@@ -1,0 +1,32 @@
+# Example profiles configuration for cz-cli
+# Copy this file to ~/.clickzetta/profiles.toml and update with your credentials
+
+default_profile = "dev"
+
+[profiles.dev]
+username = "your_username"
+password = "your_password"
+service = "dev-api.clickzetta.com"
+instance = "your_instance"
+workspace = "your_workspace"
+schema = "public"
+vcluster = "default"
+
+[profiles.prod]
+username = "prod_username"
+password = "prod_password"
+service = "api.clickzetta.com"
+instance = "prod_instance"
+workspace = "prod_workspace"
+schema = "public"
+vcluster = "default"
+
+# For testing, create a 'test' profile:
+[profiles.test]
+username = "test_username"
+password = "test_password"
+service = "dev-api.clickzetta.com"
+instance = "test_instance"
+workspace = "test_workspace"
+schema = "public"
+vcluster = "default"

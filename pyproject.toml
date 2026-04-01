@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cz-cli"
+version = "0.1.0"
+description = "AI-Agent-friendly CLI for ClickZetta Lakehouse"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Lin Zhang"}
+]
+keywords = ["clickzetta", "lakehouse", "cli", "ai-agent", "database", "sql"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+]
+
+dependencies = [
+    "click>=8.0",
+    "clickzetta-connector>=1.0.16",
+    "loguru>=0.7.0",
+    "tomli>=2.0.0; python_version<'3.11'",
+    "toons>=0.1.0",
+    "questionary>=1.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio",
+    "build",
+    "twine",
+    "wheel"
+]
+
+[project.scripts]
+cz-cli = "cz_cli.main:cli"
+clickzetta-cli = "cz_cli.main:cli"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cz_cli*"]
+
+[tool.setuptools.package-data]
+cz_cli = ["skills/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="8c36d940-173f-4996-a7fa-294462b60726" name="更改" comment="">
+      <change afterPath="$PROJECT_DIR$/.claude/commands/opsx/apply.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/commands/opsx/archive.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/commands/opsx/explore.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/commands/opsx/propose.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/skills/cz-cli/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/skills/openspec-apply-change/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/skills/openspec-archive-change/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/skills/openspec-explore/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.claude/skills/openspec-propose/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.codex/skills/openspec-apply-change/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.codex/skills/openspec-archive-change/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.codex/skills/openspec-explore/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.codex/skills/openspec-propose/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/AGETNT.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/CHANGELOG.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/MANIFEST.in" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/profile.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/schema.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/skills_installer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/sql.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/table.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/commands/workspace.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/connection.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/logger.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/main.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/masking.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/output.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/cz_cli/skills/cz-cli/SKILL.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/.openspec.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/design.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/proposal.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/ai-guide/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/connection-management/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/profile-management/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/schema-management/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/sql-execution/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/table-management/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/specs/workspace-management/spec.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/changes/clickzetta-cli-implementation/tasks.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/openspec/config.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/profiles.toml.example" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/conftest.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_connection.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_logger.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_masking.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_output.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="CopilotPersistence">
+    <persistenceIdMap>
+      <entry key="_/Users/zhanglin/PycharmProjects/clickzetta-dbutils/PythonProject/clickzetta-cli" value="3BemrQSwqj4BCn786ut8VLDQSGG" />
+    </persistenceIdMap>
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GradleLocalSettings">
+    <option name="projectSyncType">
+      <map>
+        <entry key="/opt/projects/jsp/JavaEE-Project-B-master" value="PREVIEW" />
+      </map>
+    </option>
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 8
+}]]></component>
+  <component name="ProjectId" id="3BemrQSwqj4BCn786ut8VLDQSGG" />
+  <component name="ProjectViewState">
+    <option name="autoscrollFromSource" value="true" />
+    <option name="autoscrollToSource" value="true" />
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+    <option name="showVisibilityIcons" value="true" />
+    <option name="sortByType" value="true" />
+    <option name="sortKey" value="BY_TYPE" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "main"
+  }
+}]]></component>
+  <component name="PyConsoleOptionsProvider">
+    <option name="myPythonConsoleState">
+      <console-settings sdk-home="/Library/Frameworks/Python.framework/Versions/3.6/bin/python3.6">
+        <option name="mySdkHome" value="/Library/Frameworks/Python.framework/Versions/3.6/bin/python3.6" />
+      </console-settings>
+    </option>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-ce6832f46686-7b97d883f26b-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.25557.178" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="8c36d940-173f-4996-a7fa-294462b60726" name="更改" comment="" />
+      <created>1774858109591</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1774858109591</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="VcsContentAnnotationSettings">
+    <option name="myLimit" value="2678400000" />
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
+  </component>
+</project>
