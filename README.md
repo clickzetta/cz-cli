@@ -24,6 +24,39 @@ cd cz-cli
 pip install -e .
 ```
 
+## Build Standalone Binaries (PyInstaller)
+
+Use PyInstaller to build a standalone executable that can run on target machines without installing Python packages.
+
+1. Install build dependencies on the build machine:
+
+```bash
+pip install -r requirement.txt pyinstaller
+```
+
+2. Build standalone binaries (single or multi-version):
+
+```bash
+make build-fat
+```
+
+Default behavior uses version from `cz_cli/version.py`.
+
+To build multiple versions in one run:
+
+```bash
+CZ_VERSIONS="0.1.0,0.1.1,0.2.0" make build-fat
+```
+
+Output layout:
+
+- `dist/<version>/<platform-arch>/cz-cli`
+- Windows output name remains `cz-cli.exe`
+
+Notes:
+- This script builds for the current machine platform.
+- During multi-version build, `cz_cli/version.py` is updated per version and automatically restored when done.
+
 ## Quick Start
 
 ### 1. Create a Profile

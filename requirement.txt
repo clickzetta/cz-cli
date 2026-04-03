@@ -1,0 +1,6 @@
+click>=8.0
+clickzetta-connector>=1.0.16
+loguru>=0.7.0
+tomli>=2.0.0; python_version<'3.11'
+toons>=0.1.0
+questionary>=1.10.0

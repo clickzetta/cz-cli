@@ -36,6 +36,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio",
     "build",
+    "pyinstaller>=6.0",
     "twine",
     "wheel"
 ]
@@ -46,6 +47,10 @@ clickzetta-cli = "cz_cli.main:cli"
 
 [tool.setuptools]
 package-dir = {"" = "."}
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"] }
+version = { attr = "cz_cli.version.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]

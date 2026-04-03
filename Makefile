@@ -1,4 +1,4 @@
-.PHONY: help clean test build install upload dev lint format
+.PHONY: help clean test build build-fat install upload dev lint format
 
 help:
 	@echo "cz-cli Makefile commands:"
@@ -7,6 +7,7 @@ help:
 	@echo "  make lint       - Run code linting (ruff)"
 	@echo "  make format     - Format code (ruff format)"
 	@echo "  make build      - Build distribution packages"
+	@echo "  make build-fat  - Build standalone binaries (supports multi-version)"
 	@echo "  make install    - Install package in editable mode"
 	@echo "  make dev        - Install with dev dependencies"
 	@echo "  make upload     - Upload to PyPI (requires credentials)"
@@ -45,6 +46,11 @@ build: clean
 	python -m build
 	@echo "✅ Build complete"
 	@ls -lh dist/
+
+build-fat:
+	@echo "📦 Building standalone binaries (multi-version)..."
+	bash scripts/build_fat_multi_platform.sh
+	@echo "✅ Standalone binaries build complete"
 
 install:
 	@echo "📥 Installing in editable mode..."

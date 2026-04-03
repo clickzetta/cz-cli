@@ -1,0 +1,62 @@
+name: Build Fat Binaries
+run-name: Build Fat Binaries v${{ inputs.version || 'manual' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version from cz_cli/version.py"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            target: linux-x86_64
+          - os: windows-latest
+            python-version: "3.11"
+            target: windows-x86_64
+          - os: macos-13
+            python-version: "3.11"
+            target: macos-x86_64
+          - os: macos-14
+            python-version: "3.11"
+            target: macos-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirement.txt pyinstaller
+
+      - name: Build standalone binary
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean pyinstaller/cz-cli.spec
+          mkdir -p "dist/${{ matrix.target }}"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            mv "dist/cz-cli.exe" "dist/${{ matrix.target }}/cz-cli.exe"
+          else
+            mv "dist/cz-cli" "dist/${{ matrix.target }}/cz-cli"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/${{ matrix.target }}/cz-cli*
