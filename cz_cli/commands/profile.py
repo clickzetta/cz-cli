@@ -9,6 +9,7 @@ from typing import Any
 import click
 
 from cz_cli import output
+from cz_cli.cli_group import CLIGroup
 from cz_cli.logger import log_operation
 
 try:
@@ -58,7 +59,7 @@ def _save_profiles(data: dict[str, Any]) -> None:
         f.write("\n".join(lines))
 
 
-@click.group("profile")
+@click.group("profile", cls=CLIGroup)
 @click.pass_context
 def profile_cmd(ctx: click.Context) -> None:
     """Manage connection profiles."""
@@ -68,7 +69,7 @@ def profile_cmd(ctx: click.Context) -> None:
 @click.pass_context
 def list_profiles(ctx: click.Context) -> None:
     """List all configured profiles."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
 
     try:
         data = _load_profiles()
@@ -117,7 +118,7 @@ def create_profile(
     skip_verify: bool,
 ) -> None:
     """Create a new profile."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
 
     try:
         data = _load_profiles()
@@ -182,7 +183,7 @@ def create_profile(
 @click.pass_context
 def update_profile(ctx: click.Context, name: str, key: str, value: str) -> None:
     """Update a profile field."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
 
     try:
         data = _load_profiles()
@@ -215,7 +216,7 @@ def update_profile(ctx: click.Context, name: str, key: str, value: str) -> None:
 @click.pass_context
 def delete_profile(ctx: click.Context, name: str) -> None:
     """Delete a profile."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
 
     try:
         data = _load_profiles()
@@ -242,7 +243,7 @@ def delete_profile(ctx: click.Context, name: str) -> None:
 @click.pass_context
 def use_profile(ctx: click.Context, name: str) -> None:
     """Set a profile as default."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
 
     try:
         data = _load_profiles()

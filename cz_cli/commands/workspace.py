@@ -8,6 +8,7 @@ from typing import Any
 import click
 
 from cz_cli import output
+from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
 from cz_cli.logger import log_operation
 
@@ -21,7 +22,7 @@ _PROFILES_DIR = Path.home() / ".clickzetta"
 _PROFILES_FILE = _PROFILES_DIR / "profiles.toml"
 
 
-@click.group("workspace")
+@click.group("workspace", cls=CLIGroup)
 @click.pass_context
 def workspace_cmd(ctx: click.Context) -> None:
     """Manage workspaces."""
@@ -31,7 +32,7 @@ def workspace_cmd(ctx: click.Context) -> None:
 @click.pass_context
 def current_workspace(ctx: click.Context) -> None:
     """Show current workspace."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
 
     try:
@@ -76,7 +77,7 @@ def use_workspace(ctx: click.Context, name: str, schema: str | None, persist: bo
     This command uses the SDK hint 'sdk.job.default.ns' to switch workspace context.
     Use --persist to also update the current profile configuration.
     """
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
 
     # If persist is requested, update the profile

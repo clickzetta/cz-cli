@@ -7,11 +7,11 @@ from typing import Any
 import click
 
 from cz_cli import output
+from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
 from cz_cli.logger import log_operation
 
-
-@click.group("schema")
+@click.group("schema", cls=CLIGroup)
 @click.pass_context
 def schema_cmd(ctx: click.Context) -> None:
     """Manage schemas."""
@@ -23,7 +23,7 @@ def schema_cmd(ctx: click.Context) -> None:
 @click.pass_context
 def list_schemas(ctx: click.Context, like: str | None, limit: int) -> None:
     """List all schemas in the current workspace."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -84,7 +84,7 @@ def list_schemas(ctx: click.Context, like: str | None, limit: int) -> None:
 @click.pass_context
 def describe_schema(ctx: click.Context, name: str) -> None:
     """Show schema details including tables."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -152,7 +152,7 @@ def describe_schema(ctx: click.Context, name: str) -> None:
 @click.pass_context
 def create_schema(ctx: click.Context, name: str) -> None:
     """Create a new schema."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -185,7 +185,7 @@ def create_schema(ctx: click.Context, name: str) -> None:
 @click.pass_context
 def drop_schema(ctx: click.Context, name: str) -> None:
     """Drop a schema."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 

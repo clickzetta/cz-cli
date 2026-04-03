@@ -5,6 +5,12 @@ All notable changes to cz-cli will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING**: Removed global `--format/-f` option. Use `--output/-o` instead. The `-f` shorthand is now unreserved and consistently means `--file` on commands that use it (e.g., `sql -f query.sql`).
+- `--output/-o` now works when placed after subcommand names (e.g., `table list -o csv`), not only before them.
+
 ## [0.1.0] - 2026-03-31
 
 ### Changed

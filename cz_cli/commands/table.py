@@ -7,11 +7,11 @@ from typing import Any
 import click
 
 from cz_cli import output
+from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
 from cz_cli.logger import log_operation
 
-
-@click.group("table")
+@click.group("table", cls=CLIGroup)
 @click.pass_context
 def table_cmd(ctx: click.Context) -> None:
     """Manage tables."""
@@ -24,7 +24,7 @@ def table_cmd(ctx: click.Context) -> None:
 @click.pass_context
 def list_tables(ctx: click.Context, like: str | None, schema: str | None, limit: int) -> None:
     """List all tables in the current or specified schema."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -90,7 +90,7 @@ def list_tables(ctx: click.Context, like: str | None, schema: str | None, limit:
 @click.pass_context
 def describe_table(ctx: click.Context, name: str) -> None:
     """Show table structure including columns and metadata."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -162,7 +162,7 @@ def describe_table(ctx: click.Context, name: str) -> None:
 @click.pass_context
 def preview_table(ctx: click.Context, name: str, limit: int) -> None:
     """Preview table data."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -204,7 +204,7 @@ def preview_table(ctx: click.Context, name: str, limit: int) -> None:
 @click.pass_context
 def table_stats(ctx: click.Context, name: str) -> None:
     """Show table statistics using job summary."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -262,7 +262,7 @@ def table_stats(ctx: click.Context, name: str) -> None:
 @click.pass_context
 def table_history(ctx: click.Context, name: str | None, schema: str | None, like: str | None, limit: int) -> None:
     """Show table history including deleted tables."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -333,7 +333,7 @@ def table_history(ctx: click.Context, name: str | None, schema: str | None, like
 @click.pass_context
 def create_table(ctx: click.Context, ddl: str | None, from_file: str | None) -> None:
     """Create a table from DDL."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -374,7 +374,7 @@ def create_table(ctx: click.Context, ddl: str | None, from_file: str | None) -> 
 @click.pass_context
 def drop_table(ctx: click.Context, name: str) -> None:
     """Drop a table."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 

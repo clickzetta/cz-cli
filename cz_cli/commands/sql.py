@@ -264,13 +264,10 @@ def sql_cmd(
 ) -> None:
     """Execute a SQL statement.
 
-    Note: --output and connection options are global; put them before the subcommand, e.g.:
-      clickzetta --output json sql "SELECT * FROM t LIMIT 5"
-
     If you omit STATEMENT and stdin is not a terminal (pipe or redirect), SQL is read
     from stdin so literals with '!' are not mangled by the shell.
     """
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
     debug: bool = ctx.obj.get("debug", False)
@@ -667,7 +664,7 @@ def _get_job_profile(
 @click.pass_context
 def sql_status_cmd(ctx: click.Context, job_id: str) -> None:
     """Check status of an async SQL job."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 

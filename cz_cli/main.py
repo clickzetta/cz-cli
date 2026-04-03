@@ -7,17 +7,17 @@ import json
 import click
 
 from cz_cli import __version__, output
+from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
 from cz_cli.logger import log_operation
 
 
-@click.group(invoke_without_command=True)
+@click.group(invoke_without_command=True, cls=CLIGroup)
 @click.option("--profile", "-p", help="Profile name from ~/.clickzetta/profiles.toml")
 @click.option("--jdbc-url", help="JDBC connection URL (jdbc:clickzetta://...)")
 @click.option("--schema", "-s", help="Default schema")
 @click.option("--vcluster", "-v", help="Virtual cluster")
-@click.option("--output", "-o", "fmt", type=click.Choice(["json", "table", "csv", "text", "toon"]), default="json", help="Output format")
-@click.option("--format", "-f", "fmt_alias", type=click.Choice(["json", "table", "csv", "text", "toon"]), help="Output format (alias for --output)")
+@click.option("--output", "-o", "fmt", type=click.Choice(["json", "table", "csv", "jsonl", "toon"]), default="json", help="Output format")
 @click.option("--debug", "-d", is_flag=True, help="Enable debug mode")
 @click.option("--silent", is_flag=True, help="Suppress non-essential output")
 @click.option("--verbose", is_flag=True, help="Verbose output")
@@ -30,7 +30,6 @@ def cli(
     schema: str | None,
     vcluster: str | None,
     fmt: str,
-    fmt_alias: str | None,
     debug: bool,
     silent: bool,
     verbose: bool,
@@ -41,7 +40,7 @@ def cli(
     ctx.obj["jdbc_url"] = jdbc_url
     ctx.obj["schema"] = schema
     ctx.obj["vcluster"] = vcluster
-    ctx.obj["format"] = fmt_alias or fmt  # --format takes precedence over --output
+    ctx.obj["format"] = fmt
     ctx.obj["debug"] = debug
     ctx.obj["silent"] = silent
     ctx.obj["verbose"] = verbose
@@ -54,7 +53,7 @@ def cli(
 @click.pass_context
 def status_cmd(ctx: click.Context) -> None:
     """Show connection status and version info."""
-    fmt: str = ctx.obj["format"]
+    fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
@@ -263,7 +262,7 @@ _AI_GUIDE = {
     "exit_codes": {"0": "success", "1": "business error", "2": "usage error"},
     "tips": {
         "detailed_help": "Run 'clickzetta <subcommand> --help' for detailed options.",
-        "short_options": "Use -e for --execute, -f for --file, -N for --no-header, -B for --batch mode.",
+        "short_options": "Use -e for --execute, -f for --file, -o for --output, -N for --no-header, -B for --batch mode.",
     },
 }
 

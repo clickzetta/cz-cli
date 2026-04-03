@@ -1,20 +1,64 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Project: cz-cli — AI-Agent-friendly CLI for ClickZetta Lakehouse
+  Repository: https://github.com/clickzeta/cz-cli
+  License: Apache-2.0
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Tech stack:
+  - Language: Python 3.11+ (supports 3.11, 3.12, 3.13)
+  - CLI framework: Click >= 8.0
+  - Database connector: clickzetta-connector >= 1.0.16
+  - Logging: loguru >= 0.7.0
+  - Output formats: json, table, csv, jsonl, toon (token-optimized for LLMs)
+  - Interactive prompts: questionary >= 1.10.0
+  - Linting/formatting: ruff (line-length = 100)
+  - Testing: pytest + pytest-asyncio
+  - Build: setuptools, distributed via PyPI
+
+  Architecture:
+  - Entry point: cz_cli/main.py (Click CLI group)
+  - Modular commands in cz_cli/commands/: profile, sql, table, schema, workspace, skills_installer
+  - Connection resolver (connection.py): auth priority = CLI args > JDBC URL > env vars > profiles
+  - Output formatter (output.py): unified 5-format output (json, table, csv, jsonl, toon)
+  - Operation logger (logger.py): logs to ~/.clickzetta/sql-history.jsonl with SQL redaction
+  - Data masker (masking.py): auto-masks phones, emails, passwords, ID cards
+  - AI skills in cz_cli/skills/cz-cli/ (SKILL.md)
+
+  Key design principles:
+  - AI-agent-first: JSON output by default, TOON format for token efficiency
+  - Safety by default: read-only mode, dangerous-op blocking, row limits (100), data masking
+  - Structured output for machine parsing
+  - Error messages include correction suggestions
+
+  Development commands (via Makefile):
+  - make test    — run pytest
+  - make lint    — ruff check
+  - make format  — ruff format
+  - make build   — clean + build sdist/wheel
+  - make dev     — pip install -e ".[dev]"
+  - make verify  — test + lint
+
+  Conventions:
+  - line-length = 100 (ruff)
+  - Test files: tests/test_*.py, conftest.py for shared fixtures
+  - Package scripts: cz-cli and clickzetta-cli both map to cz_cli.main:cli
+  - Profiles stored in TOML format (~/.clickzetta/profiles.toml)
+  - Async SQL execution with auto-polling for long-running queries
+
+rules:
+  proposal:
+    - Focus on CLI command design and user/AI-agent interaction patterns
+    - Consider safety implications (write protection, data masking, dangerous ops)
+    - Evaluate token efficiency for AI-agent consumers
+    - Include backward compatibility assessment for existing CLI commands
+  design:
+    - Follow the existing modular command pattern (one file per domain in cz_cli/commands/)
+    - Specify output format support (json, table, csv, jsonl, toon)
+    - Document connection/auth parameter handling
+    - Define error behavior and user-facing messages
+  tasks:
+    - Include testing task for each new command or behavior change
+    - Include lint check (make lint) before marking complete
+    - Update SKILL.md in cz_cli/skills/cz-cli/ when adding new commands
+    - Update CHANGELOG.md following Keep a Changelog format
