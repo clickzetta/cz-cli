@@ -3,71 +3,67 @@
 - DESC TABLE: /Users/zhanglin/IdeaProjects/lakehouse_doc/DESCTABLE.md
 - SHOW TABLES HISTORY: /Users/zhanglin/IdeaProjects/lakehouse_doc/show-tables-history.md
 
+### Requirement: Table command help signature contract
+The `table` command family SHALL match CLI help signatures.
+
+#### Scenario: table group help
+- **WHEN** user runs `cz-cli table --help`
+- **THEN** help shows subcommands `list|describe|preview|stats|history|create|drop`
+
+#### Scenario: table list/history help includes limit filters
+- **WHEN** user runs `cz-cli table list --help` or `cz-cli table history --help`
+- **THEN** options include `--limit`
+- **AND** list includes `--like/--schema`, history includes optional `[NAME]` plus `--schema/--like`
+
+#### Scenario: table create help signature
+- **WHEN** user runs `cz-cli table create --help`
+- **THEN** usage is `cz-cli table create [OPTIONS] [DDL]`
+- **AND** options include `--from-file`
+
 ### Requirement: List tables
-The system SHALL list all tables with filtering options using SHOW CATALOG TABLE syntax. The command SHALL accept `--output/-o` for output format.
+The system SHALL list tables in current or specified schema.
 
 #### Scenario: List all tables
-- **WHEN** user runs `clickzetta table list`
-- **THEN** system executes SHOW CATALOG TABLE and returns table list
+- **WHEN** user runs `cz-cli table list`
+- **THEN** system executes table listing SQL and returns table names
 
-#### Scenario: List tables with output format
-- **WHEN** user runs `clickzetta table list -o csv`
-- **THEN** system returns table list in CSV format
+#### Scenario: Filter and limit tables
+- **WHEN** user runs `cz-cli table list --schema myschema --like 'order%' --limit 50`
+- **THEN** system applies filters and row limit
 
-#### Scenario: Filter tables by pattern
-- **WHEN** user runs `clickzetta table list --like 'order%'`
-- **THEN** system executes SHOW CATALOG TABLE LIKE 'order%' and returns matching tables
-
-#### Scenario: Filter tables by schema
-- **WHEN** user runs `clickzetta table list --schema myschema`
-- **THEN** system returns only tables in specified schema
-
-### Requirement: Describe table
-The system SHALL show table structure using DESC TABLE syntax. The command SHALL accept `--output/-o` for output format.
+### Requirement: Describe and preview table
+The system SHALL provide table schema and data preview.
 
 #### Scenario: Describe table
-- **WHEN** user runs `clickzetta table describe orders`
-- **THEN** system executes DESC TABLE orders and returns column definitions with types and comments
+- **WHEN** user runs `cz-cli table describe orders`
+- **THEN** system returns columns and metadata
 
-### Requirement: Preview table data
-The system SHALL show sample rows from a table. The command SHALL accept `--output/-o` for output format.
+#### Scenario: Preview table data
+- **WHEN** user runs `cz-cli table preview orders --limit 10`
+- **THEN** system returns up to the requested number of rows
 
-#### Scenario: Preview with default limit
-- **WHEN** user runs `clickzetta table preview orders`
-- **THEN** system executes SELECT * FROM catalog_name.schema_name.orders LIMIT 10
+### Requirement: Table stats and history
+The system SHALL support stats and history queries.
 
-#### Scenario: Preview with custom limit
-- **WHEN** user runs `clickzetta table preview orders --limit 50`
-- **THEN** system executes SELECT * FROM catalog_name.schema_name.orders LIMIT 50
+#### Scenario: Table stats
+- **WHEN** user runs `cz-cli table stats orders`
+- **THEN** system returns row count and job summary
 
-### Requirement: Table statistics
-The system SHALL show table statistics using SDK job summary. The command SHALL accept `--output/-o` for output format.
+#### Scenario: Table history
+- **WHEN** user runs `cz-cli table history orders --limit 100`
+- **THEN** system returns history records (including deleted tables)
 
-#### Scenario: Get table stats
-- **WHEN** user runs `clickzetta table stats orders`
-- **THEN** system executes query and calls conn.get_job_summary(cursor.job_id) to return row count, data size, partition info
-
-### Requirement: Table history
-The system SHALL show table change history using SHOW TABLES HISTORY syntax. The command SHALL accept `--output/-o` for output format.
-
-#### Scenario: Get table history
-- **WHEN** user runs `clickzetta table history orders`
-- **THEN** system executes SHOW TABLES HISTORY and returns historical snapshots
-
-### Requirement: Create table
-The system SHALL create tables from DDL. The command SHALL accept `--output/-o` for output format.
+### Requirement: Create and drop table
+The system SHALL support table create and drop commands.
 
 #### Scenario: Create table with inline DDL
-- **WHEN** user runs `clickzetta table create orders "CREATE TABLE orders (id INT, name VARCHAR(100))"`
-- **THEN** system executes CREATE TABLE statement
+- **WHEN** user runs `cz-cli table create "CREATE TABLE t(a INT)"`
+- **THEN** system executes provided DDL
 
 #### Scenario: Create table from file
-- **WHEN** user runs `clickzetta table create orders --from-file schema.sql`
-- **THEN** system reads DDL from file and executes CREATE TABLE
-
-### Requirement: Drop table
-The system SHALL drop tables. The command SHALL accept `--output/-o` for output format.
+- **WHEN** user runs `cz-cli table create --from-file schema.sql`
+- **THEN** system reads DDL from file and executes it
 
 #### Scenario: Drop table
-- **WHEN** user runs `clickzetta table drop orders`
-- **THEN** system executes DROP TABLE orders
+- **WHEN** user runs `cz-cli table drop orders`
+- **THEN** system executes table drop statement

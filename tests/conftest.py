@@ -1,6 +1,5 @@
 """Test configuration for cz-cli."""
 
-import os
 from pathlib import Path
 
 try:
@@ -47,4 +46,3 @@ def get_test_jdbc_url():
         f"&schema={config.get('schema', 'public')}"
         f"&virtualCluster={config.get('vcluster', 'default')}"
     )
-

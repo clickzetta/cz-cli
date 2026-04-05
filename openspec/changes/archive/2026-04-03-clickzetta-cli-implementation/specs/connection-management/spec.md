@@ -11,7 +11,7 @@ The system SHALL resolve connection configuration from multiple sources with def
 - **THEN** system loads connection config from ~/.clickzetta/profiles.toml[profiles.myprofile]
 
 #### Scenario: Connect using JDBC URL
-- **WHEN** user runs `clickzetta --jdbc-url "jdbc:clickzetta://host/warehouse?username=user&password=pass&workspace=ws" sql "SELECT 1"`
+- **WHEN** user runs `clickzetta --jdbc "jdbc:clickzetta://host/warehouse?username=user&password=pass&workspace=ws" sql "SELECT 1"`
 - **THEN** system parses JDBC URL and extracts all connection parameters
 
 #### Scenario: Connect using environment variables
@@ -19,7 +19,7 @@ The system SHALL resolve connection configuration from multiple sources with def
 - **THEN** system reads connection config from environment variables
 
 #### Scenario: Priority order - CLI overrides JDBC
-- **WHEN** user provides both --jdbc-url and --username parameters
+- **WHEN** user provides both --jdbc and --username parameters
 - **THEN** system uses --username value, overriding JDBC URL username
 
 ### Requirement: Connection validation

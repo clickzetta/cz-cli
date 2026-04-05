@@ -10,6 +10,7 @@ import click
 from cz_cli import output
 from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
+from cz_cli.connection_ctx import connection_kwargs_from_ctx
 from cz_cli.logger import log_operation
 
 try:
@@ -36,7 +37,7 @@ def current_workspace(ctx: click.Context) -> None:
     profile: str | None = ctx.obj.get("profile")
 
     try:
-        conn = get_connection(profile=profile)
+        conn = get_connection(profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("workspace current", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -51,7 +52,13 @@ def current_workspace(ctx: click.Context) -> None:
                 rows = cursor.fetchall()
 
                 if rows:
-                    workspace_name = list(rows[0].values())[0]
+                    first_row = rows[0]
+                    if isinstance(first_row, dict):
+                        workspace_name = next(iter(first_row.values()), None)
+                    elif isinstance(first_row, (tuple, list)):
+                        workspace_name = first_row[0] if first_row else None
+                    else:
+                        workspace_name = first_row
                     log_operation("workspace current", ok=True, time_ms=timer.elapsed_ms)
                     output.success({"workspace": workspace_name}, time_ms=timer.elapsed_ms, fmt=fmt)
                 else:
@@ -101,11 +108,14 @@ def use_workspace(ctx: click.Context, name: str, schema: str | None, persist: bo
             _save_profiles(data)
 
             log_operation("workspace use", ok=True)
-            output.success({
-                "message": f"Switched to workspace '{name}' and updated profile '{profile_name}'",
-                "workspace": name,
-                "schema": schema or profiles[profile_name].get("schema", "public")
-            }, fmt=fmt)
+            output.success(
+                {
+                    "message": f"Switched to workspace '{name}' and updated profile '{profile_name}'",
+                    "workspace": name,
+                    "schema": schema or profiles[profile_name].get("schema", "public"),
+                },
+                fmt=fmt,
+            )
         except Exception as exc:
             log_operation("workspace use", ok=False, error_code="PROFILE_UPDATE_ERROR")
             output.error("PROFILE_UPDATE_ERROR", str(exc), fmt=fmt)
@@ -115,12 +125,15 @@ def use_workspace(ctx: click.Context, name: str, schema: str | None, persist: bo
         # This command primarily serves to update the profile for persistence
         schema_name = schema or "public"
         log_operation("workspace use", ok=True)
-        output.success({
-            "message": f"To use workspace '{name}', set SDK hint: {{'sdk.job.default.ns': '{name}.{schema_name}'}}",
-            "workspace": name,
-            "schema": schema_name,
-            "note": "Use --persist to save this to your profile configuration"
-        }, fmt=fmt)
+        output.success(
+            {
+                "message": f"To use workspace '{name}', set SDK hint: {{'sdk.job.default.ns': '{name}.{schema_name}'}}",
+                "workspace": name,
+                "schema": schema_name,
+                "note": "Use --persist to save this to your profile configuration",
+            },
+            fmt=fmt,
+        )
 
 
 def _load_profiles() -> dict[str, Any]:

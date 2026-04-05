@@ -1,222 +1,182 @@
 ---
 name: cz-cli
-description: "ClickZetta CLI reference - AI-Agent-friendly command-line interface for ClickZetta Lakehouse with comprehensive command documentation, usage examples, and best practices"
+description: "CLI tool for ClickZetta Lakehouse. Use this skill when the user needs to run SQL queries, develop or schedule Studio tasks, check run status and logs, or manage tables and schemas."
 license: Apache-2.0
+generated_cli_version: "0.1.0"
+generated_with: "cz-cli-skill-generator/1.0.0"
+command_inventory_source: "click-command-tree"
+command_count: 61
 ---
 
 # cz-cli Skill
 
-This skill provides comprehensive reference documentation for the cz-cli tool, an AI-Agent-friendly command-line interface for ClickZetta Lakehouse.
+> [!IMPORTANT]
+> **Binary**: After skill installation, use `cz-cli` from `scripts/<platform>-<arch>/cz-cli` inside the installed skill directory.
+> **Fallback**: If binary not present, run `pip3 install cz-cli -U` then use `cz-cli` from PATH.
 
-> pip3 install cz-cli # Must be installed to use this skill
+## AI Agent Behavior Rules
 
-## When to Use This Skill
+> [!IMPORTANT]
+> Read these rules before invoking any command.
 
-Use this skill when you need to:
-- Execute SQL queries against ClickZetta Lakehouse
-- Manage database schemas, tables, and workspaces
-- Configure connection profiles
-- Work with ClickZetta data programmatically
-- Understand cz-cli command syntax and options
+### Rule 0 — Initialize connection profile before first use
 
-## Available Commands
+Before executing any command that requires a Lakehouse connection, run `cz-cli profile list`.
 
-### AI Guide Command (Start Here!)
-- `cz-cli ai-guide` - Output structured JSON guide for AI agents
+**If the result data array is empty** (no profiles configured):
+1. **MUST** use the **AskUserQuestion tool** (not plain text) to ask the user to choose authentication method: PAT — Personal Access Token (recommended) or username/password.
+2. Collect required fields step by step via AskUserQuestion: instance ID, workspace name, and optionally default schema and vcluster.
+3. Call `cz-cli profile create <name> [--pat VALUE | --username VALUE --password VALUE] --instance VALUE --workspace VALUE`.
+4. Verify success (exit_code=0, ok=true in JSON output), then proceed with the original request using `--profile <name>`.
 
-**This is the most important command for AI agents!** It returns a comprehensive JSON document containing:
-- **usage_pattern**: How to invoke cz-cli with global options
-- **commands**: Complete list of all commands with usage and descriptions
-- **authentication**: All supported authentication methods (profile, JDBC URL, env vars, CLI args)
-- **output_formats**: Available formats (json, table, csv, text, toon)
-- **safety_features**: Write protection, masking, dangerous operation blocking
-- **exit_codes**: Status codes (0=success, 1=business error, 2=usage error)
-- **tips**: Helpful hints for using the CLI effectively
+**MUST NOT** ask the user to configure the profile themselves in a chat message — the Agent must drive the entire onboarding interactively using the AskUserQuestion tool.
 
-Example output structure:
-```json
-{
-  "tool": "cz-cli",
-  "version": "0.1.0",
-  "description": "AI-Agent-friendly CLI for ClickZetta Lakehouse",
-  "usage_pattern": "cz-cli [--profile PROFILE] [--output json|table|csv|text|toon] <subcommand> [args]",
-  "commands": [...],
-  "authentication": {...},
-  "output_formats": {...},
-  "safety_features": {...}
-}
-```
+**If `profile list` fails with a network/connection error** (not an empty list): report the error and ask the user to check connectivity or credentials. Do NOT enter onboarding flow.
 
-**When to use ai-guide:**
-- At the start of a session to understand available commands
-- When you need to know the exact syntax for a command
-- To understand authentication options
-- To learn about safety features and output formats
+### Rule 1 — Clarify intent before any state-changing operation
 
-Usage:
-```bash
-cz-cli ai-guide | jq .
-```
+When a task involves an operation that changes system state (publishing a schedule, taking a task offline, triggering a run, deleting an object, etc.):
 
-### Profile Management (First Operation)
-- `cz-cli profile create` - Create connection profiles
-- `cz-cli profile list` - List all profiles
-- `cz-cli profile use` - Set default profile
-- `cz-cli profile update` - Update profile fields
-- `cz-cli profile delete` - Delete profiles
+**Do NOT proceed without** explicitly understanding the user's intent on all three points:
+1. **Target**: Which task / table / run instance?
+2. **Purpose**: Why does this need to happen now?
+3. **Side-effect acknowledgment**: Does the user understand the impact (historical re-runs, schedule interruption, permanent deletion, etc.)?
 
-### SQL Execution
-- `cz-cli sql` - Execute SQL queries with safety guardrails
-- `cz-cli sql --async` - Async execution with auto-polling
-- `cz-cli sql --set` - Set ClickZetta SQL flags
-- `cz-cli sql --variable` - Variable substitution
-- `cz-cli sql status` - Check async job status
+Use the **AskUserQuestion tool** (not plain text) to confirm with the user, then wait for an explicit reply before executing.
 
-### Workspace Management
-- `cz-cli workspace current` - Show current workspace
-- `cz-cli workspace use` - Switch workspace
+Consult **Command Risk Reference** below to determine whether a command qualifies as state-changing.
 
-### Schema Management
-- `cz-cli schema list` - List all schemas
-- `cz-cli schema describe` - Show schema details
-- `cz-cli schema create` - Create new schema
-- `cz-cli schema drop` - Drop schema
+### Rule 2 — Development ends at save; execution requires separate authorization
 
-### Table Management
-- `cz-cli table list` - List tables with filtering
-- `cz-cli table describe` - Show table structure
-- `cz-cli table preview` - Preview table data
-- `cz-cli table stats` - Show table statistics
-- `cz-cli table history` - Show table history
-- `cz-cli table create` - Create table from DDL
-- `cz-cli table drop` - Drop table
+When the user says "develop", "write", "create", or "modify" a task, the work is **complete once the script is saved successfully**.
+After saving, tell the user: "The task has been saved as a draft. Scheduling is not yet active. Let me know explicitly if you want to publish or execute it."
 
-## Safety Features
+**Do NOT** auto-publish, auto-trigger execution, or auto-submit a backfill after saving — even if those steps seem like the logical next thing. Every phase that produces a real side effect requires the user to express intent and grant authorization separately.
 
-### Write Protection
-Write operations (INSERT, UPDATE, DELETE) require the `--write` flag:
-```bash
-cz-cli sql --write "DELETE FROM table WHERE id = 1"
-```
+### Rule 3 — Paginated results are not complete data
 
-### Dangerous Operation Blocking
-DELETE/UPDATE without WHERE clause are blocked:
-```bash
-# This will be rejected
-cz-cli sql --write "DELETE FROM table"
-```
+All `list` commands return only page 1 by default (typically 10 items). The `ai_message` field in the response contains the total count and the command to fetch the next page — treat it as the authoritative next-step hint and follow it. Never treat a first-page result as the full dataset.
 
-### Row Limit Protection
-Queries without LIMIT are automatically limited to 100 rows via `SET cz.sql.result.row.partial.limit=100`.
+### Rule 4 — Always pass explicit task type when creating tasks
 
-### Sensitive Data Masking
-Sensitive fields are automatically masked in output:
-- Phone numbers: `138****5678`
-- Emails: `u***@example.com`
-- Passwords: `******`
-- ID cards: `110***********1234`
+When creating a task with `cz-cli task create`, **always** pass `--type` explicitly (`SQL` / `PYTHON` / `SHELL` / `SPARK` / `FLOW`).
 
-## Output Formats
+- **MUST NOT** rely on default task type.
+- If user intent says “Python task”, command must include `--type PYTHON`.
 
-- `json` (default) - Structured JSON output
-- `table` - Human-readable table format
-- `csv` - Comma-separated values
-- `text` - Plain text
-- `toon` - Token-Oriented Object Notation (LLM-optimized, 30-60% fewer tokens)
+### Rule 5 — Flow nodes use Flow-specific tools exclusively
 
-Example:
-```bash
-cz-cli --output toon sql "SELECT * FROM users LIMIT 2"
-```
+When the operation target is a Flow task or any of its child nodes (`task_type=500`, or user mentions "组合任务 / flow / 工作流"):
 
-## Configuration
+- **MUST** use Flow-specific commands: `task flow node-detail`, `task flow node-save`, `task flow node-save-config`, `task flow bind`, `task flow submit`, etc.
+- **MUST NOT** use `task save`, `task save-config`, `task detail`, or `task online` on Flow child nodes — these tools are for regular (non-Flow) tasks only and will produce incorrect results or errors.
+- **Decision rule**: if `task_type == 500` OR the user mentions flow/workflow context → use `task flow *` commands unconditionally.
 
-### Profile Configuration
-Profiles are stored in `~/.clickzetta/profiles.toml`:
-```toml
-default_profile = "dev"
+### Rule 6 — Always display studio_url in final report
 
-[profiles.dev]
-username = "your_username"
-password = "your_password"
-service = "dev-api.clickzetta.com"
-instance = "your_instance"
-workspace = "your_workspace"
-schema = "public"
-vcluster = "default"
-```
+Responses from `task`, `runs`, and `executions` commands may include a `studio_url` field. When present, surface it in the end to the user so they can open the resource directly in Studio.
 
-### JDBC URL Format
-```
-jdbc:clickzetta://host/instance?username=user&password=pass&workspace=ws&schema=schema&virtualCluster=vc
-```
+## Quick Start
 
-### Environment Variables
-```bash
-export CZ_USERNAME=your_username
-export CZ_PASSWORD=your_password
-export CZ_SERVICE=dev-api.clickzetta.com
-export CZ_INSTANCE=your_instance
-export CZ_WORKSPACE=your_workspace
-export CZ_SCHEMA=public
-export CZ_VCLUSTER=default
-```
+- Inspect command options in detail: `cz-cli <subcommand> --help`
 
-## Best Practices
+## Examples
 
-1. **Always use profiles** for repeated connections instead of passing credentials via command line
-2. **Use --write flag** explicitly for write operations to prevent accidental data modification
-3. **Add LIMIT clauses** to SELECT queries to avoid fetching too much data
-4. **Use --output toon** when working with LLMs to reduce token consumption
-5. **Set SQL flags** with --set for query optimization (e.g., `--set cz.sql.result.row.partial.limit=200`)
-6. **Use --async** for long-running queries to avoid blocking
-7. **Check job_id** in output for tracking and debugging queries
+- `cz-cli --profile dev sql "SELECT 1"`
+- `cz-cli task create demo_python_task --type PYTHON --folder 0 --description "demo"`
+- `cz-cli task save demo_python_task -f ./task.py`
+- `cz-cli task save-config demo_python_task --cron "0 2 * * *" --vc default --schema public`
+- `cz-cli runs list --task demo_python_task --limit 5`
 
-## Common Patterns
+## Command Inventory (Generated)
 
-### Quick Query
-```bash
-cz-cli --profile dev sql "SELECT COUNT(*) FROM my_table"
-```
+### `ai-guide`
+- `cz-cli ai-guide [OPTIONS]` - Output structured AI Agent usage guide (JSON).
 
-### Query with Variables
-```bash
-cz-cli sql -e "SELECT * FROM users WHERE id = %(id)s" --variable id=123
-```
+### `executions`
+- `cz-cli executions [OPTIONS] COMMAND [ARGS]...` - Manage execution records and logs for task runs (run_id first, not execution_id).
+- `cz-cli executions list [OPTIONS] [RUN_ID_OR_TASK_NAME]` - List execution records by run_id or task_name. Prefer task_name; numeric input is treated as run_id.
+- `cz-cli executions log [OPTIONS] RUN_ID_OR_TASK_NAME` - Get execution log by run_id or task_name. Prefer task_name; numeric input is treated as run_id.
+- `cz-cli executions stop [OPTIONS] RUN_ID_OR_TASK_NAME` - Stop execution by run_id or task_name. Prefer task_name; numeric input is treated as run_id.
 
-### Async Long Query
-```bash
-cz-cli sql --async "SELECT COUNT(*) FROM large_table"
-```
+### `install-skills`
+- `cz-cli install-skills [OPTIONS]` - Install AI skills for coding assistants (interactive).
 
-### Custom SQL Flags
-```bash
-cz-cli sql --set cz.sql.result.row.partial.limit=500 "SELECT * FROM table"
-```
+### `profile`
+- `cz-cli profile [OPTIONS] COMMAND [ARGS]...` - Manage connection profiles.
+- `cz-cli profile create [OPTIONS] NAME` - Create a new profile.
+- `cz-cli profile delete [OPTIONS] NAME` - Delete a profile.
+- `cz-cli profile list [OPTIONS]` - List all configured profiles.
+- `cz-cli profile show [OPTIONS] NAME` - Show full configuration for a profile by name.
+- `cz-cli profile update [OPTIONS] NAME KEY VALUE` - Update a profile field.
+- `cz-cli profile use [OPTIONS] NAME` - Set a profile as default.
 
-### Export to CSV
-```bash
-cz-cli --output csv sql "SELECT * FROM users" > users.csv
-```
+### `runs`
+- `cz-cli runs [OPTIONS] COMMAND [ARGS]...` - Manage Studio task run instances.
+- `cz-cli runs detail [OPTIONS] RUN_ID_OR_TASK_NAME` - Get full detail of one run instance by run_id or task_name (resolves latest run).
+- `cz-cli runs list [OPTIONS]` - List task run instances. Defaults to SCHEDULE runs, last 24h, page 1. Use --run-type REFILL for backfill runs. Check ai_message for total count and pagination hints.
+- `cz-cli runs log [OPTIONS] RUN_ID_OR_TASK_NAME` - Get run log by run_id or task_name. Prefer task_name; numeric input is treated as run_id.
+- `cz-cli runs refill [OPTIONS] TASK_NAME_OR_ID` - [🟠 HIGH IMPACT] Submit a backfill job to re-run a task over a historical business time window. Requires user confirmation. Do NOT call this automatically — always confirm the target time window with the user first.
+- `cz-cli runs stats [OPTIONS]` - Summarize run statistics (count by status/type) for the given time window.
+- `cz-cli runs stop [OPTIONS] RUN_ID_OR_TASK_NAME` - Stop a run by run_id or task_name. Prefer task_name; numeric input is treated as run_id.
+- `cz-cli runs wait [OPTIONS] RUN_ID_OR_TASK_NAME` - Poll one run until terminal status. Prefer task_name; numeric input is treated as run_id.
 
-## Error Handling
+### `schema`
+- `cz-cli schema [OPTIONS] COMMAND [ARGS]...` - Manage schemas.
+- `cz-cli schema create [OPTIONS] NAME` - Create a new schema.
+- `cz-cli schema describe [OPTIONS] NAME` - Show schema details including tables.
+- `cz-cli schema drop [OPTIONS] NAME` - Drop a schema.
+- `cz-cli schema list [OPTIONS]` - List all schemas in the current workspace.
 
-The CLI provides structured error messages with auto-correction hints:
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "SQL_ERROR",
-    "message": "Column 'name' not found",
-    "schema": {
-      "table": "users",
-      "columns": ["id", "username", "email", "created_at"]
-    }
-  }
-}
-```
+### `sql`
+- `cz-cli sql [OPTIONS] [STATEMENT]` - Execute a SQL statement. If you omit STATEMENT and stdin is not a terminal (pipe or redirect), SQL is read from stdin so literals with '!' are not mangled by the shell.
 
-## See Also
+### `status`
+- `cz-cli status [OPTIONS] JOB_ID` - Check status of an async SQL job.
 
-- [ClickZetta Documentation](https://yunqi.tech/documents)
-- [cz-cli GitHub Repository](https://github.com/clickzetta/cz-cli)
+### `table`
+- `cz-cli table [OPTIONS] COMMAND [ARGS]...` - Manage tables.
+- `cz-cli table create [OPTIONS] [DDL]` - Create a table from DDL.
+- `cz-cli table describe [OPTIONS] NAME` - Show table structure including columns and metadata.
+- `cz-cli table drop [OPTIONS] NAME` - Drop a table.
+- `cz-cli table history [OPTIONS] [NAME]` - Show table history including deleted tables.
+- `cz-cli table list [OPTIONS]` - List all tables in the current or specified schema.
+- `cz-cli table preview [OPTIONS] NAME` - Preview table data.
+- `cz-cli table stats [OPTIONS] NAME` - Show table statistics using job summary.
+
+### `task`
+- `cz-cli task [OPTIONS] COMMAND [ARGS]...` - Manage Studio schedule tasks and flow tasks.
+- `cz-cli task create [OPTIONS] TASK_NAME` - Create a new Studio task (draft). `--type` is required (SQL/PYTHON/SHELL/SPARK/FLOW). Follow up with `task save` to add content, then `task save-config` for schedule, then `task online` to activate.
+- `cz-cli task create-folder [OPTIONS] FOLDER_NAME` - Create a new task folder. Use --parent to nest inside an existing folder (default: root).
+- `cz-cli task detail [OPTIONS] TASK_NAME_OR_ID` - Show full task detail including content, config, and online status.
+- `cz-cli task execute [OPTIONS] TASK_NAME_OR_ID` - [Notice: SIDE EFFECT] Run one temporary execution immediately without publishing to schedule. AI agents MUST obtain explicit user approval before calling this command. There is NO -y flag — approval is obtained by asking the user, not via a CLI option. Use for ad-hoc or validation runs only.
+- `cz-cli task flow [OPTIONS] COMMAND [ARGS]...` - Manage Flow task nodes and dependencies.
+- `cz-cli task flow bind [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow create-node [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow dag [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow instances [OPTIONS]` - No description.
+- `cz-cli task flow node-detail [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow node-save [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow node-save-config [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow remove-node [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow submit [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task flow unbind [OPTIONS] TASK_NAME_OR_ID` - No description.
+- `cz-cli task folders [OPTIONS]` - List Studio task folders. Supports pagination via --page and --page-size.
+- `cz-cli task list [OPTIONS]` - List tasks in the current workspace. Supports pagination and filters. Returns page 1 only by default — check ai_message for total count.
+- `cz-cli task offline [OPTIONS] TASK_NAME_OR_ID` - [🔴 IRREVERSIBLE] Take a task offline and clear ALL run instances (past and future). This CANNOT be undone. All historical instance records are permanently deleted. The task must have no active downstream dependencies. Requires explicit user confirmation.
+- `cz-cli task online [OPTIONS] TASK_NAME_OR_ID` - [🟠 HIGH IMPACT] Publish a task draft to activate scheduling. Non-Flow tasks only. Requires user confirmation. Do NOT call this automatically after save — wait for explicit user instruction.
+- `cz-cli task save [OPTIONS] TASK_NAME_OR_ID` - Save task script content as a draft. Does NOT activate the schedule — run `task online` separately when ready to publish.
+- `cz-cli task save-config [OPTIONS] TASK_NAME_OR_ID` - Save schedule configuration (cron, VC, schema) as a draft. Does NOT activate the schedule — run `task online` separately when ready to publish.
+
+### `workspace`
+- `cz-cli workspace [OPTIONS] COMMAND [ARGS]...` - Manage workspaces.
+- `cz-cli workspace current [OPTIONS]` - Show current workspace.
+- `cz-cli workspace use [OPTIONS] NAME` - Switch to a workspace using SDK hints. This command uses the SDK hint 'sdk.job.default.ns' to switch workspace context. Use --persist to also update the current profile configuration.
+
+## Command Risk Reference
+
+| Risk Level      | Commands                                         | Key Concern                                                     |
+|-----------------|--------------------------------------------------|-----------------------------------------------------------------|
+| 🔴 Irreversible | `task offline`, `schema drop`, `table drop`      | Cannot be undone; clears history or deletes objects permanently |
+| 🟠 High Impact  | `task online`, `runs refill`, `task flow submit` | Affects live schedule or re-runs historical data                |
+| 🟢 Safe         | All others                                       | No side effects                                                 |

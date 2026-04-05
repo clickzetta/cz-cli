@@ -7,9 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `cz_cli/skills/cz-cli/scripts/` directory added as skill binary delivery location; `build_fat_multi_platform.sh` now copies the platform binary there after each build so skills can run `cz-cli` without a separate `pip install`.
+- Added **Rule 0** to `SKILL.md` and `SKILL.template.md`: AI Agents must detect an unconfigured profile before any connection command and interactively guide the user through `profile create` using the `AskUserQuestion` tool — not plain-text prompts.
+
+### Changed
+- `SKILL.template.md` top-level installation block updated: binary-first (`scripts/<platform>-<arch>/cz-cli`) with `pip3 install cz-cli -U` as fallback, removing the unconditional pip-required message.
+- `.gitignore` refined: `cz_cli/skills/cz-cli/scripts/*/` ignores binary payloads while `SKILL.md` and `scripts/.gitkeep` remain trackable.
+- Integration test execution order: integration test scenarios are now implemented before per-command examples to ensure examples are validated against a real environment.
+
+### Fixed
+- `cz-cli task save --file` and `--content` no longer corrupt script content before uploading to Studio. Previously, literal escape sequences such as `\n` and `\t` inside Python string literals were silently replaced with real control characters by the MCP layer, causing `SyntaxError: unterminated string literal` at Studio runtime while `py_compile` passed cleanly on the local file. The CLI now passes `replace_escaped_chars=False` to preserve content verbatim.
+
 ### Changed
 - **BREAKING**: Removed global `--format/-f` option. Use `--output/-o` instead. The `-f` shorthand is now unreserved and consistently means `--file` on commands that use it (e.g., `sql -f query.sql`).
 - `--output/-o` now works when placed after subcommand names (e.g., `table list -o csv`), not only before them.
+- `cz-cli ai-guide` now builds command inventory dynamically from Click command metadata, replacing the hand-maintained `_AI_GUIDE` block.
+- `cz_cli/skills/cz-cli/SKILL.md` is now generated from a fixed template plus dynamic command inventory, with embedded generator and CLI version markers.
+- Build workflows now generate skill docs before packaging (`make build`, `make build-fat`, and fat multi-version loop).
+
+### Added
+- Added a shared metadata builder in `cz_cli/guide_builder.py` to keep `--help`, `ai-guide`, and generated skill signatures aligned.
+- Added `scripts/generate_skills.py` with `--check` drift validation for generated skill docs.
+- Added ai-guide length budget control and truncation metadata (`CZ_AI_GUIDE_BUDGET` override supported) to keep payload size bounded while preserving mandatory sections.
 
 ## [0.1.0] - 2026-03-31
 
@@ -88,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Global Options
 - `--profile/-p` - Profile selection
-- `--jdbc-url` - JDBC connection URL
+- `--jdbc` - JDBC connection URL
 - `--schema/-s` - Default schema
 - `--vcluster/-v` - Virtual cluster
 - `--output/-o` - Output format

@@ -1,9 +1,20 @@
 """Unit tests for logger.py"""
 
 import json
-from pathlib import Path
 
+import pytest
+
+import cz_cli.logger as logger_module
 from cz_cli.logger import log_operation, _redact_sql
+
+
+@pytest.fixture(autouse=True)
+def _isolate_log_file(monkeypatch, tmp_path):
+    log_dir = tmp_path / ".clickzetta"
+    log_file = log_dir / "sql-history.jsonl"
+    monkeypatch.setattr(logger_module, "_LOG_DIR", log_dir)
+    monkeypatch.setattr(logger_module, "_LOG_FILE", log_file)
+    return log_file
 
 
 def test_redact_sql_phone():
@@ -48,8 +59,7 @@ def test_redact_sql_no_sensitive_data():
 
 def test_log_operation_creates_file():
     """Test that log_operation creates log file."""
-    log_dir = Path.home() / ".clickzetta"
-    log_file = log_dir / "sql-history.jsonl"
+    log_file = logger_module._LOG_FILE
 
     # Log an operation
     log_operation("test", sql="SELECT 1", ok=True, rows=1, time_ms=100)
@@ -72,8 +82,7 @@ def test_log_operation_creates_file():
 
 def test_log_operation_with_error():
     """Test logging operation with error."""
-    log_dir = Path.home() / ".clickzetta"
-    log_file = log_dir / "sql-history.jsonl"
+    log_file = logger_module._LOG_FILE
 
     log_operation("test", sql="INVALID SQL", ok=False, error_code="SQL_ERROR")
 

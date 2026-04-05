@@ -13,6 +13,12 @@ if not ENTRYPOINT.exists():
 # Include bundled skills so `cz-cli install-skills` keeps working in standalone binaries.
 datas = collect_data_files("cz_cli", includes=["skills/**/*"])
 
+try:
+    datas += collect_data_files("cz_mcp", includes=["skills/**/*"])
+except Exception:
+    # Optional fallback: allow building even if cz_mcp package is unavailable in build env.
+    pass
+
 # Restrict to v0 modules used by this CLI to avoid optional extras.
 hiddenimports = collect_submodules("clickzetta.connector.v0")
 

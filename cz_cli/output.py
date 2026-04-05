@@ -5,15 +5,26 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import sys
 import time
 from typing import Any
 
 try:
     import toons
+
     TOONS_AVAILABLE = True
 except ImportError:
     TOONS_AVAILABLE = False
+
+try:
+    from pygments import highlight as _pygments_highlight
+    from pygments.formatters import TerminalFormatter
+    from pygments.lexers import JsonLexer
+
+    PYGMENTS_AVAILABLE = True
+except ImportError:
+    PYGMENTS_AVAILABLE = False
 
 
 EXIT_OK = 0
@@ -40,7 +51,34 @@ def _json_dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str)
 
 
-def success(data: Any, *, time_ms: int = 0, fmt: str = "json", ai_message: str | None = None, extra: dict[str, Any] | None = None) -> None:
+def _pretty_json_dumps(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, default=str, indent=2)
+
+
+def _should_colorize() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    force = (os.environ.get("CZ_FORCE_COLOR") or os.environ.get("CLICOLOR_FORCE") or "").strip()
+    if force in {"1", "true", "TRUE", "yes", "YES"}:
+        return True
+    return sys.stdout.isatty()
+
+
+def _pretty_json_with_highlight(obj: Any) -> str:
+    pretty = _pretty_json_dumps(obj)
+    if not (PYGMENTS_AVAILABLE and _should_colorize()):
+        return pretty
+    return _pygments_highlight(pretty, JsonLexer(), TerminalFormatter()).rstrip("\n")
+
+
+def success(
+    data: Any,
+    *,
+    time_ms: int = 0,
+    fmt: str = "json",
+    ai_message: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
     """Print a success response and exit 0."""
     payload: dict[str, Any] = {"ok": True, "data": data}
     if time_ms:
@@ -112,6 +150,8 @@ def _emit(
     """Write *payload* to stdout in the requested format."""
     if fmt == "json":
         print(_json_dumps(payload))
+    elif fmt == "pretty":
+        print(_pretty_json_with_highlight(payload))
     elif fmt == "table":
         _print_table(payload, columns, rows)
     elif fmt == "csv":
@@ -127,6 +167,7 @@ def _emit(
 # ---------------------------------------------------------------------------
 # Table format
 # ---------------------------------------------------------------------------
+
 
 def _print_table(
     payload: dict[str, Any],
@@ -156,11 +197,21 @@ def _print_table(
 
 
 def _print_table_from_data(payload: dict[str, Any]) -> None:
-    """Attempt to render 'data' as a table when it's a list of dicts."""
+    """Attempt to render 'data' as a table when it's a list/dict."""
     data = payload.get("data")
     if isinstance(data, list) and data and isinstance(data[0], dict):
         cols = list(data[0].keys())
         _print_table(payload, cols, data)
+        return
+    if isinstance(data, dict) and data:
+        cols = list(data.keys())
+        row = {
+            key: json.dumps(value, ensure_ascii=False, default=str)
+            if isinstance(value, (dict, list))
+            else value
+            for key, value in data.items()
+        }
+        _print_table(payload, cols, [row])
         return
     print(_json_dumps(payload))
 
@@ -168,6 +219,7 @@ def _print_table_from_data(payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # CSV format
 # ---------------------------------------------------------------------------
+
 
 def _print_csv(
     payload: dict[str, Any],
@@ -195,7 +247,13 @@ def _write_csv(columns: list[str], rows: list[dict[str, Any]]) -> None:
         flat: dict[str, str] = {}
         for c in columns:
             val = row.get(c)
-            flat[c] = json.dumps(val, ensure_ascii=False, default=str) if isinstance(val, (dict, list)) else str(val) if val is not None else ""
+            flat[c] = (
+                json.dumps(val, ensure_ascii=False, default=str)
+                if isinstance(val, (dict, list))
+                else str(val)
+                if val is not None
+                else ""
+            )
         writer.writerow(flat)
     sys.stdout.write(buf.getvalue())
 
@@ -203,6 +261,7 @@ def _write_csv(columns: list[str], rows: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 # JSONL format
 # ---------------------------------------------------------------------------
+
 
 def _print_jsonl(
     payload: dict[str, Any],
@@ -225,6 +284,7 @@ def _print_jsonl(
 # ---------------------------------------------------------------------------
 # TOON format (LLM-optimized lightweight format)
 # ---------------------------------------------------------------------------
+
 
 def _print_toon(
     payload: dict[str, Any],

@@ -1,11 +1,14 @@
-.PHONY: help clean test build build-fat install upload dev lint format
+.PHONY: help clean test test-unit test-integration build build-fat install upload dev lint format generate-skills
 
 help:
 	@echo "cz-cli Makefile commands:"
 	@echo "  make clean      - Remove build artifacts and cache files"
-	@echo "  make test       - Run pytest tests"
+	@echo "  make test       - Run unit + integration tests (default)"
+	@echo "  make test-unit  - Run unit tests only (exclude integration)"
+	@echo "  make test-integration - Run real Studio integration tests only"
 	@echo "  make lint       - Run code linting (ruff)"
 	@echo "  make format     - Format code (ruff format)"
+	@echo "  make generate-skills - Regenerate bundled SKILL.md from Click command tree"
 	@echo "  make build      - Build distribution packages"
 	@echo "  make build-fat  - Build standalone binaries (supports multi-version)"
 	@echo "  make install    - Install package in editable mode"
@@ -26,10 +29,21 @@ clean:
 	find . -type f -name "*.pyo" -delete
 	@echo "✅ Clean complete"
 
-test:
-	@echo "🧪 Running tests..."
-	python -m pytest tests/ -v
-	@echo "✅ Tests complete"
+test: test-unit test-integration
+	@echo "✅ Tests complete (unit + integration)"
+
+test-it: test-integration
+	@echo "✅ Tests complete (integration)"
+
+test-unit:
+	@echo "🧪 Running unit tests..."
+	python -m pytest tests/ -v -m "not integration"
+	@echo "✅ Unit tests complete"
+
+test-integration:
+	@echo "🧪 Running integration tests..."
+	CZ_RUN_INTEGRATION=1 CZ_IT_PROFILE=$${CZ_IT_PROFILE:-dev} CZ_IT_DEBUG=$${CZ_IT_DEBUG:-1} python -m pytest tests/integration/test_studio_integration.py -v -s
+	@echo "✅ Integration tests complete"
 
 lint:
 	@echo "🔍 Running linter..."
@@ -41,30 +55,33 @@ format:
 	python -m ruff format cz_cli/ tests/
 	@echo "✅ Format complete"
 
-build: clean
+generate-skills:
+	@echo "🧩 Generating bundled skill docs..."
+	python scripts/generate_skills.py
+	@echo "✅ Skill docs generated"
+
+build-pkg: clean generate-skills
 	@echo "📦 Building distribution packages..."
 	python -m build
 	@echo "✅ Build complete"
 	@ls -lh dist/
 
-build-fat:
+build-fat: generate-skills
 	@echo "📦 Building standalone binaries (multi-version)..."
 	bash scripts/build_fat_multi_platform.sh
 	@echo "✅ Standalone binaries build complete"
 
+build: build-pkg build-fat
+	@echo "✅ All builds complete"
+
 install:
 	@echo "📥 Installing in editable mode..."
-	pip install -e .
+	pip uninstall cz-cli && pip install -e ".[dev]"
 	@echo "✅ Install complete"
-
-dev:
-	@echo "📥 Installing with dev dependencies..."
-	pip install -e ".[dev]"
-	@echo "✅ Dev install complete"
 
 upload: build
 	@echo "📤 Uploading to PyPI..."
-	@echo "⚠️  Make sure you have configured your PyPI credentials!"
+	@echo "Notice:  Make sure you have configured your PyPI credentials!"
 	python -m twine upload dist/*
 	@echo "✅ Upload complete"
 
@@ -73,7 +90,7 @@ upload-test: build
 	python -m twine upload --repository testpypi dist/*
 	@echo "✅ Upload to TestPyPI complete"
 
-all: clean test build
+all: clean format test verify build
 	@echo "✅ All tasks complete"
 
 verify: test lint

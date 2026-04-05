@@ -1,1 +1,1 @@
-__version__ = "0.1.0"
+from cz_cli.version import __version__ as __version__

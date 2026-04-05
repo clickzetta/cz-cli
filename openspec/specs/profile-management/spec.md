@@ -1,57 +1,89 @@
-**Configuration File**: ~/.clickzetta/profiles.toml (TOML format)
+**Configuration File**: `~/.clickzetta/profiles.toml` (TOML format)
 
+### Requirement: Profile creation with mutually exclusive auth modes
+The system SHALL support creating profiles with either PAT auth or username/password auth.
 
-### Requirement: Profile creation
-The system SHALL allow users to create named connection profiles. The command SHALL accept `--output/-o` for output format.
+#### Scenario: Create profile with PAT
+- **WHEN** user runs `cz-cli profile create myprofile --pat <token> --instance inst --workspace ws --service dev-api.clickzetta.com`
+- **THEN** system stores `pat` in profile and does not require username/password
 
-#### Scenario: Create profile with all parameters
-- **WHEN** user runs `clickzetta profile create myprofile --username user --password pass --instance inst --workspace ws --service dev-api.clickzetta.com --schema public --vcluster default`
-- **THEN** system creates profile in ~/.clickzetta/profiles.toml with all parameters
+#### Scenario: Create profile with username/password
+- **WHEN** user runs `cz-cli profile create myprofile --username user --password pass --instance inst --workspace ws --service dev-api.clickzetta.com`
+- **THEN** system stores `username` and `password` in profile
 
-#### Scenario: Create profile with missing required parameter
-- **WHEN** user runs `clickzetta profile create myprofile --username user` without password
-- **THEN** system returns error "Password is required"
+#### Scenario: PAT and username/password both provided
+- **WHEN** user runs `cz-cli profile create myprofile --pat <token> --username user --password pass ...`
+- **THEN** system rejects request with mutual-exclusion error
 
-### Requirement: Profile listing
-The system SHALL display all configured profiles with their connection details (excluding passwords). The command SHALL accept `--output/-o` for output format.
+#### Scenario: Missing authentication arguments
+- **WHEN** user runs `cz-cli profile create myprofile --instance inst --workspace ws` without PAT or complete username/password
+- **THEN** system rejects request with authentication-required usage error
+
+### Requirement: Profile creation supports protocol and verification control
+The system SHALL support optional `--protocol` and `--skip-verify` on profile creation.
+
+#### Scenario: Create profile with protocol
+- **WHEN** user runs `cz-cli profile create ... --protocol http`
+- **THEN** profile stores normalized protocol value (`http` or `https`)
+
+#### Scenario: Skip connection verification
+- **WHEN** user runs `cz-cli profile create ... --skip-verify`
+- **THEN** system skips connection test before saving profile
+
+#### Scenario: Default create validates connectivity
+- **WHEN** user runs `cz-cli profile create ...` without `--skip-verify`
+- **THEN** system tests connection and fails with `CONNECTION_FAILED` if verification cannot pass
+
+### Requirement: Profile listing masks sensitive fields
+The system SHALL list profiles without exposing sensitive credentials.
 
 #### Scenario: List profiles
-- **WHEN** user runs `clickzetta profile list`
-- **THEN** system displays all profiles with username, service, instance, workspace
-
-#### Scenario: List profiles with output format
-- **WHEN** user runs `clickzetta profile list -o table`
-- **THEN** system displays all profiles in table format
+- **WHEN** user runs `cz-cli profile list`
+- **THEN** response includes `name/auth_mode/service/protocol/instance/workspace/is_default`
+- **AND** PAT is masked as first 8 chars plus `****`
+- **AND** password is never returned
 
 #### Scenario: List profiles when none exist
-- **WHEN** user runs `clickzetta profile list` and no profiles configured
-- **THEN** system returns empty list with ok=true
+- **WHEN** no profiles are configured
+- **THEN** system returns empty list with `ok=true`
 
-### Requirement: Profile selection
-The system SHALL allow users to set a default profile. The command SHALL accept `--output/-o` for output format.
+### Requirement: Default profile selection
+The system SHALL support setting and reading default profile via `default_profile` marker.
 
 #### Scenario: Set default profile
-- **WHEN** user runs `clickzetta profile use myprofile`
-- **THEN** system sets myprofile as default by renaming it to "default" in profiles.toml
+- **WHEN** user runs `cz-cli profile use myprofile`
+- **THEN** system writes `default_profile = "myprofile"` in profile file
 
-### Requirement: Profile update
-The system SHALL allow users to update individual fields of an existing profile. The command SHALL accept `--output/-o` for output format.
+#### Scenario: Resolve default profile in runtime
+- **WHEN** user does not pass `--profile`
+- **THEN** connection resolver uses `default_profile` if present, otherwise falls back to first available profile
 
-#### Scenario: Update profile field
-- **WHEN** user runs `clickzetta profile update myprofile password newpass`
-- **THEN** system updates only the password field in myprofile
+### Requirement: Profile update behavior
+The system SHALL support updating one allowed key at a time and maintain auth-mode consistency.
 
-#### Scenario: Update non-existent profile
-- **WHEN** user runs `clickzetta profile update nonexistent password newpass`
-- **THEN** system returns error "Profile 'nonexistent' not found"
+#### Scenario: Update allowed profile key
+- **WHEN** user runs `cz-cli profile update myprofile service uat-api.clickzetta.com`
+- **THEN** system updates only the specified key
+
+#### Scenario: Update protocol with invalid value
+- **WHEN** user runs `cz-cli profile update myprofile protocol ftp`
+- **THEN** system rejects request because protocol must be `http|https`
+
+#### Scenario: Update PAT clears username/password
+- **WHEN** user runs `cz-cli profile update myprofile pat <new_token>`
+- **THEN** system removes existing `username/password` fields from profile
+
+#### Scenario: Update username or password clears PAT
+- **WHEN** user runs `cz-cli profile update myprofile username new_user`
+- **THEN** system removes existing `pat` field from profile
 
 ### Requirement: Profile deletion
-The system SHALL allow users to delete profiles. The command SHALL accept `--output/-o` for output format.
+The system SHALL delete named profiles and return not-found errors for missing profiles.
 
 #### Scenario: Delete profile
-- **WHEN** user runs `clickzetta profile delete myprofile`
-- **THEN** system removes myprofile from profiles.toml
+- **WHEN** user runs `cz-cli profile delete myprofile`
+- **THEN** system removes `myprofile` from profile file
 
 #### Scenario: Delete non-existent profile
-- **WHEN** user runs `clickzetta profile delete nonexistent`
-- **THEN** system returns error "Profile 'nonexistent' not found"
+- **WHEN** user runs `cz-cli profile delete missing`
+- **THEN** system returns profile-not-found error

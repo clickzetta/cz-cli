@@ -9,7 +9,9 @@ import click
 from cz_cli import output
 from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
+from cz_cli.connection_ctx import connection_kwargs_from_ctx
 from cz_cli.logger import log_operation
+
 
 @click.group("schema", cls=CLIGroup)
 @click.pass_context
@@ -28,7 +30,7 @@ def list_schemas(ctx: click.Context, like: str | None, limit: int) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("schema list", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -49,14 +51,21 @@ def list_schemas(ctx: click.Context, like: str | None, limit: int) -> None:
 
                 # Convert tuples to dicts
                 columns = [d[0] for d in cursor.description] if cursor.description else []
-                rows_dict = [dict(zip(columns, row)) if isinstance(row, tuple) else row for row in rows]
+                rows_dict = [
+                    dict(zip(columns, row)) if isinstance(row, tuple) else row for row in rows
+                ]
 
                 result = []
                 for row in rows_dict:
-                    result.append({
-                        "name": row.get("schema_name", row.get("name", row.get(columns[0], "") if columns else "")),
-                        "type": row.get("type", ""),
-                    })
+                    result.append(
+                        {
+                            "name": row.get(
+                                "schema_name",
+                                row.get("name", row.get(columns[0], "") if columns else ""),
+                            ),
+                            "type": row.get("type", ""),
+                        }
+                    )
 
                 # Client-side limit (SHOW SCHEMAS doesn't support LIMIT clause)
                 total_count = len(result)
@@ -89,7 +98,7 @@ def describe_schema(ctx: click.Context, name: str) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("schema describe", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -111,7 +120,11 @@ def describe_schema(ctx: click.Context, name: str) -> None:
 
                 # Convert tuple to dict
                 columns = [d[0] for d in cursor.description] if cursor.description else []
-                schema_info = dict(zip(columns, schema_rows[0])) if isinstance(schema_rows[0], tuple) else schema_rows[0]
+                schema_info = (
+                    dict(zip(columns, schema_rows[0]))
+                    if isinstance(schema_rows[0], tuple)
+                    else schema_rows[0]
+                )
 
                 # Get tables in schema
                 cursor.execute(f"SHOW TABLES IN {name}")
@@ -157,7 +170,7 @@ def create_schema(ctx: click.Context, name: str) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("schema create", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -170,7 +183,11 @@ def create_schema(ctx: click.Context, name: str) -> None:
             try:
                 cursor.execute(f"CREATE SCHEMA {name}")
                 log_operation("schema create", ok=True, time_ms=timer.elapsed_ms)
-                output.success({"message": f"Schema '{name}' created successfully"}, time_ms=timer.elapsed_ms, fmt=fmt)
+                output.success(
+                    {"message": f"Schema '{name}' created successfully"},
+                    time_ms=timer.elapsed_ms,
+                    fmt=fmt,
+                )
             finally:
                 cursor.close()
     except Exception as exc:
@@ -190,7 +207,7 @@ def drop_schema(ctx: click.Context, name: str) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("schema drop", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -203,7 +220,11 @@ def drop_schema(ctx: click.Context, name: str) -> None:
             try:
                 cursor.execute(f"DROP SCHEMA {name}")
                 log_operation("schema drop", ok=True, time_ms=timer.elapsed_ms)
-                output.success({"message": f"Schema '{name}' dropped successfully"}, time_ms=timer.elapsed_ms, fmt=fmt)
+                output.success(
+                    {"message": f"Schema '{name}' dropped successfully"},
+                    time_ms=timer.elapsed_ms,
+                    fmt=fmt,
+                )
             finally:
                 cursor.close()
     except Exception as exc:

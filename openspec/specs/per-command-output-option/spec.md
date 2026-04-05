@@ -1,9 +1,13 @@
 ### Requirement: Subcommands accept --output/-o option
-Every leaf command in cz-cli SHALL accept `--output` and `-o` options with the same choices as the global option (`json`, `table`, `csv`, `jsonl`, `toon`). The subcommand-level option SHALL override the global `--output` when both are provided.
+Every leaf command in cz-cli SHALL accept `--output` and `-o` options with the same choices as the global option (`json`, `pretty`, `table`, `csv`, `jsonl`, `toon`). The subcommand-level option SHALL override the global `--output` when both are provided.
 
 #### Scenario: Output format after subcommand name
 - **WHEN** user runs `cz-cli sql -o table "SELECT 1"`
 - **THEN** output is rendered in table format
+
+#### Scenario: Pretty output format
+- **WHEN** user runs `cz-cli task list -o pretty`
+- **THEN** output is rendered in pretty JSON format with ANSI color when terminal supports it
 
 #### Scenario: Output format before subcommand name still works
 - **WHEN** user runs `cz-cli --output table sql "SELECT 1"`

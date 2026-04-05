@@ -1,0 +1,165 @@
+{
+  "generated_at": "2026-04-03T12:22:30.713260+00:00",
+  "scenario": "帮我在studio上面查看一下我有哪些报错的python调度任务，并查看错误原因",
+  "failed_python_tasks": [],
+  "tool_trace": [
+    {
+      "tool_call": {
+        "name": "list_clickzetta_tasks",
+        "arguments": {
+          "taskType": 26,
+          "page": 1,
+          "pageSize": 100
+        }
+      },
+      "tool_result": {
+        "success": true,
+        "message": "Successfully retrieved 4 tasks (page 1/1)",
+        "tasks": [
+          {
+            "task_id": 13284037,
+            "project_id": 139187,
+            "folder_id": 656003,
+            "task_name": "studi_test_1_20260403181912_python",
+            "task_type": 26,
+            "location": "0.656003.13284037",
+            "task_edit_state": 10
+          },
+          {
+            "task_id": 13024009,
+            "project_id": 139187,
+            "folder_id": 0,
+            "task_name": "hello_world_task",
+            "task_type": 26,
+            "location": "0.13024009",
+            "task_edit_state": 20
+          },
+          {
+            "task_id": 13018063,
+            "project_id": 139187,
+            "folder_id": 638005,
+            "task_name": "test_oss_python",
+            "task_type": 26,
+            "location": "0.638005.13018063",
+            "task_edit_state": 20
+          },
+          {
+            "task_id": 13018046,
+            "project_id": 139187,
+            "folder_id": 546001,
+            "task_name": "table_lineage_analysis",
+            "task_type": 26,
+            "location": "0.546001.13018046",
+            "task_edit_state": 20
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "pageSize": 100,
+          "total": 4,
+          "totalPages": 1
+        }
+      }
+    },
+    {
+      "tool_call": {
+        "name": "list_task_run",
+        "arguments": {
+          "task_id": 13284037,
+          "task_run_status_list": [
+            3
+          ],
+          "page_index": 1,
+          "page_size": 5,
+          "query_plan_time_left": 1774009344116,
+          "query_plan_time_right": 1775218944116,
+          "order_by": "desc",
+          "order_by_field": "execute_start_time",
+          "task_run_type": 1
+        }
+      },
+      "tool_result": {
+        "success": true,
+        "message": "Successfully list task runs",
+        "total_count": 0,
+        "page_index": 1,
+        "page_size": 5
+      }
+    },
+    {
+      "tool_call": {
+        "name": "list_task_run",
+        "arguments": {
+          "task_id": 13024009,
+          "task_run_status_list": [
+            3
+          ],
+          "page_index": 1,
+          "page_size": 5,
+          "query_plan_time_left": 1774009344116,
+          "query_plan_time_right": 1775218944116,
+          "order_by": "desc",
+          "order_by_field": "execute_start_time",
+          "task_run_type": 1
+        }
+      },
+      "tool_result": {
+        "success": true,
+        "message": "Successfully list task runs",
+        "total_count": 0,
+        "page_index": 1,
+        "page_size": 5
+      }
+    },
+    {
+      "tool_call": {
+        "name": "list_task_run",
+        "arguments": {
+          "task_id": 13018063,
+          "task_run_status_list": [
+            3
+          ],
+          "page_index": 1,
+          "page_size": 5,
+          "query_plan_time_left": 1774009344116,
+          "query_plan_time_right": 1775218944116,
+          "order_by": "desc",
+          "order_by_field": "execute_start_time",
+          "task_run_type": 1
+        }
+      },
+      "tool_result": {
+        "success": true,
+        "message": "Successfully list task runs",
+        "total_count": 0,
+        "page_index": 1,
+        "page_size": 5
+      }
+    },
+    {
+      "tool_call": {
+        "name": "list_task_run",
+        "arguments": {
+          "task_id": 13018046,
+          "task_run_status_list": [
+            3
+          ],
+          "page_index": 1,
+          "page_size": 5,
+          "query_plan_time_left": 1774009344116,
+          "query_plan_time_right": 1775218944116,
+          "order_by": "desc",
+          "order_by_field": "execute_start_time",
+          "task_run_type": 1
+        }
+      },
+      "tool_result": {
+        "success": true,
+        "message": "Successfully list task runs",
+        "total_count": 0,
+        "page_index": 1,
+        "page_size": 5
+      }
+    }
+  ]
+}

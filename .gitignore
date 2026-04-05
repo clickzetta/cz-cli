@@ -60,3 +60,14 @@ Thumbs.db
 .pyinstaller-cache/
 test.sql
 AGETNT.md
+
+.claude/skills/cz-cli/
+.codex/skills/cz-cli/
+.kiro/skills/cz-cli/
+.claude/skills/lakehouse*
+.codex/skills/lakehouse*
+.kiro/skills/lakehouse*
+
+# Skill binary payloads (platform-specific, built by build_fat_multi_platform.sh)
+# .gitkeep placeholder is kept; actual binaries are not committed
+cz_cli/skills/cz-cli/scripts/*/

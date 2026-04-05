@@ -85,7 +85,7 @@
 ## 8. CLI 入口改造
 
 - [x] 8.1 改造 main.py
-  - [x] 8.1.1 更新全局参数 (添加 --profile, --jdbc-url, --schema, --vcluster, --output/-o, --format (作为 --output 别名), --debug, --silent, --verbose)
+  - [x] 8.1.1 更新全局参数 (添加 --profile, --jdbc, --schema, --vcluster, --output/-o, --format (作为 --output 别名), --debug, --silent, --verbose)
   - [x] 8.1.2 添加全局参数短选项 (-s, -v, -d, -o 等) 和批量模式选项 (-N/--no-header, -B/--batch)
   - [x] 8.1.3 更新 ai-guide 内容 (替换为 ClickZetta 命令和示例)
   - [x] 8.1.4 注册所有命令 (profile, sql, workspace, schema, table)

@@ -1,22 +1,32 @@
-**Note**: ClickZetta does not provide a `SHOW WORKSPACES` SQL command. Workspaces are managed through the Web UI and specified via profile configuration or JDBC URL connection parameters.
+**Note**: ClickZetta does not provide a `SHOW WORKSPACES` SQL command. Workspaces are managed by connection context and profile configuration.
 
-**SDK Implementation**: Workspace switching uses SDK hint `sdk.job.default.ns` with format `workspace.schema`. Parse with `split('.')[0]` for workspace, `split('.')[1]` for schema.
+### Requirement: Workspace command help signature contract
+The `workspace` command family SHALL match CLI help signatures.
+
+#### Scenario: workspace group help
+- **WHEN** user runs `cz-cli workspace --help`
+- **THEN** help shows subcommands `current` and `use`
+
+#### Scenario: workspace use help signature
+- **WHEN** user runs `cz-cli workspace use --help`
+- **THEN** usage is `cz-cli workspace use [OPTIONS] NAME`
+- **AND** options include `--schema` and `--persist`
 
 ### Requirement: Show current workspace
-The system SHALL display the current workspace name. The command SHALL accept `--output/-o` for output format.
+The system SHALL display current workspace.
 
 #### Scenario: Show current workspace
-- **WHEN** user runs `clickzetta workspace current`
-- **THEN** system executes `SELECT current_workspace()` and returns the workspace name
+- **WHEN** user runs `cz-cli workspace current`
+- **THEN** system queries current workspace and returns `{workspace: <name>}`
 
-#### Scenario: Show current workspace with format option
-- **WHEN** user runs `clickzetta workspace current -o table`
-- **THEN** system returns workspace name in table format
+### Requirement: Switch workspace hint and persistence
+The system SHALL support switching workspace context with optional persistence.
 
-### Requirement: Switch workspace
-The system SHALL allow switching workspace using SDK hints. The command SHALL accept `--output/-o` for output format.
+#### Scenario: Use workspace without persist
+- **WHEN** user runs `cz-cli workspace use myworkspace`
+- **THEN** system returns SDK hint guidance for `sdk.job.default.ns`
+- **AND** profile file is not modified
 
-#### Scenario: Use workspace
-- **WHEN** user runs `clickzetta workspace use myworkspace`
-- **THEN** system sets SDK hint `{'sdk.job.default.ns': 'myworkspace.schema_name'}`
-- **AND** optionally updates current profile's workspace field for persistence
+#### Scenario: Use workspace with persist
+- **WHEN** user runs `cz-cli workspace use myworkspace --schema public --persist`
+- **THEN** system updates profile workspace/schema in `~/.clickzetta/profiles.toml`

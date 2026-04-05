@@ -9,7 +9,9 @@ import click
 from cz_cli import output
 from cz_cli.cli_group import CLIGroup
 from cz_cli.connection import get_connection
+from cz_cli.connection_ctx import connection_kwargs_from_ctx
 from cz_cli.logger import log_operation
+
 
 @click.group("table", cls=CLIGroup)
 @click.pass_context
@@ -29,7 +31,7 @@ def list_tables(ctx: click.Context, like: str | None, schema: str | None, limit:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table list", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -61,9 +63,13 @@ def list_tables(ctx: click.Context, like: str | None, schema: str | None, limit:
                 for row in rows:
                     if isinstance(row, tuple):
                         row_dict = dict(zip(columns, row))
-                        table_name = row_dict.get("table_name", row_dict.get("name", row_dict.get(columns[0], "")))
+                        table_name = row_dict.get(
+                            "table_name", row_dict.get("name", row_dict.get(columns[0], ""))
+                        )
                     elif isinstance(row, dict):
-                        table_name = row.get("table_name", row.get("name", list(row.values())[0] if row else ""))
+                        table_name = row.get(
+                            "table_name", row.get("name", list(row.values())[0] if row else "")
+                        )
                     else:
                         table_name = str(row)
                     result.append({"name": table_name})
@@ -95,7 +101,7 @@ def describe_table(ctx: click.Context, name: str) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table describe", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -111,7 +117,9 @@ def describe_table(ctx: click.Context, name: str) -> None:
 
                 # Convert tuples to dicts
                 columns_desc = [d[0] for d in cursor.description] if cursor.description else []
-                rows_dict = [dict(zip(columns_desc, row)) if isinstance(row, tuple) else row for row in rows]
+                rows_dict = [
+                    dict(zip(columns_desc, row)) if isinstance(row, tuple) else row for row in rows
+                ]
 
                 columns = []
                 metadata = {}
@@ -132,11 +140,13 @@ def describe_table(ctx: click.Context, name: str) -> None:
                             metadata[col_name] = data_type
                     else:
                         # This is a column
-                        columns.append({
-                            "name": col_name,
-                            "type": row.get("data_type", ""),
-                            "comment": row.get("comment", ""),
-                        })
+                        columns.append(
+                            {
+                                "name": col_name,
+                                "type": row.get("data_type", ""),
+                                "comment": row.get("comment", ""),
+                            }
+                        )
 
                 result: dict[str, Any] = {
                     "table": name,
@@ -167,7 +177,7 @@ def preview_table(ctx: click.Context, name: str, limit: int) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table preview", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -184,8 +194,12 @@ def preview_table(ctx: click.Context, name: str, limit: int) -> None:
                 if cursor.description:
                     columns = [d[0] for d in cursor.description]
                     # Convert tuples to dicts
-                    rows_dict = [dict(zip(columns, row)) if isinstance(row, tuple) else row for row in rows]
-                    log_operation("table preview", ok=True, rows=len(rows_dict), time_ms=timer.elapsed_ms)
+                    rows_dict = [
+                        dict(zip(columns, row)) if isinstance(row, tuple) else row for row in rows
+                    ]
+                    log_operation(
+                        "table preview", ok=True, rows=len(rows_dict), time_ms=timer.elapsed_ms
+                    )
                     output.success_rows(columns, rows_dict, time_ms=timer.elapsed_ms, fmt=fmt)
                 else:
                     log_operation("table preview", ok=True, time_ms=timer.elapsed_ms)
@@ -209,7 +223,7 @@ def table_stats(ctx: click.Context, name: str) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table stats", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -227,7 +241,9 @@ def table_stats(ctx: click.Context, name: str) -> None:
                 # Convert tuple to dict
                 if rows and cursor.description:
                     columns = [d[0] for d in cursor.description]
-                    row_dict = dict(zip(columns, rows[0])) if isinstance(rows[0], tuple) else rows[0]
+                    row_dict = (
+                        dict(zip(columns, rows[0])) if isinstance(rows[0], tuple) else rows[0]
+                    )
                     row_count = row_dict.get("row_count", 0)
                 else:
                     row_count = 0
@@ -260,14 +276,16 @@ def table_stats(ctx: click.Context, name: str) -> None:
 @click.option("--like", help="Filter by pattern.")
 @click.option("--limit", default=100, help="Maximum number of results to return (default: 100).")
 @click.pass_context
-def table_history(ctx: click.Context, name: str | None, schema: str | None, like: str | None, limit: int) -> None:
+def table_history(
+    ctx: click.Context, name: str | None, schema: str | None, like: str | None, limit: int
+) -> None:
     """Show table history including deleted tables."""
     fmt: str = ctx.obj.get("format", "json")
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table history", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -296,19 +314,23 @@ def table_history(ctx: click.Context, name: str | None, schema: str | None, like
 
                 # Convert tuples to dicts
                 columns = [d[0] for d in cursor.description] if cursor.description else []
-                rows_dict = [dict(zip(columns, row)) if isinstance(row, tuple) else row for row in rows]
+                rows_dict = [
+                    dict(zip(columns, row)) if isinstance(row, tuple) else row for row in rows
+                ]
 
                 result = []
                 for row in rows_dict:
-                    result.append({
-                        "schema": row.get("schema_name", ""),
-                        "table": row.get("table_name", ""),
-                        "create_time": row.get("create_time", ""),
-                        "creator": row.get("creator", ""),
-                        "rows": row.get("rows", 0),
-                        "bytes": row.get("bytes", 0),
-                        "delete_time": row.get("delete_time", ""),
-                    })
+                    result.append(
+                        {
+                            "schema": row.get("schema_name", ""),
+                            "table": row.get("table_name", ""),
+                            "create_time": row.get("create_time", ""),
+                            "creator": row.get("creator", ""),
+                            "rows": row.get("rows", 0),
+                            "bytes": row.get("bytes", 0),
+                            "delete_time": row.get("delete_time", ""),
+                        }
+                    )
 
                 # Check if results were truncated
                 ai_msg = None
@@ -346,7 +368,7 @@ def create_table(ctx: click.Context, ddl: str | None, from_file: str | None) -> 
         return
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table create", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -359,7 +381,9 @@ def create_table(ctx: click.Context, ddl: str | None, from_file: str | None) -> 
             try:
                 cursor.execute(ddl)
                 log_operation("table create", ok=True, time_ms=timer.elapsed_ms)
-                output.success({"message": "Table created successfully"}, time_ms=timer.elapsed_ms, fmt=fmt)
+                output.success(
+                    {"message": "Table created successfully"}, time_ms=timer.elapsed_ms, fmt=fmt
+                )
             finally:
                 cursor.close()
     except Exception as exc:
@@ -379,7 +403,7 @@ def drop_table(ctx: click.Context, name: str) -> None:
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("table drop", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -392,7 +416,11 @@ def drop_table(ctx: click.Context, name: str) -> None:
             try:
                 cursor.execute(f"DROP TABLE {name}")
                 log_operation("table drop", ok=True, time_ms=timer.elapsed_ms)
-                output.success({"message": f"Table '{name}' dropped successfully"}, time_ms=timer.elapsed_ms, fmt=fmt)
+                output.success(
+                    {"message": f"Table '{name}' dropped successfully"},
+                    time_ms=timer.elapsed_ms,
+                    fmt=fmt,
+                )
             finally:
                 cursor.close()
     except Exception as exc:

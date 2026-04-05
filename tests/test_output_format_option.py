@@ -25,6 +25,13 @@ def test_global_minus_o_still_works():
     assert "no such option" not in result.output
 
 
+def test_global_pretty_output_works():
+    """Global -o pretty should be recognized."""
+    runner = _runner()
+    result = runner.invoke(cli, ["-o", "pretty", "profile", "list"])
+    assert "no such option" not in result.output
+
+
 def test_subcommand_minus_o_works():
     """-o should work after subcommand name (e.g., table list -o json)."""
     runner = _runner()

@@ -12,6 +12,7 @@ import click
 
 from cz_cli import output
 from cz_cli.connection import get_connection
+from cz_cli.connection_ctx import connection_kwargs_from_ctx
 from cz_cli.logger import log_operation
 from cz_cli.masking import mask_rows
 
@@ -24,9 +25,7 @@ _LIMIT_RE = re.compile(r"\bLIMIT\s+\d+", re.I)
 
 _TABLE_NOT_FOUND_RE = re.compile(r"Table.*?not found", re.I)
 _COLUMN_NOT_FOUND_RE = re.compile(r"(Unknown column|Column.*?not found)", re.I)
-_TABLE_FROM_SQL_RE = re.compile(
-    r"\b(?:FROM|INTO|UPDATE|TABLE)\s+(?:[\w.]+\.)?(\w+)", re.I
-)
+_TABLE_FROM_SQL_RE = re.compile(r"\b(?:FROM|INTO|UPDATE|TABLE)\s+(?:[\w.]+\.)?(\w+)", re.I)
 
 ROW_PROBE_LIMIT = 101
 DEFAULT_TRUNCATE_LEN = 3000
@@ -93,6 +92,23 @@ def _split_sql_statements(sql: str) -> list[str]:
         i += 1
     flush()
     return parts if parts else [text]
+
+
+def _extract_tables_from_sql(sql: str) -> list[str]:
+    """Extract table names from SQL text for schema hinting."""
+    names = _TABLE_FROM_SQL_RE.findall(sql)
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in names:
+        name = raw.strip('`" ')
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(name)
+    return result
 
 
 def _is_write(sql: str) -> bool:
@@ -205,7 +221,11 @@ def _fetch_table_schema(
         try:
             cursor.execute(f"DESC TABLE {table}")
             columns = [
-                {"name": r.get("col_name", ""), "type": r.get("data_type", ""), "comment": r.get("comment", "")}
+                {
+                    "name": r.get("col_name", ""),
+                    "type": r.get("data_type", ""),
+                    "comment": r.get("comment", ""),
+                }
                 for r in cursor.fetchall()
             ]
             return {"table": table, "columns": columns}
@@ -230,17 +250,26 @@ def _fetch_table_schema(
 @click.option("--with-schema", is_flag=True, help="Include related table schema in output.")
 @click.option("--no-truncate", is_flag=True, help="Do not truncate large fields.")
 @click.option("-f", "--file", "sql_file", type=click.Path(exists=True), help="Read SQL from file.")
-@click.option("-e", "--execute", "statement_alias", help="Execute SQL (alias for positional argument).")
+@click.option(
+    "-e", "--execute", "statement_alias", help="Execute SQL (alias for positional argument)."
+)
 @click.option(
     "--stdin",
     "use_stdin",
     is_flag=True,
     help="Read SQL from stdin (also implied when stdin is a pipe/redirect and no statement).",
 )
-@click.option("--async", "async_exec", is_flag=True, help="Execute asynchronously with auto-polling.")
+@click.option(
+    "--async", "async_exec", is_flag=True, help="Execute asynchronously with auto-polling."
+)
 @click.option("--timeout", type=int, help="Query timeout in seconds.")
 @click.option("--variable", multiple=True, help="Variable substitution KEY=VALUE (pyformat style).")
-@click.option("--set", "sql_flags", multiple=True, help="Set ClickZetta SQL flag KEY=VALUE (e.g., cz.sql.result.row.partial.limit=200).")
+@click.option(
+    "--set",
+    "sql_flags",
+    multiple=True,
+    help="Set ClickZetta SQL flag KEY=VALUE (e.g., cz.sql.result.row.partial.limit=200).",
+)
 @click.option("--job-profile", "job_id", help="Get job profile for a query ID.")
 @click.option("-N", "--no-header", is_flag=True, help="Do not display column names.")
 @click.option("-B", "--batch", is_flag=True, help="Batch mode (tab-separated, no header).")
@@ -274,7 +303,7 @@ def sql_cmd(
 
     # Handle job profile query
     if job_id:
-        _get_job_profile(profile, jdbc_url, job_id, fmt)
+        _get_job_profile(profile, jdbc_url, job_id, fmt, connection_kwargs_from_ctx(ctx))
         return
 
     # Resolve SQL text
@@ -308,7 +337,7 @@ def sql_cmd(
 
     # Get connection
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **connection_kwargs_from_ctx(ctx))
     except Exception as exc:
         log_operation("sql", sql=sql_text, ok=False, error_code="CONNECTION_ERROR")
         err_msg = str(exc)
@@ -321,9 +350,35 @@ def sql_cmd(
     try:
         with timer:
             if async_exec:
-                _execute_async(conn, sql_text, fmt, no_truncate, with_schema, timer, timeout, variables, flags, no_header, batch, debug)
+                _execute_async(
+                    conn,
+                    sql_text,
+                    fmt,
+                    no_truncate,
+                    with_schema,
+                    timer,
+                    timeout,
+                    variables,
+                    flags,
+                    no_header,
+                    batch,
+                    debug,
+                )
             else:
-                _execute(conn, sql_text, fmt, no_truncate, with_schema, timer, timeout, variables, flags, no_header, batch, debug)
+                _execute(
+                    conn,
+                    sql_text,
+                    fmt,
+                    no_truncate,
+                    with_schema,
+                    timer,
+                    timeout,
+                    variables,
+                    flags,
+                    no_header,
+                    batch,
+                    debug,
+                )
     except SystemExit:
         raise
     except Exception as exc:
@@ -390,7 +445,7 @@ def _execute(
     # Prepare hints
     hints = {}
     if timeout:
-        hints['sdk.job.timeout'] = timeout
+        hints["sdk.job.timeout"] = timeout
 
     try:
         cursor = conn.cursor()
@@ -446,7 +501,10 @@ def _execute(
                         if schema:
                             extra["schema"] = schema
                     log_operation(
-                        "sql", sql=sql_text, ok=False, error_code="LIMIT_REQUIRED",
+                        "sql",
+                        sql=sql_text,
+                        ok=False,
+                        error_code="LIMIT_REQUIRED",
                         time_ms=timer.elapsed_ms,
                     )
                     output.error(
@@ -473,7 +531,7 @@ def _execute(
 
                 extra_out: dict[str, Any] = {}
                 # Add job_id if available
-                if hasattr(cursor, 'job_id') and cursor.job_id:
+                if hasattr(cursor, "job_id") and cursor.job_id:
                     extra_out["job_id"] = cursor.job_id
                 if with_schema:
                     tables = _extract_tables_from_sql(sql_text)
@@ -483,20 +541,19 @@ def _execute(
                             extra_out["schema"] = schema
 
                 # Handle batch mode
-                if batch or no_header:
-                    if batch:
-                        fmt = "text"
-                    # Suppress header in output
-                    ctx_obj = {"no_header": True}
-                else:
-                    ctx_obj = {}
+                if batch:
+                    fmt = "text"
 
                 log_operation(
-                    "sql", sql=sql_text, ok=True, rows=len(rows),
+                    "sql",
+                    sql=sql_text,
+                    ok=True,
+                    rows=len(rows),
                     time_ms=timer.elapsed_ms,
                 )
                 output.success_rows(
-                    columns, rows,
+                    columns,
+                    rows,
                     affected=total_affected,
                     time_ms=timer.elapsed_ms,
                     fmt=fmt,
@@ -506,11 +563,14 @@ def _execute(
             else:
                 extra_out: dict[str, Any] = {}
                 # Add job_id if available
-                if hasattr(cursor, 'job_id') and cursor.job_id:
+                if hasattr(cursor, "job_id") and cursor.job_id:
                     extra_out["job_id"] = cursor.job_id
 
                 log_operation(
-                    "sql", sql=sql_text, ok=True, affected=total_affected,
+                    "sql",
+                    sql=sql_text,
+                    ok=True,
+                    affected=total_affected,
                     time_ms=timer.elapsed_ms,
                 )
                 output.success(
@@ -531,7 +591,10 @@ def _execute(
         if debug:
             err_msg += f"\n\n{traceback.format_exc()}"
         log_operation(
-            "sql", sql=sql_text, ok=False, error_code="SQL_ERROR",
+            "sql",
+            sql=sql_text,
+            ok=False,
+            error_code="SQL_ERROR",
             time_ms=timer.elapsed_ms,
         )
         output.error("SQL_ERROR", err_msg, fmt=fmt, extra=extra_err or None)
@@ -554,7 +617,7 @@ def _execute_async(
     """Execute SQL asynchronously with auto-polling."""
     hints = {}
     if timeout:
-        hints['sdk.job.timeout'] = timeout
+        hints["sdk.job.timeout"] = timeout
 
     try:
         cursor = conn.cursor()
@@ -601,18 +664,24 @@ def _execute_async(
                             extra_out["schema"] = schema
 
                 log_operation(
-                    "sql", sql=sql_text, ok=True, rows=len(rows),
+                    "sql",
+                    sql=sql_text,
+                    ok=True,
+                    rows=len(rows),
                     time_ms=timer.elapsed_ms,
                 )
                 output.success_rows(
-                    columns, rows,
+                    columns,
+                    rows,
                     time_ms=timer.elapsed_ms,
                     fmt=fmt,
                     extra=extra_out or None,
                 )
             else:
                 log_operation(
-                    "sql", sql=sql_text, ok=True,
+                    "sql",
+                    sql=sql_text,
+                    ok=True,
                     time_ms=timer.elapsed_ms,
                 )
                 output.success(
@@ -628,7 +697,10 @@ def _execute_async(
         if debug:
             err_msg += f"\n\n{traceback.format_exc()}"
         log_operation(
-            "sql", sql=sql_text, ok=False, error_code="SQL_ERROR",
+            "sql",
+            sql=sql_text,
+            ok=False,
+            error_code="SQL_ERROR",
             time_ms=timer.elapsed_ms,
         )
         output.error("SQL_ERROR", err_msg, fmt=fmt)
@@ -639,10 +711,11 @@ def _get_job_profile(
     jdbc_url: str | None,
     job_id: str,
     fmt: str,
+    conn_kwargs: dict[str, str] | None = None,
 ) -> None:
     """Get job profile/summary for a query ID."""
     try:
-        conn = get_connection(jdbc_url=jdbc_url, profile=profile)
+        conn = get_connection(jdbc_url=jdbc_url, profile=profile, **(conn_kwargs or {}))
     except Exception as exc:
         log_operation("sql job-profile", ok=False, error_code="CONNECTION_ERROR")
         output.error("CONNECTION_ERROR", str(exc), fmt=fmt)
@@ -668,4 +741,4 @@ def sql_status_cmd(ctx: click.Context, job_id: str) -> None:
     profile: str | None = ctx.obj.get("profile")
     jdbc_url: str | None = ctx.obj.get("jdbc_url")
 
-    _get_job_profile(profile, jdbc_url, job_id, fmt)
+    _get_job_profile(profile, jdbc_url, job_id, fmt, connection_kwargs_from_ctx(ctx))

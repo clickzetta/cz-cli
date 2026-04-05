@@ -1,17 +1,22 @@
 name: Build Fat Binaries
-run-name: Build Fat Binaries v${{ inputs.version || 'manual' }}
+run-name: Build Fat Binaries ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.version || 'manual') }}
 
 on:
   workflow_dispatch:
     inputs:
       version:
         description: "CLI version from cz_cli/version.py"
-        required: true
+        required: false
         type: string
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -60,3 +65,29 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: dist/${{ matrix.target }}/cz-cli*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create GitHub release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/linux-x86_64/cz-cli
+            dist/windows-x86_64/cz-cli.exe
+            dist/macos-x86_64/cz-cli
+            dist/macos-arm64/cz-cli

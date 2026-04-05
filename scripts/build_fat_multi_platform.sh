@@ -135,6 +135,14 @@ for version in "${VERSIONS[@]}"; do
   rm -f "$LEGACY_BIN"
   mv -f "$SOURCE_BIN" "$TARGET_BIN"
   echo "Built standalone binary: $TARGET_BIN"
+
+  # Copy binary into skill scripts directory for bundled delivery (no pip required).
+  # Gitignore excludes cz_cli/skills/cz-cli/scripts/*/ so binaries are not committed.
+  SKILL_SCRIPTS_DIR="${ROOT_DIR}/cz_cli/skills/cz-cli/scripts/${TARGET_DIR_NAME}"
+  SKILL_BIN="${SKILL_SCRIPTS_DIR}/cz-cli${BIN_EXT}"
+  mkdir -p "${SKILL_SCRIPTS_DIR}"
+  cp -f "${TARGET_BIN}" "${SKILL_BIN}"
+  echo "Copied binary to skill scripts: ${SKILL_BIN}"
 done
 
 echo "All requested versions built successfully."

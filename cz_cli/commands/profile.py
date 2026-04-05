@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +29,7 @@ def _load_profiles() -> dict[str, Any]:
     try:
         with open(_PROFILES_FILE, "rb") as f:
             return tomllib.load(f)
-    except Exception as exc:
+    except Exception:
         return {"profiles": {}}
 
 
@@ -78,14 +77,21 @@ def list_profiles(ctx: click.Context) -> None:
 
         result = []
         for name, profile_data in profiles.items():
-            result.append({
-                "name": name,
-                "username": profile_data.get("username", ""),
-                "service": profile_data.get("service", ""),
-                "instance": profile_data.get("instance", ""),
-                "workspace": profile_data.get("workspace", ""),
-                "is_default": name == default_profile,
-            })
+            pat = profile_data.get("pat", "")
+            auth_mode = "pat" if pat else "password"
+            result.append(
+                {
+                    "name": name,
+                    "auth_mode": auth_mode,
+                    "pat": f"{pat[:8]}****" if pat else "",
+                    "username": profile_data.get("username", "") if not pat else "",
+                    "service": profile_data.get("service", ""),
+                    "protocol": profile_data.get("protocol", "https"),
+                    "instance": profile_data.get("instance", ""),
+                    "workspace": profile_data.get("workspace", ""),
+                    "is_default": name == default_profile,
+                }
+            )
 
         log_operation("profile list", ok=True)
         output.success(result, fmt=fmt)
@@ -94,27 +100,70 @@ def list_profiles(ctx: click.Context) -> None:
         output.error("INTERNAL_ERROR", str(exc), fmt=fmt)
 
 
+@profile_cmd.command("show")
+@click.argument("name")
+@click.option("--mask", is_flag=True, help="Mask sensitive fields (pat/password) in output.")
+@click.pass_context
+def show_profile(ctx: click.Context, name: str, mask: bool) -> None:
+    """Show full configuration for a profile by name."""
+    fmt: str = ctx.obj.get("format", "json")
+
+    try:
+        data = _load_profiles()
+        profiles = data.get("profiles", {})
+        default_profile = data.get("default_profile")
+        profile = profiles.get(name)
+        if profile is None:
+            log_operation("profile show", ok=False, error_code="PROFILE_NOT_FOUND")
+            output.error("PROFILE_NOT_FOUND", f"Profile '{name}' not found", fmt=fmt)
+            return
+
+        result = {"name": name, "is_default": name == default_profile, **dict(profile)}
+        if mask:
+            if result.get("pat"):
+                pat = str(result["pat"])
+                result["pat"] = f"{pat[:8]}****" if len(pat) > 8 else "****"
+            if result.get("password"):
+                result["password"] = "******"
+
+        log_operation("profile show", ok=True)
+        output.success(result, fmt=fmt)
+    except Exception as exc:
+        log_operation("profile show", ok=False, error_code="INTERNAL_ERROR")
+        output.error("INTERNAL_ERROR", str(exc), fmt=fmt)
+
+
 @profile_cmd.command("create")
 @click.argument("name")
-@click.option("--username", required=True, help="Username")
-@click.option("--password", required=True, help="Password")
-@click.option("--service", default="dev-api.clickzetta.com", help="Service endpoint")
-@click.option("--instance", required=True, help="Instance ID")
-@click.option("--workspace", required=True, help="Workspace name")
-@click.option("--schema", default="public", help="Default schema")
-@click.option("--vcluster", default="default", help="Virtual cluster")
+@click.option("--jdbc", "jdbc_url", help="JDBC connection URL (jdbc:clickzetta://...).")
+@click.option("--username", help="Username")
+@click.option("--password", help="Password")
+@click.option("--pat", help="Personal Access Token (PAT)")
+@click.option("--service", help="Service endpoint")
+@click.option(
+    "--protocol",
+    type=click.Choice(["https", "http"], case_sensitive=False),
+    help="Service protocol override.",
+)
+@click.option("--instance", help="Instance ID")
+@click.option("--workspace", help="Workspace name")
+@click.option("--schema", help="Default schema")
+@click.option("--vcluster", help="Virtual cluster")
 @click.option("--skip-verify", is_flag=True, help="Skip connection verification")
 @click.pass_context
 def create_profile(
     ctx: click.Context,
     name: str,
-    username: str,
-    password: str,
-    service: str,
-    instance: str,
-    workspace: str,
-    schema: str,
-    vcluster: str,
+    jdbc_url: str | None,
+    username: str | None,
+    password: str | None,
+    pat: str | None,
+    service: str | None,
+    protocol: str | None,
+    instance: str | None,
+    workspace: str | None,
+    schema: str | None,
+    vcluster: str | None,
     skip_verify: bool,
 ) -> None:
     """Create a new profile."""
@@ -129,19 +178,83 @@ def create_profile(
             output.error("PROFILE_EXISTS", f"Profile '{name}' already exists", fmt=fmt)
             return
 
+        jdbc_cfg = None
+        if jdbc_url:
+            from cz_cli.connection import _parse_jdbc_url
+
+            jdbc_cfg = _parse_jdbc_url(jdbc_url)
+            if jdbc_cfg is None:
+                log_operation("profile create", ok=False, error_code="INVALID_ARGUMENTS")
+                output.error(
+                    "INVALID_ARGUMENTS",
+                    "Invalid --jdbc. Expected format: jdbc:clickzetta://<instance>.<service>/<workspace>?username=<u>&password=<p>",
+                    fmt=fmt,
+                    exit_code=output.EXIT_USAGE_ERROR,
+                )
+                return
+
+        resolved_service = service or (jdbc_cfg.service if jdbc_cfg else "dev-api.clickzetta.com")
+        resolved_protocol = (
+            protocol.lower() if protocol else (jdbc_cfg.protocol if jdbc_cfg else "https")
+        ) or "https"
+        resolved_instance = instance or (jdbc_cfg.instance if jdbc_cfg else "")
+        resolved_workspace = workspace or (jdbc_cfg.workspace if jdbc_cfg else "")
+        resolved_schema = schema or (jdbc_cfg.schema if jdbc_cfg else "public")
+        resolved_vcluster = vcluster or (jdbc_cfg.vcluster if jdbc_cfg else "default")
+
+        resolved_username = username or (jdbc_cfg.username if jdbc_cfg else None)
+        resolved_password = password or (jdbc_cfg.password if jdbc_cfg else None)
+
+        has_pat = bool(pat)
+        has_user_pwd = bool(resolved_username and resolved_password)
+        if has_pat and (resolved_username or resolved_password):
+            log_operation("profile create", ok=False, error_code="INVALID_ARGUMENTS")
+            output.error(
+                "INVALID_ARGUMENTS",
+                "Cannot specify both --pat and --username/--password. Choose one authentication method.",
+                fmt=fmt,
+                exit_code=output.EXIT_USAGE_ERROR,
+            )
+            return
+        if not has_pat and not has_user_pwd:
+            log_operation("profile create", ok=False, error_code="INVALID_ARGUMENTS")
+            output.error(
+                "INVALID_ARGUMENTS",
+                "Authentication required: provide either --pat or both --username and --password (can come from --jdbc query parameters).",
+                fmt=fmt,
+                exit_code=output.EXIT_USAGE_ERROR,
+            )
+            return
+        if not resolved_instance or not resolved_workspace:
+            log_operation("profile create", ok=False, error_code="INVALID_ARGUMENTS")
+            output.error(
+                "INVALID_ARGUMENTS",
+                "Both instance and workspace are required (provide via --instance/--workspace or --jdbc).",
+                fmt=fmt,
+                exit_code=output.EXIT_USAGE_ERROR,
+            )
+            return
+
         # Verify connection unless --skip-verify
         if not skip_verify:
             from cz_cli.connection import get_connection
+
             try:
-                conn = get_connection(
-                    username=username,
-                    password=password,
-                    service=service,
-                    instance=instance,
-                    workspace=workspace,
-                    schema=schema,
-                    vcluster=vcluster,
-                )
+                kwargs = {
+                    "service": resolved_service,
+                    "instance": resolved_instance,
+                    "workspace": resolved_workspace,
+                    "schema": resolved_schema,
+                    "vcluster": resolved_vcluster,
+                }
+                if resolved_protocol:
+                    kwargs["protocol"] = resolved_protocol
+                if has_pat:
+                    kwargs["pat"] = pat
+                else:
+                    kwargs["username"] = resolved_username
+                    kwargs["password"] = resolved_password
+                conn = get_connection(**kwargs)
                 # Test connection
                 cursor = conn.cursor()
                 cursor.execute("SELECT 1")
@@ -156,15 +269,21 @@ def create_profile(
                 )
                 return
 
-        profiles[name] = {
-            "username": username,
-            "password": password,
-            "service": service,
-            "instance": instance,
-            "workspace": workspace,
-            "schema": schema,
-            "vcluster": vcluster,
+        profile_obj = {
+            "service": resolved_service,
+            "instance": resolved_instance,
+            "workspace": resolved_workspace,
+            "schema": resolved_schema,
+            "vcluster": resolved_vcluster,
         }
+        if resolved_protocol:
+            profile_obj["protocol"] = resolved_protocol
+        if has_pat:
+            profile_obj["pat"] = pat
+        else:
+            profile_obj["username"] = resolved_username
+            profile_obj["password"] = resolved_password
+        profiles[name] = profile_obj
 
         data["profiles"] = profiles
         _save_profiles(data)
@@ -194,13 +313,37 @@ def update_profile(ctx: click.Context, name: str, key: str, value: str) -> None:
             output.error("PROFILE_NOT_FOUND", f"Profile '{name}' not found", fmt=fmt)
             return
 
-        valid_keys = ["username", "password", "service", "instance", "workspace", "schema", "vcluster"]
+        valid_keys = [
+            "pat",
+            "username",
+            "password",
+            "service",
+            "protocol",
+            "instance",
+            "workspace",
+            "schema",
+            "vcluster",
+        ]
         if key not in valid_keys:
             log_operation("profile update", ok=False, error_code="INVALID_KEY")
-            output.error("INVALID_KEY", f"Invalid key '{key}'. Valid keys: {', '.join(valid_keys)}", fmt=fmt)
+            output.error(
+                "INVALID_KEY", f"Invalid key '{key}'. Valid keys: {', '.join(valid_keys)}", fmt=fmt
+            )
             return
+        if key == "protocol":
+            normalized = value.lower()
+            if normalized not in {"http", "https"}:
+                log_operation("profile update", ok=False, error_code="INVALID_ARGUMENTS")
+                output.error("INVALID_ARGUMENTS", "protocol must be one of: http, https", fmt=fmt)
+                return
+            value = normalized
 
         profiles[name][key] = value
+        if key == "pat":
+            profiles[name].pop("username", None)
+            profiles[name].pop("password", None)
+        if key in ("username", "password"):
+            profiles[name].pop("pat", None)
         data["profiles"] = profiles
         _save_profiles(data)
 

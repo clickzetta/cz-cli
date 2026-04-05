@@ -54,8 +54,32 @@ Output layout:
 - Windows output name remains `cz-cli.exe`
 
 Notes:
-- This script builds for the current machine platform.
+- Default targets: `linux-x86_64 windows-x86_64 macos-x86_64 macos-arm64`.
+- Targets that cannot be built on the current host are skipped by default. Set `CZ_FAIL_ON_SKIP=1` to fail instead.
 - During multi-version build, `cz_cli/version.py` is updated per version and automatically restored when done.
+- For true multi-OS release in one shot, use GitHub Actions matrix build (Linux/Windows/macOS runners) via `.github/workflows/build-fat-binaries.yml`.
+
+### One-shot Multi-OS Release (Recommended)
+
+Push a tag (for example `v0.1.0`) to trigger matrix build and automatic GitHub Release asset upload:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow will produce and attach:
+- `linux-x86_64/cz-cli`
+- `windows-x86_64/cz-cli.exe`
+- `macos-x86_64/cz-cli`
+- `macos-arm64/cz-cli`
+
+Where to find outputs:
+- In the GitHub Actions run page: per-job **Artifacts** section (`linux-x86_64`, `windows-x86_64`, `macos-x86_64`, `macos-arm64`).
+- In GitHub **Releases** page: the same binaries are attached as release assets for the tag.
+
+Release notes:
+- The workflow enables auto-generated GitHub Release Notes (`generate_release_notes: true`), so each tag release gets notes automatically.
 
 ## Quick Start
 
@@ -66,6 +90,7 @@ cz-cli profile create dev \
   --username your_username \
   --password your_password \
   --service dev-api.clickzetta.com \
+  --protocol https \
   --instance your_instance \
   --workspace your_workspace
 ```
@@ -105,6 +130,7 @@ default_profile = "dev"
 username = "your_username"
 password = "your_password"
 service = "dev-api.clickzetta.com"
+protocol = "https"
 instance = "your_instance"
 workspace = "your_workspace"
 schema = "public"
@@ -114,6 +140,7 @@ vcluster = "default"
 username = "prod_user"
 password = "prod_password"
 service = "api.clickzetta.com"
+protocol = "https"
 instance = "prod_instance"
 workspace = "prod_workspace"
 schema = "public"
@@ -129,7 +156,7 @@ jdbc:clickzetta://host/instance?username=user&password=pass&workspace=ws&schema=
 Example:
 
 ```bash
-cz-cli --jdbc-url "jdbc:clickzetta://dev-api.clickzetta.com/myinst?username=user&password=pass&workspace=ws" sql "SELECT 1"
+cz-cli --jdbc "jdbc:clickzetta://dev-api.clickzetta.com/myinst?username=user&password=pass&workspace=ws" sql "SELECT 1"
 ```
 
 ### Environment Variables
@@ -138,6 +165,7 @@ cz-cli --jdbc-url "jdbc:clickzetta://dev-api.clickzetta.com/myinst?username=user
 export CZ_USERNAME=your_username
 export CZ_PASSWORD=your_password
 export CZ_SERVICE=dev-api.clickzetta.com
+export CZ_PROTOCOL=https
 export CZ_INSTANCE=your_instance
 export CZ_WORKSPACE=your_workspace
 export CZ_SCHEMA=public
@@ -155,7 +183,7 @@ cz-cli sql "SELECT 1"
 cz-cli install-skills
 ```
 
-This command provides an interactive installer to add cz-cli skills to your AI coding assistant:
+This command provides an interactive installer to add bundled skills (from `cz_cli/skills` and `cz_mcp/skills`) to your AI coding assistant:
 - Supports Claude Code, OpenClaw, Cursor, Codex, and more
 - Interactive selection of tools and skills
 - Automatic installation to the correct directory
@@ -280,7 +308,7 @@ cz-cli table drop <name>
 
 ```bash
 --profile, -p       Profile name
---jdbc-url          JDBC connection URL
+--jdbc          JDBC connection URL
 --schema, -s        Default schema
 --vcluster, -v      Virtual cluster
 --output, -o        Output format (json|table|csv|text|toon)
@@ -431,7 +459,17 @@ This outputs a comprehensive JSON guide with all commands, safety rules, and exa
 ### Run Tests
 
 ```bash
-pytest tests/
+# Unit tests only
+make test-unit
+
+# Unit + integration tests (default)
+make test
+
+# Integration tests only (profile defaults to dev)
+make test-integration
+
+# Integration tests with debug logs (default behavior)
+CZ_IT_DEBUG=1 make test-integration
 ```
 
 ### Install Development Dependencies

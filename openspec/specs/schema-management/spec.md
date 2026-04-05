@@ -1,43 +1,50 @@
 **Documentation Reference**: /Users/zhanglin/IdeaProjects/lakehouse_doc (lakehouse SQL、概念、python sdk等文档)
 
-**SQL Commands**:
-- List schemas: SHOW SCHEMAS
-- Create schema: CREATE SCHEMA
-- Drop schema: DROP SCHEMA
-- Describe schema: DESC SCHEMA (或查询系统表)
+### Requirement: Schema command help signature contract
+The `schema` command family SHALL match CLI help signatures.
+
+#### Scenario: schema group help
+- **WHEN** user runs `cz-cli schema --help`
+- **THEN** help shows subcommands `list|describe|create|drop`
+
+#### Scenario: schema list help signature
+- **WHEN** user runs `cz-cli schema list --help`
+- **THEN** usage is `cz-cli schema list [OPTIONS]`
+- **AND** options include `--like` and `--limit`
+
+#### Scenario: schema create/describe/drop help signatures
+- **WHEN** user runs `cz-cli schema create|describe|drop --help`
+- **THEN** each usage requires positional `NAME`
 
 ### Requirement: List schemas
-The system SHALL list all schemas in the current workspace. The command SHALL accept `--output/-o` for output format.
+The system SHALL list schemas in current workspace.
 
 #### Scenario: List all schemas
-- **WHEN** user runs `clickzetta schema list`
-- **THEN** system executes SHOW SCHEMAS and returns list of schema names
-
-#### Scenario: List schemas with output format
-- **WHEN** user runs `clickzetta schema list -o table`
-- **THEN** system returns schema list in table format
+- **WHEN** user runs `cz-cli schema list`
+- **THEN** system executes `SHOW SCHEMAS` and returns schema list
 
 #### Scenario: Filter schemas by pattern
-- **WHEN** user runs `clickzetta schema list --like 'test%'`
-- **THEN** system returns only schemas matching pattern
+- **WHEN** user runs `cz-cli schema list --like 'test%'`
+- **THEN** system applies pattern filter
 
-### Requirement: Create schema
-The system SHALL create new schemas. The command SHALL accept `--output/-o` for output format.
-
-#### Scenario: Create schema
-- **WHEN** user runs `clickzetta schema create myschema`
-- **THEN** system executes CREATE SCHEMA myschema
-
-### Requirement: Drop schema
-The system SHALL drop existing schemas. The command SHALL accept `--output/-o` for output format.
-
-#### Scenario: Drop schema
-- **WHEN** user runs `clickzetta schema drop myschema`
-- **THEN** system executes DROP SCHEMA myschema
+#### Scenario: Limit schema results
+- **WHEN** user runs `cz-cli schema list --limit 20`
+- **THEN** system limits returned rows to 20 (client-side)
 
 ### Requirement: Describe schema
-The system SHALL show schema details including tables and metadata. The command SHALL accept `--output/-o` for output format.
+The system SHALL return schema metadata and table list.
 
 #### Scenario: Describe schema
-- **WHEN** user runs `clickzetta schema describe myschema`
-- **THEN** system returns schema information including table count and properties
+- **WHEN** user runs `cz-cli schema describe myschema`
+- **THEN** system returns schema info and tables in that schema
+
+### Requirement: Create and drop schema
+The system SHALL support schema create/drop operations.
+
+#### Scenario: Create schema
+- **WHEN** user runs `cz-cli schema create myschema`
+- **THEN** system executes create schema statement
+
+#### Scenario: Drop schema
+- **WHEN** user runs `cz-cli schema drop myschema`
+- **THEN** system executes drop schema statement

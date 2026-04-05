@@ -1,0 +1,296 @@
+scenario: studio-task-lifecycle
+requires_env:
+  - CZ_IT_PROFILE
+vars:
+  folder_name: "it_folder_{timestamp}_{nonce}"
+  task_name: "it_task_{timestamp}_{nonce}"
+steps:
+  - name: task list default page
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "task", "list", "--limit", "1"]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - ai_message
+        - pagination.page
+
+  - name: create folder
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "task", "create-folder", "{folder_name}", "--parent", "0"]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.folder_id
+    capture:
+      folder_id:
+        - data.folder_id
+
+  - name: create task in folder
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "task",
+        "create",
+        "{task_name}",
+        "--type",
+        "PYTHON",
+        "--folder",
+        "{folder_id}",
+        "--description",
+        "integration-created-task",
+      ]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.task_id
+    capture:
+      task_id:
+        - data.task_id
+
+  - name: task detail by id
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "task", "detail", "{task_id}"]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_equals:
+        data.task_name: "{task_name}"
+
+  - name: task detail by name
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "task", "detail", "{task_name}"]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_equals:
+        data.task_name: "{task_name}"
+
+  - name: task save content
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "task",
+        "save",
+        "{task_id}",
+        "--content",
+        "import time; time.sleep(600)",
+      ]
+    expect:
+      exit_code: 0
+      ok: true
+
+  - name: task save config
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "task",
+        "save-config",
+        "{task_name}",
+        "--cron",
+        "0 0 2 * * ? *",
+      ]
+    expect:
+      exit_code: 0
+      ok: true
+
+  - name: task online with y
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "task", "online", "{task_name}", "-y"]
+    expect:
+      exit_code: 0
+      ok: true
+
+  - name: runs list by task name
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "runs",
+        "list",
+        "--task",
+        "{task_name}",
+        "--run-type",
+        "1",
+        "--limit",
+        "1",
+      ]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - ai_message
+        - pagination.page
+    retry_count: 8
+    retry_interval_seconds: 3
+
+  - name: submit refill(backfill) job with y
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "runs",
+        "refill",
+        "{task_name}",
+        "--from",
+        "{today}",
+        "--to",
+        "{today}",
+        "-y",
+      ]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.backfill_task_id
+
+  - name: wait and capture latest refill run id
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "runs",
+        "list",
+        "--task",
+        "{task_name}",
+        "--run-type",
+        "4",
+        "--limit",
+        "1",
+      ]
+    retry_count: 20
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.0.task_run_id
+    capture:
+      refill_run_id:
+        - data.0.task_run_id
+        - data.0.task_instance_id
+
+  - name: runs detail by captured refill run id
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "runs", "detail", "{refill_run_id}"]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.task_instance_id
+
+  - name: wait and capture run id with execution records
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "executions", "list", "{task_name}", "--limit", "1"]
+    retry_count: 20
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.0.execution_id
+        - selected_run_id
+    capture:
+      run_id_with_execution:
+        - selected_run_id
+
+  - name: runs log by run id with executions
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "runs", "log", "{run_id_with_execution}"]
+    retry_count: 30
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.log_content
+
+  - name: runs stop with y
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "runs", "stop", "{refill_run_id}", "-y"]
+    retry_count: 3
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      exit_code_in: [0, 1]
+      accept_error_contains: "没有可操作的实例"
+      ok: true
+
+  - name: executions list by captured refill run id
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "executions", "list", "{refill_run_id}", "--limit", "1"]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - ai_message
+
+  - name: executions log by run id with executions
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "executions", "log", "{run_id_with_execution}"]
+    retry_count: 20
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.log_content
+
+  - name: submit second refill(backfill) job with y
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "runs",
+        "refill",
+        "{task_name}",
+        "--from",
+        "{today}",
+        "--to",
+        "{today}",
+        "--name",
+        "it_refill_exec_stop_{timestamp}_{nonce}",
+        "-y",
+      ]
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.backfill_task_id
+
+  - name: wait and capture latest refill run id for executions stop
+    cmd:
+      [
+        "--profile",
+        "{env_CZ_IT_PROFILE}",
+        "runs",
+        "list",
+        "--task",
+        "{task_name}",
+        "--run-type",
+        "4",
+        "--limit",
+        "1",
+      ]
+    retry_count: 20
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      ok: true
+      json_path_exists:
+        - data.0.task_run_id
+    capture:
+      refill_run_id_for_exec_stop:
+        - data.0.task_run_id
+        - data.0.task_instance_id
+
+  - name: executions stop with y
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "executions", "stop", "{refill_run_id_for_exec_stop}", "-y"]
+    retry_count: 20
+    retry_interval_seconds: 5
+    expect:
+      exit_code: 0
+      exit_code_in: [0, 1]
+      accept_error_contains: "没有可操作的实例"
+      ok: true
+
+  - name: task offline with y
+#    always_run: true
+    cmd: ["--profile", "{env_CZ_IT_PROFILE}", "task", "offline", "{task_name}", "-y"]
+    expect:
+      exit_code: 0
+      ok: true
