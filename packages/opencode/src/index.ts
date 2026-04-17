@@ -55,8 +55,8 @@ const args = hideBin(process.argv)
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("opencode ")) {
-    process.stderr.write(UI.logo() + EOL + EOL)
+  if (!text.startsWith("czcode ") && !text.startsWith("opencode ")) {
+    process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ CZCode" + UI.Style.TEXT_NORMAL + EOL + EOL)
     process.stderr.write(text)
     return
   }
@@ -65,7 +65,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("opencode")
+  .scriptName("czcode")
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")

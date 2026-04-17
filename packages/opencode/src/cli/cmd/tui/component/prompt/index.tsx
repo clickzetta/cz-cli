@@ -904,7 +904,7 @@ export function Prompt(props: PromptProps) {
           borderColor={highlight()}
           customBorderChars={{
             ...SplitBorder.customBorderChars,
-            bottomLeft: "╹",
+            bottomLeft: "❯",
           }}
         >
           <box

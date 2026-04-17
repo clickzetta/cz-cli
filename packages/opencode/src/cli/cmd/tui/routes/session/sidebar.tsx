@@ -60,7 +60,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
         <box flexShrink={0} gap={1} paddingTop={1}>
           <TuiPluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
             <text fg={theme.textMuted}>
-              <span style={{ fg: theme.success }}>•</span> <b>Open</b>
+              <span style={{ fg: theme.primary }}>•</span> <b>CZ</b>
               <span style={{ fg: theme.text }}>
                 <b>Code</b>
               </span>{" "}

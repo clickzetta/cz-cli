@@ -9,6 +9,7 @@ import catppuccin from "./theme/catppuccin.json" with { type: "json" }
 import catppuccinFrappe from "./theme/catppuccin-frappe.json" with { type: "json" }
 import catppuccinMacchiato from "./theme/catppuccin-macchiato.json" with { type: "json" }
 import cobalt2 from "./theme/cobalt2.json" with { type: "json" }
+import czcode from "./theme/czcode.json" with { type: "json" }
 import cursor from "./theme/cursor.json" with { type: "json" }
 import dracula from "./theme/dracula.json" with { type: "json" }
 import everforest from "./theme/everforest.json" with { type: "json" }
@@ -92,6 +93,7 @@ export const DEFAULT_THEMES: Record<string, ThemeJson> = {
   ["catppuccin-frappe"]: catppuccinFrappe,
   ["catppuccin-macchiato"]: catppuccinMacchiato,
   cobalt2,
+  czcode,
   cursor,
   dracula,
   everforest,
@@ -155,7 +157,7 @@ const [store, setStore] = createStore<State>({
   themes: listThemes(),
   mode: "dark",
   lock: undefined,
-  active: "opencode",
+  active: "czcode",
   ready: false,
 })
 
@@ -317,8 +319,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         const mode = pick(kv.get("theme_mode", props.mode))
         draft.mode = lock ?? mode ?? props.mode
         draft.lock = lock
-        const active = config.theme ?? kv.get("theme", "opencode")
-        draft.active = typeof active === "string" ? active : "opencode"
+        const active = config.theme ?? kv.get("theme", "czcode")
+        draft.active = typeof active === "string" ? active : "czcode"
         draft.ready = false
       }),
     )
@@ -337,7 +339,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
             syncThemes()
           })
           .catch(() => {
-            setStore("active", "opencode")
+            setStore("active", "czcode")
           }),
       ]).finally(() => {
         setStore("ready", true)
@@ -356,7 +358,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
             systemTheme = undefined
             syncThemes()
             if (store.active === "system") {
-              setStore("active", "opencode")
+              setStore("active", "czcode")
             }
             return
           }
@@ -367,7 +369,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
           systemTheme = undefined
           syncThemes()
           if (store.active === "system") {
-            setStore("active", "opencode")
+            setStore("active", "czcode")
           }
         })
     }

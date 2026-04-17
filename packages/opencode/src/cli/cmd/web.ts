@@ -39,7 +39,7 @@ export const WebCommand = cmd({
     const opts = await resolveNetworkOptions(args)
     const server = await Server.listen(opts)
     UI.empty()
-    UI.println(UI.logo("  "))
+    UI.println("  " + UI.Style.TEXT_INFO_BOLD + "◆ CZCode" + UI.Style.TEXT_NORMAL)
     UI.empty()
 
     if (opts.hostname === "0.0.0.0") {

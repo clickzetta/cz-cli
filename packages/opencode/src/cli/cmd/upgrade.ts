@@ -23,7 +23,7 @@ export const UpgradeCommand = {
   },
   handler: async (args: { target?: string; method?: string }) => {
     UI.empty()
-    UI.println(UI.logo("  "))
+    UI.println("  " + UI.Style.TEXT_INFO_BOLD + "◆ CZCode" + UI.Style.TEXT_NORMAL)
     UI.empty()
     prompts.intro("Upgrade")
     const detectedMethod = await AppRuntime.runPromise(Installation.Service.use((svc) => svc.method()))

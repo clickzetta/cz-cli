@@ -85,15 +85,13 @@ import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
 import { TuiPluginRuntime } from "../../plugin"
-import { DialogGoUpsell } from "../../component/dialog-go-upsell"
+// TODO(czcode): Add ClickZetta subscription dialog
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 
 addDefaultParsers(parsers.parsers)
 
-const GO_UPSELL_LAST_SEEN_AT = "go_upsell_last_seen_at"
-const GO_UPSELL_DONT_SHOW = "go_upsell_dont_show"
-const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
+
 
 const context = createContext<{
   width: number
@@ -173,7 +171,7 @@ export function Session() {
     return false
   })
   const showTimestamps = createMemo(() => timestamps() === "show")
-  const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
+  const contentWidth = createMemo(() => dimensions().width - 4)
   const providers = createMemo(() => Model.index(sync.data.provider))
 
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
@@ -239,40 +237,24 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
 
-  event.on("session.status", (evt) => {
-    if (evt.properties.sessionID !== route.sessionID) return
-    if (evt.properties.status.type !== "retry") return
-    if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
-    if (dialog.stack.length > 0) return
-
-    const seen = kv.get(GO_UPSELL_LAST_SEEN_AT)
-    if (typeof seen === "number" && Date.now() - seen < GO_UPSELL_WINDOW) return
-
-    if (kv.get(GO_UPSELL_DONT_SHOW)) return
-
-    void DialogGoUpsell.show(dialog).then((dontShowAgain) => {
-      if (dontShowAgain) kv.set(GO_UPSELL_DONT_SHOW, true)
-      kv.set(GO_UPSELL_LAST_SEEN_AT, Date.now())
-    })
-  })
+  // TODO(czcode): Add ClickZetta subscription upsell handler here
 
   // Allow exit when in child session (prompt is hidden)
   const exit = useExit()
 
   createEffect(() => {
     const title = Locale.truncate(session()?.title ?? "", 50)
-    const pad = (text: string) => text.padEnd(10, " ")
-    const weak = (text: string) => UI.Style.TEXT_DIM + pad(text) + UI.Style.TEXT_NORMAL
-    const logo = UI.logo("  ").split(/\r?\n/)
+    const dim = UI.Style.TEXT_DIM
+    const bold = UI.Style.TEXT_NORMAL_BOLD
+    const reset = UI.Style.TEXT_NORMAL
+    const blue = UI.Style.TEXT_INFO_BOLD
     return exit.message.set(
       [
-        `${logo[0] ?? ""}`,
-        `${logo[1] ?? ""}`,
-        `${logo[2] ?? ""}`,
-        `${logo[3] ?? ""}`,
         ``,
-        `  ${weak("Session")}${UI.Style.TEXT_NORMAL_BOLD}${title}${UI.Style.TEXT_NORMAL}`,
-        `  ${weak("Continue")}${UI.Style.TEXT_NORMAL_BOLD}opencode -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
+        `  ${blue}◆ CZCode${reset}`,
+        ``,
+        `  ${dim}Session ${reset}${bold}${title}${reset}`,
+        `  ${dim}Continue${reset} ${bold}czcode -s ${session()?.id}${reset}`,
         ``,
       ].join("\n"),
     )
@@ -1193,26 +1175,6 @@ export function Session() {
           </Show>
           <Toast />
         </box>
-        <Show when={sidebarVisible()}>
-          <Switch>
-            <Match when={wide()}>
-              <Sidebar sessionID={route.sessionID} />
-            </Match>
-            <Match when={!wide()}>
-              <box
-                position="absolute"
-                top={0}
-                left={0}
-                right={0}
-                bottom={0}
-                alignItems="flex-end"
-                backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
-              >
-                <Sidebar sessionID={route.sessionID} />
-              </box>
-            </Match>
-          </Switch>
-        </Show>
       </box>
     </context.Provider>
   )

@@ -265,13 +265,21 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
 function globalConfigFile() {
+  // czcode: check ~/.clickzetta/czcode.json first
+  const czcodeCandidates = ["czcode.json", "czcode.jsonc"].map((file) =>
+    path.join(os.homedir(), ".clickzetta", file),
+  )
+  for (const file of czcodeCandidates) {
+    if (existsSync(file)) return file
+  }
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
     path.join(Global.Path.config, file),
   )
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
-  return candidates[0]
+  // Default to czcode path for new installs
+  return czcodeCandidates[0]
 }
 
 function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
