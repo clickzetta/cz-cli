@@ -1,11 +1,9 @@
 import { Log } from "../util"
 import path from "path"
-import { pathToFileURL } from "url"
 import os from "os"
 import z from "zod"
 import { mergeDeep, pipe } from "remeda"
 import { Global } from "../global"
-import fsNode from "fs/promises"
 import { NamedError } from "@opencode-ai/shared/util/error"
 import { Flag } from "../flag/flag"
 import { Auth } from "../auth"
@@ -363,27 +361,30 @@ export const layer = Layer.effect(
     })
 
     const loadGlobal = Effect.fnUntraced(function* () {
+      // Load from ~/.clickzetta/czcode.json first
+      const czcodeDir = path.join(os.homedir(), ".clickzetta")
       let result: Info = pipe(
         {},
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "config.json"))),
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "opencode.json"))),
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(czcodeDir, "czcode.json"))),
+        mergeDeep(yield* loadFile(path.join(czcodeDir, "czcode.jsonc"))),
       )
 
-      const legacy = path.join(Global.Path.config, "config")
-      if (existsSync(legacy)) {
-        yield* Effect.promise(() =>
-          import(pathToFileURL(legacy).href, { with: { type: "toml" } })
-            .then(async (mod) => {
-              const { provider, model, ...rest } = mod.default
-              if (provider && model) result.model = `${provider}/${model}`
-              result["$schema"] = "https://opencode.ai/config.json"
-              result = mergeDeep(result, rest)
-              await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
-              await fsNode.unlink(legacy)
-            })
-            .catch(() => {}),
-        )
+      // ANTHROPIC_* env vars override with highest priority
+      const anthropicBaseURL = process.env["ANTHROPIC_BASE_URL"]
+      const anthropicApiKey = process.env["ANTHROPIC_API_KEY"] || process.env["ANTHROPIC_AUTH_TOKEN"]
+      const anthropicModel = process.env["ANTHROPIC_MODEL"]
+
+      if (anthropicBaseURL || anthropicApiKey || anthropicModel) {
+        const envProvider: ConfigProvider.Info = {
+          options: {
+            ...(anthropicBaseURL && { baseURL: anthropicBaseURL }),
+            ...(anthropicApiKey && { apiKey: anthropicApiKey }),
+          },
+        }
+        result = mergeDeep(result, {
+          provider: { anthropic: envProvider },
+          ...(anthropicModel && { model: `anthropic/${anthropicModel}` }),
+        } as Info)
       }
 
       return result
