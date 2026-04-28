@@ -1344,7 +1344,17 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           customBorderChars={SplitBorder.customBorderChars}
           borderColor={theme.error}
         >
-          <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
+          <text fg={theme.error}>{props.message.error?.data.message}</text>
+          <Show when={props.message.error?.name === "APIError"}>
+            <text fg={theme.textMuted}>
+              {[
+                "statusCode" in (props.message.error?.data ?? {}) && `Status: ${(props.message.error?.data as any).statusCode}`,
+                "metadata" in (props.message.error?.data ?? {}) && (props.message.error?.data as any).metadata?.url && `URL: ${(props.message.error?.data as any).metadata.url}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </text>
+          </Show>
         </box>
       </Show>
       <Switch>

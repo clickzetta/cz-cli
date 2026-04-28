@@ -369,23 +369,23 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(czcodeDir, "czcode.jsonc"))),
       )
 
-      // ANTHROPIC_* env vars override with highest priority
-      const anthropicBaseURL = process.env["ANTHROPIC_BASE_URL"]
-      const anthropicApiKey = process.env["ANTHROPIC_API_KEY"] || process.env["ANTHROPIC_AUTH_TOKEN"]
-      const anthropicModel = process.env["ANTHROPIC_MODEL"]
+      // ANTHROPIC_* env vars override — disabled for debugging
+      // const anthropicBaseURL = process.env["ANTHROPIC_BASE_URL"]
+      // const anthropicApiKey = process.env["ANTHROPIC_API_KEY"] || process.env["ANTHROPIC_AUTH_TOKEN"]
+      // const anthropicModel = process.env["ANTHROPIC_MODEL"]
 
-      if (anthropicBaseURL || anthropicApiKey || anthropicModel) {
-        const envProvider: ConfigProvider.Info = {
-          options: {
-            ...(anthropicBaseURL && { baseURL: anthropicBaseURL }),
-            ...(anthropicApiKey && { apiKey: anthropicApiKey }),
-          },
-        }
-        result = mergeDeep(result, {
-          provider: { anthropic: envProvider },
-          ...(anthropicModel && { model: `anthropic/${anthropicModel}` }),
-        } as Info)
-      }
+      // if (anthropicBaseURL || anthropicApiKey || anthropicModel) {
+      //   const envProvider: ConfigProvider.Info = {
+      //     options: {
+      //       ...(anthropicBaseURL && { baseURL: anthropicBaseURL }),
+      //       ...(anthropicApiKey && { apiKey: anthropicApiKey }),
+      //     },
+      //   }
+      //   result = mergeDeep(result, {
+      //     provider: { anthropic: envProvider, openai: envProvider },
+      //     ...(anthropicModel && { model: `anthropic/${anthropicModel}` }),
+      //   } as Info)
+      // }
 
       return result
     })
