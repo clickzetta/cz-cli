@@ -4,7 +4,7 @@
 set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
-BINARY_NAME="czagent"
+BINARY_NAME="czcli"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 print_success() { echo "✓ $1"; }
@@ -53,7 +53,7 @@ case ":$PATH:" in
         for cf in $config_files; do
             grep -q "$INSTALL_DIR" "$cf" 2>/dev/null && continue
             mkdir -p "$(dirname "$cf")"
-            printf '\n# Added by czagent setup\n' >> "$cf"
+            printf '\n# Added by czcli setup\n' >> "$cf"
             if [ "$shell_name" = "fish" ]; then
                 echo "fish_add_path $INSTALL_DIR" >> "$cf"
             else
@@ -66,8 +66,8 @@ case ":$PATH:" in
         ;;
 esac
 
-# Initialize default czagent.json if not present
-CZAGENT_CONFIG="$HOME/.clickzetta/czagent.json"
+# Initialize default czcli.json if not present
+CZAGENT_CONFIG="$HOME/.clickzetta/czcli.json"
 if [ ! -f "$CZAGENT_CONFIG" ]; then
     mkdir -p "$HOME/.clickzetta"
     cat > "$CZAGENT_CONFIG" << 'EOF'
@@ -94,50 +94,52 @@ EOF
     print_success "Created default config at $CZAGENT_CONFIG"
 fi
 
-# Install bundled cz-cli
-if [ -d "$SCRIPT_DIR/cz-cli" ]; then
-    echo "Installing bundled cz-cli ..."
-    rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/cz-cli"
-    cp -r "$SCRIPT_DIR/cz-cli/"* "$INSTALL_DIR/"
-    rm -f "$INSTALL_DIR/setup.sh"
-    chmod +x "$INSTALL_DIR/cz-cli" 2>/dev/null || true
+# Install bundled cz-tool
+if [ -d "$SCRIPT_DIR/cz-tool" ]; then
+    echo "Installing bundled cz-tool ..."
+    CZ_TOOL_DIR="$INSTALL_DIR/cz-tool"
+    rm -rf "$CZ_TOOL_DIR"
+    mkdir -p "$CZ_TOOL_DIR"
+    cp "$SCRIPT_DIR/cz-tool/cz-tool" "$CZ_TOOL_DIR/cz-tool"
+    chmod +x "$CZ_TOOL_DIR/cz-tool"
     if [ "$(uname -s)" = "Darwin" ]; then
-        xattr -r -d com.apple.quarantine "$INSTALL_DIR" 2>/dev/null || true
+        xattr -r -d com.apple.quarantine "$CZ_TOOL_DIR" 2>/dev/null || true
+        codesign --force --sign - "$CZ_TOOL_DIR/cz-tool" 2>/dev/null || true
     fi
-    print_success "Installed bundled cz-cli to $INSTALL_DIR"
+    print_success "Installed cz-tool to $CZ_TOOL_DIR"
 fi
 
-# Install bundled skills for czagent internal use
+# Install bundled skills for czcli internal use
 SKILLS_DEST="$HOME/.clickzetta/skills"
 if [ -d "$SCRIPT_DIR/skills" ]; then
     echo "Installing bundled skills ..."
     mkdir -p "$SKILLS_DEST"
-    # Copy all skills except czagent subagent skill (that goes to external agents)
+    # Copy all skills except czcli subagent skill (that goes to external agents)
     for skill_dir in "$SCRIPT_DIR/skills/"*/; do
         skill_name=$(basename "$skill_dir")
-        [ "$skill_name" = "czagent" ] && continue
+        [ "$skill_name" = "czcli" ] && continue
         rm -rf "$SKILLS_DEST/$skill_name"
         cp -r "$skill_dir" "$SKILLS_DEST/$skill_name"
     done
     print_success "Installed bundled skills to $SKILLS_DEST"
 fi
 
-# Install czagent subagent skill to external AI agents
-CZAGENT_SKILL_SRC="$SCRIPT_DIR/skills/czagent"
-if [ -d "$CZAGENT_SKILL_SRC" ]; then
+# Install czcli subagent skill to external AI agents
+CZCLI_SKILL_SRC="$SCRIPT_DIR/skills/czcli"
+if [ -d "$CZCLI_SKILL_SRC" ]; then
     AGENT_SKILL_DIRS="
-        $HOME/.claude/skills/czagent
-        $HOME/.codex/skills/czagent
-        $HOME/.cursor/skills/czagent
+        $HOME/.claude/skills/czcli
+        $HOME/.codex/skills/czcli
+        $HOME/.cursor/skills/czcli
     "
     for dest in $AGENT_SKILL_DIRS; do
         mkdir -p "$(dirname "$dest")"
         rm -rf "$dest"
-        cp -r "$CZAGENT_SKILL_SRC" "$dest"
+        cp -r "$CZCLI_SKILL_SRC" "$dest"
     done
-    print_success "Installed czagent skill to Claude Code, Codex, Cursor"
+    print_success "Installed czcli skill to Claude Code, Codex, Cursor"
 fi
 
 echo ""
-echo "Done! czagent is ready to use."
-echo "Try: czagent --help"
+echo "Done! czcli is ready to use."
+echo "Try: czcli --help"

@@ -207,8 +207,8 @@ for (const item of targets) {
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
-      outfile: `dist/${name}/bin/czagent`,
-      execArgv: [`--user-agent=czagent/${Script.version}`, "--use-system-ca", "--"],
+      outfile: `dist/${name}/bin/czcli`,
+      execArgv: [`--user-agent=czcli/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
@@ -232,7 +232,7 @@ for (const item of targets) {
 
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
-    const binaryPath = `dist/${name}/bin/czagent`
+    const binaryPath = `dist/${name}/bin/czcli`
     console.log(`Running smoke test: ${binaryPath} --version`)
     try {
       const versionOutput = await $`${binaryPath} --version`.text()
@@ -259,93 +259,49 @@ for (const item of targets) {
   binaries[name] = Script.version
 }
 
-const CZ_CLI_PLATFORM_MAP: Record<string, string | null> = {
-  "darwin-arm64": "cz-cli-macos-arm64.zip",
-  "darwin-x64": "cz-cli-macos-arm64.zip",
-  "linux-x64": "cz-cli-linux-x86_64.zip",
-  "linux-arm64": null,
-  "win32-arm64": "cz-cli-windows-x86_64.zip",
-  "win32-x64": "cz-cli-windows-x86_64.zip",
+// Compile cz-tool binary for each target
+for (const item of targets) {
+  const name = [
+    pkg.name,
+    item.os === "win32" ? "windows" : item.os,
+    item.arch,
+    item.avx2 === false ? "baseline" : undefined,
+    item.abi === undefined ? undefined : item.abi,
+  ]
+    .filter(Boolean)
+    .join("-")
+
+  console.log(`building cz-tool for ${name}`)
+  await $`mkdir -p dist/${name}/bin/cz-tool`
+
+  await Bun.build({
+    tsconfig: "../cz-cli/tsconfig.json",
+    format: "esm",
+    minify: true,
+    compile: {
+      autoloadBunfig: false,
+      autoloadDotenv: false,
+      autoloadTsconfig: true,
+      autoloadPackageJson: true,
+      target: name.replace(pkg.name, "bun") as any,
+      outfile: `dist/${name}/bin/cz-tool/cz-tool`,
+    },
+    entrypoints: ["../cz-cli/src/main.ts"],
+    define: {
+      CZ_TOOL_VERSION: `'${Script.version}'`,
+    },
+  })
 }
 
-async function bundleCzCli(distBinDir: string, os: string, arch: string) {
-  if (process.env.SKIP_CZ_CLI) {
-    console.log("SKIP_CZ_CLI set, skipping cz-cli bundling")
-    return
-  }
-
-  const version = process.env.CZ_CLI_VERSION || "latest"
-  const repo = "clickzetta/cz-cli"
-  const platformKey = `${os}-${arch}`
-  const asset = CZ_CLI_PLATFORM_MAP[platformKey]
-
-  if (asset === null || asset === undefined) {
-    console.log(`No cz-cli binary for ${platformKey}, skipping`)
-    return
-  }
-
-  const baseUrl =
-    version === "latest"
-      ? `https://github.com/${repo}/releases/latest/download`
-      : `https://github.com/${repo}/releases/download/${version}`
-
-  const tmpDir = path.join(dir, "dist", ".cz-cli-tmp")
-  await $`mkdir -p ${tmpDir}`
-
-  const czCliDir = path.join(distBinDir, "cz-cli")
-  const skillsDir = path.join(distBinDir, "skills")
-  await $`mkdir -p ${czCliDir} ${skillsDir}`
-
-  console.log(`Downloading ${asset} for ${platformKey}...`)
-  const binaryZip = path.join(tmpDir, asset)
-  if (!fs.existsSync(binaryZip)) {
-    await $`curl -fSL --retry 3 --retry-delay 5 -o ${binaryZip} ${baseUrl}/${asset}`
-  }
-  await $`unzip -o -q ${binaryZip} -d ${czCliDir}`
-
-  const skillsTar = path.join(tmpDir, "skills.tar.gz")
-  if (!fs.existsSync(skillsTar)) {
-    console.log("Downloading skills.tar.gz...")
-    await $`curl -fSL --retry 3 --retry-delay 5 -o ${skillsTar} ${baseUrl}/skills.tar.gz`
-  }
-  await $`tar -xzf ${skillsTar} -C ${skillsDir}`
-
-  console.log(`Bundled cz-cli + skills into ${distBinDir}`)
-}
-
-function findTarget(key: string) {
-  return targets.find(
-    (t) =>
-      key ===
-      [
-        pkg.name,
-        t.os === "win32" ? "windows" : t.os,
-        t.arch,
-        t.avx2 === false ? "baseline" : undefined,
-        t.abi === undefined ? undefined : t.abi,
-      ]
-        .filter(Boolean)
-        .join("-"),
-  )
-}
-
-for (const key of Object.keys(binaries)) {
-  const target = findTarget(key)
-  if (target) {
-    await bundleCzCli(`dist/${key}/bin`, target.os, target.arch)
-  }
-}
-await $`rm -rf dist/.cz-cli-tmp`
-
-// Bundle czagent subagent skill into each platform dist
-const czagentSkillSrc = path.join(dir, "..", "..", "skills", "czagent")
-if (fs.existsSync(czagentSkillSrc)) {
+// Bundle czcli subagent skill into each platform dist
+const czcliSkillSrc = path.join(dir, "..", "..", "skills", "czcli")
+if (fs.existsSync(czcliSkillSrc)) {
   for (const key of Object.keys(binaries)) {
-    const skillsDir = path.join("dist", key, "bin", "skills", "czagent")
+    const skillsDir = path.join("dist", key, "bin", "skills", "czcli")
     await $`mkdir -p ${skillsDir}`
-    await $`cp -r ${czagentSkillSrc}/ ${skillsDir}/`
+    await $`cp -r ${czcliSkillSrc}/ ${skillsDir}/`
   }
-  console.log("Bundled czagent subagent skill into all platform dists")
+  console.log("Bundled czcli subagent skill into all platform dists")
 }
 
 if (Script.release) {

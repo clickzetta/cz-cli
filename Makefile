@@ -15,8 +15,8 @@ else
   ARCH := x64
 endif
 
-PLATFORM_DIR := czcode-$(UNAME_S)-$(ARCH)
-BINARY       := $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/opencode
+PLATFORM_DIR := czcli-$(UNAME_S)-$(ARCH)
+BINARY       := $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/czcli
 ZIP_NAME     := $(PLATFORM_DIR).zip
 
 .PHONY: build clean
@@ -24,7 +24,9 @@ ZIP_NAME     := $(PLATFORM_DIR).zip
 build:
 	cd $(OPENCODE_DIR) && bun run script/build.ts --single --skip-install --skip-embed-web-ui
 	mkdir -p $(OUT_DIR)/$(PLATFORM_DIR)
-	cp $(BINARY) $(OUT_DIR)/$(PLATFORM_DIR)/czcode
+	cp $(BINARY) $(OUT_DIR)/$(PLATFORM_DIR)/czcli
+	cp -r $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/cz-tool $(OUT_DIR)/$(PLATFORM_DIR)/cz-tool
+	test -d $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/skills && cp -r $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/skills $(OUT_DIR)/$(PLATFORM_DIR)/skills || true
 	cp $(SCRIPTS_DIR)/setup.sh $(OUT_DIR)/$(PLATFORM_DIR)/setup.sh
 	cd $(OUT_DIR)/$(PLATFORM_DIR) && zip -r ../$(ZIP_NAME) .
 	@echo "✓ Package ready: $(OUT_DIR)/$(ZIP_NAME)"
