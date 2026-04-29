@@ -1,0 +1,39 @@
+import type { StudioConfig } from "../types/index.js"
+import { studioRequest } from "./client.js"
+
+export interface ListFoldersParams {
+  projectId: number
+  page: number
+  pageSize: number
+  parentFolderId?: number
+  folderName?: string
+  folderType?: string
+}
+
+export interface CreateFolderParams {
+  createdBy: string
+  projectId: number
+  dataFolderName: string
+  parentFolderId: number
+}
+
+export function listFolders(config: StudioConfig, params: ListFoldersParams) {
+  return studioRequest(config, "/ide-admin/v1/ai/mcp/listFolders", {
+    projectId: params.projectId,
+    page: params.page,
+    pageSize: params.pageSize,
+    ...(params.parentFolderId !== undefined && { parentFolderId: params.parentFolderId }),
+    ...(params.folderName !== undefined && { folderName: params.folderName }),
+    ...(params.folderType !== undefined && { folderType: params.folderType }),
+  })
+}
+
+export function createFolder(config: StudioConfig, params: CreateFolderParams) {
+  return studioRequest(config, "/ide-admin/v1/dataFolder/add", {
+    createdBy: params.createdBy,
+    projectId: params.projectId,
+    dataFolderName: params.dataFolderName,
+    parentFolderId: params.parentFolderId,
+    dataFolderType: 1,
+  })
+}
