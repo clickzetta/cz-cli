@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "cz-tool": "./src/main.ts"
+  },
   "dependencies": {
     "@clickzetta/sdk": "workspace:*",
     "smol-toml": "1.6.1",
