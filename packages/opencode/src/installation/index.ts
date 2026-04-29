@@ -25,7 +25,7 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
-export const USER_AGENT = `czagent/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
+export const USER_AGENT = `czcli/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
 
 export function isPreview() {
   return InstallationChannel !== "latest"
@@ -56,13 +56,13 @@ export const layer: Layer.Layer<Service> =
         return "unknown" as Method
       })
 
-      // TODO: version check disabled — czagent has no update channel yet.
+      // TODO: version check disabled — czcli has no update channel yet.
       // When ready, point latest() at clickzetta/cz-code GitHub Releases.
       const latestImpl = Effect.fn("Installation.latest")(function* (_installMethod?: Method) {
         return InstallationVersion
       }, Effect.orDie)
 
-      // TODO: self-upgrade disabled — czagent is distributed via zip/tar.gz, no in-place upgrade path yet.
+      // TODO: self-upgrade disabled — czcli is distributed via zip/tar.gz, no in-place upgrade path yet.
       const upgradeImpl = Effect.fn("Installation.upgrade")(function* (_m: Method, _target: string) {
         return yield* new UpgradeFailedError({ stderr: "In-place upgrade is not supported. Please download the latest release from GitHub." })
       })
