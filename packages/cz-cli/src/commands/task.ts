@@ -4,6 +4,7 @@ import {
   listTasks, createTask, getTaskDetail, getTaskConfigDetail,
   saveTaskContent, saveTaskConfig, submitTask, onlineTask, offlineTask,
   getTaskDependencies, listFolders, createFolder,
+  executeAdhoc,
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
   removeFlowNode, submitFlow, listFlowInstances,
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
@@ -290,6 +291,48 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const resp = await offlineTask(sc, argv.id as number, sc.projectId)
             logOperation("task offline", { ok: true })
             success({ data: resp.data, status: "offline" }, { format })
+          } catch (err) {
+            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      .command(
+        "execute <id>",
+        "Execute a task ad-hoc",
+        (y) =>
+          y
+            .positional("id", { type: "number", demandOption: true, describe: "Task file ID" })
+            .option("vc", { type: "string", default: "DEFAULT", describe: "Virtual cluster code" })
+            .option("schema", { type: "string", describe: "Schema name" })
+            .option("content", { type: "string", describe: "Override script content" })
+            .option("file", { alias: "f", type: "string", describe: "Read override content from file" }),
+        async (argv) => {
+          const format = argv.output
+          try {
+            const sc = await ctx(argv)
+            let content = argv.content as string | undefined
+            if (argv.file) content = readFileSync(argv.file as string, "utf-8")
+            if (!content) {
+              const detail = await getTaskDetail(sc, argv.id as number)
+              const data = detail.data as Record<string, unknown> | undefined
+              content = (data?.dataFileContent ?? data?.content ?? "") as string
+            }
+            const resp = await executeAdhoc(sc, {
+              updateBy: String(sc.userId),
+              dataFileId: argv.id as number,
+              collectType: 0,
+              maxRowSize: 5000,
+              offsetLine: 0,
+              offsetCol: 0,
+              instanceName: sc.instanceName,
+              multiDataSource: [],
+              adhocVcCode: argv.vc as string,
+              adhocSchemaName: argv.schema ?? "",
+              adhocVcId: 0,
+              dataFileContent: content,
+            })
+            logOperation("task execute", { ok: true })
+            success(resp.data, { format })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }

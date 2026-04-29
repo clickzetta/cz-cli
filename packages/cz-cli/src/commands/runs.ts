@@ -206,6 +206,71 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
+      .command(
+        "rerun <id>",
+        "Rerun a failed instance",
+        (y) => y.positional("id", { type: "number", demandOption: true }),
+        async (argv) => {
+          const format = argv.output
+          try {
+            const sc = await ctx(argv)
+            const resp = await rerunInstance(sc, argv.id as number)
+            logOperation("runs rerun", { ok: true })
+            success(resp.data, { format })
+          } catch (err) {
+            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      .command(
+        "stats",
+        "Get run statistics summary",
+        (y) =>
+          y
+            .option("task", { type: "string", describe: "Task ID filter" })
+            .option("from", { type: "string", describe: "Start time (ISO)" })
+            .option("to", { type: "string", describe: "End time (ISO)" }),
+        async (argv) => {
+          const format = argv.output
+          try {
+            const sc = await ctx(argv)
+            const now = Date.now()
+            const fromMs = argv.from ? new Date(argv.from).getTime() : now - 86400000
+            const toMs = argv.to ? new Date(argv.to).getTime() : now
+            const base = {
+              projectId: sc.projectId,
+              pageIndex: 1,
+              pageSize: 1,
+              scheduleTaskId: argv.task ? Number(argv.task) : undefined,
+              queryStartPlanTime: String(fromMs),
+              queryEndPlanTime: String(toMs),
+            }
+            const [all, succeeded, failed, running, waiting] = await Promise.all([
+              listRuns(sc, { ...base }),
+              listRuns(sc, { ...base, instanceStatusList: ["1"] }),
+              listRuns(sc, { ...base, instanceStatusList: ["3"] }),
+              listRuns(sc, { ...base, instanceStatusList: ["4"] }),
+              listRuns(sc, { ...base, instanceStatusList: ["2"] }),
+            ])
+            const total = (r: typeof all) => {
+              const d = r.data as Record<string, unknown> | undefined
+              return (d?.totalCount ?? d?.total ?? 0) as number
+            }
+            logOperation("runs stats", { ok: true })
+            success({
+              total: total(all),
+              succeeded: total(succeeded),
+              failed: total(failed),
+              running: total(running),
+              waiting: total(waiting),
+              from: new Date(fromMs).toISOString(),
+              to: new Date(toMs).toISOString(),
+            }, { format })
+          } catch (err) {
+            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
       .demandCommand(1, ""),
   )
 }
