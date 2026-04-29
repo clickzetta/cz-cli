@@ -5,7 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -55,7 +55,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             const ctx = await getExecContext(argv)
             const limit = argv.limit ?? DEFAULT_LIMIT
             let sql = "SHOW TABLES"
-            if (argv.in) sql += ` IN ${argv.in}`
+            if (argv.in) sql += ` IN ${validateIdentifier(argv.in, "schema name")}`
             if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
             sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
@@ -87,7 +87,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `DESC TABLE ${argv.name}`
+            const sql = `DESC TABLE ${validateIdentifier(argv.name as string, "table name")}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -115,7 +115,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           try {
             const ctx = await getExecContext(argv)
             const limit = argv.limit ?? DEFAULT_PREVIEW_LIMIT
-            const sql = `SELECT * FROM ${argv.name} LIMIT ${limit}`
+            const sql = `SELECT * FROM ${validateIdentifier(argv.name as string, "table name")} LIMIT ${limit}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -140,7 +140,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `SELECT COUNT(*) as row_count FROM ${argv.name}`
+            const sql = `SELECT COUNT(*) as row_count FROM ${validateIdentifier(argv.name as string, "table name")}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -170,7 +170,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             const ctx = await getExecContext(argv)
             const limit = argv.limit ?? DEFAULT_LIMIT
             let sql = "SHOW TABLES HISTORY"
-            if (argv.in) sql += ` IN ${argv.in}`
+            if (argv.in) sql += ` IN ${validateIdentifier(argv.in, "schema name")}`
             if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
             sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
@@ -228,7 +228,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `DROP TABLE ${argv.name}`
+            const sql = `DROP TABLE ${validateIdentifier(argv.name as string, "table name")}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {

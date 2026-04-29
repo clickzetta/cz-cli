@@ -3,7 +3,7 @@ import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, type ExecContext } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier, type ExecContext } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 
@@ -72,7 +72,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const name = argv.name as string
+            const name = validateIdentifier(argv.name as string, "schema name")
             const t0 = Date.now()
             const infoSql = `SHOW SCHEMAS EXTENDED WHERE schema_name='${name.replace(/'/g, "''")}'`
             const infoR = await execSql(ctx, infoSql)
@@ -95,7 +95,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `CREATE SCHEMA ${argv.name}`
+            const sql = `CREATE SCHEMA ${validateIdentifier(argv.name as string, "schema name")}`
             await execAndReturn(ctx, sql, format, "schema create")
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
@@ -110,7 +110,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `DROP SCHEMA ${argv.name}`
+            const sql = `DROP SCHEMA ${validateIdentifier(argv.name as string, "schema name")}`
             await execAndReturn(ctx, sql, format, "schema drop")
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })

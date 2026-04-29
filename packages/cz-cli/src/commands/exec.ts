@@ -85,3 +85,11 @@ export class SqlError extends Error {
     this.name = "SqlError"
   }
 }
+
+const SAFE_IDENT_RE = /^[\w][\w.]*$/
+export function validateIdentifier(name: string, label: string): string {
+  if (!SAFE_IDENT_RE.test(name)) {
+    throw new Error(`Invalid ${label}: ${name}`)
+  }
+  return name
+}

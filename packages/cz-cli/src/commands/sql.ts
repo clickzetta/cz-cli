@@ -5,7 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, type ExecContext } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier, type ExecContext } from "./exec.js"
 
 const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -108,10 +108,11 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
     if (COLUMN_NOT_FOUND_RE.test(errMsg)) {
       const m = TABLE_FROM_SQL_RE.exec(sql)
       if (m) {
-        const r = await execSql(ctx, `DESC TABLE ${m[1]}`)
+        const table = validateIdentifier(m[1], "table name")
+        const r = await execSql(ctx, `DESC TABLE ${table}`)
         if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
           const cols = r.rows.map((row) => Object.values(row)[0]).join(", ")
-          return `Columns in ${m[1]}: ${cols}`
+          return `Columns in ${table}: ${cols}`
         }
       }
     }
@@ -127,6 +128,7 @@ async function fetchWithSchema(ctx: ExecContext, sql: string): Promise<string | 
   const parts: string[] = []
   for (const table of tables) {
     try {
+      validateIdentifier(table, "table name")
       const r = await execSql(ctx, `DESC TABLE ${table}`)
       if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
         const cols = r.rows.map((row) => {
@@ -183,7 +185,7 @@ async function executeSingle(
     const probeLimit = rowLimit + 1
     const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
     const r = await execSql(ctx, probeSql, { hints, timeoutMs: argv.timeout })
-    if (!isQueryResult(r)) return
+    if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
     if (r.status === JobStatus.FAILED) {
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
       const msg = hint ? `${r.errorMessage}\n${hint}` : (r.errorMessage ?? "Query failed")
@@ -205,7 +207,7 @@ async function executeSingle(
       const userLimit = parseInt(limitMatch[1], 10)
       const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
       const r = await execSql(ctx, probeSql, { hints, timeoutMs: argv.timeout })
-      if (!isQueryResult(r)) return
+      if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
       }
@@ -222,7 +224,7 @@ async function executeSingle(
 
   // General case: SHOW, write, or other
   const r = await execSql(ctx, sql, { hints, timeoutMs: argv.timeout })
-  if (!isQueryResult(r)) return
+  if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
   }
