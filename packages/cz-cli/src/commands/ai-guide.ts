@@ -10,12 +10,18 @@ export function registerAiGuideCommand(cli: Argv<GlobalArgs>): void {
     (yargs) =>
       yargs
         .option("wide", { type: "boolean", default: false, describe: "Include per-command option details" })
-        .option("budget", { type: "number", describe: "Max payload size in chars" }),
+        .option("budget", { type: "number", describe: "Max payload size in chars" })
+        .option("format", {
+          alias: "f",
+          type: "string",
+          choices: ["json", "pretty", "toon"] as const,
+          default: "toon",
+          describe: "Output format (default: toon)",
+        }),
     (argv) => {
       registerStaticCommands()
       const guide = buildAiGuide({ wide: argv.wide, budgetChars: argv.budget })
-      const format = argv.output === "json" ? "toon" : argv.output
-      success(guide, { format })
+      success(guide, { format: argv.format })
     },
   )
 }

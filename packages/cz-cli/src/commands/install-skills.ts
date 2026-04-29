@@ -107,12 +107,30 @@ export function registerInstallSkillsCommand(cli: Argv<GlobalArgs>): void {
           }
         }
 
+        let selectedSkills: string[]
+        if (yes) {
+          selectedSkills = skillNames
+        } else if (!process.stdin.isTTY) {
+          selectedSkills = skillNames
+        } else {
+          const allAnswer = await prompt("Install all available skills? (Y/n): ")
+          if (!allAnswer || allAnswer.toLowerCase() === "y" || allAnswer.toLowerCase() === "yes") {
+            selectedSkills = skillNames
+          } else {
+            process.stderr.write("Available skills:\n")
+            skillNames.forEach((s, i) => process.stderr.write(`  ${i + 1}. ${s}\n`))
+            const answer = await prompt("Select skills (comma-separated numbers, e.g. 1,3): ")
+            const indices = answer.split(",").map((s) => parseInt(s.trim(), 10) - 1).filter((i) => i >= 0 && i < skillNames.length)
+            selectedSkills = indices.length > 0 ? indices.map((i) => skillNames[i]) : skillNames
+          }
+        }
+
         const installed: { tool: string; skill: string; path: string }[] = []
         const failed: { tool: string; skill: string }[] = []
 
         for (const tool of selectedTools) {
           const targetPath = expandPath(TOOL_CONFIGS[tool])
-          for (const skill of skillNames) {
+          for (const skill of selectedSkills) {
             if (copySkill(skillsDir, targetPath, skill)) {
               installed.push({ tool, skill, path: join(targetPath, skill) })
             } else {
