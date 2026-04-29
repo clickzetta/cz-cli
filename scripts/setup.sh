@@ -3,8 +3,8 @@
 # Run from the directory containing this script (same dir as opencode binary).
 set -e
 
-INSTALL_DIR="${HOME}/.clickzetta/bin"
-BINARY_NAME="czcode"
+INSTALL_DIR="${HOME}/.local/bin"
+BINARY_NAME="czagent"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 print_success() { echo "✓ $1"; }
@@ -53,7 +53,7 @@ case ":$PATH:" in
         for cf in $config_files; do
             grep -q "$INSTALL_DIR" "$cf" 2>/dev/null && continue
             mkdir -p "$(dirname "$cf")"
-            printf '\n# Added by czcode setup\n' >> "$cf"
+            printf '\n# Added by czagent setup\n' >> "$cf"
             if [ "$shell_name" = "fish" ]; then
                 echo "fish_add_path $INSTALL_DIR" >> "$cf"
             else
@@ -66,14 +66,17 @@ case ":$PATH:" in
         ;;
 esac
 
-# Initialize default czcode.json if not present
-CZCODE_CONFIG="$HOME/.clickzetta/czcode.json"
-if [ ! -f "$CZCODE_CONFIG" ]; then
+# Initialize default czagent.json if not present
+CZAGENT_CONFIG="$HOME/.clickzetta/czagent.json"
+if [ ! -f "$CZAGENT_CONFIG" ]; then
     mkdir -p "$HOME/.clickzetta"
-    cat > "$CZCODE_CONFIG" << 'EOF'
+    cat > "$CZAGENT_CONFIG" << 'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "formatter": false,
+  "skills": {
+    "paths": ["~/.clickzetta/skills"]
+  },
   "provider": {
     "anthropic": {
       "options": {
@@ -88,16 +91,53 @@ if [ ! -f "$CZCODE_CONFIG" ]; then
   }
 }
 EOF
-    print_success "Created default config at $CZCODE_CONFIG"
+    print_success "Created default config at $CZAGENT_CONFIG"
 fi
 
-# Install cz-cli
-if ! command -v cz-cli >/dev/null 2>&1; then
-    echo "Installing cz-cli ..."
-    curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
-    print_success "Installed cz-cli"
+# Install bundled cz-cli
+if [ -d "$SCRIPT_DIR/cz-cli" ]; then
+    echo "Installing bundled cz-cli ..."
+    rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/cz-cli"
+    cp -r "$SCRIPT_DIR/cz-cli/"* "$INSTALL_DIR/"
+    rm -f "$INSTALL_DIR/setup.sh"
+    chmod +x "$INSTALL_DIR/cz-cli" 2>/dev/null || true
+    if [ "$(uname -s)" = "Darwin" ]; then
+        xattr -r -d com.apple.quarantine "$INSTALL_DIR" 2>/dev/null || true
+    fi
+    print_success "Installed bundled cz-cli to $INSTALL_DIR"
+fi
+
+# Install bundled skills for czagent internal use
+SKILLS_DEST="$HOME/.clickzetta/skills"
+if [ -d "$SCRIPT_DIR/skills" ]; then
+    echo "Installing bundled skills ..."
+    mkdir -p "$SKILLS_DEST"
+    # Copy all skills except czagent subagent skill (that goes to external agents)
+    for skill_dir in "$SCRIPT_DIR/skills/"*/; do
+        skill_name=$(basename "$skill_dir")
+        [ "$skill_name" = "czagent" ] && continue
+        rm -rf "$SKILLS_DEST/$skill_name"
+        cp -r "$skill_dir" "$SKILLS_DEST/$skill_name"
+    done
+    print_success "Installed bundled skills to $SKILLS_DEST"
+fi
+
+# Install czagent subagent skill to external AI agents
+CZAGENT_SKILL_SRC="$SCRIPT_DIR/skills/czagent"
+if [ -d "$CZAGENT_SKILL_SRC" ]; then
+    AGENT_SKILL_DIRS="
+        $HOME/.claude/skills/czagent
+        $HOME/.codex/skills/czagent
+        $HOME/.cursor/skills/czagent
+    "
+    for dest in $AGENT_SKILL_DIRS; do
+        mkdir -p "$(dirname "$dest")"
+        rm -rf "$dest"
+        cp -r "$CZAGENT_SKILL_SRC" "$dest"
+    done
+    print_success "Installed czagent skill to Claude Code, Codex, Cursor"
 fi
 
 echo ""
-echo "Done! czcode is ready to use."
-echo "Try: czcode --help"
+echo "Done! czagent is ready to use."
+echo "Try: czagent --help"

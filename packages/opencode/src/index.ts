@@ -36,6 +36,8 @@ import { JsonMigration } from "./storage"
 import { Database } from "./storage"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
+import { ProfileCommand } from "./cli/cmd/profile"
+import { loadProfiles } from "./profile"
 import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 
@@ -55,8 +57,8 @@ const args = hideBin(process.argv)
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("czcode ") && !text.startsWith("opencode ")) {
-    process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ CZCode" + UI.Style.TEXT_NORMAL + EOL + EOL)
+  if (!text.startsWith("czagent ") && !text.startsWith("opencode ")) {
+    process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ CZAgent" + UI.Style.TEXT_NORMAL + EOL + EOL)
     process.stderr.write(text)
     return
   }
@@ -65,7 +67,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("czcode")
+  .scriptName("czagent")
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
@@ -85,6 +87,21 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    const subcmd = process.argv[2] || ""
+    const noProfileRequired = ["profile", "completion", "--help", "--version", "-h", "-v", "upgrade", "uninstall"]
+    if (!noProfileRequired.some((c) => subcmd === c || process.argv.includes(c))) {
+      const data = loadProfiles()
+      if (Object.keys(data.profiles).length === 0) {
+        process.stderr.write(
+          "\n  No ClickZetta profile configured.\n" +
+            "  Run this first:\n\n" +
+            "    czagent profile create <name> --username <user> --password <pass> \\\n" +
+            "      --instance <inst> --workspace <ws> --service <endpoint>\n\n",
+        )
+        process.exit(1)
+      }
+    }
+
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
     }
@@ -171,6 +188,7 @@ const cli = yargs(args)
   .command(PrCommand)
   .command(SessionCommand)
   .command(PluginCommand)
+  .command(ProfileCommand)
   .command(DbCommand)
   .fail((msg, err) => {
     if (

@@ -1,14 +1,14 @@
 ## Why
 
-OpenCode is an open-source AI coding agent with a rich TUI. We are forking it to create **czcode** — a ClickZetta Lakehouse-branded AI coding assistant. The current UI carries OpenCode's visual identity (animated logo, "opencode" naming, Go/Zen subscription upsells). To ship czcode as a ClickZetta product we need to strip the OpenCode visual brand and apply ClickZetta design language, while keeping the fork easy to merge with upstream.
+OpenCode is an open-source AI coding agent with a rich TUI. We are forking it to create **czagent** — a ClickZetta Lakehouse-branded AI coding assistant. The current UI carries OpenCode's visual identity (animated logo, "opencode" naming, Go/Zen subscription upsells). To ship czagent as a ClickZetta product we need to strip the OpenCode visual brand and apply ClickZetta design language, while keeping the fork easy to merge with upstream.
 
 ## What Changes
 
-- Replace the OpenCode animated ASCII logo with a static czcode text banner
-- Replace user-facing "opencode" / "OpenCode" text with "czcode" / "CZCode" **in the TUI layer only**
+- Replace the OpenCode animated ASCII logo with a static czagent text banner
+- Replace user-facing "opencode" / "OpenCode" text with "czagent" / "CZAgent" **in the TUI layer only**
 - Remove the ornate logo animation system (`logo.tsx`) and replace with a minimal static brand mark
 - Strip OpenCode commercial dialogs (Go upsell, console org) — **delete only, no replacement; leave TODO comments for future CZ equivalents**
-- Add a new `czcode.json` default theme with ClickZetta brand colors
+- Add a new `czagent.json` default theme with ClickZetta brand colors
 - Update home screen placeholders and tips to reference ClickZetta Lakehouse
 - Update CLI wordmark in `cli/ui.ts`
 - **Preserve** all structural UI features: sidebar (files/todo/MCP/LSP), Tab agent switching, keybinds, plugin slots — only strip OpenCode visual branding from them
@@ -24,11 +24,11 @@ OpenCode is an open-source AI coding agent with a rich TUI. We are forking it to
 ## Capabilities
 
 ### New Capabilities
-- `czcode-branding`: User-facing text replacement (logo, wordmark, error messages, startup text) — TUI layer only, no path/env changes
-- `czcode-theme`: New default theme file with ClickZetta colors; existing themes remain available
-- `czcode-home-screen`: Home screen visual rebrand — static logo, CZ placeholders/tips, CZ footer text
-- `czcode-session-chrome`: Visual-only rebrand of session footer, sidebar headers, permission prompts — no structural changes
-- `czcode-config`: Default theme value change; startup loading text; version display prefix
+- `czagent-branding`: User-facing text replacement (logo, wordmark, error messages, startup text) — TUI layer only, no path/env changes
+- `czagent-theme`: New default theme file with ClickZetta colors; existing themes remain available
+- `czagent-home-screen`: Home screen visual rebrand — static logo, CZ placeholders/tips, CZ footer text
+- `czagent-session-chrome`: Visual-only rebrand of session footer, sidebar headers, permission prompts — no structural changes
+- `czagent-config`: Default theme value change; startup loading text; version display prefix
 
 ### Modified Capabilities
 

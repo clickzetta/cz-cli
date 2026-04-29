@@ -1,22 +1,22 @@
 ## ADDED Requirements
 
-### Requirement: User-facing TUI text SHALL use czcode branding
-The TUI SHALL display "czcode" or "CZCode" wherever "opencode" or "OpenCode" previously appeared in user-visible text within the TUI layer. A centralized `brand.ts` module SHALL export brand constants. Internal identifiers, import paths, package names, config file paths, and environment variables SHALL NOT be changed.
+### Requirement: User-facing TUI text SHALL use czagent branding
+The TUI SHALL display "czagent" or "CZAgent" wherever "opencode" or "OpenCode" previously appeared in user-visible text within the TUI layer. A centralized `brand.ts` module SHALL export brand constants. Internal identifiers, import paths, package names, config file paths, and environment variables SHALL NOT be changed.
 
-#### Scenario: TUI displays czcode branding
+#### Scenario: TUI displays czagent branding
 - **WHEN** the user interacts with the TUI (home screen, session, dialogs)
-- **THEN** all user-visible text references the product as "czcode" or "CZCode"
+- **THEN** all user-visible text references the product as "czagent" or "CZAgent"
 
 #### Scenario: Internal paths are unchanged
 - **WHEN** the system resolves config paths, env vars, or package imports
 - **THEN** they continue to use "opencode" naming (e.g., `~/.opencode/`, `OPENCODE_*`, `@opencode-ai/*`)
 
-### Requirement: CLI wordmark SHALL display czcode identity
-The non-TUI CLI output (used when stdout is not a TTY) SHALL render a "czcode" wordmark instead of the OpenCode wordmark in `cli/ui.ts`.
+### Requirement: CLI wordmark SHALL display czagent identity
+The non-TUI CLI output (used when stdout is not a TTY) SHALL render a "czagent" wordmark instead of the OpenCode wordmark in `cli/ui.ts`.
 
-#### Scenario: Piped output shows czcode wordmark
+#### Scenario: Piped output shows czagent wordmark
 - **WHEN** the CLI output is piped (not a TTY)
-- **THEN** the wordmark text reads "czcode" instead of "opencode"
+- **THEN** the wordmark text reads "czagent" instead of "opencode"
 
 ### Requirement: OpenCode commercial features SHALL be deleted with TODO stubs
 The `dialog-go-upsell.tsx` and `dialog-console-org.tsx` components SHALL be deleted. Where they were imported/registered, TODO comments SHALL be left indicating future ClickZetta equivalents. No replacement features SHALL be built.

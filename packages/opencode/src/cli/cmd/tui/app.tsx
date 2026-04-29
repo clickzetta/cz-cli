@@ -18,7 +18,6 @@ import {
 } from "solid-js"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { Flag } from "@/flag/flag"
-import semver from "semver"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderList } from "@tui/component/dialog-provider"
 import { ErrorComponent } from "@tui/component/error-component"
@@ -37,7 +36,7 @@ import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
-// TODO(czcode): Add ClickZetta org picker
+// TODO(czagent): Add ClickZetta org picker
 import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
@@ -45,8 +44,6 @@ import { Session } from "@tui/routes/session"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
-import { DialogAlert } from "./ui/dialog-alert"
-import { DialogConfirm } from "./ui/dialog-confirm"
 import { ToastProvider, useToast } from "./ui/toast"
 import { ExitProvider, useExit } from "./context/exit"
 import { Session as SessionApi } from "@/session"
@@ -298,14 +295,14 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return
 
     if (route.data.type === "home") {
-      renderer.setTerminalTitle("CZCode")
+      renderer.setTerminalTitle("CZAgent")
       return
     }
 
     if (route.data.type === "session") {
       const session = sync.session.get(route.data.sessionID)
       if (!session || SessionApi.isDefaultTitle(session.title)) {
-        renderer.setTerminalTitle("CZCode")
+        renderer.setTerminalTitle("CZAgent")
         return
       }
 
@@ -560,7 +557,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       category: "Provider",
     },
-    // TODO(czcode): Add ClickZetta org picker command here
+    // TODO(czagent): Add ClickZetta org picker command here
     {
       title: "View status",
       keybind: "status_view",
@@ -615,7 +612,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       category: "System",
     },
-    // TODO(czcode): Add ClickZetta docs link
+    // TODO(czagent): Add ClickZetta docs link
     {
       title: "Exit the app",
       value: "app.exit",
@@ -751,53 +748,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       message,
       duration: 5000,
     })
-  })
-
-  event.on("installation.update-available", async (evt) => {
-    const version = evt.properties.version
-
-    const skipped = kv.get("skipped_version")
-    if (skipped && !semver.gt(version, skipped)) return
-
-    const choice = await DialogConfirm.show(
-      dialog,
-      `Update Available`,
-      `A new release v${version} is available. Would you like to update now?`,
-      "skip",
-    )
-
-    if (choice === false) {
-      kv.set("skipped_version", version)
-      return
-    }
-
-    if (choice !== true) return
-
-    toast.show({
-      variant: "info",
-      message: `Updating to v${version}...`,
-      duration: 30000,
-    })
-
-    const result = await sdk.client.global.upgrade({ target: version })
-
-    if (result.error || !result.data?.success) {
-      toast.show({
-        variant: "error",
-        title: "Update Failed",
-        message: "Update failed",
-        duration: 10000,
-      })
-      return
-    }
-
-    await DialogAlert.show(
-      dialog,
-      "Update Complete",
-      `Successfully updated to CZCode v${result.data.version}. Please restart the application.`,
-    )
-
-    void exit()
   })
 
   const plugin = createMemo(() => {
