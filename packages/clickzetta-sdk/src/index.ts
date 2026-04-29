@@ -1,2 +1,7 @@
 export * from "./types/index.js"
 export * from "./types/api.js"
+export * from "./client.js"
+export * from "./auth/login.js"
+export * from "./auth/token.js"
+export * from "./auth/user.js"
+export * from "./config/region.js"
