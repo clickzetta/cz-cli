@@ -12,7 +12,7 @@ The sidebar (files, todo, context, MCP, LSP panels), Tab agent switching, keybin
 - **THEN** agent switching works identically to upstream OpenCode
 
 ### Requirement: Session footer SHALL not display OpenCode-specific messages
-The "Get started /connect" welcome message SHALL be removed. Any user-visible "opencode" text in the session footer SHALL be replaced with czcode branding.
+The "Get started /connect" welcome message SHALL be removed. Any user-visible "opencode" text in the session footer SHALL be replaced with czagent branding.
 
 #### Scenario: No welcome message in session footer
 - **WHEN** the user enters a session without a connected provider
@@ -22,5 +22,5 @@ The "Get started /connect" welcome message SHALL be removed. Any user-visible "o
 Session footer, sidebar, and permission prompt colors SHALL be determined by the active theme. No per-component color overrides SHALL be added for the rebrand.
 
 #### Scenario: Theme change applies globally
-- **WHEN** the czcode theme is active
-- **THEN** all session chrome elements use the czcode theme colors without per-file color changes
+- **WHEN** the czagent theme is active
+- **THEN** all session chrome elements use the czagent theme colors without per-file color changes

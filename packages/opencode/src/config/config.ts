@@ -263,11 +263,11 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
 function globalConfigFile() {
-  // czcode: check ~/.clickzetta/czcode.json first
-  const czcodeCandidates = ["czcode.json", "czcode.jsonc"].map((file) =>
+  // czagent: check ~/.clickzetta/czagent.json first
+  const czagentCandidates = ["czagent.json", "czagent.jsonc"].map((file) =>
     path.join(os.homedir(), ".clickzetta", file),
   )
-  for (const file of czcodeCandidates) {
+  for (const file of czagentCandidates) {
     if (existsSync(file)) return file
   }
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
@@ -276,8 +276,8 @@ function globalConfigFile() {
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
-  // Default to czcode path for new installs
-  return czcodeCandidates[0]
+  // Default to czagent path for new installs
+  return czagentCandidates[0]
 }
 
 function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
@@ -361,31 +361,15 @@ export const layer = Layer.effect(
     })
 
     const loadGlobal = Effect.fnUntraced(function* () {
-      // Load from ~/.clickzetta/czcode.json first
-      const czcodeDir = path.join(os.homedir(), ".clickzetta")
+      // Load from ~/.clickzetta/czagent.json
+      const czagentDir = path.join(os.homedir(), ".clickzetta")
       let result: Info = pipe(
         {},
-        mergeDeep(yield* loadFile(path.join(czcodeDir, "czcode.json"))),
-        mergeDeep(yield* loadFile(path.join(czcodeDir, "czcode.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(czagentDir, "czagent.json"))),
+        mergeDeep(yield* loadFile(path.join(czagentDir, "czagent.jsonc"))),
       )
 
-      // ANTHROPIC_* env vars override — disabled for debugging
-      // const anthropicBaseURL = process.env["ANTHROPIC_BASE_URL"]
-      // const anthropicApiKey = process.env["ANTHROPIC_API_KEY"] || process.env["ANTHROPIC_AUTH_TOKEN"]
-      // const anthropicModel = process.env["ANTHROPIC_MODEL"]
-
-      // if (anthropicBaseURL || anthropicApiKey || anthropicModel) {
-      //   const envProvider: ConfigProvider.Info = {
-      //     options: {
-      //       ...(anthropicBaseURL && { baseURL: anthropicBaseURL }),
-      //       ...(anthropicApiKey && { apiKey: anthropicApiKey }),
-      //     },
-      //   }
-      //   result = mergeDeep(result, {
-      //     provider: { anthropic: envProvider, openai: envProvider },
-      //     ...(anthropicModel && { model: `anthropic/${anthropicModel}` }),
-      //   } as Info)
-      // }
+      // ANTHROPIC_* env vars override — disabled, replaced by clickzetta provider from profiles.toml
 
       return result
     })

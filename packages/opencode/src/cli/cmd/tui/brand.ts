@@ -1,5 +1,5 @@
 export const Brand = {
-  name: "czcode",
-  display: "CZCode",
+  name: "czagent",
+  display: "CZAgent",
   company: "ClickZetta",
 } as const

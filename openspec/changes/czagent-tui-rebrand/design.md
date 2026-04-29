@@ -36,7 +36,7 @@ Key branding touchpoints:
 
 ### D1: Replace animated logo with static text — minimal rewrite
 
-**Decision**: Replace the body of `logo.tsx`'s `Logo` component with a static "czcode" text render. Keep the file and export name identical so `routes/home.tsx` needs zero changes to its `<Logo />` usage.
+**Decision**: Replace the body of `logo.tsx`'s `Logo` component with a static "czagent" text render. Keep the file and export name identical so `routes/home.tsx` needs zero changes to its `<Logo />` usage.
 
 **Rationale**: Keeping the same file/export means the diff is contained to one file. Upstream changes to `home.tsx` won't conflict.
 
@@ -45,13 +45,13 @@ Key branding touchpoints:
 
 ### D2: New theme file, one-line default change
 
-**Decision**: Add `czcode.json` theme file alongside existing themes. Change the default theme fallback from `"opencode"` to `"czcode"` — a single string change in `theme.tsx`.
+**Decision**: Add `czagent.json` theme file alongside existing themes. Change the default theme fallback from `"opencode"` to `"czagent"` — a single string change in `theme.tsx`.
 
 **Rationale**: Additive (new file) + one-line change = minimal conflict surface. All existing themes remain untouched.
 
 ### D3: Delete commercial dialogs, leave TODO stubs
 
-**Decision**: Delete `dialog-go-upsell.tsx` and `dialog-console-org.tsx`. In `app.tsx` where they were imported/registered, replace with `// TODO(czcode): Add ClickZetta account/subscription dialog here` comments. Do NOT build replacement features.
+**Decision**: Delete `dialog-go-upsell.tsx` and `dialog-console-org.tsx`. In `app.tsx` where they were imported/registered, replace with `// TODO(czagent): Add ClickZetta account/subscription dialog here` comments. Do NOT build replacement features.
 
 **Rationale**: Clean removal now, placeholder for future CZ integration. Avoids building features that aren't specced yet.
 
@@ -60,8 +60,8 @@ Key branding touchpoints:
 **Decision**: Create `brand.ts` with:
 ```ts
 export const Brand = {
-  name: "czcode",
-  display: "CZCode",
+  name: "czagent",
+  display: "CZAgent",
   company: "ClickZetta",
 } as const
 ```
@@ -94,5 +94,5 @@ In `feature-plugins/home/tips.tsx`, update tip content strings.
 
 - **[Upstream merge — LOW]** → With this minimal approach, conflicts are limited to: `logo.tsx` (full rewrite), `app.tsx` (import removals), and one line in `theme.tsx`. All other changes are additive or string-only.
 - **[Incomplete branding]** → Some deep error messages or generated text may still say "opencode". Acceptable for v1; the final audit task catches user-visible ones.
-- **[Commercial feature gap]** → Deleting Go/console dialogs without replacement means czcode has no account system. TODO stubs mark where to add CZ equivalents later.
-- **[Theme contrast]** → New czcode theme needs testing across terminals. Mitigation: test on iTerm2, Terminal.app, Alacritty.
+- **[Commercial feature gap]** → Deleting Go/console dialogs without replacement means czagent has no account system. TODO stubs mark where to add CZ equivalents later.
+- **[Theme contrast]** → New czagent theme needs testing across terminals. Mitigation: test on iTerm2, Terminal.app, Alacritty.

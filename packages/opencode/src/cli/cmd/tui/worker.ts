@@ -4,7 +4,6 @@ import { Log } from "@/util"
 import { Instance } from "@/project/instance"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { Rpc } from "@/util"
-import { upgrade } from "@/cli/upgrade"
 import { Config } from "@/config"
 import { GlobalBus } from "@/bus/global"
 import { Flag } from "@/flag/flag"
@@ -70,15 +69,6 @@ export const rpc = {
     if (server) await server.stop(true)
     server = await Server.listen(input)
     return { url: server.url.toString() }
-  },
-  async checkUpgrade(input: { directory: string }) {
-    await Instance.provide({
-      directory: input.directory,
-      init: () => AppRuntime.runPromise(InstanceBootstrap),
-      fn: async () => {
-        await upgrade().catch(() => {})
-      },
-    })
   },
   async reload() {
     await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.invalidate(true)))
