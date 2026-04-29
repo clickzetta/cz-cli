@@ -56,7 +56,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             const limit = argv.limit ?? DEFAULT_LIMIT
             let sql = "SHOW TABLES"
             if (argv.in) sql += ` IN ${argv.in}`
-            if (argv.like) sql += ` LIKE '${argv.like}'`
+            if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
             sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
@@ -171,7 +171,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             const limit = argv.limit ?? DEFAULT_LIMIT
             let sql = "SHOW TABLES HISTORY"
             if (argv.in) sql += ` IN ${argv.in}`
-            if (argv.like) sql += ` LIKE '${argv.like}'`
+            if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
             sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)

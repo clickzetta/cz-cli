@@ -40,7 +40,9 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           try {
             const ctx = await getExecContext(argv)
             let sql = "SHOW SCHEMAS"
-            if (argv.like) sql += ` LIKE '${argv.like}'`
+            if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
+            const limit = argv.limit ?? DEFAULT_LIMIT
+            sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -48,14 +50,15 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
               logOperation("schema list", { sql, ok: false, timeMs: Date.now() - t0 })
               error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
             }
-            const limit = argv.limit ?? DEFAULT_LIMIT
-            if (r.rows.length > limit) {
-              logOperation("schema list", { sql, ok: false, errorCode: "LIMIT_EXCEEDED", timeMs: Date.now() - t0 })
-              error("LIMIT_EXCEEDED", `Returned more than ${limit} schemas. Use --limit to increase.`, { format })
+            let aiMessage: string | undefined
+            let rows = r.rows
+            if (rows.length > limit) {
+              rows = rows.slice(0, limit)
+              aiMessage = `Results truncated to ${limit} rows (more available). Use --limit to increase.`
             }
             const columns = r.columns.map((c) => c.name)
-            logOperation("schema list", { sql, ok: true, rows: r.rows.length, timeMs: Date.now() - t0 })
-            successRows(columns, r.rows, { format, timeMs: Date.now() - t0 })
+            logOperation("schema list", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
+            successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -71,7 +74,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             const ctx = await getExecContext(argv)
             const name = argv.name as string
             const t0 = Date.now()
-            const infoSql = `SHOW SCHEMAS EXTENDED WHERE schema_name='${name}'`
+            const infoSql = `SHOW SCHEMAS EXTENDED WHERE schema_name='${name.replace(/'/g, "''")}'`
             const infoR = await execSql(ctx, infoSql)
             const tablesSql = `SHOW TABLES IN ${name}`
             const tablesR = await execSql(ctx, tablesSql)

@@ -1,4 +1,4 @@
-import { formatJson, formatPretty, formatTable, formatCsv, formatJsonl, formatToon } from "./formatter.js"
+import { formatJson, formatPretty, formatTable, formatTableNoHeader, formatCsv, formatCsvNoHeader, formatJsonl, formatToon } from "./formatter.js"
 
 export const EXIT_OK = 0
 export const EXIT_BIZ_ERROR = 1
@@ -35,7 +35,7 @@ export function success(
 export function successRows(
   columns: string[],
   rows: Record<string, unknown>[],
-  opts?: OutputOptions & { affected?: number; timeMs?: number },
+  opts?: OutputOptions & { affected?: number; timeMs?: number; noHeader?: boolean },
 ): never {
   const payload: Record<string, unknown> = {
     ok: true,
@@ -48,12 +48,13 @@ export function successRows(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
 
   const format = opts?.format ?? "table"
+  const noHeader = opts?.noHeader ?? false
   let output: string
 
   if (format === "table") {
-    output = formatTable(columns, rows)
+    output = noHeader ? formatTableNoHeader(columns, rows) : formatTable(columns, rows)
   } else if (format === "csv") {
-    output = formatCsv(columns, rows)
+    output = noHeader ? formatCsvNoHeader(columns, rows) : formatCsv(columns, rows)
   } else if (format === "jsonl") {
     output = formatJsonl(rows)
   } else {

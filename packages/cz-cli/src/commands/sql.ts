@@ -1,11 +1,11 @@
 import type { Argv } from "yargs"
-import { readFileSync } from "node:fs"
+import { readFileSync, openSync, readSync, closeSync } from "node:fs"
 import { splitSql, JobStatus, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, throwOnFailure, type ExecContext } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, type ExecContext } from "./exec.js"
 
 const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -83,13 +83,13 @@ function resolveSql(argv: SqlArgs): string {
   if (argv.file) return readFileSync(argv.file, "utf-8")
   if (argv.stdin || !process.stdin.isTTY) {
     const chunks: Buffer[] = []
-    const fd = require("node:fs").openSync("/dev/stdin", "r")
+    const fd = openSync("/dev/stdin", "r")
     const buf = Buffer.alloc(4096)
     let n: number
-    while ((n = require("node:fs").readSync(fd, buf)) > 0) {
+    while ((n = readSync(fd, buf)) > 0) {
       chunks.push(buf.subarray(0, n))
     }
-    require("node:fs").closeSync(fd)
+    closeSync(fd)
     return Buffer.concat(chunks).toString("utf-8")
   }
   if (argv.statement) return argv.statement
@@ -164,16 +164,18 @@ async function executeSingle(
     error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", { format })
   }
 
-  // Async mode
   if (!argv.sync) {
     const r = await execSql(ctx, sql, { hints, asynchronous: true })
-    if (!isQueryResult(r)) {
-      logOperation("sql", { sql, ok: true })
+    logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
+    if (isQueryResult(r)) {
+      emitResult(r, sql, argv, ctx, t0)
+    } else {
       success(r, {
         format,
         aiMessage: "Job submitted asynchronously. Use `cz-tool status` or poll the job_id to check results.",
       })
     }
+    return
   }
 
   // Sync mode: SELECT without user LIMIT → inject LIMIT to guard
@@ -181,7 +183,7 @@ async function executeSingle(
     const probeLimit = rowLimit + 1
     const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
     const r = await execSql(ctx, probeSql, { hints, timeoutMs: argv.timeout })
-    if (!isQueryResult(r)) return // shouldn't happen in sync
+    if (!isQueryResult(r)) return
     if (r.status === JobStatus.FAILED) {
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
       const msg = hint ? `${r.errorMessage}\n${hint}` : (r.errorMessage ?? "Query failed")
@@ -192,60 +194,76 @@ async function executeSingle(
       logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
       error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, { format })
     }
-    const columns = r.columns.map((c) => c.name)
-    let rows = maskRows(columns, r.rows)
-    if (fieldMax !== Infinity) rows = truncateLargeFields(rows, fieldMax)
-    let aiMessage: string | undefined
-    if (argv["with-schema"]) aiMessage = await fetchWithSchema(ctx, sql)
-    logOperation("sql", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
-    successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage })
+    emitResult(r, sql, argv, ctx, t0)
+    return
   }
 
-  // SHOW or SELECT with user LIMIT
+  // Sync mode: SELECT with user LIMIT N → probe with N+1 to detect truncation
+  if (isSelect && hasLimit && !isShow && !argv["no-limit"]) {
+    const limitMatch = sql.match(/\bLIMIT\s+(\d+)/i)
+    if (limitMatch) {
+      const userLimit = parseInt(limitMatch[1], 10)
+      const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
+      const r = await execSql(ctx, probeSql, { hints, timeoutMs: argv.timeout })
+      if (!isQueryResult(r)) return
+      if (r.status === JobStatus.FAILED) {
+        await handleFailure(r, sql, ctx, format, t0)
+      }
+      let aiMessage: string | undefined
+      let rows = r.rows
+      if (rows.length > userLimit) {
+        rows = rows.slice(0, userLimit)
+        aiMessage = `Results truncated to ${userLimit} rows (more available).`
+      }
+      emitResult({ ...r, rows }, sql, argv, ctx, t0, aiMessage)
+      return
+    }
+  }
+
+  // General case: SHOW, write, or other
   const r = await execSql(ctx, sql, { hints, timeoutMs: argv.timeout })
   if (!isQueryResult(r)) return
   if (r.status === JobStatus.FAILED) {
-    const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
-    const msg = hint ? `${r.errorMessage}\n${hint}` : (r.errorMessage ?? "Query failed")
-    logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-    error(r.errorCode ?? "SQL_ERROR", msg, { format })
+    await handleFailure(r, sql, ctx, format, t0)
   }
 
-  // Handle SHOW with client-side limit check
   if (isShow && !argv["no-limit"] && r.rowCount > rowLimit) {
     logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
     error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, { format })
   }
 
-  // SELECT with user LIMIT N: probe with N+1 to detect truncation
-  let aiMessage: string | undefined
-  let rows = r.rows
-  if (isSelect && hasLimit && !isShow && !argv["no-limit"]) {
-    const limitMatch = sql.match(/\bLIMIT\s+(\d+)/i)
-    if (limitMatch) {
-      const userLimit = parseInt(limitMatch[1], 10)
-      if (rows.length > userLimit) {
-        rows = rows.slice(0, userLimit)
-        aiMessage = `Results truncated to ${userLimit} rows (more available).`
-      }
-    }
-  }
+  emitResult(r, sql, argv, ctx, t0)
+}
 
-  const columns = r.columns.map((c) => c.name)
-  rows = maskRows(columns, rows)
-  if (fieldMax !== Infinity) rows = truncateLargeFields(rows, fieldMax)
-  if (argv["with-schema"]) {
-    const schemaHint = await fetchWithSchema(ctx, sql)
-    aiMessage = aiMessage ? `${aiMessage}\n${schemaHint}` : schemaHint
-  }
+async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number): Promise<never> {
+  const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
+  const msg = hint ? `${r.errorMessage}\n${hint}` : (r.errorMessage ?? "Query failed")
+  logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
+  error(r.errorCode ?? "SQL_ERROR", msg, { format })
+}
+
+function emitResult(
+  r: QueryResult,
+  sql: string,
+  argv: SqlArgs,
+  ctx: ExecContext,
+  t0: number,
+  aiMessage?: string,
+): never {
+  const format = argv.output
+  const fieldMax = argv["no-truncate"] ? Infinity : DEFAULT_FIELD_MAX
+  const isWrite = WRITE_RE.test(sql)
 
   if (isWrite) {
     logOperation("sql", { sql, ok: true, affected: r.affectedRows, timeMs: Date.now() - t0 })
     success({ affected_rows: r.affectedRows, job_id: r.jobId }, { format, timeMs: Date.now() - t0, aiMessage })
   }
 
+  const columns = r.columns.map((c) => c.name)
+  let rows = maskRows(columns, r.rows)
+  if (fieldMax !== Infinity) rows = truncateLargeFields(rows, fieldMax)
   logOperation("sql", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
-  successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage })
+  successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage, noHeader: argv["no-header"] })
 }
 
 async function handler(argv: SqlArgs): Promise<void> {
