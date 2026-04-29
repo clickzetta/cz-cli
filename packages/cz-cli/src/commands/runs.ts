@@ -119,8 +119,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         "Get run logs (delegates to attempts)",
         (y) =>
           y
-            .positional("id", { type: "number", demandOption: true })
-            .option("offset", { type: "number", describe: "Log byte offset" }),
+            .positional("id", { type: "number", demandOption: true }),
         async (argv) => {
           const format = argv.output
           try {

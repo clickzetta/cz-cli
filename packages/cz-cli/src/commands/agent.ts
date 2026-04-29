@@ -37,19 +37,14 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const url = argv["agent-url"] ?? resolveAgentUrl(argv)
-            let token = argv.token as string | undefined
-            if (!token) {
-              const config = resolveConnectionConfig(argv)
-              const authToken = await getToken(config)
-              token = authToken.token
-            }
+            const config = resolveConnectionConfig(argv)
+            const authToken = argv.token ? undefined : await getToken(config)
+            const token = (argv.token as string | undefined) ?? authToken!.token
             let conversationId = argv["conversation-id"] as string | undefined
             if (!conversationId) {
-              const config = resolveConnectionConfig(argv)
-              const authToken = await getToken(config)
               conversationId = await createConversation(url, token, {
-                userId: authToken.userId,
-                instanceId: authToken.instanceId,
+                userId: authToken!.userId,
+                instanceId: authToken!.instanceId,
               })
             }
             const answer = await chat(url, token, conversationId, argv.question as string)
