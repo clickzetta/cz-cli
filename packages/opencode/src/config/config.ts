@@ -263,11 +263,11 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
 function globalConfigFile() {
-  // czagent: check ~/.clickzetta/czagent.json first
-  const czagentCandidates = ["czagent.json", "czagent.jsonc"].map((file) =>
+  // czcli: check ~/.clickzetta/czcli.json first, fall back to czagent.json
+  const czcliCandidates = ["czcli.json", "czcli.jsonc", "czagent.json", "czagent.jsonc"].map((file) =>
     path.join(os.homedir(), ".clickzetta", file),
   )
-  for (const file of czagentCandidates) {
+  for (const file of czcliCandidates) {
     if (existsSync(file)) return file
   }
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
@@ -276,8 +276,8 @@ function globalConfigFile() {
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
-  // Default to czagent path for new installs
-  return czagentCandidates[0]
+  // Default to czcli path for new installs
+  return czcliCandidates[0]
 }
 
 function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
@@ -361,12 +361,14 @@ export const layer = Layer.effect(
     })
 
     const loadGlobal = Effect.fnUntraced(function* () {
-      // Load from ~/.clickzetta/czagent.json
-      const czagentDir = path.join(os.homedir(), ".clickzetta")
+      // Load from ~/.clickzetta/czcli.json (or czagent.json for backward compat)
+      const czDir = path.join(os.homedir(), ".clickzetta")
       let result: Info = pipe(
         {},
-        mergeDeep(yield* loadFile(path.join(czagentDir, "czagent.json"))),
-        mergeDeep(yield* loadFile(path.join(czagentDir, "czagent.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(czDir, "czcli.json"))),
+        mergeDeep(yield* loadFile(path.join(czDir, "czcli.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(czDir, "czagent.json"))),
+        mergeDeep(yield* loadFile(path.join(czDir, "czagent.jsonc"))),
       )
 
       // ANTHROPIC_* env vars override with highest priority

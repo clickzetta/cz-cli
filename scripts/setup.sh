@@ -1,6 +1,6 @@
 #!/bin/sh
-# opencode setup — install from extracted zip to ~/.opencode
-# Run from the directory containing this script (same dir as opencode binary).
+# czcli setup — install from extracted zip
+# Run from the directory containing this script (same dir as czcli binary).
 set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
@@ -67,10 +67,10 @@ case ":$PATH:" in
 esac
 
 # Initialize default czcli.json if not present
-CZAGENT_CONFIG="$HOME/.clickzetta/czcli.json"
-if [ ! -f "$CZAGENT_CONFIG" ]; then
+CZCLI_CONFIG="$HOME/.clickzetta/czcli.json"
+if [ ! -f "$CZCLI_CONFIG" ]; then
     mkdir -p "$HOME/.clickzetta"
-    cat > "$CZAGENT_CONFIG" << 'EOF'
+    cat > "$CZCLI_CONFIG" << 'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "formatter": false,
@@ -91,7 +91,7 @@ if [ ! -f "$CZAGENT_CONFIG" ]; then
   }
 }
 EOF
-    print_success "Created default config at $CZAGENT_CONFIG"
+    print_success "Created default config at $CZCLI_CONFIG"
 fi
 
 # Install bundled cz-tool
