@@ -16,16 +16,13 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  create-release:
     runs-on: ubuntu-latest
-    env:
-      GH_REPO: ${{ github.repository }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Determine version
         id: version
@@ -38,9 +35,6 @@ jobs:
             echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install dependencies
-        run: bun install
-
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,19 +42,50 @@ jobs:
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "${{ steps.version.outputs.tag }}" \
             --generate-notes \
-            --repo "$GH_REPO" || true
+            --repo "${{ github.repository }}" || true
 
-      - name: Build and upload all platforms
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: darwin
+            runner: macos-latest
+          - os: win32
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build and upload ${{ matrix.os }} targets
         env:
-          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
+          OPENCODE_VERSION: ${{ needs.create-release.outputs.version }}
           OPENCODE_RELEASE: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cd packages/opencode && bun run script/build.ts
+
+  upload-installer:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Upload install script
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ steps.version.outputs.tag }}" \
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
             scripts/install.sh \
-            --clobber --repo "$GH_REPO"
+            --clobber --repo "${{ github.repository }}"

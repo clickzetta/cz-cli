@@ -141,35 +141,39 @@ const allTargets: {
   },
 ]
 
+const platformTargets = Script.release
+  ? allTargets.filter((item) => item.os === process.platform)
+  : allTargets
+
 const targets = singleFlag
-  ? allTargets.filter((item) => {
+  ? platformTargets.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
         return false
       }
 
-      // When building for the current platform, prefer a single native binary by default.
-      // Baseline binaries require additional Bun artifacts and can be flaky to download.
       if (item.avx2 === false) {
         return baselineFlag
       }
 
-      // also skip abi-specific builds for the same reason
       if (item.abi !== undefined) {
         return false
       }
 
       return true
     })
-  : allTargets
+  : platformTargets
 
-await $`rm -rf dist`
+console.log(`Building ${targets.length}/${allTargets.length} targets: ${targets.map((t) => [t.os, t.arch, t.avx2 === false ? "baseline" : "", t.abi].filter(Boolean).join("-")).join(", ")}`)
+
+fs.rmSync("dist", { recursive: true, force: true })
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
   await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
-for (const item of targets) {
+for (let i = 0; i < targets.length; i++) {
+  const item = targets[i]
   const name = [
     pkg.name,
     // changing to win32 flags npm for some reason
@@ -180,8 +184,9 @@ for (const item of targets) {
   ]
     .filter(Boolean)
     .join("-")
-  console.log(`building ${name}`)
-  await $`mkdir -p dist/${name}/bin`
+  const t0 = performance.now()
+  console.log(`[${i + 1}/${targets.length}] building ${name}`)
+  fs.mkdirSync(`dist/${name}/bin`, { recursive: true })
 
   const localPath = path.resolve(dir, "node_modules/@opentui/core/parser.worker.js")
   const rootPath = path.resolve(dir, "../../node_modules/@opentui/core/parser.worker.js")
@@ -243,7 +248,8 @@ for (const item of targets) {
     }
   }
 
-  await $`rm -rf ./dist/${name}/bin/tui`
+  fs.rmSync(`./dist/${name}/bin/tui`, { recursive: true, force: true })
+  console.log(`[${i + 1}/${targets.length}] ${name} done in ${((performance.now() - t0) / 1000).toFixed(1)}s`)
   await Bun.file(`dist/${name}/package.json`).write(
     JSON.stringify(
       {
@@ -290,18 +296,23 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
       : `https://github.com/${repo}/releases/download/${version}`
 
   const tmpDir = path.join(dir, "dist", ".cz-cli-tmp")
-  await $`mkdir -p ${tmpDir}`
+  fs.mkdirSync(tmpDir, { recursive: true })
 
   const czToolDir = path.join(distBinDir, "cz-tool")
   const skillsDir = path.join(distBinDir, "skills")
-  await $`mkdir -p ${czToolDir} ${skillsDir}`
+  fs.mkdirSync(czToolDir, { recursive: true })
+  fs.mkdirSync(skillsDir, { recursive: true })
 
   console.log(`Downloading ${asset} for ${platformKey}...`)
   const binaryZip = path.join(tmpDir, asset)
   if (!fs.existsSync(binaryZip)) {
     await $`curl -fSL --retry 3 --retry-delay 5 -o ${binaryZip} ${baseUrl}/${asset}`
   }
-  await $`unzip -o -q ${binaryZip} -d ${czToolDir}`
+  if (os === "win32") {
+    await $`tar -xf ${binaryZip} -C ${czToolDir}`
+  } else {
+    await $`unzip -o -q ${binaryZip} -d ${czToolDir}`
+  }
 
   // Rename the extracted cz-cli binary to cz-tool
   const extractedBin = path.join(czToolDir, os === "win32" ? "cz-cli.exe" : "cz-cli")
@@ -342,32 +353,44 @@ for (const key of Object.keys(binaries)) {
     await bundleCzCli(`dist/${key}/bin`, target.os, target.arch)
   }
 }
-await $`rm -rf dist/.cz-cli-tmp`
+fs.rmSync(path.join("dist", ".cz-cli-tmp"), { recursive: true, force: true })
 
-// Bundle czagent subagent skill into each platform dist
-const czagentSkillSrc = path.join(dir, "..", "..", "skills", "czagent")
-if (fs.existsSync(czagentSkillSrc)) {
+// Bundle cz-cli subagent skill into each platform dist
+const czCliSkillSrc = path.join(dir, "..", "..", "skills", "cz-cli")
+if (fs.existsSync(czCliSkillSrc)) {
   for (const key of Object.keys(binaries)) {
-    const skillsDir = path.join("dist", key, "bin", "skills", "czagent")
-    await $`mkdir -p ${skillsDir}`
-    await $`cp -r ${czagentSkillSrc}/ ${skillsDir}/`
+    const skillsDir = path.join("dist", key, "bin", "skills", "cz-cli")
+    fs.mkdirSync(skillsDir, { recursive: true })
+    fs.cpSync(czCliSkillSrc, skillsDir, { recursive: true })
   }
-  console.log("Bundled czagent subagent skill into all platform dists")
+  console.log("Bundled cz-cli subagent skill into all platform dists")
 }
 
 if (Script.release) {
   const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
+  const archives: string[] = []
   for (const key of Object.keys(binaries)) {
+    const target = findTarget(key)!
     if (fs.existsSync(setupSh)) {
-      await $`cp ${setupSh} dist/${key}/bin/setup.sh`
+      fs.copyFileSync(setupSh, path.join("dist", key, "bin", "setup.sh"))
     }
-    if (key.includes("linux")) {
-      await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
+    const binDir = path.resolve("dist", key, "bin")
+    if (target.os === "linux") {
+      const archive = `dist/${key}.tar.gz`
+      await $`tar -czf ../../${key}.tar.gz *`.cwd(binDir)
+      archives.push(archive)
+    } else if (target.os === "win32") {
+      const archive = `dist/${key}.zip`
+      const absArchive = path.resolve(archive)
+      await $`powershell -Command "Compress-Archive -Path (Get-ChildItem -Path '${binDir}') -DestinationPath '${absArchive}' -Force"`
+      archives.push(archive)
     } else {
-      await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
+      const archive = `dist/${key}.zip`
+      await $`zip -r ../../${key}.zip *`.cwd(binDir)
+      archives.push(archive)
     }
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+  await $`gh release upload v${Script.version} ${archives} --clobber --repo ${process.env.GH_REPO}`
 }
 
 export { binaries }

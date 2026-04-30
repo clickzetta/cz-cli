@@ -181,11 +181,15 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
   }
 
   const metadata = input.error.url ? { url: input.error.url } : undefined
+  const bodyStr = input.error.responseBody ?? ""
+  const quotaExhausted =
+    input.error.statusCode === 429 &&
+    (bodyStr.includes("daily token limit") || bodyStr.includes("daily limit") || bodyStr.includes("quota exceeded"))
   return {
     type: "api_error",
     message: m,
     statusCode: input.error.statusCode,
-    isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
+    isRetryable: quotaExhausted ? false : (input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable),
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,

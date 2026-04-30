@@ -115,36 +115,40 @@ if [ -d "$SCRIPT_DIR/cz-tool" ]; then
     print_success "Installed bundled cz-tool to $INSTALL_DIR/cz-tool"
 fi
 
-# Install bundled skills for czagent internal use
+# Install bundled skills for cz-cli internal use
 if [ -z "$SKIP_SKILLS_INSTALL" ]; then
 SKILLS_DEST="$HOME/.clickzetta/skills"
 if [ -d "$SCRIPT_DIR/skills" ]; then
     echo "Installing bundled skills ..."
     mkdir -p "$SKILLS_DEST"
-    # Copy all skills except czagent subagent skill (that goes to external agents)
+    # Copy all skills except cz-cli subagent skill (that goes to external agents)
     for skill_dir in "$SCRIPT_DIR/skills/"*/; do
         skill_name=$(basename "$skill_dir")
-        [ "$skill_name" = "czagent" ] && continue
+        [ "$skill_name" = "cz-cli" ] && continue
         rm -rf "$SKILLS_DEST/$skill_name"
         cp -r "$skill_dir" "$SKILLS_DEST/$skill_name"
     done
     print_success "Installed bundled skills to $SKILLS_DEST"
 fi
 
-# Install czagent subagent skill to external AI agents
-CZAGENT_SKILL_SRC="$SCRIPT_DIR/skills/czagent"
-if [ -d "$CZAGENT_SKILL_SRC" ]; then
+# Install cz-cli subagent skill to external AI agents
+CZCLI_SKILL_SRC="$SCRIPT_DIR/skills/cz-cli"
+if [ -d "$CZCLI_SKILL_SRC" ]; then
     AGENT_SKILL_DIRS="
-        $HOME/.claude/skills/czagent
-        $HOME/.codex/skills/czagent
-        $HOME/.cursor/skills/czagent
+        $HOME/.claude/skills/cz-cli
+        $HOME/.codex/skills/cz-cli
+        $HOME/.cursor/skills/cz-cli
     "
+    # Clean up old czagent skill directories
+    for old_dest in "$HOME/.claude/skills/czagent" "$HOME/.codex/skills/czagent" "$HOME/.cursor/skills/czagent"; do
+        rm -rf "$old_dest"
+    done
     for dest in $AGENT_SKILL_DIRS; do
         mkdir -p "$(dirname "$dest")"
         rm -rf "$dest"
-        cp -r "$CZAGENT_SKILL_SRC" "$dest"
+        cp -r "$CZCLI_SKILL_SRC" "$dest"
     done
-    print_success "Installed czagent skill to Claude Code, Codex, Cursor"
+    print_success "Installed cz-cli skill to Claude Code, Codex, Cursor"
 fi
 fi
 

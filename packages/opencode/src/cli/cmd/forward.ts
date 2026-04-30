@@ -24,6 +24,10 @@ function patchProfilesWithAIConfig(args: readonly string[]): void {
   const aimeshEndpoint = parsed.aimeshEndpointBaseUrl
   if (!apiKey && !aimeshEndpoint) return
 
+  const nameIdx = args.indexOf("--profile-name")
+  const profileName = nameIdx >= 0 && nameIdx + 1 < args.length ? args[nameIdx + 1] : "default"
+  const sectionHeader = `[profiles.${profileName}]`
+
   const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
   let content: string
   try {
@@ -32,18 +36,20 @@ function patchProfilesWithAIConfig(args: readonly string[]): void {
     return
   }
 
+  const sectionStart = content.indexOf(sectionHeader)
+  if (sectionStart < 0) return
+
+  const nextSection = content.indexOf("\n[", sectionStart + sectionHeader.length)
+  const sectionEnd = nextSection >= 0 ? nextSection : content.length
+
+  let section = content.slice(sectionStart, sectionEnd)
   const lines: string[] = []
-  if (apiKey && !content.includes("api_key")) lines.push(`api_key = "${apiKey}"`)
-  if (aimeshEndpoint && !content.includes("aimesh_endpoint")) lines.push(`aimesh_endpoint = "${aimeshEndpoint}"`)
+  if (apiKey && !section.includes("api_key")) lines.push(`api_key = "${apiKey}"`)
+  if (aimeshEndpoint && !section.includes("aimesh_endpoint")) lines.push(`aimesh_endpoint = "${aimeshEndpoint}"`)
   if (lines.length === 0) return
 
-  const insertion = lines.join("\n") + "\n"
-  const sectionMatch = content.match(/\[profiles\./)
-  if (sectionMatch?.index != null) {
-    content = content.slice(0, sectionMatch.index) + insertion + "\n" + content.slice(sectionMatch.index)
-  } else {
-    content += "\n" + insertion
-  }
+  section = section.trimEnd() + "\n" + lines.join("\n") + "\n"
+  content = content.slice(0, sectionStart) + section + content.slice(sectionEnd)
   writeFileSync(profilesPath, content)
 }
 

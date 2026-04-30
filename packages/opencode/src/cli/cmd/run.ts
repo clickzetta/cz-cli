@@ -646,8 +646,15 @@ export const RunCommand = cmd({
       }
       await share(sdk, sessionID)
 
-      loop().catch((e) => {
-        console.error(e)
+      const loopDone = loop().catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (args.format === "a2a") {
+          process.stdout.write(JSON.stringify({ session_id: sessionID, result: "", error: msg }) + EOL)
+        } else if (args.format === "json") {
+          process.stdout.write(JSON.stringify({ type: "error", timestamp: Date.now(), sessionID, error: msg }) + EOL)
+        } else {
+          console.error(e)
+        }
         process.exit(1)
       })
 
@@ -670,6 +677,7 @@ export const RunCommand = cmd({
           parts: [...files, { type: "text", text: message }],
         })
       }
+      await loopDone
     }
 
     if (args.attach) {

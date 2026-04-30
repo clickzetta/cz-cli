@@ -374,8 +374,17 @@ export const layer = Layer.effect(
       const profilesPath = path.join(czagentDir, "profiles.toml")
       try {
         const toml = readFileSync(profilesPath, "utf-8")
-        const apiKeyMatch = toml.match(/^api_key\s*=\s*"([^"]+)"/m)
-        const endpointMatch = toml.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m)
+        const defaultProfileMatch = toml.match(/^default_profile\s*=\s*"([^"]+)"/m)
+        const profileName = defaultProfileMatch ? defaultProfileMatch[1] : "default"
+        const sectionHeader = `[profiles.${profileName}]`
+        const sectionStart = toml.indexOf(sectionHeader)
+        const nextSection = sectionStart >= 0 ? toml.indexOf("\n[", sectionStart + sectionHeader.length) : -1
+        const profileSection = sectionStart >= 0
+          ? (nextSection >= 0 ? toml.slice(sectionStart, nextSection) : toml.slice(sectionStart))
+          : ""
+        // Check profile section first, fall back to top-level for backwards compat
+        const apiKeyMatch = profileSection.match(/^api_key\s*=\s*"([^"]+)"/m) || toml.match(/^api_key\s*=\s*"([^"]+)"/m)
+        const endpointMatch = profileSection.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m) || toml.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m)
         if (apiKeyMatch) {
           let baseURL = endpointMatch?.[1]
           if (baseURL) {
@@ -390,14 +399,14 @@ export const layer = Layer.effect(
               apiKey: apiKeyMatch[1],
             },
             models: {
-              "claude-sonnet-4-20250514": {
-                name: "Claude Sonnet 4",
+              "deepseek-v4-pro": {
+                name: "DeepSeek V4 Pro",
                 attachment: true,
                 reasoning: true,
                 temperature: true,
                 tool_call: true,
-                cost: { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
-                limit: { context: 200000, output: 16384 },
+                cost: { input: 1, output: 4, cache_read: 0.1, cache_write: 1 },
+                limit: { context: 128000, output: 16384 },
                 options: {},
               },
             },
@@ -405,7 +414,7 @@ export const layer = Layer.effect(
           result = mergeDeep(result, {
             provider: { clickzetta: czProvider },
             enabled_providers: ["clickzetta"],
-            model: "clickzetta/claude-sonnet-4-20250514",
+            model: "clickzetta/deepseek-v4-pro",
           } as any)
         }
       } catch {}
