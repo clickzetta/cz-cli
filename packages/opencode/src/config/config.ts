@@ -11,7 +11,7 @@ import { Env } from "../env"
 import { applyEdits, modify } from "jsonc-parser"
 import { Instance, type InstanceContext } from "../project/instance"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
-import { existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { Account } from "@/account/account"
@@ -369,7 +369,46 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(czagentDir, "czagent.jsonc"))),
       )
 
-      // ANTHROPIC_* env vars override — disabled, replaced by clickzetta provider from profiles.toml
+      // Read AI provider config from profiles.toml (written by cz-cli setup --credential)
+      // Creates a single "clickzetta" provider and hides all others
+      const profilesPath = path.join(czagentDir, "profiles.toml")
+      try {
+        const toml = readFileSync(profilesPath, "utf-8")
+        const apiKeyMatch = toml.match(/^api_key\s*=\s*"([^"]+)"/m)
+        const endpointMatch = toml.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m)
+        if (apiKeyMatch) {
+          let baseURL = endpointMatch?.[1]
+          if (baseURL) {
+            baseURL = baseURL.replace(/\/+$/, "")
+            if (!baseURL.endsWith("/v1")) baseURL += "/v1"
+          }
+          const czProvider: ConfigProvider.Info = {
+            name: "ClickZetta",
+            npm: "@ai-sdk/openai-compatible",
+            options: {
+              ...(baseURL && { baseURL }),
+              apiKey: apiKeyMatch[1],
+            },
+            models: {
+              "claude-sonnet-4-20250514": {
+                name: "Claude Sonnet 4",
+                attachment: true,
+                reasoning: true,
+                temperature: true,
+                tool_call: true,
+                cost: { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+                limit: { context: 200000, output: 16384 },
+                options: {},
+              },
+            },
+          }
+          result = mergeDeep(result, {
+            provider: { clickzetta: czProvider },
+            enabled_providers: ["clickzetta"],
+            model: "clickzetta/claude-sonnet-4-20250514",
+          } as any)
+        }
+      } catch {}
 
       return result
     })

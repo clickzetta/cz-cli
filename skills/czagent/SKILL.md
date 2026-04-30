@@ -27,19 +27,17 @@ czagent is the ONLY way to interact with ClickZetta Lakehouse. You do not have d
 
 ## Execution
 
-Run czagent headless via the bundled script:
+Run czagent headless via CLI:
 
 ```bash
-python3 <skill_dir>/scripts/execute_czagent.py --prompt "user's request here"
+cz-cli agent run "user's request here" --format a2a --dangerously-skip-permissions
 ```
 
 For follow-up queries on the same Lakehouse task, pass the session ID returned from the previous call:
 
 ```bash
-python3 <skill_dir>/scripts/execute_czagent.py --prompt "follow-up request" --session <session_id>
+cz-cli agent run "follow-up request" --format a2a --dangerously-skip-permissions --session <session_id>
 ```
-
-`<skill_dir>` is the directory containing this SKILL.md file.
 
 ## Session Management
 
@@ -49,13 +47,12 @@ python3 <skill_dir>/scripts/execute_czagent.py --prompt "follow-up request" --se
 
 ## Result Handling
 
-The script outputs JSON to stdout:
+The command outputs a single JSON object to stdout:
 
 ```json
 {
   "session_id": "abc123",
-  "result": "czagent's response text",
-  "cost": { "input_tokens": 1234, "output_tokens": 567 }
+  "result": "czagent's response text"
 }
 ```
 

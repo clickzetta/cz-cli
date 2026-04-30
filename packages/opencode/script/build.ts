@@ -207,8 +207,8 @@ for (const item of targets) {
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
-      outfile: `dist/${name}/bin/czagent`,
-      execArgv: [`--user-agent=czagent/${Script.version}`, "--use-system-ca", "--"],
+      outfile: `dist/${name}/bin/cz-cli`,
+      execArgv: [`--user-agent=cz-cli/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
@@ -232,7 +232,7 @@ for (const item of targets) {
 
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
-    const binaryPath = `dist/${name}/bin/czagent`
+    const binaryPath = `dist/${name}/bin/cz-cli`
     console.log(`Running smoke test: ${binaryPath} --version`)
     try {
       const versionOutput = await $`${binaryPath} --version`.text()
@@ -292,16 +292,23 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
   const tmpDir = path.join(dir, "dist", ".cz-cli-tmp")
   await $`mkdir -p ${tmpDir}`
 
-  const czCliDir = path.join(distBinDir, "cz-cli")
+  const czToolDir = path.join(distBinDir, "cz-tool")
   const skillsDir = path.join(distBinDir, "skills")
-  await $`mkdir -p ${czCliDir} ${skillsDir}`
+  await $`mkdir -p ${czToolDir} ${skillsDir}`
 
   console.log(`Downloading ${asset} for ${platformKey}...`)
   const binaryZip = path.join(tmpDir, asset)
   if (!fs.existsSync(binaryZip)) {
     await $`curl -fSL --retry 3 --retry-delay 5 -o ${binaryZip} ${baseUrl}/${asset}`
   }
-  await $`unzip -o -q ${binaryZip} -d ${czCliDir}`
+  await $`unzip -o -q ${binaryZip} -d ${czToolDir}`
+
+  // Rename the extracted cz-cli binary to cz-tool
+  const extractedBin = path.join(czToolDir, os === "win32" ? "cz-cli.exe" : "cz-cli")
+  const renamedBin = path.join(czToolDir, os === "win32" ? "cz-tool.exe" : "cz-tool")
+  if (fs.existsSync(extractedBin)) {
+    fs.renameSync(extractedBin, renamedBin)
+  }
 
   const skillsTar = path.join(tmpDir, "skills.tar.gz")
   if (!fs.existsSync(skillsTar)) {
@@ -310,7 +317,7 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
   }
   await $`tar -xzf ${skillsTar} -C ${skillsDir}`
 
-  console.log(`Bundled cz-cli + skills into ${distBinDir}`)
+  console.log(`Bundled cz-tool + skills into ${distBinDir}`)
 }
 
 function findTarget(key: string) {

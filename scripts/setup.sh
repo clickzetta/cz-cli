@@ -4,7 +4,7 @@
 set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
-BINARY_NAME="czagent"
+BINARY_NAME="cz-cli"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 print_success() { echo "✓ $1"; }
@@ -32,6 +32,21 @@ fi
 
 print_success "Installed to $INSTALL_DIR/$BINARY_NAME"
 
+# Remove legacy cz-cli (Python version installed by clickzetta/cz-cli)
+LEGACY_CZ_DIR="$HOME/.clickzetta/bin"
+if [ -d "$LEGACY_CZ_DIR" ]; then
+    echo "Removing legacy cz-cli from $LEGACY_CZ_DIR ..."
+    rm -rf "$LEGACY_CZ_DIR"
+    print_success "Removed legacy cz-cli"
+fi
+# Also remove standalone 'cz' symlink/binary if present
+for legacy_bin in "$INSTALL_DIR/cz" "$HOME/.local/bin/cz"; do
+    if [ -f "$legacy_bin" ] && [ "$legacy_bin" != "$INSTALL_DIR/$BINARY_NAME" ]; then
+        rm -f "$legacy_bin"
+        print_success "Removed legacy $legacy_bin"
+    fi
+done
+
 # PATH setup
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;  # already in PATH
@@ -53,7 +68,7 @@ case ":$PATH:" in
         for cf in $config_files; do
             grep -q "$INSTALL_DIR" "$cf" 2>/dev/null && continue
             mkdir -p "$(dirname "$cf")"
-            printf '\n# Added by czagent setup\n' >> "$cf"
+            printf '\n# Added by cz-cli setup\n' >> "$cf"
             if [ "$shell_name" = "fish" ]; then
                 echo "fish_add_path $INSTALL_DIR" >> "$cf"
             else
@@ -76,35 +91,23 @@ if [ ! -f "$CZAGENT_CONFIG" ]; then
   "formatter": false,
   "skills": {
     "paths": ["~/.clickzetta/skills"]
-  },
-  "provider": {
-    "anthropic": {
-      "options": {
-        "baseURL": "https://zynkapi.com/v1"
-      }
-    },
-    "openai": {
-      "options": {
-        "baseURL": "https://zynkapi.com/v1"
-      }
-    }
   }
 }
 EOF
     print_success "Created default config at $CZAGENT_CONFIG"
 fi
 
-# Install bundled cz-cli
-if [ -d "$SCRIPT_DIR/cz-cli" ]; then
-    echo "Installing bundled cz-cli ..."
-    rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/cz-cli"
-    cp -r "$SCRIPT_DIR/cz-cli/"* "$INSTALL_DIR/"
-    rm -f "$INSTALL_DIR/setup.sh"
-    chmod +x "$INSTALL_DIR/cz-cli" 2>/dev/null || true
+# Install bundled cz-tool
+if [ -d "$SCRIPT_DIR/cz-tool" ]; then
+    echo "Installing bundled cz-tool ..."
+    rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/cz-tool"
+    mkdir -p "$INSTALL_DIR/cz-tool"
+    cp -r "$SCRIPT_DIR/cz-tool/"* "$INSTALL_DIR/cz-tool/"
+    chmod +x "$INSTALL_DIR/cz-tool/cz-tool" 2>/dev/null || true
     if [ "$(uname -s)" = "Darwin" ]; then
-        xattr -r -d com.apple.quarantine "$INSTALL_DIR" 2>/dev/null || true
+        xattr -r -d com.apple.quarantine "$INSTALL_DIR/cz-tool" 2>/dev/null || true
     fi
-    print_success "Installed bundled cz-cli to $INSTALL_DIR"
+    print_success "Installed bundled cz-tool to $INSTALL_DIR/cz-tool"
 fi
 
 # Install bundled skills for czagent internal use
@@ -139,5 +142,14 @@ if [ -d "$CZAGENT_SKILL_SRC" ]; then
 fi
 
 echo ""
-echo "Done! czagent is ready to use."
-echo "Try: czagent --help"
+# Check for existing profile (aligned with cz-cli install.sh)
+if [ -f "$HOME/.clickzetta/profiles.toml" ] && grep -q '\[profiles\.' "$HOME/.clickzetta/profiles.toml" 2>/dev/null; then
+    print_success "Found existing Lakehouse profile"
+else
+    echo "No Lakehouse connection profile found."
+    echo "Run 'cz-cli setup' to configure your connection."
+fi
+
+echo ""
+echo "Done! cz-cli is ready to use."
+echo "Try: cz-cli --help"
