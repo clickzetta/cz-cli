@@ -56,8 +56,6 @@ jobs:
             runner: ubuntu-24.04-arm
           - os: darwin
             runner: macos-latest
-          - os: darwin
-            runner: macos-13
           - os: win32
             runner: windows-latest
     runs-on: ${{ matrix.runner }}
