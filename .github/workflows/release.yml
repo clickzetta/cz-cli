@@ -1,28 +1,42 @@
 name: release
+run-name: Release ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.version || 'manual') }}
 
 on:
   workflow_dispatch:
     inputs:
       version:
         description: "Release version (e.g. 0.1.0)"
-        required: true
+        required: false
         type: string
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
-env:
-  GH_REPO: ${{ github.repository }}
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install dependencies
         run: bun install
@@ -31,14 +45,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "v${{ inputs.version }}" \
-            --title "v${{ inputs.version }}" \
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
             --generate-notes \
             --repo "$GH_REPO" || true
 
       - name: Build and upload all platforms
         env:
-          OPENCODE_VERSION: ${{ inputs.version }}
+          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
           OPENCODE_RELEASE: "1"
           SKIP_CZ_CLI: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,6 +62,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "v${{ inputs.version }}" \
+          gh release upload "${{ steps.version.outputs.tag }}" \
             scripts/install.sh \
             --clobber --repo "$GH_REPO"
