@@ -63,8 +63,12 @@ case ":$PATH:" in
                 [ -f "$HOME/.bash_profile" ] && config_files="$config_files $HOME/.bash_profile"
                 ;;
             bash)
-                [ -f "$HOME/.bash_profile" ] && config_files="$config_files $HOME/.bash_profile"
-                config_files="$config_files $HOME/.bash_profile"
+                config_files="$HOME/.bashrc"
+                if [ -f "$HOME/.bash_profile" ]; then
+                    config_files="$config_files $HOME/.bash_profile"
+                elif [ -f "$HOME/.profile" ]; then
+                    config_files="$config_files $HOME/.profile"
+                fi
                 ;;
             fish) config_files="$HOME/.config/fish/config.fish" ;;
         esac
