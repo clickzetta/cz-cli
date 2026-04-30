@@ -49,7 +49,6 @@ console.log(`Loaded ${migrations.length} migrations`)
 
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
-const skipInstall = process.argv.includes("--skip-install")
 const plugin = createSolidTransformPlugin()
 const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
 
@@ -142,7 +141,7 @@ const allTargets: {
 ]
 
 const platformTargets = Script.release
-  ? allTargets.filter((item) => item.os === process.platform)
+  ? allTargets.filter((item) => item.os === process.platform && item.arch === process.arch)
   : allTargets
 
 const targets = singleFlag
@@ -168,10 +167,6 @@ console.log(`Building ${targets.length}/${allTargets.length} targets: ${targets.
 fs.rmSync("dist", { recursive: true, force: true })
 
 const binaries: Record<string, string> = {}
-if (!skipInstall) {
-  await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
-}
 for (let i = 0; i < targets.length; i++) {
   const item = targets[i]
   const name = [
@@ -279,6 +274,7 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
     console.log("SKIP_CZ_CLI set, skipping cz-cli bundling")
     return
   }
+  const t0 = performance.now()
 
   const version = process.env.CZ_CLI_VERSION || "latest"
   const repo = "clickzetta/cz-tool"
@@ -314,7 +310,6 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
     await $`unzip -o -q ${binaryZip} -d ${czToolDir}`
   }
 
-  // Rename the extracted cz-cli binary to cz-tool
   const extractedBin = path.join(czToolDir, os === "win32" ? "cz-cli.exe" : "cz-cli")
   const renamedBin = path.join(czToolDir, os === "win32" ? "cz-tool.exe" : "cz-tool")
   if (fs.existsSync(extractedBin)) {
@@ -328,7 +323,7 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
   }
   await $`tar -xzf ${skillsTar} -C ${skillsDir}`
 
-  console.log(`Bundled cz-tool + skills into ${distBinDir}`)
+  console.log(`Bundled cz-tool + skills into ${distBinDir} in ${((performance.now() - t0) / 1000).toFixed(1)}s`)
 }
 
 function findTarget(key: string) {
@@ -347,9 +342,12 @@ function findTarget(key: string) {
   )
 }
 
-for (const key of Object.keys(binaries)) {
+const bundleKeys = Object.keys(binaries)
+for (let i = 0; i < bundleKeys.length; i++) {
+  const key = bundleKeys[i]
   const target = findTarget(key)
   if (target) {
+    console.log(`[${i + 1}/${bundleKeys.length}] bundling cz-tool for ${key}`)
     await bundleCzCli(`dist/${key}/bin`, target.os, target.arch)
   }
 }
@@ -369,12 +367,15 @@ if (fs.existsSync(czCliSkillSrc)) {
 if (Script.release) {
   const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
   const archives: string[] = []
-  for (const key of Object.keys(binaries)) {
+  const keys = Object.keys(binaries)
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i]
     const target = findTarget(key)!
     if (fs.existsSync(setupSh)) {
       fs.copyFileSync(setupSh, path.join("dist", key, "bin", "setup.sh"))
     }
     const binDir = path.resolve("dist", key, "bin")
+    console.log(`[${i + 1}/${keys.length}] archiving ${key}`)
     if (target.os === "linux") {
       const archive = `dist/${key}.tar.gz`
       await $`tar -czf ../../${key}.tar.gz *`.cwd(binDir)
@@ -390,7 +391,9 @@ if (Script.release) {
       archives.push(archive)
     }
   }
+  console.log(`Uploading ${archives.length} archives to v${Script.version}...`)
   await $`gh release upload v${Script.version} ${archives} --clobber --repo ${process.env.GH_REPO}`
+  console.log("Upload complete")
 }
 
 export { binaries }
