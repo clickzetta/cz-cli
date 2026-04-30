@@ -7,6 +7,9 @@ INSTALL_DIR="${HOME}/.local/bin"
 BINARY_NAME="cz-cli"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+SKIP_PATH_PROMPT="${SKIP_PATH_PROMPT:-}"
+SKIP_SKILLS_INSTALL="${SKIP_SKILLS_INSTALL:-}"
+
 print_success() { echo "✓ $1"; }
 print_error()   { echo "Error: $1" >&2; }
 
@@ -48,6 +51,7 @@ for legacy_bin in "$INSTALL_DIR/cz" "$HOME/.local/bin/cz"; do
 done
 
 # PATH setup
+if [ -z "$SKIP_PATH_PROMPT" ]; then
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;  # already in PATH
     *)
@@ -80,6 +84,7 @@ case ":$PATH:" in
         export PATH="$INSTALL_DIR:$PATH"
         ;;
 esac
+fi
 
 # Initialize default czagent.json if not present
 CZAGENT_CONFIG="$HOME/.clickzetta/czagent.json"
@@ -111,6 +116,7 @@ if [ -d "$SCRIPT_DIR/cz-tool" ]; then
 fi
 
 # Install bundled skills for czagent internal use
+if [ -z "$SKIP_SKILLS_INSTALL" ]; then
 SKILLS_DEST="$HOME/.clickzetta/skills"
 if [ -d "$SCRIPT_DIR/skills" ]; then
     echo "Installing bundled skills ..."
@@ -139,6 +145,7 @@ if [ -d "$CZAGENT_SKILL_SRC" ]; then
         cp -r "$CZAGENT_SKILL_SRC" "$dest"
     done
     print_success "Installed czagent skill to Claude Code, Codex, Cursor"
+fi
 fi
 
 echo ""

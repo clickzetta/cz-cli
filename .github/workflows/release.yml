@@ -54,7 +54,6 @@ jobs:
         env:
           OPENCODE_VERSION: ${{ steps.version.outputs.version }}
           OPENCODE_RELEASE: "1"
-          SKIP_CZ_CLI: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cd packages/opencode && bun run script/build.ts
 

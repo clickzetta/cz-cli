@@ -155,12 +155,25 @@ main() {
             ;;
     esac
 
-    for cmd in unzip; do
-        if ! command -v "$cmd" > /dev/null 2>&1; then
-            print_error "$cmd is required but not installed"
-            exit 1
-        fi
-    done
+    # Check dependencies based on platform
+    case "$platform" in
+        linux-*)
+            for cmd in tar; do
+                if ! command -v "$cmd" > /dev/null 2>&1; then
+                    print_error "$cmd is required but not installed"
+                    exit 1
+                fi
+            done
+            ;;
+        *)
+            for cmd in unzip; do
+                if ! command -v "$cmd" > /dev/null 2>&1; then
+                    print_error "$cmd is required but not installed"
+                    exit 1
+                fi
+            done
+            ;;
+    esac
 
     if [ -n "$CZ_VERSION" ]; then
         version="$CZ_VERSION"
