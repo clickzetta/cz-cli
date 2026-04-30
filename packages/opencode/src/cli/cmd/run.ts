@@ -254,9 +254,9 @@ export const RunCommand = cmd({
       })
       .option("format", {
         type: "string",
-        choices: ["default", "json"],
+        choices: ["default", "json", "a2a"],
         default: "default",
-        describe: "format: default (formatted) or json (raw JSON events)",
+        describe: "format: default (formatted), json (raw JSON events), or a2a (agent-to-agent: single JSON with session_id and result)",
       })
       .option("file", {
         alias: ["f"],
@@ -431,8 +431,11 @@ export const RunCommand = cmd({
           process.stdout.write(JSON.stringify({ type, timestamp: Date.now(), sessionID, ...data }) + EOL)
           return true
         }
+        if (args.format === "a2a") return true
         return false
       }
+
+      const a2aTexts: string[] = []
 
       const events = await sdk.event.subscribe()
       let error: string | undefined
@@ -445,6 +448,7 @@ export const RunCommand = cmd({
             event.type === "message.updated" &&
             event.properties.info.role === "assistant" &&
             args.format !== "json" &&
+            args.format !== "a2a" &&
             toggles.get("start") !== true
           ) {
             UI.empty()
@@ -490,6 +494,11 @@ export const RunCommand = cmd({
             }
 
             if (part.type === "text" && part.time?.end) {
+              if (args.format === "a2a") {
+                const text = part.text.trim()
+                if (text) a2aTexts.push(text)
+                continue
+              }
               if (emit("text", { part })) continue
               const text = part.text.trim()
               if (!text) continue
@@ -558,6 +567,12 @@ export const RunCommand = cmd({
               })
             }
           }
+        }
+
+        if (args.format === "a2a") {
+          const output: Record<string, unknown> = { session_id: sessionID, result: a2aTexts.join("\n") }
+          if (error) output.error = error
+          process.stdout.write(JSON.stringify(output) + EOL)
         }
       }
 

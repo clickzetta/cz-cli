@@ -26,6 +26,8 @@ import { AttachCommand } from "./cli/cmd/tui/attach"
 import { TuiThreadCommand } from "./cli/cmd/tui/thread"
 import { AcpCommand } from "./cli/cmd/acp"
 import { EOL } from "os"
+import os from "os"
+import fs from "fs"
 import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
@@ -36,10 +38,9 @@ import { JsonMigration } from "./storage"
 import { Database } from "./storage"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
-import { ProfileCommand } from "./cli/cmd/profile"
-import { loadProfiles } from "./profile"
 import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
+import { forward } from "./cli/cmd/forward"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -53,11 +54,56 @@ process.on("uncaughtException", (e) => {
   })
 })
 
-const args = hideBin(process.argv)
+const rawArgs = hideBin(process.argv)
+
+const isAgentSubcommand = rawArgs[0] === "agent"
+const isGlobalFlag = rawArgs.length === 0 || ["--help", "-h", "--version", "-v"].includes(rawArgs[0])
+
+if (!isAgentSubcommand && !isGlobalFlag) {
+  forward(rawArgs)
+}
+
+// Require profiles.toml with api_key before entering agent commands
+if (!isGlobalFlag) {
+  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+  let hasApiKey = false
+  try {
+    const content = fs.readFileSync(profilesPath, "utf-8")
+    hasApiKey = /^api_key\s*=\s*".+"/m.test(content)
+  } catch {}
+  if (!hasApiKey) {
+    const isTTY = process.stderr.isTTY
+    if (isTTY) {
+      process.stderr.write(
+        "\n  No ClickZetta profile configured.\n" +
+        "  Run:\n\n" +
+        "    cz-cli setup                              # interactive setup (TTY)\n" +
+        "    cz-cli setup --credential <base64_string>  # from registration token\n\n" +
+        "  Register at:\n" +
+        "    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n" +
+        "    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n",
+      )
+    } else {
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        error: "NO_PROFILE",
+        message: "No ClickZetta profile configured.",
+        next_step: "cz-cli setup --credential <base64_string>",
+        register_urls: [
+          "https://accounts.clickzetta.com/register?ref=cz-cli",
+          "https://accounts.singdata.com/register?ref=cz-cli",
+        ],
+      }) + "\n")
+    }
+    process.exit(1)
+  }
+}
+
+const args = isAgentSubcommand ? rawArgs.slice(1) : rawArgs
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("czagent ") && !text.startsWith("opencode ")) {
+  if (!text.startsWith("cz-cli agent ") && !text.startsWith("opencode ")) {
     process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ CZAgent" + UI.Style.TEXT_NORMAL + EOL + EOL)
     process.stderr.write(text)
     return
@@ -67,7 +113,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("czagent")
+  .scriptName("cz-cli agent")
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
@@ -87,21 +133,6 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
-    const subcmd = process.argv[2] || ""
-    const noProfileRequired = ["profile", "completion", "--help", "--version", "-h", "-v", "upgrade", "uninstall"]
-    if (!noProfileRequired.some((c) => subcmd === c || process.argv.includes(c))) {
-      const data = loadProfiles()
-      if (Object.keys(data.profiles).length === 0) {
-        process.stderr.write(
-          "\n  No ClickZetta profile configured.\n" +
-            "  Run this first:\n\n" +
-            "    czagent profile create <name> --username <user> --password <pass> \\\n" +
-            "      --instance <inst> --workspace <ws> --service <endpoint>\n\n",
-        )
-        process.exit(1)
-      }
-    }
-
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
     }
@@ -188,7 +219,6 @@ const cli = yargs(args)
   .command(PrCommand)
   .command(SessionCommand)
   .command(PluginCommand)
-  .command(ProfileCommand)
   .command(DbCommand)
   .fail((msg, err) => {
     if (

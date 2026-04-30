@@ -1,4 +1,6 @@
 import { spawnSync } from "child_process"
+import { readFileSync, writeFileSync } from "fs"
+import os from "os"
 import path from "path"
 import type { CommandModule } from "yargs"
 
@@ -8,7 +10,44 @@ function resolveCzTool(): string {
   return path.join(binDir, "cz-tool", name)
 }
 
-function forward(args: readonly string[]): never {
+function patchProfilesWithAIConfig(args: readonly string[]): void {
+  const credIdx = args.indexOf("--credential")
+  if (credIdx < 0 || credIdx + 1 >= args.length) return
+  const raw = args[credIdx + 1]
+  let parsed: Record<string, string>
+  try {
+    parsed = JSON.parse(Buffer.from(raw, "base64").toString("utf-8"))
+  } catch {
+    return
+  }
+  const apiKey = parsed.apiKey
+  const aimeshEndpoint = parsed.aimeshEndpointBaseUrl
+  if (!apiKey && !aimeshEndpoint) return
+
+  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+  let content: string
+  try {
+    content = readFileSync(profilesPath, "utf-8")
+  } catch {
+    return
+  }
+
+  const lines: string[] = []
+  if (apiKey && !content.includes("api_key")) lines.push(`api_key = "${apiKey}"`)
+  if (aimeshEndpoint && !content.includes("aimesh_endpoint")) lines.push(`aimesh_endpoint = "${aimeshEndpoint}"`)
+  if (lines.length === 0) return
+
+  const insertion = lines.join("\n") + "\n"
+  const sectionMatch = content.match(/\[profiles\./)
+  if (sectionMatch?.index != null) {
+    content = content.slice(0, sectionMatch.index) + insertion + "\n" + content.slice(sectionMatch.index)
+  } else {
+    content += "\n" + insertion
+  }
+  writeFileSync(profilesPath, content)
+}
+
+export function forward(args: readonly string[]): never {
   const bin = resolveCzTool()
   const result = spawnSync(bin, args as string[], {
     stdio: "inherit",
@@ -21,6 +60,9 @@ function forward(args: readonly string[]): never {
         : `Failed to run cz-tool: ${result.error.message}`
     process.stderr.write(msg + "\n")
     process.exit(127)
+  }
+  if (result.status === 0 && args[0] === "setup") {
+    patchProfilesWithAIConfig(args)
   }
   process.exit(result.status ?? 1)
 }
