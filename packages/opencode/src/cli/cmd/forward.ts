@@ -5,9 +5,8 @@ import path from "path"
 import type { CommandModule } from "yargs"
 
 function resolveCzTool(): string {
-  const binDir = path.dirname(process.execPath)
   const name = process.platform === "win32" ? "cz-tool.exe" : "cz-tool"
-  return path.join(binDir, "cz-tool", name)
+  return path.join(os.homedir(), ".clickzetta", "cz-tool", name)
 }
 
 function patchProfilesWithAIConfig(args: readonly string[]): void {

@@ -1432,8 +1432,9 @@ const layer: Layer.Layer<
 
           if (opts.signal) signals.push(opts.signal)
           if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
-          if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
-            signals.push(AbortSignal.timeout(options["timeout"]))
+          const effectiveTimeout = options["timeout"] ?? 20_000
+          if (effectiveTimeout !== false)
+            signals.push(AbortSignal.timeout(effectiveTimeout))
 
           const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
           if (combined) opts.signal = combined

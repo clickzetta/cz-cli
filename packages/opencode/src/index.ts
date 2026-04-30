@@ -57,14 +57,22 @@ process.on("uncaughtException", (e) => {
 const rawArgs = hideBin(process.argv)
 
 const isAgentSubcommand = rawArgs[0] === "agent"
-const isGlobalFlag = rawArgs.length === 0 || ["--help", "-h", "--version", "-v"].includes(rawArgs[0])
 
-if (!isAgentSubcommand && !isGlobalFlag) {
+if (rawArgs.length === 0 || ["--help", "-h"].includes(rawArgs[0])) {
+  forward(rawArgs.length === 0 ? ["--help"] : rawArgs)
+}
+
+if (["--version", "-v"].includes(rawArgs[0])) {
+  process.stdout.write(InstallationVersion + "\n")
+  process.exit(0)
+}
+
+if (!isAgentSubcommand) {
   forward(rawArgs)
 }
 
 // Require profiles.toml with api_key before entering agent commands
-if (!isGlobalFlag) {
+{
   const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
   let hasApiKey = false
   try {
@@ -110,7 +118,7 @@ if (!isGlobalFlag) {
   }
 }
 
-const args = isAgentSubcommand ? rawArgs.slice(1) : rawArgs
+const args = rawArgs.slice(1)
 
 function show(out: string) {
   const text = out.trimStart()

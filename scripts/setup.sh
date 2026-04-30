@@ -106,17 +106,20 @@ EOF
     print_success "Created default config at $CZAGENT_CONFIG"
 fi
 
-# Install bundled cz-tool
+# Install bundled cz-tool (internal, not on PATH)
+CZ_TOOL_DIR="$HOME/.clickzetta/cz-tool"
 if [ -d "$SCRIPT_DIR/cz-tool" ]; then
     echo "Installing bundled cz-tool ..."
-    rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/cz-tool"
-    mkdir -p "$INSTALL_DIR/cz-tool"
-    cp -r "$SCRIPT_DIR/cz-tool/"* "$INSTALL_DIR/cz-tool/"
-    chmod +x "$INSTALL_DIR/cz-tool/cz-tool" 2>/dev/null || true
+    rm -rf "$CZ_TOOL_DIR"
+    mkdir -p "$CZ_TOOL_DIR"
+    cp -r "$SCRIPT_DIR/cz-tool/"* "$CZ_TOOL_DIR/"
+    chmod +x "$CZ_TOOL_DIR/cz-tool" 2>/dev/null || true
     if [ "$(uname -s)" = "Darwin" ]; then
-        xattr -r -d com.apple.quarantine "$INSTALL_DIR/cz-tool" 2>/dev/null || true
+        xattr -r -d com.apple.quarantine "$CZ_TOOL_DIR" 2>/dev/null || true
     fi
-    print_success "Installed bundled cz-tool to $INSTALL_DIR/cz-tool"
+    # Clean up legacy location
+    rm -rf "$INSTALL_DIR/cz-tool"
+    print_success "Installed bundled cz-tool to $CZ_TOOL_DIR"
 fi
 
 # Install bundled skills for cz-cli internal use
@@ -142,9 +145,10 @@ if [ -d "$CZCLI_SKILL_SRC" ]; then
         $HOME/.claude/skills/cz-cli
         $HOME/.codex/skills/cz-cli
         $HOME/.cursor/skills/cz-cli
+        $HOME/.kiro/skills/cz-cli
     "
     # Clean up old czagent skill directories
-    for old_dest in "$HOME/.claude/skills/czagent" "$HOME/.codex/skills/czagent" "$HOME/.cursor/skills/czagent"; do
+    for old_dest in "$HOME/.claude/skills/czagent" "$HOME/.codex/skills/czagent" "$HOME/.cursor/skills/czagent" "$HOME/.kiro/skills/czagent"; do
         rm -rf "$old_dest"
     done
     for dest in $AGENT_SKILL_DIRS; do
@@ -152,7 +156,7 @@ if [ -d "$CZCLI_SKILL_SRC" ]; then
         rm -rf "$dest"
         cp -r "$CZCLI_SKILL_SRC" "$dest"
     done
-    print_success "Installed cz-cli skill to Claude Code, Codex, Cursor"
+    print_success "Installed cz-cli skill to Claude Code, Codex, Cursor, Kiro"
 fi
 fi
 
