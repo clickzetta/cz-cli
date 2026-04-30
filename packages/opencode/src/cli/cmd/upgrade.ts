@@ -16,7 +16,7 @@ export const UpgradeCommand = {
     UI.println("  " + UI.Style.TEXT_INFO_BOLD + "◆ CZAgent" + UI.Style.TEXT_NORMAL)
     UI.empty()
     prompts.intro("Upgrade")
-    // TODO: implement czagent self-upgrade via GitHub Releases (clickzetta/cz-code)
+    // TODO: implement czagent self-upgrade via GitHub Releases (clickzetta/cz-cli)
     prompts.log.warn("In-place upgrade is not yet supported. Please download the latest release from GitHub.")
     prompts.outro("Done")
   },

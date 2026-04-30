@@ -57,7 +57,7 @@ export const layer: Layer.Layer<Service> =
       })
 
       // TODO: version check disabled — czagent has no update channel yet.
-      // When ready, point latest() at clickzetta/cz-code GitHub Releases.
+      // When ready, point latest() at clickzetta/cz-cli GitHub Releases.
       const latestImpl = Effect.fn("Installation.latest")(function* (_installMethod?: Method) {
         return InstallationVersion
       }, Effect.orDie)

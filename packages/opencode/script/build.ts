@@ -275,7 +275,7 @@ async function bundleCzCli(distBinDir: string, os: string, arch: string) {
   }
 
   const version = process.env.CZ_CLI_VERSION || "latest"
-  const repo = "clickzetta/cz-cli"
+  const repo = "clickzetta/cz-tool"
   const platformKey = `${os}-${arch}`
   const asset = CZ_CLI_PLATFORM_MAP[platformKey]
 
@@ -356,7 +356,11 @@ if (fs.existsSync(czagentSkillSrc)) {
 }
 
 if (Script.release) {
+  const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
   for (const key of Object.keys(binaries)) {
+    if (fs.existsSync(setupSh)) {
+      await $`cp ${setupSh} dist/${key}/bin/setup.sh`
+    }
     if (key.includes("linux")) {
       await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
     } else {

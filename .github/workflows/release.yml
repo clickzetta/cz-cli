@@ -1,0 +1,53 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes \
+            --repo "$GH_REPO" || true
+
+      - name: Build and upload all platforms
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+          OPENCODE_RELEASE: "1"
+          SKIP_CZ_CLI: "1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cd packages/opencode && bun run script/build.ts
+
+      - name: Upload install script
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${{ inputs.version }}" \
+            scripts/install.sh \
+            --clobber --repo "$GH_REPO"

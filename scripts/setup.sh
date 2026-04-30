@@ -1,6 +1,6 @@
 #!/bin/sh
-# opencode setup — install from extracted zip to ~/.opencode
-# Run from the directory containing this script (same dir as opencode binary).
+# cz-cli setup — install from extracted archive to ~/.local/bin
+# Run from the directory containing this script (same dir as cz-cli binary).
 set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
@@ -32,7 +32,7 @@ fi
 
 print_success "Installed to $INSTALL_DIR/$BINARY_NAME"
 
-# Remove legacy cz-cli (Python version installed by clickzetta/cz-cli)
+# Remove legacy cz-cli (Python version installed by clickzetta/cz-tool)
 LEGACY_CZ_DIR="$HOME/.clickzetta/bin"
 if [ -d "$LEGACY_CZ_DIR" ]; then
     echo "Removing legacy cz-cli from $LEGACY_CZ_DIR ..."
