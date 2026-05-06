@@ -67,6 +67,11 @@ if (["--version", "-v"].includes(rawArgs[0])) {
   process.exit(0)
 }
 
+if (rawArgs[0] === "setup") {
+  const { setup } = await import("./cli/cmd/setup")
+  await setup(rawArgs.slice(1))
+}
+
 if (!isAgentSubcommand) {
   forward(rawArgs)
 }
