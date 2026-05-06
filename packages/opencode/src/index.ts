@@ -109,14 +109,15 @@ if (!isAgentSubcommand) {
       )
     } else {
       process.stdout.write(JSON.stringify({
-        ok: false,
-        error: "NO_PROFILE",
-        message: "No ClickZetta profile configured.",
-        next_step: "cz-cli setup --credential <base64_string>",
-        register_urls: [
-          "https://accounts.clickzetta.com/register?ref=cz-cli",
-          "https://accounts.singdata.com/register?ref=cz-cli",
-        ],
+        error: {
+          code: "NO_PROFILE",
+          message: "No ClickZetta profile configured.",
+          next_step: "cz-cli setup --credential <base64_string>",
+          register_urls: [
+            "https://accounts.clickzetta.com/register?ref=cz-cli",
+            "https://accounts.singdata.com/register?ref=cz-cli",
+          ],
+        },
       }) + "\n")
     }
     process.exit(1)

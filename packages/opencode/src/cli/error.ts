@@ -14,6 +14,13 @@ function isTaggedError(error: unknown, tag: string): boolean {
   )
 }
 
+const LLM_CONFIG_HINT = [
+  "",
+  "To check or customize your LLM provider:",
+  "  cz-cli agent config --show",
+  "  cz-cli agent config --llm-provider <provider> --llm-model <model> --llm-api-key <key>",
+].join("\n")
+
 export function FormatError(input: unknown) {
   // MCPFailed: { name: string }
   if (NamedError.hasName(input, "MCPFailed")) {
@@ -25,6 +32,12 @@ export function FormatError(input: unknown) {
     return (input as ErrorLike).message ?? ""
   }
 
+  // ProviderAuthError: { providerID: string, message: string }
+  if (NamedError.hasName(input, "ProviderAuthError")) {
+    const data = (input as ErrorLike).data
+    return `Authentication failed for provider "${data?.providerID}": ${data?.message ?? "invalid or expired credentials"}` + LLM_CONFIG_HINT
+  }
+
   // ProviderModelNotFoundError: { providerID: string, modelID: string, suggestions?: string[] }
   if (NamedError.hasName(input, "ProviderModelNotFoundError")) {
     const data = (input as ErrorLike).data
@@ -32,14 +45,15 @@ export function FormatError(input: unknown) {
     return [
       `Model not found: ${data?.providerID}/${data?.modelID}`,
       ...(suggestions.length ? ["Did you mean: " + suggestions.join(", ")] : []),
-      `Try: \`opencode models\` to list available models`,
-      `Or check your config (opencode.json) provider/model names`,
+      `Try: \`cz-cli agent models\` to list available models`,
+      `Or check your config (~/.clickzetta/czagent.json) provider/model names`,
+      LLM_CONFIG_HINT,
     ].join("\n")
   }
 
   // ProviderInitError: { providerID: string }
   if (NamedError.hasName(input, "ProviderInitError")) {
-    return `Failed to initialize provider "${(input as ErrorLike).data?.providerID}". Check credentials and configuration.`
+    return `Failed to initialize provider "${(input as ErrorLike).data?.providerID}". Check credentials and configuration.` + LLM_CONFIG_HINT
   }
 
   // ConfigJsonError: { path: string, message?: string }

@@ -12,6 +12,7 @@ import matter from "gray-matter"
 import { Instance } from "../../project/instance"
 import { EOL } from "os"
 import type { Argv } from "yargs"
+import { AgentConfigCommand } from "./config-llm"
 
 type AgentMode = "all" | "primary" | "subagent"
 
@@ -243,6 +244,6 @@ const AgentListCommand = cmd({
 export const AgentCommand = cmd({
   command: "agent",
   describe: "manage agents",
-  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).demandCommand(),
+  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).command(AgentConfigCommand).demandCommand(),
   async handler() {},
 })

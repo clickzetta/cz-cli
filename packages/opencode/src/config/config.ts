@@ -385,22 +385,41 @@ export const layer = Layer.effect(
         // Check profile section first, fall back to top-level for backwards compat
         const apiKeyMatch = profileSection.match(/^api_key\s*=\s*"([^"]+)"/m) || toml.match(/^api_key\s*=\s*"([^"]+)"/m)
         const endpointMatch = profileSection.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m) || toml.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m)
+        const llmProviderMatch = profileSection.match(/^llm_provider\s*=\s*"([^"]+)"/m) || toml.match(/^llm_provider\s*=\s*"([^"]+)"/m)
+        const llmModelMatch = profileSection.match(/^llm_model\s*=\s*"([^"]+)"/m) || toml.match(/^llm_model\s*=\s*"([^"]+)"/m)
+        const llmBaseUrlMatch = profileSection.match(/^llm_base_url\s*=\s*"([^"]+)"/m) || toml.match(/^llm_base_url\s*=\s*"([^"]+)"/m)
+        const llmApiKeyMatch = profileSection.match(/^llm_api_key\s*=\s*"([^"]+)"/m) || toml.match(/^llm_api_key\s*=\s*"([^"]+)"/m)
         if (apiKeyMatch) {
-          let baseURL = endpointMatch?.[1]
+          const llmProvider = llmProviderMatch?.[1] ?? "openai-compatible"
+          const llmModel = llmModelMatch?.[1] ?? "deepseek-v4-pro"
+          const providerApiKey = llmApiKeyMatch?.[1] ?? apiKeyMatch[1]
+
+          const providerNpmMap: Record<string, string> = {
+            "anthropic": "@ai-sdk/anthropic",
+            "openai": "@ai-sdk/openai",
+            "openai-compatible": "@ai-sdk/openai-compatible",
+            "bedrock": "@ai-sdk/amazon-bedrock",
+            "google": "@ai-sdk/google",
+            "azure": "@ai-sdk/azure",
+          }
+          const npm = providerNpmMap[llmProvider] ?? providerNpmMap["openai-compatible"]
+
+          let baseURL = llmBaseUrlMatch?.[1] ?? endpointMatch?.[1]
           if (baseURL) {
             baseURL = baseURL.replace(/\/+$/, "")
-            if (!baseURL.endsWith("/v1")) baseURL += "/v1"
+            if (llmProvider === "openai-compatible" && !baseURL.endsWith("/v1")) baseURL += "/v1"
           }
+
           const czProvider: ConfigProvider.Info = {
             name: "ClickZetta",
-            npm: "@ai-sdk/openai-compatible",
+            npm,
             options: {
               ...(baseURL && { baseURL }),
-              apiKey: apiKeyMatch[1],
+              apiKey: providerApiKey,
             },
             models: {
-              "deepseek-v4-pro": {
-                name: "DeepSeek V4 Pro",
+              [llmModel]: {
+                name: llmModel,
                 attachment: true,
                 reasoning: true,
                 temperature: true,
@@ -413,10 +432,14 @@ export const layer = Layer.effect(
           }
           result = mergeDeep(result, {
             provider: { clickzetta: czProvider },
-            model: "clickzetta/deepseek-v4-pro",
+            model: `clickzetta/${llmModel}`,
           } as any)
         }
-      } catch {}
+      } catch (e) {
+        if (existsSync(profilesPath)) {
+          log.warn("failed to parse profiles.toml, LLM config may be incomplete", { path: profilesPath, error: String(e) })
+        }
+      }
 
       return result
     })

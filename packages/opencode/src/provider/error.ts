@@ -169,6 +169,8 @@ export type ParsedAPICallError =
       metadata?: Record<string, string>
     }
 
+const LLM_CONFIG_HINT = "\n\nTo check or customize your LLM provider: cz-cli agent config --show"
+
 export function parseAPICallError(input: { providerID: ProviderID; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
@@ -182,13 +184,15 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
 
   const metadata = input.error.url ? { url: input.error.url } : undefined
   const bodyStr = input.error.responseBody ?? ""
+  const status = input.error.statusCode
   const quotaExhausted =
-    input.error.statusCode === 429 &&
+    status === 429 &&
     (bodyStr.includes("daily token limit") || bodyStr.includes("daily limit") || bodyStr.includes("quota exceeded"))
+  const needsConfigHint = status === 401 || status === 403 || quotaExhausted
   return {
     type: "api_error",
-    message: m,
-    statusCode: input.error.statusCode,
+    message: needsConfigHint ? m + LLM_CONFIG_HINT : m,
+    statusCode: status,
     isRetryable: quotaExhausted ? false : (input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable),
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,

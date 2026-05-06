@@ -76,13 +76,14 @@ export async function setup(args: readonly string[]): Promise<never> {
     }
   } else {
     process.stdout.write(JSON.stringify({
-      ok: false,
-      error: "NO_CREDENTIAL",
-      message: "No credential provided. Use: cz-cli setup --credential <base64_string>",
-      register_urls: [
-        "https://accounts.clickzetta.com/register?ref=cz-cli",
-        "https://accounts.singdata.com/register?ref=cz-cli",
-      ],
+      error: {
+        code: "NO_CREDENTIAL",
+        message: "No credential provided. Use: cz-cli setup --credential <base64_string>",
+        register_urls: [
+          "https://accounts.clickzetta.com/register?ref=cz-cli",
+          "https://accounts.singdata.com/register?ref=cz-cli",
+        ],
+      },
     }) + "\n")
     process.exit(1)
   }
@@ -92,11 +93,17 @@ export async function setup(args: readonly string[]): Promise<never> {
     cred = parseCredential(base64)
   } catch {
     process.stderr.write("  Error: invalid credential string (not valid base64 JSON)\n")
+    process.stderr.write("  Get a valid credential from:\n")
+    process.stderr.write("    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n")
+    process.stderr.write("    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n")
     process.exit(1)
   }
 
   if (!cred.instanceName && !cred.service) {
     process.stderr.write("  Error: credential missing required fields (instanceName or service)\n")
+    process.stderr.write("  Get a valid credential from:\n")
+    process.stderr.write("    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n")
+    process.stderr.write("    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n")
     process.exit(1)
   }
 
@@ -110,7 +117,6 @@ export async function setup(args: readonly string[]): Promise<never> {
     process.stderr.write(`    user:      ${cred.username ?? "-"}\n\n`)
   } else {
     process.stdout.write(JSON.stringify({
-      ok: true,
       data: {
         message: `Profile '${profileName}' created successfully.`,
         profile: profileName,
