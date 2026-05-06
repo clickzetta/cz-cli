@@ -413,7 +413,6 @@ export const layer = Layer.effect(
           }
           result = mergeDeep(result, {
             provider: { clickzetta: czProvider },
-            enabled_providers: ["clickzetta"],
             model: "clickzetta/deepseek-v4-pro",
           } as any)
         }

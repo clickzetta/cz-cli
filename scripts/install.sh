@@ -184,18 +184,6 @@ main() {
     fi
     echo "Version: $version"
 
-    # Skip if same version already installed
-    if [ -x "$INSTALL_DIR/$BINARY_NAME" ]; then
-        local installed_version
-        installed_version=$("$INSTALL_DIR/$BINARY_NAME" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-        local v_clean="${version#v}"
-        local i_clean="${installed_version#v}"
-        if [ -n "$i_clean" ] && [ "$v_clean" = "$i_clean" ]; then
-            print_success "cz-cli $version is already installed. Skipping."
-            exit 0
-        fi
-    fi
-
     # Archive naming matches build.ts output: opencode-{os}-{arch}.{zip|tar.gz}
     local archive_name ext
     case "$platform" in
