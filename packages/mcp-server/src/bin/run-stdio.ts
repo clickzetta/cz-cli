@@ -19,6 +19,10 @@ import pino from "pino"
 import { StudioConfigManager } from "../config/profile.js"
 import { getRegionByAlias, getRegionByServiceUrl } from "../config/region.js"
 import { runStdio } from "../transport/stdio.js"
+import { McpComponentRegistrar } from "../transport/registrar.js"
+import { McpServerCore } from "../server.js"
+import { getToolRegistry } from "../tool-registry.js"
+import { registerAllTools } from "../tools/index.js"
 
 // ---------------------------------------------------------------------------
 // HEADER_ARG_MAP — run_stdio_server.py:16-26
@@ -181,13 +185,35 @@ logger.info({ configFile: `config/${env}_properties.ini` }, "Config file")
 
 // ---------------------------------------------------------------------------
 // Server startup — run_stdio_server.py:164-174
-// Create a low-level MCP Server (mirrors ClickzettaMCPServer.low_level_server)
-// Block 2 will wire in real tool handlers; for now we expose empty capabilities.
+// Create a low-level MCP Server and wire all tools/resources/prompts via
+// McpComponentRegistrar (mirrors ClickzettaMCPServer.low_level_server setup).
 // ---------------------------------------------------------------------------
 const server = new Server(
   { name: "clickzetta-stdio-server", version: "0.1.0" },
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 )
+
+// mcp_registrar.py:36-57 — create registrar with server_core + tool_registry
+const serverCore = new McpServerCore()
+const toolRegistry = getToolRegistry()
+
+// Initialize server core if config is available (token present)
+if (config.token) {
+  try {
+    serverCore.initialize(config)
+    const db = serverCore.getDb()
+    registerAllTools(toolRegistry, db)
+    logger.info("Server core initialized with DB connection")
+  } catch (err) {
+    logger.warn({ err }, "Server core initialization failed — running in limited mode (no DB tools)")
+  }
+} else {
+  logger.info("No token configured — running in limited mode (no DB tools)")
+}
+
+// mcp_registrar.py:200-278 — register tools, resources, prompts
+const registrar = new McpComponentRegistrar(serverCore, toolRegistry)
+registrar.registerAll(server)
 
 // run_stdio_server.py:167 — await server.run()
 try {

@@ -476,3 +476,86 @@ const REMOVE_TABLES_PROMPT: PromptDefinition = {
 **警告**: 如果其他表依赖此表，会提示错误
 `,
 }
+
+// ---------------------------------------------------------------------------
+// prompts/__init__.py:11-16 — PROMPTS registry
+// Maps prompt name → PromptDefinition, mirrors Python PROMPTS dict.
+// ---------------------------------------------------------------------------
+export const PROMPTS: Record<string, PromptDefinition> = {
+  cz_system_prompt: CZ_SYSTEM_PROMPT,
+  add_dimensions_to_semantic_view: ADD_DIMENSIONS_PROMPT,
+  remove_dimensions_from_semantic_view: REMOVE_DIMENSIONS_PROMPT,
+  add_tables_to_semantic_view: ADD_TABLES_PROMPT,
+  remove_tables_from_semantic_view: REMOVE_TABLES_PROMPT,
+}
+
+// ---------------------------------------------------------------------------
+// registerPrompts — mcp_registrar.py:256-278
+//
+// Registers list_prompts and get_prompt handlers on the MCP Server.
+// Mirrors _get_prompts_list_for_server (lines 820-853) and
+// _get_prompt_for_server (lines 855-895).
+// ---------------------------------------------------------------------------
+export function registerPrompts(server: Server): void {
+  // mcp_registrar.py:264-267 — @server.list_prompts()
+  server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    // mcp_registrar.py:820-853 — _get_prompts_list_for_server
+    const promptList = Object.entries(PROMPTS).map(([, data]) => ({
+      name: data.name,
+      description: data.description,
+      arguments: (data.arguments ?? []).map((arg) => ({
+        name: arg.name,
+        description: arg.description,
+        required: arg.required,
+      })),
+    }))
+    logger.info({ count: promptList.length }, "Returning prompts list")
+    return { prompts: promptList }
+  })
+
+  // mcp_registrar.py:269-272 — @server.get_prompt()
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    // mcp_registrar.py:855-895 — _get_prompt_for_server
+    const name = request.params.name
+    const args = (request.params.arguments as Record<string, string> | undefined) ?? {}
+
+    // mcp_registrar.py:860-861 — prompt not found
+    const promptObj = Object.values(PROMPTS).find((p) => p.name === name)
+    if (!promptObj) {
+      throw new Error(`Prompt not found: ${name}`)
+    }
+
+    // mcp_registrar.py:863-877 — special handling for create_table_interactive
+    if (name === "create_table_interactive") {
+      const tableName = args["table_name"] ?? ""
+      const columns = args["columns"] ?? ""
+      return {
+        messages: [
+          {
+            role: "user" as const,
+            content: {
+              type: "text" as const,
+              text: `Create a table named '${tableName}' with the following columns:\n\n${columns}`,
+            },
+          },
+        ],
+      }
+    }
+
+    // mcp_registrar.py:879-891 — default: return description as prompt text
+    const text = promptObj.content ?? promptObj.description
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text,
+          },
+        },
+      ],
+    }
+  })
+
+  logger.info("Prompts registered")
+}

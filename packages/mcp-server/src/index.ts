@@ -12,3 +12,5 @@ export * from "./auth/bearer.js"
 // Block 2: LakehouseClient
 export * from "./lakehouse-client.js"
 export * from "./mcp-server.js"
+// MCPComponentRegistrar — unified tool/resource/prompt registration
+export * from "./transport/registrar.js"

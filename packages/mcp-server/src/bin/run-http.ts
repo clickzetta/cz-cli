@@ -27,6 +27,10 @@ import { resolve } from "node:path"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import pino from "pino"
 import { runHttp } from "../transport/http.js"
+import { McpComponentRegistrar } from "../transport/registrar.js"
+import { McpServerCore } from "../server.js"
+import { getToolRegistry } from "../tool-registry.js"
+import { registerAllTools } from "../tools/index.js"
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing — run_http_server.py:83-113 (create_parser)
@@ -166,13 +170,26 @@ logger.info("=".repeat(60))
 
 // ---------------------------------------------------------------------------
 // Server startup — run_http_server.py:163-165
-// Create a low-level MCP Server (mirrors ClickzettaMCPServer.low_level_server)
-// Block 2 will wire in real tool handlers; for now we expose empty capabilities.
+// Create a low-level MCP Server and wire all tools/resources/prompts via
+// McpComponentRegistrar (mirrors ClickzettaMCPServer.low_level_server setup).
 // ---------------------------------------------------------------------------
 const server = new Server(
   { name: "clickzetta-http-server", version: "0.1.0" },
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 )
+
+// mcp_registrar.py:36-57 — create registrar with server_core + tool_registry
+const serverCore = new McpServerCore()
+const toolRegistry = getToolRegistry()
+
+// HTTP mode: tools are registered without a pre-initialized DB connection.
+// Each tool call acquires a connection on demand via serverCore.getDb().
+// (No config available at startup in HTTP mode — auth comes per-request.)
+logger.info("HTTP mode: tools registered without pre-initialized DB (per-request auth)")
+
+// mcp_registrar.py:200-278 — register tools, resources, prompts
+const registrar = new McpComponentRegistrar(serverCore, toolRegistry)
+registrar.registerAll(server)
 
 // run_http_server.py:165 — await server.run()
 try {
