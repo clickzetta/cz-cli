@@ -202,6 +202,11 @@ export class SkillSearchEngine {
     return results
   }
 
+  // Expose skills list for mcp-server.ts (mirrors search_engine.skills access in mcp_handlers.py:378,527)
+  getSkills(): Skill[] {
+    return this.skills
+  }
+
   // search_engine.py:171-194 — _cosine_similarity() (sparse variant)
   private _cosineSimilarity(
     a: Map<string, number>,
