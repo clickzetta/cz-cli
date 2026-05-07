@@ -483,6 +483,7 @@ export class SqlSession {
     }
     const result = await pollJobResult(clientOpts, jobId, {
       jobTimeoutMs: prepared.jobTimeoutMs > 0 ? prepared.jobTimeoutMs : undefined,
+      timezone: this.timezoneHint,
     })
 
     // Volume SQL post-processing — client.py:1340-1344 + process_volume_sql

@@ -21,6 +21,8 @@ function nextSleepMs(current: number): number {
 
 interface PollJobResultParams {
   jobTimeoutMs?: number
+  /** utils.py:278-300 as_timezone — timezone for TIMESTAMP_LTZ conversion */
+  timezone?: string
 }
 
 // --- Raw response types matching the actual /lh/getJob JSON ---
@@ -219,10 +221,34 @@ export function hexToBytes(hex: string): Uint8Array {
 }
 
 /**
+ * utils.py:278-300 as_timezone — apply timezone to a datetime string.
+ * JS's Intl.DateTimeFormat can convert a UTC timestamp to a named timezone.
+ * We return an ISO 8601 string with the offset suffix so callers can parse it.
+ */
+function applyTimezone(isoStr: string, timezone: string): string {
+  try {
+    const d = new Date(isoStr)
+    if (Number.isNaN(d.getTime())) return isoStr
+    // Format in the target timezone and reconstruct an ISO-like string.
+    const fmt = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timezone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      fractionalSecondDigits: 3,
+    })
+    return fmt.format(d).replace(" ", "T")
+  } catch {
+    return isoStr
+  }
+}
+
+/**
  * Minimal type coercion to match Python connector behavior.
+ * @param timezone Optional timezone hint (from SqlSession.timezoneHint) used
+ *   to convert TIMESTAMP_LTZ values, mirroring utils.py:278-300 as_timezone.
  * @internal exported for unit tests.
  */
-export function coerceValue(value: string | null, typeCategory: string): unknown {
+export function coerceValue(value: string | null, typeCategory: string, timezone?: string): unknown {
   if (value === null || value === undefined) return null
   // TEXT format uses literal "null" for null values
   if (value === "null" || value === "NULL") return null
@@ -252,11 +278,13 @@ export function coerceValue(value: string | null, typeCategory: string): unknown
     return value.trim()
   }
   // TIMESTAMP_LTZ / TIMESTAMP (alias for LTZ): normalise space → "T",
-  // keep any timezone suffix intact. Do NOT append Z or +00:00.
+  // then apply timezone if provided (utils.py:278-300 as_timezone).
   if (upper === "TIMESTAMP_LTZ" || upper === "TIMESTAMP") {
-    return value.trim().replace(" ", "T")
+    const iso = value.trim().replace(" ", "T")
+    if (timezone) return applyTimezone(iso, timezone)
+    return iso
   }
-  // TIMESTAMP_NTZ: wall-clock, no timezone suffix appended.
+  // TIMESTAMP_NTZ: wall-clock, no timezone conversion (utils.py:281-282).
   if (upper === "TIMESTAMP_NTZ") {
     return value.trim().replace(" ", "T")
   }
@@ -305,6 +333,7 @@ export function coerceValue(value: string | null, typeCategory: string): unknown
 
 function parseResultSet(
   resultSet: LhResultSet | undefined,
+  timezone?: string,
 ): { columns: ColumnSchema[]; rows: Record<string, unknown>[]; isAsync: boolean } {
   if (!resultSet) {
     return { columns: [], rows: [], isAsync: false }
@@ -342,7 +371,7 @@ function parseResultSet(
     const rows = rawRows.map((rawRow) => {
       const record: Record<string, unknown> = {}
       for (let i = 0; i < columns.length; i++) {
-        record[columns[i].name] = coerceValue(rawRow[i] ?? null, columns[i].type)
+        record[columns[i].name] = coerceValue(rawRow[i] ?? null, columns[i].type, timezone)
       }
       return record
     })
@@ -366,6 +395,7 @@ function parseResultSet(
 export async function parseJobResponse(
   raw: LhJobResponse,
   jobId: JobID,
+  timezone?: string,
 ): Promise<QueryResult> {
   const state = raw.status?.state ?? "UNKNOWN"
   const status = toJobStatus(state)
@@ -383,7 +413,7 @@ export async function parseJobResponse(
     }
   }
 
-  const { columns, rows, isAsync } = parseResultSet(raw.resultSet)
+  const { columns, rows, isAsync } = parseResultSet(raw.resultSet, timezone)
 
   // If data is in presigned URLs, fetch it. The format on disk follows the
   // same `metadata.format` as embedded data (query_result.py:297,371,387).
@@ -429,7 +459,7 @@ export async function pollJobResult(
   params: PollJobResultParams = {},
 ): Promise<QueryResult> {
   const startTime = Date.now()
-  const { jobTimeoutMs } = params
+  const { jobTimeoutMs, timezone } = params
 
   const requestBody = {
     get_result_request: {
@@ -510,11 +540,11 @@ export async function pollJobResult(
     const hasEmbeddedData = (raw?.resultSet?.data?.data?.length ?? 0) > 0
     const hasLocation = raw?.resultSet?.location != null
     if (!TERMINAL_STATES.has(state) && (hasEmbeddedData || hasLocation)) {
-      return parseJobResponse(raw, jobId)
+      return parseJobResponse(raw, jobId, timezone)
     }
 
     if (TERMINAL_STATES.has(state)) {
-      return parseJobResponse(raw, jobId)
+      return parseJobResponse(raw, jobId, timezone)
     }
 
     await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
