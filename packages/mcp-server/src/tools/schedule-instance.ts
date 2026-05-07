@@ -583,3 +583,285 @@ async function handleGetTaskRunStats(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// registerScheduleInstanceTools — all tool definitions
+// schedule_instance_tools.py:426-581, 659-722, 802-866, 948-1006, 1100-1248
+// ---------------------------------------------------------------------------
+export function registerScheduleInstanceTools(registry: ToolRegistry, db: LakehouseDB): void {
+  const getConfig = () => {
+    if (!db.connectionConfig) throw new Error("No connection configuration available")
+    return db.connectionConfig
+  }
+
+  const tools: ToolDefinition[] = [
+    // schedule_instance_tools.py:429-581 — list_task_run
+    {
+      name: "list_task_run",
+      description:
+        "List task runs that match filtering conditions with **pagination**. " +
+        "Supports filtering by project space, task type, schedule task ID, " +
+        "fuzzy task name or task run ID, task run type, planned time range, " +
+        "status combinations, task group, and sorting." +
+        "**Usage Guidelines:**" +
+        "1. Use this tool ONLY when the user explicitly requests a list of task runs." +
+        "2. By default, return ONLY the first page (page_index=1)." +
+        "3. Only iterate through all pages if the user explicitly requests the full/complete list." +
+        "4. **DO NOT use this tool** when the user asks about execution statistics in general terms — use `get_task_run_stats` instead." +
+        "**Time Parameters:**" +
+        "⚠️ The `query_plan_time_left` and `query_plan_time_right` parameters require timestamp values in milliseconds. " +
+        "If you are uncertain about the time values, first call `get_current_datetime` to get the current timestamp_ms, " +
+        "then calculate the desired time range based on it." +
+        "A *task run* represents a single execution record generated after a task runs. " +
+        "This tool returns only one page of results per call.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "integer", description: "Project space ID. Optional." },
+          task_type: { type: "integer", description: `Task type filter. Optional,${TASK_TYPE_DESC}; returns all if omitted.` },
+          task_id: { type: "integer", description: "Specific task ID to filter task runs by." },
+          task_name_or_id: { type: "string", description: "Fuzzy search for task run name, or direct task run ID value." },
+          page_index: { type: "integer", description: "Page index (1-based, default 1).", default: 1 },
+          page_size: { type: "integer", description: "Number of items per page (default 10). Maximum is 20.", default: 10 },
+          order_by: { type: "string", enum: ["asc", "desc"], description: "Sort order (default 'desc').", default: "desc" },
+          order_by_field: {
+            type: "string",
+            description: "Sorting field (default 'execute_start_time').",
+            default: "execute_start_time",
+            enum: ["execute_start_time", "execute_end_time", "plan_trigger_time"],
+          },
+          group_id: { type: "integer", description: "Task group ID filter." },
+          task_run_type: {
+            type: "integer",
+            description: "Task run type. Valid values: 1 = Schedule run, 3 = Temporary run, 4 = backfill run.",
+            enum: [1, 3, 4],
+            default: 1,
+          },
+          query_plan_time_left: {
+            type: "integer",
+            description:
+              "Left bound of planned time (timestamp in milliseconds). " +
+              "Default: yesterday at 00:00:00. Example: 1762444800000. " +
+              "⚠️ If uncertain, call `get_current_datetime` first.",
+          },
+          query_plan_time_right: {
+            type: "integer",
+            description:
+              "Right bound of planned time (timestamp in milliseconds). " +
+              "Default: tomorrow at 23:59:59. Example: 1762531199000. " +
+              "⚠️ If uncertain, call `get_current_datetime` first.",
+          },
+          task_run_status_list: {
+            type: "array",
+            items: { type: "integer" },
+            description:
+              "List of task run status values. Supported values: " +
+              "1=Success, 2=Not started, 3=Failed, 4=Running, " +
+              "5=Waiting for resources, 6=Waiting for upstream, " +
+              "7=Paused, 8=Upstream failed blocking.",
+          },
+        },
+        additionalProperties: false,
+        required: ["page_index", "page_size", "query_plan_time_left", "query_plan_time_right"],
+      },
+      handler: async (args: Record<string, unknown>) => handleListTaskRun(args, getConfig()),
+      tags: ["task_run", "normalize"],
+      samples: [
+        {
+          description: "List task runs of task 9001 within a time window.",
+          query: {
+            task_id: 9001,
+            page_index: 1,
+            page_size: 10,
+            order_by_field: "plan_trigger_time",
+            query_plan_time_left: 1762444800000,
+            query_plan_time_right: 1762531199000,
+            task_run_status_list: [3, 4],
+          },
+        },
+      ],
+    },
+    // schedule_instance_tools.py:659-722 — get_task_run_dependencies
+    {
+      name: "get_task_run_dependencies",
+      description:
+        "Get upstream and downstream dependency task runs of a specific task run. " +
+        "Returns dependency information as a tree structure, with configurable " +
+        "parent (upstream) and child (downstream) depth levels.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "integer", description: "Project space ID of the task." },
+          task_run_id: { type: "integer", description: "Task Run ID for which to retrieve dependency relations. Required." },
+          parent_level: { type: "integer", description: "Number of upstream dependency levels to retrieve. Default is 1.", default: 1 },
+          child_level: { type: "integer", description: "Number of downstream dependency levels to retrieve. Default is 1.", default: 1 },
+        },
+        additionalProperties: false,
+        required: ["task_run_id"],
+      },
+      handler: async (args: Record<string, unknown>) =>
+        handleGetTaskRunDependencies(args, getConfig()),
+      tags: ["task_run_relation", "dependency", "graph"],
+      samples: [
+        {
+          description: "Get 1-level upstream and downstream dependencies for task run 9001.",
+          query: { project_id: 2001, task_run_id: 9001, parent_level: 1, child_level: 1 },
+        },
+      ],
+    },
+    // schedule_instance_tools.py:802-866 — get_execution_log
+    {
+      name: "get_execution_log",
+      description:
+        "Get execution log content for a specific execution under a task run. " +
+        "Each task run may have multiple executions. " +
+        "Supports querying logs from top, bottom, or by offset in forward/backward direction.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          execution_id: { type: "integer", description: "Execution ID. Each task run may have multiple executions." },
+          task_run_id: { type: "integer", description: "Task run ID." },
+          query_action: {
+            type: "integer",
+            description: "Log query action type. 1 = query downward, 2 = query upward, 3 = query from tail (default).",
+            enum: [1, 2, 3],
+            default: 3,
+          },
+          offset: { type: "integer", description: "Log read offset. Not required when query_action = 3 (query from tail)." },
+        },
+        additionalProperties: false,
+        required: ["execution_id", "task_run_id"],
+      },
+      handler: async (args: Record<string, unknown>) => handleGetExecutionLog(args, getConfig()),
+      tags: ["log", "task_run", "execution"],
+      samples: [
+        {
+          description: "Get log content from tail for the specified execution.",
+          query: { execution_id: 10001, task_run_id: 50001, query_action: 3 },
+        },
+        {
+          description: "Get log content from offset 2000 downward.",
+          query: { execution_id: 10001, task_run_id: 50001, query_action: 1, offset: 2000 },
+        },
+      ],
+    },
+    // schedule_instance_tools.py:948-1006 — list_executions
+    {
+      name: "list_executions",
+      description:
+        "List executions for a specific task run with **pagination**. " +
+        "Each task run may have multiple executions. " +
+        "Supports specifying project ID and paging parameters.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_run_id: { type: "integer", description: "Task run ID." },
+          project_id: { type: "integer", description: "Project ID." },
+          page_index: { type: "integer", description: "Page index (1-based).", default: 1 },
+          page_size: { type: "integer", description: "Page size (default 20).", default: 20 },
+        },
+        additionalProperties: false,
+        required: ["task_run_id"],
+      },
+      handler: async (args: Record<string, unknown>) => handleListExecutions(args, getConfig()),
+      tags: ["execution", "task_run"],
+      samples: [
+        {
+          description: "List executions for task run 50001 under project 2001.",
+          query: { task_run_id: 50001, project_id: 2001, page_index: 1, page_size: 20 },
+        },
+      ],
+    },
+    // schedule_instance_tools.py:1100-1248 — get_task_run_stats
+    {
+      name: "get_task_run_stats",
+      description:
+        "Get task run statistics aggregated by task. " +
+        "Supports filtering by project space, task type, task run type, " +
+        "task name pattern (regex-like), planned time range, task run status combinations, " +
+        "task owner, executor user, task group, and version control code.\n\n" +
+        "**When to Use This Tool:**\n" +
+        "✅ **PRIORITIZE this tool** when users ask vague questions about task execution, such as:\n" +
+        "- 'How are my task executions doing?'\n" +
+        "- 'What's my task execution status?'\n" +
+        "- 'Show me task execution statistics'\n" +
+        "- 'How many task runs succeeded/failed?'\n\n" +
+        "❌ **DO NOT use this tool** when users explicitly request:\n" +
+        "- 'List all my task runs' (use list_task_run instead)\n" +
+        "- 'Show me execution details' (use list_executions instead)\n\n" +
+        "**Time Parameters:**\n" +
+        "⚠️ The `query_plan_time_left` and `query_plan_time_right` parameters require timestamp values in milliseconds.\n\n" +
+        "**Aggregation Dimensions:**\n" +
+        "The returned statistics are aggregated by: task_run_status, task_type, task_run_type.\n\n" +
+        "**Secondary Aggregation:**\n" +
+        "If the user needs higher-level aggregation, perform secondary aggregation on the returned data.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_name_rlike: { type: "string", description: "Task name pattern filter (regex-like). Optional." },
+          task_type: { type: "integer", description: `Task type filter. Optional. ${TASK_TYPE_DESC} ; returns all if omitted.` },
+          task_run_type: {
+            type: "integer",
+            description: "Task run type. Valid values: 1 = Schedule task run, 3 = Temporary task run, 4 = Refill task run.",
+            enum: [1, 3, 4],
+            default: 1,
+          },
+          query_plan_time_left: {
+            type: "integer",
+            description:
+              "Left bound of planned time (timestamp in milliseconds). " +
+              "Default: yesterday at 00:00:00. Example: 1762444800000. " +
+              "⚠️ If uncertain, call `get_current_datetime` first.",
+          },
+          query_plan_time_right: {
+            type: "integer",
+            description:
+              "Right bound of planned time (timestamp in milliseconds). " +
+              "Default: tomorrow at 23:59:59. Example: 1762531199000. " +
+              "⚠️ If uncertain, call `get_current_datetime` first.",
+          },
+          task_run_status_list: {
+            type: "array",
+            items: { type: "integer" },
+            description:
+              "List of task run status values. Supported values: " +
+              "1=Success, 2=Not started, 3=Failed, 4=Running, " +
+              "5=Waiting for resources, 6=Waiting for upstream, " +
+              "7=Paused, 8=Upstream failed blocking.",
+          },
+          task_owner_id: { type: "integer", description: "Task owner user ID filter." },
+          executor_user_id: { type: "integer", description: "Executor user ID filter." },
+          group_id: { type: "integer", description: "Task group ID filter." },
+          vc_code: { type: "string", description: "Version control code filter." },
+        },
+        additionalProperties: false,
+        required: ["query_plan_time_left", "query_plan_time_right"],
+      },
+      handler: async (args: Record<string, unknown>) => handleGetTaskRunStats(args, getConfig()),
+      tags: ["task_run_stats", "statistics", "aggregation"],
+      samples: [
+        {
+          description: "Get task run statistics for tasks matching pattern 'etl' within a time window.",
+          query: {
+            task_name_rlike: "etl",
+            task_run_type: 1,
+            query_plan_time_left: 1762444800000,
+            query_plan_time_right: 1762531199000,
+            task_run_status_list: [1, 3],
+          },
+        },
+        {
+          description: "Get statistics for tasks owned by a specific user.",
+          query: {
+            task_owner_id: 2001,
+            query_plan_time_left: 1762444800000,
+            query_plan_time_right: 1762531199000,
+          },
+        },
+      ],
+    },
+  ]
+
+  logger.info({ count: tools.length }, "Registering schedule instance tools")
+  registry.registerTools(tools)
+}
