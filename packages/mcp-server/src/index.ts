@@ -11,3 +11,4 @@ export * from "./transport/http.js"
 export * from "./auth/bearer.js"
 // Block 2: LakehouseClient
 export * from "./lakehouse-client.js"
+export * from "./mcp-server.js"
