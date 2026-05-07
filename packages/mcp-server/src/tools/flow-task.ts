@@ -216,3 +216,11 @@ async function handleCreateFlowNode(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// registerFlowTaskTools — flow_task_tools.py:491-859
+// TODO: Full tool definitions to be completed in a follow-up
+// ---------------------------------------------------------------------------
+export function registerFlowTaskTools(_registry: ToolRegistry, _db: LakehouseDB): void {
+  // Placeholder — full tool definitions pending
+}
