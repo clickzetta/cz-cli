@@ -36,3 +36,19 @@ cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions --sessi
 ```
 
 Reuse `session_id` for follow-ups on the same topic. Omit `--session` to start fresh.
+
+## Multi-environment (profiles)
+
+When the user specifies an environment or profile (e.g. "use uat_test", "on the test instance"):
+
+```bash
+cz-cli agent run "<request>" --profile uat_test --format a2a --dangerously-skip-permissions
+```
+
+Or via environment variable:
+
+```bash
+CZ_PROFILE=uat_test cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
+```
+
+Available profiles can be listed with: `cz-cli profile list`

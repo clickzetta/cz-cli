@@ -299,8 +299,15 @@ export const RunCommand = cmd({
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
         default: false,
       })
+      .option("profile", {
+        type: "string",
+        describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
+      })
   },
   handler: async (args) => {
+    if (args.profile) {
+      process.env.CZ_PROFILE = args.profile
+    }
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
       .join(" ")

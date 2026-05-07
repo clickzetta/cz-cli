@@ -73,7 +73,8 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
   }
   if (!isRecord(parsed)) return { providers, warnings }
 
-  const defaultProfile = asString(parsed.default_profile) ?? "default"
+  // CZ_PROFILE env var overrides default_profile for multi-environment support.
+  const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
   const defaultLlm = asString(parsed.default_llm)
 
   const profiles = isRecord(parsed.profiles) ? parsed.profiles : {}
@@ -158,7 +159,7 @@ export function hasUsableLlm(toml: string): ProfilesLlmGuardResult {
   }
   if (!isRecord(parsed)) return { hasValidConfig: false, warnings }
 
-  const defaultProfile = asString(parsed.default_profile) ?? "default"
+  const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
   const profiles = isRecord(parsed.profiles) ? parsed.profiles : {}
   const profileSection = isRecord(profiles[defaultProfile]) ? profiles[defaultProfile] : undefined
   const llms = isRecord(parsed.llm) ? parsed.llm : {}
