@@ -1,0 +1,46 @@
+# 功能描述
+
+创建指定类型的对象
+
+# 语法
+
+```
+CREATE  <object_type> [ IF NOT EXISTS ] <object_name>
+COMMENT ''
+```
+
+## 具体的语法参考
+
+[CREATE USER](CREAREUSER.md)
+
+[CREATE ROLE](CREATEROLE.md)
+
+[CREATE CONNECTION](CREATECONNECTION.md)
+
+[CREATE EXTERNAL CATALOG](create-external-catalog.md)
+
+[CREATE EXTERNAL FUNCTION](CREATE_EXTERNATL_FUNCTION.md)
+
+[CREATE SCHEMA](CREATESCHEMA.md)
+
+[CREATE EXTERNAL SCHEMA](CREATEEXTERNAlLSCHEMA.md)
+
+[CREATE SHARE](create-share.md)
+
+[CREATE VCLUSTER](create_cluster.md)
+
+[CREATE TABLE](create-table-ddl.md)
+
+[CREATE EXTERNAL TABLE](create-external-table.md)
+
+[CREATE VIEW](CREATEVIEW.md)
+
+[CREATE DYNAMIC TABLE](create-dynamic-table.md)
+
+[CREATE MATERIALIZED VIEW](CREATEMATERIALIZEDVIEW.md)
+
+[CREATE BLOOMFILTER INDEX](CREATE-BLOOMFILTER-INDEX.md)
+
+[CREATE TABLE STREAM](create-table-stream.md)
+
+[CREATE SYNONYM](create-synonym.md)

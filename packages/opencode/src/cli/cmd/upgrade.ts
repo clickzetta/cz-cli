@@ -13,7 +13,7 @@ export const UpgradeCommand = {
   },
   handler: async (_args: { target?: string }) => {
     UI.empty()
-    UI.println("  " + UI.Style.TEXT_INFO_BOLD + "◆ CZAgent" + UI.Style.TEXT_NORMAL)
+    UI.println("  " + UI.Style.TEXT_INFO_BOLD + "◆ cz-cli" + UI.Style.TEXT_NORMAL)
     UI.empty()
     prompts.intro("Upgrade")
     // TODO: implement czcli self-upgrade via GitHub Releases (clickzetta/cz-code)

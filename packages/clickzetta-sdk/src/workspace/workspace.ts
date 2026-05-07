@@ -1,4 +1,5 @@
 import { request, type ClientOptions } from "../client.js"
+import { ClickZettaApiError } from "../types/api.js"
 
 export interface WorkspaceInfo {
   workspaceId: number
@@ -37,6 +38,9 @@ export async function listUserWorkspaces(
       userId,
     },
   )
+  if (resp.code !== 0 && resp.code !== "0") {
+    throw new ClickZettaApiError(String(resp.code), resp.message ?? "Failed to list workspaces")
+  }
   return resp.data ?? []
 }
 
@@ -57,5 +61,10 @@ export async function getWorkspaceByName(
     instanceId,
     instanceName,
   )
-  return all.find((w) => w.workspaceName === workspaceName)
+  return all.find((w) => {
+    const raw = w as unknown as Record<string, unknown>
+    return w.workspaceName === workspaceName
+      || raw.projectName === workspaceName
+      || raw.showName === workspaceName
+  })
 }

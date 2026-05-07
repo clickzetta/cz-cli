@@ -1,0 +1,1286 @@
+# Lakehouse 文档（LLM 全量索引）
+
+> 云器 Lakehouse 是全托管的湖仓一体架构平台，基于云原生设计理念从零打造。通过**存算分离**、**Serverless弹性架构**、**开放存储格式**和**AI优化工具**，为企业提供数据仓库、数据湖、实时处理与BI报表的统一平台。
+
+## 快速入门
+
+- [概览](https://www.yunqi.tech/documents/Overview): 介绍云器Lakehouse的存算分离架构、Serverless计算、开放数据格式及主要应用场景。
+  - [开始之前](https://www.yunqi.tech/documents/setup): 通过Lakehouse Studio、CLI或应用程序（JDBC/第三方工具）访问云器Lakehouse，并说明浏览器与操作系统的兼容性要求。
+  - [开通使用](https://www.yunqi.tech/documents/LoggingIn): 指导用户完成云器账号注册、登录、创建Lakehouse服务实例及实例初始化的具体操作步骤。
+  - [云服务和地域](https://www.yunqi.tech/documents/Supported_Cloud_Platforms): 列举云器 Lakehouse 支持的阿里云、腾讯云、亚马逊云的具体地域代码，并提供账户控制台、实例控制台及 JDBC 连接的服务域名。
+  - [定价和计费](https://www.yunqi.tech/documents/pricing): 说明云器Lakehouse按计算（CRU*时）、存储（GiB）和网络（GB）三类资源计费，涵盖按需与包年两种模式及具体计费原理。
+  - [试用账号配额与限制说明](https://www.yunqi.tech/documents/trial-account-quotas-and-limits): 试用账户享有200元代金券，但实例数、任务并发数、运行时长及数据下载量等均有具体限制。
+- [产品概念](https://www.yunqi.tech/documents/Concepts): 介绍云器Lakehouse的存算分离架构、Serverless计算、开放数据格式及主要应用场景。
+  - [产品简介](https://www.yunqi.tech/documents/what_is_clickzetta_lakehouse): 云器 Lakehouse 提供存算分离架构、Serverless弹性计算、下一代SQL引擎及开放数据格式，实现全托管的数据湖仓服务。
+  - [基本概念](https://www.yunqi.tech/documents/Key_Concepts): 介绍云器Lakehouse的核心实体概念，包括账户、服务实例、工作空间、计算资源、数据源及Lakehouse Studio等组件。
+- [入门指导](https://www.yunqi.tech/documents/Tutorials): 通过数据导入、SQL查询、数据可视化等步骤，快速完成从数据接入到分析展示的完整流程。
+  - [Lakehouse 快速入门体验](https://www.yunqi.tech/documents/lakehouse-quick-experience_guide): 通过运行SQL查询、创建计算集群、体验存算分离与湖仓一体等八个步骤，快速上手Lakehouse核心功能。
+  - [Lakehouse Studio 快速导览](https://www.yunqi.tech/documents/LakehouseStudioTour): Lakehouse Studio 提供数据管理、ELT管道开发、任务监控、成本控制及用户角色管理等一站式数据湖仓Web界面操作功能。
+  - [Lakehouse Studio 入门指南](https://www.yunqi.tech/documents/Lakehouse_Studio_101): 通过Lakehouse Studio界面创建项目、连接数据源、编写SQL查询并生成可视化图表的基础操作流程。
+    - [入门指南：如何快速新增和管理用户](https://www.yunqi.tech/documents/quick_start_user_management): 通过管理中心创建用户账号、设置密码、提供登录地址，并支持后续密码修改。
+    - [入门指南：如何快速新建和使用工作空间](https://www.yunqi.tech/documents/quick_start_create_workspace): 指导用户创建新工作空间，包括命名、存储加密配置，并说明创建后的使用和用户协作方法。
+    - [入门指南：如何快速管理工作空间下的用户](https://www.yunqi.tech/documents/quick_start_workspace_user): 通过界面操作将用户添加至工作空间并授予 workspace_dev 等角色，实现成员管理与协作权限分配。
+    - [入门指南：如何快速运行一条SQL](https://www.yunqi.tech/documents/quick_start_sql_query): 通过内置样例或新建SQL脚本，在Lakehouse Studio中选择计算集群并运行查询，查看结果与日志。
+    - [入门指南：如何快速上传导入本地数据](https://www.yunqi.tech/documents/quick_start_upload_data): 通过Lakehouse Studio界面，将不超过2GB的本地CSV、TXT、Parquet等文件上传并创建新表或追加至已有表。
+    - [入门指南：如何快速创建同步任务来导入数据](https://www.yunqi.tech/documents/quick_start_batch_sync_data): 通过Lakehouse Studio创建同步任务，将MySQL等数据库或对象存储的数据导入Lakehouse，涵盖数据源配置、连通性测试及目标表映射步骤。
+    - [入门指南：如何快速配置编排和周期调度ETL流程](https://www.yunqi.tech/documents/quick_start_etl): 在Lakehouse Studio中创建SQL任务，配置其依赖同步任务并设置每小时调度，以构建周期ETL流程。
+    - [入门指南：如何快速配置和使用数据质量规则](https://www.yunqi.tech/documents/quick_start_data_quality): 配置数据质量规则以校验Lakehouse表字段非空等指标，支持定时、调度任务和手动触发。
+    - [入门指南：如何快速配置和使用监控告警规则](https://www.yunqi.tech/documents/quick_start_monitoring_and_alerting): 配置和启用内置的“周期任务实例运行失败”与“数据质量检测失败”监控规则，并支持自定义规则对特定任务进行精细化告警。
+  - [Lakehouse DataGPT 快速导览](https://www.yunqi.tech/documents/LakehouseDataGPTTour): 支持对话式分析Lakehouse表及Excel/CSV/PDF文件，提供多语言处理、指标计算、比较分析与多维下钻功能。
+  - [使用DataGPT进行对话式AI数据分析](https://www.yunqi.tech/documents/tutorial_DataGPT): 通过自然语言对话，对数据库、数据仓库或本地文件进行SQL查询、可视化图表生成与数据洞察分析。
+    - [基于八爪鱼和云器DataGPT，实现至简的网页数据获取与对话式数据分析](https://www.yunqi.tech/documents/simpletosimple_bazhuayu_datagpt): 使用八爪鱼采集器无代码获取网页数据并导出为Excel，再通过云器DataGPT对话式分析工具导入数据并进行自然语言问答分析。
+  - [通过TPCH样例数据和样例代码体验引擎性能](https://www.yunqi.tech/documents/get-started-with-sample-data): 使用TPCH 100GB样例数据集，通过创建计算集群、执行22个标准查询并调整集群规模，以评估Lakehouse SQL查询性能。
+  - [基于BI分析场景学习产品功能使用](https://www.yunqi.tech/documents/quick_start_bi_analysis): 通过电商BI分析场景，指导从MySQL数据源配置、集成、开发到调度发布，并连接BI工具的端到端操作流程。
+  - [基于工作空间进行团队协作](https://www.yunqi.tech/documents/tutorial_work_with_workspace): 通过创建和管理工作空间，实现成员邀请、权限分配、资源隔离与共享，以支持团队协同开发与数据作业。
+    - [使用工作空间构建数据开发环境](https://www.yunqi.tech/documents/quick_start_workspace): 介绍Lakehouse工作空间的概念、使用场景，以及如何创建和管理单一或多个工作空间以实现资源隔离与数据共享。
+    - [快速搭建团队使用的数据开发环境](https://www.yunqi.tech/documents/quickstart_envirment_for_team): 指导团队管理员通过创建用户、工作空间、分配角色权限来搭建多用户协作的 Lakehouse 数据开发环境。
+  - [如何连接到Lakehouse](https://www.yunqi.tech/documents/tutorial_connect_to_lakehouse): 使用 JDBC、命令行客户端、MySQL协议或生态工具连接到 Lakehouse 的具体方法、参数与示例。
+    - [概述](https://www.yunqi.tech/documents/guides-overview-connecting): 提供通过Lakehouse Studio、CLI、JDBC驱动、多种SDK及生态工具连接和操作Lakehouse的具体方法。
+    - [JDBC驱动](https://www.yunqi.tech/documents/JDBC-Driver): Clickzetta Lakehouse JDBC驱动的下载方法、连接字符串格式及关键连接参数（如username、password、virtualCluster）配置说明。
+    - [使用命令行客户端连接](https://www.yunqi.tech/documents/connect-with-cli): 通过命令行指定连接参数或配置文件，连接到Clickzetta Lakehouse服务实例并执行SQL命令。
+    - [使用MySQL协议连接](https://www.yunqi.tech/documents/use-mysql-client): 通过MySQL协议连接Lakehouse的配置方法、认证方式、连接字符串示例及使用限制。
+    - [使用SQLAlchemy连接](https://www.yunqi.tech/documents/sqlalchemy): 提供通过SQLAlchemy连接Clickzetta Lakehouse的配置参数、安装步骤及在Apache Superset中的使用方法。
+    - [使用生态工具连接](https://www.yunqi.tech/documents/ecosystem-all): 列举通过SQL Workbench/J、DBeaver、Tableau、DataX等客户端、BI及ETL工具连接云器Lakehouse的具体方法。
+    - [相关下载](https://www.yunqi.tech/documents/Lakehouse-client-repository): 提供命令行客户端、JDBC驱动、SQLAlchemy、Python SDK及Zettapark等连接工具的下载地址与安装方式。
+  - [数据采集](https://www.yunqi.tech/documents/tutorial_data_ingestion): 围绕"数据采集"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [将数据导入Lakehouse的完整指南](https://www.yunqi.tech/documents/a_comprehensive_guide_to_ingesting_data_into_clickzetta_lakehouse): 提供从本地文件、数据库、Kafka、数据湖等多种数据源导入数据到云器 Lakehouse 的多种具体方法指南。
+      - [概述](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_overview): 介绍从本地文件、数据库、Kafka、数据湖等多种数据源导入云器Lakehouse的具体方法，包括Studio、SQL、SDK等多种工具。
+      - [环境设置和测试数据生成](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_environment_and_data_generate): 通过conda配置Python环境并生成滑雪场缆车票等虚构测试数据，用于后续数据导入示例。
+      - [数据入仓：通过云器Lakehouse Studio 加载本地文件](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_local_file_into_table_by_studio): 通过云器Lakehouse Studio的Web界面，以无代码方式将本地CSV、TXT等文件（不大于2GB）上传并导入到Lakehouse表中。
+      - [数据入湖：通过ZettaPark PUT文件实现数据入湖的方式](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_zettapark_put_file_to_lake): 使用ZettaPark Python库将本地CSV、JSON、GZ文件上传至Lakehouse数据湖Volume的具体代码示例。
+      - [数据入仓：通过云器Lakehouse Studio 批量加载（公网连接）](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_studio_batchload_public_network): 通过云器Lakehouse Studio配置离线同步任务，从具备公网地址的数据源批量导入数据至Lakehouse表，支持全量或增量写入。
+      - [数据入仓：通过云器Lakehouse Studio 多表实时同步（CDC，公网连接）](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_studio_realtime_cdc_public_network): 通过Lakehouse Studio配置多表实时同步任务，将公网PostgreSQL数据以CDC方式全量及增量同步至目标表。
+      - [数据入仓：通过云器Lakehouse Studio以SQL INSERT方式导入数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_studio_sql_insert): 通过SQL INSERT语句将数据导入云器Lakehouse，支持VALUES直接插入、SELECT从其他表查询导入两种具体方法。
+      - [数据入仓：通过Zettapark以SQL INSERT方式加载数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_zettapark_sql_insert): 通过Zettapark在Python环境中使用SQL INSERT语句将少量数据加载到云器Lakehouse表的具体代码示例。
+      - [数据入仓：通过Zettapark以SAVE_AS_TABLE方式加载数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_zettapark_save_as_table): 使用Zettapark Python API将JSON数据以SAVE_AS_TABLE方式自动建表并批量导入云器Lakehouse的完整代码示例。
+      - [数据入仓：通过Java SDK批量和实时加载数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_javasdk_buckload_realtime): 通过Java SDK将数据批量或实时加载到云器Lakehouse表的具体步骤，包括配置修改、代码运行和写入优化。
+      - [数据入仓：使用Lakehouse Studio实时同步导入Kafka数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_kafka_realtime_sync): 通过Lakehouse Studio配置实时同步任务，将Kafka数据以秒级延迟导入Lakehouse表，包括字段映射、JSON解析和并发设置。
+      - [数据入仓：使用Pipe持续导入Kafka数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_pipe_kafka): 使用Pipe将Kafka数据持续导入Lakehouse，涵盖Pipe创建、Kafka连接配置、数据映射与任务启停管理。
+      - [数据入仓：使用Pipe持续导入对象存储数据](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_pipe_oss): 使用Pipe将对象存储中的数据持续、自动导入到云器Lakehouse的配置与操作方法。
+      - [数据入湖：通过云器Lakehouse Studio内置的Python节点从web加载文件入湖](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_studio_python_node): 通过Lakehouse Studio的Python节点，从Web下载文件并上传至阿里云OSS，实现数据入湖。
+      - [数据入湖：通过数据库客户端DBV/SQLWorkbench PUT文件的方式](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_dbv_sql_put): 通过数据库客户端使用PUT命令将本地文件上传至Lakehouse数据湖Volume的具体操作步骤。
+      - [数据入仓：通过第三方工具](https://www.yunqi.tech/documents/comprehensive_guide_to_ingesting_3rd_tools): 通过Airbyte、八爪鱼、Bluepipe等第三方工具将数据加载或同步到Lakehouse的具体操作指南。
+    - [Copy命令快速使用入门](https://www.yunqi.tech/documents/QuickStartwithCopycommand): 使用COPY命令将本地CSV文件加载到Lakehouse表中，并进行数据探查与分析的快速入门教程。
+    - [通过云器Lakehouse的多表实时同步和动态表实现变化数据捕获（CDC）及数据处理](https://www.yunqi.tech/documents/czguide-intro-to-cdc-using-clickzetta-rtsync-dynamic-tables): 使用多表实时同步从PostgreSQL捕获CDC数据，并通过动态表进行实时处理，最终在DataGPT中实现可视化分析。
+    - [将数据从阿里云数据湖摄取到云器Lakehouse的三层数据仓库中](https://www.yunqi.tech/documents/Ingesting_Data_from_Alibaba_Cloud_Data_Lake_into_Lakehouse): 提供从阿里云OSS到云器Lakehouse的三层数据仓库（Bronze、Silver、Gold）的完整实现方案，包括数据摄取、清洗转换与业务聚合的具体步骤。
+    - [通过Bluepipe实现Oracle数据库到云器Lakehouse的实时数据同步](https://www.yunqi.tech/documents/BluepipeOracleLakehouse_DataSync): 使用Bluepipe工具，通过LogMiner技术将Oracle数据库数据实时同步至云器Lakehouse，支持DDL、大事务及RAC架构。
+  - [数据处理](https://www.yunqi.tech/documents/tutorial_data_transformation): 支持数据导入、SQL查询、数据导出及可视化分析的全流程数据处理操作指南
+    - [通过SQL对数据进行清洗](https://www.yunqi.tech/documents/data_clean_with_sql): 使用SQL处理缺失值、异常值、重复数据及格式错误，包含创建表、插入脏数据和清洗步骤的完整示例。
+    - [开发动态表实现近实时增量处理](https://www.yunqi.tech/documents/streaming_pipeline_with_dynamic_table): 使用动态表构建实时ETL流程，包含数据导入、清洗转换与聚合的增量处理步骤。
+    - [通过流和任务在Lakehouse上实现SCD（缓慢变化维）](https://www.yunqi.tech/documents/SlowlyChangingDimensionsInLakehouseUsingStreamsandTasks): 使用流、管道和SQL任务在Lakehouse中实现SCD类型1、2、3，涵盖数据生成、采集、处理到历史表管理的完整流程。
+    - [将S3的非结构化数据转换为Lakehouse中的RAG就绪数据](https://www.yunqi.tech/documents/Unstructured_io): 将S3中的PDF、邮件、图像等非结构化文件转换为JSON，经分块、嵌入后加载至Lakehouse表，构建向量与倒排索引以供RAG应用检索。
+    - [基于Zettapark for Python构建数据处理链路](https://www.yunqi.tech/documents/tutorial_zettapark): 使用Python SDK（Zettapark）从数据源接入、转换、计算到结果输出的完整数据处理流程构建方法。
+      - [Lakehouse Zettapark快速上手](https://www.yunqi.tech/documents/ZettaparkQuickStart): 提供Python API，通过DataFrame执行SQL查询并操作云器Lakehouse数据，支持类似pandas的语法。
+      - [基于Lakehouse Zettapark进行数据工程](https://www.yunqi.tech/documents/Zettapark_Data_Engineering_Demo): 演示使用Zettapark Python库连接Lakehouse，对亿级表进行连接、聚合操作，并对比不同规格虚拟计算集群的性能差异。
+      - [使用Zettapark管理Lakehouse Volume的文件](https://www.yunqi.tech/documents/ManagingFilesonDatalakeVolumewithZettapark): 使用Zettapark Python API在Lakehouse Volume中执行文件上传(PUT)、下载(GET)和列出(LIST)操作，支持CSV、JSON等格式。
+      - [使用Zettapark和Python机器学习库进行信用评分](https://www.yunqi.tech/documents/CreditScoringwithZettaparkandPythonMLlibraryNew): 使用 Zettapark 和 scikit-learn 等 Python 库，通过数据准备、模型训练与部署，完成端到端的信用评分机器学习流程。
+      - [使用 Zettapark 扩展客户特征的特征工程](https://www.yunqi.tech/documents/FeatureEngineeringForExpandingCustomerFeatureswithZettapark): 使用 Zettapark 对 TPCH 表进行特征工程，通过聚合、连接和 CASE WHEN 转换构建客户消费、销售趋势及供应商绩效等机器学习特征。
+    - [在 Lakehouse 的同一张表中进行向量和标量检索](https://www.yunqi.tech/documents/PerformingVectorandScalarRetrievalinheSameTableinLakehouse): 在云器 Lakehouse 表中，对文本字段建立倒排索引、对向量字段建立向量索引，实现向量与标量的融合检索。
+  - [管理计算资源](https://www.yunqi.tech/documents/tutorial_virtual_cluster): 管理计算资源：创建、配置、监控和扩缩容虚拟计算集群（VCC）的具体操作指南。
+    - [使用Lakehouse计算集群](https://www.yunqi.tech/documents/working_with_Vclusters): 介绍Lakehouse计算集群的三种类型（通用型、分析型、同步型）、核心规格（CRU）及其按需启动、自动停止和多实例弹缩等核心功能。
+    - [通过横向弹性扩容支持多并发查询](https://www.yunqi.tech/documents/concurrency_scaling): 教程：通过创建分析型集群、设置弹性策略并运行Python并发查询，观察集群横向扩容以支持多并发请求。
+  - [数据安全](https://www.yunqi.tech/documents/data_security_quickstart): 围绕"数据安全"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Lakehouse用户授权入门指导](https://www.yunqi.tech/documents/user_permission_grand_guide): 通过SQL语句管理Lakehouse用户、角色及权限，涵盖用户添加、角色创建和Schema/表级别授权操作。
+  - [数据共享](https://www.yunqi.tech/documents/data_sharing_quickstart): 围绕"数据共享"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Lakehouse跨账号数据共享入门指导](https://www.yunqi.tech/documents/data_sharing_between_accounts_guide): 通过创建Share对象、添加表或视图并指定接收实例，实现Lakehouse跨账号数据的无复制、实时只读共享。
+  - [迁移指南](https://www.yunqi.tech/documents/tutorial_migration): 将数据从传统数仓、Hive、Iceberg等系统迁移至云器Lakehouse的步骤、工具与兼容性说明
+    - [将Spark数据工程最佳实践项目迁移到云器Lakehouse](https://www.yunqi.tech/documents/Migrate_Spark_DataEngineeringBestPractices_Project_to_Lakehouse): 指导将基于Spark、Airflow、Great Expectations的本地数据工程项目，迁移至云器Lakehouse平台，涵盖代码兼容性、架构简化与资源管理。
+    - [将Snowflake的实时ETL Pipeline迁移到云器Lakehouse](https://www.yunqi.tech/documents/MigrateSnowflakeRealtimeETLPipelinetoClickzettaLakehouse): 将Snowflake实时ETL管道迁移至云器Lakehouse的步骤与优势，包括SQL语法兼容、内置Python环境及多云支持。
+
+## 使用指南
+
+- [Studio](https://www.yunqi.tech/documents/studio_manual): 通过Web界面进行数据开发与管理，支持连接数据源、SQL查询、作业编排、结果可视化和资产目录浏览。
+  - [概述](https://www.yunqi.tech/documents/studio_overview): Lakehouse Studio 提供数据同步、任务开发调度、运维监控、数据质量管理和安全权限配置等一站式Web图形化操作界面。
+  - [首页](https://www.yunqi.tech/documents/lakehouse_instance_overview): Lakehouse服务实例首页提供数据上传、同步、SQL查询、集群管理等核心功能入口，并展示数据资产信息与最近操作记录。
+  - [工作区](https://www.yunqi.tech/documents/worksheet): 工作区以列表形式管理实例任务，支持查看最近打开、我的和全部任务，并可创建新任务或进行批量操作。
+  - [数据同步](https://www.yunqi.tech/documents/data-integration): 配置数据源、开发同步任务，支持从多种数据源进行全量、增量及多表实时数据同步。
+    - [概述](https://www.yunqi.tech/documents/data-integration-intro): 云器 Lakehouse 内置数据同步服务，支持从MySQL等数据库、文件系统、Kafka等数据源，通过向导配置离线或实时任务，将数据导入Lakehouse或同步至外部目标。
+    - [数据源管理](https://www.yunqi.tech/documents/config-datasource): 配置MySQL、Oracle、SQL Server等数据源，并通过SSH Tunnel连接VPC内数据库的操作步骤与示例。
+    - [数据源支持范围](https://www.yunqi.tech/documents/datasources): 列举数据同步服务支持的离线、单表实时、多表实时同步任务类型及其对应数据源（如Lakehouse、ClickHouse、Kafka等）与版本。
+    - [数据源配置指南](https://www.yunqi.tech/documents/DataSourceConfigGuide): 配置本地文件、关系数据库、Kafka、对象存储等多种数据源的连接参数与数据导入方法。
+      - [Amazon DocumentDB](https://www.yunqi.tech/documents/DataSource_Amazon_DocumentDB): 配置 AWS DocumentDB 数据源的连接参数、认证信息、安全证书及通过 SSH 隧道或公网直连的网络访问方法。
+      - [Amazon OpenSearch](https://www.yunqi.tech/documents/DataSource_Amazon_OpenSearch): 配置 AWS OpenSearch 数据源所需的参数、连接方式（直连或SSH Tunnel）及鉴权方法（Access Key）。
+      - [ADB MySQL](https://www.yunqi.tech/documents/DataSource_ADBMySQL): 配置ADB MySQL数据源，支持直连或通过SSH隧道连接，需提供JDBC地址、用户名密码等参数。
+      - [ADB PostgreSQL](https://www.yunqi.tech/documents/DataSource_ADB_PostgreSQL): 配置ADB PostgreSQL数据源的JDBC连接参数、Schema及SSH隧道连接方法，用于数据同步任务。
+      - [Aurora MySQL](https://www.yunqi.tech/documents/DataSource_Aurora_MySQL): 配置 Aurora MySQL 数据源，支持直连或通过 SSH 隧道连接，需提供 JDBC 地址、用户名、密码等参数。
+      - [Aurora PostgreSQL](https://www.yunqi.tech/documents/DataSource_Aurora_PostgreSQL): 配置 Aurora PostgreSQL 数据源所需的 JDBC 连接参数、直连与 SSH 隧道两种连接方法及安全注意事项。
+      - [AutoMQ](https://www.yunqi.tech/documents/DataSource_AutoMQ): 配置 AutoMQ 数据源连接，包括基础地址、SASL/SSL安全认证及高级网络设置。
+      - [ClickHouse](https://www.yunqi.tech/documents/DataSource_ClickHouse): 配置ClickHouse数据源所需的JDBC连接参数、直连与SSH隧道两种连接方式及安全注意事项。
+      - [COS](https://www.yunqi.tech/documents/DataSource_COS): 配置腾讯云COS数据源所需的参数（区域、存储桶、SecretId/Key）及连接注意事项。
+      - [Databricks](https://www.yunqi.tech/documents/DataSource_Databricks): 配置Databricks数据源所需的URL、工作空间ID、鉴权方式及SQL Warehouse等连接参数。
+      - [DB2](https://www.yunqi.tech/documents/DataSource_DB2): 配置DB2数据源，需填写JDBC地址、用户名密码等参数，支持直连或通过SSH隧道两种连接方式。
+      - [DM](https://www.yunqi.tech/documents/DataSource_DM): 配置达梦数据库数据源，提供JDBC连接地址、用户名密码，支持直连或通过SSH隧道连接。
+      - [Doris](https://www.yunqi.tech/documents/DataSource_Doris): 配置Doris数据源所需的JDBC连接地址、FE/BE节点地址、用户名密码及ExternalCatalog等参数。
+      - [DynamoDB](https://www.yunqi.tech/documents/DataSource_DynamoDB): 配置 DynamoDB 数据源所需的参数、HTTPS连接方法及权限、成本管理等注意事项。
+      - [ElasticSearch](https://www.yunqi.tech/documents/DataSource_ElasticSearch): 配置Elasticsearch数据源，需提供地址、认证信息并设置网络直连，以支持数据同步任务。
+      - [Greenplum](https://www.yunqi.tech/documents/DataSource_Greenplum): 配置Greenplum数据源的JDBC连接参数、直连与SSH隧道两种连接方式及安全注意事项。
+      - [HANA](https://www.yunqi.tech/documents/DataSource_HANA): 配置SAP HANA数据源的连接参数、直连与SSH隧道方法及安全注意事项。
+      - [HBase](https://www.yunqi.tech/documents/DataSource_HBase): 配置HBase数据源需提供ZK地址、父路径、根目录等参数，支持通过直连或SSH隧道进行安全连接。
+      - [Hive](https://www.yunqi.tech/documents/DataSource_Hive): 配置Hive数据源所需的JDBC连接参数、HDFS地址、Kerberos认证及SSH隧道连接方法。
+      - [Hologres](https://www.yunqi.tech/documents/DataSource_Hologres): 配置Hologres数据源的JDBC连接参数、直连与SSH隧道两种连接方式及安全注意事项。
+      - [Kafka](https://www.yunqi.tech/documents/DataSource_Kafka): 配置Kafka数据源时需设置连接地址、安全协议（如SASL_SSL）及JAAS认证、Truststore/Keystore文件路径与密码等参数。
+      - [MariaDB](https://www.yunqi.tech/documents/DataSource_MariaDB): 配置 MariaDB 数据源的连接参数、直连与SSH隧道两种连接方式及安全注意事项。
+      - [MaxCompute](https://www.yunqi.tech/documents/DataSource_MaxCompute): 配置MaxCompute数据源所需的Endpoint、项目空间、Access Key等参数，支持直连或通过SSH隧道连接。
+      - [MySQL](https://www.yunqi.tech/documents/DataSource_MySQL): 配置MySQL数据源，提供JDBC连接地址、用户名密码等参数，支持直连或通过SSH隧道连接。
+      - [MongoDB](https://www.yunqi.tech/documents/DataSource_MongoDB): 配置MongoDB数据源连接，包括单节点、副本集、分片集群的参数设置与直连或SSH隧道两种连接方式。
+      - [Oracle](https://www.yunqi.tech/documents/DataSource_Oracle): 配置Oracle数据源所需的JDBC连接参数、直连与SSH隧道两种连接方法及安全注意事项。
+      - [OSS](https://www.yunqi.tech/documents/DataSource_OSS): 配置阿里云OSS数据源所需的Endpoint、AccessKey、Bucket等参数，支持通过内网或公网直连进行数据同步。
+      - [PorarDB](https://www.yunqi.tech/documents/DataSource_PorarDB): 配置PolarDB数据源，包括JDBC连接参数、直连与SSH隧道两种连接方式及安全注意事项。
+      - [PostgreSQL](https://www.yunqi.tech/documents/DataSource_PostgreSQL): 配置PostgreSQL数据源，提供JDBC连接参数、直连与SSH隧道两种连接方式及安全注意事项。
+      - [Redis](https://www.yunqi.tech/documents/DataSource_Redis): 配置Redis数据源连接参数（节点模式、地址、认证）并设置工作空间权限，用于数据同步任务。
+      - [Redshift](https://www.yunqi.tech/documents/DataSource_Redshift): 配置Amazon Redshift数据源的JDBC连接、SSH隧道及安全组，以支持数据同步任务的导入与导出。
+      - [RestApi](https://www.yunqi.tech/documents/DataSource_RestApi): 配置REST API数据源，包括URL、GET/POST方法、基础认证/Bearer Token验证及请求头设置，并支持连接测试。
+      - [S3](https://www.yunqi.tech/documents/DataSource_S3): 配置S3数据源所需的参数，包括Region、Bucket、Access Key ID和Secret Access Key，用于连接AWS S3存储桶进行数据同步。
+      - [SLS(LogHub)](https://www.yunqi.tech/documents/DataSource_SLS): 配置阿里云SLS(LogHub)数据源所需的项目名称、服务地址、AccessKey等参数，支持通过直连方式接入日志数据。
+      - [SQL Server](https://www.yunqi.tech/documents/Datasource_SQLServer): 配置SQL Server数据源，支持直连或通过SSH隧道连接，需提供JDBC地址、用户名密码等参数。
+      - [StarRocks](https://www.yunqi.tech/documents/DataSource_StarRocks): 配置StarRocks数据源所需的JDBC连接地址、用户名密码及直连或SSH隧道两种连接方式。
+      - [TiDB](https://www.yunqi.tech/documents/DataSource_TiDB): 配置TiDB数据源以连接TiDB集群，包括JDBC地址、用户名密码等参数，支持直连或通过SSH隧道两种连接方式。
+    - [数据源IP白名单](https://www.yunqi.tech/documents/datasource_ip_whitelist): 配置数据同步服务访问源数据库所需的IP白名单，包含各云服务商出口IP地址及MySQL、Oracle等数据库的具体配置步骤。
+    - [离线同步任务](https://www.yunqi.tech/documents/batch_sync): 在云器 Lakehouse 中创建离线同步任务，涵盖从选择数据源、字段映射、设置并发与速率到测试和部署调度的完整流程。
+    - [多表离线同步任务](https://www.yunqi.tech/documents/multitable_batch_sync): 将MySQL、PostgreSQL等数据库整库或多表以全量方式周期性同步至Lakehouse，支持自动建表、Schema变更适配和覆盖/更新写入。
+    - [实时同步任务](https://www.yunqi.tech/documents/realtime_sync): 将Kafka Topic数据实时同步至Lakehouse，支持JSON格式解析与字段映射，提交后可在运维中心启停和监控。
+    - [多表实时同步任务](https://www.yunqi.tech/documents/multitable_realtime_sync): 将MySQL或PostgreSQL数据库整库实时同步至Lakehouse，支持全量历史数据与增量变更数据的秒级同步。
+    - [多表实时同步任务完整指南](https://www.yunqi.tech/documents/multitable_realtime_sync_sop): 实现数据库多表全量与增量实时同步，支持镜像和合并两种模式，基于JDBC和变更日志（如MySQL binlog）进行数据迁移。
+    - [离线数据同步FAQ和使用指南](https://www.yunqi.tech/documents/batch_sync_Sop): 解答离线数据同步任务的计费规则、支持的数据源类型、网络连通方法、配置流程及常见报错解决方案。
+  - [任务开发](https://www.yunqi.tech/documents/ide): 通过可视化界面或SQL创建、调度与管理数据同步、SQL查询及自定义脚本等任务的方法与配置。
+    - [任务开发概念说明](https://www.yunqi.tech/documents/task_development): 介绍云器 Lakehouse 任务开发模块中任务与任务组的概念、依赖关系配置及两种开发方式（直接创建任务与任务组内管理）的适用场景。
+    - [任务开发与调度](https://www.yunqi.tech/documents/taskdevelop): 提供实时同步、离线同步、SQL/Python/Shell脚本等任务的在线开发、调试、调度配置与发布功能。
+    - [任务参数](https://www.yunqi.tech/documents/task_param): 任务参数支持在SQL中定义${city}等自定义变量，并通过常量、系统内置时间表达式$[yyyy-MM-dd, -1d]等方式动态赋值，实现代码与配置分离。
+    - [动态表任务](https://www.yunqi.tech/documents/dynamic_table_task): 通过Web-IDE向导创建动态表，配置刷新周期、查询逻辑、运行集群及表生命周期等参数并提交部署。
+    - [Python任务](https://www.yunqi.tech/documents/Python_Task): 在云器Lakehouse中创建并运行Python脚本任务，支持编写代码、安装依赖、配置调度及工作流编排。
+    - [Python/Shell任务中使用数据源](https://www.yunqi.tech/documents/python_shell_datasource): 在Python/Shell任务中通过`clickzetta-dbutils`工具包，使用预配置的Lakehouse、MySQL、PostgreSQL数据源进行连接和查询。
+    - [JDBC任务](https://www.yunqi.tech/documents/jdbc_task): 配置并运行JDBC脚本任务，支持连接MySQL、Hive、ClickHouse等数据源，实现SQL查询、数据操作及任务调度。
+    - [流式SQL](https://www.yunqi.tech/documents/continue-job): 流式SQL采用微批处理机制，支持秒级刷新间隔，通过固化物理执行计划减少编译开销，适用于动态表或含table stream的实时数据处理场景。
+    - [组合任务](https://www.yunqi.tech/documents/composite_task): 将多个周期任务（如离线同步、SQL任务）封装为统一单元，支持统一调度配置、参数管理和依赖编排。
+    - [任务组](https://www.yunqi.tech/documents/task_group): 用于批量管理、编排和复制周期任务，支持在DAG图或列表模式下创建节点依赖关系并配置全局参数。
+    - [数据结果探查](https://www.yunqi.tech/documents/data_result_profile): 对SQL查询结果进行字段填充率、空值统计及数值分布（如总和、均值）的快速可视化探查。
+    - [数据可视化](https://www.yunqi.tech/documents/data_visualization): 将SQL查询结果转换为折线图或柱形图，支持设置X/Y轴、聚合函数及分组以分析数据趋势。
+  - [任务调度](https://www.yunqi.tech/documents/task_scheduling): 任务调度支持通过图形界面或API创建、配置和管理定时任务，涵盖工作流编排、依赖设置与执行监控。
+    - [任务调度和实例执行方式](https://www.yunqi.tech/documents/f6fc6447ee): 配置任务调度周期、依赖与实例生成规则（次日生效或发布即生效），并管理实例执行状态与失败处理。
+    - [任务调度依赖关系](https://www.yunqi.tech/documents/task_scheduling_dependency): 配置任务间的上下游依赖关系，支持同空间或跨空间依赖，提供默认、向前、向前就近三种依赖策略，并说明分钟、小时、天周期任务的实例依赖规则。
+  - [运维监控](https://www.yunqi.tech/documents/data_ops): 提供任务实例运维、数据质量监控与告警配置的运维管理指南。
+    - [任务和实例运维](https://www.yunqi.tech/documents/task-instance-maintenance): 提供任务和实例的集中运维管理，包括任务启停、批量操作、依赖关系查看、实例重跑与停止等管控功能。
+    - [补数任务](https://www.yunqi.tech/documents/backfilling_data): 通过选择时间范围、配置并发与依赖，对历史或未来的周期任务数据进行重跑或修复。
+    - [监控告警](https://www.yunqi.tech/documents/monitoring_and_alerting): 配置系统内置与自定义监控规则，对任务失败等关键事件进行实时监控，并通过多种通知策略发送告警。
+    - [监控项口径说明](https://www.yunqi.tech/documents/monitoring_item_specification): 定义周期任务失败、超时、延迟等事件及指标监控项的具体含义、包含与排除对象。
+  - [分析](https://www.yunqi.tech/documents/Notebook): 基于Web的交互式Notebook，支持SQL和Markdown单元格，用于编写和执行ClickZetta SQL查询并可视化分析结果。
+  - [数据](https://www.yunqi.tech/documents/data): 支持从本地文件、关系数据库、Kafka及对象存储等多种数据源导入数据到云器Lakehouse。
+    - [数据目录](https://www.yunqi.tech/documents/data_catalog): 提供数据资产检索与管理功能，支持按名称、类型、工作空间等条件搜索数据表，并以目录结构查看表详情、字段、血缘及上传数据。
+    - [数据质量](https://www.yunqi.tech/documents/DataQuality): 提供数据质量监控与评估功能，涵盖完整性、唯一性等六大维度，支持创建规则、查看概览大盘及校验结果。
+    - [数据分享](https://www.yunqi.tech/documents/quickstart_datashare_between_companies): 介绍云器 Lakehouse 无复制数据共享功能，包含创建视图、指定接收方及实时跨账户数据访问的操作步骤。
+  - [计算](https://www.yunqi.tech/documents/computation): 管理计算集群和查看作业历史记录，包括创建、配置集群以及查询、分析已提交作业的执行详情。
+    - [计算集群](https://www.yunqi.tech/documents/virtual-cluster): 介绍云器Lakehouse计算集群的三种类型（通用型、分析型、同步型）、规格（CRU）定义及其适用的查询、ETL、流分析等任务场景。
+    - [作业历史](https://www.yunqi.tech/documents/web-job-history): 查看和筛选近7天内通过JDBC、Studio等方式提交的SQL作业历史，支持按ID、状态、耗时、集群、提交人及query_tag进行过滤。
+    - [计算集群规格代码变更说明](https://www.yunqi.tech/documents/vcluster_size_description): 计算集群规格从2的指数倍改为更细粒度CRU，通用型步长1，分析型步长2的n次幂，同步型支持0.25/0.5等小规格。
+  - [AI](https://www.yunqi.tech/documents/AI): 围绕"AI"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [模型管理](https://www.yunqi.tech/documents/AI_Gateway): 统一管理托管与外部模型，提供权限隔离、动态限流、成本归因和SQL/API/可视化调用等治理能力。
+    - [MCP Servers](https://www.yunqi.tech/documents/MCPServers): 配置云器Lakehouse MCP-Server，使AI Agent通过自然语言使用40+工具执行SQL查询、任务创建与运维管理等操作。
+  - [审批](https://www.yunqi.tech/documents/Approval): 围绕"审批"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [权限申请](https://www.yunqi.tech/documents/Permission_application): 申请他人数据资源的读、写或全部权限，支持对用户或角色授权，并可在审批中心查看和管理工单。
+    - [审批工单](https://www.yunqi.tech/documents/Approval_list): 指导权限负责人通过“我的待办”页面查看、通过、拒绝或加签权限申请工单。
+    - [申请列表](https://www.yunqi.tech/documents/Application_list): 查看、撤回或复制自己已提交的资源权限申请工单，包括工单详情、审批状态和操作记录。
+  - [管理](https://www.yunqi.tech/documents/management): 管理账户、实例、工作空间和权限，包括创建、配置、授权等核心操作。
+    - [管理账户](https://www.yunqi.tech/documents/ManageAccounts): 管理云器 Lakehouse 账户的登录地址、账户名称、服务实例名称等核心标识，以及如何通过管理中心修改注册手机号。
+    - [管理用户](https://www.yunqi.tech/documents/account_user_management): 通过用户管理页面创建、编辑、禁用、启用和删除全局用户，并管理账户管理员角色与服务用户。
+    - [管理实例](https://www.yunqi.tech/documents/managing-instance): 创建、访问和管理Lakehouse服务实例，包括设置云服务商与地域、分配默认管理员角色、查看数据资产与计算用量。
+    - [工作空间](https://www.yunqi.tech/documents/workspace-introduction): 介绍云器Lakehouse中工作空间的核心概念，包括其创建、加入、预设角色（空间管理员、成员、开发人员）及资源隔离与授权管理。
+  - [账户管理](https://www.yunqi.tech/documents/Account): 管理账户的创建、权限分配、实名认证流程以及安全设置。
+    - [实名认证](https://www.yunqi.tech/documents/authentication): 指导账户管理员通过填写企业/个人信息及人脸识别完成个人或企业实名认证，并查看认证状态。
+  - [费用中心](https://www.yunqi.tech/documents/Billcenter): 围绕"费用中心"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [账户资金](https://www.yunqi.tech/documents/accountfunds): 介绍云器平台账户资金的现金与代金券分类，涵盖充值汇款、交易明细查询及代金券管理的具体操作。
+    - [计费账单](https://www.yunqi.tech/documents/billing): 查看云器Lakehouse平台的计算、存储、网络消费明细与总览，支持按时间、工作空间筛选和导出账单。
+- [对象模型](https://www.yunqi.tech/documents/object_model_design): 介绍云器Lakehouse的对象模型核心概念，包括目录、数据库、表、视图、物化视图、函数和共享的定义与层级关系。
+  - [Workspace](https://www.yunqi.tech/documents/workspace-introduction): 介绍云器Lakehouse中工作空间的核心概念，包括其创建、加入、预设角色（空间管理员、成员、开发人员）及资源隔离与授权管理。
+  - [External Catalog](https://www.yunqi.tech/documents/external-catalog): 围绕"External Catalog"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [External Catalog简介](https://www.yunqi.tech/documents/external-catalog-summary): 通过创建连接和外部目录，对Hive、Iceberg、Databricks等外部数据源执行只读联邦查询。
+  - [Connection](https://www.yunqi.tech/documents/connection-guide): 介绍 Lakehouse 中用于安全存储第三方服务凭据的 CONNECTION 对象，涵盖 API、Storage、Catalog 三种类型及其创建、查看、删除等管理操作。
+  - [表](https://www.yunqi.tech/documents/Tables): 围绕"表"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [内部表](https://www.yunqi.tech/documents/TABLE): 介绍 Lakehouse 内部表的列式存储特性，以及 NOT NULL、PRIMARY KEY 约束的具体行为与配置方式。
+    - [Dynamic Table](https://www.yunqi.tech/documents/dynamictable): 动态表是基于SQL查询动态生成数据的虚拟表，支持增量刷新，用于数据仓库、实时应用和ETL加工场景。
+    - [外部表](https://www.yunqi.tech/documents/external-tables): 围绕"外部表"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [外部表简介](https://www.yunqi.tech/documents/external-table-guide): 支持查询Kafka、Delta Lake、Hudi等外部数据源，并提供连接阿里云OSS、Google GCS等对象存储的具体SQL创建示例。
+      - [Delta Lake外部表](https://www.yunqi.tech/documents/delta-lake): 提供创建、删除、查看和修改Delta Lake外部表的SQL语法、参数说明及操作示例。
+      - [Hudi外部表](https://www.yunqi.tech/documents/external-hudi-table): 介绍如何创建、删除、查看和修改基于OSS等外部存储的Hudi格式外部表，并提供计费与权限说明。
+      - [Kafka外部表](https://www.yunqi.tech/documents/kafka-external-table): 通过创建存储连接和外部表，从Kafka主题中读取消息流，支持指定消费组、起始偏移量及解析消息元数据。
+  - [数据划分](https://www.yunqi.tech/documents/Datapartition): 围绕"数据划分"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [分区](https://www.yunqi.tech/documents/partition_table_guide): Lakehouse分区支持bucket、truncate、years、months、days、hours等转换函数，用于数据裁剪和查询优化。
+    - [分桶](https://www.yunqi.tech/documents/cluster-table-guide): 介绍分桶键和排序键的概念、选择准则及使用示例，以优化数据分布和查询性能。
+  - [Volume](https://www.yunqi.tech/documents/datalake_volume): Volume 用于在 Lakehouse 中管理云对象存储，支持访问、组织及处理结构化与非结构化数据，分为内部存储与外部存储（如OSS、S3）两种类型。
+  - [Time Travel](https://www.yunqi.tech/documents/timetravel-summary): 查询和恢复表的历史版本数据，包括使用undrop恢复表、restore到指定版本、查询历史数据及查看版本历史。
+  - [数据生命周期管理](https://www.yunqi.tech/documents/data-lifecycle): 通过SQL设置表或分区的数据自动回收周期，支持创建时指定和后期修改，到期后数据可被清理但表结构默认保留。
+  - [Schema](https://www.yunqi.tech/documents/schema-summary): 围绕"Schema"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Schema](https://www.yunqi.tech/documents/SCHEMA): 介绍云器 Lakehouse 中 SCHEMA 的概念、作用及管理命令（CREATE/DROP/USE/SHOW/DESC/ALTER）。
+    - [External Schema](https://www.yunqi.tech/documents/EXTERNALSCHMEA): 通过映射Hive、Databricks等外部元数据服务，直接查询OSS、COS、GCS等对象存储中的数据，支持Parquet、ORC、Text格式的读写。
+  - [视图](https://www.yunqi.tech/documents/view-summary): 围绕"视图"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [View](https://www.yunqi.tech/documents/VIEW): 通过SQL查询定义虚拟表，用于简化复杂查询、保护数据和组织数据，包含创建、删除和查看视图的方法。
+    - [Materialized View](https://www.yunqi.tech/documents/MATERIALIZEDVIEW): 介绍物化视图的概念、适用场景、管理命令（创建/删除/刷新）及其与普通视图、动态表的区别。
+  - [自定义函数](https://www.yunqi.tech/documents/user-function): 围绕"自定义函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [External Function](https://www.yunqi.tech/documents/RemoteFunctionintro): 通过Python/Java创建UDF，远程调用阿里云FC或腾讯云SCF服务，以执行AI模型、图像处理等外部计算并返回结果。
+  - [索引](https://www.yunqi.tech/documents/guid-index): 围绕"索引"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Bloomfilter Index](https://www.yunqi.tech/documents/bloomfilter-summary): BloomFilter索引通过位数组和哈希函数快速判断高基数列（如ID、邮箱）的等值查询数据是否存在，以跳过无关数据文件，提升查询性能。
+    - [倒排索引](https://www.yunqi.tech/documents/inverted-index): 介绍倒排索引的原理、构建与查询过程，并提供创建、查看和管理倒排索引的SQL语法及案例。
+    - [Lakehouse 索引最佳实践指南](https://www.yunqi.tech/documents/Lakehouse_Index_Best_Practice): 介绍云器Lakehouse中布隆过滤器、倒排索引和向量索引的适用场景、创建方法及多索引协同优化策略。
+- [数据采集](https://www.yunqi.tech/documents/Ingestion): 通过本地文件、数据库、Kafka等多种数据源导入数据，涵盖核心概念、配置步骤与操作示例。
+  - [导入数据](https://www.yunqi.tech/documents/upload-data): 支持从本地文件、关系数据库、Kafka及对象存储等多种数据源导入数据到云器Lakehouse的具体方法。
+    - [数据导入概览](https://www.yunqi.tech/documents/data-load-summary): 支持从本地文件、对象存储等数据源，通过PUT/COPY命令、JDBC客户端或可视化界面批量导入CSV、Parquet等格式数据到Lakehouse。
+    - [导入本地数据](https://www.yunqi.tech/documents/load-data-local): 介绍通过PUT命令、Lakehouse Studio页面和JDBC客户端三种方式，将本地CSV等格式文件导入Lakehouse的具体操作与限制。
+    - [使用数据上传功能上传数据](https://www.yunqi.tech/documents/upload_data): 通过Web界面上传不大于2GB的本地CSV、TXT、Parquet等文件至Lakehouse，支持创建新表或追加/覆盖已有表。
+    - [如何上传json/jsonl文件导入到lakehouse的表中](https://www.yunqi.tech/documents/774c65e217): 通过Web界面将符合规范的JSON/JSONL文件上传并导入Lakehouse，支持创建新表或追加至已有表。
+    - [批量从对象存储导入数据](https://www.yunqi.tech/documents/load-data-oss): 介绍使用Volume和COPY命令从阿里云OSS、腾讯云COS等对象存储批量导入数据到Lakehouse的具体方法、步骤与限制。
+    - [使用Java SDK批量上传数据](https://www.yunqi.tech/documents/use-java-sdk-upload-dta-local): 使用Java SDK的BulkloadStream将本地CSV文件等数据源批量导入Lakehouse表，包含初始化客户端、读取文件、逐行写入的完整代码示例。
+    - [使用Java SDK读取Kafka数据实时上传数据](https://www.yunqi.tech/documents/use-java-sdk-releatime-uploaddata): 使用Java SDK从Kafka消费JSON数据，并通过RealtimeStream接口实时写入Lakehouse表的完整代码示例。
+    - [使用Python SDK批量上传数据](https://www.yunqi.tech/documents/use-python-sdk-upload-data): 使用Python SDK的BulkloadStream将本地CSV等数据源批量导入Lakehouse，包含连接参数配置与完整操作示例。
+    - [使用数据集成导入数据](https://www.yunqi.tech/documents/import_data_with_data-integration): 配置定时任务，将本地文件、数据库、Kafka等数据源的数据定时导入到云器Lakehouse。
+    - [使用Pipe持续导入数据](https://www.yunqi.tech/documents/pipe): 围绕"使用Pipe持续导入数据"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [Pipe简介](https://www.yunqi.tech/documents/pipe-summary): 使用Pipe从Kafka或对象存储持续流式导入数据，通过CREATE PIPE等命令实现自动化调度与增量采集。
+      - [使用Pipe持续导入Kafka数据](https://www.yunqi.tech/documents/kafka-pipe): 围绕"使用Pipe持续导入Kafka数据"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+        - [借助read_kafka函数持续导入](https://www.yunqi.tech/documents/pipe-kafka): 使用CREATE PIPE语法和READ_KAFKA函数，配置并实现从Kafka到Lakehouse表的持续、自动数据导入。
+        - [借助Kafka外表Table Stream持续导入](https://www.yunqi.tech/documents/pipe-kafka-table-stream): 通过创建Kafka外部表、Table Stream和Pipe，将Kafka流数据持续导入Lakehouse目标表。
+        - [最佳实践：使用 Pipe 高效接入 kafka 数据](https://www.yunqi.tech/documents/pipe-kafka-bestpractice-1): 使用 read_kafka 函数快速验证 Kafka 连接与参数，并通过 SQL 探查数据格式以创建目标表。
+      - [使用Pipe持续导入对象存储数据](https://www.yunqi.tech/documents/pipe-storage-object): 通过LIST_PURGE或EVENT_NOTIFICATION模式，从对象存储自动检测并导入文件到Lakehouse表，避免重复加载。
+  - [导出数据](https://www.yunqi.tech/documents/download-data): 通过JDBC、命令行客户端或MySQL协议将数据导出至文件、数据库或消息队列的具体方法。
+    - [导出数据概览](https://www.yunqi.tech/documents/unloa-data-summary): 提供将数据导出为CSV文件的三种具体方法：Lakehouse Studio可视化界面、JDBC客户端以及支持多数据源的数据集成工具。
+    - [导出数据到本地](https://www.yunqi.tech/documents/unload-data-local): 通过Lakehouse Studio可视化界面或JDBC客户端GET命令，将表数据或查询结果导出为CSV/Excel文件到本地。
+    - [使用数据集成导出数据](https://www.yunqi.tech/documents/export_data_with_data-integration): 配置定时任务，将云器 Lakehouse 数据导出至外部数据存储。
+    - [使用COPY INTO导出文件](https://www.yunqi.tech/documents/COPY_INTO_Location): 使用COPY INTO命令将表或查询结果导出为CSV、Parquet或JSON文件到指定Volume路径。
+- [数据加工](https://www.yunqi.tech/documents/Transformation): 围绕"数据加工"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [增量计算](https://www.yunqi.tech/documents/streaming_data_pipeline_overview1): 围绕"增量计算"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [概述](https://www.yunqi.tech/documents/streaming_data_pipeline_overview): 支持实时数据加载、增量数据处理、变化数据捕获及连续性调度，实现从Kafka/CDC等数据源到动态表与Table Stream的流式数据处理。
+    - [动态表](https://www.yunqi.tech/documents/dynamic-table): 围绕"动态表"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [动态表简介](https://www.yunqi.tech/documents/dynamic_table_summary): 动态表通过定义查询语句和增量计算处理源表变化数据，适用于实时加工和固定维度分析场景。
+      - [查看动态表刷新模式](https://www.yunqi.tech/documents/dynamic-table-incre): 通过 explain 和 show 命令查看动态表是否支持增量刷新，并获取增量计划详情与历史刷新模式。
+      - [传统离线任务转增量实践](https://www.yunqi.tech/documents/transformt-dt): 将按天全量ETL任务改造为增量任务，通过动态分区表和SESSION_CONFIGS参数替换调度变量，实现小时/分钟级调度与资源优化。
+      - [动态表支持参数化定义](https://www.yunqi.tech/documents/dynamicTable-parmaters): 通过 SESSION_CONFIGS() 函数定义参数化查询，在刷新动态表时传入分区值以控制全量或增量数据刷新。
+      - [动态表支持DML语句修改](https://www.yunqi.tech/documents/dynamicTable-dml): 启用参数后，Dynamic Table支持通过INSERT、DELETE等DML语句直接修改数据，并说明修改后触发的全量刷新机制。
+      - [使用Studio开发监控动态表](https://www.yunqi.tech/documents/dynamic_table_using_studio): 在Lakehouse Studio中使用Web-IDE向导开发动态表：编写SQL查询、配置刷新周期与运行参数，并提交部署至目标环境。
+      - [动态表中使用UDF](https://www.yunqi.tech/documents/using-udf-in-dynamic-table): 在动态表中启用UDF增量计算支持，需设置特定参数后，可在SELECT子句中使用自定义函数（UDF/UDAF/UDTF）。
+    - [Table Stream变化数据捕获](https://www.yunqi.tech/documents/table_stream): 捕获表数据插入、更新和删除的变更记录，支持STANDARD和APPEND_ONLY两种模式，用于SQL ETL和实时数据同步。
+  - [通过SQL进行数据转换](https://www.yunqi.tech/documents/sql_data_transform): 使用SQL对数据进行清洗、过滤、聚合、连接和窗口函数计算等转换操作的具体语法与示例。
+    - [SQL数据转换基础](https://www.yunqi.tech/documents/sql_data_transform_basic): 介绍SQL数据转换的基本概念、常见操作（清洗、类型转换、聚合、合并、过滤）及在云器Lakehouse中的使用示例。
+    - [通过窗口函数进行数据转换](https://www.yunqi.tech/documents/sql_data_transform_windows): 介绍 RANK、ROW_NUMBER、LAG 等窗口函数的基本语法，及其在数据去重、分区聚合等ETL场景中的具体应用方法。
+    - [通过CTE进行数据转换](https://www.yunqi.tech/documents/sql_data_transform_cte): 使用WITH子句定义CTE，分步骤实现数据清洗、分组聚合及多表连接等数据转换操作。
+    - [通过嵌套数据类型(Nested Data Types)进行数据转换](https://www.yunqi.tech/documents/sql_data_transfom_NestedDataTypes): 介绍如何使用STRUCT和ARRAY嵌套数据类型简化数据模式、提升查询性能，并提供数据转换与清洗的SQL示例。
+    - [通过SQL进行数据转换的一些提示](https://www.yunqi.tech/documents/sql_data_transform_tips): 提供使用ROW_NUMBER、STRUCT、BOOL_OR/AND、EXCEPT、GROUP BY ALL等SQL函数和语法进行数据转换的实用技巧与示例。
+  - [利用外部引擎Spark分析Lakehouse数据](https://www.yunqi.tech/documents/Spark_Lakehouse_iceberg_REST): 通过Spark 3.5+连接并分析Lakehouse中的Iceberg表，包含认证配置、依赖项及数据类型限制说明。
+- [数据分析](https://www.yunqi.tech/documents/Analysis): 提供从数据导入、SQL查询到可视化分析的全流程操作指南，涵盖数据源连接、SQL语法、函数使用及结果导出。
+  - [SQL查询](https://www.yunqi.tech/documents/use-sql-analyze): 围绕"SQL查询"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [窗口函数](https://www.yunqi.tech/documents/window-funciton): 围绕"窗口函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [WINDOW FUNCTION](https://www.yunqi.tech/documents/window-function-summary): 介绍窗口函数的基本语法、分类（排名、聚合、分析函数）及使用示例，如ROW_NUMBER、RANK、SUM等。
+      - [WINDOW FRAME](https://www.yunqi.tech/documents/windowframe): 定义窗口函数中用于限定计算范围的ROWS和RANGE两种frame子句的语法、边界选项及使用示例。
+    - [自定义函数](https://www.yunqi.tech/documents/RemoteFunctionAsUDF): 定义、注册和使用标量、聚合与表值自定义函数，包括Python、Java和SQL实现示例。
+      - [介绍：External Function](https://www.yunqi.tech/documents/RemoteFunctionintro): 通过Python/Java创建UDF，远程调用阿里云FC或腾讯云SCF服务，以执行AI模型、图像处理等外部计算并返回结果。
+      - [使用流程: External Function](https://www.yunqi.tech/documents/RemoteFunctionBestPractice): 通过阿里云函数计算调用外部服务，实现文本情感分析和图片内容识别，需配置RAM角色授权。
+      - [开发指南: External Function (Python3)](https://www.yunqi.tech/documents/RemoteFunctionDevGuidePython3): 使用 Python 3.10 编写云器 Lakehouse 外部函数，包括代码结构、函数签名定义、依赖打包及容器化部署方法。
+      - [开发指南: External Function(Java)](https://www.yunqi.tech/documents/ExternalFunctionDevGuideJava): 使用Java基于Hive UDF API开发标量函数(UDF)、聚合函数(UDAF)和表函数(UDTF)的依赖配置与代码示例。
+    - [Json查询语法](https://www.yunqi.tech/documents/query-json-sy): 使用方括号语法查询JSON对象字段和数组元素，支持多级嵌套访问和类型转换。
+    - [Join](https://www.yunqi.tech/documents/JOIN): 介绍INNER、LEFT、RIGHT、FULL、SEMI、ANTI、CROSS、NATURAL等JOIN类型的语法、使用条件及具体示例。
+    - [Job Profile](https://www.yunqi.tech/documents/jobprofile-bestpractices): Lakehouse作业历史页面支持按ID、状态、耗时、集群、提交人等条件搜索近7天作业，并提供SQL语法错误与运行缓慢的诊断方法。
+    - [同义词](https://www.yunqi.tech/documents/synonym): 为表、物化视图、函数、Volume等对象创建别名，实现跨Schema访问、数据一致性维护与应用层解耦。
+  - [半结构化数据分析](https://www.yunqi.tech/documents/json_analyze): 介绍Lakehouse中JSON数据的存储优化、查询性能优势、构建方法及使用限制，包括parse_json函数和列式存储机制。
+  - [Lakehouse外部对象(Catalog、Schema、Table)使用指南](https://www.yunqi.tech/documents/federation-query): Lakehouse外部Catalog、Schema、Table的创建、查看、修改与删除等完整生命周期管理操作指南。
+    - [外部对象(Catalog, Schema, Table)使用指南](https://www.yunqi.tech/documents/external_object_user_guide): 配置和使用外部Catalog、Schema和Table，以联邦查询Hive、Databricks、对象存储等异构数据源。
+    - [利用 External Catalog 访问 Snowflake OpenCatalog 的 Iceberg 表](https://www.yunqi.tech/documents/Query_SnowflakeOpenCatalog_Icebergtable): 通过 External Catalog 连接 Snowflake Open Catalog，以只读方式访问其 Iceberg 表，支持 OAuth 认证与实时数据查询。
+    - [利用External Catalog 访问 Hive Catalog](https://www.yunqi.tech/documents/create-hive-catalog): 通过创建外部Catalog连接Hive Metastore，支持读写OSS、COS、S3等存储上的Hive数据，并实现与内部表的关联查询。
+    - [Databricks-云器Lakehouse 跨平台数据联邦最佳实践指南](https://www.yunqi.tech/documents/databricks_yunqi_integration_guide_v2): 实现 Databricks 与云器 Lakehouse 间的跨平台数据联邦，涵盖架构设计、实施方案与运维实践，无需复制数据。
+  - [数据湖分析](https://www.yunqi.tech/documents/datalake_volume_anlytics): 介绍数据湖分析的核心能力：统一元数据、多引擎协同、开放数据格式及对结构化与非结构化数据的统一查询。
+    - [数据湖概述](https://www.yunqi.tech/documents/datalake_overview): 云器 Lakehouse 平台通过 Volume 对象、远程函数和统一元数据系统，支持处理对象存储中的半/非结构化数据并集成AI模型分析。
+    - [存储连接(STORAGE CONNECTION)](https://www.yunqi.tech/documents/Datalake_StorageConnection): 创建并配置连接阿里云OSS、腾讯云COS、亚马逊S3、Hive及Kafka等外部数据源的认证与访问信息，供Volume、External Table等对象使用。
+      - [云对象存储](https://www.yunqi.tech/documents/cloud_object_storage): 介绍云对象存储的核心概念、存储桶管理、文件上传下载及生命周期管理等主要操作。
+        - [阿里云存储连接创建](https://www.yunqi.tech/documents/aliyun_storage_connection): 通过访问密钥或角色授权两种方式，创建连接以访问阿里云OSS存储，包含具体SQL语句和RAM策略配置步骤。
+        - [腾讯云存储连接创建](https://www.yunqi.tech/documents/cos_storage_connection): 通过访问密钥或角色授权两种方式，创建连接以访问腾讯云对象存储COS，包含具体SQL语法和参数说明。
+        - [亚马逊云存储连接创建](https://www.yunqi.tech/documents/aws_storage_connection): 通过访问密钥或角色授权两种方式，创建连接以访问AWS S3对象存储，包含参数配置与AWS侧策略创建步骤。
+      - [数仓与数据库](https://www.yunqi.tech/documents/db_dw_connection): 介绍云器 Lakehouse 的存算分离架构、Serverless 计算、开放数据格式及主要应用场景。
+        - [Hive](https://www.yunqi.tech/documents/Hive_connection): 配置Hive Catalog以访问外部Hive元数据服务，支持读写OSS、COS、S3、GCS上的Parquet、ORC、Text格式数据。
+      - [实时流数据](https://www.yunqi.tech/documents/KAFKA_Storage_connection): 提供流数据接入、实时查询、监控告警及数据导出等功能的配置与使用方法。
+        - [Kafka](https://www.yunqi.tech/documents/Kafka_connection): 通过SQL创建Kafka外部表以读取数据流，包括创建存储连接的语法、参数及示例。
+    - [数据湖VOLUME对象](https://www.yunqi.tech/documents/datalake_volume_object): 通过CREATE、ALTER、DROP等SQL语句管理VOLUME对象，实现外部数据源的挂载、卸载与访问控制。
+      - [内部VOLUME对象](https://www.yunqi.tech/documents/internal_volume): 介绍内部VOLUME对象，包括User Volume、Table Volume和命名Volume，提供文件上传、查看、删除等操作的SQL命令。
+      - [外部VOLUME对象](https://www.yunqi.tech/documents/external_volume): 创建、管理和使用外部VOLUME对象，以访问S3、OSS、HDFS等对象存储或文件系统中的数据。
+        - [阿里云OSS VOLUME创建](https://www.yunqi.tech/documents/oss_volume_creation): 通过SQL创建和管理访问阿里云OSS的外部Volume，支持目录自动刷新与文件预览。
+        - [腾讯云COS VOLUME创建](https://www.yunqi.tech/documents/cos_volume_creation): 通过SQL创建并管理腾讯云COS外部VOLUME，支持查看目录、刷新元数据及查询文件。
+        - [亚马逊云S3 VOLUME创建](https://www.yunqi.tech/documents/s3_volume_creation): 通过SQL创建和管理访问AWS S3的外部VOLUME，支持目录浏览与文件元数据刷新。
+    - [对象存储中的数据导入导出](https://www.yunqi.tech/documents/data_transfer_datalake): 通过 SQL 语句或客户端工具，将对象存储（如 S3、OSS）中的数据导入到数据库表，或将查询结果导出至对象存储。
+      - [从本地上传、下载数据到VOLUME](https://www.yunqi.tech/documents/put_get_volume): 通过PUT命令将本地文件上传至VOLUME，或使用GET命令将VOLUME数据下载到本地。
+      - [从VOLUME导入数据到表 - COPY INTO TABLE](https://www.yunqi.tech/documents/from_volume_to_table): 使用COPY INTO命令将VOLUME中的CSV、Parquet、ORC、JSON格式文件导入到Lakehouse表，支持指定列、文件格式选项和源文件筛选。
+      - [导出数据到VOLUME - COPY INTO VOLUME](https://www.yunqi.tech/documents/from_lakehouse_to_volume): 将表或查询结果以CSV、TEXT或Parquet格式导出至外部、表或用户Volume的指定路径，支持设置压缩和文件名。
+    - [数据湖VOLUME 查询分析](https://www.yunqi.tech/documents/datalake_query_ingest): 直接查询外部存储中CSV、Parquet、ORC格式文件的方法，支持阿里云OSS、腾讯云COS和AWS S3。
+      - [结构化、半结构化数据分析](https://www.yunqi.tech/documents/structure_data_analysis): 使用 SELECT 语句从 VOLUME 中直接查询 CSV、Parquet、ORC、JSON、BSON 格式文件，支持指定列、文件筛选及格式参数。
+      - [非结构化数据分析](https://www.yunqi.tech/documents/unstructure_data_analysis): 使用 SQL 直接查询和分析图像、PDF、PPT、音频、视频等非结构化文件的内容与元数据。
+        - [调用AI能力处理非结构化数据](https://www.yunqi.tech/documents/datalake_unstructure_data): 使用内置AI函数（如image_to_text、llm）在SQL中直接解析图像、PDF等非结构化数据并提取信息。
+    - [数据湖权限](https://www.yunqi.tech/documents/datalake_privilege): 管理数据湖中Volume对象的READ/WRITE/ALTER权限和Remote Function对象的USE权限，并提供具体SQL授权示例。
+  - [AI增强分析](https://www.yunqi.tech/documents/lakehouse-ai): 通过自然语言问答、SQL生成、数据洞察和可视化图表自动生成，实现AI驱动的交互式数据分析。
+    - [向量检索](https://www.yunqi.tech/documents/vector-search): 介绍Lakehouse的向量检索功能，包括VECTOR类型存储、HNSW索引构建及L2_DISTANCE等相似度计算函数的使用方法。
+    - [对话式分析DataGPT](https://www.yunqi.tech/documents/conversational_analytics_datagpt): DataGPT通过自然语言对话，基于Lakehouse引擎进行数据查询与分析，降低非技术人员使用门槛。
+  - [性能优化](https://www.yunqi.tech/documents/performance_optimization): 提供查询性能分析、索引优化、数据倾斜处理及资源配置调优的具体方法与最佳实践
+    - [Result Cache](https://www.yunqi.tech/documents/result_cache): 介绍云器 Lakehouse 查询结果缓存的启用条件、24小时保留周期及通过 `cz.sql.enable.shortcut.result.cache` 参数控制的方法。
+    - [计算集群缓存](https://www.yunqi.tech/documents/vc_cache): 介绍Lakehouse计算集群缓存的三种类型（查询结果、元数据、本地磁盘）及其主动与被动缓存的使用方法与SQL命令。
+    - [小文件优化](https://www.yunqi.tech/documents/small_file_optimization): 通过SET参数或OPTIMIZE命令自动/手动合并Lakehouse表的小文件，减少I/O以提升查询性能，仅适用于GP型计算集群。
+    - [推荐表的排序列](https://www.yunqi.tech/documents/auto-index): 通过查询 `information_schema.sortkey_candidates` 获取推荐作为表排序列的列、估算提升效果及对应的设置SQL语句。
+- [安全](https://www.yunqi.tech/documents/data_security): 提供用户管理、权限控制、审计日志等安全功能，涵盖用户创建、角色授权、数据访问策略及操作审计的具体配置方法。
+  - [安全功能概览](https://www.yunqi.tech/documents/security_overview): 介绍云器Lakehouse的架构安全、网络访问控制、数据加密、审计监控及容灾恢复等企业级安全功能。
+  - [访问控制](https://www.yunqi.tech/documents/访问控制概览): 围绕"访问控制"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [访问控制概览](https://www.yunqi.tech/documents/access-control-general): 介绍云器Lakehouse的RBAC与ACL访问控制模型，包括实例角色、工作空间角色、权限点及GRANT/REVOKE授权管理。
+    - [配置访问控制](https://www.yunqi.tech/documents/access-control-configration): 通过Web端或SQL授予实例管理员、工作空间管理员等角色，管理用户对服务实例和工作空间的访问权限。
+    - [角色](https://www.yunqi.tech/documents/roles): Lakehouse中预置与自定义角色的定义、类型、级别划分，以及通过Web端或SQL进行角色创建、授权、查看和管理的具体操作。
+    - [元数据对象与权限点](https://www.yunqi.tech/documents/meta-objects-and-privileges): 列举云器Lakehouse中可授权的元数据对象（如表、视图、计算集群）与业务对象，并说明如何使用ALL对象和GRANT/REVOKE语句进行权限管理。
+    - [用户身份](https://www.yunqi.tech/documents/user-identification): 介绍云器Lakehouse的全局账号用户与服务实例内用户层级，以及普通用户、系统服务用户和自定义服务用户类型及其权限控制。
+    - [系统内置角色权限列表说明](https://www.yunqi.tech/documents/permissions-of-built-in-workspace-level-roles): 列出云器Lakehouse各系统预设角色（如instance_admin、workspace_analyst等）在Studio各功能菜单的具体操作权限。
+  - [身份认证](https://www.yunqi.tech/documents/Authentication): 围绕"身份认证"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [绑定 Google Authenticator 进行多因子身份验证 (MFA)](https://www.yunqi.tech/documents/using-google-authenticator): 在阿里云-新加坡和AWS-新加坡区域，通过扫描二维码或手动输入密钥，为云器Lakehouse账户绑定Google Authenticator以启用MFA。
+    - [单点登录](https://www.yunqi.tech/documents/sso-configuration): 配置 OAuth 2.0/OIDC 或 SAML 2.0 协议实现单点登录，包括开启SSO、填写IdP参数及映射用户身份字段。
+  - [备份和恢复](https://www.yunqi.tech/documents/data-recover): 介绍 Lakehouse Time Travel 功能，包括查询历史数据、设置保留周期、恢复已删除表及恢复到指定版本的方法。
+  - [动态脱敏](https://www.yunqi.tech/documents/dynamic-mask): 通过SQL函数为指定列创建动态脱敏策略，支持基于用户或角色条件，在查询时实时隐藏或替换敏感数据。
+  - [网络策略](https://www.yunqi.tech/documents/network_policy): 通过白名单和黑名单控制对Lakehouse服务实例的JDBC、SDK及Web访问，支持临时绕过并遵循Deny优先原则。
+  - [私有存储](https://www.yunqi.tech/documents/bring_your_own_storage): 配置私有存储以连接自建MinIO、AWS S3等对象存储，实现数据湖与外部存储系统的对接。
+    - [私有存储概述](https://www.yunqi.tech/documents/byos_general): 配置自有对象存储作为Lakehouse数据存储位置，包括存储桶要求、访问策略及Web界面配置步骤。
+    - [阿里云私有存储配置](https://www.yunqi.tech/documents/alicloud_byos_configration): 配置阿里云OSS私有存储桶作为Lakehouse数据存储，包括创建/选择桶、设置地域、权限和存储类型等关键步骤。
+    - [腾讯云私有存储配置](https://www.yunqi.tech/documents/byos_tencentcloud_configration): 在腾讯云COS上配置私有存储桶（BYOS），包括创建/选择存储桶、验证地域一致性及设置访问策略，以供Lakehouse作为数据存储。
+- [数据分享](https://www.yunqi.tech/documents/data_share): 围绕"数据分享"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [数据分享](https://www.yunqi.tech/documents/datasharing): 通过share对象在同区域跨账户或跨实例间安全共享table或view数据，无需复制且实时更新，支持DDL命令与Web端操作。
+- [私网连接](https://www.yunqi.tech/documents/connect_to_Lakehouse): 通过配置终端节点、终端节点服务和私网连接实现跨VPC或本地IDC与云上服务的私网安全访问。
+  - [私网连接概述](https://www.yunqi.tech/documents/private-link-general): 通过私网连接实现用户VPC与Lakehouse之间的双向安全内网访问，包括入向访问服务和出向连接用户数据库。
+  - [阿里云私网连接配置](https://www.yunqi.tech/documents/private_link): 配置阿里云私网连接，实现VPC与云服务、本地IDC或第三方云的安全内网访问。
+    - [创建阿里云终端节点](https://www.yunqi.tech/documents/creating_alicloud_privatelinkendpoint): 在阿里云VPC内通过私网连接访问云器Lakehouse，需完成白名单授权、创建终端节点及允许连接三个步骤。
+    - [创建阿里云终端节点服务](https://www.yunqi.tech/documents/creating_alicloud_privatelinkservice): 在阿里云创建终端节点服务，配置服务资源并添加Lakehouse云账号至白名单，以建立PrivateLink连接访问VPC内服务。
+    - [获取阿里云ARN和ExternalID](https://www.yunqi.tech/documents/alicloud-arn-externalid): 提供在阿里云创建访问控制角色并配置ARN及ExternalID以授权Lakehouse读取终端节点状态的具体步骤。
+  - [腾讯云私网连接配置](https://www.yunqi.tech/documents/tencentcloud_privatelink): 围绕"腾讯云私网连接配置"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [创建腾讯云终端节点](https://www.yunqi.tech/documents/creating_tencentcloud_privatelinkendpoint): 在腾讯云VPC内创建连接云器Lakehouse的私网终端节点，需完成白名单授权、填入服务ID并允许连接。
+    - [创建腾讯云终端节点服务](https://www.yunqi.tech/documents/creating_tencentcloud_privatelinkservice): 在腾讯云创建终端节点服务，配置VPC内服务（如MySQL）为资源，并添加Lakehouse UIN至白名单以实现PrivateLink连接。
+    - [获取腾讯云ARN和ExternalID](https://www.yunqi.tech/documents/tencentcloud_arn_and_externalid): 指导在腾讯云控制台创建具备VPC只读权限的角色，以获取ARN和自定义ExternalID，用于配置Private Link访问。
+- [性能测试](https://www.yunqi.tech/documents/benchmark): 围绕"性能测试"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [SSB单表性能测试](https://www.yunqi.tech/documents/ssb-benchmark): 对比云器 Lakehouse 与 ClickHouse 在 SSB 单表 100GB 数据集上的 13 个查询性能，包含测试环境、数据与过程详情。
+  - [TPC-H性能测试](https://www.yunqi.tech/documents/tpch-benchmark): 对比云器Lakehouse与Trino在TPC-H 100GB数据集（22个查询）上的性能，展示云器Lakehouse总体耗时仅为Trino的1/9.84。
+  - [TPC-DS性能测试](https://www.yunqi.tech/documents/tpcds-benchmark): 提供云器Lakehouse与Spark SQL在TPC-DS 10TB数据集上的性能对比测试结果，显示前者性能约为后者的9.51倍。
+- [生态工具](https://www.yunqi.tech/documents/tools): 围绕"生态工具"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [数据集成](https://www.yunqi.tech/documents/tools_datasync): 围绕"数据集成"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Airbyte](https://www.yunqi.tech/documents/airbyte): 开源数据集成平台Airbyte的本地Docker安装指南，涵盖系统要求、安装步骤及Windows部署方法。
+    - [Datax](https://www.yunqi.tech/documents/datax): DataX插件配置指南：将MySQL等数据源通过JDBC连接同步至ClickZetta LakeHouse，支持覆盖写入模式。
+  - [数据建模](https://www.yunqi.tech/documents/tools_data_model): 围绕"数据建模"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Dbt](https://www.yunqi.tech/documents/dbt): dbt-clickzetta适配器安装、配置及使用指南，涵盖数据上传、模型运行、测试验证和文档生成全流程。
+  - [数据库管理](https://www.yunqi.tech/documents/data-mamager-tool): 管理数据库的创建、查看、修改、删除操作，以及数据库属性与存储配置的详细参数说明。
+    - [SQL Workbench/J连接云器Lakehouse](https://www.yunqi.tech/documents/sqlworkbench-j-lakehouse): 使用 SQL Workbench/J 通过 JDBC 驱动连接云器 Lakehouse，包括驱动配置、连接字符串设置及基本数据查询与管理操作。
+    - [DBeaver连接云器Lakehouse](https://www.yunqi.tech/documents/dbeaver-lakehouse): 配置DBeaver通过JDBC驱动连接云器Lakehouse，包括驱动设置、连接参数填写及执行SQL查询的步骤。
+    - [DataGrip连接云器Lakehouse](https://www.yunqi.tech/documents/datagrip-lakehouse): 指导使用DataGrip通过JDBC驱动连接云器Lakehouse，包括驱动配置、连接测试、SQL查询及常见引号问题解决方案。
+  - [分析](https://www.yunqi.tech/documents/tools_analysis): 围绕"分析"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Zeppelin](https://www.yunqi.tech/documents/Zeppelin): 通过Zeppelin Notebook配置JDBC解释器连接云器Lakehouse，执行SQL查询、切换计算资源和数据Schema。
+  - [BI](https://www.yunqi.tech/documents/tools_BI): 使用SQL查询、数据建模和可视化图表创建BI报表，支持从数据源连接到仪表板发布的完整流程。
+    - [帆软BI](https://www.yunqi.tech/documents/FineBI): 配置帆软BI通过JDBC连接云器Lakehouse，包括驱动上传、URL设置及连接测试步骤。
+    - [Metabase](https://www.yunqi.tech/documents/metabase): 提供在Docker上部署Metabase并连接云器Lakehouse数据库的步骤，包括拉取镜像、启动容器、配置驱动和数据库连接。
+    - [Rath](https://www.yunqi.tech/documents/rath): 开源自动化数据分析工具，通过增强分析引擎自动发现数据模式、见解和因果关系，支持从ClickZetta Lakehouse导入数据并创建交互式可视化图表与仪表板。
+    - [Superset](https://www.yunqi.tech/documents/superset): 通过 clickzetta-sqlalchemy 适配器在 Superset 中配置并连接 ClickZetta Lakehouse 数据库的安装、配置与使用方法。
+    - [Tableau连接Lakehouse](https://www.yunqi.tech/documents/TableauConnectToLakehouse): 通过放置JDBC驱动和Tableau插件，使用Lakehouse JDBC驱动连接Tableau并进行可视化数据分析。
+    - [PowerBI使用Lakehouse Mysql协议](https://www.yunqi.tech/documents/PowerBI): 使用PowerBI通过MySQL协议连接Lakehouse的步骤，包括用户名格式、密码重置、计算集群设置及数据准备。
+    - [帆软BI使用Lakehouse的Mysql协议](https://www.yunqi.tech/documents/finebi-mysql): 通过MySQL协议连接Lakehouse，需在帆软BI中配置拼接了实例与工作空间名的用户名，并设置用户默认计算集群。
+    - [Navicat使用Lakehouse的Mysql协议](https://www.yunqi.tech/documents/navicat-mysql): 使用Navicat通过MySQL协议连接Lakehouse，需拼接用户名、设置默认计算集群并重置密码。
+  - [AI](https://www.yunqi.tech/documents/tools_AI): 介绍云器Lakehouse的AI能力，包括内置向量数据库、AI函数、RAG应用开发框架及与主流模型服务的集成。
+    - [LangChain](https://www.yunqi.tech/documents/langchain): LangChain框架用于构建基于大语言模型的应用程序，支持集成多源数据、组件化流程设计及简化模型调用。
+    - [Llamaindex](https://www.yunqi.tech/documents/llama-index): LlamaIndex 框架通过 Database Reader 从云数据仓库加载数据，构建索引以实现检索增强生成（RAG）。
+    - [Mindsdb](https://www.yunqi.tech/documents/mindsdb): 通过AI增强SQL，将模型、代理和知识库视为虚拟表，支持从数据源进行SELECT、JOIN和微调操作。
+  - [App](https://www.yunqi.tech/documents/tools_app): 围绕"App"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Streamlit](https://www.yunqi.tech/documents/streamlit): 使用 Streamlit 和 clickzetta-sqlalchemy 库，通过配置 secrets.toml 连接字符串、编写查询界面并运行应用，实现查询 ClickZetta Lakehouse 数据并展示结果。
+  - [Connector](https://www.yunqi.tech/documents/connector): 围绕"Connector"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Logstash Connector](https://www.yunqi.tech/documents/Logstash): 通过Logstash Connector插件将数据从文件等源导入Lakehouse，包含插件安装、配置和测试方法。
+    - [Trino Connector](https://www.yunqi.tech/documents/trino): 通过Trino-Clickzetta插件连接并查询Clickzetta Lakehouse数据，包括插件安装、配置修改及使用Trino客户端执行SQL的完整流程。
+    - [Spark Connector](https://www.yunqi.tech/documents/spark-connector): 围绕"Spark Connector"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [Spark Connector介绍](https://www.yunqi.tech/documents/spark-connector-summary): 使用Spark Connector将Lakehouse作为数据源，实现Spark DataFrame与Lakehouse表之间的双向读写。
+      - [Spark Connector使用](https://www.yunqi.tech/documents/spark-connector-use): 使用Spark Connector连接Lakehouse的参数配置、数据类型映射及本地测试方法。
+    - [Flink Write Connector](https://www.yunqi.tech/documents/flink-write-connector): 提供两种Flink Connector写入模式：igs-dynamic-table支持CDC更新删除，igs-dynamic-table-append-only仅支持追加写入。
+- [Insight](https://www.yunqi.tech/documents/Lakehouse_Insight): 通过连接云器Lakehouse数据源，创建数据集并拖拽生成BI报表与看板，实现自助数据分析和可视化。
+
+## SQL手册
+
+- [SQL命令](https://www.yunqi.tech/documents/sql-reference): 提供DDL、DML、DQL等SQL命令的完整语法参考，包括CREATE、SELECT、INSERT等语句的具体参数和使用示例。
+  - [对象标识符](https://www.yunqi.tech/documents/object_identifier): Lakehouse对象标识符命名规则：常规标识符、反引号标识符和双引号标识符的命名规范、字符限制、大小写处理及关键字转义方法。
+  - [参数控制](https://www.yunqi.tech/documents/sql-parmaters): 通过 SET PROPERTIES 命令为 Workspace、Schema 和 Table 设置或修改参数，以控制数据对象的行为和性能。
+  - [常用的DDL语句](https://www.yunqi.tech/documents/DDL): 列举创建、修改、删除数据库、表、视图和索引等核心对象的完整SQL语法与示例。
+    - [ALTER](https://www.yunqi.tech/documents/alter): 修改工作空间、表、视图、模式等数据库或空间级对象的元数据和参数的具体语法与操作。
+    - [ANALYZE TABLE](https://www.yunqi.tech/documents/analyze-table): 收集表或列的统计信息以优化查询，支持指定表、Schema、列及NOSCAN模式。
+    - [CREATE](https://www.yunqi.tech/documents/create): CREATE语句参考手册，包含创建用户、角色、连接、外部目录、表、视图、物化视图、动态表等20种对象的具体语法。
+    - [CREATE...CLONE](https://www.yunqi.tech/documents/clone-doc): 提供克隆普通表和动态表的SQL语法，支持指定时间点版本克隆及动态表刷新策略配置。
+    - [DESCRIBE](https://www.yunqi.tech/documents/describe): DESCRIBE 命令用于查看表、视图、索引、作业等各类对象的元数据信息，支持使用 EXTENDED 参数获取更详细内容。
+    - [DESC HISTORY](https://www.yunqi.tech/documents/desc-history): DESC HISTORY 命令用于查看表、动态表或物化视图的历史操作记录，包括版本、时间、用户和操作类型等信息。
+    - [DROP](https://www.yunqi.tech/documents/drop): 删除数据库对象（如表、视图、索引、函数）的通用语法、可选子句及各类具体对象删除操作的参考链接。
+    - [EXPLAIN](https://www.yunqi.tech/documents/EXPLAIN): 提供基础与扩展两种模式，用于分析SQL查询的物理及逻辑执行计划，以识别性能瓶颈。
+    - [OPTIMIZE](https://www.yunqi.tech/documents/OPTIMIZE): ClickZetta Lakehouse 中用于手动优化表数据的命令，支持异步/同步执行，可合并小文件、清理删除标记并重组数据布局。
+    - [RESTORE](https://www.yunqi.tech/documents/restore): 使用 RESTORE TABLE 命令将表或动态表恢复到由 TIMESTAMP AS OF 子句指定的历史版本。
+    - [SHOW](https://www.yunqi.tech/documents/show): 列出数据库对象（如表、视图、作业）的SHOW语句语法，包括作用域限定、LIKE/WHERE过滤及参数详解。
+    - [SHOW CREATE TABLE](https://www.yunqi.tech/documents/show-create-table): 获取表、物化视图或视图的完整创建语句，包括结构、存储格式和选项。
+    - [SHOW COLUMNS](https://www.yunqi.tech/documents/show-columns): 查看指定表的列名、数据类型等结构信息，支持通过 `IN` 或 `FROM` 子句指定 Schema 和表名。
+    - [SHOW TABLES HISTORY](https://www.yunqi.tech/documents/show-tables-history): 查看表历史记录与删除时间，支持按Schema筛选、名称模式匹配及复杂条件过滤，用于恢复误删表（UNDROP）。
+    - [SHOW VOLUMES](https://www.yunqi.tech/documents/show-volume): 列出并筛选当前 schema 下的所有 Volume 信息，支持按名称、工作区、连接信息等字段过滤。
+    - [SHOW PARTITIONS](https://www.yunqi.tech/documents/list-partition): SHOW PARTITIONS 命令用于查看指定表的分区结构、数量及详细信息，支持使用 EXTENDED 参数获取文件数、大小和修改时间等扩展信息。
+    - [UNDROP](https://www.yunqi.tech/documents/UNDROP-TABLE): 使用 UNDROP TABLE 语句恢复已删除的表、动态表或物化视图，需在数据保留周期内操作。
+    - [USE](https://www.yunqi.tech/documents/use-schema): 用于切换当前会话的 SCHEMA 或计算资源（VCLUSTER）的 SQL 语法、参数及使用示例。
+  - [常用的DML](https://www.yunqi.tech/documents/DML): 围绕"常用的DML"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [INSERT INTO](https://www.yunqi.tech/documents/INSERT): INSERT INTO 语句用于向表中追加或覆盖数据，支持 VALUES 子句、SELECT 查询结果以及静态/动态分区插入。
+    - [UPDATE](https://www.yunqi.tech/documents/UPDATE): UPDATE语句语法详解，包含SET、WHERE、ORDER BY和LIMIT子句，以及使用子查询和批量更新的具体示例。
+    - [DELETE](https://www.yunqi.tech/documents/DELETE): DELETE语句的语法、必填参数、使用示例及注意事项，用于从表中删除符合条件的行。
+    - [MERGE](https://www.yunqi.tech/documents/MERGE): MERGE INTO语句的语法、参数与使用注意事项，用于根据源表数据对目标表执行插入、更新或删除操作。
+    - [TRUNCATE](https://www.yunqi.tech/documents/TRUNCATE): TRUNCATE TABLE 命令用于快速清空整表或指定分区的数据，支持 IF EXISTS 参数和基于分区列的条件筛选。
+  - [查询语法](https://www.yunqi.tech/documents/DQL): 提供SELECT、JOIN、WHERE等SQL语句的具体语法、函数使用示例及查询优化方法。
+    - [查询语法](https://www.yunqi.tech/documents/query-syntax): Lakehouse SQL查询语法手册，涵盖SELECT语句、WITH CTE、HINTS、EXCEPT排除列、WHERE条件及GROUP BY扩展（GROUPING SETS/ROLLUP/CUBE）的具体用法。
+    - [WITH](https://www.yunqi.tech/documents/WITH): 介绍WITH子句（CTE）的语法、参数及使用示例，用于创建临时结果集以提升SQL查询的可读性和重用性。
+    - [TIME TRAVEL](https://www.yunqi.tech/documents/TIMETRAVEL): 通过TIMESTAMP AS OF语法查询Lakehouse表的历史版本数据，支持设置最长90天的数据保留周期。
+    - [JOIN](https://www.yunqi.tech/documents/JOIN): 介绍INNER、LEFT、RIGHT、FULL、SEMI、ANTI、CROSS、NATURAL等JOIN类型的语法、使用条件及具体示例。
+    - [Map Join](https://www.yunqi.tech/documents/mapjoin): 通过 `/*+ MAPJOIN (table) */` 提示优化小表与大表的 JOIN，避免 Shuffle，提升查询性能。
+    - [LATERAL VIEW](https://www.yunqi.tech/documents/LATERALVIEW): 使用 LATERAL VIEW 子句配合 EXPLODE、POSEXPLODE 等生成器函数，将数组或映射类型的列展开为多行数据。
+    - [GROUP BY子句](https://www.yunqi.tech/documents/groupby): 详细说明GROUP BY子句的标准语法、GROUPING SETS、ROLLUP、CUBE等高级聚合功能及其应用场景。
+    - [窗口函数（Window Function）](https://www.yunqi.tech/documents/WINDOWFUNCTION): 介绍云器Lakehouse SQL窗口函数的语法、窗口框架类型及使用示例，包括移动窗口聚合和多窗口排名。
+    - [TABLESAMPLE采样](https://www.yunqi.tech/documents/tablesample): 云器 Lakehouse 的 TABLESAMPLE 功能支持 SYSTEM（文件级）和 ROW（行级）两种采样策略，用于按百分比或固定行数进行高效数据抽样。
+    - [QUALIFY](https://www.yunqi.tech/documents/sql-qualify): QUALIFY子句用于在SELECT语句中直接过滤窗口函数结果，无需子查询，支持ROW_NUMBER、RANK等函数别名进行条件筛选。
+  - [表、视图、物化视图、索引、同义词](https://www.yunqi.tech/documents/table-view): 围绕"表、视图、物化视图、索引、同义词"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [表](https://www.yunqi.tech/documents/TABLE_DDL): 围绕"表"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [ALTER TABLE](https://www.yunqi.tech/documents/ALTERTABLE): ALTER TABLE命令用于重命名表、修改表注释等表属性操作的具体语法和示例。
+      - [ALTER TABLE COLUMN](https://www.yunqi.tech/documents/ALTER-TABLE-COLUMN): 提供 ALTER TABLE 语句的语法和示例，用于添加、删除、修改及重命名表中的列，包括对 struct、array、map 等复杂类型的操作。
+      - [建表语法](https://www.yunqi.tech/documents/CREATETABLE): 围绕"建表语法"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+        - [CREATE TABLE](https://www.yunqi.tech/documents/create-table-ddl): CREATE TABLE语句的语法、列类型定义、主键约束及分区、分桶等高级表结构配置方法。
+        - [分区](https://www.yunqi.tech/documents/partition_table): 介绍Lakehouse分区功能，支持标识分区与转换分区（如years、months、bucket），通过WHERE子句实现数据裁剪以提升查询效率。
+        - [分桶](https://www.yunqi.tech/documents/cluster-table): 介绍分桶键和排序键的概念、选择准则及使用示例，用于优化数据组织与查询性能。
+        - [主键(primary key)](https://www.yunqi.tech/documents/primary-key): Lakehouse主键约束的默认行为（ENABLE VALIDATE RELY）与自定义模式（DISABLE NOVALIDATE RELY）说明，及其在实时写入与SQL写入时的不同去重规则。
+        - [自增列](https://www.yunqi.tech/documents/IDENTITY-Column): Lakehouse 中创建 bigint 类型自增列（IDENTITY）的语法、使用示例、行为特点与限制说明。
+        - [生成列](https://www.yunqi.tech/documents/generated-column): 介绍生成列的语法、使用限制、与默认值的区别，以及如何通过确定性表达式自动计算列值。
+        - [默认值](https://www.yunqi.tech/documents/default-value): 为表列定义默认值的语法、使用限制及与生成列的对比，支持非确定性函数和批量导入。
+      - [DESC TABLE](https://www.yunqi.tech/documents/DESCTABLE): 查看表或视图的字段名、数据类型等结构信息，使用 `DESC` 或 `DESCRIBE` 命令，可选 `EXTENDED` 参数获取表大小和记录数。
+      - [DESC HISTORY TABLE](https://www.yunqi.tech/documents/desc-history-table): 获取表、动态表或物化视图的历史操作记录，包括版本、时间、用户、操作类型等元数据，用于数据回滚或时间点查询。
+      - [DROP TABLE](https://www.yunqi.tech/documents/DROPTABLE): 删除数据库中的表，支持指定schema和IF EXISTS参数以避免错误，删除后可通过UNDROP命令在保留期内恢复。
+      - [RESTORE TABLE](https://www.yunqi.tech/documents/restore): 使用 RESTORE TABLE 命令将表或动态表恢复到由 TIMESTAMP AS OF 子句指定的历史版本。
+      - [SHOW TABLES](https://www.yunqi.tech/documents/SHOWTABLES): 列出当前或指定数据库schema下的表、视图和物化视图，支持通过LIKE模式匹配或WHERE条件按名称、类型等字段进行筛选。
+      - [UNDROP TABLE](https://www.yunqi.tech/documents/UNDROP-TABLE): 使用 UNDROP TABLE 语句恢复已删除的表、动态表或物化视图，需在数据保留周期内操作。
+    - [外部表](https://www.yunqi.tech/documents/create-external-table): 创建外部表以查询OSS、COS、GCS、S3等对象存储中的Delta格式数据，需指定列定义、CONNECTION和LOCATION路径。
+      - [ALTER EXTERNAL TABLE](https://www.yunqi.tech/documents/ALTER-EXTERNAL-TABLE): 修改外部表名称和表注释的SQL语法、示例及查看方法。
+      - [CREATE EXTERANL TABLE](https://www.yunqi.tech/documents/create-kafka-external): 创建用于查询存储在对象存储（OSS/COS/S3）中的Delta Lake或Hudi格式数据的外部表，需指定连接和路径。
+      - [DESC EXTERNAL TABLE](https://www.yunqi.tech/documents/desc-external-table): 查看外部表结构（字段、类型、分区）及扩展信息（如文件位置）的DESC/DESCRIBE语法与示例。
+      - [DROP EXTERNAL TABLE](https://www.yunqi.tech/documents/drop-external-table): 删除外部表的SQL语法，包含IF EXISTS选项、schema指定及示例。
+      - [SHOW CREATE EXTERNAL TABLE](https://www.yunqi.tech/documents/show-create-external-table): 获取指定表、外部表、物化视图、动态表或视图的完整创建语句，用于重建对象。
+      - [SHOW EXTERNAL TABLES](https://www.yunqi.tech/documents/show-external-table): 使用 `SHOW TABLES WHERE is_external=true` 命令列出当前或指定 schema 中的所有外部表。
+    - [视图](https://www.yunqi.tech/documents/VIEWDDL): 围绕"视图"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [CREATE VIEW](https://www.yunqi.tech/documents/CREATEVIEW): CREATE VIEW 命令的语法、参数（如 OR REPLACE、列别名、注释）及创建、替换视图的 SQL 示例。
+      - [DROP VIEW](https://www.yunqi.tech/documents/DROPVIEW): 删除单个或多个视图的SQL语法，支持可选IF EXISTS参数和跨schema操作。
+      - [DESC VIEW](https://www.yunqi.tech/documents/DESCVIEW): 查看视图结构（字段名、数据类型）及使用 EXTENDED 参数获取视图定义 SQL 语句。
+      - [SHOW VIEWS](https://www.yunqi.tech/documents/show-views): 查看指定或当前schema中所有视图的名称和信息的SQL语法、参数及使用示例。
+    - [物化视图](https://www.yunqi.tech/documents/materialized_ddl): 创建、管理及使用物化视图的语法、场景与示例，包括CREATE、ALTER、DROP和SHOW命令。
+      - [ALTER MATERIALIZED VIEW](https://www.yunqi.tech/documents/alter-materialzied-view): 使用 ALTER 语句暂停/启动物化视图的自动刷新任务，或修改其表/列注释与列名。
+      - [CREATE MATERIALIZED VIEW](https://www.yunqi.tech/documents/CREATEMATERIALIZEDVIEW): CREATE MATERIALIZED VIEW 的语法、参数（如 OR REPLACE、REFRESH 调度）及使用示例，用于创建和管理物化视图。
+      - [DESC MATERIALIZED VIEW](https://www.yunqi.tech/documents/DESCMATERIALIZEDVIEW): 查看指定物化视图（如 mv_inventory_refresh）的字段名、数据类型等结构信息，支持 EXTENDED 参数显示详细信息。
+      - [DROP MATERIALIZED VIEW](https://www.yunqi.tech/documents/DROPMATERIALIZEDVIEW): 删除已存在的物化视图的SQL语法，包含IF EXISTS参数和批量删除示例。
+      - [REFRESH MATERIALIZED VIEW](https://www.yunqi.tech/documents/REFRESH): 使用 REFRESH MATERIALIZED VIEW 语句手动刷新指定物化视图，以更新其存储数据。
+      - [SHOW MATERIALIZED VIEWS](https://www.yunqi.tech/documents/show-materialized-view): 使用 SHOW TABLES 命令并配合 WHERE 条件 `is_materialized_view = true`，可查看指定或默认 schema 下的物化视图列表，支持 LIKE 按名称模糊筛选。
+      - [SHOW CREATE MATERIALIZED VIEW](https://www.yunqi.tech/documents/show-create-materialized-view): 使用 SHOW CREATE TABLE 命令获取表、外部表、物化视图、动态表或视图的具体创建语句。
+      - [UNDROP MATERIALIZED VIEW](https://www.yunqi.tech/documents/undrop-materialized-view): 使用 UNDROP TABLE 语句恢复已删除的物化视图，需在数据保留周期内操作且确保无同名表存在。
+    - [索引](https://www.yunqi.tech/documents/index-t): 围绕"索引"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [布隆过滤器](https://www.yunqi.tech/documents/BLOOMFILTER-INDEX): 围绕"布隆过滤器"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+        - [CREATE BLOOMFILTER INDEX](https://www.yunqi.tech/documents/CREATE-BLOOMFILTER-INDEX): 为指定表的单列创建布隆过滤器索引，支持ngram分词器，可加速等值查询。
+      - [倒排索引](https://www.yunqi.tech/documents/inverted-ddl): 围绕"倒排索引"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+        - [CREATE INVERTED INDEX](https://www.yunqi.tech/documents/create-inverted-index): 为表创建倒排索引的语法，支持在创建表或已有表上为数值、日期及字符串列（需指定keyword/english/chinese/unicode分词器）添加索引。
+      - [向量索引](https://www.yunqi.tech/documents/vector-index): 围绕"向量索引"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+        - [CREATE VECTOR INDEX](https://www.yunqi.tech/documents/create-vector-index): 创建向量索引的SQL语法，支持HNSW算法并配置距离函数、元素类型、压缩算法等参数。
+      - [BUILD INDEX](https://www.yunqi.tech/documents/build-inverted-index): 为存量数据同步构建向量索引或倒排索引，可指定全表或特定分区。
+      - [DROP INDEX](https://www.yunqi.tech/documents/DROP-INDEX): 删除指定名称的索引（支持 IF EXISTS 可选参数以避免报错）的 SQL 语法、参数说明及使用示例。
+      - [SHOW INDEX](https://www.yunqi.tech/documents/SHOW-INDEX): 列出指定表（如 `users` 或 `my_schema.orders`）中所有布隆过滤器索引的语法与使用示例。
+      - [DESC INDEX](https://www.yunqi.tech/documents/DESC-INDEX): 查看指定索引的创建日期、名称、类型、大小等详细信息，支持使用 EXTENDED 参数获取扩展信息。
+    - [同义词](https://www.yunqi.tech/documents/synonym-ddl): 围绕"同义词"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [CREATE SYNONYM](https://www.yunqi.tech/documents/create-synonym): 为表、表流、物化视图、动态表、卷和函数创建同义词的语法、权限及使用案例。
+      - [DROP SYNONYM](https://www.yunqi.tech/documents/drop-synonym): 删除 TABLE、VOLUME 或 FUNCTION 类型同义词的 SQL 语法、权限及示例。
+      - [SHOW SYNONYMS](https://www.yunqi.tech/documents/show-synonyms): 列出指定Schema下的同义词，支持按名称过滤和数量限制。
+  - [动态表和TABLE STREAM](https://www.yunqi.tech/documents/dynamic-table-table-stream): 围绕"动态表和TABLE STREAM"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [TABLE STREAM](https://www.yunqi.tech/documents/table-stream-title): 围绕"TABLE STREAM"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [TABLE STREAM简介](https://www.yunqi.tech/documents/tablestream_summary): 在Lakehouse中创建并消费Table Stream，以捕获表、动态表和物化视图的插入、更新和删除变更，支持STANDARD和APPEND_ONLY两种模式。
+      - [CREATE TABLE STREAM](https://www.yunqi.tech/documents/create-table-stream): 在表、动态表、物化视图或外部表上创建流，以捕获插入、更新和删除操作的增量数据，支持标准模式和仅追加模式。
+      - [DESC TABLE STREAM](https://www.yunqi.tech/documents/desc-table-stream): 查看指定 Table Stream 的创建时间、修改时间、工作空间及源表等详细信息。
+      - [SHOW TABLE STREAMS](https://www.yunqi.tech/documents/show-table-streams): 查看指定或当前Schema下表流的名称、创建时间、关联表、模式等详细信息，支持LIKE和WHERE过滤。
+      - [DROP TABLE STREAM](https://www.yunqi.tech/documents/drop-table-stream): 删除已存在的 Table Stream 的 SQL 语法、可选参数 `IF EXISTS` 及操作示例。
+    - [动态表](https://www.yunqi.tech/documents/dynamic-table-title): 围绕"动态表"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [DYANMIC TABLE介绍](https://www.yunqi.tech/documents/dynamic-table-introduce): 通过定义查询语句动态生成数据，采用增量算法刷新，适用于实时加工和固定维度分析场景。
+      - [ALTER DYNAMIC TABLE](https://www.yunqi.tech/documents/alter-dynamic-table): 暂停或启动动态表调度任务、修改表注释、列名及表属性，但涉及SQL逻辑变更需使用CREATE OR REPLACE。
+      - [CREATE DYNAMIC TABLE](https://www.yunqi.tech/documents/create-dynamic-table): CREATE DYNAMIC TABLE 的语法、参数（如REFRESH调度、分区）及通过 SELECT 查询定义实时更新表的方法。
+      - [DESC DYNAMIC TABLE](https://www.yunqi.tech/documents/desc-dynamic-table): 查看动态表结构、调度周期和刷新属性的DESC/DESCRIBE语句语法及使用示例。
+      - [DESC HISTORY DYNAMIC TABLE](https://www.yunqi.tech/documents/desc-history-dynamic-table): DESCRIBE HISTORY 命令用于获取表、动态表或物化视图的版本历史记录，包含版本、时间、操作类型等详细信息。
+      - [DYNAMIC TABLE DML](https://www.yunqi.tech/documents/dynamicTable-DML-sql): 启用Dynamic Table的INSERT、DELETE等DML操作，需设置参数并注意全量刷新影响。
+      - [DROP DYNAMIC TABLE](https://www.yunqi.tech/documents/drop-dynamic-table): 删除动态表的SQL语法、可选参数`IF EXISTS`及使用示例。
+      - [SHOW DYNAMIC TABLES](https://www.yunqi.tech/documents/show-dynamic-table): 使用 `SHOW TABLES WHERE is_dynamic=true` 命令列出所有或指定 schema 中的动态表。
+      - [SHOW CREATE DYNAMIC TABLE](https://www.yunqi.tech/documents/show-create-dynamic-table): 获取动态表、物化视图等数据库对象的完整创建语句，用于查看其定义和配置。
+      - [SHOW DYNAMIC TABLE REFRESH HISTORY](https://www.yunqi.tech/documents/refresh-history): 查看动态表刷新作业历史，包括状态、耗时、触发方式及增量刷新条数，支持按字段筛选和限制数量。
+      - [RESTORE DYNAMIC TABLE](https://www.yunqi.tech/documents/restore-dynamic-table): 使用 RESTORE 命令将表或动态表恢复到由 TIMESTAMP AS OF 子句指定的历史版本。
+      - [UNDROP DYNAMIC TABLE](https://www.yunqi.tech/documents/undrop-dynamic-table): 使用 UNDROP TABLE 语句恢复被删除的表、动态表或物化视图，需在数据保留周期内操作。
+  - [计算集群和作业管理](https://www.yunqi.tech/documents/vc-job): 管理计算集群的创建、配置、扩缩容，以及提交、监控和终止SQL与JAR作业的完整操作流程。
+    - [计算集群](https://www.yunqi.tech/documents/ComputeResourceDDL): 创建、配置和管理计算集群，支持按需启动、弹性扩缩容及资源监控。
+      - [CREATE VCLUSTER](https://www.yunqi.tech/documents/create_cluster): 创建通用型、分析型、同步型三种计算集群的SQL语法、参数配置及适用场景说明。
+      - [DESC VCLUSTER](https://www.yunqi.tech/documents/desc-vcluster): 查看指定计算集群（VCLUSTER）的基本属性、状态及扩展信息的SQL命令语法与使用示例。
+      - [SHOW VCLUSTERS](https://www.yunqi.tech/documents/show-vclusters): SHOW VCLUSTERS 命令用于查询工作空间内所有计算集群的详细信息，支持通过名称、规格、状态、创建者等属性进行过滤。
+      - [DROP VCLUSTER](https://www.yunqi.tech/documents/drop-vcluster): 删除指定计算集群的SQL语法，支持IF EXISTS判断存在性和FORCE强制立即删除。
+      - [ALTER VCLUSTER](https://www.yunqi.tech/documents/alter-vcluster): 通过SQL命令启动、停止、修改配置或更新计算集群，支持设置集群规模、自动启停、并发限制等具体属性。
+      - [USE VCLUSTER](https://www.yunqi.tech/documents/use-vcluster): 切换当前会话使用的计算资源（VCLUSTER）的SQL语法、参数及使用示例。
+    - [作业管理](https://www.yunqi.tech/documents/job-manage): 通过Web界面、命令行或API创建、配置、调度、监控和运维批处理与流式作业的具体操作指南。
+      - [SHOW JOBS](https://www.yunqi.tech/documents/show-jobs): 查看和筛选指定计算资源下最近7天内的作业记录，支持按执行时间、ID模式匹配和数量限制进行查询。
+      - [CANCEL JOB](https://www.yunqi.tech/documents/cancel-job): 提供终止单个作业或取消指定虚拟集群下所有作业的 SQL 命令语法与使用示例。
+      - [DESC JOB](https://www.yunqi.tech/documents/DESC-JOB): 查看指定作业ID的详细配置、运行状态和输出结果。
+  - [数据导入导出](https://www.yunqi.tech/documents/data-unload-load): 围绕"数据导入导出"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [COPY INTO导入](https://www.yunqi.tech/documents/copy-into-table): 将对象存储（COS/OSS/S3）中的CSV、Parquet、ORC或BSON文件导入或覆盖到表中，支持分区、列映射与错误处理。
+    - [COPY INTO导出](https://www.yunqi.tech/documents/COPY-INTO-Location): 将表或查询结果以CSV、Parquet或JSON格式导出到外部存储、表存储或用户存储的指定路径。
+    - [PIPE导入](https://www.yunqi.tech/documents/pipe-syntax): 提供从对象存储或Kafka创建自动化数据导入管道（Pipe）的SQL语法、参数说明及使用限制。
+    - [VOLUME文件操作](https://www.yunqi.tech/documents/put-get): 通过CREATE、DROP、ALTER、DESCRIBE等SQL命令管理VOLUME，实现外部数据文件的存储、挂载与访问。
+      - [PUT](https://www.yunqi.tech/documents/PUT): 使用PUT命令将本地文件上传至Lakehouse的Volume、TABLE VOLUME或USER VOLUME，支持指定子目录和重命名。
+      - [GET](https://www.yunqi.tech/documents/GET): GET命令用于从云器Lakehouse的Volume中下载指定文件到本地路径，支持外部Volume、TABLE VOLUME和USER VOLUME。
+      - [LIST](https://www.yunqi.tech/documents/Volume_LIST): LIST命令用于列出Lakehouse内部或外部Volume中的文件，支持按子目录筛选和正则表达式过滤文件名。
+      - [REMOVE](https://www.yunqi.tech/documents/remove-volume): 从数据湖 Volume 中删除指定文件或目录，支持对用户、表和外部 Volume 进行操作。
+  - [用户、角色和权限](https://www.yunqi.tech/documents/usermanagement): 围绕"用户、角色和权限"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [用户和权限管理](https://www.yunqi.tech/documents/authoritymanagement): 管理用户、角色、权限，包含创建、授权、撤销等操作的SQL语法和系统视图。
+      - [CREATE USER](https://www.yunqi.tech/documents/CREAREUSER): CREATE USER 语句的语法、参数（DEFAULT_VCLUSTER、DEFAULT_SCHEMA、COMMENT）及使用示例。
+      - [ALTER USER](https://www.yunqi.tech/documents/alter-user): 修改用户默认执行集群和默认Schema的SQL语法，参数包括DEFAULT_VCLUSTER和DEFAULT_SCHEMA。
+      - [DROP USER](https://www.yunqi.tech/documents/DROPUSER): DROP USER 命令的语法、参数及示例，用于从当前 workspace 移除指定用户。
+      - [SHOW USERS](https://www.yunqi.tech/documents/SHOWUSERS): 列出当前数据库空间下的所有用户信息，包括用户名和权限等级。
+      - [GRANT](https://www.yunqi.tech/documents/grant-user-privileges): GRANT语句语法及使用示例，用于将Workspace、Schema、表/视图等对象的创建、修改、查询权限授予指定用户或角色。
+      - [REVOKE](https://www.yunqi.tech/documents/revoke-user-privileges): 回收用户或角色对工作空间、模式及表、视图等对象的创建、修改、查询等权限的SQL语法与示例。
+      - [SHOW GRANTS](https://www.yunqi.tech/documents/show-grants-user): 查询指定用户在当前数据库中拥有的权限，语法为 `SHOW GRANTS TO USER user_name;`。
+    - [角色和权限管理](https://www.yunqi.tech/documents/role-privlilige-manage): 管理用户、角色、权限及授权流程，包含角色创建、权限授予与回收等具体SQL操作。
+      - [CREATE ROLE](https://www.yunqi.tech/documents/CREATEROLE): CREATE ROLE 语法详解，支持创建或替换 Workspace 角色及跨工作空间的 Instance Role。
+      - [DROP ROLE](https://www.yunqi.tech/documents/DROPROLE): 删除Workspace或Instance角色的SQL语法、使用说明及示例，包含IF EXISTS选项和权限要求。
+      - [GRANT](https://www.yunqi.tech/documents/GrantPriveleges): 授予Workspace、Schema及各类对象（如表、视图、集群）权限的SQL语法、参数说明与使用示例。
+      - [REVOKE](https://www.yunqi.tech/documents/RevokePriveleges): 回收角色在Workspace、Schema、虚拟集群、数据湖、函数及表等对象上的创建、修改、查询等具体权限的SQL语法与示例。
+      - [SHOW ROLES](https://www.yunqi.tech/documents/SHOWROLES): 列出当前数据库空间或实例中的所有角色，支持使用LIKE模式按名称过滤。
+      - [SHOW GRANTS](https://www.yunqi.tech/documents/SHOWGRANTS): 查看当前用户或指定Workspace/Instance角色所拥有的权限信息。
+  - [工作空间管理](https://www.yunqi.tech/documents/worksapce-manage): 围绕"工作空间管理"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [修改工作空间](https://www.yunqi.tech/documents/alter-worksapce): 提供修改工作空间注释和属性的SQL语法，包括ALTER WORKSPACE和SHOW PROPERTIES命令及示例。
+  - [CONNECTION和EXTERNAL CATALOG](https://www.yunqi.tech/documents/connection-catalog): 围绕"CONNECTION和EXTERNAL CATALOG"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [CONNECTION](https://www.yunqi.tech/documents/CONNECTION): 使用 JDBC、命令行客户端、MySQL协议或第三方工具连接到数据库的具体方法、参数与示例。
+      - [CREATE CONNECTION](https://www.yunqi.tech/documents/create-connection-ddl): 围绕"CREATE CONNECTION"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+        - [CONNECTIO简介](https://www.yunqi.tech/documents/CREATECONNECTION): CONNECTION对象用于安全存储和管理访问外部服务（如API、对象存储、Hive元数据）的身份认证凭据，支持STS跨账号授权。
+        - [CREATE API CONNECTION](https://www.yunqi.tech/documents/create-api-connection): 创建用于阿里云、腾讯云、AWS云函数的外部函数API连接，需指定提供商、区域、角色ARN等参数。
+        - [CREATE STROAGE CONNECTION](https://www.yunqi.tech/documents/create-storage-connection): 创建用于访问阿里云OSS、腾讯云COS、AWS S3、Kafka及HDFS的存储连接，支持AK密钥和阿里云角色授权两种认证方式。
+        - [CREATE CATALOG CONNECTION](https://www.yunqi.tech/documents/create-catalog-connection): 提供创建和管理 Hive Catalog 与 Databricks Unity Catalog 连接的 SQL 语法、参数说明及操作步骤。
+      - [DESC CONNECTION](https://www.yunqi.tech/documents/DESCCONNECTION): 查看已创建Connection的详细属性与配置信息，支持使用EXTENDED关键字显示创建时的完整属性。
+      - [SHOW CONNECTIONS](https://www.yunqi.tech/documents/SHOWCONNECTIONS): SHOW CONNECTIONS 命令用于查询当前工作区中所有 CONNECTION 对象，支持通过 LIKE 按名称过滤或 WHERE 按字段（如 name、category、type）进行筛选。
+      - [DROP CONNECTION](https://www.yunqi.tech/documents/DROPCONNECTION): 删除指定名称的CONNECTION对象（含IF EXISTS选项）的SQL语法与使用示例。
+    - [EXTERNAL CATALOG](https://www.yunqi.tech/documents/external-catalog-ddl): 围绕"EXTERNAL CATALOG"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [CREATE EXTERNAL CATALOG](https://www.yunqi.tech/documents/create-external-catalog): 通过创建存储连接和Catalog Connection，使用SQL语法创建Hive External Catalog以访问外部数据。
+      - [DESC CATALOG](https://www.yunqi.tech/documents/desc-catalog): 显示指定Catalog的详细信息，包括名称、创建者、创建时间和最后修改时间等元数据。
+      - [SHOW CATALOGS](https://www.yunqi.tech/documents/show-catalog): 列出系统中所有Catalog的名称、创建时间和类别信息。
+      - [查看EXTERNAL CATALOG下的SCHEMA](https://www.yunqi.tech/documents/show-catalog-schema): 列出指定外部目录（EXTERNAL CATALOG）中所有SCHEMA的名称及类型（含EXTENDED选项）。
+      - [列出CATALOG下的表](https://www.yunqi.tech/documents/show-catalog-table): 列出指定Catalog和Schema中所有表的SQL命令语法、参数说明及使用示例。
+      - [查询CATALOG下的表](https://www.yunqi.tech/documents/select-catalog-table): 通过三层结构语法查询External Catalog外部目录下的表，实现跨数据源联合查询。
+      - [查看CATALOG下的表结构](https://www.yunqi.tech/documents/desc-catalog-table): 使用 `DESC TABLE catalog.schema.table` 语法查看指定三层命名空间下数据表的列名、数据类型等详细结构信息。
+  - [SCHEMAS和EXTERNAL SCHEMA](https://www.yunqi.tech/documents/scheams-connection): 围绕"SCHEMAS和EXTERNAL SCHEMA"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [SCHEMA](https://www.yunqi.tech/documents/SCHEMADDL): 围绕"SCHEMA"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [CREATE SCHEMA](https://www.yunqi.tech/documents/CREATESCHEMA): CREATE SCHEMA 语句的语法、参数（IF NOT EXISTS、COMMENT）及使用示例，用于创建带描述的数据模式。
+      - [DESC SCHEMA](https://www.yunqi.tech/documents/DESCSCHEMAS): DESC SCHEMA 命令用于查询数据库架构的基本属性，使用 EXTENDED 关键字可获取创建者、时间、权限等详细信息。
+      - [SHOW SCHEMAS](https://www.yunqi.tech/documents/show-schemas): 列出当前工作空间中的所有模式，支持通过LIKE模式匹配或WHERE条件筛选，使用EXTENDED可查看模式类型等详细信息。
+      - [ALTER SCHEMA](https://www.yunqi.tech/documents/ALTER-SCHEMA): 修改Schema的名称、注释和属性，包括RENAME TO、SET COMMENT和SET PROPERTIES语法及示例。
+      - [DROP SCHEMA](https://www.yunqi.tech/documents/DROPSCHEMA): 删除指定schema及其所有对象的SQL语法，包含IF EXISTS参数和权限要求。
+      - [USE SCHEMA](https://www.yunqi.tech/documents/USESCHEMA): USE SCHEMA 语句用于切换当前会话的默认数据库模式，后续未指定模式的SQL操作将在新模式下执行。
+    - [EXTERNAL SCHEMA](https://www.yunqi.tech/documents/EXTERNALSCHEMA): 创建和管理外部模式以访问MySQL、PostgreSQL、Kafka、对象存储等外部数据源的方法与语法。
+      - [CREATE EXTERNAL SCHEMA](https://www.yunqi.tech/documents/CREATEEXTERNAlLSCHEMA): 通过创建存储连接、Catalog连接和外部模式，将Hive on OSS/COS/S3等外部数据源映射到Lakehouse进行查询。
+      - [DESC SCHEMA](https://www.yunqi.tech/documents/desc-external-schemas): 展示指定Schema的基本信息（名称、创建者、时间）及使用EXTENDED参数获取字段默认值、索引等扩展详情。
+      - [SHOW EXTERNAL SCHEMA](https://www.yunqi.tech/documents/show-external-schemas): 使用 SHOW SCHEMAS EXTENDED 命令并指定 WHERE type='external' 来筛选并列出所有外部 schema。
+      - [ALTER SCHEMA](https://www.yunqi.tech/documents/alter-external-schema): 使用 ALTER SCHEMA 命令修改指定 Schema 的属性键值，需具备该 Schema 的 ALTER 权限。
+      - [DROP SCHEMA](https://www.yunqi.tech/documents/drop-external-schema): 删除指定schema及其所有下属对象（如表、视图、索引），支持使用IF EXISTS选项避免错误。
+      - [USE SCHEMA](https://www.yunqi.tech/documents/use-external-schema): 切换当前数据库的默认schema，以操作指定schema下的数据表。
+  - [SHARE DDL](https://www.yunqi.tech/documents/share-ddl): SHARE DDL 语法参考，包含 CREATE/DROP/ALTER SHARE 及 ADD/REMOVE ACCOUNT 等具体语句和参数说明。
+    - [CREATE SHARE](https://www.yunqi.tech/documents/create-share): 创建名为 OUTBOUND 类型的 SHARE 对象，用于数据管理与共享，包含命名规则与相关操作语句。
+    - [ALTER SHARE](https://www.yunqi.tech/documents/alter-share): 使用 ALTER SHARE 语句为分享对象添加或移除指定的目标服务实例（INSTANCE）。
+    - [GRANT TO SHARE](https://www.yunqi.tech/documents/grant-to-share): 将表或视图添加至指定分享对象，并授予其查询和读取元数据的权限。
+    - [REVOKE FROM SHARE](https://www.yunqi.tech/documents/revoke-from-share): 撤销对已分享表或视图的查询（select）和元数据查看（read metadata）权限的SQL语法及使用示例。
+    - [SHOW SHARES](https://www.yunqi.tech/documents/show-shares): 使用 SHOW SHARES 命令查询当前实例的所有数据分享对象，可按名称过滤或根据提供者、接收实例、分享方向等字段筛选。
+    - [DESC SHARE](https://www.yunqi.tech/documents/desc-share): 查询指定共享数据对象（share）中包含的具体数据对象类型、名称及共享时间。
+    - [DROP SHARE](https://www.yunqi.tech/documents/drop-share): 删除已存在的共享对象（share），移除数据共享关系，需指定对象名称。
+    - [CREATE SCHEMA FROM SHARE](https://www.yunqi.tech/documents/create-schema-from-share): 通过指定实例和共享名称，将远程共享数据中的特定Schema提取为本地只读Schema以供查询。
+  - [INFORMATION_SCHEMA](https://www.yunqi.tech/documents/it-operation-management): 提供对数据库元数据（如表、列、权限、约束）进行查询的INFORMATION_SCHEMA视图与函数列表。
+    - [实例级INFORMATION_SCHEMA](https://www.yunqi.tech/documents/instance-information_schema): 提供实例级INFORMATION_SCHEMA中所有系统表的详细说明，包括表结构、字段含义和查询示例。
+      - [实例级INFORMATION_SCHEMA简介](https://www.yunqi.tech/documents/instance-informaiton-schema-summary): 提供实例级元数据和历史信息查询，包括空间、表、列、作业历史及已删除对象，需INSTANCE ADMIN权限访问SYS库。
+      - [实例级别包含的INFORMATION_SCHEMA视图](https://www.yunqi.tech/documents/instance-informaiton-schema): 提供实例级别的WORKSPACES和SCHEMAS视图，包含ID、名称、创建者、存储量、时间戳等元数据字段。
+    - [空间级INFORMATION_SCHEMA](https://www.yunqi.tech/documents/weokspace-informationschema): 围绕"空间级INFORMATION_SCHEMA"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+      - [空间级INFORMATION_SCHEMA简介](https://www.yunqi.tech/documents/worskapce-infroamtionschema-summary): 通过INFORMATION_SCHEMA视图查询当前空间的表、作业历史和物化视图等元数据信息，需workspace_admin权限。
+      - [空间级别包含的INFORMATION_SCHEMA视图](https://www.yunqi.tech/documents/worksapce-informaiton_schema-views): 提供SCHEMAS、TABLES、COLUMNS等INFORMATION_SCHEMA视图的字段定义，用于查询数据库、表、列的结构与元数据信息。
+- [数据类型](https://www.yunqi.tech/documents/data-type): 介绍云器 Lakehouse 支持的精确数值、浮点数、字符串、日期时间、布尔值等具体数据类型及其定义。
+  - [数据类型转化](https://www.yunqi.tech/documents/datatype-conversion): 介绍 Lakehouse 中显式类型转换的 CAST 函数和 :: 符号语法，并提供详细的跨数据类型转换支持矩阵。
+  - [数值类型](https://www.yunqi.tech/documents/numeric): 围绕"数值类型"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [FLOAT](https://www.yunqi.tech/documents/FLOAT): FLOAT 数据类型语法、示例及注意事项，包含精度损失、比较误差和使用 DECIMAL 的建议。
+    - [DOUBLE](https://www.yunqi.tech/documents/DOUBLE): DOUBLE 数据类型的语法、示例及注意事项，包括转换、计算、比较和精度问题。
+    - [TINYINT](https://www.yunqi.tech/documents/TINYINT): TINYINT 数据类型：8位有符号整数，范围-128到127，包含语法、示例及使用注意事项。
+    - [SMALLINT](https://www.yunqi.tech/documents/SMALLINT): SMALLINT 数据类型：16位有符号整数，范围-32,768至32,767，用于建表、插入、查询和条件筛选。
+    - [INT](https://www.yunqi.tech/documents/INT): INT 数据类型：32位有符号整型，范围-2,147,483,648到2,147,483,647，包含语法、CAST转换、建表及计算示例。
+    - [BIGINT](https://www.yunqi.tech/documents/BIGINT): BIGINT 数据类型：8字节带符号整数的语法、字面量后缀L、使用示例及范围注意事项。
+    - [DECIMAL](https://www.yunqi.tech/documents/DECIMAL): DECIMAL数据类型的语法、精度与小数位数定义、使用示例及注意事项。
+  - [字符串类型](https://www.yunqi.tech/documents/string-type): 围绕"字符串类型"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [CHAR](https://www.yunqi.tech/documents/CHAR): CHAR 类型语法、长度范围（1-255）、存储与比较特性（不填充空格、忽略尾随空格）及使用示例。
+    - [VARCHAR(n)](https://www.yunqi.tech/documents/VARCHARleghth): VARCHAR(n) 数据类型的语法定义、长度参数 n 的取值范围及建表、插入、查询的 SQL 示例。
+    - [STRING](https://www.yunqi.tech/documents/STRING): STRING类型的语法、转义序列规则及16MB长度限制的调整方法
+  - [时间类型](https://www.yunqi.tech/documents/datetime-type): 围绕"时间类型"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [DATE](https://www.yunqi.tech/documents/DATE): DATE 数据类型语法、示例及注意事项，用于表示和操作年-月-日格式的日期。
+    - [TIMESTAMP](https://www.yunqi.tech/documents/TIMESTAMP): TIMESTAMP 与 TIMESTAMP_LTZ 类型语法、多种输入格式（含毫秒/微秒）及 CAST 转换示例。
+    - [TIMESTAMP_NTZ](https://www.yunqi.tech/documents/data-types-timestamp-ntz): TIMESTAMP_NTZ 数据类型语法、常量格式及与 TIMESTAMP_LTZ 的区别，适用于无时区场景。
+    - [INTERVAL](https://www.yunqi.tech/documents/INTERVAL): INTERVAL 数据类型语法参考，包含 YEAR_MONTH 和 DAY_TIME 两种间隔的格式、参数及示例。
+  - [BINARY](https://www.yunqi.tech/documents/BINARY): 介绍 BINARY 数据类型，包括其语法、常量值写法、与字符串的转换函数（如 CAST、BASE64、UNBASE64）以及最大长度限制与调整方法。
+  - [BITMAP](https://www.yunqi.tech/documents/bitmap-type): 介绍云器 Lakehouse 中 Bitmap 数据类型，包括其64位整数支持、Roaring Bitmap压缩算法、创建语法、构建函数及集合运算能力。
+  - [BOOLEAN](https://www.yunqi.tech/documents/BOOLEAN): 介绍 BOOLEAN 类型的语法、常量值（TRUE/FALSE）及其在条件查询和逻辑运算中的使用示例。
+  - [ARRAY](https://www.yunqi.tech/documents/ARRAY): 介绍ARRAY数据类型的语法、常量格式及创建、转换、元素访问、排序、合并等操作示例。
+  - [MAP](https://www.yunqi.tech/documents/MAP): MAP函数语法：用于创建键值对映射表，指定键类型、值类型及键值对列表。
+  - [STRUCT](https://www.yunqi.tech/documents/STRUCT): STRUCT函数用于创建包含多个不同类型字段的结构体，语法为STRUCT<字段名:类型,...>，支持通过named_struct函数或直接定义表结构使用。
+  - [JSON](https://www.yunqi.tech/documents/JSON): LakeHouse中JSON类型的存储优化、查询函数（如json_extract_bigint）、16MB长度限制及建表示例。
+  - [VECTOR](https://www.yunqi.tech/documents/vector-type): 定义向量数据类型，支持创建、类型转换及与数组互操作，包含使用限制和示例。
+- [SQL函数](https://www.yunqi.tech/documents/functions): 围绕"SQL函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [操作符](https://www.yunqi.tech/documents/operators): 包含逻辑非、按位非、不等于、取模、算术运算符等SQL操作符的功能、参数和示例。
+  - [类型转化函数](https://www.yunqi.tech/documents/datatype-cast): 介绍 CAST 函数、TYPE 函数及 `::` 运算符的语法与用法，用于在 SQL 中进行数值、字符串、日期等数据类型间的转换。
+  - [自定义函数](https://www.yunqi.tech/documents/user-external-funciton): 定义、注册和使用标量、聚合与表值自定义函数的完整流程，包括SQL、Java/Python API及参数说明。
+    - [CREATE EXTERNAL FUNCTION](https://www.yunqi.tech/documents/CREATE_EXTERNATL_FUNCTION): 通过Python或Java创建UDF、UDAF、UDTF，在阿里云FC、腾讯云SCF或AWS Lambda上远程执行自定义函数。
+    - [CREATE SQL FUNCTION](https://www.yunqi.tech/documents/create-sql-function): 创建标量函数或表函数的语法、参数说明及示例，包括 OR REPLACE、IF NOT EXISTS 和 RETURNS 子句。
+    - [SHOW EXTERNAL FUNCTIONS](https://www.yunqi.tech/documents/SHOWFUNCTIONS): 列出用户创建的外部函数，支持使用 LIKE 参数按名称模式（如 'hash%'）进行过滤。
+    - [SHOW FUNCTIONS](https://www.yunqi.tech/documents/show-finctions): 列出当前数据库中所有内置与用户自定义函数的名称，涵盖字符串、日期、数学等类别。
+    - [DROP FUNCTION](https://www.yunqi.tech/documents/drop-function): 删除指定或当前 schema 下的外部函数，支持使用 IF EXISTS 参数避免函数不存在的错误。
+    - [DESC FUNCTION](https://www.yunqi.tech/documents/desc-function): 描述已创建函数的名称、参数、返回类型及函数体，使用 EXTENDED 关键字可获取注释、确定性等扩展信息。
+  - [条件表达式](https://www.yunqi.tech/documents/conditional-expression): 围绕"条件表达式"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [like](https://www.yunqi.tech/documents/like): 介绍LIKE运算符的语法、通配符（_和%）及与ANY/ALL结合的使用方法，并提供区分大小写的字符串匹配示例。
+    - [ilike](https://www.yunqi.tech/documents/ilike): 介绍不区分大小写的字符串匹配运算符 `ilike` 的语法、特殊字符（`_` 和 `%`）及使用 `ANY`/`ALL` 进行多模式匹配的示例。
+    - [is null/is not null](https://www.yunqi.tech/documents/is-null): 介绍 SQL 中 `IS NULL` 和 `IS NOT NULL` 操作符的语法、使用场景及与等号（`=`）判断 `NULL` 的区别。
+  - [聚合函数](https://www.yunqi.tech/documents/agg_function): 聚合函数参考手册，包含SUM、AVG、COUNT、MAX、MIN等函数的语法、参数说明和使用示例。
+    - [any_value](https://www.yunqi.tech/documents/any_value): ANY_VALUE函数用于从一组数据中随机返回一个值，支持数值、字符串等类型，并可搭配FILTER子句进行条件筛选。
+    - [approx_count_distinct](https://www.yunqi.tech/documents/approx_count_distinct): 使用 hyperloglog 算法近似计算指定列中不同值数量的 SQL 函数，支持多种数据类型并忽略 NULL 值。
+    - [approx_histogram](https://www.yunqi.tech/documents/approx_histogram): approx_histogram函数根据数值列和桶数生成近似直方图，返回包含min、max、count字段的结构体数组。
+    - [approx_percentile](https://www.yunqi.tech/documents/approx_percentile): 计算数值列近似百分位数的SQL函数，支持中位数、四分位数等，可对去重数据操作。
+    - [approx_top_k](https://www.yunqi.tech/documents/approx_top_k): approx_top_k函数用于近似获取数据列中出现频率最高的前k个值及其计数，支持数值、字符串等类型，可调整跟踪精度。
+    - [avg](https://www.yunqi.tech/documents/avg): AVG函数用于计算数值表达式的算术平均值，支持DISTINCT去重、FILTER条件过滤及处理NULL值。
+    - [bit_and](https://www.yunqi.tech/documents/bit_and): BIT_AND聚合函数用于计算整数类型（TINYINT、SMALLINT、INT、BIGINT）数据的按位与结果，支持DISTINCT去重和FILTER条件过滤。
+    - [bit_or](https://www.yunqi.tech/documents/bit_or): BIT_OR聚合函数用于计算整数类型（TINYINT至BIGINT）的按位或结果，支持DISTINCT去重和FILTER条件过滤。
+    - [bit_xor](https://www.yunqi.tech/documents/bit_xor): BIT_XOR函数用于计算整数集合的按位异或结果，支持DISTINCT去重、NULL值忽略及FILTER条件过滤。
+    - [bool_and](https://www.yunqi.tech/documents/bool_and): BOOL_AND聚合函数：判断一组布尔值是否全部为TRUE，支持DISTINCT去重和FILTER条件过滤。
+    - [bool_or](https://www.yunqi.tech/documents/bool_or): BOOL_OR聚合函数用于判断一组布尔值中是否存在TRUE，支持DISTINCT去重和FILTER条件过滤。
+    - [collect_list](https://www.yunqi.tech/documents/collect_list): collect_list 函数用于将数据列聚合为数组，支持 DISTINCT 去重、FILTER 条件过滤及 limit 数量限制。
+    - [collect_list_on_array](https://www.yunqi.tech/documents/collect_list_on_array): 介绍 collect_list_on_array 函数，用于将多个数组的元素收集并合并到单个新数组中，支持去重和数量限制。
+    - [collect_set](https://www.yunqi.tech/documents/collect_set): COLLECT_SET函数用于收集不重复元素形成数组，支持DISTINCT、FILTER子句和limit参数限制结果数量。
+    - [collect_set_on_array](https://www.yunqi.tech/documents/collect_set_on_array): 从数组表达式中提取不重复元素并组成新数组，支持可选的元素数量限制参数。
+    - [count](https://www.yunqi.tech/documents/count): COUNT函数的语法、参数、返回值及示例，涵盖COUNT(*)、COUNT(expr)和COUNT(DISTINCT expr)的用法。
+    - [count_distinct](https://www.yunqi.tech/documents/count_distinct): COUNT_DISTINCT聚合函数的语法、参数、返回值及使用示例，用于计算列中不同值的精确数量。
+    - [count_if](https://www.yunqi.tech/documents/count_if): 计算布尔表达式为 TRUE 的行数，支持 DISTINCT 关键字，返回 BIGINT 类型结果。
+    - [corr](https://www.yunqi.tech/documents/corr): CORR函数用于计算两个数值列之间的皮尔逊相关系数，包含参数说明、返回类型、注意事项及SQL使用示例。
+    - [covar_pop](https://www.yunqi.tech/documents/covar_pop): COVAR_POP 函数用于计算两个数值列的总体协方差，包含参数说明、返回类型、注意事项及使用示例。
+    - [covar_samp](https://www.yunqi.tech/documents/covar_samp): 计算两个数值列样本协方差的SQL函数，包含参数说明、返回类型、注意事项及使用示例。
+    - [group_concat](https://www.yunqi.tech/documents/group_concat): 介绍 group_concat 函数的语法、参数、返回值及使用示例，包括基本用法和带 FILTER 子句的条件连接。
+    - [first_value](https://www.yunqi.tech/documents/first_value): FIRST_VALUE函数用于返回聚合组或窗口中的第一个值，支持忽略NULL值，并可配合WITHIN GROUP子句指定排序顺序。
+    - [last_value](https://www.yunqi.tech/documents/last_value): LAST_VALUE函数返回聚合组或窗口中的最后一个值，支持忽略NULL值及通过WITHIN GROUP指定顺序。
+    - [map_agg](https://www.yunqi.tech/documents/map_agg): 聚合键值对为Map的SQL函数，说明其语法、参数类型、NULL与重复键处理规则及使用示例。
+    - [max_by](https://www.yunqi.tech/documents/max_by): 返回与指定表达式最大值相关联的另一表达式的值，支持数值、时间、字符串类型及FILTER条件筛选。
+    - [max](https://www.yunqi.tech/documents/max): MAX聚合函数的语法、参数说明与使用示例，支持数值、时间、字符串类型及DISTINCT、FILTER子句。
+    - [min_by](https://www.yunqi.tech/documents/min_by): 返回与指定表达式最小值相关联的另一个表达式的值，支持数值、时间、字符串等类型及FILTER条件筛选。
+    - [min](https://www.yunqi.tech/documents/min): MIN聚合函数的语法、参数、返回值及使用示例，支持数值、时间、字符串等类型，可搭配DISTINCT和FILTER子句。
+    - [median](https://www.yunqi.tech/documents/median): MEDIAN 函数用于计算数值列的中位数，等同于 percentile(expr, 0.5)，并说明其参数、返回类型及处理空值与奇偶数据集的规则。
+    - [percentile](https://www.yunqi.tech/documents/percentile): 计算数值列百分位数的SQL函数，支持DISTINCT去重、可选频次参数及FILTER条件筛选。
+    - [percentile_rank](https://www.yunqi.tech/documents/percentile_rank): PERCENT_RANK 窗口函数的语法、参数说明及使用示例，用于计算数据在分组内的百分位排名。
+    - [percentile_approx](https://www.yunqi.tech/documents/percentile_approx): 提供 percentile_approx 函数的语法、参数说明及示例，用于计算数值列的近似百分位数。
+    - [stddev](https://www.yunqi.tech/documents/stddev): STDDEV聚合函数的语法、参数、返回值及使用示例，支持DISTINCT和FILTER子句。
+    - [std](https://www.yunqi.tech/documents/std): STD函数用于计算数值列的样本标准差，支持DISTINCT去重，可处理TINYINT至DECIMAL类型并忽略NULL值。
+    - [stddev_pop](https://www.yunqi.tech/documents/stddev_pop): 计算数值数据总体标准差的SQL函数，支持DISTINCT去重和FILTER条件过滤。
+    - [stddev_samp](https://www.yunqi.tech/documents/stddev_samp): STDDEV_SAMP函数用于计算数值列的样本标准差，支持DISTINCT去重和FILTER条件筛选。
+    - [sum](https://www.yunqi.tech/documents/sum): SUM函数用于计算数值总和，支持DISTINCT去重、FILTER条件过滤及多种数值类型。
+    - [var_pop](https://www.yunqi.tech/documents/var_pop): VAR_POP函数用于计算数值列的总体方差，支持DISTINCT去重和FILTER条件筛选。
+    - [var_samp](https://www.yunqi.tech/documents/var_samp): VAR_SAMP函数用于计算数值数据的样本方差，支持DISTINCT去重和FILTER条件筛选，参数类型包括整型、浮点型和DECIMAL。
+    - [variance](https://www.yunqi.tech/documents/variance): VARIANCE函数用于计算数值数据的样本方差，支持多种数值类型和可选的DISTINCT去重参数。
+    - [wm_concat](https://www.yunqi.tech/documents/wm_concat): WM_CONCAT函数用于将字符串列的值通过指定分隔符连接，支持去重（DISTINCT）并忽略NULL值。
+  - [BITMAP函数](https://www.yunqi.tech/documents/bitmap_function): 围绕"BITMAP函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [binary_to_bitmap](https://www.yunqi.tech/documents/binary_to_bitmap): 将 binary 类型数据转换为 bitmap 类型，常与 bitmap_to_binary 配合用于位图数据格式转换。
+    - [bitmap_and](https://www.yunqi.tech/documents/bitmap_and): 计算两个 bitmap 类型数据的交集，返回包含共同元素的新 bitmap，支持使用 bitmap_to_array 函数查看结果。
+    - [bitmap_and_cardinality](https://www.yunqi.tech/documents/bitmap_and_cardinality): 计算两个bitmap的交集并返回结果集中的元素数量，适用于快速统计集合关系。
+    - [bitmap_andnot](https://www.yunqi.tech/documents/bitmap_andnot): BITMAP_ANDNOT 函数用于计算两个 bitmap 类型参数的集合差，返回左侧存在而右侧不存在的元素。
+    - [bitmap_andnot_cardinality](https://www.yunqi.tech/documents/bitmap_andnot_cardinality): 计算两个bitmap集合差（ANDNOT操作）并直接返回结果中元素数量的SQL函数。
+    - [bitmap_build](https://www.yunqi.tech/documents/bitmap_build): 将整数数组转换为 bitmap 类型的 SQL 函数，支持包含负数和零的数组输入，需配合 bitmap_to_array 函数查看结果。
+    - [bitmap_contains](https://www.yunqi.tech/documents/bitmap_contains): 检查 bitmap 数据结构中是否包含指定整数值的 SQL 函数，语法为 bitmap_contains(bitmap, value)，返回布尔结果。
+    - [bitmap_count](https://www.yunqi.tech/documents/bitmap_count): 计算BITMAP类型中元素个数的函数，是BITMAP_CARDINALITY的别名，返回BIGINT类型。
+    - [bitmap_empty](https://www.yunqi.tech/documents/bitmap_empty): BITMAP_EMPTY函数用于创建一个不包含任何元素的空BITMAP类型对象。
+    - [bitmap_has_all](https://www.yunqi.tech/documents/bitmap_has_all): 检查一个Bitmap是否为另一个Bitmap的子集，返回布尔值，用于集合包含关系判断。
+    - [bitmap_has_any](https://www.yunqi.tech/documents/bitmap_has_any): 判断两个位图是否存在交集，返回布尔值，语法为 `bitmap_has_any(left, right)`。
+    - [bitmap_hash](https://www.yunqi.tech/documents/bitmap_hash): BITMAP_HASH 函数用于对输入的字符串表达式进行哈希运算，并返回包含整数哈希值的 BITMAP 类型结果。
+    - [bitmap_max](https://www.yunqi.tech/documents/bitmap_max): BITMAP_MAX函数用于从bitmap类型数据中提取最大整数值，语法为bitmap_max(bitmap)，返回bigint类型。
+    - [bitmap_min](https://www.yunqi.tech/documents/bitmap_min): 返回输入bitmap对象中的最小元素值，若为空则返回0，适用于bitmap类型数据分析。
+    - [bitmap_or](https://www.yunqi.tech/documents/bitmap_or): BITMAP_OR函数用于计算两个bitmap类型数据的集合并集，返回包含所有非零值的新bitmap。
+    - [bitmap_or_cardinality](https://www.yunqi.tech/documents/bitmap_or_cardinality): 计算两个位图进行逻辑或操作后结果集合的唯一元素数量，返回合并后的基数。
+    - [bitmap_remove](https://www.yunqi.tech/documents/bitmap_remove): 从Bitmap中移除指定整数值，返回新的Bitmap。
+    - [bitmap_subset_in_range](https://www.yunqi.tech/documents/bitmap_subset_in_range): bitmap_subset_in_range函数用于从bitmap中提取指定整数区间（包含起始值，不包含结束值）的子集。
+    - [bitmap_subset_limit](https://www.yunqi.tech/documents/bitmap_subset_limit): 从Bitmap中提取指定起始位置和数量限制的子集，支持int类型数据，返回Bitmap结果。
+    - [bitmap_to_array](https://www.yunqi.tech/documents/bitmap_to_array): 将 bitmap 类型数据转换为 array<bigint> 数组的函数语法与使用示例。
+    - [bitmap_to_binary](https://www.yunqi.tech/documents/bitmap_to_binary): 将 bitmap 类型数据转换为 binary 类型的 SQL 函数语法及使用示例。
+    - [bitmap_to_string](https://www.yunqi.tech/documents/bitmap_to_string): 将BITMAP类型数据转换为以逗号分隔的字符串，例如将包含元素1和2的bitmap输出为"1,2"。
+    - [string_to_bitmap](https://www.yunqi.tech/documents/string_to_bitmap): 将逗号分隔的整数字符串转换为BITMAP类型，输入格式错误或含负数则返回NULL。
+    - [to_bitmap](https://www.yunqi.tech/documents/to_bitmap): 将整数或字符串转换为包含单个元素的 BITMAP 类型，输入为 NULL 或负数时返回 NULL。
+    - [bitmap_transform](https://www.yunqi.tech/documents/bitmap_transform): BITMAP_TRANSFORM函数用于将bitmap中指定的bigint元素（from_array）一对一替换为另一组bigint元素（to_array）。
+    - [bitmap_xor](https://www.yunqi.tech/documents/bitmap_xor): bitmap_xor函数用于对两个bitmap类型数据进行集合异或运算，返回结果bitmap，并包含使用示例与注意事项。
+    - [bitmap_xor_cardinality](https://www.yunqi.tech/documents/bitmap_xor_cardinality): 计算两个 bitmap 集合进行异或 (XOR) 操作后结果集的元素数量，返回 bigint 类型值。
+    - [group_bitmap](https://www.yunqi.tech/documents/group_bitmap): 聚合函数，用于对无符号整数值生成Bitmap位图，支持集合操作，适用于大规模数据集的高效处理。
+    - [group_bitmap_and](https://www.yunqi.tech/documents/group_bitmap_and): 对多个 BITMAP 类型数据进行按位与（AND）聚合计算，返回 INT 类型结果。
+    - [group_bitmap_and_state](https://www.yunqi.tech/documents/group_bitmap_and_state): 对多个BITMAP类型数据进行按位与（AND）聚合运算，返回中间状态BITMAP对象用于后续合并。
+    - [group_bitmap_state](https://www.yunqi.tech/documents/group_bitmap_state): GROUP_BITMAP_STATE函数用于对整数表达式分组并生成BITMAP类型结果，返回每个分组的唯一值集合。
+    - [group_bitmap_merge](https://www.yunqi.tech/documents/group_bitmap_merge): 合并多个Bitmap中间状态并返回其总基数，用于高效处理大规模数据集的聚合场景。
+    - [group_bitmap_merge_state](https://www.yunqi.tech/documents/group_bitmap_merge_state): 合并多个位图值并返回其并集，适用于对分类数据进行高效位图聚合。
+    - [group_bitmap_or](https://www.yunqi.tech/documents/group_bitmap_or): 对一组 BITMAP 类型数据进行按位或（OR）聚合运算，返回 INT 类型结果。
+    - [group_bitmap_or_state](https://www.yunqi.tech/documents/group_bitmap_or_state): 对一组 BITMAP 数据进行按位或操作并返回中间状态，可与 group_bitmap_merge 结合实现聚合。
+    - [group_bitmap_xor](https://www.yunqi.tech/documents/group_bitmap_xor): 对一组 BITMAP 类型数据进行按位异或运算，返回仅出现一次元素的 INT 结果。
+    - [group_bitmap_xor_state](https://www.yunqi.tech/documents/group_bitmap_xor_state): GROUP_BITMAP_XOR_STATE函数用于计算多个BITMAP的按位异或并返回中间状态，可与group_bitmap_merge等函数结合进行聚合。
+    - [sub_bitmap](https://www.yunqi.tech/documents/sub_bitmap): SUB_BITMAP函数用于从整数bitmap中提取指定偏移量和长度的子集，并返回新的bitmap。
+  - [BIT函数](https://www.yunqi.tech/documents/bit_function): 围绕"BIT函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [bit_count](https://www.yunqi.tech/documents/bit_count): BIT_COUNT函数用于计算整数表达式中非零位的数量，支持TINYINT、SMALLINT、INT和BIGINT类型，并包含处理负数的注意事项。
+    - [bitnot](https://www.yunqi.tech/documents/bitnot): BITNOT函数用于对整数表达式进行按位取反操作，语法为BITNOT(expr)或~expr，并返回同类型结果。
+  - [条件函数](https://www.yunqi.tech/documents/conditional_funcion): 围绕"条件函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [assert_true](https://www.yunqi.tech/documents/assert_true): 用于数据质量检查和单元测试的断言函数，验证布尔表达式为真，失败时抛出异常并支持自定义错误信息。
+    - [between](https://www.yunqi.tech/documents/between): BETWEEN 操作符的语法、参数类型（数字/字符串/日期）及使用示例，用于判断表达式是否在指定范围内。
+    - [coalesce](https://www.yunqi.tech/documents/coalesce): COALESCE函数返回参数列表中第一个非空表达式的值，语法为COALESCE(expr1 [, ...])。
+    - [decode](https://www.yunqi.tech/documents/decode): DECODE条件表达式函数的语法、参数说明及使用示例，用于根据表达式匹配结果返回对应值。
+    - [if](https://www.yunqi.tech/documents/if): IF函数根据条件表达式返回expr1或expr2的值，支持嵌套用于多级判断。
+    - [in](https://www.yunqi.tech/documents/in): IN运算符用于检查值是否在给定列表或子查询结果中，包含参数说明、布尔返回类型及使用示例。
+    - [is_false](https://www.yunqi.tech/documents/is_false): 判断布尔或字符串表达式是否为false，支持'true'/'false'、'0'/'1'、'yes'/'no'等字符串格式。
+    - [is_not_null](https://www.yunqi.tech/documents/is_not_null): IS_NOT_NULL 函数用于检查表达式是否非空，返回布尔值，等同于 SQL 中的 `IS NOT NULL` 条件。
+    - [is_null](https://www.yunqi.tech/documents/is_null): 判断表达式是否为NULL的SQL函数，语法为is_null(expr)，返回布尔值true或false。
+    - [is_true](https://www.yunqi.tech/documents/is_true): 判断布尔值或特定字符串（如'true'、'1'、'yes'）是否为真，并处理NULL返回false。
+    - [multiif](https://www.yunqi.tech/documents/multiif): multiIf 条件函数的语法、参数说明及使用示例，用于替代 CASE 语句进行多条件判断。
+    - [nvl](https://www.yunqi.tech/documents/nvl): NVL函数用于在SQL查询中将NULL值替换为指定的替代值，语法为`nvl(expr1, expr2)`。
+    - [raise_error](https://www.yunqi.tech/documents/raise_error): RAISE_ERROR 函数用于在查询中抛出指定错误消息并中止执行，常与 IF 或 CASE WHEN 结合进行条件验证。
+    - [ifnull](https://www.yunqi.tech/documents/ifnull): IFNULL 函数用于在 SQL 查询中将 NULL 值替换为指定的替代值，语法为 IFNULL(expression_1, expression_2)。
+  - [时间函数](https://www.yunqi.tech/documents/time-function): 提供日期时间格式符号（如y/M/d/H/m/s/S等）的详细说明、含义及使用示例。
+    - [Lakehouse时间日期格式](https://www.yunqi.tech/documents/datetime_patterns): Lakehouse时间日期格式的符号含义、解释及示例，如yyyy-MM-dd HH:mm:ss.SSSS。
+    - [add_days](https://www.yunqi.tech/documents/add_days): ADD_DAYS 函数用于在指定日期上增加或减少天数，返回新的日期值，支持跨年计算和负数参数。
+    - [add_months](https://www.yunqi.tech/documents/add_months): ADD_MONTHS 函数用于在指定日期上增加或减少月份，若结果超出月末天数则自动调整至当月最后一天。
+    - [add_years](https://www.yunqi.tech/documents/add_years): add_years 函数用于在给定日期上增加或减少指定年数，返回新的日期值，支持正负整数参数。
+    - [convert_timezone](https://www.yunqi.tech/documents/convert_timezone): 将时间戳在指定时区（如Europe/Moscow、Asia/Shanghai）间转换，支持整数或timestamp类型输入。
+    - [current_date](https://www.yunqi.tech/documents/current_date): CURRENT_DATE 函数用于获取查询执行时的当前日期，支持在筛选、计算等SQL操作中直接使用。
+    - [current_timestamp](https://www.yunqi.tech/documents/current_timestamp): 返回查询开始时的统一时间戳，用于记录执行时间、数据插入或计算时间间隔。
+    - [date](https://www.yunqi.tech/documents/date): DATE函数将字符串、时间戳等表达式转换为YYYY-MM-DD格式的日期，无效输入返回NULL。
+    - [date_add](https://www.yunqi.tech/documents/date_add): date_add函数用于在指定日期上增加或减少指定天数，支持正负整数参数，超出日期范围则返回null。
+    - [date_format](https://www.yunqi.tech/documents/date_format): DATE_FORMAT函数将字符串或时间戳按指定格式（如yyyy-MM-dd HH:mm:ss）转换为日期字符串。
+    - [date_format_mysql](https://www.yunqi.tech/documents/date_format_mysql): 将时间戳按MySQL兼容格式（如%Y-%m-%d %H:%i:%s）转换为字符串的函数参考。
+    - [date_format_pg](https://www.yunqi.tech/documents/date_format_pg): 将日期、时间戳或字符串按PostgreSQL格式（如YYYY-MM-DD HH24:MI:SS）转换为字符串。
+    - [date_sub](https://www.yunqi.tech/documents/date_sub): DATE_SUB函数用于计算指定日期减去指定天数后的新日期，语法为`date_sub(date, int)`。
+    - [date_trunc](https://www.yunqi.tech/documents/date_trunc): DATE_TRUNC函数用于将时间戳按年、季度、月、周、日、时、分、秒等单位截断至起始点。
+    - [dateadd](https://www.yunqi.tech/documents/dateadd): DATEADD函数用于在时间戳上增加或减少指定的时间单位，支持年、月、日、时、分、秒、毫秒等。
+    - [datediff](https://www.yunqi.tech/documents/datediff): DATEDIFF函数用于计算两个日期或时间戳之间指定单位（如天、小时、季度）的差值。
+    - [day](https://www.yunqi.tech/documents/day): DAY函数用于从日期或时间戳中提取月份的天数，返回整数。
+    - [dayofmonth](https://www.yunqi.tech/documents/dayofmonth): DAYOFMONTH函数用于从日期或时间戳表达式中提取月份中的第几天，返回整数结果。
+    - [dayofweek_iso](https://www.yunqi.tech/documents/dayofweek_iso): DAYOFWEEK_ISO函数返回日期或时间戳对应的星期几序号，星期一为1，星期日为7。
+    - [dayofweek](https://www.yunqi.tech/documents/dayofweek): DAYOFWEEK函数返回日期对应的星期几（1为周日，2为周一，...，7为周六），支持字符串和时间戳等格式。
+    - [dayofyear](https://www.yunqi.tech/documents/dayofyear): DAYOFYEAR函数用于计算日期在所属年份中的天数序号，接受date或timestamp_ltz参数，返回1至366的整数。
+    - [days](https://www.yunqi.tech/documents/days): 返回指定时间戳距离1970-01-01的天数，参数为date/timestamp类型，结果为bigint。
+    - [extract](https://www.yunqi.tech/documents/extract): EXTRACT函数用于从日期时间表达式（如字符串、时间戳）中提取指定字段（如YEAR、WEEK、DAYOFWEEK_ISO）的整数值。
+    - [from_unixtime](https://www.yunqi.tech/documents/from_unixtime): 将UNIX时间戳（秒）转换为指定格式的日期时间字符串，支持yyyy、MM、dd、HH、mm、ss等格式化字符。
+    - [from_utc_timestamp](https://www.yunqi.tech/documents/from_utc_timestamp): 将UTC时间戳转换为指定时区（如Asia/Shanghai）本地时间的SQL函数，返回timestamp_ltz类型。
+    - [hour](https://www.yunqi.tech/documents/hour): HOUR 函数用于从 timestamp 类型表达式中提取小时部分，返回整数，并提供从当前时间、指定时间戳及表中列提取的示例。
+    - [hours](https://www.yunqi.tech/documents/hours): 返回指定时间戳相对于1970-01-01 00:00:00的小时数，参数为date/timestamp类型。
+    - [last_day](https://www.yunqi.tech/documents/last_day): LAST_DAY函数用于获取date或timestamp_ltz类型参数所在月份的最后一天，返回date类型结果。
+    - [localtimestamp](https://www.yunqi.tech/documents/localtimestamp): 返回当前本地时间戳的 SQL 函数 LOCALTIMESTAMP()，其结果为 TIMESTAMP_NTZ 类型。
+    - [make_date](https://www.yunqi.tech/documents/makde_date): 根据年、月、日整型参数构造date类型值的SQL函数语法与示例。
+    - [make_dt_interval](https://www.yunqi.tech/documents/make_dt_interval): 通过天数、小时、分钟和秒数（支持毫秒小数）四个可选参数，创建 `interval day to time` 类型的时间间隔值。
+    - [make_ym_interval](https://www.yunqi.tech/documents/make_ym_interval): 创建以年和月为单位的间隔，参数为整数年份和月份，返回 interval year to month 类型值。
+    - [minute](https://www.yunqi.tech/documents/minute): MINUTE 函数用于从 timestamp 类型表达式中提取分钟部分，返回整数，并提供使用示例。
+    - [month](https://www.yunqi.tech/documents/month): MONTH 函数用于从日期值中提取月份部分并返回整数，包含参数说明、使用示例及注意事项。
+    - [months](https://www.yunqi.tech/documents/months): 返回从 epoch (1970-01-01) 到指定日期或时间戳之间的总月数，参数支持 date、timestamp_ltz、timestamp_ntz 类型。
+    - [months_between](https://www.yunqi.tech/documents/months_between): months_between 函数用于计算两个时间戳之间的月份差，可指定是否对结果进行舍入。
+    - [next_day](https://www.yunqi.tech/documents/next_day): next_day函数返回指定日期之后下一个星期几的具体日期，参数为日期和星期几的字符串。
+    - [now](https://www.yunqi.tech/documents/now): NOW函数返回查询开始时的固定时间戳，用于插入、更新数据或作为时间过滤条件。
+    - [quarter](https://www.yunqi.tech/documents/quarter): QUARTER函数用于从指定日期值中提取其所属季度（1-4），输入为日期类型，返回整数。
+    - [second](https://www.yunqi.tech/documents/second): SECOND 函数用于从 timestamp 类型表达式中提取秒数部分，返回整数。
+    - [str_to_date_mysql](https://www.yunqi.tech/documents/str_to_date_mysql): STR_TO_DATE_MYSQL函数：根据指定格式字符串将文本转换为日期或时间戳，语法与MySQL兼容。
+    - [sub_days](https://www.yunqi.tech/documents/sub_days): SUB_DAYS函数的语法、参数说明及使用示例，用于计算指定日期减去若干天后的结果。
+    - [timestamp_micros](https://www.yunqi.tech/documents/timestamp_micros): 将表示微秒的 bigint 数值转换为 timestamp 类型时间戳的函数，输入为自 Unix 纪元以来的微秒数。
+    - [timestamp_millis](https://www.yunqi.tech/documents/timestamp_millis): 将表示Unix纪元以来的毫秒数（bigint类型）转换为标准时间戳格式的函数。
+    - [timestamp_seconds](https://www.yunqi.tech/documents/timestamp_seconds): 将表示Unix纪元秒数的bigint类型参数转换为timestamp类型时间戳。
+    - [timestampadd](https://www.yunqi.tech/documents/timestampadd): TIMESTAMPADD函数用于对时间戳进行加减操作，支持年、月、日、时、分、秒等多种时间单位。
+    - [timestampdiff](https://www.yunqi.tech/documents/timestampdiff): 计算两个时间戳之间以指定单位（微秒至年）的时间差，返回整型结果。
+    - [to_date](https://www.yunqi.tech/documents/to_date): TO_DATE函数将字符串按指定格式（如'dd/MM/yyyy'）转换为日期类型，支持自定义格式和非法日期处理。
+    - [to_start_of_interval](https://www.yunqi.tech/documents/to_start_of_interval): 将时间戳按指定时间间隔（如5分钟、1天）向下取整截断的SQL函数。
+    - [to_timestamp](https://www.yunqi.tech/documents/to_timestamp): 将字符串按指定或默认格式（如yyyy/MM/dd HH:mm:ss.SSS）转换为时间戳类型，格式错误则返回NULL。
+    - [to_timestamp_ntz](https://www.yunqi.tech/documents/to_timestamp_ntz): 将字符串按指定或默认格式转换为无时区时间戳（timestamp_ntz）的SQL函数用法与示例。
+    - [to_unix_timestamp](https://www.yunqi.tech/documents/to_unix_timestamp): 将日期时间字符串转换为Unix时间戳，支持自定义格式（如yyyy/MM/dd HH:mm:ss.SSS），非法输入返回null。
+    - [to_unix_timestamp_ms](https://www.yunqi.tech/documents/to_unix_timestamp_ms): 将字符串、时间戳等时间表达式转换为Unix毫秒时间戳的SQL函数参考。
+    - [to_unix_timestamp_us](https://www.yunqi.tech/documents/to_unix_timestamp_us): 将字符串、时间戳等时间表达式转换为Unix时间戳（微秒），返回BIGINT类型。
+    - [to_utc_timestamp](https://www.yunqi.tech/documents/to_utc_timestamp): 将指定时区（如 Asia/Shanghai、America/New_York）的时间戳转换为 UTC 时间。
+    - [toyyyymmdd](https://www.yunqi.tech/documents/toyyyymmdd): TOYYYYMMDD函数将日期或时间戳转换为YYYYMMDD格式的整数，包含语法、参数说明及使用示例。
+    - [trunc](https://www.yunqi.tech/documents/trunc): TRUNC函数用于将日期截断至指定精度，如年、季、月、周的第一天，支持'YEAR'、'QUARTER'、'MONTH'、'WEEK'等格式参数。
+    - [unix_timestamp](https://www.yunqi.tech/documents/unix_timestamp): UNIX_TIMESTAMP函数用于获取当前时间或指定日期时间字符串、timestamp、date类型的UNIX时间戳（自1970-01-01 UTC的总秒数）。
+    - [week](https://www.yunqi.tech/documents/week): WEEK函数返回日期或时间戳在当年是第几周，一周从周一开始，首周需包含至少四天。
+    - [weekday](https://www.yunqi.tech/documents/weekday): weekday函数返回日期或时间戳对应的星期几，0代表星期一，6代表星期日，支持date和timestamp_ltz类型参数。
+    - [weekofyear](https://www.yunqi.tech/documents/weekofyear): WEEKOFYEAR函数：根据ISO标准（周一为一周起始，首周包含该年首个星期四）计算给定日期或时间戳在当年所属的周数。
+    - [year](https://www.yunqi.tech/documents/year): YEAR函数从日期、时间戳或日期字符串中提取年份并返回整数。
+    - [years](https://www.yunqi.tech/documents/years): 返回指定时间戳距离1970-01-01 00:00:00的整年数，参数为DATE或TIMESTAMP类型。
+    - [yearofweek](https://www.yunqi.tech/documents/yearofweek): YEAROFWEEK 函数返回指定日期或时间戳的 ISO 周编号年份，遵循 ISO 8601 标准（周一为一周起始）。
+  - [GEO函数](https://www.yunqi.tech/documents/geo): 围绕"GEO函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [st_geohash](https://www.yunqi.tech/documents/st_geohash): 根据经纬度和精度参数计算 Geohash 编码的 SQL 函数，支持精度 1 至 12。
+    - [st_latfromgeohash](https://www.yunqi.tech/documents/st_latfromgeohash): ST_LATFROMGEOHASH函数根据输入的geohash字符串计算并返回对应的纬度值（double类型）。
+    - [st_longfromgeohash](https://www.yunqi.tech/documents/st_longfromgeohash): 根据GeoHash字符串计算对应经度值的SQL函数，包含参数说明与使用示例。
+  - [HASH函数](https://www.yunqi.tech/documents/hash): 围绕"HASH函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [bucket](https://www.yunqi.tech/documents/bucket): BUCKET函数根据指定桶数和列值计算哈希桶编号，用于数据分区、采样和负载均衡。
+    - [general_hash](https://www.yunqi.tech/documents/general_hash): 介绍通用哈希函数 general_complexhash2 和 general_murmurhash3，用于对任意类型数据（如字符串、整数、浮点数、日期）进行哈希计算并返回整型结果。
+    - [hash_combine](https://www.yunqi.tech/documents/hash_combine): 提供 hash_combine 和 hash_combine_commutative 两个 BigInt 哈希组合函数，前者顺序敏感，后者顺序无关。
+    - [hash_combine_commutative](https://www.yunqi.tech/documents/hash_combine_commutative): 提供可交换的哈希组合函数，用于计算无序集合（如set、bitmap、map）的哈希值，结果与参数顺序无关。
+    - [murmurhash](https://www.yunqi.tech/documents/murmurhash): 提供 murmurhash3_32 和 murmurhash3_64 函数，用于计算字符串、整数等基础数据类型的32位或64位非加密哈希值。
+  - [IP函数](https://www.yunqi.tech/documents/ip_function): 围绕"IP函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [ipv4_num_to_string](https://www.yunqi.tech/documents/ipv4_num_to_string): 将 bigint 类型的 IPv4 地址数字转换为点分十进制字符串格式（如 2130706433 转为 '127.0.0.1'）。
+    - [ipv4_string_to_num](https://www.yunqi.tech/documents/ipv4_string_to_num): 将 IPv4 地址字符串转换为 64 位整数，用于数值比较和地址范围计算。
+    - [ipv6_num_to_string](https://www.yunqi.tech/documents/ipv6_num_to_string): 将二进制形式的IPv6地址转换为标准字符串格式，如 `::ffff:127.0.0.1`。
+    - [ipv6_string_to_num](https://www.yunqi.tech/documents/ipv6_string_to_num): 将 IPv6 地址字符串转换为二进制格式的内部表示，用于标准化处理和比较。
+    - [is_ip_address_in_range](https://www.yunqi.tech/documents/is_ip_address_in_range): 判断IP地址（IPv4/IPv6）是否在指定CIDR网络范围内的SQL函数语法与使用示例。
+    - [get_ip_info](https://www.yunqi.tech/documents/get_ip_info): 通过IP地址查询指定Lakehouse表中对应IP段的地理信息字段，如国家、城市等。
+  - [JSON函数](https://www.yunqi.tech/documents/json_function): 围绕"JSON函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [from_json](https://www.yunqi.tech/documents/from_json): 解析JSON字符串并转换为结构体、数组或映射等LakeHouse类型，支持嵌套结构与类型转换。
+    - [get_json_object](https://www.yunqi.tech/documents/get_json_object): 使用 JSON Path 语法从 JSON 字符串中提取指定字段值的 SQL 函数。
+    - [schema_of_json](https://www.yunqi.tech/documents/schema_of_json): schema_of_json函数用于解析JSON字符串并生成对应的DDL结构定义，支持处理嵌套对象、数组和多种数据类型。
+    - [to_json](https://www.yunqi.tech/documents/to_json): TO_JSON函数将SQL表达式（如结构体、数组、数值、日期等）转换为JSON字符串，并说明数据类型到JSON类型的映射规则。
+    - [json_array](https://www.yunqi.tech/documents/json_array): JSON_ARRAY 函数用于将零个或多个任意类型的参数转换为一个 JSON 数组。
+    - [json_contains](https://www.yunqi.tech/documents/json_contains): 检查JSON对象或数组是否包含指定元素，支持标量值、对象键值对及数组元素匹配，并可指定JSON路径进行嵌套查询。
+    - [json_extract](https://www.yunqi.tech/documents/json_extract): 介绍 JSON_EXTRACT 系列函数，用于按 JSON 路径提取元素并转换为 BOOLEAN、INT、STRING 等具体数据类型。
+    - [json_minify](https://www.yunqi.tech/documents/json_minify): 压缩JSON字符串，移除其中的空格和换行符，返回紧凑格式。
+    - [json_normalize](https://www.yunqi.tech/documents/json_normalize): JSON_NORMALIZE函数用于对JSON字符串按键排序、压缩格式，便于比较和去重，输入无效JSON时返回NULL。
+    - [json_object](https://www.yunqi.tech/documents/json_object): JSON_OBJECT 函数语法，用于将成对的键值参数（支持字符串、数组、结构体等类型）构造为 JSON 对象。
+    - [json_parse](https://www.yunqi.tech/documents/json_parse): JSON_PARSE 函数及其别名 PARSE_JSON 的语法、参数和示例，用于将JSON字符串解析为JSON类型。
+    - [json_remove](https://www.yunqi.tech/documents/json_remove): JSON_REMOVE函数用于从JSON对象中删除指定路径的元素，返回剩余内容，不支持通配符。
+    - [json_type](https://www.yunqi.tech/documents/json_type): JSON_TYPE函数用于检测JSON值的具体类型，返回JSON_NULL、BOOLEAN、INTEGER等八种类型标识或NULL。
+    - [json_valid](https://www.yunqi.tech/documents/json_valid): 验证字符串是否为合法JSON格式的函数，输入字符串参数，返回布尔值结果。
+  - [数学函数](https://www.yunqi.tech/documents/math_funciton): 围绕"数学函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [abs](https://www.yunqi.tech/documents/abs): ABS函数用于计算整数、小数等多种数值类型的绝对值，语法为ABS(expr)，输入NULL则返回NULL。
+    - [acos](https://www.yunqi.tech/documents/acos): acos函数用于计算double类型参数的反余弦值，参数范围须在[-1, 1]之间。
+    - [acosh](https://www.yunqi.tech/documents/acosh): 计算数值反双曲余弦值的 SQL 函数 ACOSH 的语法、参数、示例及注意事项。
+    - [asin](https://www.yunqi.tech/documents/asin): asin函数用于计算数值的反正弦值（弧度），输入为double类型，返回值在-1到1之间有效，否则返回NaN。
+    - [asinh](https://www.yunqi.tech/documents/asinh): ASINH 函数用于计算 DOUBLE 类型数值表达式的反双曲正弦值，包含语法、参数说明及使用示例。
+    - [atan](https://www.yunqi.tech/documents/atan): 计算 double 类型表达式的反正切函数 atan，并返回 double 类型结果。
+    - [atan2](https://www.yunqi.tech/documents/atan2): ATAN2函数用于计算两个浮点数y和x的反正切值，返回弧度制结果并正确处理象限。
+    - [atanh](https://www.yunqi.tech/documents/atanh): 计算 double 类型表达式的反双曲正切值，返回 double 类型结果。
+    - [bround](https://www.yunqi.tech/documents/bround): BROUND函数用于对数值表达式按四舍六入五成双规则进行舍入，支持指定小数位数和多种数值类型。
+    - [cbrt](https://www.yunqi.tech/documents/cbrt): CBRT函数用于计算double类型数值的立方根，包含语法、参数说明及正负数示例。
+    - [ceil](https://www.yunqi.tech/documents/ceil): CEIL函数用于将数值向上取整至指定小数位，支持正负位数参数，并包含使用示例。
+    - [ceilling](https://www.yunqi.tech/documents/ceilling): CEILING 函数的语法、参数说明及使用示例，用于将数值向上舍入到最接近的整数。
+    - [cos](https://www.yunqi.tech/documents/cos): SQL余弦函数COS的语法、参数说明及使用示例，用于计算以弧度为单位的角度的余弦值。
+    - [cosh](https://www.yunqi.tech/documents/cosh): 计算数值表达式双曲余弦值的SQL函数，语法为`cosh(expr)`，输入输出类型均为`double`。
+    - [cot](https://www.yunqi.tech/documents/cot): COT函数用于计算给定弧度角度的余切值，包含参数说明、返回值及使用示例。
+    - [csc](https://www.yunqi.tech/documents/csc): SQL余割函数csc的语法、参数类型、返回值及使用示例，用于计算弧度角度的余割值。
+    - [degrees](https://www.yunqi.tech/documents/degrees): 将弧度值转换为角度值的SQL函数，参数为double类型，返回双精度浮点数。
+    - [div](https://www.yunqi.tech/documents/div): DIV 运算符用于计算两个整数整除的结果，返回 bigint 类型，除数为零时返回 NULL。
+    - [e](https://www.yunqi.tech/documents/e): 返回自然常数 e 的值的 SQL 函数 e()，语法为 e()，返回 double 类型。
+    - [exp](https://www.yunqi.tech/documents/exp): EXP函数用于计算数值表达式的自然指数（e的幂），支持双精度浮点数参数，常用于连续复利等数学计算。
+    - [exp2](https://www.yunqi.tech/documents/exp2): EXP2函数用于计算以2为底、指定double类型表达式为指数的幂（2^expr）。
+    - [expm1](https://www.yunqi.tech/documents/expm1): 计算 e 的 double 类型参数次方后减一（exp(expr)-1），用于提升小数值计算的数值稳定性。
+    - [floor](https://www.yunqi.tech/documents/floor): FLOOR 函数用于返回小于等于数值表达式的最大整数，支持指定小数位数，适用于多种数值类型。
+    - [greatest](https://www.yunqi.tech/documents/greatest): GREATEST函数用于从多个数值、字符串或时间参数中返回最大值，并自动忽略NULL值。
+    - [hypot](https://www.yunqi.tech/documents/hypot): HYPOT函数用于计算两个数值的平方和的平方根，即直角三角形斜边长度或点到原点的距离。
+    - [isnan](https://www.yunqi.tech/documents/isnan): 判断表达式是否为NaN（非数字）的SQL函数，参数为double类型，返回布尔值true或false。
+    - [least](https://www.yunqi.tech/documents/least): LEAST函数用于从多个数值、字符串或时间类型参数中返回最小值，忽略NULL值。
+    - [ln](https://www.yunqi.tech/documents/ln): LN函数用于计算数值表达式的自然对数（以e为底），包含语法、参数、示例及负数或零输入返回NULL的注意事项。
+    - [log](https://www.yunqi.tech/documents/log): LOG函数用于计算指定数值的自然对数或以指定底数为底的对数，语法为LOG(base, number)。
+    - [log10](https://www.yunqi.tech/documents/log10): LOG10 函数用于计算给定数值表达式以 10 为底的对数，返回 double 类型结果。
+    - [log1p](https://www.yunqi.tech/documents/log1p): LOG1P 函数用于计算 log(1 + expr) 的值，避免直接计算对数时因数值接近零导致的不稳定问题。
+    - [log2](https://www.yunqi.tech/documents/log2): LOG2函数用于计算给定数值以2为底的对数，参数为double类型，返回double类型结果。
+    - [median](https://www.yunqi.tech/documents/median): median函数用于计算指定数值列的中位数，自动忽略NULL值，支持奇数或偶数个元素的集合。
+    - [mod](https://www.yunqi.tech/documents/mod): MOD函数用于计算数值表达式相除的余数，支持整数、小数等多种数据类型，并提供使用示例与注意事项。
+    - [monotonically_increasing_id](https://www.yunqi.tech/documents/monotonically_increasing_id): 为数据行生成分布式环境下唯一且单调递增的64位整数ID，常用于创建唯一标识符或添加序列号。
+    - [negative](https://www.yunqi.tech/documents/negative): 返回数值表达式相反数的SQL函数，支持整型、小数等多种数值类型。
+    - [pi](https://www.yunqi.tech/documents/pi): 提供返回圆周率常量π的`pi()`函数语法、返回类型及计算圆面积、球体积等使用示例。
+    - [pmod](https://www.yunqi.tech/documents/pmod): PMOD函数用于计算两个数值表达式的模运算并始终返回正结果，支持多种数值类型。
+    - [pow](https://www.yunqi.tech/documents/pow): POW函数用于计算双精度浮点数expr1的expr2次幂，支持正负指数和非整数指数。
+    - [positive](https://www.yunqi.tech/documents/positive): 返回数值表达式本身的值的SQL函数，参数支持多种数值类型。
+    - [radians](https://www.yunqi.tech/documents/radians): 将角度值转换为弧度值的SQL函数，参数为double类型，返回double类型的弧度值。
+    - [rand](https://www.yunqi.tech/documents/rand): RAND() 函数用于生成 [0,1) 区间内的随机双精度浮点数，支持在SQL查询中直接调用或为记录生成随机权重。
+    - [randn](https://www.yunqi.tech/documents/randn): RANDN函数用于生成遵循标准正态分布（均值为0，标准差为1）的double类型随机数。
+    - [random](https://www.yunqi.tech/documents/random): 介绍 RAND() 函数，用于生成 [0, 1) 区间的随机浮点数，并提供生成随机数、随机选择记录等使用示例。
+    - [round](https://www.yunqi.tech/documents/round): ROUND函数用于对数值进行四舍五入，可指定保留的小数位数，支持整数、浮点数及DECIMAL类型。
+    - [sign](https://www.yunqi.tech/documents/sign): SIGN函数用于判断DOUBLE类型数值表达式的正负，返回1.0、-1.0或0。
+    - [shiftleft](https://www.yunqi.tech/documents/shiftleft): shiftleft 函数用于对 int 或 bigint 类型数值进行左移位运算，等价于乘以 2^n，并说明其参数、返回值、示例及溢出注意事项。
+    - [shiftright](https://www.yunqi.tech/documents/shiftright): 对整数值进行算术右移位操作，保留符号位，支持 int 和 bigint 类型，用于快速除以 2 的幂或位运算。
+    - [shiftrightunsigned](https://www.yunqi.tech/documents/shiftrightunsigned): 对整数进行逻辑右移位操作，不保留符号位并以0填充，支持int和bigint类型，常用于无符号运算和位操作。
+    - [sin](https://www.yunqi.tech/documents/sin): SQL函数sin的语法、参数说明及使用示例，用于计算以弧度为单位的角度的正弦值。
+    - [sinh](https://www.yunqi.tech/documents/sinh): SINH函数用于计算双曲正弦值，语法为`sinh(double)`，返回double类型结果。
+    - [sqrt](https://www.yunqi.tech/documents/sqrt): SQRT 函数用于计算 double 类型数值表达式的平方根，返回 double 类型结果。
+    - [tan](https://www.yunqi.tech/documents/tan): TAN函数用于计算DOUBLE类型角度的正切值，语法为TAN(expr)，返回DOUBLE类型结果。
+    - [tanh](https://www.yunqi.tech/documents/tanh): TANH 函数用于计算双曲正切值，接收一个浮点数参数并返回浮点数结果。
+  - [加密函数](https://www.yunqi.tech/documents/encryption-funciont): 围绕"加密函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [aes_decrypt](https://www.yunqi.tech/documents/aes_decrypt): AES_DECRYPT函数用于解密二进制数据，支持ECB和GCM模式及PKCS等填充方式，需提供16/24/32字节密钥。
+    - [aes_decrypt_mysql](https://www.yunqi.tech/documents/aes_decrypt_mysql): 提供兼容MySQL的AES解密函数，支持ECB和CBC模式，需指定密钥长度与初始向量。
+    - [aes_encrypt](https://www.yunqi.tech/documents/aes_encrypt): 提供 AES_ENCRYPT 函数语法，用于 ECB 或 GCM 模式加密二进制数据，需指定 16/24/32 字节密钥。
+    - [aes_encrypt_mysql](https://www.yunqi.tech/documents/aes_encrypt_mysql): 提供兼容MySQL的AES加密函数，支持ECB/CBC模式，密钥长度16/24/32字节，可指定初始向量。
+    - [sha1](https://www.yunqi.tech/documents/sha1): 提供SHA1函数语法、参数说明及示例，用于计算字符串的160位哈希值。
+    - [md5](https://www.yunqi.tech/documents/md5): 提供MD5函数的语法、参数说明及示例，用于计算字符串的128位散列值。
+  - [正则函数](https://www.yunqi.tech/documents/regexp-funciont): 围绕"正则函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [正则表达式](https://www.yunqi.tech/documents/regexp-statement): 列举正则表达式函数RLIKE、REGEXP_EXTRACT等的用法，说明re2引擎特性及字符串转义规则。
+    - [rlike](https://www.yunqi.tech/documents/rlike): RLIKE函数用于检查字符串是否符合指定正则表达式，支持操作符和函数两种调用方式，并提供匹配邮箱、电话等常见模式示例。
+    - [regexp_count](https://www.yunqi.tech/documents/regexp_count): REGEXP_COUNT函数用于计算字符串中与指定Java正则表达式模式匹配的子串出现次数，并返回整数结果。
+    - [regexp_extract](https://www.yunqi.tech/documents/regexp_extract): 使用正则表达式从字符串中提取指定分组或整个匹配的文本，支持分组索引参数。
+    - [regexp_extract_all](https://www.yunqi.tech/documents/regexp_extract_all): 提取字符串中所有匹配指定正则表达式的子串，返回结果为数组。
+    - [regexp_instr](https://www.yunqi.tech/documents/regexp_instr): REGEXP_INSTR函数用于返回正则表达式模式在源字符串中首次匹配的起始位置（从1开始计数），并提供邮箱解析、数据清洗等应用示例。
+    - [regexp_replace](https://www.yunqi.tech/documents/regexp_replace): regexp_replace 函数用于在字符串中查找匹配正则表达式的子串并替换为指定字符串，支持可选起始位置参数。
+  - [字符串函数](https://www.yunqi.tech/documents/string_function): 围绕"字符串函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [ascii](https://www.yunqi.tech/documents/ascii): ASCII函数用于获取字符或字符串首字符的ASCII码值或Unicode码点，并返回整数结果。
+    - [base64](https://www.yunqi.tech/documents/base64): BASE64 函数用于将二进制数据转换为 BASE64 编码字符串，包含语法、参数及使用示例。
+    - [binary](https://www.yunqi.tech/documents/binary): BINARY() 函数将字符串转换为二进制字节流，支持ASCII、特殊字符及中文字符编码。
+    - [btrim](https://www.yunqi.tech/documents/btrim): BTRIM函数用于去除字符串左右两侧的指定字符集或空格，包含参数说明与使用示例。
+    - [char](https://www.yunqi.tech/documents/char): 将整数（ASCII或Unicode码点）转换为对应字符，非法输入返回空字符串。
+    - [char_length](https://www.yunqi.tech/documents/char_length): 返回字符串中字符数量的函数 CHAR_LENGTH 的语法、参数说明及使用示例。
+    - [character_length](https://www.yunqi.tech/documents/character_length): CHARACTER_LENGTH 函数的语法、参数说明及示例，用于计算字符串的字符数量。
+    - [chr](https://www.yunqi.tech/documents/chr): 返回整数ASCII码对应的字符，参数为0-127的整数，输入NULL则返回NULL。
+    - [collation_sort_key](https://www.yunqi.tech/documents/collation_sort_key): 为字符串生成指定字符集（如中文拼音、英文utf8mb4）的二进制排序键，用于按特定规则排序。
+    - [concat](https://www.yunqi.tech/documents/concat): CONCAT函数用于连接多个字符串、数组或二进制数据，包含语法、参数说明及具体使用示例。
+    - [conv](https://www.yunqi.tech/documents/conv): conv函数用于在2到36进制间转换数字字符串，支持有符号和无符号处理，语法为conv(num, fromBase, toBase)。
+    - [concat_ws](https://www.yunqi.tech/documents/concat_ws): CONCAT_WS 函数的语法、参数及使用示例，用于以指定分隔符连接字符串或数组并自动忽略NULL值。
+    - [contains](https://www.yunqi.tech/documents/contains): contains函数用于判断字符串或二进制表达式是否包含指定子串，返回布尔值。
+    - [endswith](https://www.yunqi.tech/documents/endswith): ENDSWITH函数用于判断字符串或二进制数据是否以指定后缀结尾，返回布尔值或NULL。
+    - [find_in_set](https://www.yunqi.tech/documents/find_in_set): 查找字符串在以逗号分隔的字符串列表中的位置，返回索引或零。
+    - [format_string](https://www.yunqi.tech/documents/format_string): FORMAT_STRING 函数使用 printf 样式（如 %d, %s）格式化字符串，基于 java.util.Formatter 并遵循 Locale.US 规则。
+    - [hex](https://www.yunqi.tech/documents/hex): HEX函数将字符串、二进制数据或大整数转换为对应的十六进制格式字符串。
+    - [instr](https://www.yunqi.tech/documents/instr): INSTR函数用于查找子字符串在给定字符串中首次出现的位置，返回索引（从1开始）或0（未找到）。
+    - [is_ascii](https://www.yunqi.tech/documents/is_ascii): 判断字符串是否仅包含ASCII字符，返回布尔值，并给出示例。
+    - [is_utf8](https://www.yunqi.tech/documents/is_utf8): 判断字符串是否仅包含UTF-8编码字符的函数，输入string类型，返回boolean结果。
+    - [left](https://www.yunqi.tech/documents/left): 返回字符串左边指定数量字符的SQL函数，支持Unicode并按字符计数。
+    - [length](https://www.yunqi.tech/documents/length): LENGTH函数用于计算字符串的字符数或二进制数据的字节数，语法为LENGTH(expr)，返回整数结果。
+    - [lengthb](https://www.yunqi.tech/documents/lengthb): 计算字符串字节长度的SQL函数LENGTHB，区分字符长度，适用于多字节字符集如UTF-8。
+    - [like](https://www.yunqi.tech/documents/like): 介绍 LIKE 操作符的功能、通配符（% 和 _）的用法，并提供多个 SQL 匹配示例。
+    - [lcase](https://www.yunqi.tech/documents/lcase): LCASE 函数用于将字符串参数中的所有大写字符转换为小写，是 LOWER 函数的别名。
+    - [locate](https://www.yunqi.tech/documents/locate): LOCATE函数用于在字符串中查找子串并返回其位置，支持指定起始搜索点，返回索引从1开始。
+    - [lower](https://www.yunqi.tech/documents/lower): LOWER 函数将字符串参数转换为小写字母，包含参数说明与SQL使用示例。
+    - [lpad](https://www.yunqi.tech/documents/lpad): LPAD函数用于对字符串进行左侧填充，指定目标长度和填充字符，并包含使用示例。
+    - [ltrim](https://www.yunqi.tech/documents/ltrim): LTRIM函数用于去除字符串左侧的指定字符或空格，包含参数说明、使用示例和注意事项。
+    - [mask](https://www.yunqi.tech/documents/mask): 提供 mask_inner 和 mask_outer 函数，用于通过指定首尾保留或屏蔽的字符数来对字符串进行掩码脱敏。
+    - [parse_url](https://www.yunqi.tech/documents/parse_url): 从URL中提取主机名、路径、查询参数、协议等指定部分的SQL函数用法及示例。
+    - [position](https://www.yunqi.tech/documents/position): POSITION函数用于在字符串中查找子串的起始位置，支持指定搜索起点，返回bigint类型的位置索引。
+    - [repeat](https://www.yunqi.tech/documents/repeat): REPEAT 函数用于将指定字符串重复指定次数，返回生成的新字符串。
+    - [replace](https://www.yunqi.tech/documents/replace): REPLACE函数用于在字符串中查找并替换或删除指定子串，包含参数说明和示例。
+    - [reverse](https://www.yunqi.tech/documents/reverse): reverse函数用于反转字符串或数组的元素顺序，支持字符串、数组及嵌套函数操作。
+    - [rpad](https://www.yunqi.tech/documents/rpad): RPAD函数用于在字符串右侧填充指定字符至目标长度，若长度不足则截断，默认填充空格。
+    - [right](https://www.yunqi.tech/documents/right): RIGHT函数：返回字符串右侧指定数量的字符，支持Unicode并按字符计数。
+    - [rtrim](https://www.yunqi.tech/documents/rtrim): RTRIM函数用于去除字符串右侧的指定字符或空格，语法为`rtrim(str, [trimStr])`。
+    - [space](https://www.yunqi.tech/documents/space): SPACE 函数用于生成指定数量（bigint 类型参数）的空格字符串，常用于文本对齐或填充。
+    - [split](https://www.yunqi.tech/documents/split): SPLIT函数使用正则表达式将字符串分割为数组，支持通过limit参数控制返回数组的最大长度。
+    - [split_part](https://www.yunqi.tech/documents/split_part): SPLIT_PART 函数用于按指定分隔符分割字符串并返回正向或负向索引位置的子串。
+    - [startswith](https://www.yunqi.tech/documents/startswith): STARTSWITH 函数用于判断字符串或二进制数据是否以指定模式开头，返回布尔值，支持 NULL 和空字符串处理。
+    - [strpos](https://www.yunqi.tech/documents/strpos): 返回子串在字符串中首次或指定次出现的位置，支持Unicode，位置从1开始计数。
+    - [str_to_map](https://www.yunqi.tech/documents/str_to_map): 将字符串按指定分隔符（默认逗号和冒号）解析为键值对，生成Map类型结果。
+    - [substr](https://www.yunqi.tech/documents/substr): SUBSTR 函数用于从字符串或二进制数据中，根据指定起始位置和长度提取子字符串。
+    - [substring_index](https://www.yunqi.tech/documents/substring_index): SUBSTRING_INDEX 函数用于根据指定分隔符和出现次数（正数从左、负数从右）提取字符串或二进制数据的子串。
+    - [substring](https://www.yunqi.tech/documents/substring): SUBSTRING函数用于从字符串或二进制数据中按指定起始位置和长度提取子串，支持正向和负向索引。
+    - [unbase64](https://www.yunqi.tech/documents/unbase64): UNBASE64函数用于将Base64编码字符串转换为二进制数据，支持CAST为字符串或BLOB类型。
+    - [translate](https://www.yunqi.tech/documents/translate): translate函数用于将字符串中指定字符按映射规则替换或删除，需提供原始字符串、待替换字符集和替换字符集。
+    - [trim](https://www.yunqi.tech/documents/trim): TRIM 函数用于去除字符串两侧的空格或指定字符，包含参数说明与使用示例。
+    - [typeof](https://www.yunqi.tech/documents/typeof): 返回任意表达式（包括基本类型和复杂嵌套类型）的数据类型名称字符串。
+    - [unhex](https://www.yunqi.tech/documents/unhex): UNHEX函数将十六进制字符串转换为二进制数据，用于处理文本、图片、音频或视频数据。
+    - [upper](https://www.yunqi.tech/documents/upper): UPPER 函数将字符串参数中的小写字母转换为大写字母，包含语法、参数说明及多个SQL使用示例。
+    - [ucase](https://www.yunqi.tech/documents/ucase): UCASE函数用于将字符串中的小写字母转换为大写，是UPPER的别名，包含参数说明与使用示例。
+    - [url_decode](https://www.yunqi.tech/documents/url_decode): 解码URL编码字符串，将%XX转换为字符，将+转换为空格，是URL_ENCODE的逆操作。
+    - [url_encode](https://www.yunqi.tech/documents/url_encode): URL_ENCODE 函数用于对字符串进行URL编码，将特殊字符转换为%XX形式，空格编码为+。
+    - [uuid](https://www.yunqi.tech/documents/uuid): uuid() 函数用于生成标准格式的唯一标识符字符串，支持在SQL查询和更新语句中直接调用。
+  - [ARRAY函数](https://www.yunqi.tech/documents/array_funciton): 围绕"ARRAY函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [array_append](https://www.yunqi.tech/documents/array_append): array_append 函数用于在数组末尾追加指定元素，返回新数组，支持元素为 null 或空数组。
+    - [array_compact](https://www.yunqi.tech/documents/array_compact): 移除数组中的所有 null 元素，返回不含 null 的新数组。
+    - [array_contains](https://www.yunqi.tech/documents/array_contains): 判断数组是否包含指定值，返回布尔结果，用于SQL查询中的数组元素筛选。
+    - [array_distinct](https://www.yunqi.tech/documents/array_distinct): ARRAY_DISTINCT 函数用于去除整数、浮点数、字符串等任意类型数组中的重复元素。
+    - [array_except](https://www.yunqi.tech/documents/array_except): 返回仅存在于第一个数组中的元素并去重，支持整数、字符串等多种数组类型。
+    - [array_intersect](https://www.yunqi.tech/documents/array_intersect): 计算两个数组的交集并去重，支持整数、字符串、日期等多种元素类型。
+    - [array_join](https://www.yunqi.tech/documents/array_join): 将字符串数组元素按指定分隔符连接成单个字符串，并可选择用指定字符串替换NULL值。
+    - [array_max](https://www.yunqi.tech/documents/array_max): array_max函数用于从数组中找出最大值，自动忽略空值，支持整数、浮点数、字符串等多种数据类型。
+    - [array_min](https://www.yunqi.tech/documents/array_min): array_min函数用于从数组中找出最小值，忽略null值，支持整数、浮点数等类型，空数组或全null数组返回null。
+    - [array_position](https://www.yunqi.tech/documents/array_position): 查找数组中指定元素首次出现的位置，返回从1开始的索引，未找到则返回0。
+    - [array_prepend](https://www.yunqi.tech/documents/array_prepend): array_prepend 函数用于在数组开头插入指定元素并返回新数组，支持泛型参数和空值处理。
+    - [array_remove](https://www.yunqi.tech/documents/array_remove): 从数组中移除所有与指定元素相等的项，返回新数组，支持整数、字符串等数据类型。
+    - [array_repeat](https://www.yunqi.tech/documents/array_repeat): array_repeat函数用于创建包含指定元素重复指定次数的数组，支持字符串、数值、日期等多种数据类型。
+    - [array_size](https://www.yunqi.tech/documents/array_size): ARRAY_SIZE 函数用于获取数组中元素的数量，支持数字、字符串、布尔值等多种数据类型。
+    - [array_sort](https://www.yunqi.tech/documents/array_sort): ARRAY_SORT 函数用于对整数、浮点数、字符串等数组进行升序排序，并将所有 null 值置于末尾。
+    - [array_sort_reverse](https://www.yunqi.tech/documents/array_sort_reverse): array_sort_reverse 函数用于对输入的整数、浮点数或字符串数组进行降序排序，并返回新数组。
+    - [array_union](https://www.yunqi.tech/documents/array_union): ARRAY_UNION 函数用于合并两个数组并去除重复元素，支持整数、字符串、浮点数等多种数据类型。
+    - [array](https://www.yunqi.tech/documents/array): array函数用于创建包含指定元素的数组，支持任意数量参数和隐式类型转换。
+    - [arrays_overlap](https://www.yunqi.tech/documents/arrays_overlap): 检查两个数组是否存在至少一个相同元素的SQL函数，包含对null值和空数组的处理规则。
+    - [arrays_zip](https://www.yunqi.tech/documents/arrays_zip): 将多个数组按索引合并为结构体数组，缺失值填充null，支持不等长和多数组合并。
+    - [array_sort_by_key](https://www.yunqi.tech/documents/array_sort_by_key): 根据lambda表达式提取的键值对数组元素进行排序的函数，支持日期、字符串等多种数据类型。
+    - [concat_ws](https://www.yunqi.tech/documents/concat_ws): CONCAT_WS 函数用于以指定分隔符连接多个字符串或数组中的字符串元素，并自动忽略 NULL 值。
+    - [cardinality](https://www.yunqi.tech/documents/cardinality): CARDINALITY函数用于计算数组元素数量或映射键值对数量，语法为CARDINALITY(array/map)，返回整型结果。
+    - [exists](https://www.yunqi.tech/documents/exists): 判断数组中是否存在满足指定lambda表达式条件的元素，返回布尔值。
+    - [element_at](https://www.yunqi.tech/documents/element_at): 从数组按索引（支持负数）或从映射按键提取元素，包含语法、参数、返回值及示例。
+    - [filter](https://www.yunqi.tech/documents/filter): FILTER函数通过单参数(x)或双参数(x, i)的lambda表达式，对数组元素进行条件筛选并返回新数组。
+    - [forall](https://www.yunqi.tech/documents/forall): FORALL函数用于判断数组中的所有元素是否满足指定lambda表达式条件，返回布尔值结果。
+    - [flatten](https://www.yunqi.tech/documents/flatten): 将二维数组（数组的数组）转换为一维数组的SQL函数语法、参数说明及使用示例。
+    - [sort_array](https://www.yunqi.tech/documents/sort_array): 对数组元素进行升序或降序排序，null值默认排在数组最前面。
+    - [slice](https://www.yunqi.tech/documents/slice): SLICE 函数用于从数组中提取子集，指定起始位置和元素数量，支持负数索引从末尾计算。
+    - [sequence](https://www.yunqi.tech/documents/sequence): SEQUENCE函数用于生成整数或时间序列，需指定起始值、结束值和可选步长参数。
+    - [size](https://www.yunqi.tech/documents/size): SIZE函数用于计算数组元素数量或映射键值对数量，返回整数结果。
+    - [trans_array](https://www.yunqi.tech/documents/trans_array): 将字符串数组列按分隔符拆分为多行，支持指定Key列保持原值，自动用NULL填充不等长数组。
+    - [transform](https://www.yunqi.tech/documents/transform): TRANSFORM 函数使用单参数 `x -> expr` 或双参数 `(x, i) -> expr` 的 lambda 表达式对数组元素进行转换。
+    - [zip_with](https://www.yunqi.tech/documents/zip_with): ZIP_WITH函数使用lambda表达式对两个数组的对应元素进行计算，长度不一时以NULL补齐，返回新数组。
+  - [MAP函数](https://www.yunqi.tech/documents/map-funciton): 围绕"MAP函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [cardinality](https://www.yunqi.tech/documents/cardinality): CARDINALITY函数用于计算数组元素数量或映射键值对数量，语法为CARDINALITY(array/map)，返回整型结果。
+    - [map_concat](https://www.yunqi.tech/documents/map_concat): MAP_CONCAT 函数用于合并多个 map 的键值对，语法为 MAP_CONCAT(map1, map2, ...)，重复键时后者覆盖前者。
+    - [map_contains_key](https://www.yunqi.tech/documents/map_contains_key): MAP_CONTAINS_KEY 函数用于判断指定键是否存在于给定的 map 类型数据中，返回布尔值。
+    - [map_entries](https://www.yunqi.tech/documents/map_entries): 将Map类型数据转换为由键值对结构体组成的数组，包含语法、参数说明及使用示例。
+    - [map_equal](https://www.yunqi.tech/documents/map_equal): MAP_EQUAL函数用于比较两个Map的键值对是否完全一致，返回布尔值。
+    - [map_except](https://www.yunqi.tech/documents/map_except): MAP_EXCEPT 函数用于从第一个映射中移除与第二个映射中完全相同的键值对，支持处理NULL值。
+    - [map_from_entries](https://www.yunqi.tech/documents/map_from_entries): 将包含 key 和 value 属性的结构体数组转换为 map 类型，并说明参数、返回值及使用示例。
+    - [map_from_arrays](https://www.yunqi.tech/documents/map_from_arrays): 通过两个长度相等的数组创建映射（Map），键和值分别来自两个输入数组的对应位置。
+    - [multimap_from_entries](https://www.yunqi.tech/documents/multimap_from_entries): 将包含重复键的结构体数组转换为映射，其中每个键对应一个聚合了所有值的数组。
+    - [map_filter](https://www.yunqi.tech/documents/map_filter): MAP_FILTER函数：通过lambda表达式（(k, v) -> expr）筛选Map中的键值对，返回满足条件的新Map。
+    - [map_keys](https://www.yunqi.tech/documents/map_keys): MAP_KEYS函数用于从map类型数据中提取所有键并以数组形式返回，包含语法、参数、示例及空map处理。
+    - [map_values](https://www.yunqi.tech/documents/map_values): MAP_VALUES 函数用于从键值对映射（map）中提取所有值并返回数组，包含语法、参数说明及使用示例。
+    - [map](https://www.yunqi.tech/documents/map): MAP函数用于创建键值对集合，支持指定多个键值对，重复键时后者覆盖前者，并返回map<K, V>类型结果。
+    - [map_zip_with](https://www.yunqi.tech/documents/map_zip_with): MAP_ZIP_WITH函数使用lambda表达式对两个map中相同key的value进行配对计算，缺失值以NULL填充，返回新map。
+    - [size](https://www.yunqi.tech/documents/size): SIZE函数用于计算数组元素数量或映射键值对数量，返回整数结果。
+    - [transform_keys](https://www.yunqi.tech/documents/transform_keys): TRANSFORM_KEYS 函数通过 lambda 表达式 (k, v) -> expr 转换 Map 的键，并返回新 Map。
+    - [transform_values](https://www.yunqi.tech/documents/transform_values): 使用双参数lambda表达式对Map中的值进行转换，支持处理NULL值，返回新Map。
+  - [STRUCT函数](https://www.yunqi.tech/documents/struct-funciton): 围绕"STRUCT函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [named_struct](https://www.yunqi.tech/documents/named_struct): named_struct 函数用于创建具有指定字段名和对应值的结构体，语法为 named_struct(f1, v1, f2, v2, ...)。
+    - [struct_insert](https://www.yunqi.tech/documents/struct_insert): struct_insert函数用于向结构体插入指定名称和值的新字段，并可选择插入位置。
+    - [struct_update](https://www.yunqi.tech/documents/struct_update): STRUCT_UPDATE函数用于更新结构体（struct）中指定字段的值，支持字段名和新表达式作为参数，返回更新后的新结构体。
+    - [struct](https://www.yunqi.tech/documents/struct): STRUCT函数用于创建包含多个字段的结构化对象，字段值可为任意类型，默认字段名为col1、col2等。
+  - [窗口函数](https://www.yunqi.tech/documents/window_clause): 详解窗口函数语法，包括PARTITION BY、ORDER BY和FRAME子句，并提供COUNT等函数在ROWS与RANGE模式下的使用示例。
+    - [window function](https://www.yunqi.tech/documents/window-function-summary): 介绍窗口函数的基本语法、分类（排名、聚合、分析函数）及使用示例，如ROW_NUMBER、RANK、SUM等。
+    - [window frame](https://www.yunqi.tech/documents/windowframe): 定义窗口函数中用于限定计算范围的ROWS和RANGE两种frame子句的语法、边界选项及使用示例。
+    - [avg](https://www.yunqi.tech/documents/avg): AVG窗口函数的语法、参数说明及示例，用于计算分区内数值表达式的平均值。
+    - [count](https://www.yunqi.tech/documents/count): 介绍 COUNT 窗口函数的两种形式（count(*) 和 count(expr)）的语法、参数、返回值差异及使用示例。
+    - [cume_dist](https://www.yunqi.tech/documents/cume_dist): CUME_DIST 窗口函数：计算分区内当前行及其之前所有行的累计分布比例（公式为 last_peer_row_number / partition_row_count）。
+    - [dense_rank](https://www.yunqi.tech/documents/dense_rank): DENSE_RANK窗口函数的语法、参数说明及使用示例，用于计算分区内连续不跳跃的排名。
+    - [first](https://www.yunqi.tech/documents/first): FIRST窗口函数语法、参数说明及使用示例，用于返回窗口内第一行（或首个非空）的值。
+    - [first_value](https://www.yunqi.tech/documents/first_value): FIRST_VALUE窗口函数的语法、参数（含ignoreNull选项）及示例，用于获取窗口内第一行的值。
+    - [lag](https://www.yunqi.tech/documents/lag): 介绍 LAG 窗口函数的语法、参数（expr, offset, default）及使用示例，用于获取当前行之前的指定行数据。
+    - [last](https://www.yunqi.tech/documents/last): LAST窗口函数返回排序键相同时窗口内最后一行的值，可指定是否忽略NULL值，并提供使用示例。
+    - [last_value](https://www.yunqi.tech/documents/last_value): LAST_VALUE窗口函数的语法、参数（含ignoreNull选项）及使用示例，用于获取窗口内最后一行的值。
+    - [lead](https://www.yunqi.tech/documents/lead): LEAD窗口函数的语法、参数（expr、offset、default）及使用示例，用于获取当前行之后指定偏移量的数据。
+    - [max](https://www.yunqi.tech/documents/max): MAX窗口函数的语法、参数说明及使用示例，用于计算指定表达式在窗口范围内的最大值。
+    - [min](https://www.yunqi.tech/documents/min): MIN窗口函数语法、参数说明及使用示例，用于计算分区内表达式的最小值。
+    - [nth_value](https://www.yunqi.tech/documents/nth_value): NTH_VALUE窗口函数的语法、参数（expr, offset, ignoreNull）及使用示例，用于获取窗口内指定偏移行的值。
+    - [ntile](https://www.yunqi.tech/documents/ntile): NTILE 函数用于将有序数据集划分为指定数量的桶（如四分位数）并分配桶编号，支持分区和排序。
+    - [percent_rank](https://www.yunqi.tech/documents/percent_rank): PERCENT_RANK窗口函数的语法、使用示例及计算公式，用于计算分区内行的百分比排名。
+    - [rank](https://www.yunqi.tech/documents/rank): RANK() 窗口函数的语法、参数说明及使用示例，包括基本排名和按分区（PARTITION BY）排名。
+    - [row_number](https://www.yunqi.tech/documents/row_number): ROW_NUMBER() 窗口函数的语法、参数说明及使用示例，用于为分区内排序的行分配唯一序号。
+    - [sum](https://www.yunqi.tech/documents/sum): SUM窗口函数的语法、参数类型、返回值及使用示例，用于计算分组或累积数值和。
+  - [表函数](https://www.yunqi.tech/documents/table_funciotn): 提供 table、table_glob、table_pattern 等表函数的具体语法、参数说明和使用示例，用于直接查询本地或对象存储中的文件数据。
+    - [explode](https://www.yunqi.tech/documents/explode): EXPLODE函数用于将数组或映射展开为多行，可与LATERAL VIEW结合使用处理复杂数据。
+    - [inline](https://www.yunqi.tech/documents/inline): 将数组中的结构体元素展开为多行数据，可与 LATERAL VIEW 搭配使用。
+    - [json_tuple](https://www.yunqi.tech/documents/json_tuple): 解析JSON字符串并提取指定键的值，支持与LATERAL VIEW结合使用，键不存在时返回NULL。
+    - [posexplode](https://www.yunqi.tech/documents/posexplode): posexplode函数用于展开数组或映射为多行数据，并添加位置列（pos），支持与LATERAL VIEW结合使用。
+    - [stack](https://www.yunqi.tech/documents/stack): STACK函数用于将多列表达式按指定行数堆叠，生成新行和列，常与LATERAL VIEW搭配使用。
+    - [table_changes](https://www.yunqi.tech/documents/table_changes): 查询Lakehouse表、动态表或物化视图在指定时间区间内数据变化的表函数，需提前开启表的change_tracking功能。
+    - [read_kafka](https://www.yunqi.tech/documents/read_kafka): 从Kafka集群一次性读取数据以进行探查和测试，包含连接参数、偏移量设置及数据格式配置。
+    - [unnset](https://www.yunqi.tech/documents/unnset): UNNEST函数的语法、参数说明及使用示例，用于展开数组、嵌套结构并与JOIN结合进行行级分析。
+    - [load_history](https://www.yunqi.tech/documents/load_history): 查看指定表的COPY作业导入文件历史，保留7天，用于避免Pipe重复导入相同文件。
+  - [文件函数](https://www.yunqi.tech/documents/file_functions): 围绕"文件函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [GET_PRESIGNED_URL](https://www.yunqi.tech/documents/GET_PRESIGNED_URL): 为Volume中的文件生成带有效期的预签名URL，支持指定路径、有效期及批量操作。
+  - [上下文函数](https://www.yunqi.tech/documents/context_function): 围绕"上下文函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [current_instance_id](https://www.yunqi.tech/documents/current_instance_id): 获取当前会话关联实例的唯一标识符（整数ID），用于分布式数据库中的实例识别与追踪。
+    - [current_schema](https://www.yunqi.tech/documents/current_schema): 获取当前会话正在使用的 schema 名称，用于动态 SQL 或多 schema 环境判断。
+    - [current_session_id](https://www.yunqi.tech/documents/current_session_id): 返回当前会话唯一标识符（Session ID）的STRING类型无参数函数。
+    - [current_user](https://www.yunqi.tech/documents/current_user): 获取当前数据库会话用户名称的 SQL 函数 `CURRENT_USER()` 的语法与使用示例。
+    - [current_user_id](https://www.yunqi.tech/documents/current_user_id): 获取当前数据库会话用户ID的SQL函数，无需参数，返回整数型用户ID。
+    - [current_vcluster](https://www.yunqi.tech/documents/current_vcluster): 获取当前会话使用的计算集群名称，支持查询和切换集群（如 default、test）。
+    - [current_workspace](https://www.yunqi.tech/documents/current_workspace): 获取当前数据库会话所连接的workspace名称，用于多workspace环境下的权限管理与数据隔离。
+    - [current_workspace_id](https://www.yunqi.tech/documents/current_workspace_id): 获取当前会话所在工作区ID的SQL函数，用于多工作区环境下的操作区分。
+  - [向量函数](https://www.yunqi.tech/documents/vector-funcitons): 围绕"向量函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [binary_quantize](https://www.yunqi.tech/documents/binary_quantize): 将浮点向量二值化为二进制向量，用于向量压缩和快速相似度计算，返回 `vector<<tinyint>>` 类型结果。
+    - [cosine_distance](https://www.yunqi.tech/documents/cosine_distance): 计算两个向量（array<decimal/double/float>）的余弦距离，返回double类型结果。
+    - [dot_product](https://www.yunqi.tech/documents/dot_product): DOT_PRODUCT 函数用于计算两个 array<decimal/double/float> 类型向量的点积，返回 double 类型标量结果。
+    - [hamming_distance](https://www.yunqi.tech/documents/hamming_distance): 计算两个等长 `vector<tinyint>` 类型向量之间汉明距离的SQL函数，返回不相等元素的数量。
+    - [jaccard_distance](https://www.yunqi.tech/documents/jaccard_distance): 计算两个 `vector<tinyint>` 类型向量之间的雅卡德距离，返回一个 `double` 类型的结果。
+    - [l2_distance](https://www.yunqi.tech/documents/l2_distance): 计算两个向量（array<decimal/double/float>）之间的欧几里得距离，返回double类型结果。
+    - [l2_norm](https://www.yunqi.tech/documents/l2_norm): 计算向量L2范数（欧几里得范数）的SQL函数，支持array<decimal>、array<double>和array<float>类型的输入参数。
+    - [l2_normalize](https://www.yunqi.tech/documents/l2_normalize): L2_NORMALIZE函数用于对array<decimal>、array<double>、array<float>类型的向量进行L2范数归一化。
+    - [print_vector_bits](https://www.yunqi.tech/documents/print_vector_bits): 将二值化向量转换为可读的二进制位字符串，用于调试和可视化BINARY_QUANTIZE等函数的输出结果。
+    - [vector_add_scalar](https://www.yunqi.tech/documents/vector_add_scalar): 向量函数 VECTOR_ADD_SCALAR 的语法、参数（vector<float/double> 与 integer 标量）及使用示例。
+    - [vector](https://www.yunqi.tech/documents/vector): vector函数用于创建数值向量，支持多种数值类型，可进行相等比较、排序及向量相似度搜索等操作。
+  - [搜索函数](https://www.yunqi.tech/documents/search-functions): 围绕"搜索函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [match_all](https://www.yunqi.tech/documents/match_all): MATCH_ALL函数用于在倒排索引列中执行全文检索，要求查询字符串的所有分词结果均匹配，并需指定分词器参数。
+    - [match_any](https://www.yunqi.tech/documents/match_any): MATCH_ANY函数用于在倒排索引列上执行分词搜索，匹配查询字符串中任意分词，返回布尔值，需指定分词器参数。
+    - [match_phrase](https://www.yunqi.tech/documents/match_phrase): MATCH_PHRASE函数用于在倒排索引列上执行短语匹配，要求查询词项顺序连续且忽略大小写，需指定分词器参数。
+    - [match_phrase_prefix](https://www.yunqi.tech/documents/match_phrase_prefix): 用于文本搜索的MATCH_PHRASE_PREFIX函数，匹配短语前缀，需指定倒排索引列、查询字符串及分词参数。
+    - [match_regexp](https://www.yunqi.tech/documents/match_regexp): 对构建倒排索引的列使用正则表达式进行匹配，需指定与索引相同的分词选项。
+    - [tokenize](https://www.yunqi.tech/documents/tokenize): 提供TOKENIZE函数用法，支持keyword、english、chinese、unicode四种分词类型，用于对输入文本进行分词并返回字符串数组。
+  - [分区函数](https://www.yunqi.tech/documents/pratition-func): 围绕"分区函数"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [max_pt](https://www.yunqi.tech/documents/max_pt): 获取分区表最大分区值的函数，支持单级与多级分区场景，用于快速定位最新数据。
+- [SQL使用指南](https://www.yunqi.tech/documents/considerations-for-using-sql): 围绕"SQL使用指南"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [SQL CREATE ABLE使用指南](https://www.yunqi.tech/documents/SQL_CREATE_TABLE_GUIDE): 提供从Spark、Hive、MaxCompute等系统迁移的建表语法、数据类型对照及分区、分桶等高级功能指南。
+  - [SQL DML使用指南](https://www.yunqi.tech/documents/SQL_DML_Considerations): 提供Lakehouse中INSERT和UPDATE语句的语法规范、数据类型字面量写法、分区限制及推荐的数据导入方法。
+  - [SQL SELECT使用指南](https://www.yunqi.tech/documents/SQL_SELECT_Considerations): 提供云器Lakehouse SELECT语句的完整语法参考、实战示例、性能优化技巧及与Spark、MySQL等系统的迁移对比。
+  - [SQL Join使用指南](https://www.yunqi.tech/documents/SQL_Join_Guide): 为Spark、Hive、MaxCompute等用户提供七种JOIN类型的迁移指南，包含INNER、LEFT、SEMI JOIN语法及MAPJOIN等性能优化策略。
+  - [SQL With CTE使用指南](https://www.yunqi.tech/documents/SQL_With_CTE_Guide): 为Spark、Hive、MaxCompute、Snowflake及传统数据库用户提供使用WITH CTE进行数据分析的迁移指南与最佳实践。
+  - [分区表使用指南](https://www.yunqi.tech/documents/NotesandGuidelinesforUsingPartitionTables): 介绍Lakehouse基于Apache Iceberg的隐藏分区特性，包括智能分区函数、自动分区裁剪和分区数量控制，并提供从传统平台迁移的最佳实践。
+  - [生成列使用指南](https://www.yunqi.tech/documents/generated_columns_guide): 介绍Lakehouse生成列的基础语法、创建方法、支持函数及从MySQL、PostgreSQL等平台迁移的完整指南。
+  - [JSON数据处理使用指南](https://www.yunqi.tech/documents/json_data_process_guide): 提供JSON数据类型核心优势、存储机制、兼容性对比及函数操作指南，帮助用户高效处理半结构化数据。
+  - [VECTOR数据处理使用指南](https://www.yunqi.tech/documents/vector_data_process_guide): 介绍VECTOR数据类型及其内置函数，用于简化向量相似度计算、解决维度匹配问题并提升检索性能。
+
+## 开发手册
+
+- [Java SDK 参考](https://www.yunqi.tech/documents/java-sdk-refer): 围绕"Java SDK 参考"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [Java SDK 简介](https://www.yunqi.tech/documents/java-sdk-summary): 提供JDBC驱动连接、实时与批量数据写入ClickZetta Lakehouse的Java SDK，包含Maven依赖和连接示例。
+  - [Java SDK 更新记录](https://www.yunqi.tech/documents/version-update): 提供 ClickZetta Java SDK 各版本更新内容，如 vector 类型写入、PUT 上传命令及本地 COPY 命令弃用等变更详情。
+  - [初始化 Client](https://www.yunqi.tech/documents/client): 通过JDBC URL或参数形式初始化ClickZettaClient，以连接Lakehouse并创建RowStream或JDBC连接。
+  - [使用 JDBC 查询](https://www.yunqi.tech/documents/jdbc): 使用 JDBC 连接字符串、驱动类名和参数配置，连接到 ClickZetta Lakehouse 并执行查询。
+  - [实时写入数据](https://www.yunqi.tech/documents/realtime-upload): 通过SDK实时写入数据到Lakehouse的原理、适用场景、客户端创建流程及配置选项说明。
+  - [批量写入数据（Bulkload）](https://www.yunqi.tech/documents/bulkload-upload): 围绕"批量写入数据（Bulkload）"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Bulkload简介](https://www.yunqi.tech/documents/bulkload-summary): Lakehouse Bulkload接口用于高吞吐批量数据写入，含SDK上传、对象存储暂存及SQL触发导入的完整流程。
+    - [BulkLoad Java SDK](https://www.yunqi.tech/documents/bulkloadv1-java-sdk): 提供BulkLoadV1 Java SDK的Maven依赖、创建数据流、指定分区选项及APPEND/OVERWRITE操作类型的代码示例。
+- [Python SDK 参考](https://www.yunqi.tech/documents/python-sdk-refer): 围绕"Python SDK 参考"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+  - [Python SDK 简介](https://www.yunqi.tech/documents/python-sdk-summary): Python SDK 提供符合PEP 249的SQL接口、批量数据上传和实时数据上传功能，用于与Lakehouse交互。
+  - [使用 Python Database API 接口进行查询](https://www.yunqi.tech/documents/connector): 使用 Python Database API 接口连接 ClickZetta Lakehouse 并执行 SQL 查询、数据操作及批量上传。
+  - [使用 SQLAlchemy 接口进行查询](https://www.yunqi.tech/documents/sqlalchemy): 使用 SQLAlchemy 接口连接 ClickZetta Lakehouse 并执行 SQL 查询，支持通过 PyGWalker 进行数据可视化分析。
+  - [批量上传数据](https://www.yunqi.tech/documents/bulkload-upload): 围绕"批量上传数据"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [BulkLoad Python SDK](https://www.yunqi.tech/documents/bulkloadv1-python-sdk): 提供使用Python SDK进行单线程批量数据上传的API，包含安装、原理及写入示例。
+  - [Python Sdk实时上传数据](https://www.yunqi.tech/documents/python-igs): ClickZetta Lakehouse Python SDK 实时写入数据的方法、原理、适用场景及支持的数据类型映射。
+  - [Python SDK Version History](https://www.yunqi.tech/documents/PythonSDKVersionHistory): Python SDK 各版本（如0.8.54、0.8.51）的变更日志、发布日期及安装命令。
+  - [Python SqlAlchemy Version History](https://www.yunqi.tech/documents/PythonSqlAlchemyVersionHistory): ClickZetta SQLAlchemy 连接器各版本（如0.8.55、0.8.53）的变更日志、安装命令与发布日期。
+
+## 实践教程
+
+- [高效管理对象和组织数据](https://www.yunqi.tech/documents/data_org): 通过对象存储、数据库、数据湖等数据源创建和管理数据对象，并组织目录、设置权限、配置生命周期策略。
+  - [表设计最佳实践指南](https://www.yunqi.tech/documents/lakehouse_table_design_guide): 提供云器Lakehouse表设计指南，涵盖数据类型选择、分区分桶策略、索引架构及性能优化等具体实践。
+  - [Volume最佳实践指南](https://www.yunqi.tech/documents/volume_best_practices): 介绍云器Lakehouse中User、Table、External三种Volume的创建、文件管理、性能优化及自动化工作流最佳实践。
+  - [Table Stream 最佳实践指南](https://www.yunqi.tech/documents/lakehouse-table-stream-best-practices): 介绍云器 Lakehouse Table Stream 的创建配置、模式选择、数据消费及性能优化等全流程最佳实践。
+  - [元数据查询命令SHOW和DESC完整指南](https://www.yunqi.tech/documents/metadata_show_desc_command_guide): SHOW和DESC命令的完整语法列表，用于查询表、模式、函数、存储卷、连接、计算集群和作业等元数据。
+- [数据导入导出实践](https://www.yunqi.tech/documents/practice_data_import_and_export): 提供从本地文件、数据库、Kafka等数据源导入数据，以及将查询结果导出到文件或数据库的具体操作步骤与示例。
+  - [低延迟实时湖仓数据集成和实时分析](https://www.yunqi.tech/documents/realtime_sync_and_analysis_practice): 将MySQL等源端多张分表实时合并同步至Lakehouse，并支持BI直接查询分析。
+  - [通过Private Link和SSH结合来同步VPC内的RDS数据](https://www.yunqi.tech/documents/StudioDI_PrivateLinkVPC_fromRDS): 结合Private Link与SSH隧道，配置从VPC内RDS到Lakehouse的安全、低成本数据同步流程。
+  - [通过Copy命令批量加载parquet文件到Lakehouse](https://www.yunqi.tech/documents/batchloadparquertfileintoLakehouse): 通过脚本和SQLLine工具，将本地Parquet文件转换为CSV并批量导入Lakehouse表的完整流程。
+  - [通过Python脚本将Postgres数据导入到Lakehouse](https://www.yunqi.tech/documents/importdatabypythonintoLakehouse): 使用Python脚本从PostgreSQL查询数据，经Pandas清洗后，通过SQLAlchemy引擎导入到Lakehouse目标表。
+  - [如何将飞书上的表格导入到lakehouse中](https://www.yunqi.tech/documents/702bc8f656): 通过创建飞书应用、配置权限并获取凭证，使用Python脚本或SQL任务将飞书表格数据导入Lakehouse。
+- [数据查询分析实践](https://www.yunqi.tech/documents/practice_data_analysis): 提供从数据导入、SQL查询到可视化分析的全流程操作指南，涵盖本地文件、数据库、Kafka等多种数据源。
+  - [使用样例数据快速开始查询分析](https://www.yunqi.tech/documents/sample-data-using): 使用内置TPC-H样例数据集，通过创建计算集群、执行22个标准查询并调整集群规模来评估Lakehouse查询性能。
+  - [快速分析本地的CSV文件](https://www.yunqi.tech/documents/quickstart_local_csv): 使用 Lakehouse SQL 从用户存储空间读取并分析压缩的 CSV 文件，支持指定分隔符、表头和压缩格式。
+  - [使用虚拟集群加工和分析数据](https://www.yunqi.tech/documents/getting_started_with_vcluster_for_processing_analytics): 本教程指导用户使用通用型和分析型虚拟集群，完成纽约出租车数据的清洗转换、聚合加工及多并发查询分析。
+  - [探索和分析外部Volume上的JSON文件里的数据](https://www.yunqi.tech/documents/discovery_analysis_data_in_json_file_on_external_volume): 使用SQL直接查询和分析存储在外部Volume（如gh_archive）中的压缩JSON文件（如2025-05-14-0.json.gz），支持GROUP BY等操作。
+  - [探索和分析外部Volume上的Parquet文件里的数据](https://www.yunqi.tech/documents/discovery_analysis_data_in_parquert_file_on_external_volume): 使用SQL查询外部Volume中Parquet格式的纽约市出租车数据，涵盖文件列表、数据预览、聚合分析和时间序列分析等操作。
+  - [使用information_schema作业历史视图分析实践指南](https://www.yunqi.tech/documents/job_history_analysis_with_information_schema): 通过查询`sys.information_schema.job_history`表，分析作业历史以评估工作空间、虚拟集群的资源消耗、数据访问模式和性能瓶颈。
+  - [用户行为分析与精准营销BITMAP实战指南](https://www.yunqi.tech/documents/bitmap_uba_guide): 使用BITMAP函数实现多渠道用户重叠分析、兴趣推荐、A/B测试等六个业务场景的端到端实战方案。
+  - [复杂业务场景下的JSON数据处理指南](https://www.yunqi.tech/documents/json_guide_for_complex_biz_cases): 提供电商订单等复杂JSON数据的实时分析方案，包括嵌套结构查询、动态促销处理、多语言内容支持及性能优化。
+  - [地理信息分析实践指南](https://www.yunqi.tech/documents/geospatial_analysis): 在 ClickZetta Lakehouse 中部署 Esri 地理信息函数，实现地理围栏、区域统计等空间数据分析。
+  - [利用 AI 模型做图像分析](https://www.yunqi.tech/documents/BP_AI_Function_Image2text): 通过外部函数调用AI模型识别图像内容并生成向量，实现美食图片的批量上传、结构化存储与相似度检索。
+- [构建和运维ELT流程实践](https://www.yunqi.tech/documents/ELT_practice): 通过调度工具、数据质量监控和任务编排构建企业级ELT流水线，涵盖开发、测试、部署及故障恢复全流程。
+  - [SQL数据开发实践](https://www.yunqi.tech/documents/sql_practice): 提供数据导入、SQL查询、结果导出及可视化分析的完整数据开发流程与操作指南。
+    - [表设计及数据类型操作](https://www.yunqi.tech/documents/TableDesign): 演示如何创建包含所有支持数据类型的表，并使用CREATE LIKE、CREATE AS语句复制表结构或数据，以及创建普通视图。
+    - [JSON数据处理](https://www.yunqi.tech/documents/JSON_DataType): 使用JSON数据类型存储数据，并通过json_extract_string、json_extract_int等函数解析JSON字段。
+    - [验证SchemaEvolution的操作结果](https://www.yunqi.tech/documents/validate_schema_evolution): 通过具体SQL示例演示如何使用ALTER语句进行添加、删除、重命名列及修改列数据类型和位置。
+    - [使用SQL任务计算客户留存指标](https://www.yunqi.tech/documents/SQL_revenue): 通过SQL任务，基于电商数据集计算用户留存率，包含创建留存分析表和计算周留存的具体步骤。
+    - [使用SQL任务计算新客户、活跃客户和流失客户](https://www.yunqi.tech/documents/SQL_customers): 通过三步SQL计算电商用户生命周期：创建订单序列、计算订单间隔、根据间隔天数划分新客户、活跃客户与流失客户。
+    - [使用SQL对客户进行RFM分析](https://www.yunqi.tech/documents/sql_rfm): 使用SQL计算客户新近度、频率和货币价值，并通过ntile窗口函数进行二分位分段以完成RFM分析。
+    - [用CTE方式对客户进行同类群组分析](https://www.yunqi.tech/documents/CTERevenueCohort): 使用CTE和SQL窗口函数，按用户首次购买周进行分组，计算每周客户留存与复购的收入队列分析模型。
+  - [Dynamic Table开发实践](https://www.yunqi.tech/documents/DynamicTableDevPractical): 围绕"Dynamic Table开发实践"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [使用Dynamic Table开展实时ETL](https://www.yunqi.tech/documents/tutorials-streaming-data-pipeline-with_dynamic-table): 使用Dynamic Table创建分钟级刷新的实时ETL任务，实现电商行为数据的清洗（字段转换与过滤）与聚合分析。
+  - [Python任务开发实践](https://www.yunqi.tech/documents/PythonTaskDev): 使用Python SDK开发批处理与流处理任务，涵盖环境配置、代码编写、依赖管理、任务提交及监控全流程。
+    - [Python任务使用实践](https://www.yunqi.tech/documents/practice_python_task): Python任务运行环境、资源调整及连接Lakehouse等数据源的实践，含自定义依赖安装与示例代码。
+    - [使用Python任务将gharchive网站数据同步到对象存储](https://www.yunqi.tech/documents/PythonSample_put_gharchive2oss): 使用Python任务从gharchive网站下载指定时间点的JSON.gz数据文件，并上传至阿里云OSS对象存储的指定路径。
+    - [使用Python任务实时获取github的事件并导入Lakehouse Table](https://www.yunqi.tech/documents/PythonSample_put_github_rt_events): 通过Python任务调用GitHub Events API实时获取事件数据，并使用SDK批量写入Lakehouse分区表。
+  - [通过Lakehouse实现ELT新方式](https://www.yunqi.tech/documents/Refactor_ELT_practice): 介绍云器Lakehouse如何通过统一任务开发调度、支持JSON/向量等多数据类型、以及动态表功能，实现高效的ELT流程。
+  - [DataOps数据安全稳定生产实践](https://www.yunqi.tech/documents/dataops_practice): 构建定时数据Pipeline，配置任务监控告警与数据质量规则，确保数据处理流程稳定运行与产出正确性。
+- [优化计算资源](https://www.yunqi.tech/documents/OptimizingComputingResources): 介绍通过调整计算组配置、设置弹性伸缩策略和使用资源监控来优化计算资源使用效率的具体方法。
+  - [分析型集群规划配置及使用实践](https://www.yunqi.tech/documents/analytics_cluster_best_practices): 规划分析型集群的存储策略、数据布局与导入方法，以支持实时低延迟查询和高并发BI分析场景。
+- [性能体验](https://www.yunqi.tech/documents/performence_test): 提供性能测试方法、优化建议与监控指标，涵盖查询加速、资源调优和瓶颈排查的具体操作。
+  - [用一瓶水的成本开销体验TPC-H 100G性能测试](https://www.yunqi.tech/documents/TPC-H100G_experience): 通过共享TPC-H 100G数据集和秒级弹性虚拟集群，在3分钟内以约1.38元成本完成22个查询的性能测试。
+  - [了解和使用Result Cache](https://www.yunqi.tech/documents/working_with_cache): 介绍云器Lakehouse的查询结果缓存功能，包括启用方法、复用条件、24小时过期机制及使用限制。
+- [构建 Modern Data Stack](https://www.yunqi.tech/documents/ModernDataStackWithEcosystemTools): 介绍现代数据栈的核心组件与架构模式，包括数据集成、转换、存储、分析和可视化等关键环节的选型与组合。
+  - [基于云器Lakehouse构建面向ELT的Modern Data Stack](https://www.yunqi.tech/documents/ELTModernDataStack): 介绍云器Lakehouse作为ELT架构核心，支持数据摄取、存储处理、转换及BI分析等模块化组件，用于构建现代数据栈。
+  - [基于云器Lakehouse构建面向分析的Modern Data Stack](https://www.yunqi.tech/documents/AnalyticsModernDataStack): 基于云器Lakehouse、Metabase和MindsDB构建现代数据栈，实现从Redshift迁移、BI可视化到SQL驱动的AI分析。
+  - [使用dbt在Lakehouse进行增量开发](https://www.yunqi.tech/documents/use-dbt-dev): 使用dbt在Lakehouse中配置增量模型，支持动态表和物化视图，包含环境准备、项目初始化及连接验证步骤。
+  - [(SaaS)² ：云器Lakehouse+Zilliz，Make Data Ready for BI and AI](https://www.yunqi.tech/documents/Lakehouse_Zilliz_MakeDataReadyforBIandAI): 集成云器Lakehouse与Zilliz向量数据库，通过批量Embedding和向量检索实现BI与AI数据的规模与新鲜度对称。
+- [AI应用开发](https://www.yunqi.tech/documents/REMOTEFUNCTION): 提供从数据准备、模型训练到服务部署的完整AI应用开发流程指南与工具链。
+  - [利用Hugging Face 图片识别模型处理图片数据](https://www.yunqi.tech/documents/RemoteFunctionOnACR): 通过容器镜像创建Remote Function，使用Hugging Face图像识别模型解析图片内容，适用于大依赖包或GPU场景。
+  - [连接MindsDB实现基于ML和LLM的数据分析](https://www.yunqi.tech/documents/JDBC_MindsDB_ML_LLM): 通过MySQL协议连接MindsDB，在云器Lakehouse中创建JDBC任务以调用其机器学习模型（如Huggingface情感分类器）对本地数据进行预测分析。
+- [安全与合规审计](https://www.yunqi.tech/documents/security_compliance_audit_guide): 提供用户权限管理、SQL审计日志、数据脱敏策略及合规性配置的操作方法与参数说明。
+  - [基于Information Schema的全系体系盘点与优化指南](https://www.yunqi.tech/documents/Security_system_inventory_and_optimization_based_Information_Schema): 通过Information Schema盘点实例与空间级用户、角色及权限，识别冗余并优化权限体系。
+- [用量和费用管理](https://www.yunqi.tech/documents/cost_management): 查看云器Lakehouse的用量明细、费用构成、计费模式，并通过预算和提醒功能管理成本。
+  - [云器Lakehouse费用异常告警配置指南](https://www.yunqi.tech/documents/lakehouse_billing_anomaly_alert_configuration_guide): 配置基于 sys.information_schema.instance_usage 视图的费用异常告警，包含固定阈值和环比突增两种监控方案。
+
+## Lakehouse AI
+
+- [Lakehouse AI 概述](https://www.yunqi.tech/documents/LakehouseAI_overview): 集成非结构化数据管理、AI外部函数、多模态检索、Python开发框架及对话式分析，实现数据到智能决策的全流程闭环。
+- [AI 的数据准备](https://www.yunqi.tech/documents/Server_data_for_AI): 云器 Lakehouse 支持向量检索、全文搜索与结构化数据分析的无缝结合，为RAG、推荐等AI应用提供统一数据服务。
+  - [概述](https://www.yunqi.tech/documents/ai_ready_data_overview): 云器 Lakehouse 支持向量检索、全文搜索与结构化数据分析的无缝集成，为AI应用提供统一数据服务。
+  - [向量检索](https://www.yunqi.tech/documents/vector_search_ai): 在 Lakehouse 中创建 VECTOR 类型表、使用 AI 函数生成向量嵌入，并构建向量索引以支持相似性搜索的步骤指南。
+  - [全文检索](https://www.yunqi.tech/documents/Full_Text_Search): 提供全文检索功能的语法、参数说明及使用示例，包括`LIKE`、`MATCH`、`QUERY`等操作符。
+    - [全文检索使用指南](https://www.yunqi.tech/documents/fulltext_indexes_guide): 在Lakehouse中创建倒排索引，使用MATCH_ANY等函数进行高性能中文分词、短语匹配等全文检索，替代传统LIKE查询。
+    - [multi-match 功能](https://www.yunqi.tech/documents/inverted_idx_multi-match): multi-match 功能支持在多个倒排索引字段上执行单一查询，并合并排序结果，提供单字段与多字段联合搜索示例。
+    - [倒排索引 BM25 参数调优](https://www.yunqi.tech/documents/inverted_idx_bm25_param): 调整倒排索引BM25算法的k1（词频饱和度）和b（文档长度归一化）参数，以优化Lakehouse全文检索的相关性评分效果。
+  - [多模数据检索](https://www.yunqi.tech/documents/PerformingVectorandScalarRetrievalinheSameTableinLakehouse): 在云器 Lakehouse 表中，对文本字段建立倒排索引、对向量字段建立向量索引，实现向量与标量的融合检索。
+- [AI 函数](https://www.yunqi.tech/documents/AI_function_in_SQL): 提供在云器 Lakehouse 中创建和使用 AI 函数的方法，支持通过 Python/Java 调用外部在线 AI 服务或离线模型包。
+  - [AI 函数概述](https://www.yunqi.tech/documents/AI_function_overview): 云器 Lakehouse 提供内置 AI_COMPLETE 和 AI_EMBEDDING 函数用于SQL中直接调用LLM和嵌入模型，并支持通过外部函数框架扩展调用自定义或私有AI服务。
+  - [AI_COMPLETE](https://www.yunqi.tech/documents/AI_COMPLETE): AI_COMPLETE函数支持通过SQL调用LLM，使用文本或图像提示生成响应，可连接平台Endpoint或自定义API Connection。
+  - [AI_EMBEDDING](https://www.yunqi.tech/documents/AI_EMBEDDING): AI_EMBEDDING函数使用指定嵌入模型将文本转换为向量，支持通过API Gateway或API Connection调用，并可选配输入类型和向量维度等参数。
+  - [外部 AI 函数示例1：创建嵌入函数](https://www.yunqi.tech/documents/Create_Embeding_Function): 使用阿里云百炼平台API创建文本和图片嵌入函数，实现向量化及以图搜图功能。
+  - [外部 AI 函数示例2：创建 LLM 函数分析公司行业](https://www.yunqi.tech/documents/Create_LLM_Function): 通过阿里云百炼API创建LLM函数，根据公司名称自动填充国家规范的一级和二级行业信息。
+- [Lakehouse Python 开发框架（Zettapark）](https://www.yunqi.tech/documents/LakehousePythonZettapark): Lakehouse Python开发框架Zettapark的API参考，包含DataFrame、SQL、Catalog等核心模块的类、方法及参数说明。
+  - [Lakehouse Zettapark 介绍](https://www.yunqi.tech/documents/ZettaparkQuickStart): 提供Python API，通过DataFrame执行SQL查询并操作云器Lakehouse数据，支持类似pandas的语法。
+  - [使用 Zettapark 和 Python 机器学习库进行信用评分](https://www.yunqi.tech/documents/CreditScoringwithZettaparkandPythonMLlibraryNew): 使用 Zettapark 和 scikit-learn 等 Python 库，通过数据准备、模型训练与部署，完成端到端的信用评分机器学习流程。
+- [AI + BI 统一工作流](https://www.yunqi.tech/documents/unifiedWorkflow): 通过自然语言交互生成SQL查询、可视化图表和仪表板，实现从数据探索到分析展示的端到端流程。
+  - [AI + BI 统一工作流介绍](https://www.yunqi.tech/documents/UnifiedWorkflowIntro): 云器 Lakehouse 提供统一工作流，整合传统ETL与AI应用流程，实现结构化、非结构化及向量数据的统一存储、计算与编排。
+  - [示例：增量处理对象存储中的车辆图片](https://www.yunqi.tech/documents/UnifiedWorkflow_demo): 通过AI UDF识别OSS中增量车辆图片，解析JSON结果并入库，支持后续BI分析。
+- [AI Gateway](https://www.yunqi.tech/documents/AIGateway): AI Gateway 支持统一接入、路由分发、负载均衡、限流熔断、缓存和监控，用于管理多模型供应商的API调用。
+- [对话式数据分析（DataGPT）](https://www.yunqi.tech/documents/datagpt_intro): 通过自然语言提问直接生成SQL、执行查询并获取可视化图表，无需编写代码。
+  - [DataGPT介绍](https://www.yunqi.tech/documents/DataGPT_Intro): DataGPT是基于Lakehouse的AI分析助手，通过自然语言交互构建动态仪表板、嵌入AI洞察，并提供语义层增强的数据表、指标体系和业务术语管理。
+  - [快速入门](https://www.yunqi.tech/documents/datagpt_quickstart): 指导新用户开通DataGPT服务，并通过样例分析域或导入CSV等文件创建自定义分析域进行智能数据分析。
+  - [使用指南](https://www.yunqi.tech/documents/datagpt_tutorial): 介绍云器 Lakehouse 的核心概念、主要应用场景，并指导如何通过控制台、CLI 或 API 进行快速入门。
+    - [数据源管理](https://www.yunqi.tech/documents/datagpt_data_source): 添加和管理阿里云Lakehouse数据源，包括配置连接串、用户名密码、计算集群及进行连接测试。
+    - [指标与答案构建器](https://www.yunqi.tech/documents/metrics_answer_build): 通过聚合或自定义代码创建指标，并使用SQL模板定义复杂计算逻辑和明细查询的答案构建器。
+  - [最佳实践](https://www.yunqi.tech/documents/datagpt_bestpractice): 提供数据导入、SQL查询、可视化分析、性能优化及数据安全等关键场景的具体操作指南与配置示例。
+    - [如何让回答更准确](https://www.yunqi.tech/documents/datagpt_get_accurate_answers): 通过数据治理、划分分析域、预定义指标与答案构建器及启用列值提示，提升DataGPT问答准确性。
+    - [网页数据获取与对话式数据分析](https://www.yunqi.tech/documents/bestpractice_bazhuanyu): 使用八爪鱼采集器获取网页数据，并通过云器DataGPT进行对话式SQL查询与分析。
+  - [数据隐私](https://www.yunqi.tech/documents/data_privacy): 说明DataGPT系统向大语言模型发送的数据范围（表结构、索引列值、文档片段）及关闭列索引等隐私保护措施。
+- [Lakehouse MCP Server](https://www.yunqi.tech/documents/LakehouseMCPServer): Lakehouse MCP Server 通过 Model Context Protocol 将数据湖仓能力（如表、视图、函数）暴露给 Claude 等 AI 助手，支持自然语言查询与分析。
+  - [Lakehouse MCP Server 介绍以及快速部署](https://www.yunqi.tech/documents/LakehouseMCPServer_intro): 通过 Docker 部署 Lakehouse MCP Server，使 AI 助手能通过自然语言查询 Lakehouse 数据，支持 HTTP、SSE、Stdio 协议。
+  - [Dify中集成Lakehouse MCP Server](https://www.yunqi.tech/documents/Dify_Integreated_with_LakehouseMCPServer): 在Dify中通过MCP协议集成Lakehouse工具，实现Agent应用对Lakehouse数据服务的调用。
+  - [N8N中集成Lakehouse MCP Server](https://www.yunqi.tech/documents/N8N_Integrated_with_LakehouseMCPServer): 在N8N AI Agent节点中配置SSE端点，以集成Lakehouse MCP Server工具（如get_product_knowledge），实现通过对话操作Lakehouse环境与数据。
+  - [Claude Deskop集成使用案例介绍](https://www.yunqi.tech/documents/mcp_use_cases_with_claude_desktop): 围绕"Claude Deskop集成使用案例介绍"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [快速分析互联网公开数据](https://www.yunqi.tech/documents/analysis_internet_data_nyc_green_data): 通过自然语言对话，从NYC网站获取出租车数据、创建存储Volume、进行多维度分析并生成可视化Dashboard。
+    - [NYC绿色出租车数据清洗与转化](https://www.yunqi.tech/documents/nyc_green_taxi_data_clean_transform_with_mcp_server): 使用Claude Desktop与云器Lakehouse MCP Server，通过自然语言对话对NYC绿色出租车原始数据进行质量诊断、异常过滤、时间维度增强与业务指标计算的全流程清洗转化。
+    - [Lakehouse多云多环境管理](https://www.yunqi.tech/documents/multi_cloud_instance_manage_with_mcp_server): 通过Claude Desktop和MCP Server，使用自然语言统一管理部署在阿里云、腾讯云、AWS等不同云厂商和地域的Lakehouse环境。
+    - [费用异常分析与问题定位](https://www.yunqi.tech/documents/charge_analysis_with_lakehouse_mcp_server): 通过分析实例用量数据定位费用异常原因，包含历史趋势对比、异常模式识别和具体责任方（实例/工作空间/作业）的追踪方法。
+    - [数据运维问题排查](https://www.yunqi.tech/documents/using_mcp_solute_data_pipeline_issue): 使用 ClickZetta MCP 和 Claude AI 诊断物化视图数据缺失问题，通过切换环境、分析视图定义和边界逻辑快速定位根因。
+- [AI 生态](https://www.yunqi.tech/documents/AI_eco): 介绍如何将Lakehouse与主流AI框架（如PyTorch、TensorFlow）及工具（如MLflow、LangChain）集成，以支持模型训练、推理和AI应用开发。
+  - [和Dify集成提供文件存储和向量及全文检索服务](https://www.yunqi.tech/documents/dify_integration): 围绕"和Dify集成提供文件存储和向量及全文检索服务"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [Dify与云器Lakehouse集成概述](https://www.yunqi.tech/documents/dify_yunqilakehouse_integration_overview): 在Dify中集成云器Lakehouse，作为向量数据库、存储和计算的多重Provider，支持HNSW向量检索、Volume存储及SQL查询。
+    - [Dify中配置云器Lakehouse作为向量数据库指南](https://www.yunqi.tech/documents/dify_config_lakehouse_as_vectordb): 在Dify中通过配置环境变量，将云器Lakehouse设置为支持向量与全文检索的向量数据库。
+    - [Dify中配置云器Lakehouse Volume作为存储服务](https://www.yunqi.tech/documents/config_volume_dify_storage): 在Dify的.env文件中配置云器Lakehouse Volume作为文件存储后端，支持user、table、external三种Volume类型及相应参数。
+  - [和N8N集成实现统一AI工作流](https://www.yunqi.tech/documents/N8N_AI_Workflow_Integration): 通过N8N连接器调用AI模型、处理数据并编排自动化工作流，实现AI任务与现有系统的集成。
+    - [N8N集成安装指南](https://www.yunqi.tech/documents/n8n_Integreated_with_lakehouse_mcp_server): 在N8N中安装并使用云器Lakehouse扩展节点，支持多数据库连接及表数据、模式比对等自动化工作流。
+  - [和Langchain的全面集成](https://www.yunqi.tech/documents/langchain_integration): 提供LangChain集成方法，包括加载器、工具、代理和链，用于构建基于云器Lakehouse的AI应用。
+    - [Langchain插件概述](https://www.yunqi.tech/documents/Langchain_plugins_overview): LangChain插件提供向量与全文混合搜索、自然语言转SQL、中文优化及企业级存储服务，支持DashScope模型集成。
+    - [Langchain插件安装说明](https://www.yunqi.tech/documents/Langchain_plug_installation): 通过pip或源码安装Langchain-ClickZetta插件，配置环境变量或连接文件以连接ClickZetta Lakehouse。
+    - [Langchain插件快速上手](https://www.yunqi.tech/documents/Langchain_plug_quick_start): 通过自然语言查询数据库、创建向量存储进行相似性搜索以及使用键值存储，快速上手LangChain-ClickZetta插件。
+    - [Langchain基础示例](https://www.yunqi.tech/documents/langchain_basic_samples): Langchain与ClickZetta集成示例，涵盖数据库连接、SQL查询、向量存储、全文搜索、键值存储和聊天历史的Python代码实现。
+    - [构建RAG应用完整指南](https://www.yunqi.tech/documents/build_rag_with_langchain): 使用LangChain和ClickZetta构建具备文档上传、向量化存储、混合检索及上下文问答功能的RAG应用。
+  - [非结构化数据ETL管道](https://www.yunqi.tech/documents/unstructured_etl_pipeline): 围绕"非结构化数据ETL管道"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [非结构化数据ETL使用指南](https://www.yunqi.tech/documents/unstructured_etl_pipeline_user_guide): 使用云器Lakehouse、DashScope和Unstructured Ingest构建ETL管道，处理PDF等非结构化数据，完成解析、分块、向量嵌入并加载至知识库。
+    - [非结构化数据ETL Python API](https://www.yunqi.tech/documents/unstructured_etl_python_api): 提供Python API，用于解析非结构化文档、分块处理、调用DashScope模型生成向量，并写入Lakehouse存储。
+    - [非结构化数据ETL管道示例Notebook](https://www.yunqi.tech/documents/unstructured_etl_pipeline_notebook): 提供从本地文件或Lakehouse Volume提取非结构化数据，经ETL处理为RAG就绪格式的Notebook示例。
+  - [数据工程智能体Datus与云器Lakehouse集成指南](https://www.yunqi.tech/documents/Datus_Lakehouse_Integrated_Guide): 围绕"数据工程智能体Datus与云器Lakehouse集成指南"说明核心概念、关键配置与典型操作步骤，并提供示例与注意事项。
+    - [集成方案介绍](https://www.yunqi.tech/documents/datus_lakehouse_solution_overview): 介绍 Datus 智能体与云器 Lakehouse 的集成架构，包括 CLI、Chat、API 三种交互方式及其核心功能。
+    - [安装和使用指南](https://www.yunqi.tech/documents/datus_lakehouse_installation): 配置Datus Agent连接云器Lakehouse，支持通义千问、DeepSeek等AI模型，实现自然语言数据查询。
+    - [配置和使用云器Lakehouse MCP Server](https://www.yunqi.tech/documents/Datus_Lakehouse_MCPServer): 通过命令行添加、管理和调用云器Lakehouse的MCP服务器工具，支持HTTP/SSE传输协议及子代理集成。
+
+## 产品更新
+
+- [产品更新](https://www.yunqi.tech/documents/releasenotes): 介绍云器Lakehouse在数据导入、SQL查询、数据湖加速和流式处理等方面的近期新增功能与优化。
+  - [Lakehouse Studio 更新](https://www.yunqi.tech/documents/Lakehouse_Studio_Release_Note): Lakehouse Studio 新增数据开发、作业调度、数据目录、数据服务四大模块，并优化了数据探索与即席查询功能。
+    - [2026年01月30日-2.0.0](https://www.yunqi.tech/documents/RN_2026_1_30-2.0.0): Lakehouse Studio v2.0.0 更新，新增AI驱动的Data Agent、MCP Server接口、企业级模型管理，并拓展了数据同步至PostgreSQL/MySQL/TiDB等场景。
+    - [2025年12月17日-1.9.3](https://www.yunqi.tech/documents/RN_2025_12_17): Lakehouse Studio v1.9.3版本更新，涵盖任务开发IDE增强、离线/实时同步新功能、计算集群监控优化及多项产品体验改进。
+    - [2025年10月23日-1.9.2](https://www.yunqi.tech/documents/RN_2025_10_23): Lakehouse Studio 1.9.2版本更新，新增多表离线/实时同步、任务分享与监控通知、Volume可视化管理、账户审计与密码策略等功能。
+    - [2025年08月25日-1.9.1](https://www.yunqi.tech/documents/RN_2025-08-25): Lakehouse Studio v1.9.1版本更新，包含SSO OAuth 2.0登录、数据同步整库镜像与truncate感知、任务调度延迟/空跑策略及批量操作等新功能。
+    - [2025年07月03日-1.8.3](https://www.yunqi.tech/documents/RN_2025-07-03): Lakehouse Studio 1.8.3版本更新，涵盖计费新增DataGPT项目、多表实时同步支持动态加表、任务开发新增组合节点、监控告警抑制机制等新功能与优化。
+    - [2025年05月20日-1.8.2](https://www.yunqi.tech/documents/RN_2025-05-20): Lakehouse Studio 1.8.2版本更新，涵盖账户实名认证与资金管理、数据同步（离线/实时）功能增强、任务组与查询可视化优化、以及实时任务健康度监控。
+    - [2025年04月01日-1.8.1](https://www.yunqi.tech/documents/RN_2025-04-01): Lakehouse Studio 1.8.1版本更新，新增MySQL CDC多表实时同步、查询结果可视化图表、集群资源监控及Pipe/Volume数据质量监控等功能。
+    - [2025年03月05日-1.7](https://www.yunqi.tech/documents/RN_2025-03-05): Lakehouse Studio 1.7版本更新，新增支持同步S3 Snappy Parquet/DynamoDB/HANA数据源、任务参数加密与优先级管理、计算集群自动扩缩容及飞书告警圈人功能。
+    - [2024年12月25日-1.6](https://www.yunqi.tech/documents/RN_2024_12_25): Lakehouse Studio v1.6 版本更新，新增 Redshift 数据源、S3 Parquet 文件同步及实时同步恢复过滤功能，并包含视觉升级与多项优化。
+    - [2024年12月12日-1.5](https://www.yunqi.tech/documents/RN_2024_12_12): Lakehouse Studio v1.5版本更新，新增对Databricks任务、Amazon Redshift数据源及同步型计算集群的支持，并优化权限、数据同步与任务开发体验。
+    - [2024年11月11日-1.4](https://www.yunqi.tech/documents/RN_2024_11_11): Lakehouse Studio v1.4 更新说明，涵盖实时同步对比回滚、离线同步支持Redis、安全审计及导航布局优化等新功能与改进。
+    - [2024年10月15日-1.3](https://www.yunqi.tech/documents/RN_2024-10-15): Lakehouse Studio v1.3版本更新，新增账户审计、MySQL同步前置SQL、任务组批量调度及数据权限审批流程。
+    - [2024年09月18日-1.2](https://www.yunqi.tech/documents/RN_2023-09-18): Lakehouse Studio v1.2版本更新，新增AWS S3/Aurora数据源支持、数据查询可视化探查、虚拟节点及数据上传自动建表等功能。
+    - [2024年08月07日-1.1](https://www.yunqi.tech/documents/RN_2024-08-07): Lakehouse Studio 1.1版本更新，包含AWS Marketplace集成、新用户引导教程、任务调度实例等待时长配置及CSV文件GBK编码支持。
+    - [2024年07月24日-1.0](https://www.yunqi.tech/documents/RN_2024-07-24): Lakehouse Studio 1.0版本更新，新增动态表、流式SQL任务节点，支持任务组画布模式、Kafka同步变量定义及多表同步配置校验。
+    - [2024年06月27日-0.9](https://www.yunqi.tech/documents/RN_2024-06-27): Lakehouse Studio v0.9版本更新，新增离线同步数据过滤、实时同步异构分库分表支持，并优化了数据目录、作业历史等多项功能。
+    - [2024年06月06日-0.8.1](https://www.yunqi.tech/documents/RN_2024-06-06): Lakehouse Studio 0.8.1版本更新，新增数据同步历史全量重跑、SQL Server批量配置、代码错误高亮、数据资产主动授权等功能。
+    - [2024年05月15日-0.8](https://www.yunqi.tech/documents/RN_2024-05-15): Lakehouse Studio 0.8版本更新，新增亚马逊北京区、支持多云多Region实例、Kafka SASL_SSL认证及批量创建MySQL/PostgreSQL数据源。
+    - [2024年05月10日-0.7](https://www.yunqi.tech/documents/RN_2024-05-10): Lakehouse Studio 0.7版本更新，新增整库镜像同步、多表合并同步、数据资产概览大盘、基于数据钱包的数据分享功能，并优化实时同步与任务日志。
+    - [2024年04月10日-0.6.1](https://www.yunqi.tech/documents/RN_2024-04-10): Lakehouse Studio 0.6.1版本更新，新增SQL Server实时同步、REST API离线同步、任务全局检索与复制下游链路、计算集群监控等功能。
+    - [2024年03月22日-0.6](https://www.yunqi.tech/documents/RN_2024-03-22): Lakehouse Studio v0.6版本更新，涵盖数据集成多表实时同步、任务开发与调度、监控告警及数据管理功能的新增与优化。
+    - [2024年01月05日-0.5](https://www.yunqi.tech/documents/RN_2024-01-05): Lakehouse Studio v0.5版本更新，新增MySQL/PostgreSQL全增量实时同步、数据资产地图、批量补数据、MFA认证及多项数据质量监控功能。
+    - [2023年11月09日-0.4](https://www.yunqi.tech/documents/RN_2023-11-09): Lakehouse Studio 0.4版本更新，新增PostgreSQL/MySQL整库同步、2GB大文件上传、工作空间存储加密及精细化补数据等功能。
+    - [2023年09月20日-0.3](https://www.yunqi.tech/documents/RN_2023-09-20): Lakehouse Studio 0.3版本更新了数据质量大盘、优化了数值类型展示与精度设置，并修复了任务调度、并发补数等多项问题。
+    - [2023年09月05日-0.2](https://www.yunqi.tech/documents/RN_2023-09-05): Lakehouse Studio 0.2版本更新，新增全局搜索、Kafka安全认证、实时监控，并优化JDBC数据源、协同编辑与任务调度。
+    - [2023年08月07日-0.1](https://www.yunqi.tech/documents/RN_2023-08-07): Lakehouse Studio 0.1版本更新，新增ES、COS、SLS等数据源支持，优化数据开发对比回滚、任务调度自依赖及运维中心批量操作等功能。
+  - [Lakehouse Platform 更新](https://www.yunqi.tech/documents/Lakehouse_Platform_Release_Note): 介绍Lakehouse Platform在数据导入、SQL查询、数据湖加速和可视化分析方面的核心功能更新。
+    - [2025年10月30日-1.3](https://www.yunqi.tech/documents/RN_2025_10_30): Lakehouse Platform 1.3版本更新，支持BITMAP数据类型、新增trans_array等函数、增强Dynamic Table与Iceberg集成，并推出邀测功能Semantic View。
+    - [2025年07月15日—1.2](https://www.yunqi.tech/documents/RN_2025_07_15): Lakehouse Platform 1.2版本更新，包含Spark On Lakehouse产品化、Kerberos认证、倒排索引优化及Iceberg REST协议支持等新功能与修复。
+    - [2025年04月22日—1.1](https://www.yunqi.tech/documents/RN_2025_04_22): Lakehouse Platform 1.1版本更新，涵盖联邦查询ORC支持、COPY命令增强、SQL函数扩展、向量检索参数配置及命名Volume预览功能。
+    - [2025年03月03日—1.0](https://www.yunqi.tech/documents/RN_2025_03_03): Lakehouse Platform 1.0版本更新，涵盖联邦查询支持Hive HDFS、Delta Lake自动Schema推断、COPY命令双字符分隔符、Pipe Kafka直连导入、列级安全动态脱敏及SQL函数创建。
+    - [2024年11月12日—0.9](https://www.yunqi.tech/documents/rn_2024_11_12): Lakehouse Platform 0.9版本更新，包含自动Schema探查、联邦查询支持Databricks、Auto Index推荐、动态表DML支持及新增分区动态表等功能。
+    - [2024年09月26日—0.8](https://www.yunqi.tech/documents/RN_2024-09-26): Lakehouse 0.8版本更新，新增零拷贝克隆、Hudi外部表、Hive联邦写入、COPY INTO增强及小文件自动合并等功能。
+    - [2024年07月22日—0.7](https://www.yunqi.tech/documents/RN_2024-07-22): 介绍Lakehouse Platform 0.7版本的新功能，包括External Catalog联邦查询、Kafka外表、Spark Connector、MySQL协议支持及Logstash插件等。
+    - [2024年05月24日—0.6](https://www.yunqi.tech/documents/RN_2024-05-24): 支持创建倒排索引、内部Volume、外部表、PIPE管道及UDAF/UDTF，新增GCS连接与动态表刷新历史查看功能。
+    - [2024年04月16日—0.5.1](https://www.yunqi.tech/documents/RN_2024-04-16): COPY INTO支持导出表数据至VOLUME、导入BSON文件，数据湖查询新增BSON格式支持，动态表优化复杂SQL增量处理性能。
+    - [2024年02月05日—0.5](https://www.yunqi.tech/documents/RN_2024-02-05): Lakehouse平台0.5版本更新，新增Dynamic Table、JSON数据类型、流式处理时效性提升至1分钟及主键约束等功能。
+    - [2023年12月25日—0.4](https://www.yunqi.tech/documents/RN_2023-12-25): 介绍云器Lakehouse 0.4版本在性能、实时处理、虚拟集群、作业管理、数据湖查询、自定义函数、SQL语法和数据保护等方面的新功能与优化。
+    - [2023年10月25日—0.3](https://www.yunqi.tech/documents/RN_2023-10-25): 介绍Lakehouse Platform 0.3版本新增的增量物化视图、Table Stream CDC、实时Upsert API、对象存储访问、Time Travel查询及存储加密等核心功能。
+
+## 其它
+
+- [用户协议](https://www.yunqi.tech/documents/user-aggrement): 明确云器科技产品服务的账户注册资格、流程、使用规则及安全要求，并界定用户与云器科技的权利义务关系。
+- [隐私政策](https://www.yunqi.tech/documents/privacy-policy): 说明公司如何收集、使用、保护个人信息，以及用户享有的权利和联系方式。
+- [产品试用协议](https://www.yunqi.tech/documents/product-trial-agreement): 产品试用协议，明确测试阶段用户责任、公司权利、知识产权归属及免责条款。

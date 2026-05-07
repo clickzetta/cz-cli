@@ -85,7 +85,7 @@ import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
 import { TuiPluginRuntime } from "../../plugin"
-// TODO(czagent): Add ClickZetta subscription dialog
+// TODO(czcli): Add ClickZetta subscription dialog
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 
@@ -237,7 +237,7 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
 
-  // TODO(czagent): Add ClickZetta subscription upsell handler here
+  // TODO(czcli): Add ClickZetta subscription upsell handler here
 
   // Allow exit when in child session (prompt is hidden)
   const exit = useExit()
@@ -251,7 +251,7 @@ export function Session() {
     return exit.message.set(
       [
         ``,
-        `  ${blue}◆ CZAgent${reset}`,
+        `  ${blue}◆ cz-cli${reset}`,
         ``,
         `  ${dim}Session ${reset}${bold}${title}${reset}`,
         `  ${dim}Continue${reset} ${bold}czcli -s ${session()?.id}${reset}`,

@@ -84,3 +84,26 @@ export function getAllDownstream(config: StudioConfig, scheduleTaskId: number, p
     projectId,
   })
 }
+
+export interface PreviewScheduleInstanceTimesParams {
+  cronExpress: string
+  scheduleStartTime?: string
+  scheduleEndTime?: string
+  scheduleEnv?: string
+}
+
+export function previewScheduleInstanceTimes(
+  config: StudioConfig,
+  params: PreviewScheduleInstanceTimesParams,
+) {
+  return studioRequest(
+    config,
+    "/ide-admin/v1/dataFileConfiguration/generateInstanceTimeList",
+    {
+      cronExpress: params.cronExpress,
+      ...(params.scheduleStartTime !== undefined && { scheduleStartTime: params.scheduleStartTime }),
+      ...(params.scheduleEndTime !== undefined && { scheduleEndTime: params.scheduleEndTime }),
+    },
+    params.scheduleEnv ? { env: params.scheduleEnv } : undefined,
+  )
+}

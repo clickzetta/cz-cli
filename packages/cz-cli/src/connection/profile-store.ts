@@ -116,3 +116,17 @@ function normalizeProtocol(value?: string): string {
   if (lower === "http") return "http"
   return "https"
 }
+
+export function readAgentEndpoint(profileName?: string): string | undefined {
+  try {
+    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const data = parseTOML(text) as Record<string, unknown>
+    const name = profileName ?? (data.default_profile as string | undefined) ?? Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
+    if (!name) return undefined
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const agent = profiles[name]?.agent as Record<string, unknown> | undefined
+    return (agent?.endpoint as string) || undefined
+  } catch {
+    return undefined
+  }
+}

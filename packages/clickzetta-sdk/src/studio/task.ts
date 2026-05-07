@@ -32,6 +32,7 @@ export interface SaveTaskContentParams {
   projectId: number
   updateBy: string
   instanceName: string
+  replaceEscapedChars?: boolean
 }
 
 export interface SaveTaskConfigParams {
@@ -133,6 +134,7 @@ export function saveTaskContent(config: StudioConfig, params: SaveTaskContentPar
       updateBy: params.updateBy,
       paramValueList: [],
       instanceName: params.instanceName,
+      ...(params.replaceEscapedChars !== undefined && { replace_escaped_chars: params.replaceEscapedChars }),
     },
   )
 }
@@ -210,5 +212,33 @@ export function getTaskDependencies(config: StudioConfig, params: GetTaskDepende
   return studioRequest(config, "/ide-admin/v1/dataFileConfiguration/queryDependencyDetail", {
     currentId: params.currentId,
     fileIds: params.fileIds,
+  })
+}
+
+export interface DeleteTaskParams {
+  scheduleTaskId: number
+  projectId: number
+}
+
+export function deleteTask(config: StudioConfig, params: DeleteTaskParams) {
+  return studioRequest(config, "/ide-admin/v1/scheduleTask/deleteTask", {
+    scheduleTaskId: params.scheduleTaskId,
+    projectId: params.projectId,
+  })
+}
+
+export interface GetTaskRunStatsParams {
+  projectId: number
+  queryPlanTimeLeft?: string
+  queryPlanTimeRight?: string
+  taskNameRlike?: string
+}
+
+export function getTaskRunStats(config: StudioConfig, params: GetTaskRunStatsParams) {
+  return studioRequest(config, "/ide-admin/v1/ai/mcp/task/statistic", {
+    projectId: params.projectId,
+    ...(params.queryPlanTimeLeft !== undefined && { queryPlanTimeLeft: params.queryPlanTimeLeft }),
+    ...(params.queryPlanTimeRight !== undefined && { queryPlanTimeRight: params.queryPlanTimeRight }),
+    ...(params.taskNameRlike !== undefined && { taskNameRlike: params.taskNameRlike }),
   })
 }

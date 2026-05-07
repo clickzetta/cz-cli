@@ -14,6 +14,8 @@ export interface GlobalArgs {
   schema?: string
   vcluster?: string
   output: string
+  output_explicit?: boolean
+  field?: string
   debug: boolean
   silent: boolean
   verbose: boolean
@@ -21,7 +23,7 @@ export interface GlobalArgs {
 
 export function createCli(args: string[]) {
   return yargs(args)
-    .scriptName("cz-tool")
+    .scriptName("cz-cli")
     .version(VERSION)
     .option("profile", {
       alias: "p",
@@ -50,6 +52,7 @@ export function createCli(args: string[]) {
     })
     .option("protocol", {
       type: "string",
+      choices: ["https", "http"] as const,
       describe: "Protocol (https/http)",
     })
     .option("instance", {
@@ -73,9 +76,13 @@ export function createCli(args: string[]) {
     .option("output", {
       alias: "o",
       type: "string",
-      choices: ["json", "pretty", "table", "csv", "jsonl", "toon"] as const,
+      choices: ["json", "pretty", "table", "csv", "text", "jsonl", "toon"] as const,
       default: "json",
       describe: "Output format",
+    })
+    .option("field", {
+      type: "string",
+      describe: "Extract a single field from the response",
     })
     .option("debug", {
       alias: "d",
@@ -93,11 +100,35 @@ export function createCli(args: string[]) {
       default: false,
       describe: "Verbose output",
     })
+    .option("output_explicit", {
+      type: "boolean",
+      hidden: true,
+      default: false,
+    })
+    .middleware((argv) => {
+      // Detect whether --output was explicitly provided by the user
+      // yargs sets parsed options in argv; we check if it came from the default
+      const rawArgs = args.map(a => String(a))
+      const hasExplicitOutput = rawArgs.some(
+        (a) => a === "-o" || a === "--output" || a.startsWith("--output=") || a.startsWith("-o=")
+      )
+      argv.output_explicit = hasExplicitOutput
+    }, /* applyBeforeValidation */ true)
     .strict()
-    .fail((msg, err) => {
+    .fail((msg, err, yargs) => {
+      let helpText = ""
+      try {
+        const h = yargs.getHelp()
+        if (typeof h === "string") helpText = h
+      } catch { /* best-effort */ }
+      const aiMessage = helpText || "Run the command with --help to see available options and usage."
       const output = JSON.stringify({
         ok: false,
-        error: { code: "USAGE_ERROR", message: msg || err?.message },
+        error: {
+          code: "USAGE_ERROR",
+          message: msg || err?.message,
+        },
+        ai_message: aiMessage,
       })
       process.stdout.write(output + "\n")
       process.exit(2)

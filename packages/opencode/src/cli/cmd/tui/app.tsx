@@ -36,7 +36,7 @@ import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
-// TODO(czagent): Add ClickZetta org picker
+// TODO(czcli): Add ClickZetta org picker
 import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
@@ -295,14 +295,14 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return
 
     if (route.data.type === "home") {
-      renderer.setTerminalTitle("CZAgent")
+      renderer.setTerminalTitle("cz-cli")
       return
     }
 
     if (route.data.type === "session") {
       const session = sync.session.get(route.data.sessionID)
       if (!session || SessionApi.isDefaultTitle(session.title)) {
-        renderer.setTerminalTitle("CZAgent")
+        renderer.setTerminalTitle("cz-cli")
         return
       }
 
@@ -557,7 +557,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       category: "Provider",
     },
-    // TODO(czagent): Add ClickZetta org picker command here
+    // TODO(czcli): Add ClickZetta org picker command here
     {
       title: "View status",
       keybind: "status_view",
@@ -612,7 +612,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       category: "System",
     },
-    // TODO(czagent): Add ClickZetta docs link
+    // TODO(czcli): Add ClickZetta docs link
     {
       title: "Exit the app",
       value: "app.exit",

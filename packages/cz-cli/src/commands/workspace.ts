@@ -26,6 +26,10 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
               error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
             }
             const ws = r.rows[0] ? Object.values(r.rows[0])[0] : null
+            if (!ws) {
+              logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
+              error("NO_RESULT", "No current workspace set. Use `cz-cli workspace use <name>` to set one.", { format })
+            }
             logOperation("workspace current", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ workspace: ws }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
@@ -39,34 +43,45 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Workspace name" })
+            .option("schema", { type: "string", describe: "Default schema to set alongside workspace" })
             .option("persist", { type: "boolean", default: false, describe: "Save to profile" }),
         async (argv) => {
           const format = argv.output
           const name = argv.name as string
+          const schemaVal = argv.schema as string | undefined
           if (argv.persist) {
             try {
               const profiles = loadProfiles()
               const profileName = argv.profile ?? getDefaultProfileName() ?? Object.keys(profiles)[0]
               if (!profileName || !profiles[profileName]) {
-                error("NO_PROFILE", "No profile found to update. Create a profile first.", { format })
+                error("PROFILE_NOT_FOUND", `Profile '${profileName}' not found. Create a profile first.`, { format })
               }
               profiles[profileName].workspace = name
+              if (schemaVal) profiles[profileName].schema = schemaVal
               saveProfiles(profiles)
               logOperation("workspace use", { ok: true })
               success(
-                { workspace: name, persisted: true, profile: profileName },
-                { format, aiMessage: `Workspace set to '${name}' in profile '${profileName}'.` },
+                {
+                  message: `Switched to workspace '${name}' and updated profile '${profileName}'`,
+                  workspace: name,
+                  schema: schemaVal ?? (profiles[profileName].schema as string | undefined) ?? "public",
+                },
+                { format },
               )
             } catch (err) {
               error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
             }
           } else {
+            const schemaName = schemaVal ?? "public"
+            logOperation("workspace use", { ok: true })
             success(
-              { workspace: name, persisted: false },
               {
-                format,
-                aiMessage: `To use workspace '${name}', pass --workspace ${name} to each command, or run 'cz-tool workspace use ${name} --persist' to save it.`,
+                message: `To use workspace '${name}', set SDK hint: {"sdk.job.default.ns": "${name}.${schemaName}"}`,
+                workspace: name,
+                schema: schemaName,
+                note: "Use --persist to save this to your profile configuration",
               },
+              { format },
             )
           }
         },

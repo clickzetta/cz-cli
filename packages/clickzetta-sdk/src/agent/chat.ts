@@ -1,10 +1,25 @@
 import { request, type ClientOptions } from "../client.js"
 
-export async function agentHealth(baseUrl: string): Promise<boolean> {
+export interface AgentIdentity {
+  user_id: string
+  tenant_id: string
+  instance_id: string
+  token: string
+  instance_name?: string
+  workspace?: string
+  workspace_id?: string
+  schema_name?: string
+}
+
+export async function agentHealth(baseUrl: string, token?: string): Promise<Record<string, unknown> | false> {
   try {
-    const opts: ClientOptions = { baseUrl, timeout: 5000 }
-    await request(opts, "/ai/health", undefined, "GET")
-    return true
+    const opts: ClientOptions = {
+      baseUrl,
+      timeout: 10000,
+      ...(token ? { customHeaders: { "x-clickzetta-token": token } } : {}),
+    }
+    const resp = await request<Record<string, unknown>>(opts, "/ai/health", undefined, "GET")
+    return resp.data ?? (resp as unknown as Record<string, unknown>)
   } catch {
     return false
   }
@@ -13,25 +28,30 @@ export async function agentHealth(baseUrl: string): Promise<boolean> {
 export async function createConversation(
   baseUrl: string,
   token: string,
-  identity: Record<string, unknown>,
+  identity: AgentIdentity,
+  title?: string,
 ): Promise<string> {
   const opts: ClientOptions = {
     baseUrl,
     customHeaders: { "x-clickzetta-token": token },
+    timeout: 300000,
   }
-  const resp = await request<{ conversationId: string }>(
+  const payload: Record<string, unknown> = { identity }
+  if (title) payload.title = title
+  const resp = await request<{ conversation_id?: string; conversationId?: string }>(
     opts,
     "/ai/api/conversations",
-    identity,
+    payload,
   )
-  return resp.data.conversationId
+  return resp.data.conversation_id ?? resp.data.conversationId ?? ""
 }
 
 export async function chat(
   baseUrl: string,
   token: string,
   conversationId: string,
-  question: string,
+  userMessage: string,
+  identity: AgentIdentity,
 ): Promise<string> {
   const opts: ClientOptions = {
     baseUrl,
@@ -41,7 +61,7 @@ export async function chat(
   const resp = await request<{ answer: string }>(
     opts,
     "/ai/api/chat",
-    { conversationId, question },
+    { conversation_id: conversationId, user_message: userMessage, identity },
   )
   return resp.data.answer
 }

@@ -1,0 +1,89 @@
+# czcode Skill Configuration Example
+#
+# Copy this file to config.yaml in the skill's install directory and customize.
+# Install directory varies by agent:
+#   Claude Code: ~/.claude/skills/czcode/config.yaml
+#   Kiro:        ~/.kiro/skills/czcode/config.yaml
+#   Cursor:      ~/.cursor/skills/czcode/config.yaml
+#   Codex:       ~/.codex/skills/czcode/config.yaml
+
+security:
+  # ----------------------------------------------------------------------------
+  # APPROVAL MODE
+  # ----------------------------------------------------------------------------
+  # "prompt"        - Show approval prompt before execution (DEFAULT, MOST SECURE)
+  # "auto"          - Auto-approve all operations (requires audit logging)
+  # "envelope_only" - No tool prediction, rely on envelope blocklist only
+  #
+  approval_mode: "prompt"
+
+  # ----------------------------------------------------------------------------
+  # TOOL PREDICTION (for "prompt" mode)
+  # ----------------------------------------------------------------------------
+  tool_prediction_confidence_threshold: 0.7
+
+  # ----------------------------------------------------------------------------
+  # AUDIT LOGGING
+  # ----------------------------------------------------------------------------
+  audit_log_path: "~/.cache/czcode-skill/audit.log"
+  audit_log_rotation: "10MB"
+  audit_log_retention: 30
+
+  # ----------------------------------------------------------------------------
+  # PROMPT SANITIZATION
+  # ----------------------------------------------------------------------------
+  sanitize_conversation_history: true
+
+  # ----------------------------------------------------------------------------
+  # SECURE CACHING
+  # ----------------------------------------------------------------------------
+  cache_dir: "~/.cache/czcode-skill"
+
+  # ----------------------------------------------------------------------------
+  # CREDENTIAL FILE PROTECTION
+  # Blocks routing when prompts contain paths matching these patterns.
+  # ----------------------------------------------------------------------------
+  credential_file_allowlist:
+    - "~/.ssh/**"
+    - "~/.clickzetta/**"
+    - "~/.aws/credentials"
+    - "~/.aws/config"
+    - "~/.kube/config"
+    - "**/.env"
+    - "**/.env.*"
+    - "**/credentials.json"
+    - "**/secrets.json"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/.netrc"
+    - "**/.npmrc"
+    - "**/.pypirc"
+
+  # ----------------------------------------------------------------------------
+  # SECURITY ENVELOPES
+  # ----------------------------------------------------------------------------
+  allowed_envelopes:
+    - "RO"
+    - "RW"
+    - "RESEARCH"
+    - "DEPLOY"
+
+# ==============================================================================
+# EXAMPLE CONFIGURATIONS
+# ==============================================================================
+
+# Personal use (interactive, secure):
+# security:
+#   approval_mode: "prompt"
+#   sanitize_conversation_history: true
+
+# Automated workflows (trusted environment):
+# security:
+#   approval_mode: "auto"
+#   audit_log_path: "~/.cache/czcode-skill/audit.log"
+#   sanitize_conversation_history: true
+
+# Read-only exploration:
+# security:
+#   approval_mode: "auto"
+#   allowed_envelopes: ["RO", "RESEARCH"]

@@ -8,10 +8,10 @@ import { NamedError } from "@opencode-ai/shared/util/error"
 import { Flag } from "../flag/flag"
 import { Auth } from "../auth"
 import { Env } from "../env"
-import { applyEdits, modify } from "jsonc-parser"
+import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { Instance, type InstanceContext } from "../project/instance"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
-import { existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { Account } from "@/account/account"
@@ -263,8 +263,8 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
 function globalConfigFile() {
-  // czcli: check ~/.clickzetta/czcli.json first, fall back to czagent.json
-  const czcliCandidates = ["czcli.json", "czcli.jsonc", "czagent.json", "czagent.jsonc"].map((file) =>
+  // czcli: check ~/.clickzetta/czcli.json first
+  const czcliCandidates = ["czcli.json", "czcli.jsonc"].map((file) =>
     path.join(os.homedir(), ".clickzetta", file),
   )
   for (const file of czcliCandidates) {
@@ -276,25 +276,7 @@ function globalConfigFile() {
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
-  // Default to czcli path for new installs
   return czcliCandidates[0]
-}
-
-function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
-  if (!isRecord(patch)) {
-    const edits = modify(input, path, patch, {
-      formattingOptions: {
-        insertSpaces: true,
-        tabSize: 2,
-      },
-    })
-    return applyEdits(input, edits)
-  }
-
-  return Object.entries(patch).reduce((result, [key, value]) => {
-    if (value === undefined) return result
-    return patchJsonc(result, value, [...path, key])
-  }, input)
 }
 
 function writable(info: Info) {
@@ -361,41 +343,62 @@ export const layer = Layer.effect(
     })
 
     const loadGlobal = Effect.fnUntraced(function* () {
-      // Load from ~/.clickzetta/czcli.json (or czagent.json for backward compat)
-      const czDir = path.join(os.homedir(), ".clickzetta")
+      // Load from ~/.clickzetta/czcli.json
+      const clickzettaDir = path.join(os.homedir(), ".clickzetta")
       let result: Info = pipe(
         {},
-        mergeDeep(yield* loadFile(path.join(czDir, "czcli.json"))),
-        mergeDeep(yield* loadFile(path.join(czDir, "czcli.jsonc"))),
-        mergeDeep(yield* loadFile(path.join(czDir, "czagent.json"))),
-        mergeDeep(yield* loadFile(path.join(czDir, "czagent.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.json"))),
+        mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.jsonc"))),
       )
 
-      // ANTHROPIC_* env vars override with highest priority
-      // Note: ANTHROPIC_BASE_URL convention (used by Claude Code / official SDK) points to
-      // the API root without /v1 (e.g. https://proxy.example.com). The Vercel AI SDK
-      // (@ai-sdk/anthropic) expects baseURL to include /v1 since it appends only /messages.
-      // We append /v1 here to bridge the two conventions.
-      const anthropicBaseURL = process.env["ANTHROPIC_BASE_URL"]
-      const anthropicApiKey = process.env["ANTHROPIC_API_KEY"] || process.env["ANTHROPIC_AUTH_TOKEN"]
-      const anthropicModel = process.env["ANTHROPIC_MODEL"]
-
-      if (anthropicBaseURL || anthropicApiKey || anthropicModel) {
-        let baseURL = anthropicBaseURL
-        if (baseURL && !baseURL.endsWith("/v1") && !baseURL.endsWith("/v1/")) {
-          baseURL = baseURL.replace(/\/+$/, "") + "/v1"
+      // Read AI provider config from profiles.toml (written by cz-cli setup --credential)
+      // Creates a single "clickzetta" provider and hides all others
+      const profilesPath = path.join(clickzettaDir, "profiles.toml")
+      try {
+        const toml = readFileSync(profilesPath, "utf-8")
+        const defaultProfileMatch = toml.match(/^default_profile\s*=\s*"([^"]+)"/m)
+        const profileName = defaultProfileMatch ? defaultProfileMatch[1] : "default"
+        const sectionHeader = `[profiles.${profileName}]`
+        const sectionStart = toml.indexOf(sectionHeader)
+        const nextSection = sectionStart >= 0 ? toml.indexOf("\n[", sectionStart + sectionHeader.length) : -1
+        const profileSection = sectionStart >= 0
+          ? (nextSection >= 0 ? toml.slice(sectionStart, nextSection) : toml.slice(sectionStart))
+          : ""
+        const apiKeyMatch = profileSection.match(/^api_key\s*=\s*"([^"]+)"/m) || toml.match(/^api_key\s*=\s*"([^"]+)"/m)
+        const endpointMatch = profileSection.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m) || toml.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m)
+        if (apiKeyMatch) {
+          let baseURL = endpointMatch?.[1]
+          if (baseURL) {
+            baseURL = baseURL.replace(/\/+$/, "")
+            if (!baseURL.endsWith("/v1")) baseURL += "/v1"
+          }
+          const czProvider: ConfigProvider.Info = {
+            name: "ClickZetta",
+            npm: "@ai-sdk/openai-compatible",
+            options: {
+              ...(baseURL && { baseURL }),
+              apiKey: apiKeyMatch[1],
+            },
+            models: {
+              "deepseek-v4-pro": {
+                name: "DeepSeek V4 Pro",
+                attachment: true,
+                reasoning: true,
+                temperature: true,
+                tool_call: true,
+                cost: { input: 1, output: 4, cache_read: 0.1, cache_write: 1 },
+                limit: { context: 128000, output: 16384 },
+                options: {},
+              },
+            },
+          }
+          result = mergeDeep(result, {
+            provider: { clickzetta: czProvider },
+            enabled_providers: ["clickzetta"],
+            model: "clickzetta/deepseek-v4-pro",
+          } as any)
         }
-        const envProvider: ConfigProvider.Info = {
-          options: {
-            ...(baseURL && { baseURL }),
-            ...(anthropicApiKey && { apiKey: anthropicApiKey }),
-          },
-        }
-        result = mergeDeep(result, {
-          provider: { anthropic: envProvider },
-          ...(anthropicModel && { model: `anthropic/${anthropicModel}` }),
-        } as Info)
-      }
+      } catch {}
 
       return result
     })
@@ -736,20 +739,33 @@ export const layer = Layer.effect(
 
     const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Info) {
       const file = globalConfigFile()
-      const before = (yield* readConfigFile(file)) ?? "{}"
+      const before = (yield* readConfigFile(file)) ?? ""
 
-      let next: Info
-      if (!file.endsWith(".jsonc")) {
-        const existing = ConfigParse.schema(Info, ConfigParse.jsonc(before, file), file)
-        const merged = mergeDeep(writable(existing), writable(config))
-        yield* fs.writeFileString(file, JSON.stringify(merged, null, 2)).pipe(Effect.orDie)
-        next = merged
-      } else {
-        const updated = patchJsonc(before, writable(config))
-        next = ConfigParse.schema(Info, ConfigParse.jsonc(updated, file), file)
-        yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
+      let existing: Record<string, unknown> = {}
+      if (before) {
+        try {
+          existing = parseTOML(before) as Record<string, unknown>
+        } catch {
+          existing = {}
+        }
       }
 
+      const profileKeys = {
+        profiles: existing.profiles,
+        default_profile: existing.default_profile,
+      }
+
+      const configOnly = { ...existing }
+      delete configOnly.profiles
+      delete configOnly.default_profile
+
+      const merged = mergeDeep(configOnly, writable(config)) as Record<string, unknown>
+      if (profileKeys.profiles !== undefined) merged.profiles = profileKeys.profiles
+      if (profileKeys.default_profile !== undefined) merged.default_profile = profileKeys.default_profile
+
+      yield* fs.writeFileString(file, stringifyTOML(merged)).pipe(Effect.orDie)
+
+      const next = ConfigParse.schema(Info, writable(config), file)
       yield* invalidate()
       return next
     })

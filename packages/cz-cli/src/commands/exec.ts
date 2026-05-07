@@ -1,10 +1,13 @@
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import {
   getToken,
+  clearTokenCache,
   toServiceUrl,
   newJobId,
   submitJob,
   pollJobResult,
+  parseJobResponse,
+  ClickZettaApiError,
   type ClientOptions,
   type ConnectionConfig,
   type AuthToken,
@@ -20,6 +23,15 @@ export interface ExecContext {
 
 export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContext> {
   const config = resolveConnectionConfig(args)
+  if (!config.pat && !(config.username && config.password)) {
+    throw new Error("Authentication required. Provide --pat or --username/--password, or run `cz-cli setup` to configure a connection profile.")
+  }
+  if (!config.instance) {
+    throw new Error("Instance is required. Provide --instance or configure it in your profile.")
+  }
+  if (!config.workspace) {
+    throw new Error("Workspace is required. Provide --workspace or configure it in your profile.")
+  }
   const token = await getToken(config)
   const clientOpts: ClientOptions = {
     baseUrl: toServiceUrl(config.service, config.protocol),
@@ -44,7 +56,7 @@ export async function execSql(
   },
 ): Promise<QueryResult | ExecResult> {
   const jobId = newJobId(ctx.config.workspace, ctx.token.instanceId)
-  await submitJob(ctx.clientOpts, {
+  const submitResp = await submitJob(ctx.clientOpts, {
     sql,
     workspace: ctx.config.workspace,
     schema: ctx.config.schema,
@@ -58,7 +70,45 @@ export async function execSql(
   if (opts?.asynchronous) {
     return { jobId: jobId.id, status: "RUNNING" as const }
   }
+  // HYBRID mode: submitJob may return the result directly if the query
+  // finished within hybridPollingTimeout. Check for a terminal state.
+  const raw = submitResp as { status?: { state?: string } }
+  if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
+    return parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId)
+  }
   return pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs })
+}
+
+function isAuthError(err: unknown): boolean {
+  if (err instanceof ClickZettaApiError && err.statusCode === 401) return true
+  if (err instanceof Error && err.message.includes("401")) return true
+  return false
+}
+
+/**
+ * Execute SQL with automatic 401 retry. On auth failure, clears the token
+ * cache, re-authenticates, and retries the operation once with a fresh token.
+ */
+export async function execSqlWithRetry(
+  ctx: ExecContext,
+  sql: string,
+  opts?: {
+    hints?: Record<string, string>
+    asynchronous?: boolean
+    timeoutMs?: number
+  },
+): Promise<QueryResult | ExecResult> {
+  try {
+    return await execSql(ctx, sql, opts)
+  } catch (err) {
+    if (!isAuthError(err)) throw err
+    // Clear stale token and re-authenticate
+    clearTokenCache()
+    const freshToken = await getToken(ctx.config)
+    ctx.token = freshToken
+    ctx.clientOpts.token = freshToken.token
+    return await execSql(ctx, sql, opts)
+  }
 }
 
 export function isQueryResult(r: QueryResult | ExecResult): r is QueryResult {

@@ -1,7 +1,8 @@
 import { request, type ClientOptions } from "../client.js"
+import { ClickZettaApiError } from "../types/api.js"
 import type { StudioConfig } from "../types/index.js"
 
-export function studioRequest<T>(
+export async function studioRequest<T>(
   config: StudioConfig,
   path: string,
   body: unknown,
@@ -20,5 +21,13 @@ export function studioRequest<T>(
       ...extraHeaders,
     },
   }
-  return request<T>(opts, path, body)
+  const resp = await request<T>(opts, path, body)
+  const code = resp.code
+  if (code !== 0 && code !== "0" && code !== "200" && code !== 200) {
+    throw new ClickZettaApiError(
+      String(code),
+      resp.message ?? `Studio API error (code=${code})`,
+    )
+  }
+  return resp
 }

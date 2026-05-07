@@ -12,7 +12,7 @@ export interface GetAttemptLogParams {
   queryLogActionCode: string
   taskInstanceId: number
   executeLogId: number
-  offset: number
+  offset?: number
 }
 
 export function listAttempts(config: StudioConfig, params: ListAttemptsParams) {
@@ -25,10 +25,11 @@ export function listAttempts(config: StudioConfig, params: ListAttemptsParams) {
 }
 
 export function getAttemptLog(config: StudioConfig, params: GetAttemptLogParams) {
-  return studioRequest(config, "/ide-admin/v1/adhoc/queryTempLogResults", {
+  const body: Record<string, unknown> = {
     queryLogActionCode: params.queryLogActionCode,
     tempInstanceId: params.taskInstanceId,
     executeLogId: params.executeLogId,
-    offset: params.offset,
-  })
+  }
+  if (params.offset != null) body.offset = params.offset
+  return studioRequest(config, "/ide-admin/v1/adhoc/queryTempLogResults", body)
 }

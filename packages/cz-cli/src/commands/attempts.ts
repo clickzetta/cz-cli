@@ -1,30 +1,14 @@
 import type { Argv } from "yargs"
-import { listAttempts, getAttemptLog, listRuns, type StudioConfig } from "@clickzetta/sdk"
+import { listAttempts, getAttemptLog, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
+import { resolveRunIdOrTaskName, resolveLatestRunId } from "../resolver.js"
+import { normalizeRunIdentity } from "../identity.js"
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
-}
-
-async function resolveRunId(sc: StudioConfig, argv: Record<string, unknown>): Promise<number> {
-  if (argv["run-id"]) return argv["run-id"] as number
-  if (argv["task-id"]) {
-    const resp = await listRuns(sc, {
-      scheduleTaskId: argv["task-id"] as number,
-      projectId: sc.projectId,
-      pageIndex: 1,
-      pageSize: 1,
-    })
-    const items = (resp.data as Record<string, unknown>)?.list ?? resp.data
-    const list = Array.isArray(items) ? items : []
-    if (list.length === 0) throw new Error(`No runs found for task ${argv["task-id"]}`)
-    const item = list[0] as Record<string, unknown>
-    return (item.taskInstanceId ?? item.id) as number
-  }
-  throw new Error("Provide --run-id or --task-id")
 }
 
 async function resolveAttemptId(
@@ -35,31 +19,52 @@ async function resolveAttemptId(
     taskInstanceId: runId,
     projectId: sc.projectId,
     pageIndex: 1,
-    pageSize: 1,
+    pageSize: 20,
   })
   const items = (resp.data as Record<string, unknown>)?.list ?? resp.data
   const list = Array.isArray(items) ? items : []
   if (list.length === 0) throw new Error(`No attempts found for run ${runId}`)
   const item = list[0] as Record<string, unknown>
-  return (item.executeLogId ?? item.id) as number
+  return (item.executeLogId ?? item.id ?? item.attemptId ?? item.attempt_id) as number
 }
 
 async function logHandler(argv: Record<string, unknown>): Promise<void> {
   const format = (argv as { output: string }).output
   try {
     const sc = await ctx(argv)
-    const runId = await resolveRunId(sc, argv)
+    let runId: number
+    const idArg = argv.id as string | undefined
+    if (idArg) {
+      runId = await resolveRunIdOrTaskName(sc, idArg, format)
+    } else if (argv["run-id"]) {
+      runId = await resolveRunIdOrTaskName(sc, String(argv["run-id"]), format)
+    } else if (argv["task-id"]) {
+      const taskId = await (async () => {
+        const { resolveTaskId } = await import("../resolver.js")
+        return resolveTaskId(sc, String(argv["task-id"]), format)
+      })()
+      const r = await resolveLatestRunId(sc, format, { taskId })
+      if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
+      runId = r
+    } else {
+      return error("USAGE_ERROR", "Provide a run_id/task_name argument, --run-id, or --task-id", { format })
+    }
     const attemptId = argv["attempt-id"]
       ? (argv["attempt-id"] as number)
       : await resolveAttemptId(sc, runId)
-    const resp = await getAttemptLog(sc, {
-      queryLogActionCode: "1",
+    const logParams = {
+      queryLogActionCode: "1" as const,
       taskInstanceId: runId,
       executeLogId: attemptId,
-      offset: (argv.offset as number) ?? 0,
-    })
+      offset: (argv.offset != null && argv.offset !== 0) ? (argv.offset as number) : 0,
+    }
+    const resp = await getAttemptLog(sc, logParams)
+    const normalized = normalizeRunIdentity(
+      (resp.data as Record<string, unknown>) ?? {},
+      { attempt_id: attemptId },
+    )
     logOperation("attempts log", { ok: true })
-    success(resp.data, { format })
+    success(normalized, { format })
   } catch (err) {
     error("ATTEMPTS_ERROR", err instanceof Error ? err.message : String(err), { format })
   }
@@ -67,8 +72,9 @@ async function logHandler(argv: Record<string, unknown>): Promise<void> {
 
 const logOptions = (y: Argv) =>
   y
-    .option("run-id", { type: "number", describe: "Run instance ID" })
-    .option("task-id", { type: "number", describe: "Task ID (auto-selects latest run)" })
+    .positional("id", { type: "string", describe: "Run instance ID or task name" })
+    .option("run-id", { type: "string", describe: "Run instance ID or task name (alias of positional)" })
+    .option("task-id", { type: "string", describe: "Task name or ID (auto-selects latest run)" })
     .option("attempt-id", { type: "number", describe: "Attempt/execute log ID (auto-selects first if omitted)" })
     .option("offset", { type: "number", default: 0, describe: "Log byte offset" })
 
@@ -76,34 +82,66 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
   cli.command("attempts", "Manage attempt records", (yargs) =>
     yargs
       .command(
-        "list",
+        "list [id]",
         "List attempts for a run",
         (y) =>
           y
-            .option("run-id", { type: "number", describe: "Run instance ID" })
-            .option("task-id", { type: "number", describe: "Task ID (auto-selects latest run)" })
+            .positional("id", { type: "string", describe: "Run instance ID or task name (auto-selects latest if omitted)" })
+            .option("run-id", { type: "string", describe: "Run instance ID or task name" })
+            .option("task-id", { type: "string", describe: "Task name or ID (auto-selects latest run)" })
             .option("page", { type: "number", default: 1 })
-            .option("page-size", { type: "number", default: 10 }),
+            .option("page-size", { type: "number", default: 10 })
+            .option("limit", { type: "number", describe: "Alias of --page-size" }),
         async (argv) => {
           const format = argv.output
           try {
             const sc = await ctx(argv)
-            const runId = await resolveRunId(sc, argv)
+            const pageSize = argv.limit ?? argv["page-size"]
+            let runId: number
+            let sourceMessage: string
+            const idArg = argv.id as string | undefined
+            if (idArg) {
+              runId = await resolveRunIdOrTaskName(sc, idArg, format)
+              sourceMessage = `来源: ${idArg}`
+            } else if (argv["run-id"]) {
+              runId = await resolveRunIdOrTaskName(sc, String(argv["run-id"]), format)
+              sourceMessage = `来源: ${argv["run-id"]}`
+            } else if (argv["task-id"]) {
+              const { resolveTaskId } = await import("../resolver.js")
+              const taskId = await resolveTaskId(sc, String(argv["task-id"]), format)
+              const r = await resolveLatestRunId(sc, format, { taskId })
+              if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
+              runId = r
+              sourceMessage = `task: ${argv["task-id"]}`
+            } else {
+              const r = await resolveLatestRunId(sc, format)
+              if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
+              runId = r
+              sourceMessage = "未指定 run/task，已自动选择最近一次运行实例"
+            }
             const resp = await listAttempts(sc, {
               taskInstanceId: runId,
               projectId: sc.projectId,
               pageIndex: argv.page,
-              pageSize: argv["page-size"],
+              pageSize,
             })
+            const data = resp.data as Record<string, unknown> | undefined
+            const items = Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : []
+            const total = data?.total ?? data?.totalCount
+            const normalized = items.map((item) => normalizeRunIdentity(item, { run_id: runId }))
+            const aiMessage = `当前仅展示第 ${argv.page} 页` +
+              (total != null ? `（${normalized.length} 条 / 共 ${total} 条）` : "") +
+              `，${sourceMessage}（run_id=${runId}）` +
+              `。如需下一页，请执行: cz-cli attempts list ${runId} --page ${(argv.page as number) + 1} --page-size ${pageSize}`
             logOperation("attempts list", { ok: true })
-            success(resp.data, { format })
+            success(normalized, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total }, selected_run_id: runId, run_id: runId } })
           } catch (err) {
             error("ATTEMPTS_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
         },
       )
-      .command("log", "Get attempt log", logOptions, logHandler)
-      .command("logs", "Get attempt log (alias)", logOptions, logHandler)
+      .command("log [id]", "Get attempt log", logOptions, logHandler)
+      .command("logs [id]", "Get attempt log (alias)", logOptions, logHandler)
       .demandCommand(1, ""),
   )
 }

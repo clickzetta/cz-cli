@@ -1,0 +1,17 @@
+{
+    "title": "云器 Lakehouse产品文档",
+    "plugins": [
+        "highlight",
+        "components",
+        "video",
+        "copy-code",
+        "bilibili",
+        "ai",
+        "weaccount",
+        "sql-table",
+        "flow",
+        "sequence",
+        "comment"
+    ],
+    "theme": "doc-center"
+}

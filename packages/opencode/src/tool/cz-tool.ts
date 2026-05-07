@@ -6,6 +6,32 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./cz-tool.txt"
 import { resolveCzTool } from "../cli/cmd/forward"
 
+function splitArgs(input: string): string[] {
+  const args: string[] = []
+  let current = ""
+  let quote = ""
+  for (const ch of input) {
+    if (quote) {
+      if (ch === quote) {
+        quote = ""
+      } else {
+        current += ch
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === " " || ch === "\t") {
+      if (current) {
+        args.push(current)
+        current = ""
+      }
+    } else {
+      current += ch
+    }
+  }
+  if (current) args.push(current)
+  return args
+}
+
 const Parameters = z.object({
   command: z.string().describe(
     "The cz-tool command to execute, e.g. 'sql \"SELECT 1\"' or 'table list --schema public'",
@@ -28,8 +54,9 @@ export const CzToolTool = Tool.define(
         execute: (params: z.infer<typeof Parameters>, _ctx: Tool.Context) =>
           Effect.gen(function* () {
             const bin = resolveCzTool()
-            const profileArg = params.profile ? ` --profile ${params.profile}` : ""
-            const shellCmd = `${bin} ${params.command} --output json${profileArg}`
+            const args = splitArgs(params.command)
+            args.push("--output", "json")
+            if (params.profile) args.push("--profile", params.profile)
 
             const chunks: string[] = []
             let exitCode: number | null = null
@@ -37,7 +64,7 @@ export const CzToolTool = Tool.define(
             exitCode = yield* Effect.scoped(
               Effect.gen(function* () {
                 const handle = yield* spawner.spawn(
-                  ChildProcess.make("sh", ["-c", shellCmd], {
+                  ChildProcess.make(bin, args, {
                     stdin: "ignore",
                     detached: false,
                   }),
@@ -59,7 +86,7 @@ export const CzToolTool = Tool.define(
             const result = exitCode === 0 ? output : `Exit code: ${exitCode}\n${output}`
 
             return {
-              title: `cz-tool ${params.command.split(/\s+/)[0] ?? ""}`,
+              title: `cz-tool ${args[0] ?? ""}`,
               metadata: {
                 exitCode,
               },

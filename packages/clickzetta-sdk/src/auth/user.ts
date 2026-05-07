@@ -1,4 +1,5 @@
 import { request, type ClientOptions } from "../client.js"
+import { ClickZettaApiError } from "../types/api.js"
 
 interface UserInfo {
   id: number
@@ -18,7 +19,7 @@ export async function getCurrentUser(
     {},
   )
   if (resp.code !== 0) {
-    throw new Error(`Failed to get user: ${resp.message}`)
+    throw new ClickZettaApiError("AUTH_FAILED", `Failed to get user: ${resp.message ?? "unknown error"}`)
   }
   return resp.data
 }
@@ -36,7 +37,7 @@ export async function getInstanceByName(
     "GET",
   )
   if (resp.code !== 0) {
-    throw new Error(`Instance not found: ${instanceName}`)
+    throw new ClickZettaApiError("INSTANCE_NOT_FOUND", `Instance not found: ${instanceName}`)
   }
   return resp.data.id
 }

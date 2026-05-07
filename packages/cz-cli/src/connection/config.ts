@@ -79,18 +79,49 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
     cfg.password = ""
   }
 
+  // Propagate customHeaders from profile (highest priority: env headers could override if needed)
+  if (profileCfg?.customHeaders && Object.keys(profileCfg.customHeaders).length > 0) {
+    cfg.customHeaders = { ...profileCfg.customHeaders, ...cfg.customHeaders }
+  }
+
   return cfg
 }
 
 function getEnvConfig(): Partial<ConnectionConfig> | undefined {
   const env = process.env
   const result: Partial<ConnectionConfig> = {}
-  let hasAny = false
 
-  const map: Array<[string, keyof ConnectionConfig]> = [
-    ["CZ_PAT", "pat"],
-    ["CZ_USERNAME", "username"],
-    ["CZ_PASSWORD", "password"],
+  const pat = env.CZ_PAT || ""
+  const username = env.CZ_USERNAME || ""
+  const password = env.CZ_PASSWORD || ""
+
+  // Require PAT or both username+password to return auth config (matching Python)
+  if (!pat && !(username && password)) {
+    // Still return non-auth fields if any are set
+    const nonAuthMap: Array<[string, keyof ConnectionConfig]> = [
+      ["CZ_SERVICE", "service"],
+      ["CZ_PROTOCOL", "protocol"],
+      ["CZ_INSTANCE", "instance"],
+      ["CZ_WORKSPACE", "workspace"],
+      ["CZ_SCHEMA", "schema"],
+      ["CZ_VCLUSTER", "vcluster"],
+    ]
+    let hasAny = false
+    for (const [envKey, cfgKey] of nonAuthMap) {
+      const val = env[envKey]
+      if (val) {
+        ;(result as Record<string, string>)[cfgKey] = val
+        hasAny = true
+      }
+    }
+    return hasAny ? result : undefined
+  }
+
+  if (pat) result.pat = pat
+  if (username) result.username = username
+  if (password) result.password = password
+
+  const nonAuthMap: Array<[string, keyof ConnectionConfig]> = [
     ["CZ_SERVICE", "service"],
     ["CZ_PROTOCOL", "protocol"],
     ["CZ_INSTANCE", "instance"],
@@ -98,16 +129,13 @@ function getEnvConfig(): Partial<ConnectionConfig> | undefined {
     ["CZ_SCHEMA", "schema"],
     ["CZ_VCLUSTER", "vcluster"],
   ]
-
-  for (const [envKey, cfgKey] of map) {
+  for (const [envKey, cfgKey] of nonAuthMap) {
     const val = env[envKey]
     if (val) {
       ;(result as Record<string, string>)[cfgKey] = val
-      hasAny = true
     }
   }
-
-  return hasAny ? result : undefined
+  return result
 }
 
 function applyNonAuth(target: ConnectionConfig, src: Partial<ConnectionConfig> | undefined): void {
@@ -118,6 +146,9 @@ function applyNonAuth(target: ConnectionConfig, src: Partial<ConnectionConfig> |
   if (src.workspace) target.workspace = src.workspace
   if (src.schema) target.schema = src.schema
   if (src.vcluster) target.vcluster = src.vcluster
+  if (src.customHeaders && Object.keys(src.customHeaders).length > 0) {
+    target.customHeaders = { ...target.customHeaders, ...src.customHeaders }
+  }
 }
 
 function normalizeProtocol(value?: string): string {

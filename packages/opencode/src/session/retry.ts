@@ -67,6 +67,15 @@ export function retryable(error: Err) {
   const msg = error.data?.message
   if (typeof msg === "string") {
     const lower = msg.toLowerCase()
+    // Quota/daily limit exhaustion — not recoverable by retrying
+    if (
+      lower.includes("daily token limit") ||
+      lower.includes("daily limit") ||
+      lower.includes("quota exceeded") ||
+      lower.includes("insufficient_quota")
+    ) {
+      return undefined
+    }
     if (
       lower.includes("rate increased too quickly") ||
       lower.includes("rate limit") ||

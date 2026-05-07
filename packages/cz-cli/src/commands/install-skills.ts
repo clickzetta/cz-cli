@@ -26,24 +26,83 @@ function expandPath(p: string): string {
 }
 
 function getPackageSkillsDir(): string {
+  const selfDir = dirname(new URL(import.meta.url).pathname)
   const candidates = [
-    join(dirname(new URL(import.meta.url).pathname), "..", "..", "skills"),
-    join(dirname(new URL(import.meta.url).pathname), "..", "skills"),
+    // Compiled binary: skills/ is sibling to the binary
+    join(selfDir, "skills"),
+    // Dev mode: from src/commands/ → ../../skills (repo root skills/)
+    join(selfDir, "..", "..", "..", "..", "skills"),
+    // Dev mode: from src/commands/ → ../skills
+    join(selfDir, "..", "..", "skills"),
+    join(selfDir, "..", "skills"),
+    // Fallback: cwd
     join(process.cwd(), "skills"),
   ]
   for (const dir of candidates) {
     if (existsSync(dir) && statSync(dir).isDirectory()) return dir
   }
-  throw new Error("Could not find skills directory. Ensure cz-tool is properly installed.")
+  throw new Error("Could not find skills directory. Ensure cz-cli is properly installed.")
 }
 
-function discoverSkills(skillsDir: string): string[] {
+function getMcpSkillsDir(): string | null {
+  const candidates: string[] = []
+
+  const envPath = process.env.CZ_MCP_SERVER_PATH?.trim()
+  if (envPath) {
+    const raw = expandPath(envPath)
+    candidates.push(join(raw, "cz_mcp", "skills"), join(raw, "skills"))
+  }
+
+  const selfDir = dirname(new URL(import.meta.url).pathname)
+  const repoRoot = resolve(selfDir, "..", "..", "..")
+  candidates.push(join(repoRoot, "..", "claude-skills-mcp", "cz-mcp-server", "cz_mcp", "skills"))
+
+  for (const p of candidates) {
+    if (existsSync(p) && statSync(p).isDirectory()) return p
+  }
+  return null
+}
+
+function listSkillNames(skillsDir: string): string[] {
   if (!existsSync(skillsDir)) return []
   return readdirSync(skillsDir).filter((name) => {
     if (name.startsWith("__") || name === "__pycache__") return false
     const full = join(skillsDir, name)
     return existsSync(full) && statSync(full).isDirectory()
   }).sort()
+}
+
+interface DiscoveredSkills {
+  skillSources: Map<string, string>
+  sourceDirs: Map<string, string>
+  duplicates: string[]
+}
+
+function discoverAllSkills(): DiscoveredSkills {
+  const sourceDirs = new Map<string, string>()
+  sourceDirs.set("cz-cli", getPackageSkillsDir())
+  const mcpDir = getMcpSkillsDir()
+  if (mcpDir) sourceDirs.set("cz-mcp", mcpDir)
+
+  const skillSources = new Map<string, string>()
+  const duplicates: string[] = []
+
+  for (const [, baseDir] of sourceDirs) {
+    for (const name of listSkillNames(baseDir)) {
+      if (skillSources.has(name)) {
+        duplicates.push(name)
+        continue
+      }
+      skillSources.set(name, join(baseDir, name))
+    }
+  }
+  return { skillSources, sourceDirs, duplicates }
+}
+
+function prioritizeSkillNames(names: string[]): string[] {
+  const primary = names.filter((n) => n === "czcli")
+  const rest = names.filter((n) => n !== "czcli").sort()
+  return [...primary, ...rest]
 }
 
 function copySkill(sourceDir: string, targetDir: string, skillName: string): boolean {
@@ -83,11 +142,16 @@ export function registerInstallSkillsCommand(cli: Argv<GlobalArgs>): void {
       const yes = argv.yes || silent
 
       try {
-        const skillsDir = getPackageSkillsDir()
-        const skillNames = discoverSkills(skillsDir)
-        if (skillNames.length === 0) {
+        const { skillSources, sourceDirs, duplicates } = discoverAllSkills()
+        if (skillSources.size === 0) {
           error("NO_SKILLS", "No skills found in package.", { format })
         }
+
+        if (duplicates.length > 0 && !silent) {
+          process.stderr.write(`Warning: duplicate skills ignored from lower-priority sources: ${duplicates.join(", ")}\n`)
+        }
+
+        const skillNames = prioritizeSkillNames([...skillSources.keys()])
 
         let selectedTools: string[]
         if (yes) {
@@ -131,7 +195,10 @@ export function registerInstallSkillsCommand(cli: Argv<GlobalArgs>): void {
         for (const tool of selectedTools) {
           const targetPath = expandPath(TOOL_CONFIGS[tool])
           for (const skill of selectedSkills) {
-            if (copySkill(skillsDir, targetPath, skill)) {
+            const sourceDir = skillSources.get(skill)
+            if (!sourceDir) continue
+            const sourceDirParent = dirname(sourceDir)
+            if (copySkill(sourceDirParent, targetPath, skill)) {
               installed.push({ tool, skill, path: join(targetPath, skill) })
             } else {
               failed.push({ tool, skill })
@@ -139,8 +206,9 @@ export function registerInstallSkillsCommand(cli: Argv<GlobalArgs>): void {
           }
         }
 
+        const sourceLabels = [...sourceDirs.entries()].map(([label, dir]) => `${label}: ${dir}`)
         logOperation("install-skills", { ok: true })
-        success({ installed, failed, skills_source: skillsDir }, { format })
+        success({ installed, failed, skills_sources: sourceLabels, duplicates_ignored: duplicates }, { format })
       } catch (err) {
         error("INSTALL_ERROR", err instanceof Error ? err.message : String(err), { format })
       }

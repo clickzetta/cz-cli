@@ -1,15 +1,17 @@
-import type { Argv } from "yargs"
 import { VERSION } from "./version.js"
 
 const GUIDE_GENERATOR_VERSION = "1.0.0"
 const DEFAULT_BUDGET_CHARS = 40000
 
-interface CommandEntry {
+export interface CommandEntry {
   name: string
   kind: "command" | "group"
   description: string
+  usage?: string
   options?: OptionEntry[]
   arguments?: ArgumentEntry[]
+  shell_quote_hint?: string
+  examples?: { cmd: string; desc: string }[]
 }
 
 interface OptionEntry {
@@ -54,40 +56,89 @@ function serializePayloadLength(payload: Record<string, unknown>): number {
   return JSON.stringify(payload, null, 2).length
 }
 
-function dropParameterDetails(commands: Record<string, unknown>[]): boolean {
+function dropOptionHelpAndDefault(payload: Record<string, unknown>): boolean {
   let changed = false
-  for (const cmd of commands) {
+  for (const cmd of (payload.commands ?? []) as Record<string, unknown>[]) {
+    for (const opt of (cmd.options ?? []) as Record<string, unknown>[]) {
+      if ("help" in opt) { delete opt.help; changed = true }
+      if ("default" in opt) { delete opt.default; changed = true }
+    }
+  }
+  return changed
+}
+
+function dropParameterDetails(payload: Record<string, unknown>): boolean {
+  let changed = false
+  for (const cmd of (payload.commands ?? []) as Record<string, unknown>[]) {
     if (cmd.options) { delete cmd.options; changed = true }
     if (cmd.arguments) { delete cmd.arguments; changed = true }
   }
   return changed
 }
 
-function dropDescriptions(commands: Record<string, unknown>[]): boolean {
+function dropCommandExamples(payload: Record<string, unknown>): boolean {
   let changed = false
-  for (const cmd of commands) {
+  for (const cmd of (payload.commands ?? []) as Record<string, unknown>[]) {
+    if (cmd.examples) { delete cmd.examples; changed = true }
+  }
+  if (payload.command_examples) { delete payload.command_examples; changed = true }
+  return changed
+}
+
+function dropGlobalExamples(payload: Record<string, unknown>): boolean {
+  const go = payload.global_options as Record<string, unknown> | undefined
+  if (!go || !("examples" in go)) return false
+  delete go.examples
+  return true
+}
+
+function dropRecommendedWorkflow(payload: Record<string, unknown>): boolean {
+  if (!("recommended_workflow" in payload)) return false
+  delete payload.recommended_workflow
+  return true
+}
+
+function dropTips(payload: Record<string, unknown>): boolean {
+  if (!("tips" in payload)) return false
+  delete payload.tips
+  return true
+}
+
+function dropDescriptions(payload: Record<string, unknown>): boolean {
+  let changed = false
+  for (const cmd of (payload.commands ?? []) as Record<string, unknown>[]) {
     if (cmd.description) { delete cmd.description; changed = true }
   }
   return changed
 }
 
 function applyBudget(payload: Record<string, unknown>, budgetChars: number): Record<string, unknown> {
-  const commands = payload.commands as Record<string, unknown>[]
   const beforeChars = serializePayloadLength(payload)
   const appliedSteps: string[] = []
 
   if (beforeChars <= budgetChars) {
-    payload.truncation = { applied: false, budget_chars: budgetChars, estimated_chars: beforeChars }
+    payload.truncation = {
+      applied: false,
+      budget_chars: budgetChars,
+      estimated_chars_before: beforeChars,
+      estimated_chars_after: beforeChars,
+      steps_applied: [],
+    }
     return payload
   }
 
-  const steps: [string, () => boolean][] = [
-    ["drop_parameter_details", () => dropParameterDetails(commands)],
-    ["drop_descriptions", () => dropDescriptions(commands)],
+  const steps: [string, (p: Record<string, unknown>) => boolean][] = [
+    ["drop_option_help_and_default", dropOptionHelpAndDefault],
+    ["drop_parameter_details", dropParameterDetails],
+    ["drop_command_examples", dropCommandExamples],
+    ["drop_global_examples", dropGlobalExamples],
+    ["drop_recommended_workflow", dropRecommendedWorkflow],
+    ["drop_tips", dropTips],
+    ["drop_command_descriptions", dropDescriptions],
   ]
 
   for (const [name, fn] of steps) {
-    if (fn()) appliedSteps.push(name)
+    if (fn(payload)) appliedSteps.push(name)
     if (serializePayloadLength(payload) <= budgetChars) break
   }
 
@@ -97,20 +148,55 @@ function applyBudget(payload: Record<string, unknown>, budgetChars: number): Rec
     estimated_chars_before: beforeChars,
     estimated_chars_after: serializePayloadLength(payload),
     steps_applied: appliedSteps,
+    mandatory_sections: ["global_options", "recommended_workflow", "output_format", "safety", "exit_codes"],
   }
   return payload
 }
 
+function resolveBudget(budgetChars: number | undefined, wide: boolean): number {
+  if (budgetChars !== undefined) return Math.max(2000, budgetChars)
+  const env = process.env.CZ_AI_GUIDE_BUDGET?.trim()
+  if (env) {
+    const parsed = parseInt(env, 10)
+    if (!isNaN(parsed)) return Math.max(2000, parsed)
+  }
+  return wide ? 300000 : DEFAULT_BUDGET_CHARS
+}
+
+export function buildToonPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const result = structuredClone(payload)
+  const commandsFlat: Record<string, unknown>[] = []
+  const commandExamples: Record<string, unknown> = {}
+  const commandHints: Record<string, string> = {}
+
+  for (const cmd of (result.commands ?? []) as Record<string, unknown>[]) {
+    const flat: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(cmd)) {
+      if (k !== "examples" && k !== "shell_quote_hint") flat[k] = v
+    }
+    commandsFlat.push(flat)
+    if (cmd.examples) commandExamples[cmd.name as string] = cmd.examples
+    if (cmd.shell_quote_hint) commandHints[cmd.name as string] = cmd.shell_quote_hint as string
+  }
+
+  result.commands = commandsFlat
+  if (Object.keys(commandExamples).length > 0) result.command_examples = commandExamples
+  if (Object.keys(commandHints).length > 0) result.command_hints = commandHints
+  return result
+}
+
 export function buildAiGuide(options?: { wide?: boolean; budgetChars?: number }): GuidePayload {
   const wide = options?.wide ?? false
-  const budgetChars = options?.budgetChars ?? (wide ? 300000 : DEFAULT_BUDGET_CHARS)
-  const cliName = "cz-tool"
+  const cliName = "cz-cli"
 
   const sorted = [...commandRegistry].sort((a, b) => a.name.localeCompare(b.name))
   const commandsDicts = sorted.map((e) => {
     const d: Record<string, unknown> = { name: e.name, kind: e.kind, description: e.description }
+    if (e.usage) d.usage = e.usage
     if (e.options && e.options.length > 0) d.options = e.options
     if (e.arguments && e.arguments.length > 0) d.arguments = e.arguments
+    if (e.shell_quote_hint) d.shell_quote_hint = e.shell_quote_hint
+    if (e.examples && e.examples.length > 0) d.examples = e.examples
     return d
   })
 
@@ -121,11 +207,17 @@ export function buildAiGuide(options?: { wide?: boolean; budgetChars?: number })
     description: "AI-Agent-friendly CLI for ClickZetta Lakehouse",
     global_options: {
       order: "Global options must appear before subcommand.",
-      usage_pattern: `${cliName} [GLOBAL_OPTIONS] <subcommand> [args]`,
+      usage_pattern: `${cliName} [GLOBAL_OPTIONS] <subcommand> [args] (or run ${cliName} <subcommand> [args] --output pretty)`,
+      entry_commands: ["cz-cli", "clickzetta-cli"],
       options: [
         { flags: "--profile, -p", required: false, takes_value: true, help: "Profile name" },
         { flags: "--output, -o", required: false, takes_value: true, help: "Output format", default: "json" },
         { flags: "--debug, -d", required: false, takes_value: false, help: "Debug mode" },
+      ],
+      examples: [
+        `${cliName} --profile dev sql "SELECT 1"`,
+        `${cliName} --output table task list --limit 5`,
+        `${cliName} runs list --task my_task --run-type REFILL --limit 1`,
       ],
     },
     recommended_workflow: [
@@ -138,21 +230,23 @@ export function buildAiGuide(options?: { wide?: boolean; budgetChars?: number })
     output_format: {
       success: { ok: true, data: "...", time_ms: "N" },
       error: { ok: false, error: { code: "...", message: "..." } },
+      note: "Use -o pretty for colorized human-friendly JSON output.",
     },
     safety: {
       write_protection: "Write operations require --write. DELETE/UPDATE without WHERE are blocked.",
-      pagination: "List commands default to page 1; use --page/--page-size or --limit.",
+      confirmation: "task online/offline, runs stop/refill, executions stop require confirmation unless -y.",
+      pagination: "task list / runs list / executions list default to page 1; use --page/--page-size or --limit.",
     },
     exit_codes: { "0": "success", "1": "business error", "2": "usage error" },
     tips: {
-      help: `Run '${cliName} <subcommand> --help' for parameter details.`,
-      profile: "Use --profile for reusable connection config.",
+      help: `Run '${cliName} <subcommand> --help' to inspect exact parameter contracts.`,
+      profile: "Use --profile for reusable connection config; protocol can be overridden per profile.",
     },
   }
 
-  if (!wide) dropParameterDetails(commandsDicts)
+  if (!wide) dropParameterDetails(payload)
 
-  return applyBudget(structuredClone(payload), budgetChars) as unknown as GuidePayload
+  return applyBudget(structuredClone(payload), resolveBudget(options?.budgetChars, wide)) as unknown as GuidePayload
 }
 
 export function registerStaticCommands(): void {
@@ -167,6 +261,12 @@ export function registerStaticCommands(): void {
         { flags: "-N, --no-header", required: false, takes_value: false, help: "Omit column headers" },
       ],
       arguments: [{ name: "statement", required: false }],
+      shell_quote_hint: "Shell tip: wrap SQL statement in quotes, or pass -f/--file for complex statements.",
+      examples: [
+        { cmd: 'cz-cli sql "SELECT 1"', desc: "Run a simple query" },
+        { cmd: 'cz-cli sql -e "SELECT * FROM t LIMIT 10" --sync', desc: "Synchronous query" },
+        { cmd: "cz-cli sql -f query.sql --write", desc: "Execute write SQL from file" },
+      ],
     },
     { name: "schema", kind: "group", description: "Manage schemas" },
     { name: "schema list", kind: "command", description: "List schemas" },
@@ -184,9 +284,12 @@ export function registerStaticCommands(): void {
       arguments: [{ name: "name", required: true }] },
     { name: "table stats", kind: "command", description: "Get table row count",
       arguments: [{ name: "name", required: true }] },
-    { name: "table history", kind: "command", description: "Show table history" },
+    { name: "table history", kind: "command", description: "Show table history",
+      arguments: [{ name: "name", required: false }] },
     { name: "table create", kind: "command", description: "Create a table from DDL",
-      arguments: [{ name: "ddl", required: true }] },
+      arguments: [{ name: "ddl", required: true }],
+      shell_quote_hint: 'Shell tip: wrap DDL in quotes (e.g. "CREATE TABLE ...") or use --from-file.',
+    },
     { name: "table drop", kind: "command", description: "Drop a table",
       arguments: [{ name: "name", required: true }] },
     { name: "workspace", kind: "group", description: "Manage workspaces" },
@@ -241,11 +344,20 @@ export function registerStaticCommands(): void {
     { name: "attempts", kind: "group", description: "Manage attempt records" },
     { name: "attempts list", kind: "command", description: "List attempts for a run" },
     { name: "attempts log", kind: "command", description: "Get attempt log" },
-    { name: "agent", kind: "group", description: "AI Agent commands" },
-    { name: "agent status", kind: "command", description: "Check AI Agent health" },
-    { name: "agent ask", kind: "command", description: "Send question to AI Agent",
-      arguments: [{ name: "question", required: true }] },
-    { name: "status", kind: "command", description: "Check connection status" },
+    { name: "job", kind: "group", description: "Job performance tools" },
+    { name: "job status", kind: "command", description: "Check status/summary of a SQL job",
+      arguments: [{ name: "job-id", required: true }] },
+    { name: "job result", kind: "command", description: "Fetch result set of a SQL job",
+      arguments: [{ name: "job-id", required: true }] },
+    { name: "install-skills", kind: "command", description: "Install AI skills to coding tools" },
     { name: "ai-guide", kind: "command", description: "Generate AI-friendly command reference" },
   ])
+}
+
+/**
+ * Return the sorted command inventory. Ensures static commands are registered first.
+ */
+export function buildCommandInventory(): CommandEntry[] {
+  if (commandRegistry.length === 0) registerStaticCommands()
+  return [...commandRegistry].sort((a, b) => a.name.localeCompare(b.name))
 }

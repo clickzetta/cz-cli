@@ -1,4 +1,5 @@
 import { request, type ClientOptions } from "../client.js"
+import { ClickZettaApiError } from "../types/api.js"
 import type { AuthToken } from "../types/index.js"
 
 interface LoginResponse {
@@ -20,7 +21,10 @@ export async function loginWithPat(
     { accessToken: pat, instanceName },
   )
   if (resp.code !== 0) {
-    throw new Error(`Login failed: ${resp.message ?? JSON.stringify(resp)}`)
+    throw new ClickZettaApiError("AUTH_FAILED", `Login failed: ${resp.message ?? "unknown error"}`)
+  }
+  if (!resp.data?.token) {
+    throw new ClickZettaApiError("AUTH_FAILED", "Login succeeded but no token returned")
   }
   return {
     token: resp.data.token,
@@ -44,7 +48,10 @@ export async function loginWithPassword(
     { username, password, instanceName },
   )
   if (resp.code !== 0) {
-    throw new Error(`Login failed: ${resp.message ?? JSON.stringify(resp)}`)
+    throw new ClickZettaApiError("AUTH_FAILED", `Login failed: ${resp.message ?? "unknown error"}`)
+  }
+  if (!resp.data?.token) {
+    throw new ClickZettaApiError("AUTH_FAILED", "Login succeeded but no token returned")
   }
   return {
     token: resp.data.token,

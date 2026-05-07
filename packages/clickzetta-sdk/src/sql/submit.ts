@@ -1,4 +1,4 @@
-import { request, type ClientOptions } from "../client.js"
+import { requestRaw, type ClientOptions } from "../client.js"
 import type { JobID } from "./types.js"
 
 export interface SubmitJobParams {
@@ -62,7 +62,7 @@ export async function submitJob(
         contextJson: JSON.stringify({
           configs: {
             "cz.sql.adhoc.result.type": "embedded",
-            "cz.sql.adhoc.default.format": "ARROW",
+            "cz.sql.adhoc.default.format": "TEXT",
             "cz.sql.job.result.file.presigned.url.enabled": "true",
             "cz.sql.job.result.file.presigned.url.ttl": "3600",
           },
@@ -71,6 +71,6 @@ export async function submitJob(
     },
   }
 
-  const resp = await request<unknown>(opts, "/lh/submitJob", body)
+  const resp = await requestRaw(opts, "/lh/submitJob", body)
   return resp
 }

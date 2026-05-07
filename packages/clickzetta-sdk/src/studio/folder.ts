@@ -37,3 +37,15 @@ export function createFolder(config: StudioConfig, params: CreateFolderParams) {
     dataFolderType: 1,
   })
 }
+
+export interface DeleteFolderParams {
+  folderId: number
+  projectId: number
+}
+
+export function deleteFolder(config: StudioConfig, params: DeleteFolderParams) {
+  return studioRequest(config, "/ide-admin/v1/dataFolder/delete", {
+    folderId: params.folderId,
+    projectId: params.projectId,
+  })
+}

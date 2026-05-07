@@ -214,8 +214,8 @@ export const GlobalRoutes = lazy(() =>
     .post(
       "/upgrade",
       describeRoute({
-        summary: "Upgrade czcli",
-        description: "Upgrade czcli to the specified version or latest if not specified.",
+        summary: "Upgrade cz-cli",
+        description: "Upgrade cz-cli to the specified version or latest if not specified.",
         operationId: "global.upgrade",
         responses: {
           200: {

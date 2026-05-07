@@ -1,29 +1,11 @@
 import type { Argv } from "yargs"
 import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error } from "../output/index.js"
+import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier, type ExecContext } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
-
-async function execAndReturn(
-  ctx: ExecContext,
-  sql: string,
-  format: string,
-  command: string,
-): Promise<never> {
-  const t0 = Date.now()
-  const r = await execSql(ctx, sql)
-  if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
-    const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected async result"
-    logOperation(command, { sql, ok: false, errorCode: isQueryResult(r) ? r.errorCode : undefined, timeMs: Date.now() - t0 })
-    error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
-  }
-  const columns = r.columns.map((c) => c.name)
-  logOperation(command, { sql, ok: true, rows: r.rows.length, timeMs: Date.now() - t0 })
-  successRows(columns, r.rows, { format, timeMs: Date.now() - t0 })
-}
 
 export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
   cli.command("schema", "Manage schemas", (yargs) =>
@@ -42,7 +24,6 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             let sql = "SHOW SCHEMAS"
             if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
             const limit = argv.limit ?? DEFAULT_LIMIT
-            sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -54,11 +35,14 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             let rows = r.rows
             if (rows.length > limit) {
               rows = rows.slice(0, limit)
-              aiMessage = `Results truncated to ${limit} rows (more available). Use --limit to increase.`
+              aiMessage = `Results limited to ${limit} of ${r.rows.length} schemas. Use --limit to adjust or --like to filter.`
             }
-            const columns = r.columns.map((c) => c.name)
-            logOperation("schema list", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
-            successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage })
+            const normalized = rows.map((row) => ({
+              name: row["schema_name"] ?? row["name"] ?? Object.values(row)[0] ?? "",
+              type: row["type"] ?? "",
+            }))
+            logOperation("schema list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
+            success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -75,13 +59,18 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             const name = validateIdentifier(argv.name as string, "schema name")
             const t0 = Date.now()
             const infoSql = `SHOW SCHEMAS EXTENDED WHERE schema_name='${name.replace(/'/g, "''")}'`
-            const infoR = await execSql(ctx, infoSql)
             const tablesSql = `SHOW TABLES IN ${name}`
-            const tablesR = await execSql(ctx, tablesSql)
-            const info = isQueryResult(infoR) && infoR.status === JobStatus.SUCCEEDED ? infoR.rows : []
-            const tables = isQueryResult(tablesR) && tablesR.status === JobStatus.SUCCEEDED ? tablesR.rows : []
+            const [infoR, tablesR] = await Promise.all([execSql(ctx, infoSql), execSql(ctx, tablesSql)])
+            const infoRows = isQueryResult(infoR) && infoR.status === JobStatus.SUCCEEDED ? infoR.rows : []
+            if (infoRows.length === 0) {
+              logOperation("schema describe", { sql: infoSql, ok: false, timeMs: Date.now() - t0 })
+              error("SCHEMA_NOT_FOUND", `Schema '${name}' not found`, { format })
+            }
+            const schemaType = infoRows.length > 0 ? (Object.values(infoRows[0])[1] ?? "") : ""
+            const tableRows = isQueryResult(tablesR) && tablesR.status === JobStatus.SUCCEEDED ? tablesR.rows : []
+            const tables = tableRows.map((row) => Object.values(row)[0])
             logOperation("schema describe", { sql: infoSql, ok: true, timeMs: Date.now() - t0 })
-            success({ schema: name, info, tables }, { format, timeMs: Date.now() - t0 })
+            success({ name, type: schemaType, table_count: tables.length, tables }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -95,8 +84,17 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `CREATE SCHEMA ${validateIdentifier(argv.name as string, "schema name")}`
-            await execAndReturn(ctx, sql, format, "schema create")
+            const name = validateIdentifier(argv.name as string, "schema name")
+            const sql = `CREATE SCHEMA ${name}`
+            const t0 = Date.now()
+            const r = await execSql(ctx, sql)
+            if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
+              const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected async result"
+              logOperation("schema create", { sql, ok: false, timeMs: Date.now() - t0 })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+            }
+            logOperation("schema create", { sql, ok: true, timeMs: Date.now() - t0 })
+            success({ message: `Schema '${argv.name}' created successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -110,8 +108,17 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.output
           try {
             const ctx = await getExecContext(argv)
-            const sql = `DROP SCHEMA ${validateIdentifier(argv.name as string, "schema name")}`
-            await execAndReturn(ctx, sql, format, "schema drop")
+            const name = validateIdentifier(argv.name as string, "schema name")
+            const sql = `DROP SCHEMA ${name}`
+            const t0 = Date.now()
+            const r = await execSql(ctx, sql)
+            if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
+              const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected async result"
+              logOperation("schema drop", { sql, ok: false, timeMs: Date.now() - t0 })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+            }
+            logOperation("schema drop", { sql, ok: true, timeMs: Date.now() - t0 })
+            success({ message: `Schema '${argv.name}' dropped successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
           }

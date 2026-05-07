@@ -3,10 +3,12 @@ export function detectEnv(service: string): string {
   if (host.startsWith("dev-api.")) return "dev"
   if (host.startsWith("sit-api.")) return "sit"
   if (host.startsWith("uat-api.")) return "uat"
+  if (host === "api.clickzetta.com" || host === "api.singdata.com") return "prod"
   const czMatch = host.match(/^([^.]+)\.api\.clickzetta\.com/)
   if (czMatch) return czMatch[1]
   const sgMatch = host.match(/^([^.]+)\.api\.singdata\.com/)
   if (sgMatch) return sgMatch[1]
+  // For custom/enterprise domains, return "prod" as default (matching Python's fallback)
   return "prod"
 }
 

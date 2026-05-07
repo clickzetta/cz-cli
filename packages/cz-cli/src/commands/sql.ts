@@ -1,11 +1,11 @@
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { splitSql, JobStatus, type QueryResult } from "@clickzetta/sdk"
+import { splitSql, JobStatus, request, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier, type ExecContext } from "./exec.js"
+import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, type ExecContext } from "./exec.js"
 
 const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -43,6 +43,13 @@ function truncateLargeFields(rows: Record<string, unknown>[], maxLen: number): R
     for (const [key, val] of Object.entries(row)) {
       if (typeof val === "string" && val.length > maxLen) {
         row[key] = val.slice(0, maxLen) + `...(truncated, ${val.length} chars)`
+      } else if (val instanceof Buffer || val instanceof Uint8Array) {
+        const s = Buffer.from(val).toString("utf-8")
+        if (s.length > maxLen) {
+          row[key] = s.slice(0, maxLen) + `...(truncated, ${s.length} chars)`
+        } else {
+          row[key] = s
+        }
       }
     }
   }
@@ -50,10 +57,16 @@ function truncateLargeFields(rows: Record<string, unknown>[], maxLen: number): R
 }
 
 function applyVariables(sql: string, vars: Record<string, string>): string {
-  return sql.replace(/%\((\w+)\)s/g, (match, key) => {
+  const missing: string[] = []
+  const result = sql.replace(/%\((\w+)\)s/g, (match, key) => {
     if (key in vars) return vars[key]
+    missing.push(key)
     return match
   })
+  if (missing.length > 0) {
+    error("MISSING_VARIABLE", `Undefined variable(s): ${missing.join(", ")}. Provide them via --variable KEY=VALUE.`, { exitCode: 2 })
+  }
+  return result
 }
 
 function parseKvPairs(pairs: string[]): Record<string, string> {
@@ -79,7 +92,6 @@ function extractTableNames(sql: string): string[] {
 }
 
 function resolveSql(argv: SqlArgs): string {
-  if (argv.execute) return argv.execute
   if (argv.file) return readFileSync(argv.file, "utf-8")
   if (argv.stdin || !process.stdin.isTTY) {
     const chunks: Buffer[] = []
@@ -92,17 +104,18 @@ function resolveSql(argv: SqlArgs): string {
     closeSync(fd)
     return Buffer.concat(chunks).toString("utf-8")
   }
+  if (argv.execute) return argv.execute
   if (argv.statement) return argv.statement
-  error("USAGE_ERROR", "No SQL provided. Use positional arg, -e, -f, or pipe via stdin.", { exitCode: 2 })
+  error("MISSING_SQL", "No SQL provided. Use positional arg, -e, -f, or pipe via stdin.", { exitCode: 2 })
 }
 
-async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): Promise<string | undefined> {
+async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): Promise<Record<string, unknown> | undefined> {
   try {
     if (TABLE_NOT_FOUND_RE.test(errMsg)) {
       const r = await execSql(ctx, "SHOW TABLES")
       if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-        const names = r.rows.map((row) => Object.values(row)[0]).join(", ")
-        return `Available tables: ${names}`
+        const tables = r.rows.map((row) => Object.values(row)[0])
+        return { tables }
       }
     }
     if (COLUMN_NOT_FOUND_RE.test(errMsg)) {
@@ -111,8 +124,8 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
         const table = validateIdentifier(m[1], "table name")
         const r = await execSql(ctx, `DESC TABLE ${table}`)
         if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-          const cols = r.rows.map((row) => Object.values(row)[0]).join(", ")
-          return `Columns in ${table}: ${cols}`
+          const cols = r.rows.map((row) => Object.values(row)[0])
+          return { table, columns: cols }
         }
       }
     }
@@ -122,26 +135,24 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
   return undefined
 }
 
-async function fetchWithSchema(ctx: ExecContext, sql: string): Promise<string | undefined> {
+async function fetchWithSchema(ctx: ExecContext, sql: string): Promise<Record<string, unknown> | undefined> {
   const tables = extractTableNames(sql)
   if (tables.length === 0) return undefined
-  const parts: string[] = []
-  for (const table of tables) {
-    try {
-      validateIdentifier(table, "table name")
-      const r = await execSql(ctx, `DESC TABLE ${table}`)
-      if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-        const cols = r.rows.map((row) => {
-          const vals = Object.values(row)
-          return `${vals[0]} ${vals[1] ?? ""}`
-        }).join(", ")
-        parts.push(`${table}(${cols})`)
-      }
-    } catch {
-      // skip tables we can't describe
+  const table = tables[0]
+  try {
+    validateIdentifier(table, "table name")
+    const r = await execSql(ctx, `DESC TABLE ${table}`)
+    if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
+      const cols = r.rows.map((row) => {
+        const vals = Object.values(row)
+        return { name: vals[0] ?? "", type: vals[1] ?? "", comment: vals[2] ?? "" }
+      })
+      return { table, columns: cols }
     }
+  } catch {
+    // skip tables we can't describe
   }
-  return parts.length > 0 ? `Schema: ${parts.join("; ")}` : undefined
+  return undefined
 }
 
 async function executeSingle(
@@ -160,21 +171,24 @@ async function executeSingle(
   const t0 = Date.now()
 
   if (isWrite && !argv.write) {
-    error("WRITE_PROTECTION", "Write operation detected. Pass --write to confirm.", { format })
+    error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format })
   }
   if (isWrite && DANGEROUS_WRITE_RE.test(sql) && !WHERE_RE.test(sql)) {
     error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", { format })
   }
 
   if (!argv.sync) {
-    const r = await execSql(ctx, sql, { hints, asynchronous: true })
+    const asyncHints = { ...hints }
+    if (argv.timeout) asyncHints["sdk.job.timeout"] = String(argv.timeout)
+    const r = await execSqlWithRetry(ctx, sql, { hints: asyncHints, asynchronous: true })
     logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
     if (isQueryResult(r)) {
-      emitResult(r, sql, argv, ctx, t0)
+      await emitResult(r, sql, argv, ctx, t0)
     } else {
-      success(r, {
+      const jobId = (r as { jobId?: string }).jobId ?? ""
+      success({ job_id: jobId, status: "RUNNING" }, {
         format,
-        aiMessage: "Job submitted asynchronously. Use `cz-tool status` or poll the job_id to check results.",
+        aiMessage: `Job submitted. Check status: cz-cli job status ${jobId} | Fetch results: cz-cli job result ${jobId}`,
       })
     }
     return
@@ -182,21 +196,44 @@ async function executeSingle(
 
   // Sync mode: SELECT without user LIMIT → inject LIMIT to guard
   if (isSelect && !hasLimit && !isShow && rowLimit !== Infinity) {
+    // Set server-side row limit as safety guard
+    const serverHints = { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit) }
     const probeLimit = rowLimit + 1
     const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
-    const r = await execSql(ctx, probeSql, { hints, timeoutMs: argv.timeout })
+    let r = await execSqlWithRetry(ctx, probeSql, { hints: serverHints, timeoutMs: argv.timeout * 1000 })
+    // Retry without LIMIT if injection caused syntax error
+    if (isQueryResult(r) && r.status === JobStatus.FAILED && /syntax/i.test(r.errorMessage ?? "") && /LIMIT/i.test(r.errorMessage ?? "")) {
+      r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000 })
+      if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+      if (r.status === JobStatus.FAILED) {
+        await handleFailure(r, sql, ctx, format, t0)
+      }
+      await emitResult(r, sql, argv, ctx, t0)
+      return
+    }
     if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
     if (r.status === JobStatus.FAILED) {
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
-      const msg = hint ? `${r.errorMessage}\n${hint}` : (r.errorMessage ?? "Query failed")
       logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-      error(r.errorCode ?? "SQL_ERROR", msg, { format })
+      error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format, extra: hint ? { schema: hint } : undefined })
     }
     if (r.rowCount > rowLimit) {
+      const tables = extractTableNames(sql)
+      let schemaExtra: Record<string, unknown> | undefined
+      if (tables.length > 0) {
+        try {
+          validateIdentifier(tables[0], "table name")
+          const descR = await execSql(ctx, `DESC TABLE ${tables[0]}`)
+          if (isQueryResult(descR) && descR.status === JobStatus.SUCCEEDED && descR.rows.length > 0) {
+            const cols = descR.rows.map((row) => ({ name: Object.values(row)[0], type: Object.values(row)[1] ?? "" }))
+            schemaExtra = { table: tables[0], columns: cols }
+          }
+        } catch { /* best-effort */ }
+      }
       logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
-      error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, { format })
+      error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, { format, extra: schemaExtra ? { schema: schemaExtra } : undefined })
     }
-    emitResult(r, sql, argv, ctx, t0)
+    await emitResult(r, sql, argv, ctx, t0)
     return
   }
 
@@ -206,7 +243,7 @@ async function executeSingle(
     if (limitMatch) {
       const userLimit = parseInt(limitMatch[1], 10)
       const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
-      const r = await execSql(ctx, probeSql, { hints, timeoutMs: argv.timeout })
+      const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000 })
       if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
@@ -217,13 +254,13 @@ async function executeSingle(
         rows = rows.slice(0, userLimit)
         aiMessage = `Results truncated to ${userLimit} rows (more available).`
       }
-      emitResult({ ...r, rows }, sql, argv, ctx, t0, aiMessage)
+      await emitResult({ ...r, rows }, sql, argv, ctx, t0, aiMessage)
       return
     }
   }
 
   // General case: SHOW, write, or other
-  const r = await execSql(ctx, sql, { hints, timeoutMs: argv.timeout })
+  const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000 })
   if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
@@ -234,45 +271,79 @@ async function executeSingle(
     error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, { format })
   }
 
-  emitResult(r, sql, argv, ctx, t0)
+  await emitResult(r, sql, argv, ctx, t0)
 }
 
 async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number): Promise<never> {
   const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
-  const msg = hint ? `${r.errorMessage}\n${hint}` : (r.errorMessage ?? "Query failed")
   logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-  error(r.errorCode ?? "SQL_ERROR", msg, { format })
+  error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format, extra: hint ? { schema: hint } : undefined })
 }
 
-function emitResult(
+async function emitResult(
   r: QueryResult,
   sql: string,
   argv: SqlArgs,
   ctx: ExecContext,
   t0: number,
   aiMessage?: string,
-): never {
+): Promise<never> {
   const format = argv.output
   const fieldMax = argv["no-truncate"] ? Infinity : DEFAULT_FIELD_MAX
   const isWrite = WRITE_RE.test(sql)
 
+  let extra: Record<string, unknown> | undefined
+
+  if (argv["with-schema"]) {
+    const schema = await fetchWithSchema(ctx, sql)
+    if (schema) extra = { schema }
+  }
+
   if (isWrite) {
     logOperation("sql", { sql, ok: true, affected: r.affectedRows, timeMs: Date.now() - t0 })
-    success({ affected_rows: r.affectedRows, job_id: r.jobId }, { format, timeMs: Date.now() - t0, aiMessage })
+    const writeExtra = { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) }
+    success({ affected: r.affectedRows }, { format, timeMs: Date.now() - t0, aiMessage, extra: Object.keys(writeExtra).length > 0 ? writeExtra : undefined })
   }
 
   const columns = r.columns.map((c) => c.name)
-  let rows = maskRows(columns, r.rows)
+  let rows = r.rows
   if (fieldMax !== Infinity) rows = truncateLargeFields(rows, fieldMax)
+  rows = maskRows(columns, rows)
   logOperation("sql", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
-  successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage, noHeader: argv["no-header"] })
+  successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage, noHeader: argv["no-header"], extra: extra ? { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) } : (r.jobId ? { job_id: r.jobId } : undefined) })
 }
 
 async function handler(argv: SqlArgs): Promise<void> {
-  const format = argv.output
+  let format = argv.output
+
+  if (argv.batch) {
+    format = "text"
+  }
 
   if (argv["job-profile"]) {
-    error("NOT_IMPLEMENTED", "Job profile is not yet supported in the TypeScript CLI.", { format })
+    const ctx = await getExecContext(argv)
+    const jobId: JobID = {
+      id: argv["job-profile"],
+      workspace: ctx.config.workspace,
+      instanceId: ctx.token.instanceId,
+    }
+    const body = {
+      get_summary_request: {
+        account: { user_id: 0 },
+        job_id: { id: jobId.id, workspace: jobId.workspace, instance_id: jobId.instanceId },
+        offset: 0,
+        user_agent: "",
+      },
+      user_agent: "",
+    }
+    try {
+      const resp = await request<Record<string, unknown>>(ctx.clientOpts, "/lh/getJob", body)
+      logOperation("sql job-profile", { ok: true })
+      success(resp.data, { format })
+    } catch (err) {
+      logOperation("sql job-profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
+      error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format })
+    }
   }
 
   let sql = resolveSql(argv)
@@ -280,6 +351,15 @@ async function handler(argv: SqlArgs): Promise<void> {
     sql = applyVariables(sql, parseKvPairs(argv.variable))
   }
   const hints = argv.set ? parseKvPairs(argv.set) : undefined
+  let currentJobId: string | undefined
+
+  const sigintHandler = () => {
+    const payload: Record<string, unknown> = { ok: false, error: { code: "ABORTED", message: "Execution interrupted by user." } }
+    if (currentJobId) payload.job_id = currentJobId
+    process.stdout.write(JSON.stringify(payload) + "\n")
+    process.exit(130)
+  }
+  process.on("SIGINT", sigintHandler)
 
   try {
     const ctx = await getExecContext(argv)
@@ -289,43 +369,92 @@ async function handler(argv: SqlArgs): Promise<void> {
     }
     // Multi-statement: execute all, return last result
     if (statements.length > 1) {
+      const accumulatedHints = { ...hints }
       for (let i = 0; i < statements.length - 1; i++) {
-        const r = await execSql(ctx, statements[i], { hints, timeoutMs: argv.timeout })
+        const stmt = statements[i]
+        // Extract SET statements as hints for subsequent statements
+        const setMatch = stmt.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
+        if (setMatch) {
+          accumulatedHints[setMatch[1]] = setMatch[2].replace(/;$/, "").trim()
+          continue
+        }
+        const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000 })
         if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-          logOperation("sql", { sql: statements[i], ok: false, errorCode: r.errorCode })
+          logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
           error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format })
         }
       }
+      await executeSingle(ctx, statements[statements.length - 1], argv, accumulatedHints)
+    } else {
+      await executeSingle(ctx, statements[0], argv, hints ?? {})
     }
-    await executeSingle(ctx, statements[statements.length - 1], argv, hints ?? {})
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     logOperation("sql", { sql, ok: false, errorCode: "EXEC_ERROR" })
-    error("EXEC_ERROR", msg, { format })
+    error("EXEC_ERROR", msg, { format, debug: argv.debug })
+  } finally {
+    process.removeListener("SIGINT", sigintHandler)
   }
 }
 
 export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
   cli.command(
-    "sql [statement]",
+    "sql",
     "Execute SQL against ClickZetta",
     (yargs) =>
       yargs
-        .positional("statement", { type: "string", describe: "SQL statement" })
-        .option("write", { type: "boolean", default: false, describe: "Allow write operations" })
-        .option("with-schema", { type: "boolean", default: false, describe: "Include table schema in response" })
-        .option("no-truncate", { type: "boolean", default: false, describe: "Disable field truncation" })
-        .option("file", { alias: "f", type: "string", describe: "Read SQL from file" })
-        .option("execute", { alias: "e", type: "string", describe: "SQL string to execute" })
-        .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
-        .option("sync", { type: "boolean", default: false, describe: "Execute synchronously (wait for result)" })
-        .option("timeout", { type: "number", default: 300_000, describe: "Job timeout in ms" })
-        .option("variable", { type: "array", string: true, describe: "Variable substitution KEY=VALUE" })
-        .option("set", { type: "array", string: true, describe: "Hint KEY=VALUE" })
-        .option("job-profile", { type: "string", describe: "Get job profile for a job ID" })
-        .option("no-header", { alias: "N", type: "boolean", default: false, describe: "Omit column headers" })
-        .option("no-limit", { type: "boolean", default: false, describe: "Disable automatic LIMIT guard" })
-        .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode" }),
-    (argv) => handler(argv as SqlArgs),
+        .command(
+          "status <job-id>",
+          "Check async job status",
+          (y) => y.positional("job-id", { type: "string", demandOption: true }),
+          async (argv) => {
+            const format = (argv as unknown as SqlArgs).output
+            try {
+              const ctx = await getExecContext(argv as unknown as SqlArgs)
+              const jobId: JobID = {
+                id: argv["job-id"] as string,
+                workspace: ctx.config.workspace,
+                instanceId: ctx.token.instanceId,
+              }
+              const body = {
+                get_summary_request: {
+                  account: { user_id: 0 },
+                  job_id: { id: jobId.id, workspace: jobId.workspace, instance_id: jobId.instanceId },
+                  offset: 0,
+                  user_agent: "",
+                },
+                user_agent: "",
+              }
+              const resp = await request<Record<string, unknown>>(ctx.clientOpts, "/lh/getJob", body)
+              const data = resp.data ?? {}
+              logOperation("sql status", { ok: true })
+              success(data, { format })
+            } catch (err) {
+              error("JOB_STATUS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            }
+          },
+        )
+        .command(
+          "$0 [statement]",
+          "Execute SQL statement",
+          (y) =>
+            y
+              .positional("statement", { type: "string", describe: "SQL statement" })
+              .option("write", { type: "boolean", default: false, describe: "Allow write operations" })
+              .option("with-schema", { type: "boolean", default: false, describe: "Include table schema in response" })
+              .option("no-truncate", { type: "boolean", default: false, describe: "Disable field truncation" })
+              .option("file", { alias: "f", type: "string", describe: "Read SQL from file" })
+              .option("execute", { alias: "e", type: "string", describe: "SQL string to execute" })
+              .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
+              .option("sync", { type: "boolean", default: false, describe: "Execute synchronously (wait for result)" })
+              .option("timeout", { type: "number", default: 300, describe: "Job timeout in seconds" })
+              .option("variable", { type: "array", string: true, describe: "Variable substitution KEY=VALUE" })
+              .option("set", { type: "array", string: true, describe: "Hint KEY=VALUE" })
+              .option("job-profile", { type: "string", describe: "Get job profile for a job ID" })
+              .option("no-header", { alias: "N", type: "boolean", default: false, describe: "Omit column headers" })
+              .option("no-limit", { type: "boolean", default: false, describe: "Disable automatic LIMIT guard" })
+              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode" }),
+          (argv) => handler(argv as unknown as SqlArgs),
+        ),
   )
 }
