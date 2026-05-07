@@ -169,7 +169,7 @@ export type ParsedAPICallError =
       metadata?: Record<string, string>
     }
 
-const LLM_CONFIG_HINT = "\n\nTo check or customize your LLM provider: cz-cli agent config --show"
+const LLM_CONFIG_HINT = "\n\nTo inspect or change the agent's LLM: cz-cli agent llm show"
 
 const AUTH_ERROR_PATTERNS = [
   /invalid api[_ ]?key/i,

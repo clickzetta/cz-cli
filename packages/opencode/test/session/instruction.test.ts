@@ -221,8 +221,8 @@ describe("Instruction.resolve", () => {
 
 describe("Instruction.system", () => {
   test("loads both project and global AGENTS.md when both exist", async () => {
-    const originalConfigDir = process.env["OPENCODE_CONFIG_DIR"]
-    delete process.env["OPENCODE_CONFIG_DIR"]
+    const originalConfigDir = process.env["CLICKZETTA_CONFIG_DIR"]
+    delete process.env["CLICKZETTA_CONFIG_DIR"]
 
     await using globalTmp = await tmpdir({
       init: async (dir) => {
@@ -264,9 +264,9 @@ describe("Instruction.system", () => {
     } finally {
       ;(Global.Path as { config: string }).config = originalGlobalConfig
       if (originalConfigDir === undefined) {
-        delete process.env["OPENCODE_CONFIG_DIR"]
+        delete process.env["CLICKZETTA_CONFIG_DIR"]
       } else {
-        process.env["OPENCODE_CONFIG_DIR"] = originalConfigDir
+        process.env["CLICKZETTA_CONFIG_DIR"] = originalConfigDir
       }
     }
   })
@@ -276,14 +276,14 @@ describe("Instruction.systemPaths OPENCODE_CONFIG_DIR", () => {
   let originalConfigDir: string | undefined
 
   beforeEach(() => {
-    originalConfigDir = process.env["OPENCODE_CONFIG_DIR"]
+    originalConfigDir = process.env["CLICKZETTA_CONFIG_DIR"]
   })
 
   afterEach(() => {
     if (originalConfigDir === undefined) {
-      delete process.env["OPENCODE_CONFIG_DIR"]
+      delete process.env["CLICKZETTA_CONFIG_DIR"]
     } else {
-      process.env["OPENCODE_CONFIG_DIR"] = originalConfigDir
+      process.env["CLICKZETTA_CONFIG_DIR"] = originalConfigDir
     }
   })
 
@@ -300,7 +300,7 @@ describe("Instruction.systemPaths OPENCODE_CONFIG_DIR", () => {
     })
     await using projectTmp = await tmpdir()
 
-    process.env["OPENCODE_CONFIG_DIR"] = profileTmp.path
+    process.env["CLICKZETTA_CONFIG_DIR"] = profileTmp.path
     const originalGlobalConfig = Global.Path.config
     ;(Global.Path as { config: string }).config = globalTmp.path
 
@@ -332,7 +332,7 @@ describe("Instruction.systemPaths OPENCODE_CONFIG_DIR", () => {
     })
     await using projectTmp = await tmpdir()
 
-    process.env["OPENCODE_CONFIG_DIR"] = profileTmp.path
+    process.env["CLICKZETTA_CONFIG_DIR"] = profileTmp.path
     const originalGlobalConfig = Global.Path.config
     ;(Global.Path as { config: string }).config = globalTmp.path
 
@@ -363,7 +363,7 @@ describe("Instruction.systemPaths OPENCODE_CONFIG_DIR", () => {
     })
     await using projectTmp = await tmpdir()
 
-    delete process.env["OPENCODE_CONFIG_DIR"]
+    delete process.env["CLICKZETTA_CONFIG_DIR"]
     const originalGlobalConfig = Global.Path.config
     ;(Global.Path as { config: string }).config = globalTmp.path
 

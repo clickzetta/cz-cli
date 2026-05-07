@@ -14,10 +14,10 @@ export async function projectFiles(name: string, directory: string, worktree?: s
 export async function directories(directory: string, worktree?: string) {
   return unique([
     Global.Path.config,
-    ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+    ...(!Flag.CLICKZETTA_DISABLE_PROJECT_CONFIG
       ? await Array.fromAsync(
           Filesystem.up({
-            targets: [".opencode"],
+            targets: [".clickzetta"],
             start: directory,
             stop: worktree,
           }),
@@ -25,12 +25,12 @@ export async function directories(directory: string, worktree?: string) {
       : []),
     ...(await Array.fromAsync(
       Filesystem.up({
-        targets: [".opencode"],
+        targets: [".clickzetta"],
         start: Global.Path.home,
         stop: Global.Path.home,
       }),
     )),
-    ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
+    ...(Flag.CLICKZETTA_CONFIG_DIR ? [Flag.CLICKZETTA_CONFIG_DIR] : []),
   ])
 }
 

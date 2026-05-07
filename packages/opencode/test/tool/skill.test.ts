@@ -35,7 +35,7 @@ describe("tool.skill", () => {
     provideTmpdirInstance(
       (dir) =>
         Effect.gen(function* () {
-          const skill = path.join(dir, ".opencode", "skill", "tool-skill")
+          const skill = path.join(dir, ".clickzetta", "skill", "tool-skill")
           yield* Effect.promise(() =>
             Bun.write(
               path.join(skill, "SKILL.md"),
@@ -48,11 +48,11 @@ description: Skill for tool tests.
 `,
             ),
           )
-          const home = process.env.OPENCODE_TEST_HOME
-          process.env.OPENCODE_TEST_HOME = dir
+          const home = process.env.CLICKZETTA_TEST_HOME
+          process.env.CLICKZETTA_TEST_HOME = dir
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              process.env.OPENCODE_TEST_HOME = home
+              process.env.CLICKZETTA_TEST_HOME = home
             }),
           )
           const registry = yield* ToolRegistry.Service
@@ -77,7 +77,7 @@ description: Skill for tool tests.
             ["alpha-skill", "Alpha skill."],
             ["middle-skill", "Middle skill."],
           ]) {
-            const skill = path.join(dir, ".opencode", "skill", name)
+            const skill = path.join(dir, ".clickzetta", "skill", name)
             yield* Effect.promise(() =>
               Bun.write(
                 path.join(skill, "SKILL.md"),
@@ -91,11 +91,11 @@ description: ${description}
               ),
             )
           }
-          const home = process.env.OPENCODE_TEST_HOME
-          process.env.OPENCODE_TEST_HOME = dir
+          const home = process.env.CLICKZETTA_TEST_HOME
+          process.env.CLICKZETTA_TEST_HOME = dir
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              process.env.OPENCODE_TEST_HOME = home
+              process.env.CLICKZETTA_TEST_HOME = home
             }),
           )
 
@@ -131,7 +131,7 @@ description: ${description}
     provideTmpdirInstance(
       (dir) =>
         Effect.gen(function* () {
-          const skill = path.join(dir, ".opencode", "skill", "tool-skill")
+          const skill = path.join(dir, ".clickzetta", "skill", "tool-skill")
           yield* Effect.promise(() =>
             Bun.write(
               path.join(skill, "SKILL.md"),
@@ -148,11 +148,11 @@ Use this skill.
           )
           yield* Effect.promise(() => Bun.write(path.join(skill, "scripts", "demo.txt"), "demo"))
 
-          const home = process.env.OPENCODE_TEST_HOME
-          process.env.OPENCODE_TEST_HOME = dir
+          const home = process.env.CLICKZETTA_TEST_HOME
+          process.env.CLICKZETTA_TEST_HOME = dir
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              process.env.OPENCODE_TEST_HOME = home
+              process.env.CLICKZETTA_TEST_HOME = home
             }),
           )
 

@@ -12,7 +12,7 @@ import matter from "gray-matter"
 import { Instance } from "../../project/instance"
 import { EOL } from "os"
 import type { Argv } from "yargs"
-import { AgentConfigCommand } from "./config-llm"
+import { AgentLlmCommand } from "./config-llm"
 
 type AgentMode = "all" | "primary" | "subagent"
 
@@ -89,7 +89,7 @@ const AgentCreateCommand = cmd({
             scope = scopeResult
           }
           targetPath = path.join(
-            scope === "global" ? Global.Path.config : path.join(Instance.worktree, ".opencode"),
+            scope === "global" ? Global.Path.config : path.join(Instance.worktree, ".clickzetta"),
             "agent",
           )
         }
@@ -244,6 +244,6 @@ const AgentListCommand = cmd({
 export const AgentCommand = cmd({
   command: "agent",
   describe: "manage agents",
-  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).command(AgentConfigCommand).demandCommand(),
+  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).command(AgentLlmCommand).demandCommand(),
   async handler() {},
 })

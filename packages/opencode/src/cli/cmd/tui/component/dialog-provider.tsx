@@ -16,12 +16,13 @@ import { useToast } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
-  opencode: 0,
-  "opencode-go": 1,
-  openai: 2,
-  "github-copilot": 3,
-  anthropic: 4,
-  google: 5,
+  clickzetta: 0,
+  opencode: 1,
+  "opencode-go": 2,
+  openai: 3,
+  "github-copilot": 4,
+  anthropic: 5,
+  google: 6,
 }
 
 export function createDialogProviderOptions() {
@@ -42,6 +43,7 @@ export function createDialogProviderOptions() {
           title: provider.name,
           value: provider.id,
           description: {
+            clickzetta: "(API key from cz-cli setup)",
             anthropic: "(API key)",
             openai: "(ChatGPT Plus/Pro or API key)",
           }[provider.id],

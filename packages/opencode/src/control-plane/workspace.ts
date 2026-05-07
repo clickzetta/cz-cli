@@ -491,7 +491,7 @@ async function syncWorkspace(space: Info, signal: AbortSignal) {
 }
 
 async function startSync(space: Info) {
-  if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) return
+  if (!Flag.CLICKZETTA_EXPERIMENTAL_WORKSPACES) return
 
   const adaptor = await getAdaptor(space.projectID, space.type)
   const target = await adaptor.target(space)

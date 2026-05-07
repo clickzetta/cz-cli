@@ -4,7 +4,6 @@ import { RunCommand } from "./cli/cmd/run"
 import { GenerateCommand } from "./cli/cmd/generate"
 import { Log } from "./util"
 import { ConsoleCommand } from "./cli/cmd/account"
-import { ProvidersCommand } from "./cli/cmd/providers"
 import { AgentCommand } from "./cli/cmd/agent"
 import { UpgradeCommand } from "./cli/cmd/upgrade"
 import { UninstallCommand } from "./cli/cmd/uninstall"
@@ -28,6 +27,7 @@ import { AcpCommand } from "./cli/cmd/acp"
 import { EOL } from "os"
 import os from "os"
 import fs from "fs"
+import { hasUsableLlm } from "./config/profiles-llm"
 import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
@@ -76,24 +76,14 @@ if (!isAgentSubcommand) {
   forward(rawArgs)
 }
 
-// Require profiles.toml with api_key before entering agent commands
+// Require profiles.toml with a usable LLM before entering agent commands.
+// "Usable" = ClickZetta api_key on the default profile OR a valid [llm.*] entry.
 {
   const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
   let hasApiKey = false
   try {
     const content = fs.readFileSync(profilesPath, "utf-8")
-    const defaultMatch = content.match(/^default_profile\s*=\s*"(.+)"/m)
-    const profileName = defaultMatch ? defaultMatch[1] : "default"
-    const sectionHeader = `[profiles.${profileName}]`
-    const sectionStart = content.indexOf(sectionHeader)
-    if (sectionStart >= 0) {
-      const nextSection = content.indexOf("\n[", sectionStart + sectionHeader.length)
-      const section = nextSection >= 0 ? content.slice(sectionStart, nextSection) : content.slice(sectionStart)
-      hasApiKey = /^api_key\s*=\s*".+"/m.test(section)
-    }
-    if (!hasApiKey) {
-      hasApiKey = /^api_key\s*=\s*".+"/m.test(content)
-    }
+    hasApiKey = hasUsableLlm(content).hasValidConfig
   } catch {}
   if (!hasApiKey) {
     const isTTY = process.stderr.isTTY
@@ -146,10 +136,10 @@ const cli = yargs(args)
   .alias("version", "v")
   .epilogue(
     "LLM configuration:\n" +
-    "  Default: uses ClickZetta AI (configured by `cz-cli setup --credential <base64>`).\n" +
-    "  Custom:  `cz-cli agent config --llm-provider anthropic --llm-model claude-sonnet-4-6 --llm-api-key sk-ant-...`\n" +
-    "           supports anthropic, openai, bedrock, google, azure, openai-compatible (incl. third-party relays via --llm-base-url).\n" +
-    "  Inspect: `cz-cli agent config --show`"
+    "  Default: ClickZetta built-in LLM (configured by `cz-cli setup --credential <base64>`).\n" +
+    "  Add your own: `cz-cli agent llm add my-claude --provider anthropic --model claude-sonnet-4-6 --api-key sk-ant-... --use`\n" +
+    "           supports anthropic, openai, bedrock, google, azure, openai-compatible (third-party relays via --base-url).\n" +
+    "  Inspect: `cz-cli agent llm show`"
   )
   .option("print-logs", {
     describe: "print logs to stderr",
@@ -166,7 +156,7 @@ const cli = yargs(args)
   })
   .middleware(async (opts) => {
     if (opts.pure) {
-      process.env.OPENCODE_PURE = "1"
+      process.env.CLICKZETTA_PURE = "1"
     }
 
     await Log.init({
@@ -182,8 +172,8 @@ const cli = yargs(args)
     Heap.start()
 
     process.env.AGENT = "1"
-    process.env.OPENCODE = "1"
-    process.env.OPENCODE_PID = String(process.pid)
+    process.env.CLICKZETTA = "1"
+    process.env.CLICKZETTA_PID = String(process.pid)
 
     Log.Default.info("opencode", {
       version: InstallationVersion,
@@ -243,7 +233,6 @@ const cli = yargs(args)
   .command(GenerateCommand)
   .command(DebugCommand)
   .command(ConsoleCommand)
-  .command(ProvidersCommand)
   .command(AgentCommand)
   .command(UpgradeCommand)
   .command(UninstallCommand)

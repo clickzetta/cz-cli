@@ -53,7 +53,7 @@ test("build agent has correct default properties", async () => {
   })
 })
 
-test("plan agent denies edits except .opencode/plans/*", async () => {
+test("plan agent denies edits except .clickzetta/plans/*", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -63,7 +63,7 @@ test("plan agent denies edits except .opencode/plans/*", async () => {
       // Wildcard is denied
       expect(evalPerm(plan, "edit")).toBe("deny")
       // But specific path is allowed
-      expect(Permission.evaluate("edit", ".opencode/plans/foo.md", plan!.permission).action).toBe("allow")
+      expect(Permission.evaluate("edit", ".clickzetta/plans/foo.md", plan!.permission).action).toBe("allow")
     },
   })
 })
@@ -565,7 +565,7 @@ test("skill directories are allowed for external_directory", async () => {
   await using tmp = await tmpdir({
     git: true,
     init: async (dir) => {
-      const skillDir = path.join(dir, ".opencode", "skill", "perm-skill")
+      const skillDir = path.join(dir, ".clickzetta", "skill", "perm-skill")
       await Bun.write(
         path.join(skillDir, "SKILL.md"),
         `---
@@ -579,21 +579,21 @@ description: Permission skill.
     },
   })
 
-  const home = process.env.OPENCODE_TEST_HOME
-  process.env.OPENCODE_TEST_HOME = tmp.path
+  const home = process.env.CLICKZETTA_TEST_HOME
+  process.env.CLICKZETTA_TEST_HOME = tmp.path
 
   try {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const build = await load(tmp.path, (svc) => svc.get("build"))
-        const skillDir = path.join(tmp.path, ".opencode", "skill", "perm-skill")
+        const skillDir = path.join(tmp.path, ".clickzetta", "skill", "perm-skill")
         const target = path.join(skillDir, "reference", "notes.md")
         expect(Permission.evaluate("external_directory", target, build!.permission).action).toBe("allow")
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = home
+    process.env.CLICKZETTA_TEST_HOME = home
   }
 })
 

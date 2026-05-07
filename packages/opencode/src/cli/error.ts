@@ -16,9 +16,9 @@ function isTaggedError(error: unknown, tag: string): boolean {
 
 const LLM_CONFIG_HINT = [
   "",
-  "To check or customize your LLM provider:",
-  "  cz-cli agent config --show",
-  "  cz-cli agent config --llm-provider <provider> --llm-model <model> --llm-api-key <key>",
+  "To inspect or change which LLM the agent uses:",
+  "  cz-cli agent llm show",
+  "  cz-cli agent llm add <name> --provider <provider> --model <model> --api-key <key> --use",
 ].join("\n")
 
 export function FormatError(input: unknown) {

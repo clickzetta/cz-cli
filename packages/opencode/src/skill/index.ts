@@ -150,7 +150,7 @@ const discoverSkills = Effect.fnUntraced(function* (
 ) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
 
-  if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
+  if (!Flag.CLICKZETTA_DISABLE_EXTERNAL_SKILLS) {
     for (const dir of EXTERNAL_DIRS) {
       const root = path.join(Global.Path.home, dir)
       if (!(yield* fsys.isDir(root))) continue

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "version": "1.4.7",
-  "name": "opencode",
+  "name": "czcli",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -163,6 +163,7 @@
     "remeda": "catalog:",
     "ripgrep": "0.3.1",
     "semver": "^7.6.3",
+    "smol-toml": "1.6.1",
 
     "solid-js": "catalog:",
     "strip-ansi": "7.1.2",

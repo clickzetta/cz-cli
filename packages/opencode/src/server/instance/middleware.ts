@@ -67,10 +67,10 @@ export function WorkspaceRouterMiddleware(upgrade: UpgradeWebSocket): Middleware
     const sessionWorkspaceID = await getSessionWorkspace(url)
     const workspaceID = sessionWorkspaceID || url.searchParams.get("workspace")
 
-    if (!workspaceID || url.pathname.startsWith("/console") || Flag.OPENCODE_WORKSPACE_ID) {
-      if (Flag.OPENCODE_WORKSPACE_ID) {
+    if (!workspaceID || url.pathname.startsWith("/console") || Flag.CLICKZETTA_WORKSPACE_ID) {
+      if (Flag.CLICKZETTA_WORKSPACE_ID) {
         return WorkspaceContext.provide({
-          workspaceID: WorkspaceID.make(Flag.OPENCODE_WORKSPACE_ID),
+          workspaceID: WorkspaceID.make(Flag.CLICKZETTA_WORKSPACE_ID),
           async fn() {
             return Instance.provide({
               directory,

@@ -17,10 +17,10 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
-  it.live("loads tools from .opencode/tool (singular)", () =>
+  it.live("loads tools from .clickzetta/tool (singular)", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
-        const opencode = path.join(dir, ".opencode")
+        const opencode = path.join(dir, ".clickzetta")
         const tool = path.join(opencode, "tool")
         yield* Effect.promise(() => fs.mkdir(tool, { recursive: true }))
         yield* Effect.promise(() =>
@@ -45,10 +45,10 @@ describe("tool.registry", () => {
     ),
   )
 
-  it.live("loads tools from .opencode/tools (plural)", () =>
+  it.live("loads tools from .clickzetta/tools (plural)", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
-        const opencode = path.join(dir, ".opencode")
+        const opencode = path.join(dir, ".clickzetta")
         const tools = path.join(opencode, "tools")
         yield* Effect.promise(() => fs.mkdir(tools, { recursive: true }))
         yield* Effect.promise(() =>
@@ -76,7 +76,7 @@ describe("tool.registry", () => {
   it.live("loads tools with external dependencies without crashing", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
-        const opencode = path.join(dir, ".opencode")
+        const opencode = path.join(dir, ".clickzetta")
         const tools = path.join(opencode, "tools")
         yield* Effect.promise(() => fs.mkdir(tools, { recursive: true }))
         yield* Effect.promise(() =>

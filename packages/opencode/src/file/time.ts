@@ -40,7 +40,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const fsys = yield* AppFileSystem.Service
-    const disableCheck = yield* Flag.OPENCODE_DISABLE_FILETIME_CHECK
+    const disableCheck = yield* Flag.CLICKZETTA_DISABLE_FILETIME_CHECK
 
     const stamp = Effect.fnUntraced(function* (file: string) {
       const info = yield* fsys.stat(file).pipe(Effect.catch(() => Effect.void))

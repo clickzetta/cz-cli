@@ -184,11 +184,11 @@ main() {
     fi
     echo "Version: $version"
 
-    # Archive naming matches build.ts output: opencode-{os}-{arch}.{zip|tar.gz}
+    # Archive naming matches build.ts output: czcli-{os}-{arch}.{zip|tar.gz}
     local archive_name ext
     case "$platform" in
-        linux-*) ext="tar.gz"; archive_name="opencode-${platform}.tar.gz" ;;
-        *)       ext="zip";    archive_name="opencode-${platform}.zip" ;;
+        linux-*) ext="tar.gz"; archive_name="czcli-${platform}.tar.gz" ;;
+        *)       ext="zip";    archive_name="czcli-${platform}.zip" ;;
     esac
 
     local archive_url

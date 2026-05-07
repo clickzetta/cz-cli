@@ -69,6 +69,7 @@ export function DialogModel(props: { providerID?: string }) {
     const providerOptions = pipe(
       sync.data.provider,
       sortBy(
+        (provider) => provider.id !== "clickzetta",
         (provider) => provider.id !== "opencode",
         (provider) => provider.name,
       ),

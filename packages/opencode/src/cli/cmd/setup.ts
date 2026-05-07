@@ -1,10 +1,13 @@
-import { readFileSync, writeFileSync, mkdirSync } from "fs"
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import os from "os"
 import path from "path"
 import readline from "readline"
+import { xdgData } from "xdg-basedir"
 
 const CLICKZETTA_DIR = path.join(os.homedir(), ".clickzetta")
 const PROFILES_PATH = path.join(CLICKZETTA_DIR, "profiles.toml")
+// auth.json lives in the XDG data dir, same as Global.Path.data
+const AUTH_PATH = path.join(xdgData ?? path.join(os.homedir(), ".local", "share"), "clickzetta", "auth.json")
 
 interface Credential {
   instanceName?: string
@@ -43,6 +46,18 @@ function writeProfile(cred: Credential, profileName: string): void {
   lines.push("")
 
   writeFileSync(PROFILES_PATH, lines.join("\n"))
+}
+
+function writeAuth(apiKey: string): void {
+  mkdirSync(path.dirname(AUTH_PATH), { recursive: true })
+  let existing: Record<string, unknown> = {}
+  if (existsSync(AUTH_PATH)) {
+    try {
+      existing = JSON.parse(readFileSync(AUTH_PATH, "utf-8"))
+    } catch {}
+  }
+  existing["clickzetta"] = { type: "api", key: apiKey }
+  writeFileSync(AUTH_PATH, JSON.stringify(existing, null, 2), { mode: 0o600 })
 }
 
 function prompt(question: string): Promise<string> {
@@ -108,6 +123,7 @@ export async function setup(args: readonly string[]): Promise<never> {
   }
 
   writeProfile(cred, profileName)
+  if (cred.apiKey) writeAuth(cred.apiKey)
 
   if (process.stdin.isTTY) {
     process.stderr.write(`\n  ✓ Profile '${profileName}' created\n`)

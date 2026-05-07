@@ -253,7 +253,7 @@ export const Event = {
 
 export function plan(input: { slug: string; time: { created: number } }) {
   const base = Instance.project.vcs
-    ? path.join(Instance.worktree, ".opencode", "plans")
+    ? path.join(Instance.worktree, ".clickzetta", "plans")
     : path.join(Global.Path.data, "plans")
   return path.join(base, [input.time.created, input.slug].join("-") + ".md")
 }
@@ -417,7 +417,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
 
       yield* Effect.sync(() => SyncEvent.run(Event.Created, { sessionID: result.id, info: result }))
 
-      if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
+      if (!Flag.CLICKZETTA_EXPERIMENTAL_WORKSPACES) {
         // This only exist for backwards compatibility. We should not be
         // manually publishing this event; it is a sync event now
         yield* bus.publish(Event.Updated, {
@@ -712,7 +712,7 @@ export function* list(input?: {
   if (input?.workspaceID) {
     conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
   }
-  if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) {
+  if (!Flag.CLICKZETTA_EXPERIMENTAL_WORKSPACES) {
     if (input?.directory) {
       conditions.push(eq(SessionTable.directory, input.directory))
     }

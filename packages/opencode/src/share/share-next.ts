@@ -15,7 +15,7 @@ import { Log } from "@/util"
 import { SessionShareTable } from "./share.sql"
 
 const log = Log.create({ service: "share-next" })
-const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
+const disabled = process.env["CLICKZETTA_DISABLE_SHARE"] === "true" || process.env["CLICKZETTA_DISABLE_SHARE"] === "1"
 
 export type Api = {
   create: string

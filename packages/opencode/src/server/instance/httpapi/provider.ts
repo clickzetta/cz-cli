@@ -2,6 +2,7 @@ import { ProviderAuth } from "@/provider"
 import { Config } from "@/config"
 import { ModelsDev } from "@/provider"
 import { Provider } from "@/provider"
+import { CLICKZETTA_PROVIDER_ENTRY } from "@/provider/provider"
 import { ProviderID } from "@/provider/schema"
 import { mapValues } from "remeda"
 import { Effect, Layer, Schema } from "effect"
@@ -86,9 +87,15 @@ export const providerHandlers = Layer.unwrap(
           filtered[key] = value
         }
       }
+
+      // Inject ClickZetta into the provider list so /connect can show it.
+      if (!disabled.has("clickzetta") && (enabled ? enabled.has("clickzetta") : true)) {
+        ;(filtered as Record<string, unknown>)["clickzetta"] = CLICKZETTA_PROVIDER_ENTRY
+      }
+
       const connected = yield* provider.list()
       const providers = Object.assign(
-        mapValues(filtered, (item) => Provider.fromModelsDevProvider(item)),
+        mapValues(filtered, (item) => Provider.fromModelsDevProvider(item as any)),
         connected,
       )
       return {

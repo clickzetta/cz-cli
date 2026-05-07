@@ -6,8 +6,8 @@ import { pathToFileURL } from "url"
 import { tmpdir } from "../fixture/fixture"
 import { Filesystem } from "../../src/util"
 
-const disableDefault = process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS
-process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS = "1"
+const disableDefault = process.env.CLICKZETTA_DISABLE_DEFAULT_PLUGINS
+process.env.CLICKZETTA_DISABLE_DEFAULT_PLUGINS = "1"
 
 const { Plugin } = await import("../../src/plugin/index")
 const { PluginLoader } = await import("../../src/plugin/loader")
@@ -17,10 +17,10 @@ const { Npm } = await import("../../src/npm")
 
 afterAll(() => {
   if (disableDefault === undefined) {
-    delete process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS
+    delete process.env.CLICKZETTA_DISABLE_DEFAULT_PLUGINS
     return
   }
-  process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS = disableDefault
+  process.env.CLICKZETTA_DISABLE_DEFAULT_PLUGINS = disableDefault
 })
 
 afterEach(async () => {
@@ -850,8 +850,8 @@ export default {
       },
     })
 
-    const pure = process.env.OPENCODE_PURE
-    process.env.OPENCODE_PURE = "1"
+    const pure = process.env.CLICKZETTA_PURE
+    process.env.CLICKZETTA_PURE = "1"
 
     try {
       await load(tmp.path)
@@ -862,9 +862,9 @@ export default {
       expect(called).toBe(false)
     } finally {
       if (pure === undefined) {
-        delete process.env.OPENCODE_PURE
+        delete process.env.CLICKZETTA_PURE
       } else {
-        process.env.OPENCODE_PURE = pure
+        process.env.CLICKZETTA_PURE = pure
       }
     }
   })

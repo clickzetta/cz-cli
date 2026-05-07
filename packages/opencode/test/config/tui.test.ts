@@ -28,8 +28,8 @@ const getTuiConfig = async (directory: string) =>
   )
 
 afterEach(async () => {
-  delete process.env.OPENCODE_CONFIG
-  delete process.env.OPENCODE_TUI_CONFIG
+  delete process.env.CLICKZETTA_CONFIG
+  delete process.env.CLICKZETTA_TUI_CONFIG
   await fs.rm(path.join(Global.Path.config, "opencode.json"), { force: true }).catch(() => {})
   await fs.rm(path.join(Global.Path.config, "opencode.jsonc"), { force: true }).catch(() => {})
   await fs.rm(path.join(Global.Path.config, "tui.json"), { force: true }).catch(() => {})
@@ -40,7 +40,7 @@ afterEach(async () => {
 test("keeps server and tui plugin merge semantics aligned", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
-      const local = path.join(dir, ".opencode")
+      const local = path.join(dir, ".clickzetta")
       await fs.mkdir(local, { recursive: true })
 
       await Bun.write(
@@ -113,9 +113,9 @@ test("loads tui config with the same precedence order as server config paths", a
     init: async (dir) => {
       await Bun.write(path.join(Global.Path.config, "tui.json"), JSON.stringify({ theme: "global" }, null, 2))
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ theme: "project" }, null, 2))
-      await fs.mkdir(path.join(dir, ".opencode"), { recursive: true })
+      await fs.mkdir(path.join(dir, ".clickzetta"), { recursive: true })
       await Bun.write(
-        path.join(dir, ".opencode", "tui.json"),
+        path.join(dir, ".clickzetta", "tui.json"),
         JSON.stringify({ theme: "local", diff_style: "stacked" }, null, 2),
       )
     },
@@ -363,7 +363,7 @@ test("project config takes precedence over OPENCODE_TUI_CONFIG (matches OPENCODE
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ theme: "project", diff_style: "auto" }))
       const custom = path.join(dir, "custom-tui.json")
       await Bun.write(custom, JSON.stringify({ theme: "custom", diff_style: "stacked" }))
-      process.env.OPENCODE_TUI_CONFIG = custom
+      process.env.CLICKZETTA_TUI_CONFIG = custom
     },
   })
 
@@ -421,7 +421,7 @@ test("OPENCODE_TUI_CONFIG provides settings when no project config exists", asyn
     init: async (dir) => {
       const custom = path.join(dir, "custom-tui.json")
       await Bun.write(custom, JSON.stringify({ theme: "from-env", diff_style: "stacked" }))
-      process.env.OPENCODE_TUI_CONFIG = custom
+      process.env.CLICKZETTA_TUI_CONFIG = custom
     },
   })
   const config = await getTuiConfig(tmp.path)
@@ -436,7 +436,7 @@ test("does not derive tui path from OPENCODE_CONFIG", async () => {
       await fs.mkdir(customDir, { recursive: true })
       await Bun.write(path.join(customDir, "opencode.json"), JSON.stringify({ model: "test/model" }))
       await Bun.write(path.join(customDir, "tui.json"), JSON.stringify({ theme: "should-not-load" }))
-      process.env.OPENCODE_CONFIG = path.join(customDir, "opencode.json")
+      process.env.CLICKZETTA_CONFIG = path.join(customDir, "opencode.json")
     },
   })
   const config = await getTuiConfig(tmp.path)
@@ -485,11 +485,11 @@ test("applies file substitutions when first identical token is in a commented li
   expect(config.theme).toBe("resolved-theme")
 })
 
-test("loads .opencode/tui.json", async () => {
+test("loads .clickzetta/tui.json", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
-      await fs.mkdir(path.join(dir, ".opencode"), { recursive: true })
-      await Bun.write(path.join(dir, ".opencode", "tui.json"), JSON.stringify({ diff_style: "stacked" }, null, 2))
+      await fs.mkdir(path.join(dir, ".clickzetta"), { recursive: true })
+      await Bun.write(path.join(dir, ".clickzetta", "tui.json"), JSON.stringify({ diff_style: "stacked" }, null, 2))
     },
   })
   const config = await getTuiConfig(tmp.path)
