@@ -55,3 +55,54 @@ function formatJobIdCore(): string {
 export function newJobId(workspace: string, instanceId: number): JobID {
   return { id: formatJobIdCore(), workspace, instanceId }
 }
+
+// ---------------------------------------------------------------------------
+// DB-API 2.0 type objects (types.py:34-48)
+// ---------------------------------------------------------------------------
+
+/**
+ * types.py:34-39 _DBAPITypeObject — a type tag that compares equal to any
+ * of its member type-category strings. Mirrors Python's __eq__ override.
+ */
+export class DBAPITypeObject {
+  readonly values: ReadonlySet<string>
+  constructor(...values: string[]) {
+    this.values = new Set(values)
+  }
+  /** Returns true when typeCategory is one of this object's values. */
+  equals(typeCategory: string): boolean {
+    return this.values.has(typeCategory.toUpperCase())
+  }
+}
+
+/** types.py:42 STRING */
+export const STRING = new DBAPITypeObject("STRING", "CHAR", "VARCHAR")
+/** types.py:43 BINARY */
+export const BINARY = new DBAPITypeObject("BINARY", "ARRAY", "STRUCT", "MAP", "VECTOR", "JSON")
+/** types.py:44-46 NUMBER */
+export const NUMBER = new DBAPITypeObject("INT8", "INT32", "INT64", "FLOAT32", "FLOAT64", "DECIMAL", "BOOL")
+/** types.py:47 DATETIME */
+export const DATETIME = new DBAPITypeObject("TIMESTAMP", "DATE")
+/** types.py:48 ROWID */
+export const ROWID = "ROWID"
+
+/**
+ * types.py:13-24 Binary — construct a DB-API binary value from various inputs.
+ * In TS we return a Uint8Array.
+ */
+export function Binary(data: string | ArrayBufferLike | Iterable<number>): Uint8Array {
+  if (typeof data === "string") return new TextEncoder().encode(data)
+  if (data instanceof Uint8Array) return data
+  if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) return new Uint8Array(data)
+  return new Uint8Array(data as Iterable<number>)
+}
+
+/**
+ * types.py:6-10 Date/Time/Timestamp constructors (DB-API 2.0 spec).
+ */
+export function DateFromTicks(ticks: number): Date { return new Date(ticks * 1000) }
+export function TimestampFromTicks(ticks: number): Date { return new Date(ticks * 1000) }
+export function TimeFromTicks(ticks: number): string {
+  const d = new Date(ticks * 1000)
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`
+}
