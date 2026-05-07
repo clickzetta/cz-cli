@@ -6,6 +6,7 @@ export * from "./auth/login.js"
 export * from "./auth/token.js"
 export * from "./auth/user.js"
 export * from "./config/region.js"
+export * from "./config/parseUrl.js"
 export * from "./sql/types.js"
 export * from "./sql/errors.js"
 export * from "./sql/submit.js"
@@ -27,3 +28,9 @@ export * from "./studio/folder.js"
 export * from "./studio/schedule.js"
 export * from "./workspace/workspace.js"
 export * from "./agent/chat.js"
+
+// dbapi.py:28-29 — DB-API 2.0 module-level constants
+/** DB-API 2.0 threadsafety level (dbapi.py:28). */
+export const threadsafety = 2
+/** DB-API 2.0 parameter style (dbapi.py:29). */
+export const paramstyle = "qmark"
