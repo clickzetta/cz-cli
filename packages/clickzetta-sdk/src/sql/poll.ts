@@ -5,7 +5,7 @@ import {
   isRetryableErrorCode,
   isRetryableMessage,
 } from "./errors.js"
-import { toClickZettaError } from "../types/errors.js"
+import { toClickZettaError, OperationalError } from "../types/errors.js"
 import { decodeArrowPayload, fetchArrowFromUrls } from "./arrow.js"
 
 const TERMINAL_STATES = new Set(["SUCCEED", "FAILED", "CANCELLED"])
@@ -484,7 +484,12 @@ export async function pollJobResult(
 
   while (true) {
     if (jobTimeoutMs !== undefined && Date.now() - startTime > jobTimeoutMs) {
-      throw new Error(`Job ${jobId.id} timed out after ${jobTimeoutMs}ms`)
+      // client.py:1101-1108 _check_job_timeout_with_cancel — cancel before throwing.
+      try {
+        const { cancelJob } = await import("./cancel.js")
+        await cancelJob(opts, jobId)
+      } catch { /* best-effort cancel; ignore errors */ }
+      throw new OperationalError(`Job ${jobId.id} timed out after ${jobTimeoutMs}ms`, { jobId: jobId.id })
     }
 
     const raw = await requestRaw<LhJobResponse>(opts, "/lh/getJob", requestBody)
