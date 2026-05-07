@@ -568,3 +568,21 @@ export class SqlSession {
     }
   }
 }
+
+/**
+ * connection.py:256-261 connect() — top-level factory that mirrors the
+ * Python `clickzetta.connect(**kwargs)` entry point.
+ *
+ * Creates a SqlSession from a ConnectionConfig (or a clickzetta:// URL
+ * string) and returns it ready for use.
+ */
+export function connect(
+  configOrUrl: ConnectionConfig | string,
+  options?: SqlSessionOptions,
+): SqlSession {
+  if (typeof configOrUrl === "string") {
+    const { connectionConfigFromUrl } = require("../config/parseUrl.js") as typeof import("../config/parseUrl.js")
+    return new SqlSession(connectionConfigFromUrl(configOrUrl), options)
+  }
+  return new SqlSession(configOrUrl, options)
+}
