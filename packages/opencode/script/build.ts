@@ -156,7 +156,7 @@ const binaries: Record<string, string> = {}
 for (let i = 0; i < targets.length; i++) {
   const item = targets[i]
   const name = [
-    pkg.name,
+    "czcli",  // product name for dist artifacts (package.json name stays "opencode" for workspace compat)
     // changing to win32 flags npm for some reason
     item.os === "win32" ? "windows" : item.os,
     item.arch,
@@ -192,7 +192,7 @@ for (let i = 0; i < targets.length; i++) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(pkg.name, "bun") as any,
+      target: name.replace("czcli", "bun") as any,
       outfile: `dist/${name}/bin/cz-cli`,
       execArgv: [`--user-agent=cz-cli/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
@@ -317,7 +317,7 @@ function findTarget(key: string) {
     (t) =>
       key ===
       [
-        pkg.name,
+        "czcli",
         t.os === "win32" ? "windows" : t.os,
         t.arch,
         t.avx2 === false ? "baseline" : undefined,
