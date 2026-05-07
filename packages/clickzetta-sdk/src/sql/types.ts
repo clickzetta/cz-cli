@@ -106,3 +106,48 @@ export function TimeFromTicks(ticks: number): string {
   const d = new Date(ticks * 1000)
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`
 }
+
+// ---------------------------------------------------------------------------
+// Additional enums from enums.py
+// ---------------------------------------------------------------------------
+
+/** enums.py:92-96 JobRequestMode */
+export const JobRequestMode = {
+  UNKNOWN: "UNKNOWN",
+  HYBRID: "HYBRID",
+  ASYNC: "ASYNC",
+  SYNC: "SYNC",
+} as const
+
+/** enums.py:76-79 JobType */
+export const JobType = {
+  SQL_JOB: "SQL_JOB",
+  COMPACTION_JOB: "COMPACTION_JOB",
+} as const
+
+/** enums.py:56-59 QueryPriority */
+export const QueryPriority = {
+  INTERACTIVE: "INTERACTIVE",
+  BATCH: "BATCH",
+} as const
+
+/** enums.py:62-74 QueryApiMethod */
+export const QueryApiMethod = {
+  SELECT: "SELECT",
+  SHOW: "SHOW",
+  DROP: "DROP",
+  ALTER: "ALTER",
+  CREATE: "CREATE",
+  TRUNCATE: "TRUNCATE",
+} as const
+
+/** enums.py:20-27 Compression */
+export const Compression = {
+  GZIP: "GZIP",
+  DEFLATE: "DEFLATE",
+  SNAPPY: "SNAPPY",
+  NONE: "NONE",
+} as const
+
+/** enums.py:6 DEFAULT_NS */
+export const DEFAULT_NS = ["default", "lh"] as const
