@@ -139,6 +139,8 @@ export class LakehouseDB {
       this.lakehouseClient = new LakehouseClient(this.connectionConfig)
       this.lakehouseClient.connect()
       this.authTime = Date.now() / 1000
+      // server_core.py:157 — fetch managed workspaces (optional, failure is non-fatal)
+      await this._fetchManagedWorkspaces()
     }
 
     try {
@@ -215,6 +217,26 @@ export class LakehouseDB {
         this.lakehouseClient = null
         this.authTime = 0
       }
+    }
+  }
+
+  /**
+   * server_core.py:184-201 — fetch managed workspaces via SHOW CATALOGS.
+   * Optional: failure is non-fatal, falls back to empty list.
+   */
+  private async _fetchManagedWorkspaces(): Promise<void> {
+    try {
+      const rows = await this.lakehouseClient!.runSql(
+        "SHOW CATALOGS WHERE category='MANAGED'",
+      )
+      this.managedWorkspace = rows
+        .filter((r) => "workspace_name" in r)
+        .map((r) => String(r["workspace_name"] ?? ""))
+        .filter(Boolean)
+      logger.debug({ count: this.managedWorkspace.length }, "获取到管理的workspace")
+    } catch (e) {
+      logger.warn({ err: e }, "获取管理workspace失败，使用空列表")
+      this.managedWorkspace = []
     }
   }
 }
