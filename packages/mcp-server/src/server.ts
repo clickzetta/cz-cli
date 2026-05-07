@@ -25,37 +25,135 @@ import { LakehouseClient } from "./lakehouse-client.js"
 export type { StudioConfig } from "./config/profile.js"
 
 // ---------------------------------------------------------------------------
-// Error types
+// Error types — exceptions.py:11-165
 // ---------------------------------------------------------------------------
-export class NotSupportedError extends Error {
+
+/** exceptions.py:11-47 MCPBaseException */
+export class MCPBaseException extends Error {
+  readonly errorCode: string
+  readonly details: Record<string, unknown>
+  readonly timestamp: string
+  readonly cause?: unknown
+
+  constructor(
+    message: string,
+    init: { errorCode?: string; details?: Record<string, unknown>; cause?: unknown } = {},
+  ) {
+    super(message)
+    this.name = "MCPBaseException"
+    this.errorCode = init.errorCode ?? this.constructor.name
+    this.details = init.details ?? {}
+    this.timestamp = new Date().toISOString()
+    this.cause = init.cause
+  }
+
+  toDict(): Record<string, unknown> {
+    return {
+      success: false,
+      error_code: this.errorCode,
+      message: this.message,
+      details: this.details,
+      timestamp: this.timestamp,
+      cause: this.cause != null ? String(this.cause) : null,
+    }
+  }
+}
+
+export class NotSupportedError extends MCPBaseException {
   constructor(message: string) {
     super(message)
     this.name = "NotSupportedError"
   }
 }
 
-export class ConnectionException extends Error {
+/** exceptions.py:50-58 ConnectionException */
+export class ConnectionException extends MCPBaseException {
   readonly connectionInfo?: Record<string, unknown>
   constructor(
     message: string,
     connectionInfo?: Record<string, unknown>,
   ) {
-    super(message)
+    super(message, { details: connectionInfo ? { connection_info: connectionInfo } : {} })
     this.name = "ConnectionException"
     this.connectionInfo = connectionInfo
   }
 }
 
-export class QueryExecutionException extends Error {
+/** exceptions.py:61-69 ToolExecutionException */
+export class ToolExecutionException extends MCPBaseException {
+  readonly toolName?: string
+  constructor(message: string, toolName?: string) {
+    super(message, { details: toolName ? { tool_name: toolName } : {} })
+    this.name = "ToolExecutionException"
+    this.toolName = toolName
+  }
+}
+
+/** exceptions.py:72-80 ValidationException */
+export class ValidationException extends MCPBaseException {
+  readonly validationErrors?: Record<string, unknown>
+  constructor(message: string, validationErrors?: Record<string, unknown>) {
+    super(message, { details: validationErrors ? { validation_errors: validationErrors } : {} })
+    this.name = "ValidationException"
+    this.validationErrors = validationErrors
+  }
+}
+
+/** exceptions.py:83-91 PermissionException */
+export class PermissionException extends MCPBaseException {
+  readonly requiredPermission?: string
+  constructor(message: string, requiredPermission?: string) {
+    super(message, { details: requiredPermission ? { required_permission: requiredPermission } : {} })
+    this.name = "PermissionException"
+    this.requiredPermission = requiredPermission
+  }
+}
+
+/** exceptions.py:105-113 TransportException */
+export class TransportException extends MCPBaseException {
+  readonly transportType?: string
+  constructor(message: string, transportType?: string) {
+    super(message, { details: transportType ? { transport_type: transportType } : {} })
+    this.name = "TransportException"
+    this.transportType = transportType
+  }
+}
+
+/** exceptions.py:116-126 QueryExecutionException */
+export class QueryExecutionException extends MCPBaseException {
   readonly query?: string
-  constructor(
-    message: string,
-    query?: string,
-  ) {
-    super(message)
+  constructor(message: string, query?: string) {
+    const details: Record<string, unknown> = {}
+    if (query) {
+      details["query"] = query.length > 500 ? query.slice(0, 500) + "..." : query
+      details["query_length"] = query.length
+    }
+    super(message, { details })
     this.name = "QueryExecutionException"
     this.query = query
   }
+}
+
+/**
+ * exceptions.py:141-165 map_exception — map a generic Error to the
+ * appropriate MCPBaseException subclass.
+ */
+export function mapException(err: unknown, context?: string): MCPBaseException {
+  const details: Record<string, unknown> = {}
+  if (context) details["context"] = context
+  const typeName = err instanceof Error ? err.constructor.name : typeof err
+  details["original_exception_type"] = typeName
+  const message = err instanceof Error ? err.message : String(err)
+
+  if (err instanceof TypeError || err instanceof RangeError) {
+    return new ValidationException(message, details)
+  }
+  if (err instanceof MCPBaseException) return err
+  return new MCPBaseException(message, {
+    errorCode: `MAPPED_${typeName.toUpperCase()}`,
+    details,
+    cause: err,
+  })
 }
 
 // ---------------------------------------------------------------------------
