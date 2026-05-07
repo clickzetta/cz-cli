@@ -50,7 +50,7 @@ function buildHeaders(opts: ClientOptions): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/plain, */*",
-    "User-Agent": `cz-cli/${SDK_VERSION}`,
+    "User-Agent": `tssdk/${SDK_VERSION}`,
     // client.py:293 — trace id header, required by the gateway for correlation
     "requestId": generateRequestId(),
     ...opts.customHeaders,
