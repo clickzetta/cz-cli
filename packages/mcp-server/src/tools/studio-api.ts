@@ -58,6 +58,27 @@ const API_PATHS: Record<string, string> = {
   DATA_SOURCES_LIST_NAMESPACES: "/ide-authority/v1/projectDataSources/listNamespaces",
   DATA_SOURCES_LIST_DATA_OBJECTS: "/ide-authority/v1/projectDataSources/listDataObjects",
   DATA_SOURCES_GET_META_DETAIL: "/ide-authority/v1/projectDataSources/getMetaDetail",
+  // vCluster — vc_server.py
+  VC_LIST: "/clickzetta-lakeconsole/api/v1/vcluster/list",
+  VC_CREATE: "/clickzetta-lakeconsole/api/v1/vcluster/create",
+  // Workspace — ide_admin_server.py
+  LIST_WORK_SPACES_BY_USER: "/ide-authority/v1/workspace/listUserWorkspacesByCondition",
+  // DQC — ide_admin_server.py
+  DQC_ADD: "/clickzetta-dqc/api/v1/rule/add",
+  // CDC — ide_admin_server.py
+  MCP_SAVE_CDC_TASK: "/ide-admin/v1/ai/mcp/saveCdcTask",
+  // Flow — flow_task_server.py
+  FLOW_GET_DAG: "/ide-admin/v1/flow/getDag",
+  FLOW_NODE_CREATE: "/ide-admin/v1/flow/node/create",
+  FLOW_NODE_BIND: "/ide-admin/v1/flow/node/bind",
+  FLOW_NODE_UNBIND: "/ide-admin/v1/flow/node/unbind",
+  FLOW_NODE_REMOVE: "/ide-admin/v1/flow/node/remove",
+  FLOW_SUBMIT: "/ide-admin/v1/flow/submit",
+  FLOW_CHECK_SUBMIT_STATUS: "/ide-admin/v1/flow/checkSubmitStatus",
+  FLOW_INST_LIST_WITH_EXTRA: "/ide-admin/v1/flow/inst/listWithExtraInfo",
+  // Job performance — optimize_tools.py
+  JOB_PROFILE_URL: "/clickzetta-lakeconsole/api/v1/vcluster/job/jobProfile",
+  GET_JOB_PROFILE_URL: "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
 }
 
 export function getBaseUrl(env: string, configBaseUrl?: string): string {
@@ -557,4 +578,451 @@ export async function apiGetMetaDetail(
     nameSpace: params.namespace,
     tableName: params.dataObjectName,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Block 4 API additions
+// ---------------------------------------------------------------------------
+
+/** vc_server.py:12-47 vc_list */
+export async function apiVcList(
+  config: StudioConfig,
+  params: { workspaceId: number | string; name?: string },
+): Promise<Record<string, unknown>> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("VC_LIST")
+  const headers = {
+    ...buildHeaders(config),
+    userId: String(config.userId),
+    instanceId: String(config.instanceId),
+    accountId: String(config.tenantId),
+    tenantId: String(config.tenantId),
+  }
+  const body: Record<string, unknown> = {
+    instanceId: config.instanceId,
+    workspaceId: String(params.workspaceId),
+  }
+  if (params.name) body["name"] = params.name
+  const text = await studioPost(url, headers, body)
+  return JSON.parse(text) as Record<string, unknown>
+}
+
+/** vc_server.py:51-97 vc_create */
+export async function apiVcCreate(
+  config: StudioConfig,
+  params: {
+    workspaceId: number | string
+    vcName: string
+    vcType: string
+    minSize?: number
+    maxSize?: number
+    apMaxConcurrency?: number
+    apSize?: number
+  },
+): Promise<Record<string, unknown>> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("VC_CREATE")
+  const headers = {
+    ...buildHeaders(config),
+    userId: String(config.userId),
+    instanceId: String(config.instanceId),
+    accountId: String(config.tenantId),
+    tenantId: String(config.tenantId),
+  }
+  const vcType = params.vcType.toUpperCase()
+  const body: Record<string, unknown> = {
+    instanceId: config.instanceId,
+    workspaceId: String(params.workspaceId),
+    name: params.vcName,
+    type: vcType,
+    autoStartEnabled: true,
+    autoStopSeconds: 60,
+    provisionMode: "SERVERLESS",
+  }
+  if (vcType === "INTEGRATION" || vcType === "GENERAL") {
+    body["minSize"] = params.minSize
+    body["maxSize"] = params.maxSize
+  } else {
+    body["minReplicas"] = params.minSize
+    body["maxReplicas"] = params.maxSize
+    body["maxConcurrency"] = params.apMaxConcurrency
+    body["size"] = params.apSize
+  }
+  const text = await studioPost(url, headers, body)
+  return JSON.parse(text) as Record<string, unknown>
+}
+
+/** ide_admin_server.py list_user_workspaces */
+export async function apiListUserWorkspaces(
+  config: StudioConfig,
+  params: { pageIndex?: number; pageSize?: number; workspaceName?: string },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("LIST_WORK_SPACES_BY_USER")
+  const headers = {
+    ...buildHeaders(config),
+    userId: String(config.userId),
+    instanceId: String(config.instanceId),
+    tenantId: String(config.tenantId),
+  }
+  return studioPost(url, headers, {
+    pageIndex: params.pageIndex ?? 1,
+    pageSize: params.pageSize ?? 20,
+    instanceId: config.instanceId,
+    userId: config.userId,
+    workspaceName: params.workspaceName ?? "",
+  })
+}
+
+/** ide_admin_server.py dqc_add */
+export async function apiDqcAdd(
+  config: StudioConfig,
+  params: Record<string, unknown>,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("DQC_ADD")
+  const headers = {
+    ...buildHeaders(config),
+    userId: String(config.userId),
+    instanceId: String(config.instanceId),
+    accountId: String(config.tenantId),
+  }
+  return studioPost(url, headers, params)
+}
+
+/** ide_admin_server.py save_cdc_task */
+export async function apiSaveCdcTask(
+  config: StudioConfig,
+  params: Record<string, unknown>,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("MCP_SAVE_CDC_TASK")
+  const headers = buildHeaders(config)
+  return studioPost(url, headers, params)
+}
+
+// ---------------------------------------------------------------------------
+// Flow API helpers — flow_task_server.py
+// ---------------------------------------------------------------------------
+
+function buildFlowHeaders(config: StudioConfig): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/plain, */*",
+    "x-clickzetta-token": config.token,
+    tenantId: String(config.tenantId),
+    userId: String(config.userId),
+    instanceName: config.instance,
+    env: "prod",
+    openApi: "false",
+  }
+  if (config.workspace) headers["workspaceName"] = config.workspace
+  return headers
+}
+
+/** flow_task_server.py:32-37 get_flow_dag */
+export async function apiFlowGetDag(
+  config: StudioConfig,
+  dataFileId: number,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_GET_DAG")
+  const headers = buildFlowHeaders(config)
+  // Python uses params (query string) for GET_DAG
+  const fullUrl = url + `?dataFileId=${dataFileId}`
+  const response = await fetch(fullUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({}),
+  })
+  return response.text()
+}
+
+/** flow_task_server.py:40-66 create_flow_node */
+export async function apiFlowCreateNode(
+  config: StudioConfig,
+  params: {
+    dataFileId: number
+    projectId: string
+    nodeName: string
+    fileType: number
+    nodeDescription?: string
+    dependencyNodeId?: number
+    position?: unknown
+    content?: string
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_NODE_CREATE")
+  const headers = buildFlowHeaders(config)
+  const body: Record<string, unknown> = {
+    tenantId: config.tenantId,
+    userId: config.userId,
+    dataFileId: params.dataFileId,
+    projectId: params.projectId,
+    nodeName: params.nodeName,
+    fileType: params.fileType,
+    env: config.env,
+  }
+  if (params.nodeDescription) body["nodeDescription"] = params.nodeDescription
+  if (params.dependencyNodeId) body["dependencyNodeId"] = params.dependencyNodeId
+  if (params.position) body["position"] = params.position
+  if (params.content) body["content"] = params.content
+  return studioPost(url, headers, body)
+}
+
+/** flow_task_server.py:69-88 bind_flow_node */
+export async function apiFlowBindNode(
+  config: StudioConfig,
+  params: {
+    currentFileId: number
+    currentNodeId: number
+    currentProjectId: string
+    dependencyFileId: number
+    dependencyNodeId: number
+    dependencyProjectId: string
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_NODE_BIND")
+  const headers = buildFlowHeaders(config)
+  return studioPost(url, headers, {
+    tenantId: config.tenantId,
+    userId: config.userId,
+    currentFileId: params.currentFileId,
+    currentNodeId: params.currentNodeId,
+    currentProjectId: params.currentProjectId,
+    dependencyFileId: params.dependencyFileId,
+    dependencyNodeId: params.dependencyNodeId,
+    dependencyProjectId: params.dependencyProjectId,
+  })
+}
+
+/** flow_task_server.py:91-104 unbind_flow_node */
+export async function apiFlowUnbindNode(
+  config: StudioConfig,
+  params: { depId: number; fileId: number },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_NODE_UNBIND")
+  const headers = buildFlowHeaders(config)
+  return studioPost(url, headers, {
+    tenantId: config.tenantId,
+    userId: config.userId,
+    depId: params.depId,
+    fileId: params.fileId,
+  })
+}
+
+/** flow_task_server.py:107-120 remove_flow_node */
+export async function apiFlowRemoveNode(
+  config: StudioConfig,
+  params: { fileId: number; nodeId: number },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_NODE_REMOVE")
+  const headers = buildFlowHeaders(config)
+  return studioPost(url, headers, {
+    tenantId: config.tenantId,
+    userId: config.userId,
+    fileId: params.fileId,
+    nodeId: params.nodeId,
+  })
+}
+
+/** flow_task_server.py:123-135 submit_flow */
+export async function apiFlowSubmit(
+  config: StudioConfig,
+  params: { fileId: number; projectId: string },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_SUBMIT")
+  const headers = buildFlowHeaders(config)
+  return studioPost(url, headers, {
+    fileId: params.fileId,
+    projectId: params.projectId,
+    env: config.env,
+  })
+}
+
+/** flow_task_server.py:138-144 check_submit_status */
+export async function apiFlowCheckSubmitStatus(
+  config: StudioConfig,
+  submitTraceId: string,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_CHECK_SUBMIT_STATUS")
+  const headers = buildFlowHeaders(config)
+  const fullUrl = url + `?submitTraceId=${encodeURIComponent(submitTraceId)}`
+  const response = await fetch(fullUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({}),
+  })
+  return response.text()
+}
+
+/** flow_task_server.py:147-164 list_flow_node_instances */
+export async function apiFlowListNodeInstances(
+  config: StudioConfig,
+  params: {
+    flowId: number
+    flowInstanceId: number
+    flowNodeId?: number
+    flowNodeInstanceId?: number
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("FLOW_INST_LIST_WITH_EXTRA")
+  const headers = buildFlowHeaders(config)
+  const body: Record<string, unknown> = {
+    tenantId: config.tenantId,
+    flowId: params.flowId,
+    flowInstanceId: params.flowInstanceId,
+  }
+  if (params.flowNodeId != null) body["flowNodeId"] = params.flowNodeId
+  if (params.flowNodeInstanceId != null) body["flowNodeInstanceId"] = params.flowNodeInstanceId
+  return studioPost(url, headers, body)
+}
+
+/** flow_task_server.py:167-195 save_flow_node_content */
+export async function apiFlowSaveNodeContent(
+  config: StudioConfig,
+  params: {
+    dataFileId: number
+    nodeId: number
+    content: string
+    projectId: string
+    paramValueList?: unknown[]
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("SAVE_DATAFILE_CONFIGURATION")
+  const headers = buildFlowHeaders(config)
+  return studioPost(url, headers, {
+    dataFileId: params.dataFileId,
+    nodeId: params.nodeId,
+    dataFileContent: params.content,
+    projectId: params.projectId,
+    collectType: 2,
+    onlySaveContent: 1,
+    updateBy: config.username ?? "",
+    paramValueList: params.paramValueList ?? [],
+    inputParamValueList: null,
+    outputParamValueList: null,
+    instanceName: config.instance,
+    adhocConfigs: JSON.stringify({
+      multiDataSource: [],
+      schema: "public",
+      adhocVcCode: "DEFAULT",
+    }),
+    extendConfigs: null,
+  })
+}
+
+/** flow_task_server.py:198-204 get_flow_node_detail */
+export async function apiFlowGetNodeDetail(
+  config: StudioConfig,
+  params: { dataFileId: number; nodeId: number },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("GET_DETAIL")
+  const headers = buildFlowHeaders(config)
+  return studioPost(url, headers, {
+    id: params.dataFileId,
+    nodeId: params.nodeId,
+    collectType: 2,
+  })
+}
+
+/** flow_task_server.py:207-255 save_flow_node_configuration */
+export async function apiFlowSaveNodeConfiguration(
+  config: StudioConfig,
+  params: {
+    dataFileId: number
+    nodeId: number
+    projectId: string
+    schemaName?: string
+    etlVcCode?: string
+    etlVcId?: string
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("SAVE_DATAFILE_CONFIGURATION")
+  const headers = buildFlowHeaders(config)
+  const body: Record<string, unknown> = {
+    projectId: params.projectId,
+    dataFileId: params.dataFileId,
+    nodeId: params.nodeId,
+    useFlowConfig: true,
+    scheduleConfigType: "1",
+    scheduleRateType: 1,
+    scheduleType: 1,
+    triggerType: 1,
+    taskPriority: "1",
+    fileCreateType: 1,
+    scheduleCreatedType: "2",
+    collectType: 2,
+    onlySaveContent: 0,
+    isScheduleRateTypeOff: false,
+    useActiveEndTime: false,
+    enableAutoMv: false,
+    retryIntervalTime: 2,
+    retryIntervalTimeUnit: "s",
+    retryCount: 1,
+    rerunProperty: "1",
+    selfDependsJob: 0,
+    executeTimeout: 0,
+    executeTimeoutUnit: "m",
+    activeStartTime: "1989-12-31T00:00:00.000Z",
+    activeEndTime: "2099-01-01T00:00:00.000Z",
+    ownerEnName: String(config.userId),
+    ownerCnName: config.username ?? String(config.userId),
+    schemaName: params.schemaName ?? "public",
+    etlVcCode: params.etlVcCode ?? "DEFAULT",
+    instanceName: config.instance,
+    schedule: [["everyday"]],
+    frequency: "1",
+    configProperties: JSON.stringify({ extConfig: {}, enableAutoMv: false }),
+    dataFileInputListReqs: [],
+    dataFileOutputListReqs: [],
+  }
+  if (params.etlVcId) body["etlVcId"] = params.etlVcId
+  return studioPost(url, headers, body)
+}
+
+/** optimize_tools.py get_job_plan_url */
+export async function apiGetJobPlanUrl(
+  config: StudioConfig,
+  params: { workspaceName: string; jobId: string; extended?: boolean },
+): Promise<Record<string, unknown>> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("JOB_PROFILE_URL")
+  const headers = {
+    ...buildHeaders(config),
+    userId: String(config.userId),
+    instanceId: String(config.instanceId),
+    accountId: String(config.userId),
+    instanceName: config.instance,
+  }
+  const queryParams = new URLSearchParams({
+    workspaceName: params.workspaceName,
+    jobId: params.jobId,
+    extended: String(params.extended ?? true),
+    jsonFormat: "true",
+  })
+  const response = await fetch(`${url}?${queryParams}`, {
+    method: "GET",
+    headers,
+  })
+  const text = await response.text()
+  return JSON.parse(text) as Record<string, unknown>
+}
+
+/** optimize_tools.py get_job_profile */
+export async function apiGetJobProfile(
+  config: StudioConfig,
+  params: { workspaceName: string; jobId: string },
+): Promise<Record<string, unknown>> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("GET_JOB_PROFILE_URL")
+  const headers = {
+    ...buildHeaders(config),
+    instanceId: String(config.instanceId),
+    instanceName: config.instance,
+  }
+  const queryParams = new URLSearchParams({
+    jobId: params.jobId,
+    workspaceName: params.workspaceName,
+    instanceId: String(config.instanceId),
+    brief: "false",
+  })
+  const response = await fetch(`${url}?${queryParams}`, {
+    method: "GET",
+    headers,
+  })
+  const text = await response.text()
+  return JSON.parse(text) as Record<string, unknown>
 }
