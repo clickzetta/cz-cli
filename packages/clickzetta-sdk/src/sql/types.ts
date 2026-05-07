@@ -211,3 +211,24 @@ export function createField(name: string, typeCategory: string): Field {
     scale: null,
   }
 }
+
+/** enums.py:381-383 ErrorStatus */
+export const ErrorStatus = {
+  Unauthorized: "UNAUTHORIZED",
+} as const
+
+/** enums.py:385-395 SourceFormat */
+export const SourceFormat = {
+  CSV: "CSV",
+  NEWLINE_DELIMITED_JSON: "NEWLINE_DELIMITED_JSON",
+  AVRO: "AVRO",
+  PARQUET: "PARQUET",
+  ORC: "ORC",
+} as const
+
+/** enums.py:397-400 KeyResultStatementKind */
+export const KeyResultStatementKind = {
+  KEY_RESULT_STATEMENT_KIND_UNSPECIFIED: "KEY_RESULT_STATEMENT_KIND_UNSPECIFIED",
+  LAST: "LAST",
+  FIRST_SELECT: "FIRST_SELECT",
+} as const
