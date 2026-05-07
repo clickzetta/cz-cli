@@ -168,6 +168,8 @@ export class SqlSession {
 
   readonly config: ConnectionConfig
   readonly clientHeaders?: Record<string, string>
+  /** connection.py:62 _closed — set by close(), checked before execute(). */
+  private _closed = false
 
   constructor(config: ConnectionConfig, options: SqlSessionOptions = {}) {
     this.config = config
@@ -177,6 +179,19 @@ export class SqlSession {
     this.configs = { ...DEFAULT_CONFIGS }
     this.hints = { ...(options.hints ?? {}) }
     this.clientHeaders = options.clientHeaders
+  }
+
+  /**
+   * connection.py:61-62 close() — mark session as closed.
+   * Subsequent execute() calls will throw ProgrammingError.
+   */
+  close(): void {
+    this._closed = true
+  }
+
+  /** Returns true if close() has been called. */
+  get isClosed(): boolean {
+    return this._closed
   }
 
   // ---------------------------------------------------------------------
@@ -426,6 +441,10 @@ export class SqlSession {
     sql: string,
     options: SqlSessionExecuteOptions = {},
   ): Promise<QueryResult> {
+    // _dbapi_helpers.py:6-15 raise_on_closed — guard against use after close.
+    if (this._closed) {
+      throw new ProgrammingError("Cannot execute on a closed session")
+    }
     // cursor.py:172-177 — null/empty SQL guard.
     if (sql == null) {
       throw new ProgrammingError("sql is empty")
