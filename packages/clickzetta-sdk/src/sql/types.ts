@@ -151,3 +151,63 @@ export const Compression = {
 
 /** enums.py:6 DEFAULT_NS */
 export const DEFAULT_NS = ["default", "lh"] as const
+
+// ---------------------------------------------------------------------------
+// DB-API 2.0 ColumnDescription (_dbapi.py:12-118)
+// ---------------------------------------------------------------------------
+
+/**
+ * _dbapi.py:12-118 ColumnDescription — PEP 249 cursor.description element.
+ * Extends ColumnSchema with the full set of DB-API 2.0 metadata fields.
+ */
+export interface ColumnDescription {
+  /** Column name */
+  name: string
+  /** Type category string (e.g. "INT32", "STRING") */
+  type_code: string
+  display_size: number | null
+  internal_size: number | null
+  precision: number | null
+  scale: number | null
+  null_ok: boolean
+}
+
+/**
+ * _dbapi.py:119-142 Field — named tuple for schema field metadata.
+ */
+export interface Field {
+  name: string
+  field_type: string
+  mode: string
+  description: string | null
+  precision: number | null
+  scale: number | null
+}
+
+/**
+ * _dbapi.py:144-148 proto_to_field — convert a proto dict to a Field.
+ */
+export function protoToField(data: Record<string, unknown>): Field {
+  return {
+    name: String(data["name"] ?? ""),
+    field_type: String(data["type"] ?? data["field_type"] ?? ""),
+    mode: String(data["mode"] ?? "NULLABLE"),
+    description: data["description"] != null ? String(data["description"]) : null,
+    precision: data["precision"] != null ? Number(data["precision"]) : null,
+    scale: data["scale"] != null ? Number(data["scale"]) : null,
+  }
+}
+
+/**
+ * _dbapi.py:150-158 create_field — create a Field from name + type category.
+ */
+export function createField(name: string, typeCategory: string): Field {
+  return {
+    name,
+    field_type: typeCategory,
+    mode: "NULLABLE",
+    description: null,
+    precision: null,
+    scale: null,
+  }
+}
