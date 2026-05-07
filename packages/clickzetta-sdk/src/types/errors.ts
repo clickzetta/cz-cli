@@ -90,6 +90,18 @@ export class NotSupportedError extends DatabaseError {
   }
 }
 
+/**
+ * exception.py:29-32 ClickzettaJobNotExistsException — raised when a job id
+ * does not exist on the server (lh_code CZLH-60005 / JOB_NOT_EXISTS).
+ * Extends ProgrammingError because the caller supplied an invalid job id.
+ */
+export class JobNotExistsError extends ProgrammingError {
+  constructor(message: string, init: ClickZettaErrorInit = {}) {
+    super(message, init)
+    this.name = "JobNotExistsError"
+  }
+}
+
 export interface RawErrorInput {
   code?: string
   statusCode?: number
@@ -123,7 +135,7 @@ export function toClickZettaError(raw: RawErrorInput): ClickZettaError {
     return new OperationalError(message, init)
   }
   if (raw.errorCode === "CZLH-60005") {
-    return new ProgrammingError(message, init)
+    return new JobNotExistsError(message, init)
   }
 
   const status = raw.statusCode
