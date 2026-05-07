@@ -28,6 +28,7 @@ import {
   type QueryResult,
   newJobId,
 } from "./types.js"
+import { isVolumeSql, processVolumeSql } from "./volume.js"
 
 /**
  * Mirrors `client.py:69` `DEFAULT_MAXIMUM_TIMEOUT = 60` — the upper bound
@@ -466,9 +467,25 @@ export class SqlSession {
         jobId,
       )
     }
-    return pollJobResult(clientOpts, jobId, {
+    const result = await pollJobResult(clientOpts, jobId, {
       jobTimeoutMs: prepared.jobTimeoutMs > 0 ? prepared.jobTimeoutMs : undefined,
     })
+
+    // Volume SQL post-processing — client.py:1340-1344 + process_volume_sql
+    if (isVolumeSql(sql)) {
+      return processVolumeSql(
+        {
+          clientOpts,
+          workspace: prepared.workspace,
+          instanceId: jobId.instanceId,
+        },
+        jobId,
+        result,
+        sql,
+      )
+    }
+
+    return result
   }
 
   // ---------------------------------------------------------------------

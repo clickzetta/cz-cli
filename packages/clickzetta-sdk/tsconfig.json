@@ -3,7 +3,7 @@
   "extends": "@tsconfig/bun/tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
-    "types": [],
+    "types": ["node"],
     "noUncheckedIndexedAccess": false
   }
 }

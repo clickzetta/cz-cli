@@ -8,6 +8,7 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:"
   }
 }
