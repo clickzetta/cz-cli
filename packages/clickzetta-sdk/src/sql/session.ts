@@ -17,7 +17,7 @@
 import { getToken } from "../auth/token.js"
 import type { ClientOptions } from "../client.js"
 import { toServiceUrl } from "../config/region.js"
-import { InterfaceError } from "../types/errors.js"
+import { InterfaceError, ProgrammingError } from "../types/errors.js"
 import type { ConnectionConfig } from "../types/index.js"
 import { splitSql } from "./split.js"
 import { submitJob } from "./submit.js"
@@ -423,7 +423,18 @@ export class SqlSession {
     sql: string,
     options: SqlSessionExecuteOptions = {},
   ): Promise<QueryResult> {
-    const prepared = this.prepareSubmit(sql, options)
+    // cursor.py:172-177 — null/empty SQL guard.
+    if (sql == null) {
+      throw new ProgrammingError("sql is empty")
+    }
+    const stripped = sql.trim()
+    if (stripped === "") {
+      throw new ProgrammingError("sql is empty")
+    }
+    // cursor.py:180 — ensure trailing ';' so the server parses the final statement.
+    const normalizedSql = stripped.endsWith(";") ? stripped : stripped + ";"
+
+    const prepared = this.prepareSubmit(normalizedSql, options)
     if (!prepared) return this.emptyResult()
 
     const jobId = await this.newJobId()
