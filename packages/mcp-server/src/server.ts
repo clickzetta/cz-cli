@@ -371,6 +371,42 @@ export class McpServerCore {
     }
   }
 
+  // server_core.py:475-522
+  updateConnectionConfig(connectionConfig: StudioConfig): void {
+    try {
+      const configChanged =
+        !this.connectionConfig ||
+        this.connectionConfig.service !== connectionConfig.service ||
+        this.connectionConfig.workspace !== connectionConfig.workspace ||
+        this.connectionConfig.vcluster !== connectionConfig.vcluster ||
+        this.connectionConfig.instance !== connectionConfig.instance ||
+        this.connectionConfig.schema !== connectionConfig.schema ||
+        this.connectionConfig.token !== connectionConfig.token
+
+      if (configChanged) {
+        logger.info(
+          {
+            service: connectionConfig.service,
+            workspace: connectionConfig.workspace,
+            vcluster: connectionConfig.vcluster,
+            instance: connectionConfig.instance,
+            schema: connectionConfig.schema,
+          },
+          "Connection config changed, updating database connection",
+        )
+        this.connectionConfig = connectionConfig
+        const newDb = LakehouseDB.createFromConnectionConfig(connectionConfig)
+        this.setDbInstance(newDb)
+        logger.info("Database connection updated successfully")
+      } else {
+        logger.debug("Connection config unchanged, skipping database reconnection")
+      }
+    } catch (e) {
+      logger.error({ err: e }, "Failed to update connection config")
+      throw new ConfigurationException(`Failed to update connection config: ${String(e)}`)
+    }
+  }
+
   // server_core.py:524-527
   isInitialized(): boolean {
     return this._initialized
