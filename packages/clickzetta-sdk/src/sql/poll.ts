@@ -1,5 +1,11 @@
 import { requestRaw, type ClientOptions } from "../client.js"
 import { JobStatus, type JobID, type QueryResult, type ColumnSchema } from "./types.js"
+import {
+  isFatalErrorCode,
+  isRetryableErrorCode,
+  isRetryableMessage,
+} from "./errors.js"
+import { toClickZettaError } from "../types/errors.js"
 
 const TERMINAL_STATES = new Set(["SUCCEED", "FAILED", "CANCELLED"])
 
@@ -194,13 +200,35 @@ function toJobStatus(state: string): JobStatus {
 
 // --- Type coercion ---
 
-/** Minimal type coercion to match Python connector behavior */
-function coerceValue(value: string | null, typeCategory: string): unknown {
+/**
+ * Decode an even-length hex string into a Uint8Array.
+ * Invalid characters or odd length fall through to an empty array.
+ * @internal exported for unit tests.
+ */
+export function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.trim()
+  if (!clean || clean.length % 2 !== 0) return new Uint8Array()
+  const out = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < out.length; i++) {
+    const byte = Number.parseInt(clean.substr(i * 2, 2), 16)
+    if (Number.isNaN(byte)) return new Uint8Array()
+    out[i] = byte
+  }
+  return out
+}
+
+/**
+ * Minimal type coercion to match Python connector behavior.
+ * @internal exported for unit tests.
+ */
+export function coerceValue(value: string | null, typeCategory: string): unknown {
   if (value === null || value === undefined) return null
   // TEXT format uses literal "null" for null values
   if (value === "null" || value === "NULL") return null
 
   const upper = typeCategory.toUpperCase()
+
+  // Numeric
   if (upper === "DECIMAL" || upper.startsWith("DECIMAL(")) {
     return value // keep as string for precision
   }
@@ -216,6 +244,33 @@ function coerceValue(value: string | null, typeCategory: string): unknown {
   if (upper === "BOOLEAN") {
     return value.toLowerCase() === "true"
   }
+
+  // 时间类型
+  // DATE: TEXT format is already "YYYY-MM-DD", return as ISO string.
+  if (upper === "DATE") {
+    return value.trim()
+  }
+  // TIMESTAMP_LTZ / TIMESTAMP (alias for LTZ): normalise space → "T",
+  // keep any timezone suffix intact. Do NOT append Z or +00:00.
+  if (upper === "TIMESTAMP_LTZ" || upper === "TIMESTAMP") {
+    return value.trim().replace(" ", "T")
+  }
+  // TIMESTAMP_NTZ: wall-clock, no timezone suffix appended.
+  if (upper === "TIMESTAMP_NTZ") {
+    return value.trim().replace(" ", "T")
+  }
+
+  // 二进制
+  if (upper === "BINARY" || upper === "VARBINARY") {
+    return hexToBytes(value)
+  }
+
+  // JSON
+  if (upper === "JSON") {
+    try { return JSON.parse(value) } catch { return value }
+  }
+
+  // Complex containers (JSON-encoded strings in TEXT format)
   if (upper === "MAP" && value) {
     try { return JSON.parse(value) } catch { return value }
   }
@@ -225,6 +280,23 @@ function coerceValue(value: string | null, typeCategory: string): unknown {
   if ((upper === "STRUCT" || upper.startsWith("STRUCT<") || upper.startsWith("ROW(")) && value) {
     try { return JSON.parse(value) } catch { return value }
   }
+
+  // String-like: CHAR / CHAR(n) / VARCHAR / VARCHAR(n) / STRING
+  if (upper.startsWith("CHAR") || upper.startsWith("VARCHAR") || upper === "STRING") {
+    return value
+  }
+
+  // Pass-through types: intervals, vector, bitmap, void.
+  if (
+    upper.startsWith("INTERVAL_YEAR_MONTH") ||
+    upper.startsWith("INTERVAL_DAY_TIME") ||
+    upper.startsWith("VECTOR") ||
+    upper.startsWith("BITMAP") ||
+    upper === "VOID"
+  ) {
+    return value
+  }
+
   return value
 }
 
@@ -364,6 +436,32 @@ export async function pollJobResult(
 
     const raw = await requestRaw<LhJobResponse>(opts, "/lh/getJob", requestBody)
     const state = raw?.status?.state ?? "UNKNOWN"
+    const errorCode = raw?.status?.errorCode || undefined
+    const errorMessage = raw?.status?.errorMessage || raw?.status?.message || undefined
+
+    // Fatal lh_code → raise, classified via toClickZettaError.
+    if (isFatalErrorCode(errorCode)) {
+      throw toClickZettaError({
+        errorCode,
+        message: errorMessage ?? `Job ${jobId.id} failed with ${errorCode}`,
+        jobId: jobId.id,
+      })
+    }
+
+    // Retryable lh_code (60007 / 60022 / 60023 / 57015 / 60015) →
+    // keep polling, ignore the terminal state check below.
+    if (isRetryableErrorCode(errorCode)) {
+      await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
+      sleepMs = nextSleepMs(sleepMs)
+      continue
+    }
+
+    // Retryable message (502 Bad Gateway / NoPermission …) → keep polling.
+    if (!errorCode && isRetryableMessage(errorMessage)) {
+      await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
+      sleepMs = nextSleepMs(sleepMs)
+      continue
+    }
 
     if (TERMINAL_STATES.has(state)) {
       return parseJobResponse(raw, jobId)
