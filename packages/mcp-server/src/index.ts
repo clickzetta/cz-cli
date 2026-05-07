@@ -6,3 +6,6 @@ export * from "./transport/stdio.js"
 // config exports — StudioConfig is intentionally re-exported from server.js above;
 // export StudioConfigManager separately to avoid duplicate-export ambiguity.
 export { StudioConfigManager } from "./config/index.js"
+// Block 1d: HTTP transport + Bearer auth
+export * from "./transport/http.js"
+export * from "./auth/bearer.js"
