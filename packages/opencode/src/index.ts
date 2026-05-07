@@ -144,6 +144,13 @@ const cli = yargs(args)
   .alias("help", "h")
   .version("version", "show version number", InstallationVersion)
   .alias("version", "v")
+  .epilogue(
+    "LLM configuration:\n" +
+    "  Default: uses ClickZetta AI (configured by `cz-cli setup --credential <base64>`).\n" +
+    "  Custom:  `cz-cli agent config --llm-provider anthropic --llm-model claude-sonnet-4-6 --llm-api-key sk-ant-...`\n" +
+    "           supports anthropic, openai, bedrock, google, azure, openai-compatible (incl. third-party relays via --llm-base-url).\n" +
+    "  Inspect: `cz-cli agent config --show`"
+  )
   .option("print-logs", {
     describe: "print logs to stderr",
     type: "boolean",

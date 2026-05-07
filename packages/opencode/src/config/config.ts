@@ -407,7 +407,11 @@ export const layer = Layer.effect(
           let baseURL = llmBaseUrlMatch?.[1] ?? endpointMatch?.[1]
           if (baseURL) {
             baseURL = baseURL.replace(/\/+$/, "")
-            if (llmProvider === "openai-compatible" && !baseURL.endsWith("/v1")) baseURL += "/v1"
+            // Most SDKs (anthropic, openai, openai-compatible) expect baseURL to include the /v1 prefix.
+            // If the user provided a bare host (no /v1, /v2, /openai path segment), append /v1.
+            const needsVersionPrefix = ["anthropic", "openai", "openai-compatible"].includes(llmProvider)
+            const hasVersionPath = /\/v\d+(\/|$)/.test(baseURL) || /\/openai(\/|$)/.test(baseURL)
+            if (needsVersionPrefix && !hasVersionPath) baseURL += "/v1"
           }
 
           const czProvider: ConfigProvider.Info = {
@@ -580,23 +584,11 @@ export const layer = Layer.effect(
 
         yield* ensureGitignore(dir).pipe(Effect.orDie)
 
-        const dep = yield* npmSvc
-          .install(dir, {
-            add: ["@opencode-ai/plugin" + (InstallationLocal ? "" : "@" + InstallationVersion)],
-          })
-          .pipe(
-            Effect.exit,
-            Effect.tap((exit) =>
-              Exit.isFailure(exit)
-                ? Effect.sync(() => {
-                    log.warn("background dependency install failed", { dir, error: String(exit.cause) })
-                  })
-                : Effect.void,
-            ),
-            Effect.asVoid,
-            Effect.forkDetach,
-          )
-        deps.push(dep)
+        // Note: upstream opencode would background-install @opencode-ai/plugin here so user
+        // `.opencode/plugin/*.ts` files get type completions in the IDE. cz-cli doesn't publish
+        // @opencode-ai/plugin to npm under its own version line, so the install always fails and
+        // wastes ~300ms per scanned directory on every startup. External plugins declared in
+        // config load through their own Npm.add() path and don't depend on this install.
 
         result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => ConfigCommand.load(dir)))
         result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.load(dir)))

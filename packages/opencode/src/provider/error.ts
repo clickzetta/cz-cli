@@ -171,6 +171,26 @@ export type ParsedAPICallError =
 
 const LLM_CONFIG_HINT = "\n\nTo check or customize your LLM provider: cz-cli agent config --show"
 
+const AUTH_ERROR_PATTERNS = [
+  /invalid api[_ ]?key/i,
+  /api[_ ]?key.*(?:not valid|invalid|disabled|expired|missing)/i,
+  /unauthorized/i,
+  /authentication (?:failed|required)/i,
+  /invalid credential/i,
+  /forbidden/i,
+  /permission denied/i,
+]
+
+function isAuthError(status: number | undefined, message: string): boolean {
+  if (status === 401 || status === 403) return true
+  return AUTH_ERROR_PATTERNS.some((p) => p.test(message))
+}
+
+function isQuotaExhausted(status: number | undefined, body: string): boolean {
+  if (status !== 429) return false
+  return /daily token limit|daily limit|quota exceeded|insufficient[_ ]quota/i.test(body)
+}
+
 export function parseAPICallError(input: { providerID: ProviderID; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
@@ -185,10 +205,8 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
   const metadata = input.error.url ? { url: input.error.url } : undefined
   const bodyStr = input.error.responseBody ?? ""
   const status = input.error.statusCode
-  const quotaExhausted =
-    status === 429 &&
-    (bodyStr.includes("daily token limit") || bodyStr.includes("daily limit") || bodyStr.includes("quota exceeded"))
-  const needsConfigHint = status === 401 || status === 403 || quotaExhausted
+  const quotaExhausted = isQuotaExhausted(status, bodyStr)
+  const needsConfigHint = isAuthError(status, m) || quotaExhausted
   return {
     type: "api_error",
     message: needsConfigHint ? m + LLM_CONFIG_HINT : m,

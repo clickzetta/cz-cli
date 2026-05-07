@@ -46,7 +46,7 @@ function removeProfileField(content: string, sectionStart: number, sectionEnd: n
 
 export const AgentConfigCommand = cmd({
   command: "config",
-  describe: "configure custom LLM provider (anthropic, openai, bedrock, google, azure, openai-compatible)",
+  describe: "use your own LLM (Claude/OpenAI/etc.) instead of the default ClickZetta AI. Supports third-party relays via --llm-base-url.",
   builder: (yargs: Argv) =>
     yargs
       .option("llm-provider", {
@@ -59,11 +59,11 @@ export const AgentConfigCommand = cmd({
       })
       .option("llm-api-key", {
         type: "string",
-        describe: "API key for the LLM provider",
+        describe: "your own API key for the chosen provider (e.g. sk-ant-... for anthropic)",
       })
       .option("llm-base-url", {
         type: "string",
-        describe: "base URL override (required for openai-compatible, optional for others)",
+        describe: "base URL override. Use this to point at third-party relays (e.g. https://qtok.cc for Anthropic-compatible gateways). Required for openai-compatible.",
       })
       .option("show", {
         type: "boolean",
@@ -73,10 +73,12 @@ export const AgentConfigCommand = cmd({
         type: "boolean",
         describe: "remove custom LLM config, revert to ClickZetta AI default",
       })
-      .example("$0 agent config --llm-provider anthropic --llm-model claude-sonnet-4-6 --llm-api-key sk-ant-...", "use Claude")
-      .example("$0 agent config --llm-provider openai --llm-model gpt-4o --llm-api-key sk-...", "use OpenAI")
+      .example("$0 agent config --llm-provider anthropic --llm-model claude-sonnet-4-6 --llm-api-key sk-ant-...", "use Claude directly")
+      .example("$0 agent config --llm-provider anthropic --llm-model claude-sonnet-4-6 --llm-api-key $ANTHROPIC_AUTH_TOKEN --llm-base-url $ANTHROPIC_BASE_URL", "reuse Claude Code env vars (works with relays like qtok.cc)")
+      .example("$0 agent config --llm-provider openai --llm-model gpt-4o --llm-api-key sk-...", "use OpenAI directly")
       .example("$0 agent config --show", "show current config")
-      .example("$0 agent config --reset", "revert to default"),
+      .example("$0 agent config --reset", "revert to ClickZetta AI default")
+      .epilogue("Alternatively, edit ~/.clickzetta/profiles.toml directly and add:\n  llm_provider = \"anthropic\"\n  llm_model = \"claude-sonnet-4-6\"\n  llm_api_key = \"sk-ant-...\"\n  llm_base_url = \"https://api.anthropic.com\"  # optional"),
   async handler(args) {
     const opts = args as {
       llmProvider?: string
