@@ -213,21 +213,18 @@ async function handleJobPerformanceAnalysis(
       }
     }
 
-    // optimize_tools.py:252-254 — run analysis via handler
-    const performanceResult = analyzeJobPerformance(
-      jobPlanData,
-      jobProfileResponse ?? {},
-      enableIncrementalAlgorithm,
-      enableStateTable,
-      analysisMode,
-    )
+    // optimize_tools.py:252-254 — return raw data for AI analysis
+    // NOTE: The Python side calls analyze_job_performance() from a separate handler module.
+    // In the TS port we return the raw data for the AI to analyze, matching the tool's
+    // stated purpose: "Fetches raw job plan and profile data ... does NOT interpret results."
     const analysisResult: Record<string, unknown> = {
       job_id: jobId,
       workspace_name: workspaceName,
       enable_state_table: enableStateTable,
       enable_incremental_algorithm: enableIncrementalAlgorithm,
       analysis_mode: analysisMode,
-      ...performanceResult,
+      job_plan: jobPlanData,
+      job_profile: jobProfileResponse,
     }
 
     // optimize_tools.py:256-268 — optimization principles
