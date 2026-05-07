@@ -6,6 +6,7 @@ import {
   isRetryableMessage,
 } from "./errors.js"
 import { toClickZettaError } from "../types/errors.js"
+import { decodeArrowPayload, fetchArrowFromUrls } from "./arrow.js"
 
 const TERMINAL_STATES = new Set(["SUCCEED", "FAILED", "CANCELLED"])
 
@@ -326,9 +327,17 @@ function parseResultSet(
   }
 
   const columnCount = columns.length
+  // query_result.py:297 — default ARROW when the server omits the tag.
+  const format = (metadata?.format ?? "ARROW").toUpperCase()
 
   // Embedded data present
   if (resultSet.data?.data && resultSet.data.data.length > 0) {
+    if (format === "ARROW") {
+      // query_result.py:249-258 — Arrow IPC branch.
+      const { columns: arrowCols, rows } = decodeArrowPayload(resultSet.data.data, columns)
+      return { columns: arrowCols, rows, isAsync: false }
+    }
+    // query_result.py:260-269 — TEXT branch.
     const rawRows = textToRows(resultSet.data.data, columnCount)
     const rows = rawRows.map((rawRow) => {
       const record: Record<string, unknown> = {}
@@ -376,24 +385,33 @@ export async function parseJobResponse(
 
   const { columns, rows, isAsync } = parseResultSet(raw.resultSet)
 
-  // If data is in presigned URLs, fetch it
+  // If data is in presigned URLs, fetch it. The format on disk follows the
+  // same `metadata.format` as embedded data (query_result.py:297,371,387).
+  let finalCols = columns
   let finalRows = rows
   if (isAsync && raw.resultSet?.location?.presignedUrls) {
     const urls = raw.resultSet.location.presignedUrls
-    const rawRows = await fetchTextFromUrls(urls, columns.length)
-    finalRows = rawRows.map((rawRow) => {
-      const record: Record<string, unknown> = {}
-      for (let i = 0; i < columns.length; i++) {
-        record[columns[i].name] = coerceValue(rawRow[i] ?? null, columns[i].type)
-      }
-      return record
-    })
+    const format = (raw.resultSet.metadata?.format ?? "ARROW").toUpperCase()
+    if (format === "ARROW") {
+      const decoded = await fetchArrowFromUrls(urls, columns)
+      finalCols = decoded.columns
+      finalRows = decoded.rows
+    } else {
+      const rawRows = await fetchTextFromUrls(urls, columns.length)
+      finalRows = rawRows.map((rawRow) => {
+        const record: Record<string, unknown> = {}
+        for (let i = 0; i < columns.length; i++) {
+          record[columns[i].name] = coerceValue(rawRow[i] ?? null, columns[i].type)
+        }
+        return record
+      })
+    }
   }
 
   return {
     jobId: jobId.id,
     status,
-    columns,
+    columns: finalCols,
     rows: finalRows,
     rowCount: finalRows.length,
     affectedRows: 0,

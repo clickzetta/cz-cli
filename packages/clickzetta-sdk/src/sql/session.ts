@@ -52,6 +52,9 @@ const DEFAULT_MAX_RETRIES = 120
 /** enums.py:134-139 — default configs populated on a fresh CZConnectContext. */
 const DEFAULT_CONFIGS: Readonly<Record<string, string>> = Object.freeze({
   "cz.sql.adhoc.result.type": "embedded",
+  // enums.py:136 — Python connector default is ARROW. Keeping ARROW here
+  // means Lakehouse will return Arrow IPC streams; the SDK's result
+  // decoder must handle that format (see poll.ts).
   "cz.sql.adhoc.default.format": "ARROW",
   "cz.sql.job.result.file.presigned.url.enabled": "true",
   "cz.sql.job.result.file.presigned.url.ttl": "3600",

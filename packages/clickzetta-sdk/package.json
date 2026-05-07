@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "apache-arrow": "21.1.0"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:"

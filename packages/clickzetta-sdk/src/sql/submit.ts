@@ -104,7 +104,7 @@ export async function submitJob(
         : JSON.stringify({
             configs: {
               "cz.sql.adhoc.result.type": "embedded",
-              "cz.sql.adhoc.default.format": "TEXT",
+              "cz.sql.adhoc.default.format": "ARROW",
               "cz.sql.job.result.file.presigned.url.enabled": "true",
               "cz.sql.job.result.file.presigned.url.ttl": "3600",
             },
