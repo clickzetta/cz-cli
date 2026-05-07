@@ -34,11 +34,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * Generate a request id matching the Python connector format
+ * (`pysdk-v{version}-{uuid12}`, client.py:292). The server uses this for
+ * log correlation; every outgoing request carries its own id.
+ */
+function generateRequestId(): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+  return `tssdk-v${SDK_VERSION}-${hex}`
+}
+
 function buildHeaders(opts: ClientOptions): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/plain, */*",
     "User-Agent": `cz-cli/${SDK_VERSION}`,
+    // client.py:293 — trace id header, required by the gateway for correlation
+    "requestId": generateRequestId(),
     ...opts.customHeaders,
   }
   if (opts.token) {

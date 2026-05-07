@@ -464,10 +464,13 @@ export async function pollJobResult(
     // Retryable message (502 Bad Gateway / NoPermission …) → keep polling,
     // but cap NoPermission retries at 5 to match Python's `tried < 5` guard.
     if (!errorCode && isRetryableMessage(errorMessage)) {
+      // client.py:1232 uses endswith(" is not found") — the message must
+      // end with that phrase, not merely contain it. Using includes() here
+      // would misclassify unrelated errors that happen to contain the phrase.
       const isNoPerm =
         !!errorMessage &&
         errorMessage.includes("NoPermission: User ") &&
-        errorMessage.includes(" is not found")
+        errorMessage.endsWith(" is not found")
       if (isNoPerm) {
         noPermissionTries++
         if (noPermissionTries >= NO_PERMISSION_MAX_TRIES) {
@@ -484,11 +487,11 @@ export async function pollJobResult(
 
     // Early-return when resultSet data/location is available even if
     // the job state is still non-terminal (client.py:1222-1230).
-    // The server sometimes returns the payload while reporting
-    // QUEUEING/SETUP/RUNNING/RESUMING_CLUSTER; we accept it.
+    // Python checks `"location" in result_dict["resultSet"]` — presence
+    // of the location object is enough, regardless of presignedUrls length.
     const hasEmbeddedData = (raw?.resultSet?.data?.data?.length ?? 0) > 0
-    const hasPresignedUrls = (raw?.resultSet?.location?.presignedUrls?.length ?? 0) > 0
-    if (!TERMINAL_STATES.has(state) && (hasEmbeddedData || hasPresignedUrls)) {
+    const hasLocation = raw?.resultSet?.location != null
+    if (!TERMINAL_STATES.has(state) && (hasEmbeddedData || hasLocation)) {
       return parseJobResponse(raw, jobId)
     }
 
