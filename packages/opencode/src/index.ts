@@ -119,7 +119,7 @@ const args = rawArgs.slice(1)
 function show(out: string) {
   const text = out.trimStart()
   if (!text.startsWith("cz-cli agent ") && !text.startsWith("opencode ")) {
-    process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ CZAgent" + UI.Style.TEXT_NORMAL + EOL + EOL)
+    process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ cz-cli" + UI.Style.TEXT_NORMAL + EOL + EOL)
     process.stderr.write(text)
     return
   }
