@@ -45,10 +45,4 @@ When the user specifies an environment or profile (e.g. "use uat_test", "on the 
 cz-cli agent run "<request>" --profile uat_test --format a2a --dangerously-skip-permissions
 ```
 
-Or via environment variable:
-
-```bash
-CZ_PROFILE=uat_test cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
-```
-
 Available profiles can be listed with: `cz-cli profile list`
