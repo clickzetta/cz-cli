@@ -428,6 +428,11 @@ export async function pollJobResult(
   }
 
   let sleepMs = 50
+  // Mirrors Python `tried < 5` guard for the NoPermission-propagation
+  // message (client.py:1232-1234): we tolerate a handful of transient
+  // "User is not found" blips after a grant, then give up.
+  const NO_PERMISSION_MAX_TRIES = 5
+  let noPermissionTries = 0
 
   while (true) {
     if (jobTimeoutMs !== undefined && Date.now() - startTime > jobTimeoutMs) {
@@ -456,11 +461,35 @@ export async function pollJobResult(
       continue
     }
 
-    // Retryable message (502 Bad Gateway / NoPermission …) → keep polling.
+    // Retryable message (502 Bad Gateway / NoPermission …) → keep polling,
+    // but cap NoPermission retries at 5 to match Python's `tried < 5` guard.
     if (!errorCode && isRetryableMessage(errorMessage)) {
+      const isNoPerm =
+        !!errorMessage &&
+        errorMessage.includes("NoPermission: User ") &&
+        errorMessage.includes(" is not found")
+      if (isNoPerm) {
+        noPermissionTries++
+        if (noPermissionTries >= NO_PERMISSION_MAX_TRIES) {
+          throw toClickZettaError({
+            message: errorMessage ?? `Job ${jobId.id} permission check failed`,
+            jobId: jobId.id,
+          })
+        }
+      }
       await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
       sleepMs = nextSleepMs(sleepMs)
       continue
+    }
+
+    // Early-return when resultSet data/location is available even if
+    // the job state is still non-terminal (client.py:1222-1230).
+    // The server sometimes returns the payload while reporting
+    // QUEUEING/SETUP/RUNNING/RESUMING_CLUSTER; we accept it.
+    const hasEmbeddedData = (raw?.resultSet?.data?.data?.length ?? 0) > 0
+    const hasPresignedUrls = (raw?.resultSet?.location?.presignedUrls?.length ?? 0) > 0
+    if (!TERMINAL_STATES.has(state) && (hasEmbeddedData || hasPresignedUrls)) {
+      return parseJobResponse(raw, jobId)
     }
 
     if (TERMINAL_STATES.has(state)) {

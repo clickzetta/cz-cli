@@ -1,5 +1,6 @@
-import { request, type ClientOptions } from "../client.js"
-import { ClickZettaApiError } from "../types/api.js"
+import { type ClientOptions } from "../client.js"
+import { ClickZettaApiError, type ApiResponse } from "../types/api.js"
+import { InterfaceError } from "../types/errors.js"
 import type { AuthToken } from "../types/index.js"
 
 interface LoginResponse {
@@ -9,30 +10,123 @@ interface LoginResponse {
   expireTime: number
 }
 
+// Mirrors Python connector login loop at client.py:296-392:
+// max 5 retries (6 attempts total), backoff = min(2^n * 0.1, 2) seconds,
+// 10s per-attempt timeout.
+const LOGIN_MAX_RETRIES = 5
+const LOGIN_TIMEOUT_MS = 10_000
+
+function loginBackoffMs(attempt: number): number {
+  // attempt is 1-based: 1 → 200ms, 2 → 400ms, 3 → 800ms, 4 → 1600ms, 5 → 2000ms
+  return Math.min(2 ** attempt * 100, 2000)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Detect the instance-configuration error the Lakehouse gateway returns
+ * when the instance name is unknown. Python checks both the Chinese and
+ * English forms (client.py:310).
+ */
+function instanceConfigError(serverMessage: unknown, instance: string): string | undefined {
+  const msg = typeof serverMessage === "string" ? serverMessage : ""
+  if (!msg) return undefined
+  if (msg.includes("没有这样的元素") || msg.includes("No such element")) {
+    return `instance name '${instance}' is invalid or not found. Please check your \`instance\` configuration. server error:${msg}`
+  }
+  return undefined
+}
+
+async function postLogin(
+  baseUrl: string,
+  body: unknown,
+): Promise<ApiResponse<LoginResponse>> {
+  const url = `${baseUrl}/clickzetta-portal/user/loginSingle`
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/plain, */*",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
+  })
+  const text = await resp.text()
+  if (!resp.ok) {
+    // Throw something the outer retry loop can inspect for instance errors.
+    throw new ClickZettaApiError(
+      `HTTP_${resp.status}`,
+      `HTTP ${resp.status}: ${text.slice(0, 500)}`,
+      resp.status,
+    )
+  }
+  if (!text) {
+    throw new ClickZettaApiError("AUTH_FAILED", "Login returned empty body")
+  }
+  try {
+    return JSON.parse(text) as ApiResponse<LoginResponse>
+  } catch {
+    throw new ClickZettaApiError("AUTH_FAILED", `Login returned invalid JSON: ${text.slice(0, 200)}`)
+  }
+}
+
+async function loginWithRetry(
+  baseUrl: string,
+  body: unknown,
+  instance: string,
+): Promise<AuthToken> {
+  let lastError: Error | undefined
+
+  for (let attempt = 0; attempt <= LOGIN_MAX_RETRIES; attempt++) {
+    try {
+      const resp = await postLogin(baseUrl, body)
+      if (resp.code !== 0 && resp.code !== "0") {
+        const serverMsg = resp.message ?? ""
+        const instErr = instanceConfigError(serverMsg, instance)
+        if (instErr) throw new InterfaceError(instErr, { code: "INSTANCE_CONFIG_ERROR" })
+        lastError = new ClickZettaApiError(
+          "AUTH_FAILED",
+          `Login failed: ${serverMsg || "unknown error"}`,
+        )
+      } else if (!resp.data?.token) {
+        lastError = new ClickZettaApiError("AUTH_FAILED", "Login succeeded but no token returned")
+      } else {
+        return {
+          token: resp.data.token,
+          instanceId: resp.data.instanceId,
+          userId: resp.data.userId,
+          expireTimeMs: resp.data.expireTime,
+          obtainedAt: Date.now(),
+        }
+      }
+    } catch (err) {
+      // InterfaceError from instanceConfigError must not be retried.
+      if (err instanceof InterfaceError) throw err
+      // An HTTP error may carry an instance-config error in its body;
+      // surface it before giving up.
+      if (err instanceof ClickZettaApiError && err.message) {
+        const instErr = instanceConfigError(err.message, instance)
+        if (instErr) throw new InterfaceError(instErr, { code: "INSTANCE_CONFIG_ERROR" })
+      }
+      lastError = err instanceof Error ? err : new Error(String(err))
+    }
+
+    if (attempt < LOGIN_MAX_RETRIES) {
+      await sleep(loginBackoffMs(attempt + 1))
+    }
+  }
+
+  throw lastError ?? new ClickZettaApiError("AUTH_FAILED", "Login failed after retries")
+}
+
 export async function loginWithPat(
   baseUrl: string,
   pat: string,
   instanceName: string,
 ): Promise<AuthToken> {
-  const opts: ClientOptions = { baseUrl, timeout: 10000 }
-  const resp = await request<LoginResponse>(
-    opts,
-    "/clickzetta-portal/user/loginSingle",
-    { accessToken: pat, instanceName },
-  )
-  if (resp.code !== 0) {
-    throw new ClickZettaApiError("AUTH_FAILED", `Login failed: ${resp.message ?? "unknown error"}`)
-  }
-  if (!resp.data?.token) {
-    throw new ClickZettaApiError("AUTH_FAILED", "Login succeeded but no token returned")
-  }
-  return {
-    token: resp.data.token,
-    instanceId: resp.data.instanceId,
-    userId: resp.data.userId,
-    expireTimeMs: resp.data.expireTime,
-    obtainedAt: Date.now(),
-  }
+  return loginWithRetry(baseUrl, { accessToken: pat, instanceName }, instanceName)
 }
 
 export async function loginWithPassword(
@@ -41,23 +135,13 @@ export async function loginWithPassword(
   password: string,
   instanceName: string,
 ): Promise<AuthToken> {
-  const opts: ClientOptions = { baseUrl, timeout: 10000 }
-  const resp = await request<LoginResponse>(
-    opts,
-    "/clickzetta-portal/user/loginSingle",
+  return loginWithRetry(
+    baseUrl,
     { username, password, instanceName },
+    instanceName,
   )
-  if (resp.code !== 0) {
-    throw new ClickZettaApiError("AUTH_FAILED", `Login failed: ${resp.message ?? "unknown error"}`)
-  }
-  if (!resp.data?.token) {
-    throw new ClickZettaApiError("AUTH_FAILED", "Login succeeded but no token returned")
-  }
-  return {
-    token: resp.data.token,
-    instanceId: resp.data.instanceId,
-    userId: resp.data.userId,
-    expireTimeMs: resp.data.expireTime,
-    obtainedAt: Date.now(),
-  }
 }
+
+// ClientOptions is imported only to keep the original public signature
+// compatible; the login functions no longer go through `request()`.
+export type { ClientOptions }
