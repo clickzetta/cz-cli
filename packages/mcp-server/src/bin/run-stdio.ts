@@ -17,6 +17,7 @@ import { parseArgs } from "node:util"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import pino from "pino"
 import { StudioConfigManager } from "../config/profile.js"
+import { getRegionByAlias, getRegionByServiceUrl } from "../config/region.js"
 import { runStdio } from "../transport/stdio.js"
 
 // ---------------------------------------------------------------------------
@@ -100,6 +101,16 @@ const cliOverrides: Record<string, string | undefined> = {
 // Normalize service URL if provided — run_stdio_server.py:96-99
 if (cliOverrides["service"]) {
   cliOverrides["service"] = normalizeServiceUrl(cliOverrides["service"])
+}
+
+// run_stdio_server.py:101-106 — resolve region from alias, or infer from service URL.
+// If both are set, --x-lakehouse-region wins (Python precedence).
+if (cliOverrides["region"]) {
+  const resolved = getRegionByAlias(cliOverrides["region"], cliOverrides["region"])
+  if (resolved) cliOverrides["region"] = resolved
+} else if (cliOverrides["service"]) {
+  const inferred = getRegionByServiceUrl(cliOverrides["service"], null)
+  if (inferred) cliOverrides["region"] = inferred
 }
 
 // Strip undefined values

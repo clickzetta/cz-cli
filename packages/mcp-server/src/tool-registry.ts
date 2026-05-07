@@ -157,13 +157,10 @@ export class ToolDefinitionCache {
   }
 }
 
-/**
- * Placeholder — Block 2 will fill in the real region description.
- * tool_registry.py:11 — from .region_config import get_region_description
- */
-export function getRegionDescription(): string {
-  return ""
-}
+// tool_registry.py:11 — re-export from region config so tool descriptions
+// carry the full region alias table.
+export { getRegionDescription } from "./config/region.js"
+import { getRegionDescription } from "./config/region.js"
 
 /** ConfigurationException mirrors cz_mcp/core/exceptions.py */
 export class ConfigurationException extends Error {
