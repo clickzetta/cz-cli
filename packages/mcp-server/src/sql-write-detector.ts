@@ -147,10 +147,17 @@ function detectCreateOrReplace(sql: string): Set<WriteOperation> {
 /**
  * Python: _is_function_call (write_detector.py:155-168).
  * TRUNCATE(x, 2) is a function, TRUNCATE TABLE t is DDL.
+ * Two conditions (py:163-167):
+ *   1. next token is "(" — e.g. TRUNCATE(
+ *   2. token itself ends with "(" — e.g. TRUNCATE( as a single token
  */
 function isFunctionCall(tokens: string[], idx: number): boolean {
   const next = tokens[idx + 1]
-  return next === "("
+  if (next === "(") return true
+  // write_detector.py:166 — token itself ends with "("
+  const t = tokens[idx] ?? ""
+  if (t.endsWith("(")) return true
+  return false
 }
 
 /**
@@ -170,6 +177,17 @@ function findWriteOperations(rawSql: string): Set<WriteOperation> {
     if (isFunctionCall(tokens, i)) continue
     ops.add(t)
   }
+
+  // write_detector.py:142-151 — additional string-based detection for edge
+  // cases where the keyword is followed by a space (e.g. "INSERT ").
+  // Python iterates all tokens and checks token_str.startswith(write_keyword + ' ').
+  for (const keyword of WRITE_KEYWORDS) {
+    const pattern = keyword + " "
+    if (scrubbed.toUpperCase().includes(pattern)) {
+      ops.add(keyword as WriteOperation)
+    }
+  }
+
   return ops
 }
 

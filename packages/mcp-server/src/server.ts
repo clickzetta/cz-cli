@@ -18,31 +18,11 @@
 
 import { logger } from "./logger.js"
 import { ConfigurationException } from "./tool-registry.js"
+import type { StudioConfig } from "./config/profile.js"
+import { LakehouseClient } from "./lakehouse-client.js"
 
-// ---------------------------------------------------------------------------
-// StudioConfig — placeholder interface (Block 2 will replace with real impl)
-// server_core.py:23 — from ..studio_config_manager import StudioConfig
-// ---------------------------------------------------------------------------
-export interface StudioConfig {
-  token?: string
-  instance?: string
-  service?: string
-  workspace?: string
-  vcluster?: string
-  schema?: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  hints?: Record<string, any>
-}
-
-// ---------------------------------------------------------------------------
-// Placeholder for EnhancedLakehouseClient (Block 2 will provide real impl)
-// server_core.py:15 — from cz_mcp.core.enhanced_lakehouse import ...
-// ---------------------------------------------------------------------------
-export interface LakehouseClient {
-  connect(): Promise<void>
-  runSql(sql: string, params: unknown): Promise<string>
-  close(): Promise<void>
-}
+// Re-export StudioConfig so existing callers that import from server.js keep working.
+export type { StudioConfig } from "./config/profile.js"
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -135,19 +115,40 @@ export class LakehouseDB {
   /**
    * executeQuery — server_core.py:203-271
    *
-   * Block 2 will replace this stub with a real implementation that calls
-   * this.lakehouseClient.runSql(). For now it throws NotSupportedError so
-   * callers can detect the unimplemented state.
+   * Real implementation: re-initialises the LakehouseClient when the session
+   * has expired, then delegates to LakehouseClient.runSql().
+   *
+   * Returns [rows, errorMessage] where errorMessage is "" on success,
+   * matching the Python tuple convention (server_core.py:268-271).
    */
   async executeQuery(
     query: string,
     _useCache = false,
     _cacheTtl = 300,
   ): Promise<[Array<Record<string, unknown>>, string]> {
-    // TODO(Block 2): implement real query execution via LakehouseClient
-    throw new NotSupportedError(
-      `executeQuery is not yet implemented (Block 2). Query: ${query.slice(0, 80)}`,
-    )
+    if (!this.connectionConfig) {
+      throw new ConnectionException("No connection configuration available")
+    }
+
+    // server_core.py:233 — re-initialise when session expired
+    if (this.isSessionExpired()) {
+      logger.info("Session expired or not initialised — creating new LakehouseClient")
+      if (this.lakehouseClient) {
+        this.lakehouseClient.close()
+      }
+      this.lakehouseClient = new LakehouseClient(this.connectionConfig)
+      this.lakehouseClient.connect()
+      this.authTime = Date.now() / 1000
+    }
+
+    try {
+      const rows = await this.lakehouseClient!.runSql(query)
+      return [rows, ""]
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      logger.error({ err: e, query: query.slice(0, 80) }, "executeQuery failed")
+      throw new QueryExecutionException(msg, query)
+    }
   }
 
   // server_core.py:316-325
@@ -206,7 +207,7 @@ export class LakehouseDB {
   async close(): Promise<void> {
     if (this.lakehouseClient) {
       try {
-        await this.lakehouseClient.close()
+        this.lakehouseClient.close()
         logger.debug("Lakehouse连接已关闭")
       } catch (e) {
         logger.warn({ err: e }, "关闭连接时发生错误")
