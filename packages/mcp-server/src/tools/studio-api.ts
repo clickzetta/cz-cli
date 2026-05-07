@@ -79,6 +79,10 @@ const API_PATHS: Record<string, string> = {
   // Job performance — optimize_tools.py
   JOB_PROFILE_URL: "/clickzetta-lakeconsole/api/v1/vcluster/job/jobProfile",
   GET_JOB_PROFILE_URL: "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
+  // Datasource utils — datasource_utils.py (api_properties.ini:276-281)
+  EXECUTE_SQL_URL: "/ide-authority/v1/ai/mcp/execute",
+  DATA_SOURCES_GET_DDL: "/ide-authority/v1/projectDataSources/getDdl",
+  DATA_SOURCES_GET_COLUMN_MAP_META: "/ide-authority/v1/projectDataSources/getColumnMapMeta",
 }
 
 export function getBaseUrl(env: string, configBaseUrl?: string): string {
