@@ -33,7 +33,7 @@ export class MCPBaseException extends Error {
   readonly errorCode: string
   readonly details: Record<string, unknown>
   readonly timestamp: string
-  readonly cause?: unknown
+  override readonly cause?: unknown
 
   constructor(
     message: string,
