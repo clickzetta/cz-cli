@@ -97,7 +97,7 @@ export class SkillSearchEngine {
   readonly modelName: string
 
   /** search_engine.py:23 — skills list */
-  private skills: Skill[] = []
+  skills: Skill[] = []
 
   /** TF maps per skill (replaces numpy embeddings matrix) */
   private tfMaps: Map<string, number>[] = []

@@ -410,3 +410,69 @@ function loadDocumentsFromDirectory(
 
   return documents
 }
+
+// ---------------------------------------------------------------------------
+// loadAllSkills — skill_loader.py:982-1021
+// ---------------------------------------------------------------------------
+export async function loadAllSkills(
+  skillSources: Array<Record<string, unknown>>,
+  config?: Record<string, unknown> | null,
+): Promise<Skill[]> {
+  const allSkills: Skill[] = []
+  for (const sourceConfig of skillSources) {
+    const sourceType = sourceConfig["type"] as string | undefined
+    if (sourceType === "local") {
+      const path = sourceConfig["path"] as string | undefined
+      if (path) {
+        const skills = loadFromLocal(path, config ?? undefined)
+        allSkills.push(...skills)
+      }
+    } else {
+      logger.warn({ sourceType }, "Unknown source type")
+    }
+  }
+  logger.info({ count: allSkills.length }, "Total skills loaded")
+  return allSkills
+}
+
+// ---------------------------------------------------------------------------
+// loadSkillsInBatches — skill_loader.py:1024-1088
+// ---------------------------------------------------------------------------
+export async function loadSkillsInBatches(
+  skillSources: Array<Record<string, unknown>>,
+  config: Record<string, unknown> | null | undefined,
+  batchCallback: (batch: Skill[], totalLoaded: number) => void,
+  batchSize = 10,
+): Promise<void> {
+  let currentBatch: Skill[] = []
+  let totalLoaded = 0
+
+  const processBatch = () => {
+    if (currentBatch.length > 0) {
+      totalLoaded += currentBatch.length
+      batchCallback([...currentBatch], totalLoaded)
+      currentBatch = []
+    }
+  }
+
+  for (const sourceConfig of skillSources) {
+    const sourceType = sourceConfig["type"] as string | undefined
+    try {
+      if (sourceType === "local") {
+        const path = sourceConfig["path"] as string | undefined
+        if (path) {
+          const skills = loadFromLocal(path, config ?? undefined)
+          for (const skill of skills) {
+            currentBatch.push(skill)
+            if (currentBatch.length >= batchSize) processBatch()
+          }
+        }
+      } else {
+        logger.warn({ sourceType }, "Unknown source type")
+      }
+    } catch (e) {
+      logger.error({ err: e, sourceConfig }, "Error loading from source")
+    }
+  }
+  processBatch()
+}
