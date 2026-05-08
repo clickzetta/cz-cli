@@ -13,6 +13,9 @@ import { Provider } from "../../provider"
 import { Agent } from "../../agent/agent"
 import { Permission } from "../../permission"
 import { Tool } from "../../tool"
+import fs from "fs"
+import os from "os"
+import { parse as parseToml } from "smol-toml"
 import { GlobTool } from "../../tool/glob"
 import { GrepTool } from "../../tool/grep"
 import { ReadTool } from "../../tool/read"
@@ -254,9 +257,9 @@ export const RunCommand = cmd({
       })
       .option("format", {
         type: "string",
-        choices: ["default", "json"],
+        choices: ["default", "json", "a2a"],
         default: "default",
-        describe: "format: default (formatted) or json (raw JSON events)",
+        describe: "format: default (formatted), json (raw JSON events), or a2a (agent-to-agent: single JSON with session_id and result)",
       })
       .option("file", {
         alias: ["f"],
@@ -307,6 +310,25 @@ export const RunCommand = cmd({
   handler: async (args) => {
     if (args.profile) {
       process.env.CZ_PROFILE = args.profile
+      // Expand profile fields into CZ_* env vars so cz-tool picks up the right
+      // credentials even when the profile uses username/password (no PAT).
+      try {
+        const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+        const toml = parseToml(fs.readFileSync(profilesPath, "utf-8")) as Record<string, unknown>
+        const profiles = toml.profiles as Record<string, Record<string, string>> | undefined
+        const p = profiles?.[args.profile]
+        if (p) {
+          if (p.pat) process.env.CZ_PAT = p.pat
+          if (p.username) process.env.CZ_USERNAME = p.username
+          if (p.password) process.env.CZ_PASSWORD = p.password
+          if (p.service) process.env.CZ_SERVICE = p.service
+          if (p.protocol) process.env.CZ_PROTOCOL = p.protocol
+          if (p.instance) process.env.CZ_INSTANCE = p.instance
+          if (p.workspace) process.env.CZ_WORKSPACE = p.workspace
+          if (p.schema) process.env.CZ_SCHEMA = p.schema
+          if (p.vcluster) process.env.CZ_VCLUSTER = p.vcluster
+        }
+      } catch {}
     }
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
@@ -434,12 +456,15 @@ export const RunCommand = cmd({
       }
 
       function emit(type: string, data: Record<string, unknown>) {
+        if (args.format === "a2a") return true
         if (args.format === "json") {
           process.stdout.write(JSON.stringify({ type, timestamp: Date.now(), sessionID, ...data }) + EOL)
           return true
         }
         return false
       }
+
+      const a2aTexts: string[] = []
 
       const events = await sdk.event.subscribe()
       let error: string | undefined
@@ -452,6 +477,7 @@ export const RunCommand = cmd({
             event.type === "message.updated" &&
             event.properties.info.role === "assistant" &&
             args.format !== "json" &&
+            args.format !== "a2a" &&
             toggles.get("start") !== true
           ) {
             UI.empty()
@@ -481,7 +507,8 @@ export const RunCommand = cmd({
               part.type === "tool" &&
               part.tool === "task" &&
               part.state.status === "running" &&
-              args.format !== "json"
+              args.format !== "json" &&
+              args.format !== "a2a"
             ) {
               if (toggles.get(part.id) === true) continue
               task(props<typeof TaskTool>(part))
@@ -497,7 +524,13 @@ export const RunCommand = cmd({
             }
 
             if (part.type === "text" && part.time?.end) {
-              if (emit("text", { part })) continue
+              if (emit("text", { part })) {
+                if (args.format === "a2a") {
+                  const text = part.text.trim()
+                  if (text) a2aTexts.push(text)
+                }
+                continue
+              }
               const text = part.text.trim()
               if (!text) continue
               if (!process.stdout.isTTY) {
@@ -638,8 +671,15 @@ export const RunCommand = cmd({
       }
       await share(sdk, sessionID)
 
-      loop().catch((e) => {
-        console.error(e)
+      const loopDone = loop().catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (args.format === "a2a") {
+          process.stdout.write(JSON.stringify({ session_id: sessionID, result: "", error: msg }) + EOL)
+        } else if (args.format === "json") {
+          process.stdout.write(JSON.stringify({ type: "error", timestamp: Date.now(), sessionID, error: msg }) + EOL)
+        } else {
+          console.error(e)
+        }
         process.exit(1)
       })
 
@@ -661,6 +701,14 @@ export const RunCommand = cmd({
           variant: args.variant,
           parts: [...files, { type: "text", text: message }],
         })
+      }
+
+      await loopDone
+
+      if (args.format === "a2a") {
+        const output: Record<string, unknown> = { session_id: sessionID, result: a2aTexts.join("\n") }
+        if (error) output.error = error
+        process.stdout.write(JSON.stringify(output) + EOL)
       }
     }
 

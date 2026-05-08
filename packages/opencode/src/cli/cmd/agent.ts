@@ -242,9 +242,5 @@ const AgentListCommand = cmd({
 
 import { AgentLlmCommand } from "./config-llm"
 
-export const AgentCommand = cmd({
-  command: "agent",
-  describe: "manage agents",
-  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).command(AgentLlmCommand).demandCommand(),
-  async handler() {},
-})
+export { AgentCreateCommand, AgentListCommand }
+export { AgentLlmCommand }

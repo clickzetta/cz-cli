@@ -45,4 +45,14 @@ When the user specifies an environment or profile (e.g. "use uat_test", "on the 
 cz-cli agent run "<request>" --profile uat_test --format a2a --dangerously-skip-permissions
 ```
 
-Available profiles can be listed with: `cz-cli profile list`
+Available profiles: read `~/.clickzetta/profiles.toml` or run `cz-cli profile list`.
+
+## Error handling
+
+All errors in non-TTY mode output JSON to stdout:
+
+```json
+{"ok": false, "error": "NO_PROFILE", "next_steps": ["cz-cli setup --credential <base64>"]}
+```
+
+On `NO_PROFILE` error: guide user to run `cz-cli setup --credential <base64>`. See `references/profile-setup.md`.

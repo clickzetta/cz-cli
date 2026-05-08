@@ -254,11 +254,11 @@ const LlmAddCommand = cmd({
         describe: "after writing, set default_llm to this entry",
       })
       .example(
-        "$0 agent llm add my-claude --provider anthropic --api-key sk-ant-... --use",
+        "$0 llm add my-claude --provider anthropic --api-key sk-ant-... --use",
         "add Claude and make it the default (model auto-selected)",
       )
-      .example("$0 agent llm add my-openai --provider openai --api-key sk-...", "add OpenAI (not default)")
-      .example("$0 agent llm add my-claude --provider anthropic --api-key sk-ant-... --model claude-opus-4-1 --use", "add Claude with specific model"),
+      .example("$0 llm add my-openai --provider openai --api-key sk-...", "add OpenAI (not default)")
+      .example("$0 llm add my-claude --provider anthropic --api-key sk-ant-... --model claude-opus-4-1 --use", "add Claude with specific model"),
   async handler(args) {
     const opts = args as {
       name: string
@@ -456,13 +456,13 @@ export const AgentLlmCommand = cmd({
       .command(LlmResetCommand)
       .command(LlmPurgeLegacyCommand)
       .demandCommand(1, "run `cz-cli agent llm --help` to see available subcommands")
-      .example("$0 agent llm show", "see which LLM is active and what is defined")
+      .example("$0 llm show", "see which LLM is active and what is defined")
       .example(
-        "$0 agent llm add my-claude --provider anthropic --api-key sk-ant-... --use",
+        "$0 llm add my-claude --provider anthropic --api-key sk-ant-... --use",
         "add Claude and select it (model auto-selected from provider defaults)",
       )
-      .example("$0 agent llm use my-openai", "switch to a different entry")
-      .example("$0 agent llm reset", "fall back to the ClickZetta built-in LLM"),
+      .example("$0 llm use my-openai", "switch to a different entry")
+      .example("$0 llm reset", "fall back to the ClickZetta built-in LLM"),
   async handler() {},
 })
 

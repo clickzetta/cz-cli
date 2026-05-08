@@ -4,6 +4,32 @@ import path from "path"
 import readline from "readline"
 import { xdgData } from "xdg-basedir"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
+import { cmd } from "./cmd"
+
+export const SetupCommand = cmd({
+  command: "setup",
+  describe: "configure ClickZetta profile from a registration credential",
+  builder: (yargs) =>
+    yargs
+      .option("credential", {
+        type: "string",
+        describe: "base64-encoded credential string from the registration page",
+      })
+      .option("profile-name", {
+        type: "string",
+        describe: "profile name to write (default: 'default')",
+        default: "default",
+      })
+      .example("$0 setup --credential <base64>", "configure from registration token")
+      .example("$0 setup", "interactive setup (TTY only)"),
+  handler: async (args) => {
+    const argv: string[] = []
+    if (args.credential) argv.push("--credential", args.credential)
+    if (args["profile-name"] && args["profile-name"] !== "default")
+      argv.push("--profile-name", args["profile-name"])
+    await setup(argv)
+  },
+})
 
 const CLICKZETTA_DIR = path.join(os.homedir(), ".clickzetta")
 const PROFILES_PATH = path.join(CLICKZETTA_DIR, "profiles.toml")
