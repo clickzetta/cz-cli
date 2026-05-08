@@ -4,7 +4,7 @@ import { JobStatus, request } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -45,9 +45,9 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         "List tables",
         (y) =>
           y
-            .option("in", { type: "string", describe: "Schema name (alias: --schema, --filter-schema)" })
-            .option("schema", { type: "string", describe: "Schema name (alias of --in)", hidden: true })
-            .option("filter-schema", { type: "string", describe: "Schema name (alias of --in)", hidden: true })
+            .option("in", { type: "string", describe: "Filter by schema name (e.g. --in public)" })
+            .option("schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
+            .option("filter-schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
             .option("like", { type: "string", describe: "Filter pattern" })
             .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
         async (argv) => {
@@ -80,7 +80,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             logOperation("table list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format: argv.output })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format: argv.output , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -111,7 +112,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (Object.keys(metadata).length > 0) result.metadata = metadata
             success(result, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -144,7 +146,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             logOperation("table preview", { sql, ok: true, rows: r.rows.length, timeMs: Date.now() - t0 })
             successRows(columns, r.rows, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -191,7 +194,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (jobSummary) result.job_summary = jobSummary
             success(result, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -201,9 +205,9 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", describe: "Table name (optional, filters to single table)" })
-            .option("in", { type: "string", describe: "Schema name (alias: --schema, --filter-schema)" })
-            .option("schema", { type: "string", describe: "Schema name (alias of --in)", hidden: true })
-            .option("filter-schema", { type: "string", describe: "Schema name (alias of --in)", hidden: true })
+            .option("in", { type: "string", describe: "Filter by schema name (e.g. --in public)" })
+            .option("schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
+            .option("filter-schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
             .option("like", { type: "string", describe: "Filter pattern" })
             .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
         async (argv) => {
@@ -242,17 +246,18 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             logOperation("table history", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format: argv.output })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format: argv.output , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
       .command(
         "create [ddl]",
-        "Create a table from DDL",
+        "Create a table from DDL statement",
         (y) =>
           y
-            .positional("ddl", { type: "string", describe: "DDL statement or table name" })
-            .option("from-file", { type: "string", describe: "Read DDL from file" }),
+            .positional("ddl", { type: "string", describe: "CREATE TABLE DDL statement (positional takes priority over --from-file)" })
+            .option("from-file", { type: "string", describe: "Read DDL from a file path (used when positional DDL is not provided)" }),
         async (argv) => {
           const format = argv.output
           try {
@@ -271,7 +276,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             logOperation("table create", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: "Table created successfully" }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -294,7 +300,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             logOperation("table drop", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: `Table '${argv.name}' dropped successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )

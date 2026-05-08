@@ -1,48 +1,13 @@
-import yargs from "yargs"
+// Minimal static imports — only what's needed before the fast-path exits.
+// Agent-specific modules are loaded dynamically below so data commands
+// (sql, table, …) don't pay the cost of loading the full agent bundle.
 import { hideBin } from "yargs/helpers"
-import { RunCommand } from "./cli/cmd/run"
-import { GenerateCommand } from "./cli/cmd/generate"
-import { Log } from "./util"
-import { ConsoleCommand } from "./cli/cmd/account"
-import { ProvidersCommand } from "./cli/cmd/providers"
-import { AgentCreateCommand, AgentListCommand } from "./cli/cmd/agent"
-import { UpgradeCommand } from "./cli/cmd/upgrade"
-import { UninstallCommand } from "./cli/cmd/uninstall"
-import { ModelsCommand } from "./cli/cmd/models"
-import { UI } from "./cli/ui"
-import { Installation } from "./installation"
-import { InstallationVersion } from "./installation/version"
-import { NamedError } from "@opencode-ai/shared/util/error"
-import { FormatError } from "./cli/error"
-import { ServeCommand } from "./cli/cmd/serve"
-import { Filesystem } from "./util"
-import { DebugCommand } from "./cli/cmd/debug"
-import { StatsCommand } from "./cli/cmd/stats"
-import { McpCommand } from "./cli/cmd/mcp"
-import { GithubCommand } from "./cli/cmd/github"
-import { ExportCommand } from "./cli/cmd/export"
-import { ImportCommand } from "./cli/cmd/import"
-import { AttachCommand } from "./cli/cmd/tui/attach"
-import { TuiThreadCommand } from "./cli/cmd/tui/thread"
-import { AcpCommand } from "./cli/cmd/acp"
 import { EOL } from "os"
 import os from "os"
 import fs from "fs"
-import { forward } from "./cli/cmd/forward"
-import { WebCommand } from "./cli/cmd/web"
-import { PrCommand } from "./cli/cmd/pr"
-import { SessionCommand } from "./cli/cmd/session"
-import { DbCommand } from "./cli/cmd/db"
 import path from "path"
-import { Global } from "./global"
-import { JsonMigration } from "./storage"
-import { Database } from "./storage"
+import { Log } from "./util"
 import { errorMessage } from "./util/error"
-import { PluginCommand } from "./cli/cmd/plug"
-import { SetupCommand } from "./cli/cmd/setup"
-import { AgentLlmCommand } from "./cli/cmd/config-llm"
-import { Heap } from "./cli/heap"
-import { drizzle } from "drizzle-orm/bun-sqlite"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -58,125 +23,164 @@ process.on("uncaughtException", (e) => {
 
 const rawArgs = hideBin(process.argv)
 
-// Fast path: `cz-cli setup` runs before any agent bootstrap
-// Skip fast path for --help/-h so yargs can render the help text
+// --version fast path
+if (["--version", "-v"].includes(rawArgs[0])) {
+  const { InstallationVersion } = await import("./installation/version")
+  process.stdout.write(InstallationVersion + "\n")
+  process.exit(0)
+}
+
+// setup fast path — runs before any agent bootstrap
 if (rawArgs[0] === "setup" && !rawArgs.includes("--help") && !rawArgs.includes("-h")) {
   const { setup } = await import("./cli/cmd/setup")
   await setup(rawArgs.slice(1))
 }
 
-// `agent` and `run` are handled by the yargs CLI below.
-// Everything else (sql, table, profile, status, …) is forwarded to cz-tool.
 const isAgentSubcommand = rawArgs[0] === "agent" || rawArgs[0] === "run"
 
-if (rawArgs.length === 0 || ["--help", "-h"].includes(rawArgs[0])) {
-  // No-args / help: fall through to yargs so it renders the full help text
+// Prevent recursive agent invocation: if we're already inside an agent session,
+// block nested `cz-cli agent` / `cz-cli run` calls.
+if (isAgentSubcommand && process.env.CLICKZETTA_PID) {
+  process.stderr.write("Cannot start a nested agent session (already running inside an agent).\n")
+  process.exit(1)
 }
 
-if (["--version", "-v"].includes(rawArgs[0])) {
-  process.stdout.write(InstallationVersion + "\n")
-  process.exit(0)
+// ---------------------------------------------------------------------------
+// Profile check — shared by both data commands and agent commands.
+// Only checks that profiles.toml exists; key validity is left to the command.
+// ---------------------------------------------------------------------------
+function checkProfile(): boolean {
+  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+  try {
+    const content = fs.readFileSync(profilesPath, "utf-8")
+    return /^\[profiles\./m.test(content)
+  } catch {
+    return false
+  }
 }
 
-// Non-agent, non-setup commands are forwarded directly to the cz-tool binary.
+function exitNoProfile(): never {
+  const isTTY = process.stderr.isTTY
+  if (isTTY) {
+    process.stderr.write(
+      "\n  No ClickZetta profile configured.\n" +
+      "  Run:\n\n" +
+      "    cz-cli setup                              # interactive setup (TTY)\n" +
+      "    cz-cli setup --credential <base64_string>  # from registration token\n\n" +
+      "  Register at:\n" +
+      "    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n" +
+      "    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n",
+    )
+  } else {
+    process.stdout.write(JSON.stringify({
+      error: {
+        code: "NO_PROFILE",
+        message: "No ClickZetta profile configured.",
+        next_step: "cz-cli setup --credential <base64_string>",
+        register_urls: [
+          "https://accounts.clickzetta.com/register?ref=cz-cli",
+          "https://accounts.singdata.com/register?ref=cz-cli",
+        ],
+      },
+    }) + "\n")
+  }
+  process.exit(1)
+}
+
+// ---------------------------------------------------------------------------
+// Data commands (sql, table, schema, …) — check login then forward.
+// Exits here; agent modules are never loaded.
+// ---------------------------------------------------------------------------
 if (!isAgentSubcommand && rawArgs[0] !== "setup" && rawArgs.length > 0 && !["--help", "-h", "--version", "-v"].includes(rawArgs[0])) {
+  if (!checkProfile()) exitNoProfile()
+
+  const { forward } = await import("./cli/cmd/forward")
   await forward(rawArgs)
 }
 
-// Require profiles.toml with api_key before entering agent commands
+// ---------------------------------------------------------------------------
+// Agent commands — validate profile then load all agent modules.
+// ---------------------------------------------------------------------------
 if (isAgentSubcommand) {
-  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
-  let hasApiKey = false
-  let profileExists = false
-  let hasLlmEntry = false
-  try {
-    const content = fs.readFileSync(profilesPath, "utf-8")
-    profileExists = true
-    const defaultMatch = content.match(/^default_profile\s*=\s*"(.+)"/m)
-    const profileName = defaultMatch ? defaultMatch[1] : "default"
-    const sectionHeader = `[profiles.${profileName}]`
-    const sectionStart = content.indexOf(sectionHeader)
-    if (sectionStart >= 0) {
-      const nextSection = content.indexOf("\n[", sectionStart + sectionHeader.length)
-      const section = nextSection >= 0 ? content.slice(sectionStart, nextSection) : content.slice(sectionStart)
-      hasApiKey = /^api_key\s*=\s*".+"/m.test(section)
-    }
-    if (!hasApiKey) {
-      hasApiKey = /^api_key\s*=\s*".+"/m.test(content)
-    }
-    hasLlmEntry = /^\[llm\./m.test(content)
-  } catch {}
-  if (!hasApiKey) {
-    const isTTY = process.stderr.isTTY
-    if (isTTY) {
-      if (!profileExists) {
-        process.stderr.write(
-          "\n  No ClickZetta profile configured.\n" +
-          "  Run:\n\n" +
-          "    cz-cli setup                              # interactive setup (TTY)\n" +
-          "    cz-cli setup --credential <base64_string>  # from registration token\n\n" +
-          "  Register at:\n" +
-          "    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n" +
-          "    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n",
-        )
-      } else if (hasLlmEntry) {
-        process.stderr.write(
-          "\n  Profile found but no ClickZetta api_key.\n" +
-          "  You have user-defined LLM entries — run:\n\n" +
-          "    cz-cli agent llm show   # check which LLM is active\n\n" +
-          "  Or re-run setup to add a ClickZetta api_key:\n" +
-          "    cz-cli setup --credential <base64_string>\n\n",
-        )
-      } else {
-        process.stderr.write(
-          "\n  Profile found but missing api_key.\n" +
-          "  Re-run setup or add an LLM key:\n\n" +
-          "    cz-cli setup --credential <base64_string>\n" +
-          "    cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use\n\n",
-        )
-      }
-    } else {
-      const base: Record<string, unknown> = {
-        ok: false,
-        error: "NO_PROFILE",
-        profile_exists: profileExists,
-        has_llm_entry: hasLlmEntry,
-      }
-      if (!profileExists) {
-        Object.assign(base, {
-          message: "No ClickZetta profile configured. Run setup with a registration credential.",
-          next_steps: [
-            "cz-cli setup --credential <base64_string>",
-          ],
-          register_urls: [
-            "https://accounts.clickzetta.com/register?ref=cz-cli",
-            "https://accounts.singdata.com/register?ref=cz-cli",
-          ],
-        })
-      } else if (hasLlmEntry) {
-        Object.assign(base, {
-          message: "Profile exists but no ClickZetta api_key. You have user-defined LLM entries — check which is active.",
-          next_steps: [
-            "cz-cli agent llm show",
-            "cz-cli agent llm add <name> --provider <provider> --api-key <key> --use",
-          ],
-        })
-      } else {
-        Object.assign(base, {
-          message: "Profile exists but missing api_key. Re-run setup or add an LLM key.",
-          next_steps: [
-            "cz-cli setup --credential <base64_string>",
-            "cz-cli agent llm add my-claude --provider anthropic --api-key <key> --use",
-            "cz-cli agent llm add my-openai --provider openai --api-key <key> --use",
-          ],
-          supported_providers: ["anthropic", "openai", "openai-compatible", "bedrock", "google", "azure"],
-        })
-      }
-      process.stdout.write(JSON.stringify(base) + "\n")
-    }
-    process.exit(1)
-  }
+  if (!checkProfile()) exitNoProfile()
 }
+
+// Dynamic imports — only reached for `cz-cli agent …` or `cz-cli --help`
+const [
+  { default: yargs },
+  { RunCommand },
+  { GenerateCommand },
+  { UI },
+  { Installation },
+  { InstallationVersion },
+  { NamedError },
+  { FormatError },
+  { ConsoleCommand },
+  { ProvidersCommand },
+  { AgentCreateCommand, AgentListCommand },
+  { UpgradeCommand },
+  { UninstallCommand },
+  { ModelsCommand },
+  { ServeCommand },
+  { Filesystem },
+  { DebugCommand },
+  { StatsCommand },
+  { McpCommand },
+  { GithubCommand },
+  { ExportCommand },
+  { ImportCommand },
+  { AttachCommand },
+  { TuiThreadCommand },
+  { AcpCommand },
+  { WebCommand },
+  { PrCommand },
+  { SessionCommand },
+  { DbCommand },
+  { Global },
+  { JsonMigration, Database },
+  { PluginCommand },
+  { SetupCommand },
+  { AgentLlmCommand },
+  { Heap },
+  { drizzle },
+] = await Promise.all([
+  import("yargs"),
+  import("./cli/cmd/run"),
+  import("./cli/cmd/generate"),
+  import("./cli/ui"),
+  import("./installation"),
+  import("./installation/version"),
+  import("@opencode-ai/shared/util/error"),
+  import("./cli/error"),
+  import("./cli/cmd/account"),
+  import("./cli/cmd/providers"),
+  import("./cli/cmd/agent"),
+  import("./cli/cmd/upgrade"),
+  import("./cli/cmd/uninstall"),
+  import("./cli/cmd/models"),
+  import("./cli/cmd/serve"),
+  import("./util"),
+  import("./cli/cmd/debug"),
+  import("./cli/cmd/stats"),
+  import("./cli/cmd/mcp"),
+  import("./cli/cmd/github"),
+  import("./cli/cmd/export"),
+  import("./cli/cmd/import"),
+  import("./cli/cmd/tui/attach"),
+  import("./cli/cmd/tui/thread"),
+  import("./cli/cmd/acp"),
+  import("./cli/cmd/web"),
+  import("./cli/cmd/pr"),
+  import("./cli/cmd/session"),
+  import("./cli/cmd/db"),
+  import("./global"),
+  import("./storage"),
+  import("./cli/cmd/plug"),
+  import("./cli/cmd/setup"),
+  import("./cli/cmd/config-llm"),
+  import("./cli/heap"),
+  import("drizzle-orm/bun-sqlite"),
+])
 
 const args = isAgentSubcommand ? rawArgs.slice(1) : rawArgs
 
@@ -318,7 +322,7 @@ const cli = yargs(args)
     ) {
       if (err) throw err
       if (!process.stderr.isTTY) {
-        process.stdout.write(JSON.stringify({ ok: false, error: "INVALID_ARGS", message: msg }) + EOL)
+        process.stdout.write(JSON.stringify({ error: { code: "INVALID_ARGS", message: msg } }) + EOL)
         process.exit(1)
       }
       cli.showHelp(show)

@@ -79,7 +79,7 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   } catch (e) {
     if (!process.exitCode) process.exitCode = 1
     if (!chunks.length) {
-      chunks.push(JSON.stringify({ ok: false, error: { code: "INTERNAL_ERROR", message: String(e) } }))
+      chunks.push(JSON.stringify({ error: { code: "INTERNAL_ERROR", message: String(e) } }))
     }
   }
 

@@ -276,12 +276,12 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "update <name> <key> <value>",
-        "Update a profile field",
+        `Update a profile field. Valid keys: pat, username, password, service, protocol, instance, workspace, schema, vcluster, header.<NAME>`,
         (y) =>
           y
-            .positional("name", { type: "string", demandOption: true })
-            .positional("key", { type: "string", demandOption: true })
-            .positional("value", { type: "string", demandOption: true }),
+            .positional("name", { type: "string", demandOption: true, describe: "Profile name" })
+            .positional("key", { type: "string", demandOption: true, describe: "Field to update: pat | username | password | service | protocol | instance | workspace | schema | vcluster | header.<NAME>" })
+            .positional("value", { type: "string", demandOption: true, describe: "New value" }),
         (argv) => {
           const format = argv.output
           try {

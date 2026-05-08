@@ -22,7 +22,7 @@ function isJson(r: ExecuteResult): Record<string, unknown> | null {
 function assertOk(r: ExecuteResult): string | null {
   const j = isJson(r)
   if (!j) return `not JSON: ${r.output.slice(0, 80)}`
-  if (j.ok !== true) return `ok=${j.ok} error=${JSON.stringify((j as any).error)}`
+  if (j.error) return `unexpected error: ${JSON.stringify(j.error)}`
   return null
 }
 
@@ -30,7 +30,7 @@ function assertError(code?: string) {
   return (r: ExecuteResult): string | null => {
     const j = isJson(r)
     if (!j) return `not JSON: ${r.output?.slice(0, 80)}`
-    if (j.ok !== false) return `expected error but ok=true`
+    if (!j.error) return `expected error but got no error field`
     if (code && (j.error as any)?.code !== code) return `expected code=${code} got=${(j.error as any)?.code}`
     return null
   }

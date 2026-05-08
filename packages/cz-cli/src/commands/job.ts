@@ -90,8 +90,8 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
-            .option("limit", { type: "boolean", default: true, describe: "Row limit (use --no-limit to disable)" })
-            .option("timeout", { type: "number", default: 300, describe: "Max seconds to wait for job completion" }),
+            .option("limit", { type: "boolean", default: true, describe: "Limit results to 100 rows. Use --no-limit to fetch all rows." })
+            .option("timeout", { type: "number", default: 300, describe: "Max seconds to wait for job completion. Returns an error if exceeded." }),
         async (argv) => {
           const format = argv.output
           try {

@@ -3,7 +3,7 @@ import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 
@@ -44,7 +44,8 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             logOperation("schema list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) }); return
           }
         },
       )
@@ -72,7 +73,8 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             logOperation("schema describe", { sql: infoSql, ok: true, timeMs: Date.now() - t0 })
             success({ name, type: schemaType, table_count: tables.length, tables }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) }); return
           }
         },
       )
@@ -96,7 +98,8 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             logOperation("schema create", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: `Schema '${argv.name}' created successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) }); return
           }
         },
       )
@@ -120,7 +123,8 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             logOperation("schema drop", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: `Schema '${argv.name}' dropped successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) }); return
           }
         },
       )

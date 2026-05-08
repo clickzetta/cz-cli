@@ -72,11 +72,11 @@ async function logHandler(argv: Record<string, unknown>): Promise<void> {
 
 const logOptions = (y: Argv) =>
   y
-    .positional("id", { type: "string", describe: "Run instance ID or task name" })
-    .option("run-id", { type: "string", describe: "Run instance ID or task name (alias of positional)" })
-    .option("task-id", { type: "string", describe: "Task name or ID (auto-selects latest run)" })
-    .option("attempt-id", { type: "number", describe: "Attempt/execute log ID (auto-selects first if omitted)" })
-    .option("offset", { type: "number", default: 0, describe: "Log byte offset" })
+    .positional("id", { type: "string", describe: "Run instance ID or task name. Priority: positional > --run-id > --task-id." })
+    .option("run-id", { type: "string", describe: "Run instance ID or task name (alternative to positional argument)" })
+    .option("task-id", { type: "string", describe: "Task name or ID — auto-selects the most recent run" })
+    .option("attempt-id", { type: "number", describe: "Attempt log ID. Auto-selects the first attempt if omitted." })
+    .option("offset", { type: "number", default: 0, describe: "Log byte offset for paginating large logs" })
 
 export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
   cli.command("attempts", "Manage attempt records", (yargs) =>
@@ -86,9 +86,9 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
         "List attempts for a run",
         (y) =>
           y
-            .positional("id", { type: "string", describe: "Run instance ID or task name (auto-selects latest if omitted)" })
-            .option("run-id", { type: "string", describe: "Run instance ID or task name" })
-            .option("task-id", { type: "string", describe: "Task name or ID (auto-selects latest run)" })
+            .positional("id", { type: "string", describe: "Run instance ID or task name. Priority: positional > --run-id > --task-id > auto-select latest run." })
+            .option("run-id", { type: "string", describe: "Run instance ID or task name (alternative to positional argument)" })
+            .option("task-id", { type: "string", describe: "Task name or ID — auto-selects the most recent run for that task" })
             .option("page", { type: "number", default: 1 })
             .option("page-size", { type: "number", default: 10 })
             .option("limit", { type: "number", describe: "Alias of --page-size" }),
@@ -98,26 +98,21 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const pageSize = argv.limit ?? argv["page-size"]
             let runId: number
-            let sourceMessage: string
             const idArg = argv.id as string | undefined
             if (idArg) {
               runId = await resolveRunIdOrTaskName(sc, idArg, format)
-              sourceMessage = `来源: ${idArg}`
             } else if (argv["run-id"]) {
               runId = await resolveRunIdOrTaskName(sc, String(argv["run-id"]), format)
-              sourceMessage = `来源: ${argv["run-id"]}`
             } else if (argv["task-id"]) {
               const { resolveTaskId } = await import("../resolver.js")
               const taskId = await resolveTaskId(sc, String(argv["task-id"]), format)
               const r = await resolveLatestRunId(sc, format, { taskId })
               if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
               runId = r
-              sourceMessage = `task: ${argv["task-id"]}`
             } else {
               const r = await resolveLatestRunId(sc, format)
               if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
               runId = r
-              sourceMessage = "未指定 run/task，已自动选择最近一次运行实例"
             }
             const resp = await listAttempts(sc, {
               taskInstanceId: runId,
@@ -129,10 +124,10 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
             const items = Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : []
             const total = data?.total ?? data?.totalCount
             const normalized = items.map((item) => normalizeRunIdentity(item, { run_id: runId }))
-            const aiMessage = `当前仅展示第 ${argv.page} 页` +
-              (total != null ? `（${normalized.length} 条 / 共 ${total} 条）` : "") +
-              `，${sourceMessage}（run_id=${runId}）` +
-              `。如需下一页，请执行: cz-cli attempts list ${runId} --page ${(argv.page as number) + 1} --page-size ${pageSize}`
+            const aiMessage = `Showing page ${argv.page}` +
+              (total != null ? ` (${normalized.length} of ${total} total)` : "") +
+              ` for run_id=${runId}.` +
+              ` For next page: cz-cli attempts list ${runId} --page ${(argv.page as number) + 1} --page-size ${pageSize}`
             logOperation("attempts list", { ok: true })
             success(normalized, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total }, selected_run_id: runId, run_id: runId } })
           } catch (err) {

@@ -9,7 +9,7 @@ const FAIL = "\x1b[31m✗\x1b[0m"
 
 interface Test { name: string; cmd: string; check: (r: ExecuteResult) => string | null }
 
-function ok(r: ExecuteResult) { const j = JSON.parse(r.output.trim().split("\n")[0]); return j.ok ? null : `error: ${j.error?.code} ${j.error?.message?.slice(0,60)}` }
+function ok(r: ExecuteResult) { const j = JSON.parse(r.output.trim().split("\n")[0]); return !j.error ? null : `error: ${j.error?.code} ${j.error?.message?.slice(0,60)}` }
 function single(r: ExecuteResult) { return r.output.trim().split("\n").length === 1 ? null : `multi-line (${r.output.trim().split("\n").length})` }
 function exitCode(n: number) { return (r: ExecuteResult) => r.exitCode === n ? null : `exit=${r.exitCode} want=${n}` }
 function hasRows(r: ExecuteResult) { const j = JSON.parse(r.output.trim().split("\n")[0]); return j.rows?.length > 0 ? null : `no rows` }

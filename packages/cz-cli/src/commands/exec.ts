@@ -102,6 +102,54 @@ function isAuthError(err: unknown): boolean {
   return false
 }
 
+function isNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const msg = err.message.toLowerCase()
+  return (
+    msg.includes("socket") ||
+    msg.includes("connection") ||
+    msg.includes("econnrefused") ||
+    msg.includes("enotfound") ||
+    msg.includes("network") ||
+    msg.includes("fetch") ||
+    msg.includes("timeout")
+  )
+}
+
+/**
+ * Classify an error into a structured { code, message, aiMessage } tuple
+ * suitable for passing directly to the output error() function.
+ */
+export function classifyExecError(err: unknown): { code: string; message: string; aiMessage: string } {
+  const message = err instanceof Error ? err.message : String(err)
+  if (isAuthError(err)) {
+    return {
+      code: "AUTH_ERROR",
+      message,
+      aiMessage: "Authentication failed. The API key may be invalid or expired. Ask the user to run: cz-cli setup --credential <base64_string>",
+    }
+  }
+  if (err instanceof Error && err.message.startsWith("Authentication required")) {
+    return {
+      code: "NO_CREDENTIALS",
+      message,
+      aiMessage: "No credentials configured. Ask the user to run: cz-cli setup --credential <base64_string>",
+    }
+  }
+  if (isNetworkError(err)) {
+    return {
+      code: "CONNECTION_ERROR",
+      message,
+      aiMessage: "Cannot connect to ClickZetta. Check network connectivity and verify the instance/service URL in the profile.",
+    }
+  }
+  return {
+    code: "EXEC_ERROR",
+    message,
+    aiMessage: "",
+  }
+}
+
 /**
  * Execute SQL with automatic 401 retry. On auth failure, clears the token
  * cache, re-authenticates, and retries the operation once with a fresh token.

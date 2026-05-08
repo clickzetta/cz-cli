@@ -88,13 +88,13 @@ export const Info = z
               .int()
               .positive()
               .describe(
-                "Timeout in milliseconds for requests to this provider. Default is 20000 (20 seconds). Set to false to disable timeout.",
+                "First-byte timeout in milliseconds for requests to this provider. Default is 120000 (2 minutes). The timeout is cancelled once the server begins responding. Set to false to disable.",
               ),
             z.literal(false).describe("Disable timeout for this provider entirely."),
           ])
           .optional()
           .describe(
-            "Timeout in milliseconds for requests to this provider. Default is 20000 (20 seconds). Set to false to disable timeout.",
+            "First-byte timeout in milliseconds for requests to this provider. Default is 120000 (2 minutes). The timeout is cancelled once the server begins responding. Set to false to disable.",
           ),
         chunkTimeout: z
           .number()

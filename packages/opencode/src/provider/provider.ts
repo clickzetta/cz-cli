@@ -1520,9 +1520,13 @@ const layer: Layer.Layer<
 
           if (opts.signal) signals.push(opts.signal)
           if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
-          const effectiveTimeout = options["timeout"] ?? 20_000
-          if (effectiveTimeout !== false)
-            signals.push(AbortSignal.timeout(effectiveTimeout))
+          const effectiveTimeout = options["timeout"] ?? 120_000
+          let timeoutId: ReturnType<typeof setTimeout> | undefined
+          const timeoutCtl = effectiveTimeout !== false ? new AbortController() : undefined
+          if (timeoutCtl) {
+            signals.push(timeoutCtl.signal)
+            timeoutId = setTimeout(() => timeoutCtl.abort(new Error("First byte timeout")), effectiveTimeout as number)
+          }
 
           const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
           if (combined) opts.signal = combined
@@ -1547,6 +1551,9 @@ const layer: Layer.Layer<
             // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
             timeout: false,
           })
+
+          // Response received — cancel the first-byte timeout
+          if (timeoutId) clearTimeout(timeoutId)
 
           if (!chunkAbortCtl) return res
           return wrapSSE(res, chunkTimeout, chunkAbortCtl)

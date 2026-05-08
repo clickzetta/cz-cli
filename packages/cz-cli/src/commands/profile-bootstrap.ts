@@ -1106,8 +1106,7 @@ export function registerSetupCommand(yargs: Argv<GlobalArgs>): void {
       // Branch 3: non-TTY without credential — output guidance JSON and exit
       logOperation("setup", { ok: false, errorCode: "NO_CREDENTIAL" })
       const payload = {
-        ok: false,
-        error: {
+                error: {
           code: "NO_CREDENTIAL",
           message: "Non-interactive environment detected. Provide --credential to create a profile.",
         },

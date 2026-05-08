@@ -120,7 +120,6 @@ export function createCli(args: string[]) {
       if (err) throw err
       const aiMessage = "Run the command with --help to see available options and usage."
       const output = JSON.stringify({
-        ok: false,
         error: {
           code: "USAGE_ERROR",
           message: msg,

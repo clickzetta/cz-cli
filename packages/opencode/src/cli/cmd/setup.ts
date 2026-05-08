@@ -11,6 +11,7 @@ export const SetupCommand = cmd({
   describe: "configure ClickZetta profile from a registration credential",
   builder: (yargs) =>
     yargs
+      .usage("cz-cli setup")
       .option("credential", {
         type: "string",
         describe: "base64-encoded credential string from the registration page",
@@ -20,8 +21,8 @@ export const SetupCommand = cmd({
         describe: "profile name to write (default: 'default')",
         default: "default",
       })
-      .example("$0 setup --credential <base64>", "configure from registration token")
-      .example("$0 setup", "interactive setup (TTY only)"),
+      .example("cz-cli setup --credential <base64>", "configure from registration token")
+      .example("cz-cli setup", "interactive setup (TTY only)"),
   handler: async (args) => {
     const argv: string[] = []
     if (args.credential) argv.push("--credential", args.credential)

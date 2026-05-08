@@ -5,7 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, type ExecContext } from "./exec.js"
+import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
 
 const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -107,7 +107,10 @@ function resolveSql(argv: SqlArgs): string {
     closeSync(fd)
     return Buffer.concat(chunks).toString("utf-8")
   }
-  error("MISSING_SQL", "No SQL provided. Use positional arg, -e, -f, or pipe via stdin.", { exitCode: 2 })
+  error("MISSING_SQL", "No SQL provided. Use positional arg, -e, -f, or pipe via stdin.", {
+    exitCode: 2,
+    aiMessage: 'Provide SQL as a positional argument: cz-cli sql "SELECT ..."',
+  })
   return "" // unreachable after error
 }
 
@@ -173,10 +176,16 @@ async function executeSingle(
   const t0 = Date.now()
 
   if (isWrite && !argv.write) {
-    error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format }); return
+    error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", {
+      format,
+      aiMessage: "Add --write flag to execute write operations: cz-cli sql \"<SQL>\" --write",
+    }); return
   }
   if (isWrite && DANGEROUS_WRITE_RE.test(sql) && !WHERE_RE.test(sql)) {
-    error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", { format }); return
+    error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", {
+      format,
+      aiMessage: "Always include a WHERE clause in DELETE/UPDATE to avoid unintended data loss.",
+    }); return
   }
 
   if (!argv.sync) {
@@ -235,7 +244,11 @@ async function executeSingle(
         } catch { /* best-effort */ }
       }
       logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
-      error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, { format, extra: schemaExtra ? { schema: schemaExtra } : undefined }); return
+      error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, {
+        format,
+        extra: schemaExtra ? { schema: schemaExtra } : undefined,
+        aiMessage: `Too many rows. Add LIMIT to your query, e.g.: cz-cli sql "SELECT ... LIMIT 10" --sync, or use --no-limit to fetch all.`,
+      }); return
     }
     await emitResult(r, sql, argv, ctx, t0)
     return
@@ -274,7 +287,10 @@ async function executeSingle(
 
   if (isShow && !!argv.limit && r.rowCount > rowLimit) {
     logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
-    error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, { format }); return
+    error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, {
+      format,
+      aiMessage: `Add --no-limit to retrieve all rows: cz-cli sql "${sql.trim()}" --no-limit`,
+    }); return
   }
 
   await emitResult(r, sql, argv, ctx, t0)
@@ -283,7 +299,14 @@ async function executeSingle(
 async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number): Promise<void> {
   const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
   logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-  error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format, extra: hint ? { schema: hint } : undefined })
+  const aiMessage = hint
+    ? `SQL failed. Available schema info attached in the 'schema' field — check table/column names and retry.`
+    : undefined
+  error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", {
+    format,
+    extra: hint ? { schema: hint } : undefined,
+    ...(aiMessage && { aiMessage }),
+  })
 }
 
 async function emitResult(
@@ -360,7 +383,7 @@ async function handler(argv: SqlArgs): Promise<void> {
   let currentJobId: string | undefined
 
   const sigintHandler = () => {
-    const payload: Record<string, unknown> = { ok: false, error: { code: "ABORTED", message: "Execution interrupted by user." } }
+    const payload: Record<string, unknown> = { error: { code: "ABORTED", message: "Execution interrupted by user." } }
     if (currentJobId) payload.job_id = currentJobId
     process.stdout.write(JSON.stringify(payload) + "\n")
     process.exit(130)
@@ -396,9 +419,9 @@ async function handler(argv: SqlArgs): Promise<void> {
       await executeSingle(ctx, statements[0], argv, hints ?? {})
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    logOperation("sql", { sql, ok: false, errorCode: "EXEC_ERROR" })
-    error("EXEC_ERROR", msg, { format, debug: argv.debug })
+    const { code, message, aiMessage } = classifyExecError(err)
+    logOperation("sql", { sql, ok: false, errorCode: code })
+    error(code, message, { format, debug: argv.debug, ...(aiMessage && { aiMessage }) })
   } finally {
     process.removeListener("SIGINT", sigintHandler)
   }
@@ -446,22 +469,32 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           "Execute SQL statement",
           (y) =>
             y
-              .positional("statement", { type: "string", describe: "SQL statement" })
-              .option("write", { type: "boolean", default: false, describe: "Allow write operations" })
-              .option("with-schema", { type: "boolean", default: false, describe: "Include table schema in response" })
-              .option("truncate", { type: "boolean", default: true, describe: "Truncate large fields (use --no-truncate to disable)" })
-              .option("file", { alias: "f", type: "string", describe: "Read SQL from file" })
-              .option("execute", { alias: "e", type: "string", describe: "SQL string to execute" })
+              .positional("statement", { type: "string", describe: "SQL statement to execute" })
+              .option("write", { type: "boolean", default: false, describe: "Allow write operations (INSERT/UPDATE/DELETE/CREATE/DROP). Required as a safety guard." })
+              .option("with-schema", { type: "boolean", default: false, describe: "Attach table schema (columns) to the response for context" })
+              .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
+              .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })
+              .option("execute", { alias: "e", type: "string", describe: "SQL string (alternative to positional argument)" })
               .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
-              .option("sync", { type: "boolean", default: false, describe: "Execute synchronously (wait for result)" })
-              .option("timeout", { type: "number", default: 300, describe: "Job timeout in seconds" })
-              .option("variable", { type: "array", string: true, describe: "Variable substitution KEY=VALUE" })
-              .option("set", { type: "array", string: true, describe: "Hint KEY=VALUE" })
-              .option("job-profile", { type: "string", describe: "Get job profile for a job ID" })
-              .option("header", { type: "boolean", default: true, describe: "Show column headers (use --no-header or -N to hide)" })
+              .option("sync", { type: "boolean", default: false, describe: "Wait for query result before returning. Without --sync, returns a job_id immediately (async). Use --sync for SELECT queries when you need the data." })
+              .option("timeout", { type: "number", default: 300, describe: "Job timeout in seconds (default: 300)" })
+              .option("variable", { type: "array", string: true, describe: "Variable substitution: --variable KEY=VALUE. Use %(KEY)s in SQL." })
+              .option("set", { type: "array", string: true, describe: "Query hint: --set KEY=VALUE (e.g. --set cz.sql.timezone=UTC)" })
+              .option("job-profile", { type: "string", describe: "Fetch execution profile for a completed job ID (separate from running SQL)" })
+              .option("header", { type: "boolean", default: true, describe: "Include column names in output. Use --no-header or -N to suppress." })
               .option("N", { type: "boolean", hidden: true })
-              .option("limit", { type: "boolean", default: true, describe: "Automatic LIMIT guard (use --no-limit to disable)" })
-              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode" }),
+              .option("limit", { type: "boolean", default: true, describe: "Auto-truncate results to 100 rows. Use --no-limit to fetch all rows." })
+              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute multiple semicolon-separated statements sequentially" })
+              .epilogue([
+                "Examples:",
+                "  cz-cli sql \"SELECT * FROM orders LIMIT 10\" --sync",
+                "  cz-cli sql \"INSERT INTO t VALUES(1)\" --write --sync",
+                "  cz-cli sql \"SELECT %(col)s FROM t\" --variable col=id --sync",
+                "  cz-cli sql -f query.sql --sync --no-limit",
+                "",
+                "SQL input priority: positional > -e/--execute > -f/--file > --stdin",
+                "Default mode is async (returns job_id). Use --sync to wait for results.",
+              ].join("\n")),
           (argv) => handler(argv as unknown as SqlArgs),
         ),
   )

@@ -26,7 +26,6 @@ import { Log } from "@/util"
 import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
-import { CzToolTool } from "./cz-tool"
 import { Glob } from "@opencode-ai/shared/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -116,7 +115,6 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
-    const cztool = yield* CzToolTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -183,7 +181,6 @@ export const layer: Layer.Layer<
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
           bash: Tool.init(bash),
-          cz: Tool.init(cztool),
           read: Tool.init(read),
           glob: Tool.init(globtool),
           grep: Tool.init(greptool),
@@ -207,7 +204,6 @@ export const layer: Layer.Layer<
             tool.invalid,
             ...(questionEnabled ? [tool.question] : []),
             tool.bash,
-            tool.cz,
             tool.read,
             tool.glob,
             tool.grep,

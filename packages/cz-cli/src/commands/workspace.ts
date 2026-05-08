@@ -4,11 +4,34 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { loadProfiles, saveProfiles, getDefaultProfileName } from "../connection/profile-store.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, classifyExecError } from "./exec.js"
 
 export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
   cli.command("workspace", "Manage workspace", (yargs) =>
     yargs
+      .command(
+        "list",
+        "List available workspaces",
+        () => {},
+        async (argv) => {
+          const format = argv.output
+          try {
+            const ctx = await getExecContext(argv)
+            const sql = "SHOW WORKSPACES"
+            const t0 = Date.now()
+            const r = await execSql(ctx, sql)
+            if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
+              const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
+            }
+            const workspaces = r.rows.map((row) => Object.values(row)[0])
+            success(workspaces, { format, timeMs: Date.now() - t0 })
+          } catch (err) {
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format, ...(_ea && { aiMessage: _ea }) })
+          }
+        },
+      )
       .command(
         "current",
         "Show current workspace",
@@ -28,24 +51,28 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
             const ws = r.rows[0] ? Object.values(r.rows[0])[0] : null
             if (!ws) {
               logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
-              error("NO_RESULT", "No current workspace set. Use `cz-cli workspace use <name>` to set one.", { format })
+              error("NO_RESULT", "No current workspace set. Use `cz-cli workspace use <name>` to set one.", {
+                format,
+                aiMessage: "No workspace is active. List available workspaces with: cz-cli workspace list, then set one with: cz-cli workspace use <name>",
+              })
               return
             }
             logOperation("workspace current", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ workspace: ws }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format, ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
       .command(
         "use <name>",
-        "Switch workspace",
+        "Switch workspace (use --persist to save to profile)",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Workspace name" })
             .option("schema", { type: "string", describe: "Default schema to set alongside workspace" })
-            .option("persist", { type: "boolean", default: false, describe: "Save to profile" }),
+            .option("persist", { type: "boolean", default: false, describe: "Save workspace to profile config (permanent). Without --persist, returns the SDK hint only." }),
         async (argv) => {
           const format = argv.output
           const name = argv.name as string
@@ -70,7 +97,8 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
                 { format },
               )
             } catch (err) {
-              error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+              const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+              error(_ec, _em, { format, ...(_ea && { aiMessage: _ea }) })
             }
           } else {
             const schemaName = schemaVal ?? "public"

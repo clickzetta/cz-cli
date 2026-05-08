@@ -17,7 +17,7 @@ import { registerSetupCommand } from "./commands/setup.js"
 import { checkAndUpdate } from "./auto-update.js"
 
 process.on("SIGINT", () => {
-  process.stdout.write(JSON.stringify({ ok: false, error: { code: "ABORTED", message: "Operation aborted by user." } }) + "\n")
+  process.stdout.write(JSON.stringify({ error: { code: "ABORTED", message: "Operation aborted by user." } }) + "\n")
   process.exit(130)
 })
 

@@ -28,7 +28,7 @@ export function success(
   data: unknown,
   opts?: OutputOptions & { timeMs?: number },
 ): void {
-  const payload: Record<string, unknown> = { ok: true, data }
+  const payload: Record<string, unknown> = { data }
   if (opts?.timeMs !== undefined) payload.time_ms = opts.timeMs
   if (Array.isArray(data)) payload.count = data.length
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
@@ -45,7 +45,6 @@ export function successRows(
   opts?: OutputOptions & { affected?: number; timeMs?: number; noHeader?: boolean },
 ): void {
   const payload: Record<string, unknown> = {
-    ok: true,
     columns,
     rows,
     count: rows.length,
@@ -86,7 +85,6 @@ export function error(
     errObj.traceback = err.stack
   }
   const payload: Record<string, unknown> = {
-    ok: false,
     error: errObj,
   }
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
@@ -150,9 +148,9 @@ function extractField(obj: Record<string, unknown>, field: string): unknown {
 function unwrapToonEnvelope(payload: unknown): unknown {
   if (!payload || typeof payload !== "object") return payload
   const obj = payload as Record<string, unknown>
-  // For TOON format, unwrap the data from ok/data envelope for generic payloads
-  if (obj.ok === true && obj.data !== undefined) {
-    const result: Record<string, unknown> = { ok: true }
+  // For TOON format, unwrap the data from data envelope for generic payloads
+  if (obj.data !== undefined && !obj.error) {
+    const result: Record<string, unknown> = {}
     if (obj.count !== undefined) result.count = obj.count
     if (obj.time_ms !== undefined) result.time_ms = obj.time_ms
     if (obj.ai_message !== undefined) result.ai_message = obj.ai_message

@@ -45,11 +45,11 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         "List run instances",
         (y) =>
           y
-            .option("task", { type: "string", describe: "Task name or ID filter" })
-            .option("status", { type: "array", string: true, choices: ["SUCCESS", "WAITING", "FAILED", "RUNNING"], describe: "Status: SUCCESS/WAITING/FAILED/RUNNING (multiple allowed)" })
-            .option("run-type", { type: "string", default: "SCHEDULE", choices: ["SCHEDULE", "TEMP", "REFILL"], describe: "SCHEDULE/TEMP/REFILL" })
-            .option("from", { type: "string", describe: "Start time (ISO)" })
-            .option("to", { type: "string", describe: "End time (ISO)" })
+            .option("task", { type: "string", describe: "Filter by task name or ID" })
+            .option("status", { type: "array", string: true, choices: ["SUCCESS", "WAITING", "FAILED", "RUNNING"], describe: "Filter by status (multiple allowed). SUCCESS=completed OK, WAITING=queued, FAILED=errored, RUNNING=in progress" })
+            .option("run-type", { type: "string", default: "SCHEDULE", choices: ["SCHEDULE", "TEMP", "REFILL"], describe: "Run type: SCHEDULE=scheduled runs, TEMP=ad-hoc executions, REFILL=backfill jobs" })
+            .option("from", { type: "string", describe: "Start time filter (ISO 8601 or YYYY-MM-DD). Defaults to 24h ago." })
+            .option("to", { type: "string", describe: "End time filter (ISO 8601 or YYYY-MM-DD). Defaults to now." })
             .option("page", { type: "number", default: 1 })
             .option("page-size", { type: "number", default: 10 })
             .option("limit", { type: "number", describe: "Alias of --page-size" }),
@@ -148,7 +148,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .positional("id", { type: "string", demandOption: true })
             .option("attempts", { type: "number", default: 120, describe: "Maximum polling attempts" })
             .option("interval", { type: "number", default: 5, describe: "Poll interval seconds" })
-            .option("allow-timeout", { type: "boolean", default: false, describe: "Return success on timeout instead of error" }),
+            .option("allow-timeout", { type: "boolean", default: false, describe: "Exit with success (code 0) when max polling attempts are reached, instead of returning an error" }),
         async (argv) => {
           const format = argv.output
           try {
@@ -231,7 +231,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "deps <task>",
-        "View published task dependencies (调度态)",
+        "View published task upstream/downstream dependencies",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
@@ -292,7 +292,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "refill <task>",
-        "[🟠 HIGH IMPACT] Submit a backfill job. Requires confirmation.",
+        "Submit a backfill job to re-run scheduled instances for a date range. Irreversible — requires confirmation.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
