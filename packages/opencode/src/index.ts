@@ -80,7 +80,7 @@ if (["--version", "-v"].includes(rawArgs[0])) {
 
 // Non-agent, non-setup commands are forwarded directly to the cz-tool binary.
 if (!isAgentSubcommand && rawArgs[0] !== "setup" && rawArgs.length > 0 && !["--help", "-h", "--version", "-v"].includes(rawArgs[0])) {
-  forward(rawArgs)
+  await forward(rawArgs)
 }
 
 // Require profiles.toml with api_key before entering agent commands
