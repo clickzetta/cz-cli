@@ -34,7 +34,7 @@ interface SqlArgs extends GlobalArgs {
   set?: string[]
   "job-profile"?: string
   "no-header": boolean
-  "no-limit": boolean
+  "limit": boolean
   batch: boolean
 }
 
@@ -168,7 +168,7 @@ async function executeSingle(
   const hasLimit = LIMIT_RE.test(sql)
   const format = argv.output
   const fieldMax = argv["no-truncate"] ? Infinity : DEFAULT_FIELD_MAX
-  const rowLimit = argv["no-limit"] ? Infinity : DEFAULT_ROW_LIMIT
+  const rowLimit = !argv.limit ? Infinity : DEFAULT_ROW_LIMIT
   const t0 = Date.now()
 
   if (isWrite && !argv.write) {
@@ -241,7 +241,7 @@ async function executeSingle(
   }
 
   // Sync mode: SELECT with user LIMIT N → probe with N+1 to detect truncation
-  if (isSelect && hasLimit && !isShow && !argv["no-limit"]) {
+  if (isSelect && hasLimit && !isShow && !!argv.limit) {
     const limitMatch = sql.match(/\bLIMIT\s+(\d+)/i)
     if (limitMatch) {
       const userLimit = parseInt(limitMatch[1], 10)
@@ -271,7 +271,7 @@ async function executeSingle(
     return
   }
 
-  if (isShow && !argv["no-limit"] && r.rowCount > rowLimit) {
+  if (isShow && !!argv.limit && r.rowCount > rowLimit) {
     logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
     error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, { format }); return
   }
@@ -458,7 +458,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("set", { type: "array", string: true, describe: "Hint KEY=VALUE" })
               .option("job-profile", { type: "string", describe: "Get job profile for a job ID" })
               .option("no-header", { alias: "N", type: "boolean", default: false, describe: "Omit column headers" })
-              .option("no-limit", { type: "boolean", default: false, describe: "Disable automatic LIMIT guard" })
+              .option("limit", { type: "boolean", default: true, describe: "Automatic LIMIT guard (use --no-limit to disable)" })
               .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode" }),
           (argv) => handler(argv as unknown as SqlArgs),
         ),

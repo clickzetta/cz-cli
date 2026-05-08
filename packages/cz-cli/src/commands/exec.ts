@@ -7,6 +7,8 @@ import {
   submitJob,
   pollJobResult,
   parseJobResponse,
+  isVolumeSql,
+  processVolumeSql,
   ClickZettaApiError,
   type ClientOptions,
   type ConnectionConfig,
@@ -74,10 +76,24 @@ export async function execSql(
   // HYBRID mode: submitJob may return the result directly if the query
   // finished within hybridPollingTimeout. Check for a terminal state.
   const raw = submitResp as { status?: { state?: string } }
+  let result: QueryResult
   if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
-    return parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId)
+    result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId)
+  } else {
+    result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs })
   }
-  return pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs })
+
+  // Volume SQL (PUT/GET): process file transfers after getting the job result
+  if (isVolumeSql(normalizedSql) && result.status === JobStatus.SUCCEEDED) {
+    return processVolumeSql(
+      { clientOpts: ctx.clientOpts, workspace: ctx.config.workspace, instanceId: ctx.token.instanceId },
+      jobId,
+      result,
+      normalizedSql,
+    )
+  }
+
+  return result
 }
 
 function isAuthError(err: unknown): boolean {
