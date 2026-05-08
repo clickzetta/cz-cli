@@ -94,6 +94,10 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bus: Bus.I
   const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
   if (!parsed.success) return
 
+  // Skip cz-cli skill — its functionality is provided by the built-in cz_tool.
+  // Loading it would cause the agent to shell out to `cz-cli agent run` recursively.
+  if (parsed.data.name === "cz-cli") return
+
   if (state.skills[parsed.data.name]) {
     log.warn("duplicate skill name", {
       name: parsed.data.name,
