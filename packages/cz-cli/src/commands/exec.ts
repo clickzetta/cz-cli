@@ -36,7 +36,7 @@ export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContex
   const clientOpts: ClientOptions = {
     baseUrl: toServiceUrl(config.service, config.protocol),
     token: token.token,
-    customHeaders: config.customHeaders,
+    customHeaders: { ...config.customHeaders, instanceName: config.instance },
   }
   return { config, token, clientOpts }
 }
@@ -55,9 +55,10 @@ export async function execSql(
     timeoutMs?: number
   },
 ): Promise<QueryResult | ExecResult> {
+  const normalizedSql = sql.trimEnd().endsWith(";") ? sql : sql + ";"
   const jobId = newJobId(ctx.config.workspace, ctx.token.instanceId)
   const submitResp = await submitJob(ctx.clientOpts, {
-    sql,
+    sql: normalizedSql,
     workspace: ctx.config.workspace,
     schema: ctx.config.schema,
     vcluster: ctx.config.vcluster,

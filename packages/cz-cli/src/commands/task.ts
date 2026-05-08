@@ -514,7 +514,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               offsetCol: 0,
               instanceName: sc.instanceName,
               multiDataSource: [],
-              adhocVcCode: vcCode,
+              adhocVcCode: vcCode ?? "",
               adhocSchemaName: argv.schema ?? "",
               adhocVcId: 0,
               dataFileContent: content,

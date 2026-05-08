@@ -116,21 +116,18 @@ export function createCli(args: string[]) {
     }, /* applyBeforeValidation */ true)
     .strict()
     .fail((msg, err, yargs) => {
-      let helpText = ""
-      try {
-        const h = yargs.getHelp()
-        if (typeof h === "string") helpText = h
-      } catch { /* best-effort */ }
-      const aiMessage = helpText || "Run the command with --help to see available options and usage."
+      if (err) throw err
+      const aiMessage = "Run the command with --help to see available options and usage."
       const output = JSON.stringify({
         ok: false,
         error: {
           code: "USAGE_ERROR",
-          message: msg || err?.message,
+          message: msg,
         },
         ai_message: aiMessage,
       })
       process.stdout.write(output + "\n")
-      process.exit(2)
+      process.exitCode = 2
+      throw new Error(msg ?? "usage error")
     })
 }

@@ -64,7 +64,7 @@ function applyVariables(sql: string, vars: Record<string, string>): string {
     return match
   })
   if (missing.length > 0) {
-    error("MISSING_VARIABLE", `Undefined variable(s): ${missing.join(", ")}. Provide them via --variable KEY=VALUE.`, { exitCode: 2 })
+    error("MISSING_VARIABLE", `Undefined variable(s): ${missing.join(", ")}. Provide them via --variable KEY=VALUE.`, { exitCode: 2 }); return ""
   }
   return result
 }
@@ -93,6 +93,8 @@ function extractTableNames(sql: string): string[] {
 
 function resolveSql(argv: SqlArgs): string {
   if (argv.file) return readFileSync(argv.file, "utf-8")
+  if (argv.execute) return argv.execute
+  if (argv.statement) return argv.statement
   if (argv.stdin || !process.stdin.isTTY) {
     const chunks: Buffer[] = []
     const fd = openSync("/dev/stdin", "r")
@@ -104,9 +106,8 @@ function resolveSql(argv: SqlArgs): string {
     closeSync(fd)
     return Buffer.concat(chunks).toString("utf-8")
   }
-  if (argv.execute) return argv.execute
-  if (argv.statement) return argv.statement
   error("MISSING_SQL", "No SQL provided. Use positional arg, -e, -f, or pipe via stdin.", { exitCode: 2 })
+  return "" // unreachable after error
 }
 
 async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): Promise<Record<string, unknown> | undefined> {
@@ -171,10 +172,10 @@ async function executeSingle(
   const t0 = Date.now()
 
   if (isWrite && !argv.write) {
-    error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format })
+    error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format }); return
   }
   if (isWrite && DANGEROUS_WRITE_RE.test(sql) && !WHERE_RE.test(sql)) {
-    error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", { format })
+    error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", { format }); return
   }
 
   if (!argv.sync) {
@@ -189,7 +190,7 @@ async function executeSingle(
       success({ job_id: jobId, status: "RUNNING" }, {
         format,
         aiMessage: `Job submitted. Check status: cz-cli job status ${jobId} | Fetch results: cz-cli job result ${jobId}`,
-      })
+      }); return
     }
     return
   }
@@ -204,14 +205,14 @@ async function executeSingle(
     // Retry without LIMIT if injection caused syntax error
     if (isQueryResult(r) && r.status === JobStatus.FAILED && /syntax/i.test(r.errorMessage ?? "") && /LIMIT/i.test(r.errorMessage ?? "")) {
       r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000 })
-      if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+      if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
       }
       await emitResult(r, sql, argv, ctx, t0)
       return
     }
-    if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+    if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
     if (r.status === JobStatus.FAILED) {
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
       logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
@@ -231,7 +232,7 @@ async function executeSingle(
         } catch { /* best-effort */ }
       }
       logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
-      error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, { format, extra: schemaExtra ? { schema: schemaExtra } : undefined })
+      error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, { format, extra: schemaExtra ? { schema: schemaExtra } : undefined }); return
     }
     await emitResult(r, sql, argv, ctx, t0)
     return
@@ -244,7 +245,7 @@ async function executeSingle(
       const userLimit = parseInt(limitMatch[1], 10)
       const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
       const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000 })
-      if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+      if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
       }
@@ -261,20 +262,20 @@ async function executeSingle(
 
   // General case: SHOW, write, or other
   const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000 })
-  if (!isQueryResult(r)) error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+  if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
   }
 
   if (isShow && !argv["no-limit"] && r.rowCount > rowLimit) {
     logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
-    error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, { format })
+    error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, { format }); return
   }
 
   await emitResult(r, sql, argv, ctx, t0)
 }
 
-async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number): Promise<never> {
+async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number): Promise<void> {
   const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
   logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
   error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format, extra: hint ? { schema: hint } : undefined })
@@ -287,7 +288,7 @@ async function emitResult(
   ctx: ExecContext,
   t0: number,
   aiMessage?: string,
-): Promise<never> {
+): Promise<void> {
   const format = argv.output
   const fieldMax = argv["no-truncate"] ? Infinity : DEFAULT_FIELD_MAX
   const isWrite = WRITE_RE.test(sql)
@@ -342,7 +343,7 @@ async function handler(argv: SqlArgs): Promise<void> {
       success(resp.data, { format })
     } catch (err) {
       logOperation("sql job-profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
-      error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format })
+      error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format }); return
     }
   }
 
@@ -365,7 +366,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     const ctx = await getExecContext(argv)
     const statements = splitSql(sql).map((s) => s.trim()).filter(Boolean)
     if (statements.length === 0) {
-      error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 })
+      error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
     }
     // Multi-statement: execute all, return last result
     if (statements.length > 1) {

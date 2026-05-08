@@ -29,7 +29,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("schema list", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             let aiMessage: string | undefined
             let rows = r.rows
@@ -44,7 +44,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             logOperation("schema list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
           }
         },
       )
@@ -64,7 +64,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             const infoRows = isQueryResult(infoR) && infoR.status === JobStatus.SUCCEEDED ? infoR.rows : []
             if (infoRows.length === 0) {
               logOperation("schema describe", { sql: infoSql, ok: false, timeMs: Date.now() - t0 })
-              error("SCHEMA_NOT_FOUND", `Schema '${name}' not found`, { format })
+              error("SCHEMA_NOT_FOUND", `Schema '${name}' not found`, { format }); return
             }
             const schemaType = infoRows.length > 0 ? (Object.values(infoRows[0])[1] ?? "") : ""
             const tableRows = isQueryResult(tablesR) && tablesR.status === JobStatus.SUCCEEDED ? tablesR.rows : []
@@ -72,7 +72,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             logOperation("schema describe", { sql: infoSql, ok: true, timeMs: Date.now() - t0 })
             success({ name, type: schemaType, table_count: tables.length, tables }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
           }
         },
       )
@@ -91,12 +91,12 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected async result"
               logOperation("schema create", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             logOperation("schema create", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: `Schema '${argv.name}' created successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
           }
         },
       )
@@ -115,12 +115,12 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected async result"
               logOperation("schema drop", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             logOperation("schema drop", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: `Schema '${argv.name}' dropped successfully` }, { format, timeMs: Date.now() - t0 })
           } catch (err) {
-            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format })
+            error("EXEC_ERROR", err instanceof Error ? err.message : String(err), { format }); return
           }
         },
       )

@@ -38,6 +38,9 @@ registerInstallSkillsCommand(cli)
 registerSetupCommand(cli)
 cli.demandCommand(1, "").help().parse()
 
+// Exit with the code set by success/error/fail handlers
+if (process.exitCode) process.exit()
+
 // Run update check in background on exit (non-blocking, like Python's __main__.py)
 // Fire-and-forget: don't let update check failures affect CLI exit code
 checkAndUpdate().catch(() => {})

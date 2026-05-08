@@ -42,7 +42,7 @@ export async function resolveTaskId(
   format: string,
 ): Promise<number> {
   const raw = nameOrId.trim()
-  if (!raw) return error("USAGE_ERROR", "Task name or ID is required.", { format })
+  if (!raw) { error("USAGE_ERROR", "Task name or ID is required.", { format }); return 0 as never }
   if (/^\d+$/.test(raw)) return parseInt(raw, 10)
 
   const resp = await listTasks(sc, {
@@ -55,19 +55,19 @@ export async function resolveTaskId(
   const data = resp.data as Record<string, unknown> | undefined
   const tasks = (Array.isArray(data) ? data : (data?.tasks ?? data?.data ?? [])) as Record<string, unknown>[]
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return error("TASK_NOT_FOUND", `No task found matching '${raw}'.`, { format })
+    error("TASK_NOT_FOUND", `No task found matching '${raw}'.`, { format }); return 0 as never
   }
 
   const exact = tasks.filter((t) => t.task_name === raw || t.taskName === raw || t.fileName === raw || t.dataFileName === raw)
   if (exact.length === 1) return Number(exact[0].task_id ?? exact[0].id ?? exact[0].fileId)
   if (exact.length > 1) {
     const candidates = exact.slice(0, 10).map((t) => `${t.task_id ?? t.id}: ${t.task_name ?? t.taskName}`).join(", ")
-    return error("TASK_AMBIGUOUS", `Multiple tasks match '${raw}': ${candidates}`, { format })
+    error("TASK_AMBIGUOUS", `Multiple tasks match '${raw}': ${candidates}`, { format }); return 0 as never
   }
   if (tasks.length === 1) return Number(tasks[0].task_id ?? tasks[0].id ?? tasks[0].fileId)
 
   const candidates = tasks.slice(0, 10).map((t) => `${t.task_id ?? t.id}: ${t.task_name ?? t.taskName}`).join(", ")
-  return error("TASK_AMBIGUOUS", `Multiple tasks match '${raw}': ${candidates}`, { format })
+  error("TASK_AMBIGUOUS", `Multiple tasks match '${raw}': ${candidates}`, { format }); return 0 as never
 }
 
 async function resolveTaskIdsForRunLookup(
@@ -85,7 +85,7 @@ async function resolveTaskIdsForRunLookup(
   const data = resp.data as Record<string, unknown> | undefined
   const tasks = (Array.isArray(data) ? data : (data?.tasks ?? data?.data ?? [])) as Record<string, unknown>[]
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return error("TASK_NOT_FOUND", `No task found matching '${taskName}'.`, { format })
+    error("TASK_NOT_FOUND", `No task found matching '${taskName}'.`, { format }); return 0 as never
   }
 
   const exact = tasks.filter((t) => t.task_name === taskName || t.taskName === taskName || t.fileName === taskName || t.dataFileName === taskName)
@@ -93,7 +93,7 @@ async function resolveTaskIdsForRunLookup(
   if (tasks.length === 1) return [Number(tasks[0].task_id ?? tasks[0].id ?? tasks[0].fileId)]
 
   const candidates = tasks.slice(0, 10).map((t) => `${t.task_id ?? t.id}: ${t.task_name ?? t.taskName}`).join(", ")
-  return error("TASK_AMBIGUOUS", `Multiple tasks match '${taskName}': ${candidates}`, { format })
+  error("TASK_AMBIGUOUS", `Multiple tasks match '${taskName}': ${candidates}`, { format }); return 0 as never
 }
 
 export async function resolveLatestRunId(
@@ -150,14 +150,14 @@ export async function resolveRunIdOrTaskName(
   format: string,
 ): Promise<number> {
   const raw = runIdOrTaskName.trim()
-  if (!raw) return error("USAGE_ERROR", "Run ID or task name is required.", { format })
+  if (!raw) { error("USAGE_ERROR", "Run ID or task name is required.", { format }); return 0 as never }
   if (/^\d+$/.test(raw)) return parseInt(raw, 10)
 
   const taskIds = await resolveTaskIdsForRunLookup(sc, raw, format)
 
   if (taskIds.length === 1) {
     const runId = await resolveLatestRunId(sc, format, { taskId: taskIds[0] })
-    if (runId === undefined) return error("RUN_NOT_FOUND", `No run instances found for task '${raw}'.`, { format })
+    if (runId === undefined) { error("RUN_NOT_FOUND", `No run instances found for task '${raw}'.`, { format }); return 0 as never }
     return runId
   }
 
@@ -175,7 +175,7 @@ export async function resolveRunIdOrTaskName(
     }
   }
 
-  if (results.length === 0) return error("RUN_NOT_FOUND", `No run instances found for task '${raw}'.`, { format })
+  if (results.length === 0) { error("RUN_NOT_FOUND", `No run instances found for task '${raw}'.`, { format }); return 0 as never }
   results.sort((a, b) => b.ts - a.ts)
   return results[0].runId
 }
@@ -205,7 +205,7 @@ export async function resolveFolderIdByName(
     if (page >= totalPages) break
     page++
   }
-  return error("FOLDER_NOT_FOUND", `Folder '${name}' not found.`, { format })
+  error("FOLDER_NOT_FOUND", `Folder '${name}' not found.`, { format }); return 0 as never
 }
 
 export async function resolveNodeId(
@@ -231,5 +231,5 @@ export async function resolveNodeId(
 
   const match = nodes.find((n) => String(n.fileName) === nodeName)
   if (match) return Number(match.id)
-  return error("NODE_NOT_FOUND", `Node '${nodeName}' not found in flow ${taskId}.`, { format })
+  error("NODE_NOT_FOUND", `Node '${nodeName}' not found in flow ${taskId}.`, { format }); return 0 as never
 }

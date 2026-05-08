@@ -23,7 +23,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             const ws = r.rows[0] ? Object.values(r.rows[0])[0] : null
             if (!ws) {

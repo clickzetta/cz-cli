@@ -65,7 +65,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table list", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             let aiMessage: string | undefined
             let rows = r.rows
@@ -98,7 +98,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table describe", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             const { columns: rawCols, metadata } = parseDescribeResult(r)
             const columns = rawCols.map((row) => ({
@@ -133,7 +133,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table preview", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             if (!r.columns || r.columns.length === 0) {
               logOperation("table preview", { sql, ok: true, rows: 0, timeMs: Date.now() - t0 })
@@ -162,7 +162,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table stats", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             const rowCount = r.rows[0]?.row_count ?? r.rows[0]?.[Object.keys(r.rows[0])[0]] ?? 0
 
@@ -222,7 +222,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table history", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             let aiMessage: string | undefined
             let rows = r.rows
@@ -266,7 +266,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table create", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             logOperation("table create", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: "Table created successfully" }, { format, timeMs: Date.now() - t0 })
@@ -289,7 +289,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               logOperation("table drop", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format })
+              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
             logOperation("table drop", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ message: `Table '${argv.name}' dropped successfully` }, { format, timeMs: Date.now() - t0 })

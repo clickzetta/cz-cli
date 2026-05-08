@@ -23,17 +23,10 @@ export interface ExecuteResult {
   output: string
 }
 
-class ExitCapture extends Error {
-  constructor(public code: number) {
-    super(`process.exit(${code})`)
-  }
-}
-
-// Mutex to prevent concurrent execute() calls from conflicting on process.stdout/exit hijacking
+// Mutex to prevent concurrent execute() calls from conflicting on stdout hijacking
 let executing: Promise<ExecuteResult> | null = null
 
 export async function execute(command: string, extraArgs?: string[]): Promise<ExecuteResult> {
-  // Serialize concurrent calls
   while (executing) await executing
   const p = executeInternal(command, extraArgs)
   executing = p
@@ -52,25 +45,19 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   const chunks: string[] = []
   const originalStdoutWrite = process.stdout.write.bind(process.stdout)
   const originalStderrWrite = process.stderr.write.bind(process.stderr)
-  const originalExit = process.exit
+  const savedExitCode = process.exitCode
 
-  // Capture stdout + stderr (matches old behavior of capturing combined output)
-  process.stdout.write = ((chunk: any, ...rest: any[]) => {
+  process.stdout.write = ((chunk: any) => {
     chunks.push(typeof chunk === "string" ? chunk : chunk.toString())
     return true
   }) as any
 
-  process.stderr.write = ((chunk: any, ...rest: any[]) => {
+  process.stderr.write = ((chunk: any) => {
     chunks.push(typeof chunk === "string" ? chunk : chunk.toString())
     return true
   }) as any
 
-  // Capture process.exit
-  process.exit = ((code?: number) => {
-    throw new ExitCapture(code ?? 0)
-  }) as never
-
-  let exitCode = 0
+  process.exitCode = 0
   try {
     const cli = createCli(args)
     registerSqlCommand(cli)
@@ -89,17 +76,16 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
     registerSetupCommand(cli)
     await cli.demandCommand(1, "").help().parseAsync()
   } catch (e) {
-    if (e instanceof ExitCapture) {
-      exitCode = e.code
-    } else {
-      exitCode = 1
+    if (!process.exitCode) process.exitCode = 1
+    if (!chunks.length) {
       chunks.push(JSON.stringify({ ok: false, error: { code: "INTERNAL_ERROR", message: String(e) } }))
     }
-  } finally {
-    process.stdout.write = originalStdoutWrite
-    process.stderr.write = originalStderrWrite
-    process.exit = originalExit
   }
+
+  const exitCode = process.exitCode ?? 0
+  process.stdout.write = originalStdoutWrite
+  process.stderr.write = originalStderrWrite
+  process.exitCode = savedExitCode
 
   return { exitCode, output: chunks.join("") }
 }

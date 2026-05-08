@@ -24,7 +24,7 @@ export function shouldColorize(): boolean {
 export function success(
   data: unknown,
   opts?: OutputOptions & { timeMs?: number },
-): never {
+): void {
   const payload: Record<string, unknown> = { ok: true, data }
   if (opts?.timeMs !== undefined) payload.time_ms = opts.timeMs
   if (Array.isArray(data)) payload.count = data.length
@@ -33,14 +33,14 @@ export function success(
 
   const output = emit(payload, opts?.format, opts?.field)
   if (output !== "") process.stdout.write(output + "\n")
-  process.exit(EXIT_OK)
+  process.exitCode = EXIT_OK
 }
 
 export function successRows(
   columns: string[],
   rows: Record<string, unknown>[],
   opts?: OutputOptions & { affected?: number; timeMs?: number; noHeader?: boolean },
-): never {
+): void {
   const payload: Record<string, unknown> = {
     ok: true,
     columns,
@@ -69,14 +69,14 @@ export function successRows(
   }
 
   process.stdout.write(output + "\n")
-  process.exit(EXIT_OK)
+  process.exitCode = EXIT_OK
 }
 
 export function error(
   code: string,
   message: string,
   opts?: OutputOptions & { exitCode?: number },
-): never {
+): void {
   const errObj: Record<string, unknown> = { code, message }
   if (opts?.debug && message) {
     const err = new Error(message)
@@ -91,7 +91,7 @@ export function error(
 
   const output = emit(payload, opts?.format, opts?.field)
   process.stdout.write(output + "\n")
-  process.exit(opts?.exitCode ?? EXIT_BIZ_ERROR)
+  process.exitCode = opts?.exitCode ?? EXIT_BIZ_ERROR
 }
 
 function emit(payload: unknown, format?: string, field?: string): string {

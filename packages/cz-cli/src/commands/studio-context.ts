@@ -28,10 +28,12 @@ export async function getStudioContext(args: Partial<CliArgs> & { output?: strin
 
   if (!ws) {
     error("WORKSPACE_NOT_FOUND", `Workspace '${config.workspace}' not found.`, { format })
+    return undefined as never
   }
 
   if (!ws.projectId) {
     error("PROJECT_NOT_FOUND", `Workspace '${config.workspace}' has no associated project.`, { format })
+    return undefined as never
   }
 
   return {
