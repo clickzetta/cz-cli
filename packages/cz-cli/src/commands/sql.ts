@@ -24,7 +24,7 @@ interface SqlArgs extends GlobalArgs {
   statement?: string
   write: boolean
   "with-schema": boolean
-  "no-truncate": boolean
+  "truncate": boolean
   file?: string
   execute?: string
   stdin: boolean
@@ -33,7 +33,8 @@ interface SqlArgs extends GlobalArgs {
   variable?: string[]
   set?: string[]
   "job-profile"?: string
-  "no-header": boolean
+  "header": boolean
+  N?: boolean
   "limit": boolean
   batch: boolean
 }
@@ -167,7 +168,7 @@ async function executeSingle(
   const isShow = SHOW_RE.test(sql)
   const hasLimit = LIMIT_RE.test(sql)
   const format = argv.output
-  const fieldMax = argv["no-truncate"] ? Infinity : DEFAULT_FIELD_MAX
+  const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
   const rowLimit = !argv.limit ? Infinity : DEFAULT_ROW_LIMIT
   const t0 = Date.now()
 
@@ -294,7 +295,7 @@ async function emitResult(
   aiMessage?: string,
 ): Promise<void> {
   const format = argv.output
-  const fieldMax = argv["no-truncate"] ? Infinity : DEFAULT_FIELD_MAX
+  const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
   const isWrite = WRITE_RE.test(sql)
 
   let extra: Record<string, unknown> | undefined
@@ -315,7 +316,7 @@ async function emitResult(
   if (fieldMax !== Infinity) rows = truncateLargeFields(rows, fieldMax)
   rows = maskRows(columns, rows)
   logOperation("sql", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
-  successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage, noHeader: argv["no-header"], extra: extra ? { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) } : (r.jobId ? { job_id: r.jobId } : undefined) })
+  successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage, noHeader: !argv.header || argv.N, extra: extra ? { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) } : (r.jobId ? { job_id: r.jobId } : undefined) })
 }
 
 async function handler(argv: SqlArgs): Promise<void> {
@@ -448,7 +449,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .positional("statement", { type: "string", describe: "SQL statement" })
               .option("write", { type: "boolean", default: false, describe: "Allow write operations" })
               .option("with-schema", { type: "boolean", default: false, describe: "Include table schema in response" })
-              .option("no-truncate", { type: "boolean", default: false, describe: "Disable field truncation" })
+              .option("truncate", { type: "boolean", default: true, describe: "Truncate large fields (use --no-truncate to disable)" })
               .option("file", { alias: "f", type: "string", describe: "Read SQL from file" })
               .option("execute", { alias: "e", type: "string", describe: "SQL string to execute" })
               .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
@@ -457,7 +458,8 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("variable", { type: "array", string: true, describe: "Variable substitution KEY=VALUE" })
               .option("set", { type: "array", string: true, describe: "Hint KEY=VALUE" })
               .option("job-profile", { type: "string", describe: "Get job profile for a job ID" })
-              .option("no-header", { alias: "N", type: "boolean", default: false, describe: "Omit column headers" })
+              .option("header", { type: "boolean", default: true, describe: "Show column headers (use --no-header or -N to hide)" })
+              .option("N", { type: "boolean", hidden: true })
               .option("limit", { type: "boolean", default: true, describe: "Automatic LIMIT guard (use --no-limit to disable)" })
               .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode" }),
           (argv) => handler(argv as unknown as SqlArgs),

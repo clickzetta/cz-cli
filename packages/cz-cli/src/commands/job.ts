@@ -90,7 +90,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
-            .option("no-limit", { type: "boolean", default: false, describe: "Disable automatic row limit" })
+            .option("limit", { type: "boolean", default: true, describe: "Row limit (use --no-limit to disable)" })
             .option("timeout", { type: "number", default: 300, describe: "Max seconds to wait for job completion" }),
         async (argv) => {
           const format = argv.output
@@ -112,7 +112,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
               logOperation("job result", { ok: true, timeMs: Date.now() - t0 })
               success({ job_id: argv["job-id"], message: "Job completed with no result set." }, { format, timeMs: Date.now() - t0 })
             }
-            const rowLimit = argv["no-limit"] ? Infinity : DEFAULT_ROW_LIMIT
+            const rowLimit = !argv.limit ? Infinity : DEFAULT_ROW_LIMIT
             let rows = r.rows
             let aiMessage: string | undefined
             if (rows.length > rowLimit) {

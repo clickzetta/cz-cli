@@ -107,11 +107,38 @@ const tests: TestCase[] = [
   { name: "invalid SQL", cmd: 'sql "INVALID SYNTAX HERE" --sync', assert: assertSingleLine },
   { name: "unicode/中文", cmd: 'sql "SELECT \'你好世界\' as greeting" --sync', assert: all(assertSingleLine, assertOk) },
 
-  // === 9. Volume (PUT/GET) ===
-  { name: "volume PUT", cmd: 'sql "PUT file:///tmp/cz-test-upload.txt @vol/test/" --sync', assert: assertSingleLine, skip: true },
-  { name: "volume GET", cmd: 'sql "GET @vol/test/file.txt file:///tmp/" --sync', assert: assertSingleLine, skip: true },
+  // === 9. SQL flags ===
+  { name: "--no-truncate", cmd: 'sql "SELECT 1 as v" --sync --no-truncate', assert: all(assertSingleLine, assertOk) },
+  { name: "--no-header", cmd: 'sql "SELECT 1 as v" --sync --no-header', assert: all(assertSingleLine, assertOk) },
+  { name: "-N flag", cmd: 'sql "SELECT 1 as v" --sync -N', assert: all(assertSingleLine, assertOk) },
+  { name: "--no-limit", cmd: 'sql "SELECT 1 as v" --sync --no-limit', assert: all(assertSingleLine, assertOk) },
+  { name: "--batch", cmd: 'sql "SELECT 1 as v" --sync --batch', assert: assertSingleLine },
+  { name: "--with-schema", cmd: 'sql "SELECT 1 as v" --sync --with-schema', assert: all(assertSingleLine, assertOk) },
+  { name: "--set hint", cmd: 'sql "SELECT 1 as v" --sync --set cz.sql.timezone=UTC', assert: all(assertSingleLine, assertOk) },
+  { name: "--timeout", cmd: 'sql "SELECT 1 as v" --sync --timeout 10', assert: all(assertSingleLine, assertOk) },
+  { name: "dangerous write", cmd: 'sql "DELETE FROM some_table" --write', assert: all(assertSingleLine, assertError("DANGEROUS_WRITE")) },
 
-  // === 10. Task/Runs (requires Studio access) ===
+  // === 10. DECIMAL precision ===
+  { name: "DECIMAL 3.14", cmd: 'sql "SELECT 3.14 as d" --sync', assert: (r) => {
+    const j = isJson(r); if (!j) return "not json";
+    const val = (j as any).rows?.[0]?.d;
+    return val === "3.14" ? null : `expected "3.14" got ${JSON.stringify(val)}`
+  }},
+  { name: "DECIMAL -99.99", cmd: 'sql "SELECT -99.99 as d" --sync', assert: (r) => {
+    const j = isJson(r); if (!j) return "not json";
+    const val = (j as any).rows?.[0]?.d;
+    return val === "-99.99" ? null : `expected "-99.99" got ${JSON.stringify(val)}`
+  }},
+  { name: "DECIMAL 0.001", cmd: 'sql "SELECT 0.001 as d" --sync', assert: (r) => {
+    const j = isJson(r); if (!j) return "not json";
+    const val = (j as any).rows?.[0]?.d;
+    return val === "0.001" ? null : `expected "0.001" got ${JSON.stringify(val)}`
+  }},
+
+  // === 11. Volume SQL (correct syntax) ===
+  { name: "SHOW USER VOLUME", cmd: 'sql "SHOW USER VOLUME DIRECTORY" --sync', assert: all(assertSingleLine, assertOk) },
+
+  // === 12. Task/Runs (requires Studio access) ===
   { name: "task list", cmd: "task list", assert: assertSingleLine },
   { name: "runs list", cmd: "runs list", assert: assertSingleLine },
   { name: "attempts list", cmd: "attempts list", assert: assertSingleLine },
