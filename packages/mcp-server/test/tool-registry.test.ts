@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach } from "bun:test"
 import {
   ToolRegistry,
   ToolDefinitionCache,
-  ToolDefinition,
   ConfigurationException,
   TOP_LEVEL_DESCRIPTION,
 } from "../src/tool-registry.js"
+import type { ToolDefinition } from "../src/tool-registry.js"
 
 // ---------------------------------------------------------------------------
 // Helpers

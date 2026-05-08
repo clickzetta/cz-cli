@@ -1,6 +1,6 @@
 Execute ClickZetta Lakehouse CLI commands via cz-tool. Use this tool for database operations including SQL queries, table management, schema operations, task scheduling, and profile management.
 
-Commands are passed as a single string and forwarded to the cz-tool binary. Output is always JSON for machine parsing.
+Commands are passed as a single string and executed by the built-in cz-cli engine. Output is always JSON for machine parsing.
 
 Common commands:
 - sql "SELECT * FROM table LIMIT 10" — execute SQL

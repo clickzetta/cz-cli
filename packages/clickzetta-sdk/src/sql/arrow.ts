@@ -36,29 +36,35 @@ function base64ToBytes(b64: string): Uint8Array {
  *    apache-arrow reads them as bigint or record objects. We surface the
  *    raw value; callers needing a human-readable form can cast in SQL.
  */
-function columnToArray(vec: Vector<DataType> | null | undefined, typeCategory: string): unknown[] {
+function columnToArray(vec: Vector<DataType> | null | undefined, typeCategory: string, timezone?: string): unknown[] {
   if (!vec) return []
   const out = new Array<unknown>(vec.length)
   for (let i = 0; i < vec.length; i++) {
-    out[i] = normaliseArrowValue(vec.get(i), typeCategory)
+    out[i] = normaliseArrowValue(vec.get(i), typeCategory, timezone)
   }
   return out
 }
 
-function normaliseArrowValue(value: unknown, typeCategory: string): unknown {
+function normaliseArrowValue(value: unknown, typeCategory: string, timezone?: string): unknown {
   if (value == null) return null
   const upper = typeCategory.toUpperCase()
 
-  // Timestamps: apache-arrow returns number (ms epoch) or bigint (ns epoch)
-  // for Timestamp types. Convert to ISO 8601 to match the TEXT path.
+  // Timestamps: apply timezone conversion for TIMESTAMP_LTZ (matches Python as_timezone)
   if (upper === "TIMESTAMP_LTZ" || upper === "TIMESTAMP" || upper === "TIMESTAMP_NTZ") {
-    if (typeof value === "number") return new Date(value).toISOString()
-    if (typeof value === "bigint") {
-      // ns → ms (lossy for sub-ms precision; Python's as_timezone does the same)
-      return new Date(Number(value / 1_000_000n)).toISOString()
+    let date: Date
+    if (typeof value === "number") date = new Date(value)
+    else if (typeof value === "bigint") date = new Date(Number(value / 1_000_000n))
+    else if (value instanceof Date) date = value
+    else return String(value)
+
+    if (timezone && upper !== "TIMESTAMP_NTZ") {
+      try {
+        return date.toLocaleString("sv-SE", { timeZone: timezone }).replace(" ", "T")
+      } catch {
+        return date.toISOString()
+      }
     }
-    if (value instanceof Date) return value.toISOString()
-    return String(value)
+    return date.toISOString()
   }
 
   // DATE: apache-arrow returns Date object (days since epoch at midnight UTC)
@@ -130,6 +136,7 @@ function schemaFromArrow(arrowSchema: Schema, fallback: ColumnSchema[]): ColumnS
 export function decodeArrowPayload(
   base64Chunks: string[],
   metadataColumns: ColumnSchema[],
+  timezone?: string,
 ): { columns: ColumnSchema[]; rows: Record<string, unknown>[] } {
   if (!base64Chunks || base64Chunks.length === 0) {
     return { columns: metadataColumns, rows: [] }
@@ -152,7 +159,7 @@ export function decodeArrowPayload(
     for (let ci = 0; ci < resolvedColumns.length; ci++) {
       const name = table.schema.fields[ci]?.name ?? resolvedColumns[ci]!.name
       const vec = table.getChild(name) as Vector<DataType> | null
-      colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type))
+      colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type, timezone))
     }
 
     const rowCount = table.numRows
@@ -175,6 +182,7 @@ export function decodeArrowPayload(
 export async function fetchArrowFromUrls(
   urls: string[],
   metadataColumns: ColumnSchema[],
+  timezone?: string,
 ): Promise<{ columns: ColumnSchema[]; rows: Record<string, unknown>[] }> {
   let resolvedColumns = metadataColumns
   const allRows: Record<string, unknown>[] = []
@@ -194,7 +202,7 @@ export async function fetchArrowFromUrls(
     for (let ci = 0; ci < resolvedColumns.length; ci++) {
       const name = table.schema.fields[ci]?.name ?? resolvedColumns[ci]!.name
       const vec = table.getChild(name) as Vector<DataType> | null
-      colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type))
+      colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type, timezone))
     }
     for (let r = 0; r < table.numRows; r++) {
       const record: Record<string, unknown> = {}

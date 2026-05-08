@@ -26,6 +26,7 @@ import { registerScheduleInstanceTools } from "./schedule-instance.js"
 import { registerBackfillTools } from "./backfill.js"
 import { registerSemanticViewTools } from "./semantic-view.js"
 import { registerIntegrationTools } from "./integration.js"
+import { registerAgentExecuteTools } from "./agent-execute.js"
 
 /**
  * Register all available tools into the registry.
@@ -51,6 +52,7 @@ export function registerAllTools(registry: ToolRegistry, db: LakehouseDB): void 
   registerBackfillTools(registry, db)
   registerSemanticViewTools(registry, db)
   registerIntegrationTools(registry, db)
+  registerAgentExecuteTools(registry, db)
 }
 
 export * from "./admin.js"
@@ -72,3 +74,4 @@ export * from "./schedule-instance.js"
 export * from "./backfill.js"
 export * from "./semantic-view.js"
 export * from "./integration.js"
+export * from "./agent-execute.js"

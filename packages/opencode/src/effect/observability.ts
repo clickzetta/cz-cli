@@ -24,7 +24,7 @@ const resource = {
   serviceVersion: InstallationVersion,
   attributes: {
     "deployment.environment.name": InstallationChannel,
-    "opencode.client": Flag.OPENCODE_CLIENT,
+    "opencode.client": Flag.CLICKZETTA_CLIENT,
   },
 }
 

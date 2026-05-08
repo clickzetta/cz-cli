@@ -12,6 +12,7 @@ import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { Instance, type InstanceContext } from "../project/instance"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
 import { existsSync, readFileSync } from "fs"
+import { parseProfilesToml } from "./profiles-llm"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { Account } from "@/account/account"
@@ -351,54 +352,21 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.jsonc"))),
       )
 
-      // Read AI provider config from profiles.toml (written by cz-cli setup --credential)
-      // Creates a single "clickzetta" provider and hides all others
+      // Read AI provider config from profiles.toml
+      // Supports: ClickZetta built-in (api_key + aimesh_endpoint) and user-defined [llm.*] entries
       const profilesPath = path.join(clickzettaDir, "profiles.toml")
-      try {
-        const toml = readFileSync(profilesPath, "utf-8")
-        const defaultProfileMatch = toml.match(/^default_profile\s*=\s*"([^"]+)"/m)
-        const profileName = defaultProfileMatch ? defaultProfileMatch[1] : "default"
-        const sectionHeader = `[profiles.${profileName}]`
-        const sectionStart = toml.indexOf(sectionHeader)
-        const nextSection = sectionStart >= 0 ? toml.indexOf("\n[", sectionStart + sectionHeader.length) : -1
-        const profileSection = sectionStart >= 0
-          ? (nextSection >= 0 ? toml.slice(sectionStart, nextSection) : toml.slice(sectionStart))
-          : ""
-        const apiKeyMatch = profileSection.match(/^api_key\s*=\s*"([^"]+)"/m) || toml.match(/^api_key\s*=\s*"([^"]+)"/m)
-        const endpointMatch = profileSection.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m) || toml.match(/^aimesh_endpoint\s*=\s*"([^"]+)"/m)
-        if (apiKeyMatch) {
-          let baseURL = endpointMatch?.[1]
-          if (baseURL) {
-            baseURL = baseURL.replace(/\/+$/, "")
-            if (!baseURL.endsWith("/v1")) baseURL += "/v1"
+      if (existsSync(profilesPath)) {
+        try {
+          const toml = readFileSync(profilesPath, "utf-8")
+          const { providers, warnings } = parseProfilesToml(toml)
+          for (const w of warnings) log.warn(w, { path: profilesPath })
+          if (Object.keys(providers).length > 0) {
+            result = mergeDeep(result, { provider: providers } as any)
           }
-          const czProvider: ConfigProvider.Info = {
-            name: "ClickZetta",
-            npm: "@ai-sdk/openai-compatible",
-            options: {
-              ...(baseURL && { baseURL }),
-              apiKey: apiKeyMatch[1],
-            },
-            models: {
-              "deepseek-v4-pro": {
-                name: "DeepSeek V4 Pro",
-                attachment: true,
-                reasoning: true,
-                temperature: true,
-                tool_call: true,
-                cost: { input: 1, output: 4, cache_read: 0.1, cache_write: 1 },
-                limit: { context: 128000, output: 16384 },
-                options: {},
-              },
-            },
-          }
-          result = mergeDeep(result, {
-            provider: { clickzetta: czProvider },
-            enabled_providers: ["clickzetta"],
-            model: "clickzetta/deepseek-v4-pro",
-          } as any)
+        } catch (e) {
+          log.warn("failed to read profiles.toml, LLM config may be incomplete", { path: profilesPath, error: String(e) })
         }
-      } catch {}
+      }
 
       return result
     })
@@ -444,7 +412,7 @@ export const layer = Layer.effect(
 
       const pluginScopeForSource = Effect.fnUntraced(function* (source: string) {
         if (source.startsWith("http://") || source.startsWith("https://")) return "global"
-        if (source === "OPENCODE_CONFIG_CONTENT") return "local"
+        if (source === "CLICKZETTA_CONFIG_CONTENT") return "local"
         if (yield* InstanceRef.use((ctx) => Effect.succeed(Instance.containsPath(source, ctx)))) return "local"
         return "global"
       })
@@ -500,12 +468,12 @@ export const layer = Layer.effect(
       const global = yield* getGlobal()
       yield* merge(Global.Path.config, global, "global")
 
-      if (Flag.OPENCODE_CONFIG) {
-        yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG))
-        log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
+      if (Flag.CLICKZETTA_CONFIG) {
+        yield* merge(Flag.CLICKZETTA_CONFIG, yield* loadFile(Flag.CLICKZETTA_CONFIG))
+        log.debug("loaded custom config", { path: Flag.CLICKZETTA_CONFIG })
       }
 
-      if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+      if (!Flag.CLICKZETTA_DISABLE_PROJECT_CONFIG) {
         for (const file of yield* Effect.promise(() =>
           ConfigPaths.projectFiles("opencode", ctx.directory, ctx.worktree),
         )) {
@@ -519,14 +487,14 @@ export const layer = Layer.effect(
 
       const directories = yield* Effect.promise(() => ConfigPaths.directories(ctx.directory, ctx.worktree))
 
-      if (Flag.OPENCODE_CONFIG_DIR) {
-        log.debug("loading config from OPENCODE_CONFIG_DIR", { path: Flag.OPENCODE_CONFIG_DIR })
+      if (Flag.CLICKZETTA_CONFIG_DIR) {
+        log.debug("loading config from CLICKZETTA_CONFIG_DIR", { path: Flag.CLICKZETTA_CONFIG_DIR })
       }
 
       const deps: Fiber.Fiber<void, never>[] = []
 
       for (const dir of directories) {
-        if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
+        if (dir.endsWith(".clickzetta") || dir === Flag.CLICKZETTA_CONFIG_DIR) {
           for (const file of ["opencode.json", "opencode.jsonc"]) {
             const source = path.join(dir, file)
             log.debug(`loading config from ${source}`)
@@ -560,20 +528,20 @@ export const layer = Layer.effect(
         result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => ConfigCommand.load(dir)))
         result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.load(dir)))
         result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.loadMode(dir)))
-        // Auto-discovered plugins under `.opencode/plugin(s)` are already local files, so ConfigPlugin.load
+        // Auto-discovered plugins under `.clickzetta/plugin(s)` are already local files, so ConfigPlugin.load
         // returns normalized Specs and we only need to attach origin metadata here.
         const list = yield* Effect.promise(() => ConfigPlugin.load(dir))
         yield* mergePluginOrigins(dir, list)
       }
 
-      if (process.env.OPENCODE_CONFIG_CONTENT) {
-        const source = "OPENCODE_CONFIG_CONTENT"
-        const next = yield* loadConfig(process.env.OPENCODE_CONFIG_CONTENT, {
+      if (process.env.CLICKZETTA_CONFIG_CONTENT) {
+        const source = "CLICKZETTA_CONFIG_CONTENT"
+        const next = yield* loadConfig(process.env.CLICKZETTA_CONFIG_CONTENT, {
           dir: ctx.directory,
           source,
         })
         yield* merge(source, next, "local")
-        log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
+        log.debug("loaded custom config from CLICKZETTA_CONFIG_CONTENT")
       }
 
       const activeAccount = Option.getOrUndefined(
@@ -589,8 +557,8 @@ export const layer = Layer.effect(
             { concurrency: 2 },
           )
           if (Option.isSome(tokenOpt)) {
-            process.env["OPENCODE_CONSOLE_TOKEN"] = tokenOpt.value
-            yield* env.set("OPENCODE_CONSOLE_TOKEN", tokenOpt.value)
+            process.env["CLICKZETTA_CONSOLE_TOKEN"] = tokenOpt.value
+            yield* env.set("CLICKZETTA_CONSOLE_TOKEN", tokenOpt.value)
           }
 
           if (Option.isSome(configOpt)) {
@@ -644,8 +612,8 @@ export const layer = Layer.effect(
         })
       }
 
-      if (Flag.OPENCODE_PERMISSION) {
-        result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
+      if (Flag.CLICKZETTA_PERMISSION) {
+        result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.CLICKZETTA_PERMISSION))
       }
 
       if (result.tools) {
@@ -667,10 +635,10 @@ export const layer = Layer.effect(
         result.share = "auto"
       }
 
-      if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
+      if (Flag.CLICKZETTA_DISABLE_AUTOCOMPACT) {
         result.compaction = { ...result.compaction, auto: false }
       }
-      if (Flag.OPENCODE_DISABLE_PRUNE) {
+      if (Flag.CLICKZETTA_DISABLE_PRUNE) {
         result.compaction = { ...result.compaction, prune: false }
       }
 

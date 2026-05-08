@@ -12,6 +12,7 @@ export const ProviderID = providerIdSchema.pipe(
     zod: z.string().pipe(z.custom<ProviderID>()),
     // Well-known providers
     opencode: schema.make("opencode"),
+    clickzetta: schema.make("clickzetta"),
     anthropic: schema.make("anthropic"),
     openai: schema.make("openai"),
     google: schema.make("google"),

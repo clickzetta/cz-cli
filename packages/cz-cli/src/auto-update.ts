@@ -107,18 +107,13 @@ function isStandaloneBinary(): boolean {
   const argv1 = process.argv[1] ?? ""
   if (argv1.endsWith(".ts")) return false
 
-  // Check if the executable lives under ~/.local/bin (TS install location)
-  // or ~/.clickzetta/bin (legacy Python install location)
+  // Check if the executable lives under ~/.local/bin (install location)
   try {
     const exe = resolve(process.execPath)
-    const tsInstallDir = resolve(join(homedir(), ".local", "bin"))
-    const legacyInstallDir = resolve(join(homedir(), ".clickzetta", "bin"))
-    if (exe.startsWith(tsInstallDir) || exe.startsWith(legacyInstallDir)) {
-      return true
-    }
-    // Also check if argv[1] (the script) is in those dirs
+    const installDir = resolve(join(homedir(), ".local", "bin"))
+    if (exe.startsWith(installDir)) return true
     const script = resolve(argv1)
-    return script.startsWith(tsInstallDir) || script.startsWith(legacyInstallDir)
+    return script.startsWith(installDir)
   } catch {
     return false
   }

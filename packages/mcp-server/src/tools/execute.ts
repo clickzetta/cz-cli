@@ -21,10 +21,13 @@ import {
 } from "./studio-api.js"
 
 // ---------------------------------------------------------------------------
-// TaskType constants — execute_tools.py:88-95
-// Integration task types that require FLINK_ON_VC
+// Integration FileType constants — execute_tools.py:88-95
+// The API returns fileType (FileType enum values), which must be compared here.
+// FileType values: DataIntegration=1, RealTimeDI=14, FullIncrementalSync=280,
+//                  MultipleRISync=281, MultipleDISync=291
+// Python converts fileType→taskType before comparing; we compare fileType directly.
 // ---------------------------------------------------------------------------
-const INTEGRATION_TASK_TYPES = new Set([10, 28, 280, 281, 291])
+const INTEGRATION_FILE_TYPES = new Set([1, 14, 280, 281, 291])
 
 // ---------------------------------------------------------------------------
 // Status mapping — execute_server.py:198-207
@@ -231,7 +234,7 @@ async function handleExecuteTask(
 
     // execute_tools.py:87-104 — determine adhoc_vc_code based on task type
     let adhocVcCode: string
-    if (taskType != null && INTEGRATION_TASK_TYPES.has(taskType)) {
+    if (taskType != null && INTEGRATION_FILE_TYPES.has(taskType)) {
       adhocVcCode = "FLINK_ON_VC"
       logger.info({ dataTaskId, taskType }, "Integration task — setting adhocVcCode=FLINK_ON_VC")
     } else {

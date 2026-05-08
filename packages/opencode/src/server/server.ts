@@ -32,7 +32,7 @@ function create(opts: { cors?: string[] }) {
   const app = new Hono()
   const runtime = adapter.create(app)
 
-  if (Flag.OPENCODE_WORKSPACE_ID) {
+  if (Flag.CLICKZETTA_WORKSPACE_ID) {
     return {
       app: app
         .onError(ErrorMiddleware)

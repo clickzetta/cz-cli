@@ -22,6 +22,7 @@
  */
 
 import { createHash } from "node:crypto"
+import { execSync } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync, readdirSync } from "node:fs"
 import { tmpdir, homedir } from "node:os"
 import { join, extname, relative, resolve, dirname, basename } from "node:path"
@@ -421,7 +422,14 @@ export async function loadAllSkills(
   const allSkills: Skill[] = []
   for (const sourceConfig of skillSources) {
     const sourceType = sourceConfig["type"] as string | undefined
-    if (sourceType === "local") {
+    if (sourceType === "github") {
+      const url = sourceConfig["url"] as string | undefined
+      const subpath = (sourceConfig["subpath"] as string) ?? ""
+      if (url) {
+        const skills = await loadFromGithub(url, subpath, config ?? undefined)
+        allSkills.push(...skills)
+      }
+    } else if (sourceType === "local") {
       const path = sourceConfig["path"] as string | undefined
       if (path) {
         const skills = loadFromLocal(path, config ?? undefined)
@@ -458,7 +466,17 @@ export async function loadSkillsInBatches(
   for (const sourceConfig of skillSources) {
     const sourceType = sourceConfig["type"] as string | undefined
     try {
-      if (sourceType === "local") {
+      if (sourceType === "github") {
+        const url = sourceConfig["url"] as string | undefined
+        const subpath = (sourceConfig["subpath"] as string) ?? ""
+        if (url) {
+          const skills = await loadFromGithub(url, subpath, config ?? undefined)
+          for (const skill of skills) {
+            currentBatch.push(skill)
+            if (currentBatch.length >= batchSize) processBatch()
+          }
+        }
+      } else if (sourceType === "local") {
         const path = sourceConfig["path"] as string | undefined
         if (path) {
           const skills = loadFromLocal(path, config ?? undefined)
@@ -475,4 +493,272 @@ export async function loadSkillsInBatches(
     }
   }
   processBatch()
+}
+
+// ---------------------------------------------------------------------------
+// skill_loader.py:509-587 — _get_document_metadata_from_github()
+// ---------------------------------------------------------------------------
+
+export function getDocumentMetadataFromGithub(
+  owner: string,
+  repo: string,
+  branch: string,
+  skillDirPath: string,
+  treeData: Record<string, unknown>,
+  textExtensions: string[],
+  imageExtensions: string[],
+): Record<string, DocumentInfo> {
+  const documents: Record<string, DocumentInfo> = {}
+  const tree = (treeData as { tree?: Array<{ type: string; path: string; size?: number }> }).tree ?? []
+
+  for (const item of tree) {
+    if (item.type !== "blob") continue
+    const itemPath = item.path
+
+    // Skip if not in the skill directory
+    if (skillDirPath && !itemPath.startsWith(skillDirPath)) continue
+
+    // Skip SKILL.md itself
+    if (itemPath.endsWith("/SKILL.md") || itemPath === `${skillDirPath}/SKILL.md`) continue
+
+    // Calculate relative path from skill directory
+    let relPath: string
+    if (skillDirPath) {
+      relPath = itemPath.slice(skillDirPath.length).replace(/^\//, "")
+    } else {
+      relPath = itemPath
+    }
+    if (!relPath) continue
+
+    const fileExt = extname(itemPath).toLowerCase()
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${itemPath}`
+
+    if (textExtensions.includes(fileExt)) {
+      documents[relPath] = { type: "text", size: item.size ?? 0, url, fetched: false }
+    } else if (imageExtensions.includes(fileExt)) {
+      documents[relPath] = { type: "image", size: item.size ?? 0, url, fetched: false }
+    }
+  }
+
+  return documents
+}
+
+// ---------------------------------------------------------------------------
+// skill_loader.py:590-716 — _create_document_fetcher()
+// ---------------------------------------------------------------------------
+
+export function createDocumentFetcher(
+  owner: string,
+  repo: string,
+  branch: string,
+  skillDirPath: string,
+  textExtensions: string[],
+  imageExtensions: string[],
+  maxImageSize: number,
+): DocumentFetcher {
+  const cacheDir = getDocumentCacheDir()
+
+  return (docPath: string): DocumentInfo | null => {
+    const fullPath = skillDirPath ? `${skillDirPath}/${docPath}` : docPath
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${fullPath}`
+
+    // Check disk cache first
+    const cacheKey = createHash("md5").update(url).digest("hex")
+    const cacheFile = join(cacheDir, `${cacheKey}.cache`)
+
+    if (existsSync(cacheFile)) {
+      try {
+        const cached = JSON.parse(readFileSync(cacheFile, "utf-8")) as DocumentInfo
+        logger.debug({ docPath }, "Using cached document")
+        return cached
+      } catch (e) {
+        logger.warn({ err: e, docPath }, "Failed to load cache for document")
+      }
+    }
+
+    // Fetch from GitHub (synchronous via blocking — use async wrapper externally if needed)
+    // NOTE: This uses a synchronous XMLHttpRequest-style approach isn't available in Node.
+    // We'll use a sync fetch workaround via child_process for the fetcher closure.
+    try {
+      const fileExt = extname(docPath).toLowerCase()
+      const rawBuffer = execSync(`curl -sL "${url}"`, { maxBuffer: 50 * 1024 * 1024 })
+
+      let content: DocumentInfo
+
+      if (imageExtensions.includes(fileExt)) {
+        const fileSize = rawBuffer.length
+        if (fileSize > maxImageSize) {
+          content = { type: "image", size: fileSize, size_exceeded: true, url, fetched: true }
+        } else {
+          content = { type: "image", content: rawBuffer.toString("base64"), size: fileSize, url, fetched: true }
+        }
+      } else if (textExtensions.includes(fileExt)) {
+        const text = rawBuffer.toString("utf-8")
+        content = { type: "text", content: text, size: text.length, fetched: true }
+      } else {
+        return null
+      }
+
+      // Save to disk cache
+      try {
+        writeFileSync(cacheFile, JSON.stringify(content), "utf-8")
+        logger.debug({ docPath }, "Cached document")
+      } catch (e) {
+        logger.warn({ err: e, docPath }, "Failed to cache document")
+      }
+
+      return content
+    } catch (e) {
+      logger.error({ err: e, docPath, url }, "Failed to fetch document from GitHub")
+      return null
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// skill_loader.py:719-979 — load_from_github()
+// ---------------------------------------------------------------------------
+
+export async function loadFromGithub(
+  url: string,
+  subpath = "",
+  config?: Partial<SkillsConfig>,
+): Promise<Skill[]> {
+  const skills: Skill[] = []
+  const cfg = config ?? {}
+
+  const loadDocuments = cfg.load_skill_documents ?? true
+  const textExtensions = cfg.text_file_extensions ?? [
+    ".md", ".py", ".txt", ".json", ".yaml", ".yml", ".sh", ".r", ".ipynb",
+  ]
+  const imageExtensions = cfg.allowed_image_extensions ?? [
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+  ]
+  const maxImageSize = cfg.max_image_size_bytes ?? 5242880
+
+  let owner: string
+  let repo: string
+  let branch = "main"
+
+  try {
+    // Parse GitHub URL
+    const parsed = new URL(url)
+    const pathParts = parsed.pathname.replace(/^\//, "").split("/")
+
+    if (pathParts.length < 2) {
+      logger.error({ url }, "Invalid GitHub URL")
+      return skills
+    }
+
+    owner = pathParts[0]!
+    repo = pathParts[1]!
+
+    // Check if URL contains /tree/{branch}/{subpath}
+    if (pathParts.length > 3 && pathParts[2] === "tree") {
+      branch = pathParts[3]!
+      if (pathParts.length > 4 && !subpath) {
+        subpath = pathParts.slice(4).join("/")
+        logger.info({ subpath }, "Extracted subpath from URL")
+      }
+    }
+
+    logger.info({ owner, repo, branch, subpath }, "Loading skills from GitHub")
+
+    // Get repository tree (with caching)
+    const cachePath = getCachePath(url, branch)
+    let treeData = loadFromCache(cachePath) as Record<string, unknown> | null
+
+    if (treeData === null) {
+      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`
+      const response = await fetch(apiUrl)
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          // Try master branch
+          logger.info({ owner, repo }, "Branch 'main' not found, trying 'master'")
+          branch = "master"
+          const masterCachePath = getCachePath(url, branch)
+          treeData = loadFromCache(masterCachePath) as Record<string, unknown> | null
+
+          if (treeData === null) {
+            const masterApiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`
+            const masterResponse = await fetch(masterApiUrl)
+            if (!masterResponse.ok) {
+              logger.error({ url, status: masterResponse.status }, "HTTP error loading from GitHub (tried both main and master)")
+              return skills
+            }
+            treeData = await masterResponse.json() as Record<string, unknown>
+            saveToCache(masterCachePath, treeData)
+          }
+        } else {
+          logger.error({ url, status: response.status }, "HTTP error loading from GitHub")
+          return skills
+        }
+      } else {
+        treeData = await response.json() as Record<string, unknown>
+        saveToCache(cachePath, treeData)
+      }
+    }
+
+    // Find all SKILL.md files
+    const tree = (treeData as { tree?: Array<{ type: string; path: string }> }).tree ?? []
+    const skillPaths: string[] = []
+    for (const item of tree) {
+      if (item.type === "blob" && item.path.endsWith("SKILL.md")) {
+        if (subpath) {
+          if (item.path.startsWith(subpath)) skillPaths.push(item.path)
+        } else {
+          skillPaths.push(item.path)
+        }
+      }
+    }
+
+    // Load each SKILL.md file
+    for (const skillPath of skillPaths) {
+      try {
+        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${skillPath}`
+        const response = await fetch(rawUrl)
+        if (!response.ok) {
+          logger.error({ skillPath, status: response.status }, "Failed to fetch SKILL.md")
+          continue
+        }
+        const content = await response.text()
+        const source = `${url}/tree/${branch}/${skillPath}`
+        const skill = parseSkillMd(content, source)
+
+        if (skill) {
+          if (loadDocuments) {
+            // Get skill directory path (parent of SKILL.md)
+            const skillDirIdx = skillPath.lastIndexOf("/")
+            const skillDirPath = skillDirIdx >= 0 ? skillPath.slice(0, skillDirIdx) : ""
+
+            const documents = getDocumentMetadataFromGithub(
+              owner, repo, branch, skillDirPath, treeData!, textExtensions, imageExtensions,
+            )
+
+            const fetcher = createDocumentFetcher(
+              owner, repo, branch, skillDirPath, textExtensions, imageExtensions, maxImageSize,
+            )
+
+            skill.documents = documents
+            ;(skill as unknown as { _documentFetcher: DocumentFetcher })._documentFetcher = fetcher
+
+            if (Object.keys(documents).length > 0) {
+              logger.info({ skillName: skill.name, count: Object.keys(documents).length }, "Found additional documents")
+            }
+          }
+          skills.push(skill)
+          logger.info({ skillName: skill.name, source }, "Loaded skill from GitHub")
+        }
+      } catch (e) {
+        logger.error({ err: e, skillPath }, "Error loading skill from GitHub")
+      }
+    }
+
+    logger.info({ count: skills.length, url }, "Loaded skills from GitHub repo")
+  } catch (e) {
+    logger.error({ err: e, url }, "Error loading from GitHub")
+  }
+
+  return skills
 }

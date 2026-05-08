@@ -30,7 +30,10 @@ export * from "./workspace/workspace.js"
 export * from "./agent/chat.js"
 
 // dbapi.py:28-29 — DB-API 2.0 module-level constants
+/** DB-API 2.0 API level (dbapi.py:27). */
+export const apilevel = "2.0"
 /** DB-API 2.0 threadsafety level (dbapi.py:28). */
 export const threadsafety = 2
 /** DB-API 2.0 parameter style (dbapi.py:29). */
 export const paramstyle = "qmark"
+export { czStruct } from "./sql/converter.js"

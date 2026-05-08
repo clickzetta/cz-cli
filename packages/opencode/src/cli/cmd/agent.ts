@@ -88,7 +88,7 @@ const AgentCreateCommand = cmd({
             scope = scopeResult
           }
           targetPath = path.join(
-            scope === "global" ? Global.Path.config : path.join(Instance.worktree, ".opencode"),
+            scope === "global" ? Global.Path.config : path.join(Instance.worktree, ".clickzetta"),
             "agent",
           )
         }
@@ -240,9 +240,11 @@ const AgentListCommand = cmd({
   },
 })
 
+import { AgentLlmCommand } from "./config-llm"
+
 export const AgentCommand = cmd({
   command: "agent",
   describe: "manage agents",
-  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).demandCommand(),
+  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).command(AgentLlmCommand).demandCommand(),
   async handler() {},
 })

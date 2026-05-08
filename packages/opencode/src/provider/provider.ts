@@ -139,8 +139,93 @@ function useLanguageModel(sdk: any) {
   return sdk.responses === undefined && sdk.chat === undefined
 }
 
+// ClickZetta Aimesh model catalog — hardcoded because ClickZetta is not in models.dev.
+export const CLICKZETTA_MODELS: Record<string, unknown> = {
+  "deepseek-v4-pro": {
+    id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "deepseek",
+    release_date: "2025-05-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 1, output: 4, cache_read: 0.1, cache_write: 1 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "deepseek-v4-flash": {
+    id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", family: "deepseek",
+    release_date: "2025-05-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 0.5, output: 1.5, cache_read: 0.05, cache_write: 0.5 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "deepseek-v3.2": {
+    id: "deepseek-v3.2", name: "DeepSeek V3.2", family: "deepseek",
+    release_date: "2025-03-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 0.5, output: 1.5, cache_read: 0.05, cache_write: 0.5 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "qwen3.5-plus": {
+    id: "qwen3.5-plus", name: "Qwen3.5 Plus", family: "qwen",
+    release_date: "2025-07-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 0.8, output: 3.2, cache_read: 0.08, cache_write: 0.8 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "qwen3.5-flash": {
+    id: "qwen3.5-flash", name: "Qwen3.5 Flash", family: "qwen",
+    release_date: "2025-07-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 0.2, output: 0.6, cache_read: 0.02, cache_write: 0.2 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "qwen3-coder-plus": {
+    id: "qwen3-coder-plus", name: "Qwen3 Coder Plus", family: "qwen",
+    release_date: "2025-07-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 1.2, output: 4.8, cache_read: 0.12, cache_write: 1.2 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "qwen3-max-preview": {
+    id: "qwen3-max-preview", name: "Qwen3 Max Preview", family: "qwen",
+    release_date: "2025-05-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
+    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
+    cost: { input: 1.6, output: 6.4, cache_read: 0.16, cache_write: 1.6 },
+    limit: { context: 128000, output: 16384 },
+  },
+  "qwen3-vl-plus": {
+    id: "qwen3-vl-plus", name: "Qwen3 VL Plus", family: "qwen",
+    release_date: "2025-05-01", attachment: true, reasoning: false, tool_call: true, temperature: true,
+    modalities: { input: ["text", "image"], output: ["text"] }, open_weights: false,
+    cost: { input: 1.2, output: 4.8, cache_read: 0.12, cache_write: 1.2 },
+    limit: { context: 128000, output: 16384 },
+  },
+}
+
+export const CLICKZETTA_PROVIDER_ENTRY = {
+  id: "clickzetta",
+  name: "ClickZetta",
+  npm: "@ai-sdk/openai-compatible",
+  api: "",
+  env: ["CLICKZETTA_API_KEY"],
+  models: CLICKZETTA_MODELS,
+}
+
 function custom(dep: CustomDep): Record<string, CustomLoader> {
   return {
+    // ClickZetta: reads apiKey from auth.json; baseURL from config.provider.clickzetta.options.
+    clickzetta: Effect.fnUntraced(function* (input: Info) {
+      const stored = yield* dep.auth(input.id)
+      const env = yield* dep.env()
+      const apiKey = iife(() => {
+        const envKey = env["CLICKZETTA_API_KEY"]
+        if (envKey) return envKey
+        if (stored?.type === "api") return stored.key
+        if (typeof input.options?.["apiKey"] === "string") return input.options["apiKey"] as string
+        return undefined
+      })
+      return {
+        autoload: !!apiKey,
+        options: apiKey ? { apiKey } : {},
+      }
+    }),
     anthropic: () =>
       Effect.succeed({
         autoload: false,
@@ -1055,6 +1140,9 @@ const layer: Layer.Layer<
         const modelsDev = yield* Effect.promise(() => ModelsDev.get())
         const database = mapValues(modelsDev, fromModelsDevProvider)
 
+        // Inject ClickZetta as a first-class provider (not in models.dev).
+        database["clickzetta"] = fromModelsDevProvider(CLICKZETTA_PROVIDER_ENTRY as unknown as ModelsDev.Provider)
+
         const providers: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
         const languages = new Map<string, LanguageModelV3>()
         const modelLoaders: {
@@ -1325,7 +1413,7 @@ const layer: Layer.Layer<
               (providerID === ProviderID.openrouter && modelID === "openai/gpt-5-chat")
             )
               delete provider.models[modelID]
-            if (model.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS) delete provider.models[modelID]
+            if (model.status === "alpha" && !Flag.CLICKZETTA_ENABLE_EXPERIMENTAL_MODELS) delete provider.models[modelID]
             if (model.status === "deprecated") delete provider.models[modelID]
             if (
               (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||

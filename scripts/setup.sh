@@ -114,20 +114,12 @@ EOF
     print_success "Created default config at $CZAGENT_CONFIG"
 fi
 
-# Install bundled cz-tool (internal, not on PATH)
+# Remove legacy bundled cz-tool (Python version, no longer needed)
 CZ_TOOL_DIR="$HOME/.clickzetta/cz-tool"
-if [ -d "$SCRIPT_DIR/cz-tool" ]; then
-    echo "Installing bundled cz-tool ..."
+if [ -d "$CZ_TOOL_DIR" ]; then
+    echo "Removing legacy cz-tool (now built-in) ..."
     rm -rf "$CZ_TOOL_DIR"
-    mkdir -p "$CZ_TOOL_DIR"
-    cp -r "$SCRIPT_DIR/cz-tool/"* "$CZ_TOOL_DIR/"
-    chmod +x "$CZ_TOOL_DIR/cz-tool" 2>/dev/null || true
-    if [ "$(uname -s)" = "Darwin" ]; then
-        xattr -r -d com.apple.quarantine "$CZ_TOOL_DIR" 2>/dev/null || true
-    fi
-    # Clean up legacy location
-    rm -rf "$INSTALL_DIR/cz-tool"
-    print_success "Installed bundled cz-tool to $CZ_TOOL_DIR"
+    print_success "Removed legacy cz-tool from $CZ_TOOL_DIR"
 fi
 
 # Install bundled skills for cz-cli internal use
@@ -150,7 +142,7 @@ fi
 CZCLI_SKILL_SRC="$SCRIPT_DIR/skills/cz-cli"
 LAKEHOUSE_SKILL_SRC="$SCRIPT_DIR/skills/lakehouse-doc"
 if [ -d "$CZCLI_SKILL_SRC" ]; then
-    AGENT_DIRS="$HOME/.claude/skills $HOME/.codex/skills $HOME/.cursor/skills $HOME/.kiro/skills"
+    AGENT_DIRS="$HOME/.claude/skills $HOME/.codex/skills $HOME/.cursor/skills $HOME/.kiro/skills $HOME/.openclaw/workspace/skills $HOME/.singclaw/workspace/skills"
     # Clean up old czcli/czagent skill directories
     for agent_dir in $AGENT_DIRS; do
         rm -rf "$agent_dir/czagent"

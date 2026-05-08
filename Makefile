@@ -25,7 +25,6 @@ build:
 	cd $(OPENCODE_DIR) && bun run script/build.ts --single --skip-install --skip-embed-web-ui
 	mkdir -p $(OUT_DIR)/$(PLATFORM_DIR)
 	cp $(BINARY) $(OUT_DIR)/$(PLATFORM_DIR)/czcli
-	cp -r $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/cz-tool $(OUT_DIR)/$(PLATFORM_DIR)/cz-tool
 	test -d $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/skills && cp -r $(DIST_DIR)/opencode-$(UNAME_S)-$(ARCH)/bin/skills $(OUT_DIR)/$(PLATFORM_DIR)/skills || true
 	cp $(SCRIPTS_DIR)/setup.sh $(OUT_DIR)/$(PLATFORM_DIR)/setup.sh
 	cd $(OUT_DIR)/$(PLATFORM_DIR) && zip -r ../$(ZIP_NAME) .

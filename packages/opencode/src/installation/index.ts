@@ -25,7 +25,7 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
-export const USER_AGENT = `cz-cli/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
+export const USER_AGENT = `cz-cli/${InstallationChannel}/${InstallationVersion}/${Flag.CLICKZETTA_CLIENT}`
 
 export function isPreview() {
   return InstallationChannel !== "latest"

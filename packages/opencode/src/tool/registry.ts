@@ -178,7 +178,7 @@ export const layer: Layer.Layer<
 
         yield* config.get()
         const questionEnabled =
-          ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) || Flag.OPENCODE_ENABLE_QUESTION_TOOL
+          ["app", "cli", "desktop"].includes(Flag.CLICKZETTA_CLIENT) || Flag.CLICKZETTA_ENABLE_QUESTION_TOOL
 
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
@@ -220,8 +220,8 @@ export const layer: Layer.Layer<
             tool.code,
             tool.skill,
             tool.patch,
-            ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
-            ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
+            ...(Flag.CLICKZETTA_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
+            ...(Flag.CLICKZETTA_EXPERIMENTAL_PLAN_MODE && Flag.CLICKZETTA_CLIENT === "cli" ? [tool.plan] : []),
           ],
           task: tool.task,
           read: tool.read,
@@ -275,7 +275,7 @@ export const layer: Layer.Layer<
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
       const filtered = (yield* all()).filter((tool) => {
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
-          return input.providerID === ProviderID.opencode || Flag.OPENCODE_ENABLE_EXA
+          return input.providerID === ProviderID.opencode || Flag.CLICKZETTA_ENABLE_EXA
         }
 
         const usePatch =

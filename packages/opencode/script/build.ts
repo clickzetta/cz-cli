@@ -207,13 +207,13 @@ for (let i = 0; i < targets.length; i++) {
       ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : []),
     ],
     define: {
-      OPENCODE_VERSION: `'${Script.version}'`,
-      OPENCODE_MIGRATIONS: JSON.stringify(migrations),
+      CLICKZETTA_VERSION: `'${Script.version}'`,
+      CLICKZETTA_MIGRATIONS: JSON.stringify(migrations),
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
-      OPENCODE_WORKER_PATH: workerPath,
-      OPENCODE_RIPGREP_WORKER_PATH: rgPath,
-      OPENCODE_CHANNEL: `'${Script.channel}'`,
-      OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
+      CLICKZETTA_WORKER_PATH: workerPath,
+      CLICKZETTA_RIPGREP_WORKER_PATH: rgPath,
+      CLICKZETTA_CHANNEL: `'${Script.channel}'`,
+      CLICKZETTA_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
     },
   })
 
@@ -248,69 +248,11 @@ for (let i = 0; i < targets.length; i++) {
 }
 
 const CZ_CLI_PLATFORM_MAP: Record<string, string | null> = {
-  "darwin-arm64": "cz-cli-macos-arm64.zip",
-  "darwin-x64": "cz-cli-macos-arm64.zip",
-  "linux-x64": "cz-cli-linux-x86_64.zip",
-  "linux-arm64": null,
-  "win32-arm64": "cz-cli-windows-x86_64.zip",
-  "win32-x64": "cz-cli-windows-x86_64.zip",
+  // Python cz-tool binary is no longer needed — cz-cli is now built-in via @clickzetta/cli
 }
 
 async function bundleCzCli(distBinDir: string, os: string, arch: string) {
-  if (process.env.SKIP_CZ_CLI) {
-    console.log("SKIP_CZ_CLI set, skipping cz-cli bundling")
-    return
-  }
-  const t0 = performance.now()
-
-  const version = process.env.CZ_CLI_VERSION || "latest"
-  const repo = "clickzetta/cz-tool"
-  const platformKey = `${os}-${arch}`
-  const asset = CZ_CLI_PLATFORM_MAP[platformKey]
-
-  if (asset === null || asset === undefined) {
-    console.log(`No cz-cli binary for ${platformKey}, skipping`)
-    return
-  }
-
-  const baseUrl =
-    version === "latest"
-      ? `https://github.com/${repo}/releases/latest/download`
-      : `https://github.com/${repo}/releases/download/${version}`
-
-  const tmpDir = path.join(dir, "dist", ".cz-cli-tmp")
-  fs.mkdirSync(tmpDir, { recursive: true })
-
-  const czToolDir = path.join(distBinDir, "cz-tool")
-  const skillsDir = path.join(distBinDir, "skills")
-  fs.mkdirSync(czToolDir, { recursive: true })
-  fs.mkdirSync(skillsDir, { recursive: true })
-
-  console.log(`Downloading ${asset} for ${platformKey}...`)
-  const binaryZip = path.join(tmpDir, asset)
-  if (!fs.existsSync(binaryZip)) {
-    await $`curl -fSL --retry 3 --retry-delay 5 -o ${binaryZip} ${baseUrl}/${asset}`
-  }
-  if (os === "win32") {
-    await $`tar -xf ${binaryZip} -C ${czToolDir}`
-  } else {
-    await $`unzip -o -q ${binaryZip} -d ${czToolDir}`
-  }
-
-  const extractedBin = path.join(czToolDir, os === "win32" ? "cz-cli.exe" : "cz-cli")
-  const renamedBin = path.join(czToolDir, os === "win32" ? "cz-tool.exe" : "cz-tool")
-  if (fs.existsSync(extractedBin)) {
-    fs.renameSync(extractedBin, renamedBin)
-  }
-
-  const skillsTar = path.join(tmpDir, "skills.tar.gz")
-  if (!fs.existsSync(skillsTar)) {
-    console.log("Downloading skills.tar.gz...")
-    await $`curl -fSL --retry 3 --retry-delay 5 -o ${skillsTar} ${baseUrl}/skills.tar.gz`
-  }
-  await $`tar -xzf ${skillsTar} -C ${skillsDir}`
-
-  console.log(`Bundled cz-tool + skills into ${distBinDir} in ${((performance.now() - t0) / 1000).toFixed(1)}s`)
+  // No-op: Python cz-tool removed. cz-cli functionality is now built into the czcli binary.
 }
 
 function findTarget(key: string) {
@@ -329,16 +271,7 @@ function findTarget(key: string) {
   )
 }
 
-const bundleKeys = Object.keys(binaries)
-for (let i = 0; i < bundleKeys.length; i++) {
-  const key = bundleKeys[i]
-  const target = findTarget(key)
-  if (target) {
-    console.log(`[${i + 1}/${bundleKeys.length}] bundling cz-tool for ${key}`)
-    await bundleCzCli(`dist/${key}/bin`, target.os, target.arch)
-  }
-}
-fs.rmSync(path.join("dist", ".cz-cli-tmp"), { recursive: true, force: true })
+// Python cz-tool bundling removed — cz-cli is now built-in via @clickzetta/cli
 
 // Bundle cz-cli subagent skill into each platform dist
 const czCliSkillSrc = path.join(dir, "..", "..", "skills", "cz-cli")

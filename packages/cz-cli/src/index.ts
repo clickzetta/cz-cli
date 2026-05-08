@@ -10,3 +10,4 @@ export { formatJson, formatPretty, formatTable, formatCsv, formatJsonl, formatTo
 export { logOperation, redactSql } from "./logger.js"
 export { createCli } from "./cli.js"
 export type { GlobalArgs } from "./cli.js"
+export { execute, type ExecuteResult } from "./execute.js"

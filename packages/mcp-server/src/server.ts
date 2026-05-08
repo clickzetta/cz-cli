@@ -200,6 +200,16 @@ export class LakehouseDB {
     return new LakehouseDB(config)
   }
 
+  // server_core.py:85-100
+  private _ensureDefaultHints(): void {
+    if (this.connectionConfig && !this.connectionConfig.hints) {
+      this.connectionConfig.hints = {
+        "sdk.job.timeout": 300,
+        "query_tag": "mcp-server",
+      }
+    }
+  }
+
   /**
    * Check whether the current session has expired.
    * Mirrors the inline check at server_core.py:233:

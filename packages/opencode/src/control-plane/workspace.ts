@@ -113,9 +113,9 @@ export const create = fn(CreateInput, async (input) => {
   })
 
   const env = {
-    OPENCODE_AUTH_CONTENT: JSON.stringify(await AppRuntime.runPromise(Auth.Service.use((auth) => auth.all()))),
-    OPENCODE_WORKSPACE_ID: config.id,
-    OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
+    CLICKZETTA_AUTH_CONTENT: JSON.stringify(await AppRuntime.runPromise(Auth.Service.use((auth) => auth.all()))),
+    CLICKZETTA_WORKSPACE_ID: config.id,
+    CLICKZETTA_EXPERIMENTAL_WORKSPACES: "true",
   }
   await adaptor.create(config, env)
 
@@ -491,7 +491,7 @@ async function syncWorkspace(space: Info, signal: AbortSignal) {
 }
 
 async function startSync(space: Info) {
-  if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) return
+  if (!Flag.CLICKZETTA_EXPERIMENTAL_WORKSPACES) return
 
   const adaptor = await getAdaptor(space.projectID, space.type)
   const target = await adaptor.target(space)

@@ -4,6 +4,7 @@ import {
   isFatalErrorCode,
   isRetryableErrorCode,
   isRetryableMessage,
+  shouldResubmitWithNewJobId,
 } from "./errors.js"
 import { toClickZettaError, OperationalError } from "../types/errors.js"
 import { decodeArrowPayload, fetchArrowFromUrls } from "./arrow.js"
@@ -23,6 +24,10 @@ interface PollJobResultParams {
   jobTimeoutMs?: number
   /** utils.py:278-300 as_timezone — timezone for TIMESTAMP_LTZ conversion */
   timezone?: string
+  /** Max polling iterations before giving up (default 120, matches Python sdk.query.max.retries) */
+  maxRetries?: number
+  /** Called when CZLH-57015/60015 requires resubmit with new job ID. Returns the new poll result. */
+  resubmitFn?: () => Promise<QueryResult>
 }
 
 // --- Raw response types matching the actual /lh/getJob JSON ---
@@ -459,7 +464,7 @@ export async function pollJobResult(
   params: PollJobResultParams = {},
 ): Promise<QueryResult> {
   const startTime = Date.now()
-  const { jobTimeoutMs, timezone } = params
+  const { jobTimeoutMs, timezone, maxRetries = 120, resubmitFn } = params
 
   const requestBody = {
     get_result_request: {
@@ -476,19 +481,20 @@ export async function pollJobResult(
   }
 
   let sleepMs = 50
-  // Mirrors Python `tried < 5` guard for the NoPermission-propagation
-  // message (client.py:1232-1234): we tolerate a handful of transient
-  // "User is not found" blips after a grant, then give up.
   const NO_PERMISSION_MAX_TRIES = 5
   let noPermissionTries = 0
+  let retryCount = 0
 
   while (true) {
+    if (maxRetries > 0 && retryCount >= maxRetries) {
+      throw new OperationalError(`Job ${jobId.id} exceeded max retries (${maxRetries})`, { jobId: jobId.id })
+    }
+
     if (jobTimeoutMs !== undefined && Date.now() - startTime > jobTimeoutMs) {
-      // client.py:1101-1108 _check_job_timeout_with_cancel — cancel before throwing.
       try {
         const { cancelJob } = await import("./cancel.js")
         await cancelJob(opts, jobId)
-      } catch { /* best-effort cancel; ignore errors */ }
+      } catch { /* best-effort cancel */ }
       throw new OperationalError(`Job ${jobId.id} timed out after ${jobTimeoutMs}ms`, { jobId: jobId.id })
     }
 
@@ -497,7 +503,6 @@ export async function pollJobResult(
     const errorCode = raw?.status?.errorCode || undefined
     const errorMessage = raw?.status?.errorMessage || raw?.status?.message || undefined
 
-    // Fatal lh_code → raise, classified via toClickZettaError.
     if (isFatalErrorCode(errorCode)) {
       throw toClickZettaError({
         errorCode,
@@ -506,20 +511,25 @@ export async function pollJobResult(
       })
     }
 
-    // Retryable lh_code (60007 / 60022 / 60023 / 57015 / 60015) →
-    // keep polling, ignore the terminal state check below.
+    // CZLH-57015 (JOB_NEEDS_RERUN) / CZLH-60015 (VC_QUEUE_LIMIT) →
+    // resubmit with a new job ID (Python: execute_with_retrying)
+    if (shouldResubmitWithNewJobId(errorCode)) {
+      if (resubmitFn) {
+        retryCount++
+        return resubmitFn()
+      }
+      // No resubmit function provided — fall through to retry polling
+    }
+
+    // Other retryable lh_codes (60007 / 60022 / 60023) → keep polling same job
     if (isRetryableErrorCode(errorCode)) {
+      retryCount++
       await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
       sleepMs = nextSleepMs(sleepMs)
       continue
     }
 
-    // Retryable message (502 Bad Gateway / NoPermission …) → keep polling,
-    // but cap NoPermission retries at 5 to match Python's `tried < 5` guard.
     if (!errorCode && isRetryableMessage(errorMessage)) {
-      // client.py:1232 uses endswith(" is not found") — the message must
-      // end with that phrase, not merely contain it. Using includes() here
-      // would misclassify unrelated errors that happen to contain the phrase.
       const isNoPerm =
         !!errorMessage &&
         errorMessage.includes("NoPermission: User ") &&
@@ -533,15 +543,12 @@ export async function pollJobResult(
           })
         }
       }
+      retryCount++
       await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
       sleepMs = nextSleepMs(sleepMs)
       continue
     }
 
-    // Early-return when resultSet data/location is available even if
-    // the job state is still non-terminal (client.py:1222-1230).
-    // Python checks `"location" in result_dict["resultSet"]` — presence
-    // of the location object is enough, regardless of presignedUrls length.
     const hasEmbeddedData = (raw?.resultSet?.data?.data?.length ?? 0) > 0
     const hasLocation = raw?.resultSet?.location != null
     if (!TERMINAL_STATES.has(state) && (hasEmbeddedData || hasLocation)) {
@@ -552,6 +559,7 @@ export async function pollJobResult(
       return parseJobResponse(raw, jobId, timezone)
     }
 
+    retryCount++
     await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
     sleepMs = nextSleepMs(sleepMs)
   }

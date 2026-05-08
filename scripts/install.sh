@@ -85,43 +85,6 @@ get_platform() {
     echo "${os}-${arch}"
 }
 
-# ── Version resolution ────────────────────────────────────────────────────
-
-get_latest_version() {
-    local version=""
-    local redirect_url="https://github.com/${REPO}/releases/latest"
-
-    if command -v curl > /dev/null 2>&1; then
-        version=$(curl -fsSI "$redirect_url" 2>/dev/null \
-            | grep -i '^location:' | sed 's|.*/tag/||;s/[[:space:]]//g')
-    elif command -v wget > /dev/null 2>&1; then
-        version=$(wget --spider -S "$redirect_url" 2>&1 \
-            | grep -i '^\s*location:' | sed 's|.*/tag/||;s/[[:space:]]//g')
-    else
-        print_error "curl or wget is required"
-        exit 1
-    fi
-
-    if [ -z "$version" ]; then
-        local api_url="https://api.github.com/repos/${REPO}/releases/latest"
-        if command -v curl > /dev/null 2>&1; then
-            version=$(curl -fsSL "$api_url" 2>/dev/null \
-                | grep '"tag_name"' | head -1 \
-                | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"//;s/".*//')
-        else
-            version=$(wget -qO- "$api_url" 2>/dev/null \
-                | grep '"tag_name"' | head -1 \
-                | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"//;s/".*//')
-        fi
-    fi
-
-    if [ -z "$version" ]; then
-        print_error "Failed to determine latest version"
-        exit 1
-    fi
-    echo "$version"
-}
-
 # ── Download helper ───────────────────────────────────────────────────────
 
 download() {
@@ -134,8 +97,13 @@ download() {
 }
 
 release_url() {
-    local base="${CZ_MIRROR:-https://github.com/${REPO}/releases/download}"
-    echo "${base}/$1/$2"
+    local base="${CZ_MIRROR:-https://github.com/${REPO}/releases}"
+    if [ -n "$1" ]; then
+        echo "${base}/download/$1/$2"
+    else
+        # No version specified: use /latest/download/ — GitHub auto-redirects to newest release
+        echo "${base}/latest/download/$2"
+    fi
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────
@@ -175,28 +143,16 @@ main() {
             ;;
     esac
 
+    # Version: use CZ_VERSION if set, otherwise let GitHub resolve "latest"
+    version=""
     if [ -n "$CZ_VERSION" ]; then
         version="$CZ_VERSION"
         case "$version" in v*) ;; *) version="v${version}" ;; esac
+        echo "Version: $version"
     else
-        echo "Fetching latest version..."
-        version=$(get_latest_version)
+        echo "Using latest release"
     fi
-    echo "Version: $version"
 
-    # Skip if same version already installed (check both czcli and cz-cli symlink)
-    local check_bin="$INSTALL_DIR/$BINARY_NAME"
-    [ ! -x "$check_bin" ] && check_bin="$INSTALL_DIR/cz-cli"
-    if [ -x "$check_bin" ]; then
-        local installed_version
-        installed_version=$("$check_bin" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-        local v_clean="${version#v}"
-        local i_clean="${installed_version#v}"
-        if [ -n "$i_clean" ] && [ "$v_clean" = "$i_clean" ]; then
-            print_success "cz-cli $version is already installed. Skipping."
-            exit 0
-        fi
-    fi
 
     # Archive naming matches Makefile output: czcli-{os}-{arch}.zip
     local archive_name ext

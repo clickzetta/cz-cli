@@ -55,6 +55,12 @@ process.on("uncaughtException", (e) => {
 
 const rawArgs = hideBin(process.argv)
 
+// Fast path: `cz-cli setup` runs before any agent bootstrap
+if (rawArgs[0] === "setup") {
+  const { setup } = await import("./cli/cmd/setup")
+  await setup(rawArgs.slice(1))
+}
+
 const isAgentSubcommand = rawArgs[0] === "agent" || rawArgs[0] === "run"
 
 if (rawArgs.length === 0 || ["--help", "-h"].includes(rawArgs[0])) {
@@ -117,7 +123,7 @@ const args = isAgentSubcommand ? rawArgs.slice(1) : rawArgs
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("cz-cli agent ") && !text.startsWith("opencode ")) {
+  if (!text.startsWith("cz-cli agent ") && !text.startsWith("clickzetta ")) {
     process.stderr.write(EOL + "  " + UI.Style.TEXT_INFO_BOLD + "◆ cz-cli" + UI.Style.TEXT_NORMAL + EOL + EOL)
     process.stderr.write(text)
     return
@@ -148,7 +154,7 @@ const cli = yargs(args)
   })
   .middleware(async (opts) => {
     if (opts.pure) {
-      process.env.OPENCODE_PURE = "1"
+      process.env.CLICKZETTA_PURE = "1"
     }
 
     await Log.init({
@@ -164,15 +170,15 @@ const cli = yargs(args)
     Heap.start()
 
     process.env.AGENT = "1"
-    process.env.OPENCODE = "1"
-    process.env.OPENCODE_PID = String(process.pid)
+    process.env.CLICKZETTA = "1"
+    process.env.CLICKZETTA_PID = String(process.pid)
 
-    Log.Default.info("opencode", {
+    Log.Default.info("clickzetta", {
       version: InstallationVersion,
       args: process.argv.slice(2),
     })
 
-    const marker = path.join(Global.Path.data, "opencode.db")
+    const marker = path.join(Global.Path.data, "clickzetta.db")
     if (!(await Filesystem.exists(marker))) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)

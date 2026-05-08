@@ -1030,3 +1030,74 @@ export async function apiGetJobProfile(
   const text = await response.text()
   return JSON.parse(text) as Record<string, unknown>
 }
+
+/** ide_admin_server.py:87-110 create_folder */
+export async function apiCreateFolder(
+  config: StudioConfig,
+  params: {
+    projectId: string
+    createdBy: string
+    parentFolderId: number
+    dataFolderName: string
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("DATA_FOLDER_ADD")
+  const headers = buildHeaders(config)
+  return studioPost(url, headers, {
+    createdBy: params.createdBy,
+    projectId: params.projectId,
+    dataFolderName: params.dataFolderName,
+    parentFolderId: params.parentFolderId,
+    dataFolderType: 1,
+  })
+}
+
+/** ide_admin_server.py:112-149 list_folders */
+export async function apiListFolders(
+  config: StudioConfig,
+  params: {
+    projectId: string
+    parentFolderId?: number
+    folderName?: string
+    folderType?: number
+    page?: number
+    pageSize?: number
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("MCP_LIST_FOLDERS")
+  const headers = buildHeaders(config)
+  const body: Record<string, unknown> = {
+    projectId: params.projectId,
+    page: params.page ?? 1,
+    pageSize: params.pageSize ?? 20,
+  }
+  if (params.parentFolderId != null) body["parentFolderId"] = params.parentFolderId
+  if (params.folderName) body["folderName"] = params.folderName
+  if (params.folderType != null) body["folderType"] = params.folderType
+  return studioPost(url, headers, body)
+}
+
+/** ide_admin_server.py:151-180 list_files */
+export async function apiListFiles(
+  config: StudioConfig,
+  params: {
+    projectId: string
+    folderId?: number
+    fileName?: string
+    fileType?: number
+    page?: number
+    pageSize?: number
+  },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("MCP_LIST_FILES")
+  const headers = buildHeaders(config)
+  const body: Record<string, unknown> = {
+    projectId: params.projectId,
+    page: params.page ?? 1,
+    pageSize: params.pageSize ?? 20,
+  }
+  if (params.folderId != null) body["folderId"] = params.folderId
+  if (params.fileName) body["fileName"] = params.fileName
+  if (params.fileType != null) body["fileType"] = params.fileType
+  return studioPost(url, headers, body)
+}

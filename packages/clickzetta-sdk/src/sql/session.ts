@@ -503,6 +503,8 @@ export class SqlSession {
     const result = await pollJobResult(clientOpts, jobId, {
       jobTimeoutMs: prepared.jobTimeoutMs > 0 ? prepared.jobTimeoutMs : undefined,
       timezone: this.timezoneHint,
+      maxRetries: prepared.maxRetry > 0 ? prepared.maxRetry : undefined,
+      resubmitFn: () => this.execute(sql, options),
     })
 
     // Volume SQL post-processing — client.py:1340-1344 + process_volume_sql
@@ -520,6 +522,49 @@ export class SqlSession {
     }
 
     return result
+  }
+
+  // ---------------------------------------------------------------------
+  // Metadata helpers (client.py:1357-1410)
+  // ---------------------------------------------------------------------
+
+  /** client.py:1357 — SHOW TABLES in the given (or current) schema. */
+  async getTableNames(schema?: string): Promise<string[]> {
+    const s = schema ?? this.schema
+    const result = await this.execute(`SHOW TABLES IN ${s}`)
+    return result.rows.map((row) => String(Object.values(row)[1]))
+  }
+
+  /** client.py:1369 — SHOW SCHEMAS in the current workspace. */
+  async getSchemas(): Promise<string[]> {
+    const result = await this.execute("SHOW SCHEMAS")
+    return result.rows.map((row) => String(Object.values(row)[0]))
+  }
+
+  /** client.py:1381 — return column metadata for a table. */
+  async getColumns(tableName: string): Promise<QueryResult["columns"]> {
+    const result = await this.execute(`SELECT * FROM ${tableName} LIMIT 0`)
+    return result.columns
+  }
+
+  /** client.py:1395 — check if a table exists. */
+  async hasTable(tableName: string): Promise<boolean> {
+    try {
+      const result = await this.execute(`SHOW CREATE TABLE ${tableName}`)
+      return result.status !== JobStatus.FAILED
+    } catch {
+      return false
+    }
+  }
+
+  /** client.py:521 — check if a schema exists. */
+  async checkSchema(schemaName: string): Promise<boolean> {
+    try {
+      await this.execute(`DESC SCHEMA ${schemaName}`)
+      return true
+    } catch {
+      return false
+    }
   }
 
   // ---------------------------------------------------------------------

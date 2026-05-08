@@ -68,6 +68,11 @@ export class HornhubClient {
     this.timeout = timeoutMs
   }
 
+  // hornhub_client.py:77-79
+  async close(): Promise<void> {
+    // No persistent connection to close in fetch-based client
+  }
+
   // hornhub_client.py:81-87
   async checkAccessToken(token: string): Promise<BaseUser> {
     const tokenHash = HornhubClient.generateTokenHash(token)

@@ -422,7 +422,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         if (theme) return resolveTheme(theme, store.mode)
       }
 
-      return resolveTheme(store.themes.opencode, store.mode)
+      return resolveTheme(store.themes.clickzetta, store.mode)
     })
 
     createEffect(() => {
@@ -483,7 +483,7 @@ async function getCustomThemes() {
     Global.Path.config,
     ...(await Array.fromAsync(
       Filesystem.up({
-        targets: [".opencode"],
+        targets: [".clickzetta"],
         start: process.cwd(),
       }),
     )),

@@ -88,7 +88,7 @@ const TYPE_MAPPINGS_TO_LAKEHOUSE: Record<string, string> = {
   NUMRANGE: "string", TSTZRANGE: "string", DATERANGE: "string",
   // MongoDB/NoSQL
   String: "string", OBJECTID: "string", DOCUMENT: "string",
-  Integer: "int", Double: "double", Boolean: "boolean",
+  Integer: "int", Long: "bigint", Double: "double", Boolean: "boolean",
   // ClickHouse special
   FIXEDSTRING: "string", ENUM8: "string", ENUM16: "string",
   NESTED: "string", STRUCT: "string", COLLECTION: "string",
@@ -528,6 +528,7 @@ async function handleRecommendIntegrationConfig(
       success: false,
       message: `Internal error: ${err.message}`,
       error_type: err.name,
+      traceback: err.stack ?? "",
     }
   }
 }
