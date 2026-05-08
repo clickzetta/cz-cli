@@ -24,7 +24,11 @@ export const CzToolTool = Tool.define(
         execute: (params: z.infer<typeof Parameters>, _ctx: Tool.Context) =>
           Effect.gen(function* () {
             const extraArgs = params.profile ? ["--profile", params.profile] : undefined
-            const result = yield* Effect.promise(() => execute(params.command, extraArgs))
+            // Always use --sync for agent tool calls so we get actual results
+            const cmd = params.command.startsWith("sql ") && !params.command.includes("--sync")
+              ? params.command + " --sync"
+              : params.command
+            const result = yield* Effect.promise(() => execute(cmd, extraArgs))
             const output = result.exitCode === 0
               ? result.output
               : `Exit code: ${result.exitCode}\n${result.output}`
