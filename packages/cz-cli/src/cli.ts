@@ -1,5 +1,6 @@
 import yargs from "yargs"
 import { VERSION } from "./version.js"
+import { outputState } from "./output/index.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -107,12 +108,12 @@ export function createCli(args: string[]) {
     })
     .middleware((argv) => {
       // Detect whether --output was explicitly provided by the user
-      // yargs sets parsed options in argv; we check if it came from the default
       const rawArgs = args.map(a => String(a))
       const hasExplicitOutput = rawArgs.some(
         (a) => a === "-o" || a === "--output" || a.startsWith("--output=") || a.startsWith("-o=")
       )
       argv.output_explicit = hasExplicitOutput
+      outputState.field = argv.field as string | undefined
     }, /* applyBeforeValidation */ true)
     .strict()
     .fail((msg, err, yargs) => {

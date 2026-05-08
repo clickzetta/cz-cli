@@ -208,6 +208,7 @@ async function executeSingle(
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
+        return
       }
       await emitResult(r, sql, argv, ctx, t0)
       return
@@ -217,6 +218,7 @@ async function executeSingle(
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
       logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
       error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format, extra: hint ? { schema: hint } : undefined })
+      return
     }
     if (r.rowCount > rowLimit) {
       const tables = extractTableNames(sql)
@@ -248,6 +250,7 @@ async function executeSingle(
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
+        return
       }
       let aiMessage: string | undefined
       let rows = r.rows
@@ -265,6 +268,7 @@ async function executeSingle(
   if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
+    return
   }
 
   if (isShow && !argv["no-limit"] && r.rowCount > rowLimit) {
@@ -383,6 +387,7 @@ async function handler(argv: SqlArgs): Promise<void> {
         if (isQueryResult(r) && r.status === JobStatus.FAILED) {
           logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
           error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format })
+          return
         }
       }
       await executeSingle(ctx, statements[statements.length - 1], argv, accumulatedHints)

@@ -4,6 +4,9 @@ export const EXIT_OK = 0
 export const EXIT_BIZ_ERROR = 1
 export const EXIT_USAGE_ERROR = 2
 
+/** Set by the CLI arg parser; success/error use it for --field extraction */
+export const outputState = { field: undefined as string | undefined }
+
 export interface OutputOptions {
   format?: string
   field?: string
@@ -31,7 +34,7 @@ export function success(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
   if (opts?.extra) Object.assign(payload, opts.extra)
 
-  const output = emit(payload, opts?.format, opts?.field)
+  const output = emit(payload, opts?.format, opts?.field ?? outputState.field)
   if (output !== "") process.stdout.write(output + "\n")
   process.exitCode = EXIT_OK
 }
@@ -89,7 +92,7 @@ export function error(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
   if (opts?.extra) Object.assign(payload, opts.extra)
 
-  const output = emit(payload, opts?.format, opts?.field)
+  const output = emit(payload, opts?.format, opts?.field ?? outputState.field)
   process.stdout.write(output + "\n")
   process.exitCode = opts?.exitCode ?? EXIT_BIZ_ERROR
 }

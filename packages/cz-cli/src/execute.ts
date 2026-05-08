@@ -3,6 +3,7 @@
  * Captures stdout and exit code without calling process.exit().
  */
 import { createCli } from "./cli.js"
+import { outputState } from "./output/index.js"
 import { registerSqlCommand } from "./commands/sql.js"
 import { registerSchemaCommand } from "./commands/schema.js"
 import { registerTableCommand } from "./commands/table.js"
@@ -86,6 +87,7 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   process.stdout.write = originalStdoutWrite
   process.stderr.write = originalStderrWrite
   process.exitCode = savedExitCode
+  outputState.field = undefined
 
   return { exitCode, output: chunks.join("") }
 }
