@@ -102,6 +102,9 @@ export async function submitJob(
       contextJson: contextJson
         ? JSON.stringify(contextJson)
         : JSON.stringify({
+            workspace,
+            schema,
+            vc: vcluster,
             configs: {
               "cz.sql.adhoc.result.type": "embedded",
               "cz.sql.adhoc.default.format": "ARROW",
