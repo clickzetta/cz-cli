@@ -29,6 +29,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
             if (!ws) {
               logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
               error("NO_RESULT", "No current workspace set. Use `cz-cli workspace use <name>` to set one.", { format })
+              return
             }
             logOperation("workspace current", { sql, ok: true, timeMs: Date.now() - t0 })
             success({ workspace: ws }, { format, timeMs: Date.now() - t0 })
