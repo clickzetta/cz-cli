@@ -24,7 +24,7 @@ interface PollJobResultParams {
   jobTimeoutMs?: number
   /** utils.py:278-300 as_timezone — timezone for TIMESTAMP_LTZ conversion */
   timezone?: string
-  /** Max polling iterations before giving up (default 120, matches Python sdk.query.max.retries) */
+  /** Max polling iterations before giving up (default unlimited, matches Python max_tries=-1). Use jobTimeoutMs for time-based limits. */
   maxRetries?: number
   /** Called when CZLH-57015/60015 requires resubmit with new job ID. Returns the new poll result. */
   resubmitFn?: () => Promise<QueryResult>
@@ -41,6 +41,7 @@ interface LhJobStatus {
 
 interface LhFieldType {
   category: string
+  decimalTypeInfo?: { precision?: string; scale?: string }
 }
 
 interface LhField {
@@ -346,10 +347,15 @@ function parseResultSet(
 
   const metadata = resultSet.metadata
   const fields = metadata?.fields ?? []
-  const columns: ColumnSchema[] = fields.map((f) => ({
-    name: f.name,
-    type: f.type.category,
-  }))
+  const columns: ColumnSchema[] = fields.map((f) => {
+    let type = f.type.category
+    if (type === "DECIMAL" && f.type.decimalTypeInfo) {
+      const p = f.type.decimalTypeInfo.precision ?? "38"
+      const s = f.type.decimalTypeInfo.scale ?? "0"
+      type = `DECIMAL(${p},${s})`
+    }
+    return { name: f.name, type }
+  })
 
   // No data and no location — DDL result
   if (!resultSet.data && !resultSet.location) {
@@ -464,7 +470,7 @@ export async function pollJobResult(
   params: PollJobResultParams = {},
 ): Promise<QueryResult> {
   const startTime = Date.now()
-  const { jobTimeoutMs, timezone, maxRetries = 120, resubmitFn } = params
+  const { jobTimeoutMs, timezone, maxRetries = Infinity, resubmitFn } = params
 
   const requestBody = {
     get_result_request: {

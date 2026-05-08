@@ -9,6 +9,10 @@ export interface SubmitJobParams {
   instanceName: string
   instanceId: number
   jobId: JobID
+  /** Service host (e.g. "uat-api.clickzetta.com"). Sent in contextJson. */
+  host?: string
+  /** Username for contextJson audit trail. */
+  user?: string
   /**
    * SQL hints forwarded as `sqlJob.sqlConfig.hint`. The Python connector
    * passes the merged `connect_context.configs` dict here
@@ -58,9 +62,11 @@ export async function submitJob(
     workspace,
     schema,
     vcluster,
-    instanceName: _instanceName,
+    instanceName,
     instanceId,
     jobId,
+    host,
+    user,
     hints = {},
     asynchronous = false,
     jobTimeoutMs,
@@ -108,14 +114,20 @@ export async function submitJob(
       contextJson: contextJson
         ? JSON.stringify(contextJson)
         : JSON.stringify({
+            host: host ?? null,
+            instance: instanceName ?? null,
+            user: user ?? null,
             workspace,
             schema,
             vc: vcluster,
+            maxRowSize: 0,
+            priority: "",
             configs: {
               "cz.sql.adhoc.result.type": "embedded",
               "cz.sql.adhoc.default.format": "ARROW",
               "cz.sql.job.result.file.presigned.url.enabled": "true",
               "cz.sql.job.result.file.presigned.url.ttl": "3600",
+              ...hints,
             },
           }),
     },

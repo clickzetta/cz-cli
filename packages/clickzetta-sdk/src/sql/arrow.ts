@@ -39,13 +39,15 @@ function base64ToBytes(b64: string): Uint8Array {
 function columnToArray(vec: Vector<DataType> | null | undefined, typeCategory: string, timezone?: string): unknown[] {
   if (!vec) return []
   const out = new Array<unknown>(vec.length)
+  // For DECIMAL, extract scale from Arrow type metadata
+  const scale = typeCategory.toUpperCase().startsWith("DECIMAL") ? ((vec.type as any).scale ?? 0) : 0
   for (let i = 0; i < vec.length; i++) {
-    out[i] = normaliseArrowValue(vec.get(i), typeCategory, timezone)
+    out[i] = normaliseArrowValue(vec.get(i), typeCategory, timezone, scale)
   }
   return out
 }
 
-function normaliseArrowValue(value: unknown, typeCategory: string, timezone?: string): unknown {
+function normaliseArrowValue(value: unknown, typeCategory: string, timezone?: string, decimalScale?: number): unknown {
   if (value == null) return null
   const upper = typeCategory.toUpperCase()
 
@@ -95,9 +97,19 @@ function normaliseArrowValue(value: unknown, typeCategory: string, timezone?: st
   }
 
   // DECIMAL: keep string to preserve precision (same as TEXT path).
+  // Arrow stores DECIMAL as scaled integer (bigint or DecimalBigNum); apply scale to restore decimal point.
   if (upper === "DECIMAL" || upper.startsWith("DECIMAL(")) {
-    if (typeof value === "bigint") return value.toString()
-    return String(value)
+    const scale = decimalScale ?? 0
+    const raw = typeof value === "bigint" ? value.toString() : String(value)
+    if (scale > 0) {
+      const negative = raw.startsWith("-")
+      const abs = negative ? raw.slice(1) : raw
+      const padded = abs.padStart(scale + 1, "0")
+      const intPart = padded.slice(0, padded.length - scale)
+      const fracPart = padded.slice(padded.length - scale)
+      return (negative ? "-" : "") + intPart + "." + fracPart
+    }
+    return raw
   }
 
   // MAP / LIST / STRUCT: apache-arrow returns already-parsed JS structures

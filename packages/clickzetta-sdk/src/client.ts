@@ -2,8 +2,8 @@ import { ClickZettaApiError, type ApiResponse } from "./types/api.js"
 import type { ConnectionConfig } from "./types/index.js"
 
 const SDK_VERSION = "0.1.0"
-const MAX_RETRIES = 2
-const NON_RETRYABLE_STATUS = new Set([400, 403, 404, 409, 422, 504])
+const MAX_RETRIES = 3
+const NON_RETRYABLE_STATUS = new Set([400, 403, 404, 409, 422])
 const AUTH_EXPIRED_STATUS = 401
 const DEFAULT_TIMEOUT_MS = 60_000
 
