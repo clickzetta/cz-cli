@@ -10,11 +10,34 @@ import { Schema } from "effect"
  *       from: Schema.decodeUnknownOption(schema),
  *     }))
  *   )
+ *
+ * Properties are defined as lazy getters evaluated on first access.
+ * This prevents circular-dependency crashes in bundled binaries where
+ * module initialisation order differs from source — the factory is only
+ * called when a property is first read, by which time all modules are
+ * fully initialised.
  */
 export const withStatics =
   <S extends object, M extends Record<string, unknown>>(methods: (schema: S) => M) =>
-  (schema: S): S & M =>
-    Object.assign(schema, methods(schema))
+  (schema: S): S & M => {
+    // Call methods() once to discover the property keys, then redefine each
+    // key as a lazy getter so the actual value is re-evaluated on first access.
+    // This handles the case where the factory captures module-level values that
+    // are not yet initialised at the time withStatics runs (circular deps).
+    const keys = Object.keys(methods(schema))
+    let resolved: M | undefined
+    for (const key of keys) {
+      Object.defineProperty(schema, key, {
+        get() {
+          if (!resolved) resolved = methods(schema)
+          return (resolved as Record<string, unknown>)[key]
+        },
+        configurable: true,
+        enumerable: true,
+      })
+    }
+    return schema as S & M
+  }
 
 declare const NewtypeBrand: unique symbol
 type NewtypeBrand<Tag extends string> = { readonly [NewtypeBrand]: Tag }

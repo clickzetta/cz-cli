@@ -50,8 +50,10 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(
-  Layer.provide(ShareNext.defaultLayer),
-  Layer.provide(Session.defaultLayer),
-  Layer.provide(Config.defaultLayer),
+export const defaultLayer = Layer.suspend(() =>
+  layer.pipe(
+    Layer.provide(ShareNext.defaultLayer),
+    Layer.provide(Session.defaultLayer),
+    Layer.provide(Config.defaultLayer),
+  )
 )

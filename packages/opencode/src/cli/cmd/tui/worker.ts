@@ -31,6 +31,7 @@ process.on("unhandledRejection", (e) => {
 process.on("uncaughtException", (e) => {
   Log.Default.error("exception", {
     e: e instanceof Error ? e.message : e,
+    stack: e instanceof Error ? e.stack : undefined,
   })
 })
 

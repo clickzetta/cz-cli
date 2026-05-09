@@ -101,11 +101,20 @@ function formatError(error: Error, depth = 0): string {
 }
 
 let last = Date.now()
+
 export function create(tags?: Record<string, any>) {
+  return createLogger(tags, false)
+}
+
+function createFresh(tags: Record<string, any>): Logger {
+  return createLogger(tags, true)
+}
+
+function createLogger(tags?: Record<string, any>, skipCache = false) {
   tags = tags || {}
 
   const service = tags["service"]
-  if (service && typeof service === "string") {
+  if (!skipCache && service && typeof service === "string") {
     const cached = loggers.get(service)
     if (cached) {
       return cached
@@ -156,7 +165,11 @@ export function create(tags?: Record<string, any>) {
       return result
     },
     clone() {
-      return create({ ...tags })
+      // Bypass the service cache so the clone is always a fresh independent
+      // logger. Without this, clone() on a cached logger (e.g. Log.Default)
+      // returns the same object, and a subsequent tag() call mutates the
+      // original — corrupting Log.Default's service tag for all callers.
+      return createFresh({ ...tags })
     },
     time(message: string, extra?: Record<string, any>) {
       const now = Date.now()
@@ -177,7 +190,7 @@ export function create(tags?: Record<string, any>) {
     },
   }
 
-  if (service && typeof service === "string") {
+  if (!skipCache && service && typeof service === "string") {
     loggers.set(service, result)
   }
 

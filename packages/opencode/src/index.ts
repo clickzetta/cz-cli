@@ -18,6 +18,7 @@ process.on("unhandledRejection", (e) => {
 process.on("uncaughtException", (e) => {
   Log.Default.error("exception", {
     e: errorMessage(e),
+    stack: e instanceof Error ? e.stack : undefined,
   })
 })
 
@@ -120,81 +121,44 @@ if (isAgentSubcommand) {
 }
 
 // Dynamic imports — only reached for `cz-cli agent …` or `cz-cli --help`
-const [
-  { default: yargs },
-  { RunCommand },
-  { GenerateCommand },
-  { UI },
-  { Installation },
-  { InstallationVersion },
-  { NamedError },
-  { FormatError },
-  { ConsoleCommand },
-  { ProvidersCommand },
-  { AgentCreateCommand, AgentListCommand },
-  { UpgradeCommand },
-  { UninstallCommand },
-  { ModelsCommand },
-  { ServeCommand },
-  { Filesystem },
-  { DebugCommand },
-  { StatsCommand },
-  { McpCommand },
-  { GithubCommand },
-  { ExportCommand },
-  { ImportCommand },
-  { AttachCommand },
-  { TuiThreadCommand },
-  { AcpCommand },
-  { WebCommand },
-  { PrCommand },
-  { SessionCommand },
-  { DbCommand },
-  { Global },
-  { JsonMigration, Database },
-  { PluginCommand },
-  { SetupCommand },
-  { AgentLlmCommand },
-  { Heap },
-  { drizzle },
-] = await Promise.all([
-  import("yargs"),
-  import("./cli/cmd/run"),
-  import("./cli/cmd/generate"),
-  import("./cli/ui"),
-  import("./installation"),
-  import("./installation/version"),
-  import("@opencode-ai/shared/util/error"),
-  import("./cli/error"),
-  import("./cli/cmd/account"),
-  import("./cli/cmd/providers"),
-  import("./cli/cmd/agent"),
-  import("./cli/cmd/upgrade"),
-  import("./cli/cmd/uninstall"),
-  import("./cli/cmd/models"),
-  import("./cli/cmd/serve"),
-  import("./util"),
-  import("./cli/cmd/debug"),
-  import("./cli/cmd/stats"),
-  import("./cli/cmd/mcp"),
-  import("./cli/cmd/github"),
-  import("./cli/cmd/export"),
-  import("./cli/cmd/import"),
-  import("./cli/cmd/tui/attach"),
-  import("./cli/cmd/tui/thread"),
-  import("./cli/cmd/acp"),
-  import("./cli/cmd/web"),
-  import("./cli/cmd/pr"),
-  import("./cli/cmd/session"),
-  import("./cli/cmd/db"),
-  import("./global"),
-  import("./storage"),
-  import("./cli/cmd/plug"),
-  import("./cli/cmd/setup"),
-  import("./cli/cmd/config-llm"),
-  import("./cli/heap"),
-  import("drizzle-orm/bun-sqlite"),
-])
+// Sequential imports to avoid circular-dependency TDZ errors that occur when
+// Bun evaluates interdependent modules in parallel (Promise.all).
+const { default: yargs } = await import("yargs")
+const { Global } = await import("./global")
+const { Filesystem } = await import("./util")
+const { JsonMigration, Database } = await import("./storage")
+const { UI } = await import("./cli/ui")
+const { Installation } = await import("./installation")
+const { InstallationVersion } = await import("./installation/version")
+const { NamedError } = await import("@opencode-ai/shared/util/error")
+const { FormatError } = await import("./cli/error")
+const { Heap } = await import("./cli/heap")
+const { drizzle } = await import("drizzle-orm/bun-sqlite")
+const { RunCommand } = await import("./cli/cmd/run")
+const { GenerateCommand } = await import("./cli/cmd/generate")
+const { ConsoleCommand } = await import("./cli/cmd/account")
+const { ProvidersCommand } = await import("./cli/cmd/providers")
+const { AgentCreateCommand, AgentListCommand } = await import("./cli/cmd/agent")
+const { UpgradeCommand } = await import("./cli/cmd/upgrade")
+const { UninstallCommand } = await import("./cli/cmd/uninstall")
+const { ModelsCommand } = await import("./cli/cmd/models")
+const { ServeCommand } = await import("./cli/cmd/serve")
+const { DebugCommand } = await import("./cli/cmd/debug")
+const { StatsCommand } = await import("./cli/cmd/stats")
+const { McpCommand } = await import("./cli/cmd/mcp")
+const { GithubCommand } = await import("./cli/cmd/github")
+const { ExportCommand } = await import("./cli/cmd/export")
+const { ImportCommand } = await import("./cli/cmd/import")
+const { AttachCommand } = await import("./cli/cmd/tui/attach")
+const { TuiThreadCommand } = await import("./cli/cmd/tui/thread")
+const { AcpCommand } = await import("./cli/cmd/acp")
+const { WebCommand } = await import("./cli/cmd/web")
+const { PrCommand } = await import("./cli/cmd/pr")
+const { SessionCommand } = await import("./cli/cmd/session")
+const { DbCommand } = await import("./cli/cmd/db")
+const { PluginCommand } = await import("./cli/cmd/plug")
+const { SetupCommand } = await import("./cli/cmd/setup")
+const { AgentLlmCommand } = await import("./cli/cmd/config-llm")
 
 const args = isAgentSubcommand ? rawArgs.slice(1) : rawArgs
 

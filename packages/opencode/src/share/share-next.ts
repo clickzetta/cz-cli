@@ -338,11 +338,16 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(
-  Layer.provide(Bus.layer),
-  Layer.provide(Account.defaultLayer),
-  Layer.provide(Config.defaultLayer),
-  Layer.provide(FetchHttpClient.layer),
-  Layer.provide(Provider.defaultLayer),
-  Layer.provide(Session.defaultLayer),
+// Wrap in Layer.suspend to defer evaluation until runtime, avoiding
+// "Cannot access 'layer' before initialization" in bundled binaries where
+// module evaluation order differs from source.
+export const defaultLayer = Layer.suspend(() =>
+  layer.pipe(
+    Layer.provide(Bus.layer),
+    Layer.provide(Account.defaultLayer),
+    Layer.provide(Config.defaultLayer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Provider.defaultLayer),
+    Layer.provide(Session.defaultLayer),
+  )
 )
