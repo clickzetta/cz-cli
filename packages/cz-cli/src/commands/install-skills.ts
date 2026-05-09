@@ -27,8 +27,12 @@ function expandPath(p: string): string {
 
 function getPackageSkillsDir(): string {
   const selfDir = dirname(new URL(import.meta.url).pathname)
+  const exeDir = dirname(resolve(process.execPath))
   const candidates = [
+    // Installed location: ~/.clickzetta/skills
+    join(homedir(), ".clickzetta", "skills"),
     // Compiled binary: skills/ is sibling to the binary
+    join(exeDir, "skills"),
     join(selfDir, "skills"),
     // Dev mode: from src/commands/ → ../../skills (repo root skills/)
     join(selfDir, "..", "..", "..", "..", "skills"),
