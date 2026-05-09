@@ -179,8 +179,8 @@ Key tools:
 - `cz-cli attempts list <run_id_or_task>` / `cz-cli attempts log <run_id_or_task> [--attempt-id N]`
 
 ### Agent (AI Agent)
-- `cz-cli agent status` — Check agent health
-- `cz-cli agent ask "question" [--conversation-id ID]` — Ask the agent
+- `cz-cli agent run "<prompt>" [--session ID]` — Run AI agent with a natural-language prompt
+- `cz-cli agent llm` — Manage LLM providers
 
 ## Command Inventory (Generated)
 

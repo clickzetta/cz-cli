@@ -254,10 +254,10 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 })
                 const r = await execSql(ctx, "SELECT 1", { timeoutMs: 30000 })
                 if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-                  error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
+                  return error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
                 }
               } catch (err) {
-                error("CONNECTION_FAILED", `Failed to connect: ${err instanceof Error ? err.message : String(err)}`, { format })
+                return error("CONNECTION_FAILED", `Failed to connect: ${err instanceof Error ? err.message : String(err)}`, { format })
               }
             }
             profiles[name] = profileObj

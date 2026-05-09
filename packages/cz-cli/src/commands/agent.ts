@@ -1,92 +1,38 @@
 import type { Argv } from "yargs"
-import { agentHealth, createConversation, chat, toServiceUrl, type AgentIdentity } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error } from "../output/index.js"
-import { logOperation } from "../logger.js"
-import { resolveConnectionConfig } from "../connection/config.js"
-import { getStudioContext } from "./studio-context.js"
-import { readAgentEndpoint } from "../connection/profile-store.js"
 
 export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
   cli.command("agent", "AI agent — run sessions, configure LLM, manage tasks (run `cz-cli agent --help` for full command list)", (yargs) =>
     yargs
       .command(
-        "status",
-        "Check AI Agent health",
+        "run <prompt>",
+        "Run AI agent with a natural-language prompt",
         (y) =>
           y
-            .option("agent-url", { type: "string", describe: "Agent base URL" })
-            .option("token", { type: "string", describe: "Override auth token" }),
-        async (argv) => {
-          const format = argv.output
-          try {
-            const url = argv["agent-url"] ?? resolveAgentUrl(argv)
-            const result = await agentHealth(url)
-            logOperation("agent status", { ok: true })
-            if (result === false) {
-              error("AGENT_UNREACHABLE", `Cannot connect to agent at ${url}`, { format })
-            }
-            success({ healthy: true, url, ...(typeof result === "object" ? result : {}) }, { format })
-          } catch (err) {
-            error("AGENT_ERROR", err instanceof Error ? err.message : String(err), { format })
-          }
+            .positional("prompt", { type: "string", demandOption: true, describe: "Natural-language request" })
+            .option("session", { type: "string", describe: "Session ID for multi-turn conversations" })
+            .option("format", { type: "string", choices: ["a2a", "text"], describe: "Output format (a2a for structured)" })
+            .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
+            .option("agent", { type: "string", describe: "Agent to use" })
+            .example("cz-cli agent run \"show tables\"", "One-shot query")
+            .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session"),
+        () => {
+          // This handler is never reached — opencode kernel handles `agent run` directly.
+          // This command definition exists only to provide correct --help output.
         },
       )
       .command(
-        "ask <question>",
-        "Send question to AI Agent",
-        (y) =>
-          y
-            .positional("question", { type: "string", demandOption: true })
-            .option("conversation-id", { alias: "c", type: "string", describe: "Reuse conversation" })
-            .option("agent-url", { type: "string", describe: "Agent base URL" })
-            .option("token", { type: "string", describe: "Override auth token" })
-            .option("session", { type: "string", describe: "Session ID for multi-turn" }),
-        async (argv) => {
-          const format = argv.output
-          try {
-            const url = argv["agent-url"] ?? resolveAgentUrl(argv)
-            const sc = await getStudioContext(argv)
-            const identity: AgentIdentity = {
-              user_id: String(sc.userId),
-              tenant_id: String(sc.tenantId),
-              instance_id: String(sc.instanceId),
-              token: sc.token,
-              instance_name: sc.instanceName,
-              workspace: sc.workspaceName,
-              workspace_id: String(sc.workspaceId),
-              schema_name: (argv as Record<string, unknown>).schema as string | undefined,
-            }
-            let conversationId = argv["conversation-id"] as string | undefined
-            if (!conversationId) {
-              conversationId = await createConversation(url, sc.token, identity)
-            }
-            const answer = await chat(url, sc.token, conversationId, argv.question as string, identity)
-            logOperation("agent ask", { ok: true })
-            success({ question: argv.question, answer, conversation_id: conversationId }, { format })
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err)
-            if (msg.includes("504") || msg.includes("timeout")) {
-              error("AGENT_TIMEOUT", "Agent did not respond in time (timeout)", { format })
-            }
-            error("AGENT_ERROR", msg, { format })
-          }
-        },
+        "llm",
+        "Manage LLM providers (add, remove, show, list)",
+        (y) => y
+          .example("cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use", "Add Claude")
+          .example("cz-cli agent llm show", "Show active LLM config")
+          .example("cz-cli agent llm list", "List all configured LLMs"),
+        () => {},
       )
-      .demandCommand(1, ""),
+      .demandCommand(1, "")
+      .example("cz-cli agent run \"create a daily sync task\"", "One-shot (scripts, CI)")
+      .example("cz-cli agent run \"describe sales\" --session s1", "Conversational (reuse context)")
+      .strict(false),
   )
-}
-
-function resolveAgentUrl(argv: Record<string, unknown>): string {
-  // 1. Check profile [agent] endpoint override
-  const profileOverride = readAgentEndpoint(argv.profile as string | undefined)
-  if (profileOverride) return profileOverride
-
-  // 2. Auto-derive from service
-  try {
-    const config = resolveConnectionConfig(argv as Record<string, string>)
-    return toServiceUrl(config.service, config.protocol)
-  } catch {
-    return "https://dev-api.clickzetta.com"
-  }
 }

@@ -413,7 +413,7 @@ const cases: HelpCase[] = [
   {
     args: ["agent", "--help"],
     expectHeader: "cz-cli agent",
-    expectOptions: ["status", "ask"],
+    expectOptions: ["run", "llm"],
   },
 
   // setup

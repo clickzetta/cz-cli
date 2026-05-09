@@ -44,7 +44,7 @@ async function logHandler(argv: Record<string, unknown>): Promise<void> {
         return resolveTaskId(sc, String(argv["task-id"]), format)
       })()
       const r = await resolveLatestRunId(sc, format, { taskId })
-      if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
+      if (r === undefined) return
       runId = r
     } else {
       return error("USAGE_ERROR", "Provide a run_id/task_name argument, --run-id, or --task-id", { format })
@@ -107,11 +107,11 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
               const { resolveTaskId } = await import("../resolver.js")
               const taskId = await resolveTaskId(sc, String(argv["task-id"]), format)
               const r = await resolveLatestRunId(sc, format, { taskId })
-              if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
+              if (r === undefined) return
               runId = r
             } else {
               const r = await resolveLatestRunId(sc, format)
-              if (r === undefined) return error("RUN_NOT_FOUND", "No runs found", { format })
+              if (r === undefined) return
               runId = r
             }
             const resp = await listAttempts(sc, {

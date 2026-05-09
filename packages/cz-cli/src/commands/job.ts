@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import {
-  request, pollJobResult,
+  requestRaw, pollJobResult,
   type ClientOptions, type JobID, type QueryResult,
   JobStatus,
 } from "@clickzetta/sdk"
@@ -50,8 +50,7 @@ async function getJobStatus(opts: ClientOptions, jobId: JobID): Promise<RawJobRe
     },
     user_agent: "",
   }
-  const resp = await request<RawJobResponse>(opts, "/lh/getJob", body)
-  return resp.data as RawJobResponse
+  return requestRaw<RawJobResponse>(opts, "/lh/getJob", body)
 }
 
 export function registerJobCommand(cli: Argv<GlobalArgs>): void {
