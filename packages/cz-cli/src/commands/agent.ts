@@ -8,7 +8,7 @@ import { getStudioContext } from "./studio-context.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
 
 export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("agent", "AI Agent commands", (yargs) =>
+  cli.command("agent", "AI agent — run sessions, configure LLM, manage tasks (run `cz-cli agent --help` for full command list)", (yargs) =>
     yargs
       .command(
         "status",

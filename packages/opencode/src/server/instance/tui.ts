@@ -3,6 +3,7 @@ import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
 import { Bus } from "../../bus"
 import { Session } from "../../session"
+import { SessionID } from "../../session/schema"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import { AppRuntime } from "@/effect/app-runtime"
 import { AsyncQueue } from "../../util/queue"
@@ -371,8 +372,8 @@ export const TuiRoutes = lazy(() =>
       validator("json", TuiEvent.SessionSelect.properties),
       async (c) => {
         const { sessionID } = c.req.valid("json")
-        await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID)))
-        await Bus.publish(TuiEvent.SessionSelect, { sessionID })
+        await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(SessionID.make(sessionID))))
+        await Bus.publish(TuiEvent.SessionSelect, { sessionID: SessionID.make(sessionID) })
         return c.json(true)
       },
     )

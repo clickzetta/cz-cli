@@ -88,14 +88,17 @@ function exitNoProfile(): never {
 }
 
 // ---------------------------------------------------------------------------
-// Data commands (sql, table, schema, …) — check login then forward.
-// Exits here; agent modules are never loaded.
+// Data commands (sql, table, schema, …) and --help/no-args — forward to
+// cz-cli so agent modules are never loaded for these paths.
 // ---------------------------------------------------------------------------
-if (!isAgentSubcommand && rawArgs[0] !== "setup" && rawArgs.length > 0 && !["--help", "-h", "--version", "-v"].includes(rawArgs[0])) {
-  if (!checkProfile()) exitNoProfile()
+const isHelpOrEmpty = rawArgs.length === 0 || ["--help", "-h"].includes(rawArgs[0])
+const isDataCommand = !isAgentSubcommand && rawArgs[0] !== "setup" && rawArgs.length > 0 && !["--help", "-h", "--version", "-v"].includes(rawArgs[0])
+
+if (isHelpOrEmpty || isDataCommand) {
+  if (isDataCommand && !checkProfile()) exitNoProfile()
 
   const { forward } = await import("./cli/cmd/forward")
-  await forward(rawArgs)
+  await forward(isHelpOrEmpty ? ["--help"] : rawArgs)
 }
 
 // ---------------------------------------------------------------------------

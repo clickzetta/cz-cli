@@ -1,5 +1,4 @@
 import { BusEvent } from "@/bus/bus-event"
-import { SessionID } from "@/session/schema"
 import z from "zod"
 
 export const TuiEvent = {
@@ -42,7 +41,9 @@ export const TuiEvent = {
   SessionSelect: BusEvent.define(
     "tui.session.select",
     z.object({
-      sessionID: SessionID.zod.describe("Session ID to navigate to"),
+      // Use z.string() directly to avoid circular dependency issue in bundled binary
+      // where SessionID may not be initialized when this module loads.
+      sessionID: z.string().startsWith("ses").describe("Session ID to navigate to"),
     }),
   ),
 }
