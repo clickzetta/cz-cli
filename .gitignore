@@ -31,3 +31,9 @@ logs/
 tsconfig.tsbuildinfo
 out
 out/*
+
+# Skills synced from external repos at build time
+skills/external/
+
+# npm platform package binaries (downloaded at publish time)
+packages/npm/cz-cli-*/bin/

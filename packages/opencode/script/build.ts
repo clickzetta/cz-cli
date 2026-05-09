@@ -273,24 +273,31 @@ function findTarget(key: string) {
 
 // Python cz-tool bundling removed — cz-cli is now built-in via @clickzetta/cli
 
-// Bundle cz-cli subagent skill into each platform dist
-const czCliSkillSrc = path.join(dir, "..", "..", "skills", "cz-cli")
-const lakehouseDocSkillSrc = path.join(dir, "..", "..", "skills", "lakehouse-doc")
-if (fs.existsSync(czCliSkillSrc)) {
-  for (const key of Object.keys(binaries)) {
-    const skillsDir = path.join("dist", key, "bin", "skills", "cz-cli")
-    fs.mkdirSync(skillsDir, { recursive: true })
-    fs.cpSync(czCliSkillSrc, skillsDir, { recursive: true })
+// Bundle all skills from skills/ and skills/external/ into each platform dist
+const allSkillsSrc = path.join(dir, "..", "..", "skills")
+if (fs.existsSync(allSkillsSrc)) {
+  const scanDirs = [allSkillsSrc]
+  const externalDir = path.join(allSkillsSrc, "external")
+  if (fs.existsSync(externalDir)) scanDirs.push(externalDir)
+
+  const skillEntries: { name: string; src: string }[] = []
+  for (const base of scanDirs) {
+    for (const name of fs.readdirSync(base)) {
+      const full = path.join(base, name)
+      if (name === "external") continue
+      if (fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, "SKILL.md"))) {
+        skillEntries.push({ name, src: full })
+      }
+    }
   }
-  console.log("Bundled cz-cli subagent skill into all platform dists")
-}
-if (fs.existsSync(lakehouseDocSkillSrc)) {
+
   for (const key of Object.keys(binaries)) {
-    const skillsDir = path.join("dist", key, "bin", "skills", "lakehouse-doc")
-    fs.mkdirSync(skillsDir, { recursive: true })
-    fs.cpSync(lakehouseDocSkillSrc, skillsDir, { recursive: true })
+    for (const { name, src } of skillEntries) {
+      const dest = path.join("dist", key, "bin", "skills", name)
+      fs.cpSync(src, dest, { recursive: true })
+    }
   }
-  console.log("Bundled lakehouse-doc skill into all platform dists")
+  console.log(`Bundled ${skillEntries.length} skills into all platform dists`)
 }
 
 if (Script.release) {

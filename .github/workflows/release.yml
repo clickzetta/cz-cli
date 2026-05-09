@@ -64,11 +64,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sync clickzetta-skills
+        run: |
+          git clone --depth 1 https://github.com/clickzetta/clickzetta-skills.git /tmp/clickzetta-skills
+          mkdir -p skills/external
+          for dir in /tmp/clickzetta-skills/clickzetta-*/; do
+            [ -f "$dir/SKILL.md" ] && cp -r "$dir" skills/external/
+          done
+          echo "Synced $(ls -d skills/external/clickzetta-* 2>/dev/null | wc -l) skills from clickzetta-skills repo"
+
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.3.11"
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: bun install
 
       - name: Build and upload ${{ matrix.os }} targets
@@ -91,3 +101,49 @@ jobs:
           gh release upload "${{ needs.create-release.outputs.tag }}" \
             scripts/install.sh \
             --clobber --repo "${{ github.repository }}"
+
+  publish-npm:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download release binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          mkdir -p artifacts
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
+            mkdir -p "artifacts/czcli-${platform}/bin"
+            if [ "$platform" = "linux-arm64" ] || [ "$platform" = "linux-x64" ]; then
+              gh release download "$TAG" \
+                --pattern "czcli-${platform}.tar.gz" \
+                --dir artifacts --repo "${{ github.repository }}"
+              tar -xzf "artifacts/czcli-${platform}.tar.gz" -C "artifacts/czcli-${platform}"
+              mv "artifacts/czcli-${platform}/czcli" "artifacts/czcli-${platform}/bin/czcli"
+            else
+              gh release download "$TAG" \
+                --pattern "czcli-${platform}.zip" \
+                --dir artifacts --repo "${{ github.repository }}"
+              unzip -o "artifacts/czcli-${platform}.zip" -d "artifacts/czcli-${platform}"
+              if [ "$platform" = "win32-x64" ]; then
+                mv "artifacts/czcli-${platform}/czcli.exe" "artifacts/czcli-${platform}/bin/czcli.exe" 2>/dev/null || \
+                mv "artifacts/czcli-${platform}/czcli" "artifacts/czcli-${platform}/bin/czcli.exe"
+              else
+                mv "artifacts/czcli-${platform}/czcli" "artifacts/czcli-${platform}/bin/czcli"
+              fi
+            fi
+          done
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          scripts/npm-publish.sh "${{ needs.create-release.outputs.version }}" artifacts

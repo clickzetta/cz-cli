@@ -14,6 +14,7 @@ import { registerJobCommand } from "./commands/job.js"
 import { registerAiGuideCommand } from "./commands/ai-guide.js"
 import { registerInstallSkillsCommand } from "./commands/install-skills.js"
 import { registerSetupCommand } from "./commands/setup.js"
+import { registerUpdateCommand } from "./commands/update.js"
 import { checkAndUpdate } from "./auto-update.js"
 
 process.on("SIGINT", () => {
@@ -36,6 +37,7 @@ registerJobCommand(cli)
 registerAiGuideCommand(cli)
 registerInstallSkillsCommand(cli)
 registerSetupCommand(cli)
+registerUpdateCommand(cli)
 cli.demandCommand(1, "").help().parse()
 
 // Exit with the code set by success/error/fail handlers
