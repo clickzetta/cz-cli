@@ -1,11 +1,11 @@
 #!/bin/sh
 # cz-cli installer — download release archive, extract, run setup.sh.
 # Usage:
-#   curl -fsSL https://github.com/clickzetta/cz-code/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
 #
 # Environment variables:
 #   CZ_VERSION          — pin a specific version (e.g. "0.1.0"); default: latest
-#   CZ_MIRROR           — custom mirror base URL (e.g. "https://your-cdn.com/cz-code")
+#   CZ_MIRROR           — custom mirror base URL (e.g. "https://your-cdn.com/cz-cli")
 #   NON_INTERACTIVE     — skip all prompts (set to any non-empty value)
 #   SKIP_PATH_PROMPT    — skip PATH configuration prompt
 #   SKIP_SKILLS_INSTALL — skip automatic skills registration

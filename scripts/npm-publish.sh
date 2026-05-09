@@ -74,6 +74,12 @@ for platform in "${PLATFORMS[@]}"; do
     chmod +x "$pkg_dir/bin/cz-cli"
   fi
 
+  # Copy skills if present
+  if [ -d "$ARTIFACTS/cz-cli-${platform}/skills" ]; then
+    rm -rf "$pkg_dir/bin/skills"
+    cp -r "$ARTIFACTS/cz-cli-${platform}/skills" "$pkg_dir/bin/skills"
+  fi
+
   # Publish
   if [ -n "$DRY_RUN" ]; then
     echo "  [dry-run] npm publish --access public"

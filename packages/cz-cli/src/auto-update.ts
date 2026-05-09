@@ -15,7 +15,7 @@ import { join, resolve } from "node:path"
 import { execSync } from "node:child_process"
 import { VERSION } from "./version.js"
 
-const REPO = "clickzetta/cz-code"
+const REPO = "clickzetta/cz-cli"
 const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`
 const CHECK_INTERVAL_HOURS = 4
 const STATE_DIR = join(homedir(), ".clickzetta")
