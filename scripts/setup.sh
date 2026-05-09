@@ -1,10 +1,10 @@
 #!/bin/sh
 # cz-cli setup — install from extracted archive to ~/.local/bin
-# Run from the directory containing this script (same dir as czcli binary).
+# Run from the directory containing this script (same dir as cz-cli binary).
 set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
-BINARY_NAME="czcli"
+BINARY_NAME="cz-cli"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 SKIP_PATH_PROMPT="${SKIP_PATH_PROMPT:-}"
@@ -40,8 +40,8 @@ fi
 
 print_success "Installed to $INSTALL_DIR/$BINARY_NAME"
 
-# Create cz-cli symlink for backward compatibility
-ln -sf "$INSTALL_DIR/$BINARY_NAME" "$INSTALL_DIR/cz-cli" 2>/dev/null || true
+# Remove legacy czcli binary if present
+rm -f "$INSTALL_DIR/czcli" 2>/dev/null || true
 
 # Remove legacy cz-cli (Python version installed by clickzetta/cz-tool)
 LEGACY_CZ_DIR="$HOME/.clickzetta/bin"

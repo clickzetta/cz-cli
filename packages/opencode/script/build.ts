@@ -117,6 +117,10 @@ const allTargets: {
     arch: "arm64",
   },
   {
+    os: "darwin",
+    arch: "x64",
+  },
+  {
     os: "win32",
     arch: "arm64",
   },
@@ -152,7 +156,7 @@ console.log(`Building ${targets.length}/${allTargets.length} targets: ${targets.
 
 fs.rmSync("dist", { recursive: true, force: true })
 
-const DIST_PREFIX = "czcli"
+const DIST_PREFIX = "cz-cli"
 
 const binaries: Record<string, string> = {}
 for (let i = 0; i < targets.length; i++) {
@@ -194,8 +198,8 @@ for (let i = 0; i < targets.length; i++) {
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: name.replace(DIST_PREFIX, "bun") as any,
-      outfile: `dist/${name}/bin/czcli`,
-      execArgv: [`--user-agent=czcli/${Script.version}`, "--use-system-ca", "--"],
+      outfile: `dist/${name}/bin/cz-cli`,
+      execArgv: [`--user-agent=cz-cli/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
@@ -219,7 +223,7 @@ for (let i = 0; i < targets.length; i++) {
 
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
-    const binaryPath = `dist/${name}/bin/czcli`
+    const binaryPath = `dist/${name}/bin/cz-cli`
     console.log(`Running smoke test: ${binaryPath} --version`)
     try {
       const versionOutput = await $`${binaryPath} --version`.text()
@@ -252,7 +256,7 @@ const CZ_CLI_PLATFORM_MAP: Record<string, string | null> = {
 }
 
 async function bundleCzCli(distBinDir: string, os: string, arch: string) {
-  // No-op: Python cz-tool removed. cz-cli functionality is now built into the czcli binary.
+  // No-op: Python cz-tool removed. cz-cli functionality is now built into the binary.
 }
 
 function findTarget(key: string) {

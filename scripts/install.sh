@@ -13,7 +13,7 @@
 set -e
 
 REPO="clickzetta/cz-cli"
-BINARY_NAME="czcli"
+BINARY_NAME="cz-cli"
 INSTALL_DIR="${HOME}/.local/bin"
 TEMP_DIR=$(mktemp -d)
 
@@ -154,11 +154,11 @@ main() {
     fi
 
 
-    # Archive naming matches Makefile output: czcli-{os}-{arch}.zip
+    # Archive naming: cz-cli-{os}-{arch}.{ext}
     local archive_name ext
     case "$platform" in
-        linux-*) ext="tar.gz"; archive_name="czcli-${platform}.tar.gz" ;;
-        *)       ext="zip";    archive_name="czcli-${platform}.zip" ;;
+        linux-*) ext="tar.gz"; archive_name="cz-cli-${platform}.tar.gz" ;;
+        *)       ext="zip";    archive_name="cz-cli-${platform}.zip" ;;
     esac
 
     local archive_url

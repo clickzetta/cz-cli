@@ -104,8 +104,8 @@ function discoverAllSkills(): DiscoveredSkills {
 }
 
 function prioritizeSkillNames(names: string[]): string[] {
-  const primary = names.filter((n) => n === "czcli")
-  const rest = names.filter((n) => n !== "czcli").sort()
+  const primary = names.filter((n) => n === "cz-cli")
+  const rest = names.filter((n) => n !== "cz-cli").sort()
   return [...primary, ...rest]
 }
 

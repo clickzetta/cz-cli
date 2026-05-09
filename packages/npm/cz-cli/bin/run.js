@@ -8,7 +8,7 @@ const os = require("os");
 const platform = os.platform();
 const arch = os.arch() === "x64" ? "x64" : "arm64";
 const pkgName = `@clickzetta/cz-cli-${platform}-${arch}`;
-const binName = platform === "win32" ? "czcli.exe" : "czcli";
+const binName = platform === "win32" ? "cz-cli.exe" : "cz-cli";
 
 try {
   const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));

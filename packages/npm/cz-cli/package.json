@@ -3,8 +3,7 @@
   "version": "0.1.0",
   "description": "AI-Agent-friendly CLI for ClickZetta Lakehouse",
   "bin": {
-    "cz-cli": "bin/run.js",
-    "czcli": "bin/run.js"
+    "cz-cli": "bin/run.js"
   },
   "scripts": {
     "postinstall": "node bin/postinstall.js"
@@ -12,6 +11,7 @@
   "files": ["bin/"],
   "optionalDependencies": {
     "@clickzetta/cz-cli-darwin-arm64": "0.1.0",
+    "@clickzetta/cz-cli-darwin-x64": "0.1.0",
     "@clickzetta/cz-cli-linux-arm64": "0.1.0",
     "@clickzetta/cz-cli-linux-x64": "0.1.0",
     "@clickzetta/cz-cli-win32-x64": "0.1.0"

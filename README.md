@@ -109,7 +109,7 @@ CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest
 | Platform | Architecture |
 | --- | --- |
 | Linux | x64, arm64 |
-| macOS | arm64 (Apple Silicon) |
+| macOS | x64 (Intel), arm64 (Apple Silicon) |
 | Windows | x64, arm64 |
 
 ## License

@@ -5,11 +5,11 @@
 #   scripts/npm-publish.sh <version> <artifacts-dir>
 #
 # <artifacts-dir> should contain the built binaries:
-#   czcli-darwin-arm64/bin/czcli
-#   czcli-darwin-x64/bin/czcli
-#   czcli-linux-arm64/bin/czcli
-#   czcli-linux-x64/bin/czcli
-#   czcli-win32-x64/bin/czcli.exe
+#   cz-cli-darwin-arm64/bin/cz-cli
+#   cz-cli-darwin-x64/bin/cz-cli
+#   cz-cli-linux-arm64/bin/cz-cli
+#   cz-cli-linux-x64/bin/cz-cli
+#   cz-cli-win32-x64/bin/cz-cli.exe
 #
 # Environment:
 #   NPM_TOKEN — npm auth token (required)
@@ -27,6 +27,7 @@ NPM_DIR="$REPO_ROOT/packages/npm"
 
 PLATFORMS=(
   "darwin-arm64"
+  "darwin-x64"
   "linux-arm64"
   "linux-x64"
   "win32-x64"
@@ -67,10 +68,10 @@ for platform in "${PLATFORMS[@]}"; do
   # Copy binary
   mkdir -p "$pkg_dir/bin"
   if [ "$platform" = "win32-x64" ]; then
-    cp "$ARTIFACTS/czcli-${platform}/bin/czcli.exe" "$pkg_dir/bin/czcli.exe"
+    cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli.exe" "$pkg_dir/bin/cz-cli.exe"
   else
-    cp "$ARTIFACTS/czcli-${platform}/bin/czcli" "$pkg_dir/bin/czcli"
-    chmod +x "$pkg_dir/bin/czcli"
+    cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli" "$pkg_dir/bin/cz-cli"
+    chmod +x "$pkg_dir/bin/cz-cli"
   fi
 
   # Publish

@@ -56,13 +56,13 @@ export const layer: Layer.Layer<Service> =
         return "unknown" as Method
       })
 
-      // TODO: version check disabled — czcli has no update channel yet.
+      // TODO: version check disabled — cz-cli has no update channel yet.
       // When ready, point latest() at clickzetta/cz-code GitHub Releases.
       const latestImpl = Effect.fn("Installation.latest")(function* (_installMethod?: Method) {
         return InstallationVersion
       }, Effect.orDie)
 
-      // TODO: self-upgrade disabled — czcli is distributed via zip/tar.gz, no in-place upgrade path yet.
+      // TODO: self-upgrade disabled — cz-cli is distributed via zip/tar.gz, no in-place upgrade path yet.
       const upgradeImpl = Effect.fn("Installation.upgrade")(function* (_m: Method, _target: string) {
         return yield* new UpgradeFailedError({ stderr: "In-place upgrade is not supported. Please download the latest release from GitHub." })
       })

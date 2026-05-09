@@ -264,11 +264,11 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
 function globalConfigFile() {
-  // czcli: check ~/.clickzetta/czcli.json first
-  const czcliCandidates = ["czcli.json", "czcli.jsonc"].map((file) =>
+  // cz-cli: check ~/.clickzetta/czcli.json first (legacy config file name)
+  const czCliCandidates = ["czcli.json", "czcli.jsonc"].map((file) =>
     path.join(os.homedir(), ".clickzetta", file),
   )
-  for (const file of czcliCandidates) {
+  for (const file of czCliCandidates) {
     if (existsSync(file)) return file
   }
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
@@ -277,7 +277,7 @@ function globalConfigFile() {
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
-  return czcliCandidates[0]
+  return czCliCandidates[0]
 }
 
 function writable(info: Info) {
