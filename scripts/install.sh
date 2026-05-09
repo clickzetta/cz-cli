@@ -12,7 +12,7 @@
 
 set -e
 
-REPO="clickzetta/cz-code"
+REPO="clickzetta/cz-cli"
 BINARY_NAME="czcli"
 INSTALL_DIR="${HOME}/.local/bin"
 TEMP_DIR=$(mktemp -d)
