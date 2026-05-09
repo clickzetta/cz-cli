@@ -123,17 +123,19 @@ jobs:
           mkdir -p artifacts
           for platform in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
             mkdir -p "artifacts/czcli-${platform}/bin"
+            # Asset names use "windows" not "win32"
+            asset_platform="${platform/win32/windows}"
             if [ "$platform" = "linux-arm64" ] || [ "$platform" = "linux-x64" ]; then
               gh release download "$TAG" \
-                --pattern "czcli-${platform}.tar.gz" \
+                --pattern "czcli-${asset_platform}.tar.gz" \
                 --dir artifacts --repo "${{ github.repository }}"
-              tar -xzf "artifacts/czcli-${platform}.tar.gz" -C "artifacts/czcli-${platform}"
+              tar -xzf "artifacts/czcli-${asset_platform}.tar.gz" -C "artifacts/czcli-${platform}"
               mv "artifacts/czcli-${platform}/czcli" "artifacts/czcli-${platform}/bin/czcli"
             else
               gh release download "$TAG" \
-                --pattern "czcli-${platform}.zip" \
+                --pattern "czcli-${asset_platform}.zip" \
                 --dir artifacts --repo "${{ github.repository }}"
-              unzip -o "artifacts/czcli-${platform}.zip" -d "artifacts/czcli-${platform}"
+              unzip -o "artifacts/czcli-${asset_platform}.zip" -d "artifacts/czcli-${platform}"
               if [ "$platform" = "win32-x64" ]; then
                 mv "artifacts/czcli-${platform}/czcli.exe" "artifacts/czcli-${platform}/bin/czcli.exe" 2>/dev/null || \
                 mv "artifacts/czcli-${platform}/czcli" "artifacts/czcli-${platform}/bin/czcli.exe"
