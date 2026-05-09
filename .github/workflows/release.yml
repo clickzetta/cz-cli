@@ -65,6 +65,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Sync clickzetta-skills
+        shell: bash
         run: |
           git clone --depth 1 https://github.com/clickzetta/clickzetta-skills.git /tmp/clickzetta-skills
           mkdir -p skills/external
