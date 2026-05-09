@@ -18,8 +18,6 @@ export interface GlobalArgs {
   output_explicit?: boolean
   field?: string
   debug: boolean
-  silent: boolean
-  verbose: boolean
 }
 
 export function createCli(args: string[]) {
@@ -91,23 +89,12 @@ export function createCli(args: string[]) {
       default: false,
       describe: "Enable debug mode",
     })
-    .option("silent", {
-      type: "boolean",
-      default: false,
-      describe: "Suppress non-essential output",
-    })
-    .option("verbose", {
-      type: "boolean",
-      default: false,
-      describe: "Verbose output",
-    })
     .option("output_explicit", {
       type: "boolean",
       hidden: true,
       default: false,
     })
     .middleware((argv) => {
-      // Detect whether --output was explicitly provided by the user
       const rawArgs = args.map(a => String(a))
       const hasExplicitOutput = rawArgs.some(
         (a) => a === "-o" || a === "--output" || a.startsWith("--output=") || a.startsWith("-o=")

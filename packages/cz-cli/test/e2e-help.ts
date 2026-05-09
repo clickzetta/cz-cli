@@ -71,6 +71,17 @@ const cases: HelpCase[] = [
     expectOptions: ["name"],
   },
 
+  {
+    args: ["schema", "create", "--help"],
+    expectHeader: "cz-cli schema create",
+    expectOptions: ["name"],
+  },
+  {
+    args: ["schema", "drop", "--help"],
+    expectHeader: "cz-cli schema drop",
+    expectOptions: ["name"],
+  },
+
   // table
   {
     args: ["table", "--help"],
@@ -91,6 +102,16 @@ const cases: HelpCase[] = [
     args: ["table", "preview", "--help"],
     expectHeader: "cz-cli table preview",
     expectOptions: ["name", "--limit"],
+  },
+  {
+    args: ["table", "stats", "--help"],
+    expectHeader: "cz-cli table stats",
+    expectOptions: ["name"],
+  },
+  {
+    args: ["table", "history", "--help"],
+    expectHeader: "cz-cli table history",
+    expectOptions: ["--in", "--like"],
   },
   {
     args: ["table", "create", "--help"],
@@ -166,6 +187,15 @@ const cases: HelpCase[] = [
     expectHeader: "cz-cli profile use",
     expectOptions: ["name"],
   },
+  {
+    args: ["profile", "status", "--help"],
+    expectHeader: "cz-cli profile status",
+  },
+  {
+    args: ["profile", "quickstart", "--help"],
+    expectHeader: "cz-cli profile quickstart",
+    expectOptions: ["--credential"],
+  },
 
   // job
   {
@@ -196,9 +226,19 @@ const cases: HelpCase[] = [
     expectOptions: ["--task", "--status", "--run-type", "--from", "--to"],
   },
   {
+    args: ["runs", "detail", "--help"],
+    expectHeader: "cz-cli runs detail",
+    expectOptions: ["id"],
+  },
+  {
     args: ["runs", "wait", "--help"],
     expectHeader: "cz-cli runs wait",
     expectOptions: ["--attempts", "--interval", "--allow-timeout"],
+  },
+  {
+    args: ["runs", "logs", "--help"],
+    expectHeader: "cz-cli runs logs",
+    expectOptions: ["id"],
   },
   {
     args: ["runs", "deps", "--help"],
@@ -206,9 +246,24 @@ const cases: HelpCase[] = [
     expectOptions: ["task", "--parent-level", "--child-level"],
   },
   {
+    args: ["runs", "stop", "--help"],
+    expectHeader: "cz-cli runs stop",
+    expectOptions: ["id", "--yes"],
+  },
+  {
     args: ["runs", "refill", "--help"],
     expectHeader: "cz-cli runs refill",
     expectOptions: ["task", "--from", "--to", "--yes"],
+  },
+  {
+    args: ["runs", "rerun", "--help"],
+    expectHeader: "cz-cli runs rerun",
+    expectOptions: ["id"],
+  },
+  {
+    args: ["runs", "stats", "--help"],
+    expectHeader: "cz-cli runs stats",
+    expectOptions: ["--task", "--from", "--to"],
   },
 
   // attempts
@@ -240,14 +295,118 @@ const cases: HelpCase[] = [
     expectOptions: ["--like", "--type"],
   },
   {
+    args: ["task", "list-folders", "--help"],
+    expectHeader: "cz-cli task list-folders",
+  },
+  {
     args: ["task", "create", "--help"],
     expectHeader: "cz-cli task create",
     expectOptions: ["name", "--type"],
   },
   {
+    args: ["task", "create-folder", "--help"],
+    expectHeader: "cz-cli task create-folder",
+    expectOptions: ["name"],
+  },
+  {
+    args: ["task", "content", "--help"],
+    expectHeader: "cz-cli task content",
+    expectOptions: ["task"],
+  },
+  {
+    args: ["task", "save-content", "--help"],
+    expectHeader: "cz-cli task save-content",
+    expectOptions: ["task", "--content", "--file"],
+  },
+  {
+    args: ["task", "save-config", "--help"],
+    expectHeader: "cz-cli task save-config",
+    expectOptions: ["task", "--cron", "--vc"],
+  },
+  {
+    args: ["task", "deps", "--help"],
+    expectHeader: "cz-cli task deps",
+    expectOptions: ["task", "--parent-level", "--child-level"],
+  },
+  {
+    args: ["task", "online", "--help"],
+    expectHeader: "cz-cli task online",
+    expectOptions: ["task", "--yes"],
+  },
+  {
+    args: ["task", "offline", "--help"],
+    expectHeader: "cz-cli task offline",
+    expectOptions: ["task", "--yes"],
+  },
+  {
     args: ["task", "execute", "--help"],
     expectHeader: "cz-cli task execute",
     expectOptions: ["task", "--vc", "--content"],
+  },
+  {
+    args: ["task", "flow", "--help"],
+    expectHeader: "cz-cli task flow",
+    expectCommands: ["dag", "create-node", "remove-node", "bind", "unbind", "node-detail", "node-save", "submit", "instances"],
+  },
+  {
+    args: ["task", "flow", "dag", "--help"],
+    expectHeader: "cz-cli task flow dag",
+    expectOptions: ["task"],
+  },
+  {
+    args: ["task", "flow", "create-node", "--help"],
+    expectHeader: "cz-cli task flow create-node",
+    expectOptions: ["task", "--name", "--type"],
+  },
+  {
+    args: ["task", "flow", "remove-node", "--help"],
+    expectHeader: "cz-cli task flow remove-node",
+    expectOptions: ["task"],
+  },
+  {
+    args: ["task", "flow", "bind", "--help"],
+    expectHeader: "cz-cli task flow bind",
+    expectOptions: ["task", "--upstream", "--downstream"],
+  },
+  {
+    args: ["task", "flow", "unbind", "--help"],
+    expectHeader: "cz-cli task flow unbind",
+    expectOptions: ["task"],
+  },
+  {
+    args: ["task", "flow", "node-detail", "--help"],
+    expectHeader: "cz-cli task flow node-detail",
+    expectOptions: ["task"],
+  },
+  {
+    args: ["task", "flow", "node-save", "--help"],
+    expectHeader: "cz-cli task flow node-save",
+    expectOptions: ["task", "--content"],
+  },
+  {
+    args: ["task", "flow", "node-save-config", "--help"],
+    expectHeader: "cz-cli task flow node-save-config",
+    expectOptions: ["task", "--cron"],
+  },
+  {
+    args: ["task", "flow", "submit", "--help"],
+    expectHeader: "cz-cli task flow submit",
+    expectOptions: ["task"],
+  },
+  {
+    args: ["task", "flow", "instances", "--help"],
+    expectHeader: "cz-cli task flow instances",
+    expectOptions: ["task", "--instance"],
+  },
+  {
+    args: ["task", "delete-folder", "--help"],
+    expectHeader: "cz-cli task delete-folder",
+    expectOptions: ["folder", "--yes"],
+  },
+  {
+    args: ["task", "delete", "--help"],
+    expectHeader: "cz-cli task delete",
+    expectOptions: ["task", "--yes"],
   },
 
   // agent (top-level description only — agent subcommands go through opencode)
