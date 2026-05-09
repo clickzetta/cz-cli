@@ -30,13 +30,24 @@ if (["--version", "-v"].includes(rawArgs[0])) {
   process.exit(0)
 }
 
-// setup fast path — runs before any agent bootstrap
-if (rawArgs[0] === "setup" && !rawArgs.includes("--help") && !rawArgs.includes("-h")) {
+// setup fast path — runs before any agent bootstrap.
+// Also forward setup --help to cz-cli so TUI modules are never loaded.
+if (rawArgs[0] === "setup") {
+  if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
+    const { forward } = await import("./cli/cmd/forward")
+    await forward(rawArgs)
+  }
   const { setup } = await import("./cli/cmd/setup")
   await setup(rawArgs.slice(1))
 }
 
 const isAgentSubcommand = rawArgs[0] === "agent" || rawArgs[0] === "run"
+
+// --help for agent/run: forward to cz-cli so TUI modules are never loaded.
+if (isAgentSubcommand && (rawArgs.includes("--help") || rawArgs.includes("-h"))) {
+  const { forward } = await import("./cli/cmd/forward")
+  await forward(rawArgs)
+}
 
 // Prevent recursive agent invocation: if we're already inside an agent session,
 // block nested `cz-cli agent` / `cz-cli run` calls.
