@@ -9,7 +9,7 @@
 import { logger } from "../logger.js"
 import type { ToolRegistry, ToolDefinition } from "../tool-registry.js"
 import type { LakehouseDB } from "../server.js"
-import { studioPost, getBaseUrl, getApiPath, buildHeaders } from "./studio-api.js"
+import { studioPost, getBaseUrl, getApiPath, buildHeaders, apiDeleteFolder, apiGetCurrentUser } from "./studio-api.js"
 
 // ---------------------------------------------------------------------------
 // handleCreateFolder — folder_tools.py:19-87
@@ -77,6 +77,51 @@ async function handleCreateFolder(
 }
 
 // ---------------------------------------------------------------------------
+// handleDeleteFolder — folder_tools.py:131-165
+// ---------------------------------------------------------------------------
+async function handleDeleteFolder(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const folderId = arguments_["folder_id"] as number | undefined
+    if (!folderId) return { success: false, message: "folder_id is required" }
+
+    let updateBy = config.username ?? ""
+    if (!updateBy) {
+      try {
+        const resp = await apiGetCurrentUser(config)
+        const data = JSON.parse(resp) as Record<string, unknown>
+        if (data["code"] === "200") {
+          const user = data["data"] as Record<string, unknown> | undefined
+          updateBy = (user?.["name"] as string) ?? ""
+        }
+      } catch { /* ignore */ }
+    }
+
+    const response = await apiDeleteFolder(config, { folderId, updateBy })
+    const responseData = JSON.parse(response) as Record<string, unknown>
+
+    if (responseData["code"] === "200") {
+      return { success: true, message: "Successfully deleted folder", folder_id: folderId }
+    }
+    return {
+      success: false,
+      message: `[handle_delete_folder]API request failed: ${responseData["message"] ?? "Unknown error"}`,
+      code: responseData["code"],
+      raw_response: responseData,
+    }
+  } catch (e) {
+    logger.error({ err: e }, "Error in delete folder")
+    return {
+      success: false,
+      message: `Internal error: ${e instanceof Error ? e.message : String(e)}`,
+      error_type: e instanceof Error ? e.constructor.name : "Error",
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // registerFolderTools — folder_tools.py:90-127
 // ---------------------------------------------------------------------------
 export function registerFolderTools(registry: ToolRegistry, db: LakehouseDB): void {
@@ -120,6 +165,32 @@ export function registerFolderTools(registry: ToolRegistry, db: LakehouseDB): vo
             data_folder_name: "test_folder",
             parent_folder_id: 528042,
           },
+        },
+      ],
+    },
+    // folder_tools.py:168-195 — delete_folder tool definition
+    {
+      name: "delete_folder",
+      description:
+        "Delete a data folder in Clickzetta Studio. " +
+        "The folder must be empty (no tasks or subfolders) before it can be deleted.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          folder_id: {
+            type: "integer",
+            description: "ID of the folder to delete.",
+          },
+        },
+        additionalProperties: false,
+        required: ["folder_id"],
+      },
+      handler: async (args: Record<string, unknown>) => handleDeleteFolder(args, getConfig()),
+      tags: ["studio", "project", "normalize"],
+      samples: [
+        {
+          description: "Delete folder with ID 780003",
+          query: { folder_id: 780003 },
         },
       ],
     },

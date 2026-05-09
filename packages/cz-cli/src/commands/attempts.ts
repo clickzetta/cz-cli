@@ -5,7 +5,20 @@ import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { resolveRunIdOrTaskName, resolveLatestRunId } from "../resolver.js"
-import { normalizeRunIdentity } from "../identity.js"
+
+const EXECUTION_FIELDS: Record<string, string> = {
+  scheduleTaskId: "task_id", scheduleInstanceId: "task_run_id", executeLogId: "execution_id",
+  createdTime: "created_time", startTime: "start_time", endTime: "end_time",
+  finishResult: "finish_result", createdBy: "created_by",createdTimeStr:"create_time_str", startTimeStr:"start_time_str",endTimeStr:"end_time_str",
+}
+
+function convertExecution(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    out[EXECUTION_FIELDS[k] ?? k] = v
+  }
+  return out
+}
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
@@ -59,10 +72,8 @@ async function logHandler(argv: Record<string, unknown>): Promise<void> {
       offset: (argv.offset != null && argv.offset !== 0) ? (argv.offset as number) : 0,
     }
     const resp = await getAttemptLog(sc, logParams)
-    const normalized = normalizeRunIdentity(
-      (resp.data as Record<string, unknown>) ?? {},
-      { attempt_id: attemptId },
-    )
+    const logData = (resp.data as Record<string, unknown>) ?? {}
+    const normalized = { ...convertExecution(logData), execution_id: attemptId }
     logOperation("attempts log", { ok: true })
     success(normalized, { format })
   } catch (err) {
@@ -120,10 +131,10 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
               pageIndex: argv.page,
               pageSize,
             })
-            const data = resp.data as Record<string, unknown> | undefined
-            const items = Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : []
-            const total = data?.total ?? data?.totalCount
-            const normalized = items.map((item) => normalizeRunIdentity(item, { run_id: runId }))
+            const data = resp.data
+            const items = Array.isArray(data) ? data as Record<string, unknown>[] : []
+            const total = resp.count
+            const normalized = items.map((item) => convertExecution(item))
             const aiMessage = `Showing page ${argv.page}` +
               (total != null ? ` (${normalized.length} of ${total} total)` : "") +
               ` for run_id=${runId}.` +

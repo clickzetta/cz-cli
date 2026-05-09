@@ -23,12 +23,13 @@ type MessageKey =
 
 const MESSAGES: Record<MessageKey, [zh: string, en: string]> = {
   task_content: [
-    "这是草稿态数据（content + schedule config）。调度态数据请使用 cz-cli runs detail。",
-    "This is draft data (content + schedule config). For scheduled data, use cz-cli runs detail.",
+    "这是草稿态数据(content + schedule config)",
+    "This is draft data (content + schedule config).",
   ],
   task_deps: [
-    "这是草稿态依赖关系。调度态依赖请使用 cz-cli runs deps。",
-    "This is draft dependency data. For scheduled dependencies, use cz-cli runs deps.",
+    "这是草稿态依赖关系。",
+    "This is draft dependency data." +
+    "",
   ],
   task_save_online_reminder: [
     "草稿已保存（task_id={0}）。注意：调度尚未激活。请在用户明确要求发布后，再执行: cz-cli task online {0} -y",
@@ -43,8 +44,8 @@ const MESSAGES: Record<MessageKey, [zh: string, en: string]> = {
     "Note: could not fetch full schedule config; returning basic run instance info.",
   ],
   runs_deps: [
-    "这是调度态（已发布）依赖关系。草稿态依赖请使用 cz-cli task deps。",
-    "This is scheduled (published) dependency data. For draft dependencies, use cz-cli task deps.",
+    "这是调度态运行时依赖关系。草稿态依赖请使用 cz-cli task config.",
+    "This is task run dependency data. For task dependencies, use cz-cli task config.",
   ],
   runs_refill: [
     "补数任务已提交（run_id={0}）。已归一化: backfill_task_id 即本次补数运行实例 run_id。可使用 cz-cli runs logs {0} 查看执行日志。",

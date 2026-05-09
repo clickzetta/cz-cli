@@ -83,6 +83,16 @@ const API_PATHS: Record<string, string> = {
   EXECUTE_SQL_URL: "/ide-authority/v1/ai/mcp/execute",
   DATA_SOURCES_GET_DDL: "/ide-authority/v1/projectDataSources/getDdl",
   DATA_SOURCES_GET_COLUMN_MAP_META: "/ide-authority/v1/projectDataSources/getColumnMapMeta",
+  // Folder — folder_tools.py
+  DATA_FOLDER_DELETE: "/ide-admin/v1/dataFolder/delete",
+  // File — file_tools.py
+  DATA_FILE_DELETE: "/ide-admin/v1/dataFile/delete",
+  // Backfill — backfill_task_tools.py
+  CREATE_COMPLEMENT_JOB: "/ide-admin/v1/complementTask/createComplementJob",
+  GET_ALL_DOWNSTREAM: "/ide-admin/v1/scheduleTask/flatAllDownstream",
+  CHECK_VCLUSTER_CREATE_PERMISSION: "/clickzetta-groot/api/v1/entity/checkPermission",
+  // Login — login_server.py
+  GET_CURRENT_USER: "/ide-authority/v1/user/getCurrentUser",
 }
 
 export function getBaseUrl(env: string, configBaseUrl?: string): string {
@@ -885,6 +895,8 @@ export async function apiFlowSaveNodeContent(
     content: string
     projectId: string
     paramValueList?: unknown[]
+    userName?: string
+    userId?: string
   },
 ): Promise<string> {
   const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("SAVE_DATAFILE_CONFIGURATION")
@@ -896,7 +908,9 @@ export async function apiFlowSaveNodeContent(
     projectId: params.projectId,
     collectType: 2,
     onlySaveContent: 1,
-    updateBy: config.username ?? "",
+    updateBy: params.userName ?? config.username ?? "",
+    userName: params.userName ?? config.username ?? "",
+    userId: params.userId ?? config.userId ?? "",
     paramValueList: params.paramValueList ?? [],
     inputParamValueList: null,
     outputParamValueList: null,
@@ -934,6 +948,8 @@ export async function apiFlowSaveNodeConfiguration(
     schemaName?: string
     etlVcCode?: string
     etlVcId?: string
+    userName?: string
+    userId?: string
   },
 ): Promise<string> {
   const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("SAVE_DATAFILE_CONFIGURATION")
@@ -942,6 +958,8 @@ export async function apiFlowSaveNodeConfiguration(
     projectId: params.projectId,
     dataFileId: params.dataFileId,
     nodeId: params.nodeId,
+    userName: params.userName ?? config.username ?? "",
+    userId: params.userId ?? config.userId ?? "",
     useFlowConfig: true,
     scheduleConfigType: "1",
     scheduleRateType: 1,
@@ -1100,4 +1118,85 @@ export async function apiListFiles(
   if (params.fileName) body["fileName"] = params.fileName
   if (params.fileType != null) body["fileType"] = params.fileType
   return studioPost(url, headers, body)
+}
+
+/** folder_tools.py:131-165 delete_folder */
+export async function apiDeleteFolder(
+  config: StudioConfig,
+  params: { folderId: number; updateBy: string },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("DATA_FOLDER_DELETE")
+  const headers = buildHeaders(config)
+  headers["env"] = "prod"
+  return studioPost(url, headers, {
+    id: params.folderId,
+    updateBy: params.updateBy,
+    tenantId: config.tenantId,
+    userId: config.userId,
+  })
+}
+
+/** file_tools.py:3204-3260 delete_file */
+export async function apiDeleteFile(
+  config: StudioConfig,
+  params: { fileId: number; updateBy: string },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("DATA_FILE_DELETE")
+  const headers = buildHeaders(config)
+  headers["env"] = "prod"
+  return studioPost(url, headers, {
+    id: params.fileId,
+    updateBy: params.updateBy,
+    tenantId: config.tenantId,
+    userId: config.userId,
+  })
+}
+
+/** backfill_task_tools.py:555-575 create_complement_job */
+export async function apiCreateComplementJob(
+  config: StudioConfig,
+  payload: Record<string, unknown>,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("CREATE_COMPLEMENT_JOB")
+  const headers = buildHeaders(config)
+  return studioPost(url, headers, payload)
+}
+
+/** backfill_task_tools.py:503-515 get_all_downstream */
+export async function apiGetAllDownstream(
+  config: StudioConfig,
+  params: { scheduleTaskId: number },
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("GET_ALL_DOWNSTREAM")
+  const headers = buildHeaders(config)
+  return studioPost(url, headers, { scheduleTaskId: params.scheduleTaskId, workspace: config.workspace })
+}
+
+/** backfill_task_tools.py:527-539 check_vcluster_create_permission */
+export async function apiCheckVclusterCreatePermission(
+  config: StudioConfig,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("CHECK_VCLUSTER_CREATE_PERMISSION") + "?env=PROD"
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "X-Clickzetta-Token": config.token,
+    "instanceName": config.instance,
+    "instanceId": String(config.instanceId),
+    "env": "prod",
+  }
+  return studioPost(url, headers, {
+    entitySubType: "VCLUSTER",
+    workspace: config.workspace,
+    actions: [{ actions: ["CREATE"], operate: "OR" }],
+  })
+}
+
+/** login_server.py:get_current_user */
+export async function apiGetCurrentUser(
+  config: StudioConfig,
+): Promise<string> {
+  const url = getBaseUrl(config.env, config.baseUrl) + getApiPath("GET_CURRENT_USER")
+  const headers = buildHeaders(config)
+  return studioPost(url, headers, {})
 }

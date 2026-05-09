@@ -45,7 +45,7 @@ export interface SaveTaskConfigParams {
   retryIntervalTime?: number
   retryIntervalTimeUnit?: string
   rerunProperty?: string
-  selfDependsJob?: boolean
+  selfDependsJob?: number
   activeStartTime?: string
   activeEndTime?: string
   ownerEnName?: string
@@ -196,9 +196,10 @@ export function onlineTask(config: StudioConfig, taskId: number, projectId: numb
 }
 
 export function offlineTask(config: StudioConfig, taskId: number, projectId: number) {
-  return studioRequest(config, "/ide-admin/v1/scheduleTask/offlineTask", {
+  return studioRequest(config, "/ide-admin/v1/scheduleTask/deleteTask", {
     scheduleTaskId: taskId,
     projectId,
+    updateBy: String(config.userId),
   })
 }
 

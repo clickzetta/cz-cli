@@ -9,7 +9,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { output?: strin
   const token = await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
 
-  const user = await getCurrentUser(baseUrl, token.token)
+  const user = await getCurrentUser(baseUrl, token.token)  
   const tenantId = user.accountId
 
   if (!config.workspace) {

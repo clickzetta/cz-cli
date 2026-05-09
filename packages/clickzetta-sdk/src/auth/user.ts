@@ -18,7 +18,7 @@ export async function getCurrentUser(
     "/clickzetta-portal/user/getCurrentUser",
     {},
   )
-  if (resp.code !== 0) {
+  if (resp.code !== 0 && resp.code !== "0" && resp.code !== 200 && resp.code !== "200") {
     throw new ClickZettaApiError("AUTH_FAILED", `Failed to get user: ${resp.message ?? "unknown error"}`)
   }
   return resp.data
@@ -36,7 +36,7 @@ export async function getInstanceByName(
     undefined,
     "GET",
   )
-  if (resp.code !== 0) {
+  if (resp.code !== 0 && resp.code !== "0" && resp.code !== 200 && resp.code !== "200") {
     throw new ClickZettaApiError("INSTANCE_NOT_FOUND", `Instance not found: ${instanceName}`)
   }
   return resp.data.id

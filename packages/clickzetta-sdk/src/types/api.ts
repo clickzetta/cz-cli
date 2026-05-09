@@ -3,6 +3,9 @@ import { OperationalError } from "./errors.js"
 export interface ApiResponse<T = unknown> {
   code: number | string
   message?: string
+  msg?:string
+  count?: number
+  pageIndex?:number
   data: T
 }
 

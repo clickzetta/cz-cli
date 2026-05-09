@@ -130,3 +130,18 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
     return undefined
   }
 }
+
+export function setTelemetry(enabled: boolean): void {
+  let existing: Record<string, unknown> = {}
+  try {
+    const text = readFileSync(PROFILES_FILE, "utf-8")
+    existing = parseTOML(text) as Record<string, unknown>
+  } catch {}
+  existing.telemetry = enabled
+  const content = stringifyTOML(existing)
+  const dir = dirname(PROFILES_FILE)
+  mkdirSync(dir, { recursive: true })
+  const tmpFile = PROFILES_FILE + ".tmp." + Date.now()
+  writeFileSync(tmpFile, content, "utf-8")
+  renameSync(tmpFile, PROFILES_FILE)
+}

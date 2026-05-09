@@ -11,6 +11,29 @@ import { Log } from "../util"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
+import { OtelPlugin } from "@devtheops/opencode-plugin-otel"
+import { OTEL_DEFAULTS } from "./otel-defaults"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { homedir } from "node:os"
+
+// Read telemetry setting from ~/.clickzetta/profiles.toml top-level field
+function isTelemetryEnabled(): boolean {
+  if (process.env.OPENCODE_ENABLE_TELEMETRY) return true
+  try {
+    const text = readFileSync(join(homedir(), ".clickzetta", "profiles.toml"), "utf-8")
+    return /^telemetry\s*=\s*true/m.test(text)
+  } catch {
+    return false
+  }
+}
+
+if (isTelemetryEnabled()) {
+  if (!process.env.OPENCODE_ENABLE_TELEMETRY) process.env.OPENCODE_ENABLE_TELEMETRY = "1"
+  if (!process.env.OPENCODE_OTLP_ENDPOINT) process.env.OPENCODE_OTLP_ENDPOINT = OTEL_DEFAULTS.endpoint
+  if (!process.env.OPENCODE_OTLP_PROTOCOL) process.env.OPENCODE_OTLP_PROTOCOL = OTEL_DEFAULTS.protocol
+  if (!process.env.OPENCODE_OTLP_HEADERS && OTEL_DEFAULTS.headers) process.env.OPENCODE_OTLP_HEADERS = OTEL_DEFAULTS.headers
+}
 import { Session } from "../session"
 import { NamedError } from "@opencode-ai/shared/util/error"
 import { CopilotAuthPlugin } from "./github-copilot/copilot"
@@ -61,6 +84,7 @@ const INTERNAL_PLUGINS: PluginInstance[] = [
   PoeAuthPlugin,
   CloudflareWorkersAuthPlugin,
   CloudflareAIGatewayAuthPlugin,
+  OtelPlugin,
 ]
 
 function isServerPlugin(value: unknown): value is PluginInstance {

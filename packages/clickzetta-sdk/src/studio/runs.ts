@@ -2,18 +2,18 @@ import type { StudioConfig } from "../types/index.js"
 import { studioRequest } from "./client.js"
 
 export interface ListRunsParams {
-  cycleTaskType?: string
+  cycleTaskType?: string | number
   taskNameLike?: string
   scheduleTaskId?: number
   projectId: number
   pageIndex: number
   pageSize: number
-  instanceType?: string
+  instanceType?: string | number
   orderByFields?: string
   orderBy?: string
   queryStartPlanTime?: number | string
   queryEndPlanTime?: number | string
-  instanceStatusList?: string[]
+  instanceStatusList?: (string | number)[]
   groupId?: number
 }
 
@@ -66,21 +66,25 @@ export function getRunDetail(
   params?: GetRunDetailParams,
 ) {
   return studioRequest(config, "/ide-admin/v1/taskInst/getDetail", {
-    taskInstanceId,
-    projectId: params?.projectId,
-    scheduleTaskId: params?.scheduleTaskId,
+    taskInstanceId
   })
+
 }
 
 export function stopRun(config: StudioConfig, taskInstanceId: number) {
-  return studioRequest(config, "/ide-admin/v1/taskInst/stopTaskInstance", {
+  return studioRequest(config, "/ide-admin/v1/taskInst/killTaskInstance", {
     taskInstanceId,
+    workspace: config.workspaceName,
+    tenantId: config.tenantId,
+    updateBy: "cli-agent"
   })
 }
 
 export function rerunInstance(config: StudioConfig, taskInstanceId: number) {
   return studioRequest(config, "/ide-admin/v1/taskInst/reRunTaskInstance", {
     taskInstanceId,
+    nextType:0,
+    updateBy: "cli-agent"
   })
 }
 
@@ -105,4 +109,35 @@ export function getRunContent(config: StudioConfig, taskInstanceId: number) {
   return studioRequest(config, "/ide-admin/v1/taskInst/getTaskInstanceContent", {
     taskInstanceId,
   })
+}
+
+export interface GetInstanceStatsParams {
+  projectId: number
+  scheduleTaskName?: string
+  taskType?: number
+  instanceType?: number
+  queryStartPlanTime?: number
+  queryEndPlanTime?: number
+  instanceStatusList?: number[]
+  groupId?: number
+  taskOwnerId?: number
+  executorUserId?: number
+  vcCode?: string
+}
+
+export function getInstanceStats(config: StudioConfig, params: GetInstanceStatsParams) {
+  const body: Record<string, unknown> = {
+    projectId: params.projectId,
+    instanceType: params.instanceType,
+    queryStartPlanTime: params.queryStartPlanTime,
+    queryEndPlanTime: params.queryEndPlanTime,
+  }
+  if (params.scheduleTaskName) body.scheduleTaskName = params.scheduleTaskName
+  if (params.taskType != null) body.cycleTaskType = params.taskType
+  if (params.instanceStatusList) body.instanceStatusList = params.instanceStatusList
+  if (params.groupId != null) body.groupId = params.groupId
+  if (params.taskOwnerId != null) body.taskOwnerId = params.taskOwnerId
+  if (params.executorUserId != null) body.executorUserId = params.executorUserId
+  if (params.vcCode) body.vcCodes = [params.vcCode]
+  return studioRequest(config, "/ide-admin/v1/ai/mcp/instance/statistic", body, { env: "prod" })
 }

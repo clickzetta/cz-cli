@@ -13,7 +13,7 @@
 import { logger } from "../logger.js"
 import type { ToolRegistry, ToolDefinition } from "../tool-registry.js"
 import type { LakehouseDB } from "../server.js"
-import { getBaseUrl, studioPost, buildHeaders } from "./studio-api.js"
+import { getBaseUrl, studioPost, buildHeaders, apiCreateComplementJob, apiGetAllDownstream, apiCheckVclusterCreatePermission } from "./studio-api.js"
 
 // ---------------------------------------------------------------------------
 // API path constants — api_properties.ini:68-81
@@ -279,6 +279,90 @@ async function handleListBackfillInstances(
 }
 
 // ---------------------------------------------------------------------------
+// handleCreateBackfillJob — backfill_task_tools.py:477-600
+// ---------------------------------------------------------------------------
+async function handleCreateBackfillJob(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const scheduleTaskId = arguments_["schedule_task_id"] as number
+    const bizStartTime = arguments_["biz_start_time"] as number
+    const bizEndTime = arguments_["biz_end_time"] as number
+    const sqlVcCode = (arguments_["sql_vc_code"] as string | undefined) ?? "DEFAULT"
+    const includeRoot = (arguments_["include_root"] as number | undefined) ?? 1
+    const isConcurrence = (arguments_["is_concurrence"] as number | undefined) ?? 0
+    const concurrenceNumber = (arguments_["concurrence_number"] as number | undefined) ?? 1
+    const selfDep = (arguments_["self_dep"] as number | undefined) ?? 0
+    const complementType = (arguments_["complement_type"] as number | undefined) ?? 1
+    const nextType = (arguments_["next_type"] as number | undefined) ?? 0
+    const checkPermission = arguments_["check_permission"] !== false
+    const checkDownstream = arguments_["check_downstream"] !== false
+
+    const suffix = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
+    const complementJobName = (arguments_["complement_job_name"] as string | undefined) ?? `S_${scheduleTaskId}_${suffix}`
+
+    let downstreamTasks: unknown[] = []
+    if (checkDownstream) {
+      const downResp = await apiGetAllDownstream(config, { scheduleTaskId })
+      const downData = JSON.parse(downResp) as Record<string, unknown>
+      if (String(downData["code"]) !== "200") {
+        return { success: false, message: `get_all_downstream failed: ${downData["message"] ?? "Unknown error"}`, code: downData["code"] }
+      }
+      const raw = downData["data"]
+      if (Array.isArray(raw)) downstreamTasks = raw
+    }
+
+    if (checkPermission) {
+      const permResp = await apiCheckVclusterCreatePermission(config)
+      const permData = JSON.parse(permResp) as Record<string, unknown>
+      if (!["200", "0"].includes(String(permData["code"]))) {
+        return { success: false, message: `check_permission failed: ${permData["message"] ?? "Unknown error"}`, code: permData["code"] }
+      }
+      if (permData["data"] === false) {
+        return { success: false, message: "Permission denied: no CREATE permission on VCLUSTER." }
+      }
+    }
+
+    const payload = {
+      includeRoot,
+      sqlVcCode,
+      complementJobName,
+      isConcurrence,
+      complementType,
+      concurrenceNumber,
+      selfDep,
+      dateList: [{ bizStartDate: bizStartTime, bizEndDate: bizEndTime }],
+      nextType,
+      complementBizDateBeanList: [{ bizStartDate: bizStartTime, bizEndDate: bizEndTime }],
+      scheduleTaskId,
+      userId: config.userId,
+      createBy: config.username ?? "",
+      projectId: config.projectId,
+      workspace: config.workspace,
+    }
+
+    const response = await apiCreateComplementJob(config, payload)
+    const responseData = JSON.parse(response) as Record<string, unknown>
+
+    if (String(responseData["code"]) === "200") {
+      return {
+        success: true,
+        message: "Successfully create backfill task",
+        backfill_task_id: responseData["data"],
+        schedule_task_id: scheduleTaskId,
+        complement_job_name: complementJobName,
+        downstream_count: downstreamTasks.length,
+      }
+    }
+    return { success: false, message: `API request failed: ${responseData["message"] ?? "Unknown error"}`, code: responseData["code"], raw_response: responseData }
+  } catch (e) {
+    logger.error({ err: e }, "Error in create backfill task")
+    return { success: false, message: `Internal error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // registerBackfillTools — combines get_backfill_task_detail_tools(),
 //   list_backfill_tasks_tools(), list_backfill_instances_tools()
 // ---------------------------------------------------------------------------
@@ -460,4 +544,35 @@ export function registerBackfillTools(registry: ToolRegistry, db: LakehouseDB): 
 
   logger.info({ count: tools.length }, "Registering backfill tools")
   registry.registerTools(tools)
+
+  // create_backfill_job — backfill_task_tools.py:600-680
+  registry.registerTools([{
+    name: "create_backfill_job",
+    description:
+      "Create a backfill (complement) job for a periodic schedule task. " +
+      "Optionally checks downstream relationships and VCLUSTER CREATE permission before submitting.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        schedule_task_id: { type: "integer", description: "Schedule task ID for creating backfill job." },
+        biz_start_time: { type: "integer", description: "Business start time in milliseconds timestamp." },
+        biz_end_time: { type: "integer", description: "Business end time in milliseconds timestamp." },
+        sql_vc_code: { type: "string", description: "VC code for executing complement tasks (default: DEFAULT)." },
+        complement_job_name: { type: "string", description: "Optional complement job name. Auto-generated when omitted." },
+        include_root: { type: "integer", description: "Include root task: 1=yes, 0=no (default: 1)." },
+        is_concurrence: { type: "integer", description: "Run in parallel: 1=yes, 0=no (default: 0)." },
+        concurrence_number: { type: "integer", description: "Parallel number (default: 1)." },
+        self_dep: { type: "integer", description: "Self dependency flag (default: 0)." },
+        complement_type: { type: "integer", description: "Complement type (default: 1)." },
+        next_type: { type: "integer", description: "Next type (default: 0)." },
+        check_permission: { type: "boolean", description: "Check VCLUSTER CREATE permission (default: true)." },
+        check_downstream: { type: "boolean", description: "Query downstream relation (default: true)." },
+      },
+      additionalProperties: false,
+      required: ["schedule_task_id", "biz_start_time", "biz_end_time"],
+    },
+    handler: async (args: Record<string, unknown>) => handleCreateBackfillJob(args, getConfig()),
+    tags: ["backfill", "complement", "create"],
+    samples: [{ description: "Create backfill job", query: { schedule_task_id: 12345, biz_start_time: 1700000000000, biz_end_time: 1700086400000 } }],
+  }])
 }

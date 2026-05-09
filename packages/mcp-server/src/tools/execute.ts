@@ -18,14 +18,16 @@ import {
   apiGetTaskInstanceDetail,
   apiGetTaskDetail,
   getBaseUrl,
+  apiGetCurrentUser,
 } from "./studio-api.js"
 
 // ---------------------------------------------------------------------------
 // Integration FileType constants — execute_tools.py:88-95
-// The API returns fileType (FileType enum values), which must be compared here.
-// FileType values: DataIntegration=1, RealTimeDI=14, FullIncrementalSync=280,
-//                  MultipleRISync=281, MultipleDISync=291
-// Python converts fileType→taskType before comparing; we compare fileType directly.
+// Python converts fileType→taskType via _convert_file_type_to_task_type before comparing
+// against TaskType values (10, 28, 280, 281, 291).
+// Since we compare directly against the API's fileType field, we use FileType values:
+// DataIntegration=1, RealTimeDI=14, FullIncrementalSync=280,
+// MultipleRISync=281, MultipleDISync=291
 // ---------------------------------------------------------------------------
 const INTEGRATION_FILE_TYPES = new Set([1, 14, 280, 281, 291])
 
@@ -73,6 +75,57 @@ const ENV_WEB_URLS: Record<string, string> = {
   "ap-southeast-1-alicloud": "ap-southeast-1-alicloud.app.singdata.com",
 }
 
+// ---------------------------------------------------------------------------
+// convertTaskRunFields — schedule_instance_tools.py:65-160
+// ---------------------------------------------------------------------------
+const TASK_RUN_FIELD_MAP: Record<string, string> = {
+  taskInstanceId: "task_run_id",
+  instanceType: "task_run_type",
+  instanceStatus: "task_run_status",
+  scheduleTaskId: "task_id",
+  cycleTaskName: "task_name",
+  cycleTaskType: "task_type",
+  tenantId: "tenant_id",
+  userId: "user_id",
+  projectId: "project_id",
+  projectName: "project_name",
+  taskOwnerCn: "task_owner_cn",
+  taskOwnerEn: "task_owner_en",
+  executorUserName: "executor_user_name",
+  executorUserId: "executor_user_id",
+  taskGroupId: "task_group_id",
+  taskGroupName: "task_group_name",
+  planTriggerTime: "plan_trigger_time",
+  triggerTime: "trigger_time",
+  executeStartTime: "execute_start_time",
+  executeEndTime: "execute_end_time",
+  startWaitTime: "start_wait_time",
+  endWaitTime: "end_wait_time",
+  waitSpanTime: "wait_span_time",
+  failType: "fail_type",
+  failMsg: "fail_msg",
+  rerunStatus: "rerun_status",
+  executeLogId: "attempt_id",
+  showTaskParam: "task_param",
+  taskPriority: "task_priority",
+  vcCode: "vc_code",
+  env: "env",
+  version: "version",
+}
+
+function convertTaskRunFields(apiData: Record<string, unknown>): Record<string, unknown> {
+  if (!apiData) return {}
+  const converted: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(apiData)) {
+    const newKey = TASK_RUN_FIELD_MAP[key]
+    if (newKey) converted[newKey] = value
+  }
+  return converted
+}
+
+// ---------------------------------------------------------------------------
+// buildOpsStudioUrl — redirect_url_utils.py:57-88 _build_ops_studio_url
+// ---------------------------------------------------------------------------
 function buildOpsStudioUrl(
   config: NonNullable<LakehouseDB["connectionConfig"]>,
   id: number,
@@ -249,7 +302,18 @@ async function handleExecuteTask(
     const maxWaitSeconds = (arguments_["max_wait_seconds"] as number | undefined) ?? 300
     const pollInterval = (arguments_["poll_interval"] as number | undefined) ?? 5
 
-    const updateBy = config.username ?? ""
+    const updateBy = await (async () => {
+      if (config.username) return config.username
+      try {
+        const resp = await apiGetCurrentUser(config)
+        const data = JSON.parse(resp) as Record<string, unknown>
+        if (data["code"] === "200") {
+          const user = data["data"] as Record<string, unknown> | undefined
+          return (user?.["name"] as string) ?? ""
+        }
+      } catch { /* ignore */ }
+      return ""
+    })()
 
     logger.info({ dataTaskId }, "Executing task")
 
@@ -361,18 +425,22 @@ async function handleGetTaskInstanceDetail(
     if (responseData["code"] === "200") {
       const taskData = (responseData["data"] ?? {}) as Record<string, unknown>
 
-      const statusCode = taskData["status"] as number | undefined
+      // execute_tools.py:265 — Python reads instanceStatus, not status
+      const statusCode = (taskData["instanceStatus"] ?? taskData["status"]) as number | undefined
       const statusName = statusCode != null
         ? (DETAIL_STATUS_NAMES[statusCode] ?? `UNKNOWN(${statusCode})`)
         : "UNKNOWN"
 
+      // execute_tools.py:267 — convert_task_run_fields normalization
+      const convertedDetail = convertTaskRunFields(taskData)
+
       const formattedResponse: Record<string, unknown> = {
         success: true,
         message: "Task status retrieved successfully",
-        task_instance_id: taskInstanceId,
+        task_run_id: taskInstanceId,
         status: statusName,
         status_code: statusCode,
-        task_detail: taskData,
+        task_detail: convertedDetail,
       }
 
       // execute_tools.py:276-278 — add redirect URL

@@ -92,6 +92,16 @@ function writeAuth(apiKey: string): void {
   writeFileSync(AUTH_PATH, JSON.stringify(existing, null, 2), { mode: 0o600 })
 }
 
+function writeTelemetry(enabled: boolean): void {
+  mkdirSync(CLICKZETTA_DIR, { recursive: true })
+  let existing: Record<string, unknown> = {}
+  if (existsSync(PROFILES_PATH)) {
+    try { existing = parseTOML(readFileSync(PROFILES_PATH, "utf-8")) as Record<string, unknown> } catch {}
+  }
+  existing.telemetry = enabled
+  writeFileSync(PROFILES_PATH, stringifyTOML(existing))
+}
+
 function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
   return new Promise((resolve) => {
@@ -156,6 +166,20 @@ export async function setup(args: readonly string[]): Promise<never> {
 
   writeProfile(cred, profileName)
   if (cred.apiKey) writeAuth(cred.apiKey)
+
+  // Telemetry opt-in: only ask if not already configured
+  let existing: Record<string, unknown> = {}
+  if (existsSync(PROFILES_PATH)) {
+    try { existing = parseTOML(readFileSync(PROFILES_PATH, "utf-8")) as Record<string, unknown> } catch {}
+  }
+  if (!("telemetry" in existing)) {
+    let telemetryEnabled = true
+    if (process.stdin.isTTY) {
+      const answer = await prompt("  Enable anonymous telemetry to help improve cz-cli? (Y/n) ")
+      telemetryEnabled = answer.toLowerCase() !== "n"
+    }
+    writeTelemetry(telemetryEnabled)
+  }
 
   if (process.stdin.isTTY) {
     process.stderr.write(`\n  ✓ Profile '${profileName}' created\n`)

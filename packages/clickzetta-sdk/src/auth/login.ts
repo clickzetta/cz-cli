@@ -57,17 +57,23 @@ async function postLogin(
   requestId: string,
 ): Promise<ApiResponse<LoginResponse>> {
   const url = `${baseUrl}/clickzetta-portal/user/loginSingle`
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json, text/plain, */*",
-      "requestId": requestId,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
-  })
-  const text = await resp.text()
+  let resp: Response
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "requestId": requestId,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
+    })
+  } catch (e) {
+    console.error("DEBUG fetch error:", url, e)
+    throw e
+  }  
+  const text = await resp.text()  
   if (!resp.ok) {
     // Throw something the outer retry loop can inspect for instance errors.
     throw new ClickZettaApiError(
@@ -98,7 +104,7 @@ async function loginWithRetry(
   for (let attempt = 0; attempt <= LOGIN_MAX_RETRIES; attempt++) {
     try {
       const resp = await postLogin(baseUrl, body, requestId)
-      if (resp.code !== 0 && resp.code !== "0") {
+      if (resp.code !== 0 && resp.code !== "0" && resp.code !== 200 && resp.code !== "200") {
         const serverMsg = resp.message ?? ""
         const instErr = instanceConfigError(serverMsg, instance)
         if (instErr) throw new InterfaceError(instErr, { code: "INSTANCE_CONFIG_ERROR" })

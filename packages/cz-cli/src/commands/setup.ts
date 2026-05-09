@@ -1,8 +1,20 @@
 import type { Argv } from "yargs"
+import { createInterface } from "node:readline"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { loadProfiles, saveProfiles, type ProfileEntry } from "../connection/profile-store.js"
+import { loadProfiles, saveProfiles, setTelemetry, type ProfileEntry } from "../connection/profile-store.js"
+
+function askYesNo(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return Promise.resolve(true)
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close()
+      resolve(answer.trim().toLowerCase() !== "n")
+    })
+  })
+}
 
 /**
  * Top-level `setup` command — entry point for first-time configuration.
@@ -58,6 +70,11 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
       }
       profiles[profileName] = profileObj
       saveProfiles(profiles)
+
+      // Telemetry opt-in: ask user in TTY, default yes for non-interactive
+      const telemetryEnabled = await askYesNo("Enable anonymous telemetry to help improve cz-cli? (Y/n) ")
+      setTelemetry(telemetryEnabled)
+
       logOperation("setup", { ok: true })
       success({
         message: `Profile '${profileName}' created successfully.`,

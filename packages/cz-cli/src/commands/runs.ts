@@ -3,7 +3,7 @@ import {
   listRuns, getRunDetail, stopRun, rerunInstance,
   createBackfill, getInstanceRelation,
   getTaskRelation, listAttempts, getAttemptLog,
-  getScheduleDetail, getTaskRunStats,
+  getScheduleDetail, getInstanceStats,
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
@@ -15,12 +15,84 @@ import { resolveTaskId, resolveRunIdOrTaskName } from "../resolver.js"
 import { normalizeRunIdentity, normalizeRunIdentityList } from "../identity.js"
 import { t } from "../locale.js"
 
-const STATUS_MAP: Record<string, string> = {
-  SUCCESS: "1", WAITING: "2", FAILED: "3", RUNNING: "4",
+const STATUS_MAP: Record<string, number> = {
+  SUCCESS: 1, WAITING: 2, FAILED: 3, RUNNING: 4,
 }
-const RUN_TYPE_MAP: Record<string, string> = {
-  SCHEDULE: "1", TEMP: "3", REFILL: "4",
-  "1": "1", "3": "3", "4": "4",
+const RUN_TYPE_MAP: Record<string, number> = {
+  SCHEDULE: 1, TEMP: 3, REFILL: 4,
+  "1": 1, "3": 3, "4": 4,
+}
+
+// ---------------------------------------------------------------------------
+// Field converters — mirrors MCP server schedule_instance_tools.py converters
+// ---------------------------------------------------------------------------
+const TASK_RUN_FIELDS: Record<string, string> = {
+  taskInstanceId: "run_id", instanceType: "task_run_type", instanceStatus: "task_run_status",
+  scheduleTaskId: "task_id", cycleTaskName: "task_name", cycleTaskType: "task_type",
+  tenantId: "tenant_id", userId: "user_id", projectId: "project_id", projectName: "project_name",
+  taskOwnerCn: "task_owner_cn", taskOwnerEn: "task_owner_en",
+  executorUserName: "executor_user_name", executorUserId: "executor_user_id",
+  taskGroupId: "task_group_id", taskGroupName: "task_group_name",
+  planTriggerTime: "plan_trigger_time", triggerTime: "trigger_time",
+  executeStartTime: "execute_start_time", executeEndTime: "execute_end_time",
+  startWaitTime: "start_wait_time", endWaitTime: "end_wait_time", waitSpanTime: "wait_span_time",
+  failType: "fail_type", failMsg: "fail_msg", rerunStatus: "rerun_status",
+  showTaskParam: "task_param", taskPriority: "task_priority", vcCode: "vc_code",
+  env: "env", version: "version",
+}
+
+const EXECUTION_FIELDS: Record<string, string> = {
+  scheduleTaskId: "task_id", scheduleInstanceId: "task_run_id", executeLogId: "execution_id",
+  createdTime: "created_time", startTime: "start_time", endTime: "end_time",
+  finishResult: "finish_result", createdBy: "created_by",
+}
+
+const RUN_STATS_FIELDS: Record<string, string> = {
+  instanceStatus: "task_run_status", taskType: "task_type", instanceType: "task_run_type", count: "count",
+}
+
+function convertFields(data: Record<string, unknown>, mapping: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    out[mapping[k] ?? k] = v
+  }
+  return out
+}
+
+function convertRunList(items: Record<string, unknown>[]): Record<string, unknown>[] {
+  return items.map((item) => convertFields(item, TASK_RUN_FIELDS))
+}
+
+function convertRunStats(items: unknown[]): Record<string, unknown>[] {
+  return (items as Record<string, unknown>[]).map((item) => convertFields(item, RUN_STATS_FIELDS))
+}
+
+function convertExecutions(items: unknown[]): Record<string, unknown>[] {
+  return (items as Record<string, unknown>[]).map((item) => convertFields(item, EXECUTION_FIELDS))
+}
+
+const RUN_DEPENDENCY_FIELDS: Record<string, string> = {
+  scheduleInstanceId: "task_run_id", taskInstanceStatus: "task_run_status",
+  scheduleTaskId: "task_id", scheduleTaskName: "task_name", cycleTaskType: "task_type",
+  projectId: "project_id", projectName: "project_name", tenantId: "tenant_id",
+  planTriggerTime: "plan_trigger_time", executeStartTime: "execute_start_time",
+  executeEndTime: "execute_end_time", taskOwnerDisplayName: "task_owner_display_name",
+  taskOwnerUserId: "task_owner_user_id", cronExpression: "cron_expression",
+  rerunStatus: "rerun_status", vcCode: "vc_code", nextLevelCount: "next_level_count",
+}
+
+function convertRunDependency(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (k in RUN_DEPENDENCY_FIELDS) {
+      out[RUN_DEPENDENCY_FIELDS[k]!] = v
+    } else if (k === "parentScheduleTaskInstanceBeans") {
+      out["parent_task_runs"] = Array.isArray(v) ? v.map((i) => convertRunDependency(i as Record<string, unknown>)) : v
+    } else if (k === "childScheduleTaskInstanceBeans") {
+      out["child_task_runs"] = Array.isArray(v) ? v.map((i) => convertRunDependency(i as Record<string, unknown>)) : v
+    }
+  }
+  return out
 }
 
 function parseWindowBoundary(value: string, endOfDay: boolean): number {
@@ -47,7 +119,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
           y
             .option("task", { type: "string", describe: "Filter by task name or ID" })
             .option("status", { type: "array", string: true, choices: ["SUCCESS", "WAITING", "FAILED", "RUNNING"], describe: "Filter by status (multiple allowed). SUCCESS=completed OK, WAITING=queued, FAILED=errored, RUNNING=in progress" })
-            .option("run-type", { type: "string", default: "SCHEDULE", choices: ["SCHEDULE", "TEMP", "REFILL"], describe: "Run type: SCHEDULE=scheduled runs, TEMP=ad-hoc executions, REFILL=backfill jobs" })
+            .option("run-type", { type: "string", choices: ["SCHEDULE", "TEMP", "REFILL"], describe: "Run type: SCHEDULE=scheduled runs, TEMP=ad-hoc executions, REFILL=backfill jobs" })
             .option("from", { type: "string", describe: "Start time filter (ISO 8601 or YYYY-MM-DD). Defaults to 24h ago." })
             .option("to", { type: "string", describe: "End time filter (ISO 8601 or YYYY-MM-DD). Defaults to now." })
             .option("page", { type: "number", default: 1 })
@@ -62,27 +134,26 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const fromMs = argv.from ? parseWindowBoundary(argv.from as string, false) : now - 86400000
             const toMs = argv.to ? parseWindowBoundary(argv.to as string, true) : now
             const statusList = argv.status
-              ? (argv.status as string[]).map((s) => STATUS_MAP[s.toUpperCase()] ?? s)
+              ? (argv.status as string[]).map((s) => STATUS_MAP[s.toUpperCase()] ?? Number(s))
               : undefined
             const taskId = argv.task ? await resolveTaskId(sc, argv.task, format) : undefined
-            const resolvedRunType = RUN_TYPE_MAP[(argv["run-type"] as string).toUpperCase()] ?? argv["run-type"]
+            const resolvedRunType = argv["run-type"] ? (RUN_TYPE_MAP[(argv["run-type"] as string).toUpperCase()] ?? Number(argv["run-type"])) : undefined
             const resp = await listRuns(sc, {
               projectId: sc.projectId,
               pageIndex: argv.page,
               pageSize,
               scheduleTaskId: taskId,
               instanceStatusList: statusList,
-              cycleTaskType: resolvedRunType,
+              instanceType: resolvedRunType,
               queryStartPlanTime: fromMs,
               queryEndPlanTime: toMs,
             })
-            const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const items = normalizeRunIdentityList(Array.isArray(data.taskRunList) ? data.taskRunList as Record<string, unknown>[] : [])
-            const total = data.totalCount ?? data.total
-            const aiMessage = `当前仅展示第 ${data.pageIndex ?? argv.page} 页` +
+            const items = convertRunList(Array.isArray(resp.data) ? resp.data as Record<string, unknown>[] : [])
+            const total = resp.count
+            const aiMessage = `当前仅展示第 ${resp.pageIndex ?? argv.page} 页` +
               (total != null ? `（${items.length} 条 / 共 ${total} 条）` : "") +
-              `，run_type=${resolvedRunType}` +
-              `。如需下一页，请执行: cz-cli runs list --run-type ${resolvedRunType} --page ${(argv.page as number) + 1} --page-size ${pageSize}`
+              `，run_type=${resolvedRunType ?? "all"}` +
+              `。如需下一页，请执行: cz-cli runs list${resolvedRunType ? ` --run-type ${argv["run-type"]}` : ""} --page ${(argv.page as number) + 1} --page-size ${pageSize}`
             logOperation("runs list", { ok: true })
             success(items, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total } } })
           } catch (err) {
@@ -101,23 +172,14 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
             const resp = await getRunDetail(sc, runId, { projectId: sc.projectId })
             const runData = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const taskDetail = (typeof runData.taskDetail === "object" && runData.taskDetail !== null ? runData.taskDetail : {}) as Record<string, unknown>
-            const normalized = normalizeRunIdentity(runData, taskDetail, { run_id: runId })
-            normalized.workspace = taskDetail.projectName ?? taskDetail.project_name
-            normalized.owner = taskDetail.taskOwnerCn ?? taskDetail.task_owner_cn ?? taskDetail.executorUserName ?? taskDetail.executor_user_name
-            normalized.vc_code = taskDetail.vcCode ?? taskDetail.vc_code
-            normalized.plan_trigger_time = taskDetail.planTriggerTime ?? taskDetail.plan_trigger_time
-            normalized.execute_start_time = taskDetail.executeStartTime ?? taskDetail.execute_start_time
-            normalized.execute_end_time = taskDetail.executeEndTime ?? taskDetail.execute_end_time
+            const normalized = convertFields(runData, TASK_RUN_FIELDS) as Record<string, unknown>
+            normalized.run_id = runId
             const start = normalized.execute_start_time as number | undefined
             const end = normalized.execute_end_time as number | undefined
             if (start && end) normalized.duration_ms = end - start
-            normalized.task_param = taskDetail.taskParam ?? taskDetail.task_param
-            normalized.version = taskDetail.version
-            normalized.fail_msg = taskDetail.failMsg ?? taskDetail.fail_msg
             let scheduleConfig: Record<string, unknown> | undefined
             let aiMessage = t("runs_detail")
-            const scheduleTaskId = taskDetail.taskId ?? taskDetail.task_id ?? runData.scheduleTaskId ?? runData.schedule_task_id
+            const scheduleTaskId = normalized.task_id ?? runData.scheduleTaskId
             if (scheduleTaskId != null) {
               try {
                 const sResp = await getScheduleDetail(sc, {
@@ -125,7 +187,14 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
                   projectId: sc.projectId,
                 })
                 const sData = (sResp.data && typeof sResp.data === "object" ? sResp.data : {}) as Record<string, unknown>
-                scheduleConfig = (sData.scheduleTaskDetail ?? sData.schedule_task_detail ?? sData) as Record<string, unknown>
+                const raw = (sData.scheduleTaskDetail ?? sData.schedule_task_detail ?? sData) as Record<string, unknown>
+                scheduleConfig = {
+                  cron_expression: raw.cronExpression,
+                  active_start_time: raw.activeStartTime,
+                  active_end_time: raw.activeEndTime,
+                  publish_time: raw.publishTime,
+                  extra_params: raw.extraParams,
+                }
               } catch {
                 aiMessage += " " + t("runs_detail_degraded")
               }
@@ -170,10 +239,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               if (isTerminal) {
                 const polling = { run_id: runId, attempts_used: attempt, attempts_max: maxAttempts, interval_seconds: argv.interval, terminal_status: STATUS_NAME[statusCode as number] ?? statusCode }
                 if (statusCode === 3 || failMsg) {
-                  error("RUN_FAILED", String(failMsg ?? `Run ${runId} ended with terminal failure status`), { format, extra: { run_detail: data, polling } })
+                  error("RUN_FAILED", String(failMsg ?? `Run ${runId} ended with terminal failure status`), { format, extra: { run_detail: convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), polling } })
                 }
                 logOperation("runs wait", { ok: true })
-                success(data ?? {}, { format, extra: { polling } })
+                success(convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), { format, extra: { polling } })
               }
               if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, intervalMs))
             }
@@ -218,10 +287,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               executeLogId: attemptId,
               ...(argv.offset != null ? { offset: argv.offset as number } : {}),
             })
-            const normalized = normalizeRunIdentity(
-              (logResp.data as Record<string, unknown>) ?? {},
-              { attempt_id: attemptId },
-            )
+            const logData = (logResp.data as Record<string, unknown>) ?? {}
+            const normalized = { ...convertFields(logData, EXECUTION_FIELDS), execution_id: attemptId }
             logOperation("runs logs", { ok: true })
             success(normalized, { format })
           } catch (err) {
@@ -230,28 +297,26 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "deps <task>",
-        "View published task upstream/downstream dependencies",
+        "deps <id>",
+        "View run instance upstream/downstream dependencies",
         (y) =>
           y
-            .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
+            .positional("id", { type: "string", demandOption: true, describe: "Run ID" })
             .option("parent-level", { type: "number", default: 1, describe: "Upstream dependency depth" })
             .option("child-level", { type: "number", default: 1, describe: "Downstream dependency depth" }),
         async (argv) => {
           const format = argv.output
           try {
             const sc = await ctx(argv)
-            const taskId = await resolveTaskId(sc, argv.task as string, format)
-            const resp = await getTaskRelation(sc, {
-              scheduleTaskId: taskId,
+            const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
+            const resp = await getInstanceRelation(sc, {
+              taskInstanceId: runId,
               projectId: sc.projectId,
               parentLevel: Math.max(1, argv["parent-level"] as number),
               childLevel: Math.max(1, argv["child-level"] as number),
             })
-            const relation = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            relation.task_id ??= taskId
-            relation.parent_tasks ??= []
-            relation.child_tasks ??= []
+            const relation = convertRunDependency((resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>)
+            relation.run_id ??= runId
             logOperation("runs deps", { ok: true })
             success(relation, { format, aiMessage: t("runs_deps") })
           } catch (err) {
@@ -375,14 +440,15 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const now = Date.now()
             const fromMs = argv.from ? parseWindowBoundary(argv.from as string, false) : now - 86400000
             const toMs = argv.to ? parseWindowBoundary(argv.to as string, true) : now
-            const resp = await getTaskRunStats(sc, {
+            const resp = await getInstanceStats(sc, {
               projectId: sc.projectId,
-              queryPlanTimeLeft: fromMs,
-              queryPlanTimeRight: toMs,
-              ...(argv.task ? { taskNameRlike: argv.task as string } : {}),
+              queryStartPlanTime: fromMs,
+              queryEndPlanTime: toMs,
+              ...(argv.task ? { scheduleTaskName: argv.task as string } : {}),
             })
             logOperation("runs stats", { ok: true })
-            success(resp.data, { format })
+            const statsData = Array.isArray(resp.data) ? convertRunStats(resp.data) : resp.data
+            success(statsData, { format })
           } catch (err) {
             error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
           }

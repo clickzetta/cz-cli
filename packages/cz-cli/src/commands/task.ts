@@ -5,7 +5,7 @@ import {
   saveTaskContent, saveTaskConfig, submitTask, onlineTask, offlineTask,
   offlineTaskWithDownstream, deleteTask, deleteFolder,
   getTaskDependencies, listFolders, createFolder,
-  executeAdhoc, getRunDetail, previewScheduleInstanceTimes,
+  executeAdhoc, getRunDetail,
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
   removeFlowNode, submitFlow, listFlowInstances,
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
@@ -21,9 +21,24 @@ import { resolveTaskId, resolveNodeId, resolveFolderIdByName } from "../resolver
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
+import { convertAgentCron } from "../cron-adapter.js"
+
+function formatIsoStartOfDay(value: string | undefined | null): string {
+  if (!value) return new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
+  const trimmed = String(value).trim()
+  // Already ISO with time? strip time to start of day
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10) + "T00:00:00.000Z"
+  return trimmed
+}
 
 const TASK_TYPE_MAP: Record<string, number> = {
-  SQL: 4, PYTHON: 7, SHELL: 5, SPARK: 400, FLOW: 500,
+  SQL: 4, LAKEHOUSE: 4, PYTHON: 7, SHELL: 5, JDBC: 15,
+  SPARK: 400, FLOW: 500, INTEGRATION: 1, DI: 1,
+  REALTIME: 14, CDC: 14, DYNAMIC_TABLE: 16, DT: 16,
+  STREAMING: 17, CONTINUOUS: 17,
+  FULL_INCREMENTAL: 280, MULTI_REALTIME: 281, MULTI_DI: 291,
+  DATABRICKS_SQL: 300, DATABRICKS_NOTEBOOK: 301,
+  VIRTUAL: 0,
 }
 
 function parseTaskType(value: string): number {
@@ -58,6 +73,89 @@ async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
 }
 
+// ---------------------------------------------------------------------------
+// Field converter — mirrors MCP server convertTaskDetailFields
+// ---------------------------------------------------------------------------
+const FILE_TYPE_TO_TASK_TYPE: Record<number, number> = {
+  0: 0, 1: 10, 4: 23, 5: 24, 7: 26, 14: 28, 15: 29, 16: 30, 17: 31,
+  280: 280, 281: 281, 291: 291, 300: 300, 301: 301, 400: 400, 500: 500,
+}
+
+const TASK_DETAIL_FIELDS: Record<string, string> = {
+  id: "task_id", tenantId: "tenant_id", userId: "user_id", projectId: "project_id",
+  location: "location", dataFolderId: "folder_id", dataFileName: "task_name",
+  ownerCnName: "owner_cn_name", ownerEnName: "owner_en_name",
+  lastEditTime: "last_edit_time", lastEditUser: "last_edit_user",
+  createdBy: "created_by", createdTime: "created_time",
+  updatedBy: "updated_by", updatedTime: "updated_time", lockTime: "lock_time",
+  fileFlowStatus: "task_edit_state", showFileStatusName: "show_file_status_name",
+  lockUserName: "lock_user_name", hasConfig: "has_config",
+  currentVersion: "current_version", fileContent: "task_content",
+  fileDescription: "task_description", paramValueList: "param_value_list",
+  executeParam: "execute_param", workspaceId: "workspace_id",
+  defaultSchemaName: "default_schema_name", defaultVcName: "default_vc_name",
+  datasourceId: "datasource_id", dsType: "ds_type",
+  sessionSchemaName: "session_schema_name", cdcTaskId: "cdc_task_id",
+  groupId: "group_id", instanceName: "instance_name",
+  multiDataSource: "multi_data_source", nodeId: "node_id",
+  adhocConfigs: "adhoc_configs",
+  fileCreateType: "file_create_type", fileStatus: "file_status",
+  deployStatus: "deploy_status", isLock: "is_lock",
+}
+
+function convertTaskFields(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (k in TASK_DETAIL_FIELDS) {
+      out[TASK_DETAIL_FIELDS[k]!] = v
+    } else if (k === "fileType") {
+      out["task_type"] = FILE_TYPE_TO_TASK_TYPE[v as number] ?? v
+    }
+  }
+  return out
+}
+
+const CONFIG_DETAIL_FIELDS: Record<string, string> = {
+  projectId: "project_id", dataFileId: "task_id", dataFileVersion: "data_file_version",
+  retryIntervalTime: "retry_interval_time", retryIntervalTimeUnit: "retry_interval_time_unit",
+  retryCount: "retry_count", rerunProperty: "rerun_property", selfDependsJob: "self_depends_job",
+  cronExpress: "cron_express", activeStartTime: "active_start_time", activeEndTime: "active_end_time",
+  schemaName: "schema_name", etlVcCode: "etl_vc_code", etlVcId: "etl_vc_id",
+  executeTimeout: "execute_timeout", executeTimeoutUnit: "execute_timeout_unit",
+  taskPriority: "task_priority", triggerType: "trigger_type",
+  scheduleRateType: "schedule_rate_type", scheduleConfigType: "schedule_config_type",
+  configProperties: "config_properties",
+}
+
+function convertConfigFields(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (k in CONFIG_DETAIL_FIELDS) {
+      out[CONFIG_DETAIL_FIELDS[k]!] = v
+    } else if (k === "fileType") {
+      out["task_type"] = FILE_TYPE_TO_TASK_TYPE[v as number] ?? v
+    }
+  }
+  // Parse configProperties JSON string
+  const raw = out["config_properties"]
+  if (typeof raw === "string") {
+    try { out["config_properties"] = JSON.parse(raw) } catch { /* keep as string */ }
+  }
+  // Convert dependencies
+  const deps = data.dataFileDependencyDTOS
+  if (Array.isArray(deps)) {
+    out["task_dependencies"] = deps.map((d: unknown) => {
+      const dep = d as Record<string, unknown>
+      return {
+        dependency_task_id: dep.dependencyFileId ?? dep.dataFileId,
+        dependency_task_name: dep.dependencyFileName ?? dep.dataFileName,
+        dep_strategy: dep.depStrategy ?? 0,
+      }
+    })
+  }
+  return out
+}
+
 export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
   cli.command("task", "Manage Studio tasks", (yargs) =>
     yargs
@@ -74,7 +172,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("folder-id", { type: "number", describe: "Folder ID filter (alias of --parent)", hidden: true })
             .option("like", { type: "string", describe: "Task name filter" })
             .option("name", { type: "string", describe: "Task name filter (alias of --like)", hidden: true })
-            .option("type", { type: "string", describe: "Task type (SQL/PYTHON/SHELL/SPARK/FLOW)" }),
+            .option("type", {
+              type: "string",
+              describe:
+                "Task type: SQL, PYTHON, SHELL, JDBC, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
+            }),
         async (argv) => {
           const format = argv.output
           try {
@@ -92,14 +194,21 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               fileType,
             })
             const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const tasks = Array.isArray(data.tasks) ? data.tasks as Record<string, unknown>[] : []
-            const pagination = (data.pagination && typeof data.pagination === "object" ? data.pagination : {}) as Record<string, unknown>
-            const total = pagination.total
-            const aiMessage = `当前仅展示第 ${pagination.page ?? argv.page} 页` +
-              (total != null ? `（${tasks.length} 条 / 共 ${total} 条）` : "") +
+            const tasks = (Array.isArray(data.list) ? (data.list as Record<string, unknown>[]) : []).map(
+              convertTaskFields,
+            )
+            const total = data.total as number | undefined
+            const totalPages = data.totalPages as number | undefined
+            const aiMessage =
+              `当前仅展示第 ${argv.page} 页` +
+              (total != null ? `（${tasks.length} 条 / 共 ${total} 条，共 ${totalPages} 页）` : "") +
               `。如需下一页，请执行: cz-cli task list --page ${(argv.page as number) + 1} --page-size ${pageSize}`
             logOperation("task list", { ok: true })
-            success(tasks, { format, aiMessage, extra: { pagination } })
+            success(tasks, {
+              format,
+              aiMessage,
+              extra: { pagination: { page: argv.page, page_size: pageSize, total, total_pages: totalPages } },
+            })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -124,11 +233,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               parentFolderId: argv.parent,
             })
             const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const items = Array.isArray(data.folders) ? data.folders as unknown[] : []
-            const pagination = (data.pagination && typeof data.pagination === "object" ? data.pagination : {}) as Record<string, unknown>
-            const aiMessage = `当前仅展示第 ${pagination.page ?? argv.page} 页。可使用 --page 和 --page-size 翻页。`
+            const items = Array.isArray(data.list) ? (data.list as unknown[]) : []
+            const total = data.total as number | undefined
+            const totalPages = data.totalPages as number | undefined
+            const aiMessage =
+              `当前仅展示第 ${argv.page} 页` +
+              (total != null ? `（${items.length} 条 / 共 ${total} 条，共 ${totalPages} 页）` : "") +
+              `。可使用 --page 和 --page-size 翻页。`
             logOperation("task list-folders", { ok: true })
-            success(items, { format, aiMessage, extra: { pagination } })
+            success(items, {
+              format,
+              aiMessage,
+              extra: { pagination: { page: argv.page, page_size: argv["page-size"], total, total_pages: totalPages } },
+            })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -140,7 +257,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("type", { type: "string", demandOption: true, describe: "SQL/PYTHON/SHELL/SPARK/FLOW" })
+            .option("type", {
+              type: "string",
+              demandOption: true,
+              describe:
+                'Available options: SQL, PYTHON, SHELL, JDBC, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI"',
+            })
             .option("folder", { type: "string", default: "0", describe: "Folder ID or name" })
             .option("description", { type: "string", describe: "Task description" }),
         async (argv) => {
@@ -203,7 +325,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "content <task>",
+        ["content <task>", "detail <task>"],
         "Get task content and config",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
@@ -215,17 +337,31 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               getTaskDetail(sc, fileId),
               getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
             ])
-            const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
-            const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null ? detailData.taskDetail : detailData) as Record<string, unknown>
-            const normalizedDetail = normalizeTaskIdentity(detailObj, { task_id: fileId })
-            const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<string, unknown>
-            const scheduleConfig = (configData.taskConfigurationDetail ?? configData.task_configuration_detail ?? configData.scheduleConfig ?? configData.schedule_config ?? configData) as Record<string, unknown>
-            const merged = normalizeTaskIdentity({
+            const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<
+              string,
+              unknown
+            >
+            const detailObj = (
+              typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
+                ? detailData.taskDetail
+                : detailData
+            ) as Record<string, unknown>
+            const normalizedDetail: Record<string, unknown> = { ...convertTaskFields(detailObj), task_id: fileId }
+            const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<
+              string,
+              unknown
+            >
+            const scheduleConfig = convertConfigFields((configData.taskConfigurationDetail ??
+              configData.task_configuration_detail ??
+              configData.scheduleConfig ??
+              configData.schedule_config ??
+              configData) as Record<string, unknown>)
+            const merged = {
               task_id: normalizedDetail.task_id ?? fileId,
               task_name: normalizedDetail.task_name,
-              task_content: normalizedDetail.taskContent ?? normalizedDetail.task_content ?? normalizedDetail.dataFileContent ?? normalizedDetail.data_file_content,
+              task_content: normalizedDetail.task_content ?? detailObj.fileContent ?? detailObj.dataFileContent,
               schedule_config: scheduleConfig,
-            }, { task_id: fileId })
+            }
             logOperation("task content", { ok: true })
             success(merged, { format, aiMessage: t("task_content") })
           } catch (err) {
@@ -266,77 +402,133 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-config <task>",
-        "Save task schedule config",
+        "save-cron <task>",
+        "Save cron schedule configuration (preserves non-cron settings)",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
-            .option("cron", { type: "string", describe: "Cron expression (5/6/7 fields)" })
+            .option("cron", { type: "string", demandOption: true, describe: "Cron expression (5/6/7 fields)" })
             .option("vc", { type: "string", describe: "Virtual cluster code" })
-            .option("schema", { type: "string", describe: "Schema name" })
-            .option("retry-count", { type: "number", describe: "Retry count" })
-            .option("timeout", { type: "number", describe: "Execute timeout" })
-            .option("timeout-unit", { type: "string", default: "MINUTES", describe: "Timeout unit" })
-            .option("active-start-time", { type: "string", describe: "Schedule active start time (e.g. 2026-01-01 00:00:00)" })
-            .option("active-end-time", { type: "string", describe: "Schedule active end time (e.g. 2099-12-31 23:59:59)" })
-            .option("dry-run", { type: "boolean", default: false, describe: "Validate and preview without saving" })
-            .option("start", { alias: "s", type: "string", describe: "Preview start clock HH:MM (dry-run only, default: 00:00)" })
-            .option("end", { alias: "e", type: "string", describe: "Preview end clock HH:MM (dry-run only, default: 23:59)" })
-            .option("env", { alias: "E", type: "string", describe: "Preview schedule env (dry-run only, default: prod)" }),
+            .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
+            .option("schema", { type: "string", describe: "Schema name" }),
         async (argv) => {
           const format = argv.output
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            if (!argv.cron) {
-              error("INVALID_ARGUMENTS", "Missing required fields for task save-config: cron_express", { format, exitCode: 2 })
-            }
-            const cronExpress = normalizeCron(argv.cron as string)
-            if (!argv["dry-run"] && (argv.start || argv.end || argv.env)) {
-              error("INVALID_ARGUMENTS", "--start/--end/--env options can only be used together with --dry-run.", { format, exitCode: 2 })
-            }
-            if (argv["dry-run"]) {
-              const startClock = normalizeScheduleClock(argv.start ?? "00:00", "--start")
-              const endClock = normalizeScheduleClock(argv.end ?? "23:59", "--end")
-              const scheduleEnv = argv.env ?? "prod"
-              let instanceTimes: unknown[] = []
-              try {
-                const previewResp = await previewScheduleInstanceTimes(sc, {
-                  cronExpress: cronExpress,
-                  scheduleStartTime: startClock,
-                  scheduleEndTime: endClock,
-                  scheduleEnv,
-                })
-                instanceTimes = Array.isArray(previewResp.data) ? previewResp.data : []
-              } catch { /* best-effort preview */ }
-              logOperation("task save-config dry-run", { ok: true })
-              success({
-                dry_run: true,
-                task_id: fileId,
-                input_cron: argv.cron,
-                normalized_cron: cronExpress,
-                vc: argv.vc,
-                schema: argv.schema,
-                schedule_start_time: startClock,
-                schedule_end_time: endClock,
-                schedule_env: scheduleEnv,
-                instance_times: instanceTimes,
-              }, { format })
+            const cronResult = convertAgentCron(argv.cron as string)
+            if (!cronResult.ok || !cronResult.outputCron) {
+              error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 })
               return
             }
+            // Fetch existing config to merge
+            const oldResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
+            const oldData = (oldResp.data && typeof oldResp.data === "object" ? oldResp.data : {}) as Record<string, unknown>
+            // Build configProperties with schedule times from UI param
+            const oldConfigProps = (() => {
+              const raw = oldData.configProperties
+              if (typeof raw === "string") { try { return JSON.parse(raw) } catch { return {} } }
+              return typeof raw === "object" && raw ? raw : {}
+            })() as Record<string, unknown>
+            // Python: pop old schedule times, then add new from ui_param
+            delete oldConfigProps["scheduleStartTime"]
+            delete oldConfigProps["scheduleEndTime"]
+            if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
+            if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
+
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
               updateBy: String(sc.userId),
               instanceName: sc.instanceName,
-              cronExpress,
-              etlVcCode: argv.vc,
-              schemaName: argv.schema,
-              retryCount: argv["retry-count"],
-              executeTimeout: argv.timeout,
-              executeTimeoutUnit: argv["timeout-unit"],
-              activeStartTime: argv["active-start-time"],
-              activeEndTime: argv["active-end-time"],
+              cronExpress: cronResult.outputCron!,
+              schemaName: (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public",
+              etlVcCode: (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT",
+              etlVcId: argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined),
+              retryCount: (oldData.retryCount as number | undefined) ?? 1,
+              retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
+              retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
+              rerunProperty: String((oldData.rerunProperty as number | undefined) ?? 3),
+              selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? 0,
+              executeTimeout: (oldData.executeTimeout as number | undefined) ?? 0,
+              executeTimeoutUnit: (oldData.executeTimeoutUnit as string | undefined) ?? "m",
+              activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
+              activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
+              dataFileInputListReqs: (oldData.dataFileDependencyDTOS as unknown[]) ?? [],
+              configProperties: JSON.stringify(oldConfigProps),
+            })
+            logOperation("task save-cron", { ok: true })
+            success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
+          } catch (err) {
+            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      .command(
+        "save-config <task>",
+        "Save non-cron task configuration (retry, deps, VC, timeout — preserves cron)",
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true })
+            .option("retry-count", { type: "number", describe: "Max retry attempts" })
+            .option("retry-interval", { type: "number", describe: "Retry interval value" })
+            .option("retry-unit", { type: "string", describe: "Retry interval unit (m/s)" })
+            .option("rerun-property", { type: "number", describe: "Rerun policy: 1=ANY_TIME, 2=FAILED_ONLY, 3=NOT_RERUN" })
+            .option("self-depends", { type: "number", describe: "Self dependency: 0=no, 1=yes" })
+            .option("vc", { type: "string", describe: "Virtual cluster code" })
+            .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
+            .option("schema", { type: "string", describe: "Schema name" })
+            .option("timeout", { type: "number", describe: "Execute timeout" })
+            .option("timeout-unit", { type: "string", describe: "Timeout unit (m/s)" })
+            .option("deps", { type: "string", choices: ["keep", "replace", "clear"], describe: "Dependency action" })
+            .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array (with --deps replace)" }),
+        async (argv) => {
+          const format = argv.output
+          try {
+            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vc-id", "schema", "timeout", "timeout-unit", "deps"] as const
+            if (!configOpts.some((k) => argv[k] != null)) {
+              error("INVALID_ARGUMENTS", "At least one configuration option is required.", { format, exitCode: 2 })
+              return
+            }
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            // Fetch existing config
+            const oldResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
+            const oldData = (oldResp.data && typeof oldResp.data === "object" ? oldResp.data : {}) as Record<string, unknown>
+            // Dependencies
+            let deps: unknown[]
+            const depsAction = argv.deps as string | undefined
+            if (depsAction === "clear") deps = []
+            else if (depsAction === "replace") {
+              const raw = argv["dep-tasks"] as string | undefined
+              deps = raw ? JSON.parse(raw).map((d: Record<string, unknown>) => ({
+                parseType: "1", dependencyProjectId: sc.projectId, depStrategy: d.dep_strategy ?? 0,
+                dependencyFileId: d.dependency_task_id, dependencyFileName: d.dependency_task_name,
+              })) : []
+            } else {
+              deps = (oldData.dataFileDependencyDTOS as unknown[]) ?? []
+            }
+
+            const resp = await saveTaskConfig(sc, {
+              dataFileId: fileId,
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.instanceName,
+              cronExpress: (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *",
+              activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
+              activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
+              schemaName: (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "",
+              etlVcCode: (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT",
+              etlVcId: argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined),
+              retryCount: (argv["retry-count"] as number | undefined) ?? (oldData.retryCount as number | undefined) ?? 1,
+              retryIntervalTime: (argv["retry-interval"] as number | undefined) ?? (oldData.retryIntervalTime as number | undefined) ?? 1,
+              retryIntervalTimeUnit: (argv["retry-unit"] as string | undefined) ?? (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
+              rerunProperty: String((argv["rerun-property"] as number | undefined) ?? (oldData.rerunProperty as number | undefined) ?? 3),
+              selfDependsJob: (argv["self-depends"] as number | undefined) ?? (oldData.selfDependsJob as number | undefined) ?? 0,
+              executeTimeout: (argv.timeout as number | undefined) ?? (oldData.executeTimeout as number | undefined),
+              executeTimeoutUnit: (argv["timeout-unit"] as string | undefined) ?? (oldData.executeTimeoutUnit as string | undefined) ?? "m",
+              dataFileInputListReqs: deps,
+              configProperties: oldData.configProperties ?? "{}",
             })
             logOperation("task save-config", { ok: true })
             success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
@@ -350,29 +542,34 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         "Show task dependencies (draft state)",
         (y) =>
           y
-            .positional("task", { type: "string", demandOption: true })
-            .option("parent-level", { type: "number", default: 1, describe: "Upstream depth" })
-            .option("child-level", { type: "number", default: 1, describe: "Downstream depth" }),
+            .positional("task", { type: "string", demandOption: true }),
         async (argv) => {
           const format = argv.output
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            const configResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
-            const configData = (configResp.data && typeof configResp.data === "object" ? configResp.data : {}) as Record<string, unknown>
-            const detail = (configData.configurationDetail ?? configData.configuration_detail ?? {}) as Record<string, unknown>
-            const selfDepends = detail.selfDependsJob ?? detail.self_depends_job ?? 0
-            const depDtos = Array.isArray(detail.taskDependencies ?? detail.task_dependencies)
-              ? (detail.taskDependencies ?? detail.task_dependencies) as Record<string, unknown>[]
+            const configResp = await getTaskConfigDetail(sc, {
+              projectId: sc.projectId,
+              workspaceId: sc.workspaceId,
+              dataFileId: fileId,
+            })
+            const configData = (
+              configResp.data && typeof configResp.data === "object" ? configResp.data : {}
+            ) as Record<string, unknown>
+            const depDtos = Array.isArray(configData.dataFileDependencyDTOS)
+              ? (configData.dataFileDependencyDTOS as Record<string, unknown>[])
               : []
-            const depIds = depDtos.map((d) => Number(d.dependencyTaskId ?? d.dependency_task_id)).filter((id) => id > 0)
-            let parentTasks: unknown[] = []
-            if (depIds.length > 0) {
-              const depResp = await getTaskDependencies(sc, { currentId: fileId, fileIds: depIds })
-              const depData = (depResp.data && typeof depResp.data === "object" ? depResp.data : {}) as Record<string, unknown>
-              parentTasks = Array.isArray(depData.dependencies) ? depData.dependencies as unknown[] : []
+            const dependencies = depDtos.map((d) => ({
+              dependency_task_id: d.dependencyFileId ?? d.dataFileId,
+              dependency_task_name: d.dependencyFileName ?? d.dataFileName,
+              dep_strategy: d.depStrategy ?? 0,
+              dependency_project_id: d.dependencyProjectId,
+            }))
+            const result = {
+              task_id: fileId,
+              self_depends_job: configData.selfDependsJob ?? 0,
+              dependencies,
             }
-            const result = normalizeTaskIdentity({ task_id: fileId, self_depends_job: selfDepends, parent_tasks: parentTasks })
             logOperation("task deps", { ok: true })
             success(result, { format, aiMessage: t("task_deps") })
           } catch (err) {
@@ -387,7 +584,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("task", { type: "string", demandOption: true })
             .version(false)
-            .option("version", { type: "number", describe: "Task version to publish" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
           const format = argv.output
@@ -395,28 +591,36 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const detail = await getTaskDetail(sc, fileId)
-            const taskData = detail.data as Record<string, unknown> | undefined
-            const taskDetail = (typeof taskData?.taskDetail === "object" && taskData?.taskDetail !== null ? taskData.taskDetail : taskData) as Record<string, unknown> | undefined
-            const fileType = Number(taskDetail?.fileType ?? taskDetail?.file_type ?? taskData?.fileType ?? taskData?.file_type ?? 0)
+            const taskDetail = detail.data as Record<string, unknown> | undefined
+            const fileType = Number(
+              taskDetail?.fileType ?? taskDetail?.file_type ?? 0,
+            )
             if (fileType === 500) {
-              error("TASK_ERROR", "Flow tasks cannot be published with task online. Use: cz-cli task flow submit <task>", { format })
+              error(
+                "TASK_ERROR",
+                "Flow tasks cannot be published with task online. Use: cz-cli task flow submit <task>",
+                { format },
+              )
             }
             if (!argv.yes) {
               const ok = await confirm(`Publish and online task ${fileId}?`)
               if (!ok) {
-                success({ message: "Cancelled by user. No online action was executed.", action: "task.online", executed: false }, { format })
+                success(
+                  {
+                    message: "Cancelled by user. No online action was executed.",
+                    action: "task.online",
+                    executed: false,
+                  },
+                  { format },
+                )
                 return
               }
             }
-            const resolvedVersion = argv.version != null
-              ? String(argv.version)
-              : String(taskDetail?.currentVersion ?? taskDetail?.current_version ?? taskData?.currentVersion ?? taskData?.current_version ?? "")
             const resp = await submitTask(sc, {
               commitMsg: "Published via cz-cli",
               dataFileId: fileId,
               projectId: sc.projectId,
               updatedBy: String(sc.userId),
-              ...(resolvedVersion ? { dataFileVersion: resolvedVersion } : {}),
             })
             await onlineTask(sc, fileId, sc.projectId)
             logOperation("task online", { ok: true })
@@ -440,9 +644,18 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             if (!argv.yes) {
-              const ok = await confirm(`Take task ${fileId} offline? This clears ALL run instances and is IRREVERSIBLE.`)
+              const ok = await confirm(
+                `Take task ${fileId} offline? This clears ALL run instances and is IRREVERSIBLE.`,
+              )
               if (!ok) {
-                success({ message: "Cancelled by user. No offline action was executed.", action: "task.offline", executed: false }, { format })
+                success(
+                  {
+                    message: "Cancelled by user. No offline action was executed.",
+                    action: "task.offline",
+                    executed: false,
+                  },
+                  { format },
+                )
                 return
               }
             }
@@ -462,12 +675,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
-            .option("vc", { type: "string", describe: "Virtual cluster code (resolves from task detail or profile if omitted)" })
+            .option("vc", {
+              type: "string",
+              describe: "Virtual cluster code (resolves from task detail or profile if omitted)",
+            })
             .option("schema", { type: "string", describe: "Schema name" })
             .option("content", { type: "string", describe: "Override script content" })
             .option("file", { alias: "f", type: "string", describe: "Read override content from file" })
             .option("param", { type: "array", string: true, describe: "Parameter KEY=VALUE" })
-            .option("max-wait-seconds", { type: "number", default: 300, describe: "Max seconds to wait for completion" })
+            .option("max-wait-seconds", {
+              type: "number",
+              default: 300,
+              describe: "Max seconds to wait for completion",
+            })
             .option("poll-interval", { type: "number", default: 5, describe: "Polling interval seconds" }),
         async (argv) => {
           const format = argv.output
@@ -489,26 +709,53 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (!vcCode) {
               const detail = await getTaskDetail(sc, fileId)
               const data = detail.data as Record<string, unknown> | undefined
-              const taskDetail = (typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data) as Record<string, unknown> | undefined
-              vcCode = (taskDetail?.defaultVcName ?? taskDetail?.default_vc_name ?? taskDetail?.etlVcCode ?? taskDetail?.etl_vc_code) as string | undefined
+              const taskDetail = (
+                typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
+              ) as Record<string, unknown> | undefined
+              vcCode = (taskDetail?.defaultVcName ??
+                taskDetail?.default_vc_name ??
+                taskDetail?.etlVcCode ??
+                taskDetail?.etl_vc_code) as string | undefined
               if (!vcCode) {
                 const config = resolveConnectionConfig(argv as Record<string, unknown>)
                 vcCode = config.vcluster || undefined
               }
               if (!content) {
-                content = (taskDetail?.taskContent ?? taskDetail?.task_content ?? taskDetail?.dataFileContent ?? taskDetail?.data_file_content ?? data?.dataFileContent ?? data?.content ?? "") as string
+                content = (taskDetail?.taskContent ??
+                  taskDetail?.task_content ??
+                  taskDetail?.dataFileContent ??
+                  taskDetail?.data_file_content ??
+                  data?.dataFileContent ??
+                  data?.content ??
+                  "") as string
               }
             } else if (!content) {
               const detail = await getTaskDetail(sc, fileId)
               const data = detail.data as Record<string, unknown> | undefined
-              const taskDetail = (typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data) as Record<string, unknown> | undefined
-              content = (taskDetail?.taskContent ?? taskDetail?.task_content ?? taskDetail?.dataFileContent ?? taskDetail?.data_file_content ?? data?.dataFileContent ?? data?.content ?? "") as string
+              const taskDetail = (
+                typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
+              ) as Record<string, unknown> | undefined
+              content = (taskDetail?.taskContent ??
+                taskDetail?.task_content ??
+                taskDetail?.dataFileContent ??
+                taskDetail?.data_file_content ??
+                data?.dataFileContent ??
+                data?.content ??
+                "") as string
             }
             if (!content) {
-              error("INVALID_ARGUMENTS", "Task content is empty. Provide --content or ensure the task has saved content.", { format })
+              error(
+                "INVALID_ARGUMENTS",
+                "Task content is empty. Provide --content or ensure the task has saved content.",
+                { format },
+              )
             }
             if (!vcCode || !vcCode.trim()) {
-              error("INVALID_ARGUMENTS", "Virtual cluster (VC) is required. Provide --vc or configure vcluster in your profile.", { format })
+              error(
+                "INVALID_ARGUMENTS",
+                "Virtual cluster (VC) is required. Provide --vc or configure vcluster in your profile.",
+                { format },
+              )
             }
             const resp = await executeAdhoc(sc, {
               updateBy: String(sc.userId),
@@ -539,18 +786,26 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             while (Date.now() < deadline) {
               const detailResp = await getRunDetail(sc, Number(runInstanceId), { projectId: sc.projectId })
               const detailData = detailResp.data as Record<string, unknown> | undefined
-              const taskDetail = (typeof detailData?.taskDetail === "object" && detailData?.taskDetail !== null ? detailData.taskDetail : detailData) as Record<string, unknown> | undefined
+              const taskDetail = (
+                typeof detailData?.taskDetail === "object" && detailData?.taskDetail !== null
+                  ? detailData.taskDetail
+                  : detailData
+              ) as Record<string, unknown> | undefined
               const statusCode = (taskDetail?.instanceStatus ?? detailData?.instanceStatus) as number | undefined
               const endTime = taskDetail?.executeEndTime ?? detailData?.executeEndTime
               const failMsg = taskDetail?.failMsg ?? detailData?.failMsg
               const isTerminal = statusCode === 1 || statusCode === 3 || (statusCode == null && endTime != null)
               if (isTerminal) {
-                const normalized = normalizeTaskIdentity(
-                  { ...detailData, task_id: fileId, run_id: runInstanceId, execution_status: STATUS_NAME[statusCode as number] ?? statusCode },
-                )
-                const aiMessage = normalized.run_id != null
-                  ? `临时执行完成（task_id=${normalized.task_id}，run_id=${normalized.run_id}）。Notice: 这是一次临时执行，不影响调度计划。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${normalized.task_id} -y`
-                  : `临时执行完成（task_id=${normalized.task_id}）。Notice: 这是一次临时执行，不影响调度计划。`
+                const normalized = normalizeTaskIdentity({
+                  ...detailData,
+                  task_id: fileId,
+                  run_id: runInstanceId,
+                  execution_status: STATUS_NAME[statusCode as number] ?? statusCode,
+                })
+                const aiMessage =
+                  normalized.run_id != null
+                    ? `临时执行完成（task_id=${normalized.task_id}，run_id=${normalized.run_id}）。Notice: 这是一次临时执行，不影响调度计划。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${normalized.task_id} -y`
+                    : `临时执行完成（task_id=${normalized.task_id}）。Notice: 这是一次临时执行，不影响调度计划。`
                 if (statusCode === 3 || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
                 }
@@ -559,7 +814,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
               await new Promise((r) => setTimeout(r, pollMs))
             }
-            error("EXECUTE_TIMEOUT", `Task execution ${runInstanceId} did not complete within ${argv["max-wait-seconds"]}s`, { format })
+            error(
+              "EXECUTE_TIMEOUT",
+              `Task execution ${runInstanceId} did not complete within ${argv["max-wait-seconds"]}s`,
+              { format },
+            )
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -854,7 +1113,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             },
           )
-          .strictCommands().strictOptions().demandCommand(1, ""),
+          .strictCommands()
+          .strictOptions()
+          .demandCommand(1, ""),
       )
       .command(
         "delete-folder <folder>",
@@ -914,37 +1175,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "detail <task>",
-        false as unknown as string,
-        (y: Argv) => y.positional("task", { type: "string", demandOption: true }),
-        async (argv: Record<string, unknown>) => {
-          const format = (argv as { output: string }).output
-          try {
-            const sc = await ctx(argv)
-            const fileId = await resolveTaskId(sc, String(argv.task), format)
-            const [detail, config] = await Promise.all([
-              getTaskDetail(sc, fileId),
-              getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
-            ])
-            const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
-            const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null ? detailData.taskDetail : detailData) as Record<string, unknown>
-            const normalizedDetail = normalizeTaskIdentity(detailObj, { task_id: fileId })
-            const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<string, unknown>
-            const scheduleConfig = (configData.taskConfigurationDetail ?? configData.task_configuration_detail ?? configData.scheduleConfig ?? configData.schedule_config ?? configData) as Record<string, unknown>
-            const merged = normalizeTaskIdentity({
-              task_id: normalizedDetail.task_id ?? fileId,
-              task_name: normalizedDetail.task_name,
-              task_content: normalizedDetail.taskContent ?? normalizedDetail.task_content ?? normalizedDetail.dataFileContent ?? normalizedDetail.data_file_content,
-              schedule_config: scheduleConfig,
-            }, { task_id: fileId })
-            logOperation("task detail (alias)", { ok: true })
-            success(merged, { format, aiMessage: t("task_content") })
-          } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
-          }
-        },
-      )
-      .command(
         "save <task>",
         false as unknown as string,
         (y: Argv) =>
@@ -976,6 +1206,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
+      .strictCommands()
+      .strictOptions()
+      .demandCommand(1, ""),
   )
 }

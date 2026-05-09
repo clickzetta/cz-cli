@@ -412,6 +412,8 @@ async function handleSaveNodeContent(
       content,
       projectId: (arguments_["project_id"] as string | undefined) ?? config.projectId,
       paramValueList: arguments_["param_value_list"] as unknown[] | undefined,
+      userName: config.username,
+      userId: config.userId != null ? String(config.userId) : undefined,
     })
     return parseFlowResponse(response, "Node content saved successfully")
   } catch (e) {
@@ -466,6 +468,8 @@ async function handleSaveNodeConfiguration(
       schemaName,
       etlVcCode,
       etlVcId,
+      userName: config.username,
+      userId: config.userId != null ? String(config.userId) : undefined,
     })
     return parseFlowResponse(response, "Node configuration saved successfully")
   } catch (e) {

@@ -22,49 +22,33 @@ import {
   apiSaveConfiguration,
   apiGetConfigurationDetail,
   apiSubmitTask,
+  apiListFiles,
+  apiDeleteFile,
+  apiGetCurrentUser,
 } from "./studio-api.js"
 
 // ---------------------------------------------------------------------------
 // TaskType / FileType mapping — file_tools.py:375-420
 // Mirrors TASK_FILE_TYPE_MAPPING from common/task_type.py
+// TaskType → FileType (they are NOT 1:1 for most types)
 // ---------------------------------------------------------------------------
 const TASK_TYPE_TO_FILE_TYPE: Record<number, number> = {
-  1: 1,   // LakehouseSQL
-  2: 2,   // JdbcSQL
-  3: 3,   // Shell
-  4: 4,   // Python
-  5: 5,   // Notebook
-  6: 6,   // Spark
-  7: 7,   // Flink
-  8: 8,   // Hive
-  9: 9,   // Presto
-  10: 10, // DataIntegration (离线同步)
-  11: 11, // DataQuality
-  12: 12, // DataService
-  13: 13, // DataMasking
-  14: 14, // DataLineage
-  15: 15, // DataCatalog
-  16: 16, // DataGovernance
-  17: 17, // DataSecurity
-  18: 18, // DataLifecycle
-  19: 19, // DataMonitor
-  20: 20, // DataAlert
-  21: 21, // DataReport
-  22: 22, // DataDashboard
-  23: 23, // DataAPI
-  24: 24, // DataExport
-  25: 25, // DataImport
-  26: 26, // DataSync
-  27: 27, // DataMigration
-  28: 28, // RealTimeDI (实时同步)
-  29: 29, // DataBackup
-  30: 30, // DataRestore
-  100: 100, // Custom
-  200: 200, // Workflow
-  280: 280, // FullIncrementalSync (全增量一体同步)
-  281: 281, // MultipleRISync (多表实时同步)
-  291: 291, // MultipleDISync (多表离线同步)
-  500: 500, // Flow (组合任务)
+  0: 0,     // Virtual
+  10: 1,    // DataIntegration
+  23: 4,    // LakeHouse SQL
+  24: 5,    // Shell
+  26: 7,    // Python3
+  28: 14,   // RealTimeDI
+  29: 15,   // JDBC
+  30: 16,   // DynamicTable
+  31: 17,   // ContinuousJob
+  280: 280, // FullIncrementalSync
+  281: 281, // MultipleRISync
+  291: 291, // MultipleDISync
+  300: 300, // DatabrickSql
+  301: 301, // DatabrickNotebook
+  400: 400, // Spark
+  500: 500, // Flow
 }
 
 function convertTaskTypeToFileType(taskType: number): number {
@@ -73,6 +57,19 @@ function convertTaskTypeToFileType(taskType: number): number {
     throw new Error(`Invalid task_type ${taskType}: no corresponding FileType mapping`)
   }
   return fileType
+}
+
+// Reverse mapping: FileType → TaskType
+const FILE_TYPE_TO_TASK_TYPE: Record<number, number> = Object.fromEntries(
+  Object.entries(TASK_TYPE_TO_FILE_TYPE).map(([k, v]) => [v, Number(k)]),
+)
+
+function convertFileTypeToTaskType(fileType: number): number {
+  const taskType = FILE_TYPE_TO_TASK_TYPE[fileType]
+  if (taskType == null) {
+    throw new Error(`Invalid fileType ${fileType}: no corresponding TaskType mapping`)
+  }
+  return taskType
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +115,10 @@ function convertTaskDetailFields(apiData: Record<string, unknown>): Record<strin
     multiDataSource: "multi_data_source",
     nodeId: "node_id",
     adhocConfigs: "adhoc_configs",
+    fileCreateType: "file_create_type",
+    fileStatus: "file_status",
+    deployStatus: "deploy_status",
+    isLock: "is_lock",
   }
 
   const converted: Record<string, unknown> = {}
@@ -126,7 +127,7 @@ function convertTaskDetailFields(apiData: Record<string, unknown>): Record<strin
       converted[fieldMapping[key]!] = value
     } else if (key === "fileType") {
       try {
-        converted["task_type"] = convertTaskTypeToFileType(value as number)
+        converted["task_type"] = convertFileTypeToTaskType(value as number)
       } catch {
         logger.warn({ fileType: value }, "Failed to convert fileType to task_type, skipping")
       }
@@ -460,6 +461,306 @@ async function handlePublishTask(
 }
 
 // ---------------------------------------------------------------------------
+// helper: resolve username with getCurrentUser fallback — login_server.py
+// ---------------------------------------------------------------------------
+async function resolveUsername(config: NonNullable<LakehouseDB["connectionConfig"]>): Promise<string> {
+  if (config.username) return config.username
+  try {
+    const resp = await apiGetCurrentUser(config)
+    const data = JSON.parse(resp) as Record<string, unknown>
+    if (data["code"] === "200") {
+      const user = data["data"] as Record<string, unknown> | undefined
+      return (user?.["name"] as string) ?? ""
+    }
+  } catch { /* ignore */ }
+  return ""
+}
+
+// ---------------------------------------------------------------------------
+// handleSaveIntegrationTask — file_tools.py:885-1400
+// ---------------------------------------------------------------------------
+async function handleSaveIntegrationTask(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const taskId = arguments_["task_id"] as number | undefined
+    if (!taskId) return { success: false, message: "task_id is required" }
+
+    const sourceDatasourceName = arguments_["source_datasource_name"] as string | undefined
+    const sourceSchema = arguments_["source_schema"] as string | undefined
+    const sourceTable = arguments_["source_table"] as string | undefined
+    const sourceDsType = arguments_["source_ds_type"] as number | undefined
+    const sinkDatasourceName = arguments_["sink_datasource_name"] as string | undefined
+    const sinkSchema = (arguments_["sink_schema"] as string | undefined) ?? "public"
+    const sinkTable = (arguments_["sink_table"] as string | undefined) ?? sourceTable
+    const sinkDsType = arguments_["sink_ds_type"] as number | undefined
+
+    if (!sourceDatasourceName || !sourceSchema || !sourceTable || sourceDsType == null) {
+      return { success: false, message: "source_datasource_name, source_schema, source_table, and source_ds_type are required" }
+    }
+    if (!sinkDatasourceName || sinkDsType == null) {
+      return { success: false, message: "sink_datasource_name and sink_ds_type are required" }
+    }
+
+    // NOTE: The full integration workflow (datasource lookup, table existence check,
+    // sink table creation, integration config generation) requires datasource_utils
+    // which depends on multiple API calls. This is a placeholder that saves the
+    // integration parameters as content. The full workflow should be implemented
+    // when datasource_utils are ported.
+    const updateBy = await resolveUsername(config)
+    const integrationConfig = {
+      source: { datasource_name: sourceDatasourceName, schema: sourceSchema, table: sourceTable, ds_type: sourceDsType },
+      sink: { datasource_name: sinkDatasourceName, schema: sinkSchema, table: sinkTable, ds_type: sinkDsType },
+    }
+
+    const response = await apiSaveContent(config, {
+      projectId: config.projectId,
+      dataFileId: taskId,
+      content: JSON.stringify(integrationConfig),
+      paramValueList: (arguments_["param_value_list"] as unknown[]) ?? [],
+      updateBy,
+    })
+
+    const responseData = JSON.parse(response) as Record<string, unknown>
+    if (responseData["code"] === "200") {
+      return {
+        success: true,
+        message: "Successfully saved data integration task configuration",
+        task_id: taskId,
+        source: { datasource: sourceDatasourceName, table: `${sourceSchema}.${sourceTable}` },
+        sink: { datasource: sinkDatasourceName, table: `${sinkSchema}.${sinkTable}` },
+        integration_config: responseData["data"],
+      }
+    }
+    return {
+      success: false,
+      message: `API error: ${responseData["message"] ?? "Unknown error"}`,
+      code: responseData["code"],
+      raw_response: responseData,
+    }
+  } catch (e) {
+    logger.error({ err: e }, "Error in save_integration_task")
+    return { success: false, message: `Internal error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// handleSaveTaskCronConfiguration — file_tools.py:1590-1730
+// ---------------------------------------------------------------------------
+async function handleSaveTaskCronConfiguration(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const taskId = arguments_["task_id"] as number | undefined
+    if (!taskId) return { success: false, message: "task_id is required" }
+
+    const userName = await resolveUsername(config)
+
+    // Fetch existing configuration to merge defaults
+    const oldConfigResp = await apiGetConfigurationDetail(config, {
+      projectId: config.projectId,
+      workspaceId: config.workspaceId,
+      dataFileId: taskId,
+    })
+    const oldConfigData = JSON.parse(oldConfigResp) as Record<string, unknown>
+    const oldConfig = ((oldConfigData["code"] === "200" ? oldConfigData["data"] : {}) ?? {}) as Record<string, unknown>
+
+    const cronExpress = (arguments_["cron_express"] as string | undefined) ?? "0 00 00 * * ? *"
+    const schemaName = (arguments_["schema_name"] as string | undefined) ?? (oldConfig["schemaName"] as string | undefined) ?? "public"
+    const etlVcCode = (arguments_["etl_vc_code"] as string | undefined) ?? (oldConfig["etlVcCode"] as string | undefined) ?? "DEFAULT"
+    const etlVcId = (arguments_["etl_vc_id"] as string | undefined) ?? (oldConfig["etlVcId"] as string | undefined) ?? ""
+
+    const response = await apiSaveConfiguration(config, {
+      projectId: config.projectId,
+      dataFileId: taskId,
+      cronExpress: cronExpress,
+      userId: String(config.userId ?? ""),
+      userName,
+      activeStartTime: oldConfig["activeStartTime"] as string | undefined,
+      activeEndTime: (oldConfig["activeEndTime"] as string | undefined) ?? "2099-01-01",
+      retryIntervalTime: (oldConfig["retryIntervalTime"] as number | undefined) ?? 1,
+      retryIntervalTimeUnits: (oldConfig["retryIntervalTimeUnit"] as string | undefined) ?? "m",
+      retryCount: (oldConfig["retryCount"] as number | undefined) ?? 1,
+      rerunProperty: (oldConfig["rerunProperty"] as number | undefined) ?? 3,
+      executeTimeout: (oldConfig["executeTimeout"] as number | undefined) ?? 0,
+      executeTimeoutUnit: (oldConfig["executeTimeoutUnit"] as string | undefined) ?? "m",
+      selfDependsJob: (oldConfig["selfDependsJob"] as number | undefined) ?? 0,
+      dataFileInputListReqs: (oldConfig["dataFileDependencyDTOS"] as unknown[]) ?? [],
+      configProperties: JSON.stringify(oldConfig["configProperties"] ?? {}),
+      schemaName,
+      etlVcCode,
+      etlVcId,
+    })
+
+    const responseData = JSON.parse(response) as Record<string, unknown>
+    if (responseData["code"] === "200") {
+      return { success: true, message: "Successfully save configuration", save_config_result: responseData["data"] }
+    }
+    return { success: false, message: `API request failed: ${responseData["message"] ?? "Unknown error"}`, code: responseData["code"], raw_response: responseData }
+  } catch (e) {
+    logger.error({ err: e }, "Error in save_task_cron_configuration")
+    return { success: false, message: `Internal error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// handleSaveTaskNonCronConfiguration — file_tools.py:1733-1900
+// ---------------------------------------------------------------------------
+async function handleSaveTaskNonCronConfiguration(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const taskId = arguments_["task_id"] as number | undefined
+    if (!taskId) return { success: false, message: "task_id is required" }
+
+    const userName = await resolveUsername(config)
+
+    // Fetch existing configuration
+    const oldConfigResp = await apiGetConfigurationDetail(config, {
+      projectId: config.projectId,
+      workspaceId: config.workspaceId,
+      dataFileId: taskId,
+    })
+    const oldConfigData = JSON.parse(oldConfigResp) as Record<string, unknown>
+    const oldConfig = ((oldConfigData["code"] === "200" ? oldConfigData["data"] : {}) ?? {}) as Record<string, unknown>
+
+    const cronExpress = (oldConfig["cronExpress"] as string | undefined) ?? "0 00 00 * * ? *"
+    const retryIntervalTime = (arguments_["retry_interval_time"] as number | undefined) ?? (oldConfig["retryIntervalTime"] as number | undefined) ?? 1
+    const retryIntervalTimeUnit = (arguments_["retry_interval_time_unit"] as string | undefined) ?? (oldConfig["retryIntervalTimeUnit"] as string | undefined) ?? "m"
+    const retryCount = (arguments_["retry_count"] as number | undefined) ?? (oldConfig["retryCount"] as number | undefined) ?? 1
+    const rerunProperty = (arguments_["rerun_property"] as number | undefined) ?? (oldConfig["rerunProperty"] as number | undefined) ?? 3
+    const selfDependsJob = (arguments_["self_depends_job"] as number | undefined) ?? (oldConfig["selfDependsJob"] as number | undefined) ?? 0
+    const schemaName = (arguments_["schema_name"] as string | undefined) ?? (oldConfig["schemaName"] as string | undefined) ?? ""
+    const etlVcCode = (arguments_["etl_vc_code"] as string | undefined) ?? (oldConfig["etlVcCode"] as string | undefined) ?? "DEFAULT"
+    const etlVcId = (arguments_["etl_vc_id"] as string | undefined) ?? (oldConfig["etlVcId"] as string | undefined) ?? ""
+    const executeTimeout = (arguments_["execute_timeout"] as number | undefined) ?? (oldConfig["executeTimeout"] as number | undefined)
+    const executeTimeoutUnit = (arguments_["execute_timeout_unit"] as string | undefined) ?? (oldConfig["executeTimeoutUnit"] as string | undefined) ?? "m"
+
+    // Dependencies: support keep/replace/clear
+    const action = arguments_["task_dependencies_action"] as string | undefined
+    let taskDependencies: unknown[]
+    if (action === "clear") taskDependencies = []
+    else if (action === "replace") taskDependencies = (arguments_["task_dependencies"] as unknown[]) ?? []
+    else if ("task_dependencies" in arguments_) taskDependencies = (arguments_["task_dependencies"] as unknown[]) ?? []
+    else taskDependencies = (oldConfig["dataFileDependencyDTOS"] as unknown[]) ?? []
+
+    const response = await apiSaveConfiguration(config, {
+      projectId: config.projectId,
+      dataFileId: taskId,
+      cronExpress,
+      userId: String(config.userId ?? ""),
+      userName,
+      activeStartTime: oldConfig["activeStartTime"] as string | undefined,
+      activeEndTime: (oldConfig["activeEndTime"] as string | undefined) ?? "2099-01-01",
+      retryIntervalTime,
+      retryIntervalTimeUnits: retryIntervalTimeUnit,
+      retryCount,
+      rerunProperty,
+      executeTimeout,
+      executeTimeoutUnit,
+      selfDependsJob,
+      dataFileInputListReqs: taskDependencies,
+      configProperties: JSON.stringify(oldConfig["configProperties"] ?? {}),
+      schemaName,
+      etlVcCode,
+      etlVcId,
+    })
+
+    const responseData = JSON.parse(response) as Record<string, unknown>
+    if (responseData["code"] === "200") {
+      return { success: true, message: "Successfully save configuration", save_config_result: responseData["data"] }
+    }
+    return { success: false, message: `API request failed: ${responseData["message"] ?? "Unknown error"}`, code: responseData["code"], raw_response: responseData }
+  } catch (e) {
+    logger.error({ err: e }, "Error in save_task_non_cron_configuration")
+    return { success: false, message: `Internal error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// handleListClickzettaTasks — file_tools.py:3013-3100
+// ---------------------------------------------------------------------------
+async function handleListClickzettaTasks(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const folderId = arguments_["folderId"] as number | undefined
+    const taskName = arguments_["taskName"] as string | undefined
+    const taskType = arguments_["taskType"] as number | undefined
+    const page = (arguments_["page"] as number | undefined) ?? 1
+    const pageSize = (arguments_["pageSize"] as number | undefined) ?? 10
+
+    let fileType: number | undefined
+    if (taskType != null) {
+      fileType = TASK_TYPE_TO_FILE_TYPE[taskType] ?? taskType
+    }
+
+    const response = await apiListFiles(config, {
+      projectId: config.projectId,
+      folderId,
+      fileName: taskName,
+      fileType,
+      page,
+      pageSize,
+    })
+
+    const responseData = JSON.parse(response) as Record<string, unknown>
+    if (responseData["code"] === "200") {
+      const data = (responseData["data"] ?? {}) as Record<string, unknown>
+      const taskList = (data["list"] ?? []) as Record<string, unknown>[]
+      const total = data["total"] as number ?? 0
+      const totalPages = data["totalPages"] as number ?? 0
+      const convertedTasks = taskList.map(convertTaskDetailFields)
+      return {
+        success: true,
+        message: `Successfully retrieved ${convertedTasks.length} tasks (page ${page}/${totalPages})`,
+        tasks: convertedTasks,
+        pagination: { page, pageSize, total, totalPages },
+      }
+    }
+    return { success: false, message: `API request failed: ${responseData["message"] ?? "Unknown error"}`, raw_response: responseData }
+  } catch (e) {
+    logger.error({ err: e }, "Error in list_clickzetta_tasks")
+    return { success: false, message: `Internal error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// handleDeleteTask — file_tools.py:3204-3260
+// ---------------------------------------------------------------------------
+async function handleDeleteTask(
+  arguments_: Record<string, unknown>,
+  config: NonNullable<LakehouseDB["connectionConfig"]>,
+): Promise<Record<string, unknown>> {
+  try {
+    const taskId = arguments_["task_id"] as number | undefined
+    if (!taskId) return { success: false, message: "task_id is required" }
+
+    const updateBy = await resolveUsername(config)
+
+    const response = await apiDeleteFile(config, { fileId: taskId, updateBy })
+    const responseData = JSON.parse(response) as Record<string, unknown>
+
+    if (responseData["code"] === "200") {
+      return { success: true, message: "Successfully deleted task", task_id: taskId }
+    }
+    return {
+      success: false,
+      message: `API request failed: ${responseData["message"] ?? "Unknown error"}`,
+      code: responseData["code"],
+      raw_response: responseData,
+    }
+  } catch (e) {
+    logger.error({ err: e }, "Error in delete_task")
+    return { success: false, message: `Internal error: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // registerTaskTools — file_tools.py tool definitions
 // ---------------------------------------------------------------------------
 export function registerTaskTools(registry: ToolRegistry, db: LakehouseDB): void {
@@ -770,6 +1071,127 @@ export function registerTaskTools(registry: ToolRegistry, db: LakehouseDB): void
           query: { task_id: 11955233 },
         },
       ],
+    },
+    // file_tools.py:885-1400 — save_integration_task
+    {
+      name: "save_integration_task",
+      description:
+        "Save a complete data integration task with source and sink parameters. " +
+        "Handles table existence checks, automatic sink table creation, and integration configuration building.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_id: { type: "integer", description: "Unique task ID of the integration task." },
+          source_datasource_name: { type: "string", description: "Name of the source datasource." },
+          source_schema: { type: "string", description: "Schema/database containing the source table." },
+          source_table: { type: "string", description: "Name of the source table." },
+          source_ds_type: { type: "integer", description: "Source datasource type (1=Lakehouse, 5=MySQL, 7=PostgreSQL, etc.)." },
+          sink_datasource_name: { type: "string", description: "Name of the sink datasource." },
+          sink_schema: { type: "string", description: "Schema for the sink table (default: public)." },
+          sink_table: { type: "string", description: "Name of the sink table (defaults to source_table name)." },
+          sink_ds_type: { type: "integer", description: "Sink datasource type." },
+        },
+        additionalProperties: false,
+        required: ["task_id", "source_datasource_name", "source_schema", "source_table", "source_ds_type", "sink_datasource_name", "sink_ds_type"],
+      },
+      handler: async (args: Record<string, unknown>) => handleSaveIntegrationTask(args, getConfig()),
+      tags: ["studio", "project", "tasks", "integration", "save"],
+      samples: [{ description: "Save integration task", query: { task_id: 1234566, source_datasource_name: "MySQL_Prod", source_schema: "app", source_table: "users", source_ds_type: 5, sink_datasource_name: "LAKEHOUSE_ws", sink_schema: "public", sink_table: "users_from_mysql", sink_ds_type: 1 } }],
+    },
+    // file_tools.py:1590-1730 — save_task_cron_configuration
+    {
+      name: "save_task_cron_configuration",
+      description:
+        "Save cron-based scheduling configuration to a task. Fetches existing config and merges with the new cron expression. " +
+        "Use this when you want to SET or CHANGE the cron schedule of a task.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_id: { type: "integer", description: "Task ID to configure." },
+          cron_express: { type: "string", description: "Cron expression (e.g. '0 0 2 * * ? *' for 2AM daily)." },
+          schema_name: { type: "string", description: "Schema name for execution." },
+          etl_vc_code: { type: "string", description: "Virtual cluster code." },
+          etl_vc_id: { type: "string", description: "Virtual cluster ID." },
+        },
+        additionalProperties: false,
+        required: ["task_id", "cron_express"],
+      },
+      handler: async (args: Record<string, unknown>) => handleSaveTaskCronConfiguration(args, getConfig()),
+      tags: ["studio", "project", "tasks", "configure", "cron"],
+      samples: [{ description: "Set daily 2AM schedule", query: { task_id: 11955233, cron_express: "0 0 2 * * ? *" } }],
+    },
+    // file_tools.py:1733-1900 — save_task_non_cron_configuration
+    {
+      name: "save_task_non_cron_configuration",
+      description:
+        "Save non-cron configuration fields (retry, dependencies, VC, timeout) without changing the cron expression. " +
+        "Preserves the existing cron schedule while updating other scheduling parameters.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_id: { type: "integer", description: "Task ID to configure." },
+          retry_count: { type: "integer", description: "Max retry attempts on failure." },
+          retry_interval_time: { type: "integer", description: "Retry interval duration." },
+          retry_interval_time_unit: { type: "string", description: "Retry interval unit ('m' or 's')." },
+          rerun_property: { type: "integer", description: "Rerun policy: 1=ANY_TIME, 2=FAILED_ONLY, 3=NOT_RERUN." },
+          self_depends_job: { type: "integer", description: "Self-dependency: 0=no, 1=yes." },
+          schema_name: { type: "string", description: "Schema name." },
+          etl_vc_code: { type: "string", description: "Virtual cluster code." },
+          etl_vc_id: { type: "string", description: "Virtual cluster ID." },
+          execute_timeout: { type: "integer", description: "Execution timeout." },
+          execute_timeout_unit: { type: "string", description: "Timeout unit." },
+          task_dependencies_action: { type: "string", description: "Action for dependencies: 'keep', 'replace', or 'clear'." },
+          task_dependencies: { type: "array", description: "Dependency list (used with action='replace').", items: { type: "object" } },
+        },
+        additionalProperties: false,
+        required: ["task_id"],
+      },
+      handler: async (args: Record<string, unknown>) => handleSaveTaskNonCronConfiguration(args, getConfig()),
+      tags: ["studio", "project", "tasks", "configure"],
+      samples: [{ description: "Update retry policy", query: { task_id: 11955233, retry_count: 3, retry_interval_time: 5, retry_interval_time_unit: "m" } }],
+    },
+    // file_tools.py:3110-3200 — list_clickzetta_tasks
+    {
+      name: "list_clickzetta_tasks",
+      description:
+        "List tasks in Clickzetta Studio with optional filtering by folder, name, or type. " +
+        "Returns both draft and published tasks in any state.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          folderId: { type: "integer", description: "Folder ID to filter tasks." },
+          taskName: { type: "string", description: "Task name for fuzzy search." },
+          taskType: { type: "integer", description: "Task type filter (e.g. 1=LakehouseSQL, 10=DataIntegration)." },
+          page: { type: "integer", description: "Page number (default: 1)." },
+          pageSize: { type: "integer", description: "Items per page (default: 10)." },
+        },
+        additionalProperties: false,
+        required: [],
+      },
+      handler: async (args: Record<string, unknown>) => handleListClickzettaTasks(args, getConfig()),
+      tags: ["studio", "project", "tasks", "normalize"],
+      samples: [
+        { description: "List all tasks", query: { page: 1, pageSize: 20 } },
+        { description: "Search tasks by name", query: { taskName: "test", page: 1, pageSize: 20 } },
+      ],
+    },
+    // file_tools.py:3262-3300 — delete_task
+    {
+      name: "delete_task",
+      description:
+        "Delete a task in Clickzetta Studio. The task must be in draft/offline state. " +
+        "Published (online) tasks must be taken offline first.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_id: { type: "integer", description: "ID of the task to delete." },
+        },
+        additionalProperties: false,
+        required: ["task_id"],
+      },
+      handler: async (args: Record<string, unknown>) => handleDeleteTask(args, getConfig()),
+      tags: ["studio", "project", "tasks"],
+      samples: [{ description: "Delete task 12345", query: { task_id: 12345 } }],
     },
   ]
 

@@ -35,7 +35,9 @@ export function createFolder(config: StudioConfig, params: CreateFolderParams) {
     dataFolderName: params.dataFolderName,
     parentFolderId: params.parentFolderId,
     dataFolderType: 1,
-  })
+  },
+  { workspaceName: config.workspaceName }
+  )
 }
 
 export interface DeleteFolderParams {

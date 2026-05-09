@@ -45,7 +45,7 @@ export async function getToken(config: ConnectionConfig): Promise<AuthToken> {
   }
   pendingFetch = (async () => {
     try {
-      const token = await fetchToken(config)
+      const token = await fetchToken(config)      
       cachedToken = token
       cachedKey = key
       return token

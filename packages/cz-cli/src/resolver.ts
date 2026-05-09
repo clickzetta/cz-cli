@@ -53,7 +53,7 @@ export async function resolveTaskId(
   })
 
   const data = resp.data as Record<string, unknown> | undefined
-  const tasks = (Array.isArray(data) ? data : (data?.tasks ?? data?.data ?? [])) as Record<string, unknown>[]
+  const tasks = (Array.isArray(data) ? data : (data?.list ?? data?.data ?? [])) as Record<string, unknown>[]
   if (!Array.isArray(tasks) || tasks.length === 0) {
     error("TASK_NOT_FOUND", `No task found matching '${raw}'.`, { format }); return 0 as never
   }
@@ -195,13 +195,12 @@ export async function resolveFolderIdByName(
       pageSize,
     })
     const data = resp.data as Record<string, unknown> | undefined
-    const items = (Array.isArray(data) ? data : (data?.data ?? data?.folders ?? [])) as Record<string, unknown>[]
+    const items = (Array.isArray(data) ? data : (data?.list ?? [])) as Record<string, unknown>[]
     if (Array.isArray(items)) {
       const match = items.find((f) => f.dataFolderName === name)
       if (match) return Number(match.id)
     }
-    const pagination = (data?.pagination ?? data) as Record<string, unknown> | undefined
-    const totalPages = Number(pagination?.totalPages ?? 1)
+    const totalPages = Number(data?.totalPages ?? 1)
     if (page >= totalPages) break
     page++
   }

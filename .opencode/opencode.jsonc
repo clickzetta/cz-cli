@@ -10,7 +10,7 @@
       "packages/opencode/migration/*": "deny",
     },
   },
-  "plugin": ["../daytona.ts"],
+  "plugin": ["../daytona.ts","@devtheops/opencode-plugin-otel"],
   "mcp": {},
   "tools": {
     "github-triage": false,

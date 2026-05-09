@@ -75,6 +75,28 @@ async function apiGetTaskStatistics(
 }
 
 // ---------------------------------------------------------------------------
+// FileType → TaskType reverse mapping — common/task_type.py TASK_FILE_TYPE_MAPPING (reversed)
+// ---------------------------------------------------------------------------
+const FILE_TYPE_TO_TASK_TYPE: Record<number, number> = {
+  0: 0,     // Virtual
+  1: 10,    // DataIntegration
+  4: 23,    // LakeHouse SQL
+  5: 24,    // Shell
+  7: 26,    // Python3
+  14: 28,   // RealTimeDI
+  15: 29,   // JDBC
+  16: 30,   // DynamicTable
+  17: 31,   // ContinuousJob
+  280: 280, // FullIncrementalSync
+  281: 281, // MultipleRISync
+  291: 291, // MultipleDISync
+  300: 300, // DatabrickSql
+  301: 301, // DatabrickNotebook
+  400: 400, // Spark
+  500: 500, // Flow
+}
+
+// ---------------------------------------------------------------------------
 // convertTaskStatisticsFields — schedule_task_tools.py:28-71
 // ---------------------------------------------------------------------------
 function convertTaskStatisticsFields(apiData: Record<string, unknown>): Record<string, unknown> {
@@ -94,9 +116,13 @@ function convertTaskStatisticsFields(apiData: Record<string, unknown>): Record<s
       // schedule_task_tools.py:55-57
       converted[fieldMapping[key]!] = value
     } else if (key === "fileType") {
-      // schedule_task_tools.py:58-65 — skip fileType→taskType conversion (no reverse map needed here)
-      // Keep as-is since we don't have _convert_file_type_to_task_type in TS
-      converted["task_type"] = value
+      // schedule_task_tools.py:58-65 — convert FileType to TaskType
+      const taskType = FILE_TYPE_TO_TASK_TYPE[value as number]
+      if (taskType != null) {
+        converted["task_type"] = taskType
+      } else {
+        converted["task_type"] = value
+      }
     } else {
       // schedule_task_tools.py:67-69 — keep other fields as-is
       converted[key] = value

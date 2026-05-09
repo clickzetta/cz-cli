@@ -24,7 +24,7 @@ export async function listUserWorkspaces(
       accountId: String(tenantId),
       instanceName,
       tenantId: String(tenantId),
-      env: "prod",
+      env: 'prod'
     },
   }
   const resp = await request<WorkspaceInfo[]>(
@@ -39,6 +39,7 @@ export async function listUserWorkspaces(
       userId,
     },
   )
+
   if (resp.code !== 0 && resp.code !== "0" && resp.code !== 200 && resp.code !== "200") {
     throw new ClickZettaApiError(String(resp.code), resp.message ?? "Failed to list workspaces")
   }
