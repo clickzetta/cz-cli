@@ -380,23 +380,13 @@ export const RunCommand = cmd({
       process.exit(1)
     }
 
-    const rules: Permission.Ruleset = [
-      {
-        permission: "question",
-        action: "deny",
-        pattern: "*",
-      },
-      {
-        permission: "plan_enter",
-        action: "deny",
-        pattern: "*",
-      },
-      {
-        permission: "plan_exit",
-        action: "deny",
-        pattern: "*",
-      },
-    ]
+    const rules: Permission.Ruleset = args["dangerously-skip-permissions"]
+      ? [{ permission: "*", action: "allow" as const, pattern: "*" }]
+      : [
+          { permission: "question", action: "deny" as const, pattern: "*" },
+          { permission: "plan_enter", action: "deny" as const, pattern: "*" },
+          { permission: "plan_exit", action: "deny" as const, pattern: "*" },
+        ]
 
     function title() {
       if (args.title === undefined) return
@@ -412,7 +402,14 @@ export const RunCommand = cmd({
         return forked.data?.id
       }
 
-      if (baseID) return baseID
+      if (baseID) {
+        // Validate session exists; if not, create one with the custom string as title
+        const existing = await sdk.session.get({ sessionID: baseID }).catch(() => null)
+        if (existing?.data) return baseID
+        // Custom session string that doesn't exist — create a new session with it as title
+        const result = await sdk.session.create({ title: baseID, permission: rules })
+        return result.data?.id
+      }
 
       const name = title()
       const result = await sdk.session.create({ title: name, permission: rules })
@@ -584,7 +581,7 @@ export const RunCommand = cmd({
             if (args["dangerously-skip-permissions"]) {
               await sdk.permission.reply({
                 requestID: permission.id,
-                reply: "once",
+                reply: "always",
               })
             } else {
               UI.println(

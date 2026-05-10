@@ -55,8 +55,17 @@ export function successRows(
   if (opts?.extra) Object.assign(payload, opts.extra)
 
   const format = opts?.format ?? "json"
+  const field = opts?.field ?? outputState.field
   const noHeader = opts?.noHeader ?? false
   let output: string
+
+  // --field extraction takes priority over format
+  if (field) {
+    output = emit(payload, format, field)
+    if (output !== "") process.stdout.write(output + "\n")
+    process.exitCode = EXIT_OK
+    return
+  }
 
   if (format === "table") {
     output = noHeader ? formatTableNoHeader(columns, rows) : formatTable(columns, rows)
@@ -120,12 +129,32 @@ function emit(payload: unknown, format?: string, field?: string): string {
       return emitAsCsv(payload)
     case "jsonl":
       return emitAsJsonl(payload)
+    case "text":
+      return emitAsText(payload)
     default:
       return formatJson(payload)
   }
 }
 
 function extractField(obj: Record<string, unknown>, field: string): unknown {
+  // Support dot notation and array index: "data[0].name", "data.row_count"
+  const parts = field.replace(/\[(\d+)\]/g, ".$1").split(".")
+  let current: unknown = obj
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined
+    if (Array.isArray(current)) {
+      const idx = parseInt(part, 10)
+      if (isNaN(idx)) return undefined
+      current = current[idx]
+    } else if (typeof current === "object") {
+      current = (current as Record<string, unknown>)[part]
+    } else {
+      return undefined
+    }
+  }
+  if (current !== undefined) return current
+
+  // Fallback: simple key lookup in data/rows (backward compat)
   // 1. Top-level key
   if (field in obj) return obj[field]
   // 2. data (dict)
@@ -174,6 +203,11 @@ function emitAsTable(payload: unknown): string {
       const columns = Object.keys(data[0] as Record<string, unknown>)
       return formatTable(columns, data as Record<string, unknown>[])
     }
+    if (Array.isArray(data) && data.length > 0) {
+      // Primitive array — wrap each item as {value: item}
+      const rows = data.map((v) => ({ value: v === null || v === undefined ? "" : String(v) }))
+      return formatTable(["value"], rows)
+    }
     if (data && typeof data === "object" && !Array.isArray(data)) {
       const columns = Object.keys(data as Record<string, unknown>)
       return formatTable(columns, [data as Record<string, unknown>])
@@ -190,6 +224,14 @@ function emitAsCsv(payload: unknown): string {
       const columns = Object.keys(data[0] as Record<string, unknown>)
       return formatCsv(columns, data as Record<string, unknown>[])
     }
+    if (Array.isArray(data) && data.length > 0) {
+      const rows = data.map((v) => ({ value: v === null || v === undefined ? "" : String(v) }))
+      return formatCsv(["value"], rows)
+    }
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      const columns = Object.keys(data as Record<string, unknown>)
+      return formatCsv(columns, [data as Record<string, unknown>])
+    }
   }
   return formatPretty(payload)
 }
@@ -203,7 +245,30 @@ function emitAsJsonl(payload: unknown): string {
     }
     const data = obj.data
     if (Array.isArray(data)) {
-      return formatJsonl(data as Record<string, unknown>[])
+      if (data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
+        return formatJsonl(data as Record<string, unknown>[])
+      }
+      // Primitive array — one JSON value per line
+      return data.map((v) => JSON.stringify(v)).join("\n")
+    }
+  }
+  return formatJson(payload)
+}
+
+function emitAsText(payload: unknown): string {
+  if (payload && typeof payload === "object") {
+    const obj = payload as Record<string, unknown>
+    const data = obj.data
+    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
+      const columns = Object.keys(data[0] as Record<string, unknown>)
+      return formatText(columns, data as Record<string, unknown>[])
+    }
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map((v) => (v === null || v === undefined ? "" : String(v))).join("\n")
+    }
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      const columns = Object.keys(data as Record<string, unknown>)
+      return formatText(columns, [data as Record<string, unknown>])
     }
   }
   return formatJson(payload)

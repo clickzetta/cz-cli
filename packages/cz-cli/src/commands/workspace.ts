@@ -72,7 +72,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("name", { type: "string", demandOption: true, describe: "Workspace name" })
             .option("schema", { type: "string", describe: "Default schema to set alongside workspace" })
-            .option("persist", { type: "boolean", default: false, describe: "Save workspace to profile config (permanent). Without --persist, returns the SDK hint only." }),
+            .option("persist", { type: "boolean", default: true, describe: "Save workspace to profile config (permanent). Use --no-persist to only show the SDK hint without saving." }),
         async (argv) => {
           const format = argv.output
           const name = argv.name as string
@@ -115,6 +115,6 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .demandCommand(1, ""),
+      .strictCommands().strictOptions().demandCommand(1, ""),
   )
 }

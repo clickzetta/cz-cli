@@ -11,8 +11,8 @@ export interface ListRunsParams {
   instanceType?: string
   orderByFields?: string
   orderBy?: string
-  queryStartPlanTime?: string
-  queryEndPlanTime?: string
+  queryStartPlanTime?: number | string
+  queryEndPlanTime?: number | string
   instanceStatusList?: string[]
   groupId?: number
 }

@@ -65,14 +65,10 @@ async function input(value?: string) {
 }
 
 export const TuiThreadCommand = cmd({
-  command: "$0 [project]",
+  command: "$0",
   describe: "start opencode tui",
   builder: (yargs) =>
     withNetworkOptions(yargs)
-      .positional("project", {
-        type: "string",
-        describe: "path to start opencode in",
-      })
       .option("model", {
         type: "string",
         alias: ["m"],
@@ -115,11 +111,11 @@ export const TuiThreadCommand = cmd({
         return
       }
 
-      // Resolve relative --project paths from PWD, then use the real cwd after
+      // Resolve relative --dir paths from PWD, then use the real cwd after
       // chdir so the thread and worker share the same directory key.
       const root = Filesystem.resolve(process.env.PWD ?? process.cwd())
-      const next = args.project
-        ? Filesystem.resolve(path.isAbsolute(args.project) ? args.project : path.join(root, args.project))
+      const next = args.dir
+        ? Filesystem.resolve(path.isAbsolute(args.dir) ? args.dir : path.join(root, args.dir))
         : Filesystem.resolve(process.cwd())
       const file = await target()
       try {

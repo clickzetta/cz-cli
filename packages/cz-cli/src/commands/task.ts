@@ -23,7 +23,7 @@ import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 
 const TASK_TYPE_MAP: Record<string, number> = {
-  SQL: 23, PYTHON: 26, SHELL: 24, SPARK: 400, FLOW: 500,
+  SQL: 4, PYTHON: 7, SHELL: 5, SPARK: 400, FLOW: 500,
 }
 
 function parseTaskType(value: string): number {
@@ -382,6 +382,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
+            .version(false)
             .option("version", { type: "number", describe: "Task version to publish" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
@@ -849,7 +850,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             },
           )
-          .demandCommand(1, ""),
+          .strictCommands().strictOptions().demandCommand(1, ""),
       )
       .command(
         "delete-folder <folder>",
@@ -971,6 +972,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .demandCommand(1, ""),
+      .strictCommands().strictOptions().demandCommand(1, ""),
   )
 }

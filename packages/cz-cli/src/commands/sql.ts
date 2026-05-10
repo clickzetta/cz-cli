@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { splitSql, JobStatus, request, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
+import { splitSql, JobStatus, request, requestRaw, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
@@ -447,7 +447,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
                 instanceId: ctx.token.instanceId,
               }
               const body = {
-                get_summary_request: {
+                get_result_request: {
                   account: { user_id: 0 },
                   job_id: { id: jobId.id, workspace: jobId.workspace, instance_id: jobId.instanceId },
                   offset: 0,
@@ -455,10 +455,15 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
                 },
                 user_agent: "",
               }
-              const resp = await request<Record<string, unknown>>(ctx.clientOpts, "/lh/getJob", body)
-              const data = resp.data ?? {}
+              const resp = await requestRaw<Record<string, unknown>>(ctx.clientOpts, "/lh/getJob", body)
+              const status = resp.status as Record<string, unknown> | undefined
               logOperation("sql status", { ok: true })
-              success(data, { format })
+              success({
+                job_id: argv["job-id"],
+                state: status?.state ?? "UNKNOWN",
+                error_code: status?.errorCode || undefined,
+                error_message: status?.errorMessage || undefined,
+              }, { format })
             } catch (err) {
               error("JOB_STATUS_ERROR", err instanceof Error ? err.message : String(err), { format })
             }

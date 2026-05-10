@@ -224,13 +224,14 @@ export function deleteTask(config: StudioConfig, params: DeleteTaskParams) {
   return studioRequest(config, "/ide-admin/v1/scheduleTask/deleteTask", {
     scheduleTaskId: params.scheduleTaskId,
     projectId: params.projectId,
+    operateUser: String(config.userId),
   })
 }
 
 export interface GetTaskRunStatsParams {
   projectId: number
-  queryPlanTimeLeft?: string
-  queryPlanTimeRight?: string
+  queryPlanTimeLeft?: number | string
+  queryPlanTimeRight?: number | string
   taskNameRlike?: string
 }
 

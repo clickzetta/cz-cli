@@ -109,7 +109,7 @@ export function createCli(args: string[]) {
       const output = JSON.stringify({
         error: {
           code: "USAGE_ERROR",
-          message: msg,
+          message: msg ?? "Unknown or invalid arguments",
         },
         ai_message: aiMessage,
       })

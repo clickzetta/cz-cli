@@ -73,8 +73,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               scheduleTaskId: taskId,
               instanceStatusList: statusList,
               cycleTaskType: resolvedRunType,
-              queryStartPlanTime: String(fromMs),
-              queryEndPlanTime: String(toMs),
+              queryStartPlanTime: fromMs,
+              queryEndPlanTime: toMs,
             })
             const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
             const items = normalizeRunIdentityList(Array.isArray(data.taskRunList) ? data.taskRunList as Record<string, unknown>[] : [])
@@ -377,8 +377,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const toMs = argv.to ? parseWindowBoundary(argv.to as string, true) : now
             const resp = await getTaskRunStats(sc, {
               projectId: sc.projectId,
-              queryPlanTimeLeft: String(fromMs),
-              queryPlanTimeRight: String(toMs),
+              queryPlanTimeLeft: fromMs,
+              queryPlanTimeRight: toMs,
               ...(argv.task ? { taskNameRlike: argv.task as string } : {}),
             })
             logOperation("runs stats", { ok: true })
@@ -388,6 +388,6 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .demandCommand(1, ""),
+      .strictCommands().strictOptions().demandCommand(1, ""),
   )
 }
