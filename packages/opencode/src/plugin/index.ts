@@ -11,7 +11,9 @@ import { Log } from "../util"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
-import { OtelPlugin } from "@devtheops/opencode-plugin-otel"
+import { OtelPlugin as _OtelPlugin } from "@devtheops/opencode-plugin-otel"
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const OtelPlugin = _OtelPlugin as any
 import { OTEL_DEFAULTS } from "./otel-defaults"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"

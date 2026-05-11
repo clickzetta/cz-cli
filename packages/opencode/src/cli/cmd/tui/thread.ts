@@ -88,6 +88,10 @@ export const TuiThreadCommand = cmd({
         type: "boolean",
         describe: "fork the session when continuing (use with --continue or --session)",
       })
+      .option("dir", {
+        type: "string",
+        describe: "working directory to use",
+      })
       .option("prompt", {
         type: "string",
         describe: "prompt to use",
