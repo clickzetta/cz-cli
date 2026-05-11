@@ -43,11 +43,13 @@ function truncateLargeFields(rows: Record<string, unknown>[], maxLen: number): R
   for (const row of rows) {
     for (const [key, val] of Object.entries(row)) {
       if (typeof val === "string" && val.length > maxLen) {
-        row[key] = val.slice(0, maxLen) + `...(truncated, ${val.length} chars)`
+        const suffix = `...(truncated, ${val.length} chars)`
+        row[key] = val.slice(0, maxLen - suffix.length) + suffix
       } else if (val instanceof Buffer || val instanceof Uint8Array) {
         const s = Buffer.from(val).toString("utf-8")
         if (s.length > maxLen) {
-          row[key] = s.slice(0, maxLen) + `...(truncated, ${s.length} chars)`
+          const suffix = `...(truncated, ${s.length} chars)`
+          row[key] = s.slice(0, maxLen - suffix.length) + suffix
         } else {
           row[key] = s
         }
@@ -371,8 +373,9 @@ async function handler(argv: SqlArgs): Promise<void> {
       success(resp.data, { format })
     } catch (err) {
       logOperation("sql job-profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
-      error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format }); return
+      error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format })
     }
+    return
   }
 
   let sql = resolveSql(argv)
@@ -396,10 +399,10 @@ async function handler(argv: SqlArgs): Promise<void> {
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
     }
-    // Multi-statement: execute all, return last result
+    // Multi-statement: execute all, return all results in batch mode or last result otherwise
     if (statements.length > 1) {
       const accumulatedHints = { ...hints }
-      for (let i = 0; i < statements.length - 1; i++) {
+      for (let i = 0; i < statements.length; i++) {
         const stmt = statements[i]
         // Extract SET statements as hints for subsequent statements
         const setMatch = stmt.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
@@ -407,14 +410,21 @@ async function handler(argv: SqlArgs): Promise<void> {
           accumulatedHints[setMatch[1]] = setMatch[2].replace(/;$/, "").trim()
           continue
         }
-        const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000 })
-        if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-          logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
-          error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format })
-          return
+        if (argv.batch) {
+          // Batch mode: output every statement's result
+          await executeSingle(ctx, stmt, argv, accumulatedHints)
+        } else if (i < statements.length - 1) {
+          // Non-batch: silently execute intermediate statements
+          const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000 })
+          if (isQueryResult(r) && r.status === JobStatus.FAILED) {
+            logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
+            error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format })
+            return
+          }
+        } else {
+          await executeSingle(ctx, stmt, argv, accumulatedHints)
         }
       }
-      await executeSingle(ctx, statements[statements.length - 1], argv, accumulatedHints)
     } else {
       await executeSingle(ctx, statements[0], argv, hints ?? {})
     }

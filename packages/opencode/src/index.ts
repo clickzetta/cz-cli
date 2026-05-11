@@ -227,8 +227,11 @@ const cli = yargs(args)
       args: process.argv.slice(2),
     })
 
-    const marker = path.join(Global.Path.data, "clickzetta.db")
-    if (!(await Filesystem.exists(marker))) {
+    // Show migration progress only on first run (DB file doesn't exist yet).
+    // Database.Client() creates the DB and applies schema migrations on first access.
+    // JsonMigration.run() migrates legacy JSON storage → SQLite (idempotent, skips if no storage/ dir).
+    const isFirstRun = !(await Filesystem.exists(Database.Path))
+    if (isFirstRun) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36

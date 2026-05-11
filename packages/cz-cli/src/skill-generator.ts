@@ -9,11 +9,18 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
 import { resolve, dirname } from "node:path"
 import { VERSION } from "./version.js"
 import { buildCommandInventory, type CommandEntry } from "./guide-builder.js"
+import EMBEDDED_TEMPLATE from "./SKILL.template.md" with { type: "text" }
 
 const GUIDE_GENERATOR_VERSION = "1.0.0"
 
 /** Default template path: src/SKILL.template.md (sibling to this file at build time). */
-export const SKILL_TEMPLATE_PATH = resolve(import.meta.dirname ?? dirname(new URL(import.meta.url).pathname), "SKILL.template.md")
+const _baseDir = import.meta.dirname ?? dirname(new URL(import.meta.url).pathname)
+export const SKILL_TEMPLATE_PATH = resolve(_baseDir, "SKILL.template.md")
+
+function readTemplate(templatePath?: string): string {
+  if (!templatePath || templatePath === SKILL_TEMPLATE_PATH) return EMBEDDED_TEMPLATE
+  return readFileSync(templatePath, "utf-8")
+}
 
 /** Default output path: skills/cz-cli/SKILL.md relative to repo root. */
 export const SKILL_OUTPUT_PATH = resolve(import.meta.dirname ?? dirname(new URL(import.meta.url).pathname), "../../../skills/cz-cli/SKILL.md")
@@ -115,8 +122,7 @@ export function generateSkillMarkdown(opts?: {
   cliVersion?: string
   companionSkills?: CompanionSkill[]
 }): string {
-  const templatePath = opts?.templatePath ?? SKILL_TEMPLATE_PATH
-  const templateText = readFileSync(templatePath, "utf-8")
+  const templateText = readTemplate(opts?.templatePath)
   return renderSkillMarkdown({
     templateText,
     cliVersion: opts?.cliVersion,

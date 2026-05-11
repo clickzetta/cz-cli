@@ -277,6 +277,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("retry-count", { type: "number", describe: "Retry count" })
             .option("timeout", { type: "number", describe: "Execute timeout" })
             .option("timeout-unit", { type: "string", default: "MINUTES", describe: "Timeout unit" })
+            .option("active-start-time", { type: "string", describe: "Schedule active start time (e.g. 2026-01-01 00:00:00)" })
+            .option("active-end-time", { type: "string", describe: "Schedule active end time (e.g. 2099-12-31 23:59:59)" })
             .option("dry-run", { type: "boolean", default: false, describe: "Validate and preview without saving" })
             .option("start", { alias: "s", type: "string", describe: "Preview start clock HH:MM (dry-run only, default: 00:00)" })
             .option("end", { alias: "e", type: "string", describe: "Preview end clock HH:MM (dry-run only, default: 23:59)" })
@@ -333,6 +335,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               retryCount: argv["retry-count"],
               executeTimeout: argv.timeout,
               executeTimeoutUnit: argv["timeout-unit"],
+              activeStartTime: argv["active-start-time"],
+              activeEndTime: argv["active-end-time"],
             })
             logOperation("task save-config", { ok: true })
             success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
