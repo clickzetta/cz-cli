@@ -124,10 +124,16 @@ fi
 
 # Install bundled skills for cz-cli internal use
 if [ -z "$SKIP_SKILLS_INSTALL" ]; then
-SKILLS_DEST="$HOME/.clickzetta/skills"
+SKILLS_DEST="$HOME/.clickzetta/skills/.builtin"
 if [ -d "$SCRIPT_DIR/skills" ]; then
     echo "Installing bundled skills ..."
     mkdir -p "$SKILLS_DEST"
+    # Migrate: remove legacy skills previously installed directly in ~/.clickzetta/skills/
+    for skill_dir in "$SCRIPT_DIR/skills/"*/; do
+        skill_name=$(basename "$skill_dir")
+        [ "$skill_name" = "cz-cli" ] && continue
+        rm -rf "$HOME/.clickzetta/skills/$skill_name"
+    done
     # Copy all skills except cz-cli subagent skill (that goes to external agents)
     for skill_dir in "$SCRIPT_DIR/skills/"*/; do
         skill_name=$(basename "$skill_dir")

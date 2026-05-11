@@ -3,10 +3,8 @@
 AI-Agent-friendly command-line interface for ClickZetta Lakehouse.
 
 ```bash
-curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+npm install -g @clickzetta/cz-cli
 ```
-
-Restart your shell after installation.
 
 ## Features
 
@@ -82,18 +80,30 @@ Use `--session <id>` for multi-turn conversations on the same topic.
 
 ## Installation Options
 
+### npm (recommended)
+
+```bash
+npm install -g @clickzetta/cz-cli
+```
+
+### Shell Script
+
+```bash
+curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+```
+
+Pin a specific version:
+
+```bash
+CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+```
+
 ### Manual Install
 
 Download the archive for your platform from [Releases](https://github.com/clickzetta/cz-cli/releases), extract, and run:
 
 ```bash
 sh setup.sh
-```
-
-### Pin a Version
-
-```bash
-CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
 ```
 
 ### Environment Variables

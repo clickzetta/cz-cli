@@ -40,9 +40,20 @@ try {
     }
   }
 
-  // 2. All other skills → ~/.clickzetta/skills/ (cz-cli internal use)
-  const internalDest = path.join(home, ".clickzetta", "skills");
+  // 2. All other skills → ~/.clickzetta/skills/.builtin/ (cz-cli managed, safe to overwrite)
+  const internalDest = path.join(home, ".clickzetta", "skills", ".builtin");
   fs.mkdirSync(internalDest, { recursive: true });
+
+  // Migrate: remove legacy skills that were previously installed directly in ~/.clickzetta/skills/
+  const legacyDir = path.join(home, ".clickzetta", "skills");
+  for (const name of skills) {
+    if (name === "cz-cli") continue;
+    const legacy = path.join(legacyDir, name);
+    if (fs.existsSync(legacy) && fs.statSync(legacy).isDirectory()) {
+      try { fs.rmSync(legacy, { recursive: true, force: true }); } catch (e) {}
+    }
+  }
+
   for (const name of skills) {
     if (name === "cz-cli") continue;
     const src = path.join(skillsSrc, name);

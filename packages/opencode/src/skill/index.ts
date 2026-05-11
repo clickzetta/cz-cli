@@ -172,7 +172,7 @@ const discoverSkills = Effect.fnUntraced(function* (
 
   const configDirs = yield* config.directories()
   for (const dir of configDirs) {
-    yield* scan(state, dir, CLICKZETTA_SKILL_PATTERN)
+    yield* scan(state, dir, CLICKZETTA_SKILL_PATTERN, { dot: true })
   }
 
   const cfg = yield* config.get()
@@ -184,7 +184,7 @@ const discoverSkills = Effect.fnUntraced(function* (
       continue
     }
 
-    yield* scan(state, dir, SKILL_PATTERN)
+    yield* scan(state, dir, SKILL_PATTERN, { dot: true })
   }
 
   for (const url of cfg.skills?.urls ?? []) {
