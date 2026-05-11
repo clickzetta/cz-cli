@@ -34,7 +34,8 @@ cz-cli task list                              List Studio tasks
 cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW)
 cz-cli task content <task>                    Get task script and config
 cz-cli task save-content <task> --file <f>    Save task script
-cz-cli task save-config <task>                Save task schedule config
+cz-cli task save-config <task>                Save task non-cron config, like retry, dependency
+cz-cli task save-cron <task>                  Save task schedule config
 cz-cli task deps <task>                       Show task dependencies (draft)
 cz-cli task online <task>                     Publish a task
 cz-cli task offline <task>                    Take task offline (irreversible)
