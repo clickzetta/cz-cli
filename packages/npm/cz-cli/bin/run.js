@@ -13,15 +13,11 @@ const binName = platform === "win32" ? "cz-cli.exe" : "cz-cli";
 try {
   const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));
   const binPath = path.join(pkgDir, "bin", binName);
-  const result = execFileSync(binPath, process.argv.slice(2), {
-    stdio: "inherit",
-    env: process.env,
-  });
+  execFileSync(binPath, process.argv.slice(2), { stdio: "inherit", env: process.env });
 } catch (e) {
-  if (e.status !== undefined) {
-    process.exit(e.status);
-  }
-  console.error(`Error: Platform ${platform}-${arch} is not supported by @clickzetta/cz-cli.`);
-  console.error(`Try installing directly: curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh`);
+  if (e.status !== undefined) process.exit(e.status);
+  console.error(`Error: Platform binary not found (${pkgName}).`);
+  console.error(`Fix: npm install -g @clickzetta/cz-cli@latest`);
+  console.error(`Or:  curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh`);
   process.exit(1);
 }
