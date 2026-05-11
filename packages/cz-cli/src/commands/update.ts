@@ -59,10 +59,16 @@ async function fetchLatestVersion(): Promise<string | null> {
 function updateViaNpm(): boolean {
   try {
     process.stderr.write("Updating via npm...\n")
-    execSync(`npm install -g ${NPM_PACKAGE}@latest`, { stdio: "inherit" })
+    execSync(`npm install -g ${NPM_PACKAGE}@latest --ignore-scripts=false`, { stdio: "inherit" })
     return true
   } catch {
-    return false
+    // Retry without strict dependency resolution (works around unrelated broken global packages)
+    try {
+      execSync(`npm install -g ${NPM_PACKAGE}@latest --force`, { stdio: "inherit" })
+      return true
+    } catch {
+      return false
+    }
   }
 }
 
