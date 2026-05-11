@@ -59,7 +59,7 @@ async function fetchLatestVersion(): Promise<string | null> {
 function updateViaNpm(): boolean {
   try {
     process.stderr.write("Updating via npm...\n")
-    execSync(`npm update -g ${NPM_PACKAGE}`, { stdio: "inherit" })
+    execSync(`npm install -g ${NPM_PACKAGE}@latest`, { stdio: "inherit" })
     return true
   } catch {
     return false
@@ -67,7 +67,7 @@ function updateViaNpm(): boolean {
 }
 
 function updateViaBinary(version: string): boolean {
-  const installUrl = `https://github.com/${REPO}/releases/download/v${version}/install.sh`
+  const installUrl = `https://github.com/${REPO}/releases/latest/download/install.sh`
   try {
     process.stderr.write("Downloading and installing update...\n")
     execSync(`curl -fsSL "${installUrl}" | sh`, {
@@ -123,7 +123,7 @@ export function registerUpdateCommand(cli: Argv) {
       } else {
         process.stderr.write("Update failed. Try manually:\n")
         if (installType === "npm-global") {
-          process.stderr.write(`  npm update -g ${NPM_PACKAGE}\n`)
+          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@latest\n`)
         } else {
           process.stderr.write(`  curl -fsSL https://github.com/${REPO}/releases/latest/download/install.sh | sh\n`)
         }
