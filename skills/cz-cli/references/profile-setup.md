@@ -79,6 +79,38 @@ For `openai-compatible` (third-party relays), add `--base-url <url>`.
  "supported_providers": ["anthropic", "openai", "openai-compatible", "bedrock", "google", "azure"]}
 ```
 
+## Alternative: username/password profile (no credential required)
+
+If the user has an existing instance account (username + password) but no base64 credential, use `cz-cli profile create` directly:
+
+```bash
+cz-cli profile create <name> \
+  --username <username> \
+  --password <password> \
+  --instance <instance_name> \
+  --workspace <workspace_name> \
+  --service <service_host> \
+  --schema public \
+  --vcluster default
+```
+
+**Common service endpoints:**
+
+| 云区域 | service |
+|--------|---------|
+| 阿里云 华东2（上海） | `cn-shanghai-alicloud.api.clickzetta.com` |
+| 腾讯云 华东（上海） | `ap-shanghai-tencentcloud.api.clickzetta.com` |
+| 腾讯云 华北（北京） | `ap-beijing-tencentcloud.api.clickzetta.com` |
+| 腾讯云 华南（广州） | `ap-guangzhou-tencentcloud.api.clickzetta.com` |
+| AWS 中国（北京） | `cn-north-1-aws.api.clickzetta.com` |
+
+After creating, verify with:
+```bash
+cz-cli status --profile <name>
+```
+
+Note: `profile discover` / `list-workspaces` / `render-command` require a Studio page URL (`https://<instance>.accounts.clickzetta.com`) and are not usable when only a service endpoint + credentials are available.
+
 ## Step-by-step: no credential available
 
 If the user doesn't have a base64 credential, guide them to:
