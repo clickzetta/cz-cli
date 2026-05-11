@@ -42,7 +42,9 @@ export async function execute(command: string, extraArgs?: string[]): Promise<Ex
 async function executeInternal(command: string, extraArgs?: string[]): Promise<ExecuteResult> {
   const args = splitArgs(command)
   if (extraArgs) args.push(...extraArgs)
-  args.push("--output", "json")
+  if (!args.includes("--output") && !args.includes("-o")) {
+    args.push("--output", "json")
+  }
 
   const chunks: string[] = []
   const originalStdoutWrite = process.stdout.write.bind(process.stdout)

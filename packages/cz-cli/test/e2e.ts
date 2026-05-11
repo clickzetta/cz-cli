@@ -96,7 +96,9 @@ const tests: TestCase[] = [
 
   // === 7. Output formats ===
   { name: "output json", cmd: "profile list --output json", assert: assertSingleLine },
-  { name: "output pretty", cmd: "profile list --output pretty", assert: assertOk },
+  { name: "output pretty", cmd: "profile list --output pretty", assert: (r) => {
+    try { const j = JSON.parse(r.output.trim()); return j.data ? null : "no data field" } catch { return `not valid JSON: ${r.output.slice(0, 40)}` }
+  }},
   { name: "output table", cmd: "profile list --output table", assert: (r) => r.output.trim() ? null : "empty output" },
   { name: "output csv", cmd: "profile list --output csv", assert: (r) => r.output.trim() ? null : "empty output" },
   { name: "output toon", cmd: "profile list --output toon", assert: (r) => r.output.trim() ? null : "empty output" },

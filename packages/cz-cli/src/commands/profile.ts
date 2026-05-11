@@ -496,6 +496,6 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         },
       )
     registerBootstrapCommands(yargs)
-    return yargs.demandCommand(1, "")
+    return yargs.strictCommands().strictOptions().demandCommand(1, "")
   })
 }

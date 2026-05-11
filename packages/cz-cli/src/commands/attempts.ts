@@ -137,6 +137,6 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command("log [id]", "Get attempt log", logOptions, logHandler)
       .command("logs [id]", "Get attempt log (alias)", logOptions, logHandler)
-      .demandCommand(1, ""),
+      .strictCommands().strictOptions().demandCommand(1, ""),
   )
 }

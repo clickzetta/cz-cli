@@ -106,11 +106,17 @@ export function createCli(args: string[]) {
     .fail((msg, err, yargs) => {
       if (err) throw err
       const aiMessage = "Run the command with --help to see available options and usage."
+      const message = msg ?? (() => {
+        const KNOWN_FLAGS = new Set(["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "output", "o", "field", "debug", "d", "help", "h", "version"])
+        const KNOWN_COMMANDS = new Set(["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "setup", "update", "ai-guide", "install-skills"])
+        const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => !KNOWN_FLAGS.has(a))
+        if (unknownFlags.length > 0) return `Unknown argument: ${unknownFlags[0]}`
+        const unknownCmds = args.filter((a) => !a.startsWith("-")).filter((a) => !KNOWN_COMMANDS.has(a))
+        if (unknownCmds.length > 0) return `Unknown argument: ${unknownCmds[0]}`
+        return "Unknown argument"
+      })()
       const output = JSON.stringify({
-        error: {
-          code: "USAGE_ERROR",
-          message: msg ?? "Unknown or invalid arguments",
-        },
+        error: { code: "USAGE_ERROR", message },
         ai_message: aiMessage,
       })
       process.stdout.write(output + "\n")

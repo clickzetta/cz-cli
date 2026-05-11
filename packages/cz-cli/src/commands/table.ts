@@ -305,6 +305,6 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .demandCommand(1, ""),
+      .strictCommands().strictOptions().demandCommand(1, ""),
   )
 }
