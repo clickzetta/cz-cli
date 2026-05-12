@@ -308,6 +308,13 @@ export const RunCommand = cmd({
       })
   },
   handler: async (args) => {
+    // Prevent recursive fork: if a parent cz-cli agent already set this, refuse to start.
+    if (process.env.CLICKZETTA_AGENT_RUNNING) {
+      process.stdout.write(JSON.stringify({ ok: false, error: "NESTED_AGENT", message: "cz-cli agent is already running (pid " + process.env.CLICKZETTA_AGENT_RUNNING + "), refusing to start nested agent." }) + "\n")
+      process.exit(1)
+    }
+    process.env.CLICKZETTA_AGENT_RUNNING = String(process.pid)
+
     if (args.profile) {
       process.env.CZ_PROFILE = args.profile
       // Expand profile fields into CZ_* env vars so cz-tool picks up the right

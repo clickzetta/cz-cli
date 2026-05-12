@@ -1,4 +1,5 @@
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
+import { VERSION } from "../version.js"
 import {
   getToken,
   clearTokenCache,
@@ -67,7 +68,7 @@ export async function execSql(
     instanceName: ctx.config.instance,
     instanceId: ctx.token.instanceId,
     jobId,
-    hints: opts?.hints,
+    hints: opts?.hints?.query_tag ? opts.hints : { query_tag: `cz-cli@v${VERSION}`, ...opts?.hints },
     asynchronous: opts?.asynchronous,
   })
   if (opts?.asynchronous) {

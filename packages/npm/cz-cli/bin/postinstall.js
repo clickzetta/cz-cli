@@ -28,6 +28,20 @@ try {
     path.join(home, ".openclaw", "workspace", "skills"),
     path.join(home, ".singclaw", "workspace", "skills"),
   ];
+
+  // Cleanup: fix cz-cli-v2 → cz-cli in existing skill files (bug introduced in 57a49fcdc)
+  for (const dir of agentDirs) {
+    const skillFile = path.join(dir, "cz-cli", "SKILL.md");
+    try {
+      if (fs.existsSync(skillFile)) {
+        const content = fs.readFileSync(skillFile, "utf-8");
+        if (content.includes("name: cz-cli-v2")) {
+          fs.writeFileSync(skillFile, content.replace("name: cz-cli-v2", "name: cz-cli"), "utf-8");
+        }
+      }
+    } catch (e) {}
+  }
+
   if (skills.includes("cz-cli")) {
     const src = path.join(skillsSrc, "cz-cli");
     for (const dir of agentDirs) {
