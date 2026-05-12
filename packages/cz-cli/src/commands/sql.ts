@@ -359,7 +359,7 @@ async function handler(argv: SqlArgs): Promise<void> {
       instanceId: ctx.token.instanceId,
     }
     const body = {
-      get_summary_request: {
+      get_result_request: {
         account: { user_id: 0 },
         job_id: { id: jobId.id, workspace: jobId.workspace, instance_id: jobId.instanceId },
         offset: 0,
@@ -368,9 +368,9 @@ async function handler(argv: SqlArgs): Promise<void> {
       user_agent: "",
     }
     try {
-      const resp = await request<Record<string, unknown>>(ctx.clientOpts, "/lh/getJob", body)
+      const resp = await requestRaw<Record<string, unknown>>(ctx.clientOpts, "/lh/getJob", body)
       logOperation("sql job-profile", { ok: true })
-      success(resp.data, { format })
+      success(resp, { format })
     } catch (err) {
       logOperation("sql job-profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
       error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format })

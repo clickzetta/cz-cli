@@ -22,8 +22,8 @@ function readTemplate(templatePath?: string): string {
   return readFileSync(templatePath, "utf-8")
 }
 
-/** Default output path: skills/cz-cli/SKILL.md relative to repo root. */
-export const SKILL_OUTPUT_PATH = resolve(import.meta.dirname ?? dirname(new URL(import.meta.url).pathname), "../../../skills/cz-cli/SKILL.md")
+const _resolved = resolve(_baseDir, "../../../skills/cz-cli/SKILL.md")
+export const SKILL_OUTPUT_PATH = _resolved.startsWith("/skills/") ? resolve(process.cwd(), "skills/cz-cli/SKILL.md") : _resolved
 
 // ---------------------------------------------------------------------------
 // Internal helpers
