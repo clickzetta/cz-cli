@@ -18,6 +18,7 @@ import { registerJobCommand } from "./commands/job.js"
 import { registerAiGuideCommand } from "./commands/ai-guide.js"
 import { registerSetupCommand } from "./commands/setup.js"
 import { registerUpdateCommand } from "./commands/update.js"
+import { registerDatasourceCommand } from "./commands/datasource.js"
 
 export interface ExecuteResult {
   exitCode: number
@@ -77,6 +78,7 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
     registerAiGuideCommand(cli)
     registerSetupCommand(cli)
     registerUpdateCommand(cli)
+    registerDatasourceCommand(cli)
     await cli.demandCommand(1, "").help().parseAsync()
   } catch (e) {
     if (!process.exitCode) process.exitCode = 1

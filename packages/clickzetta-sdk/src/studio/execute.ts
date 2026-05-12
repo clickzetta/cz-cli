@@ -32,5 +32,9 @@ export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
     adhocVcId: params.adhocVcId,
     dataFileContent: params.dataFileContent,
     params: params.params,
-  })
+  },
+    {
+      env: "prod",
+      workspaceName:config.workspaceName
+    })
 }

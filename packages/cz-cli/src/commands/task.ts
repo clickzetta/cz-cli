@@ -4,7 +4,7 @@ import {
   listTasks, createTask, getTaskDetail, getTaskConfigDetail,
   saveTaskContent, saveTaskConfig, submitTask, onlineTask, offlineTask,
   offlineTaskWithDownstream, deleteTask, deleteFolder,
-  getTaskDependencies, listFolders, createFolder,
+   listFolders, createFolder,
   executeAdhoc, getRunDetail,
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
   removeFlowNode, submitFlow, listFlowInstances,
@@ -722,10 +722,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
               if (!content) {
                 content = (taskDetail?.taskContent ??
-                  taskDetail?.task_content ??
-                  taskDetail?.dataFileContent ??
-                  taskDetail?.data_file_content ??
-                  data?.dataFileContent ??
+                  taskDetail?.fileContent ??
                   data?.content ??
                   "") as string
               }
@@ -773,10 +770,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               params,
             })
             const execData = resp.data as Record<string, unknown> | undefined
-            const runInstanceId = execData?.taskInstanceId ?? execData?.task_instance_id
+            const runInstanceId = execData?.scheduleInstanceId ?? execData?.instanceId
             if (runInstanceId == null) {
-              logOperation("task execute", { ok: true })
-              success(execData ?? {}, { format })
+              logOperation("task execute failed", { ok: false})
+              error(
+                "EXECUTE_FAILED",
+                "Can not trace execute cause no run id returned",execData ?? {})
               return
             }
             const maxWaitMs = (argv["max-wait-seconds"] as number) * 1000
@@ -796,21 +795,20 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const failMsg = taskDetail?.failMsg ?? detailData?.failMsg
               const isTerminal = statusCode === 1 || statusCode === 3 || (statusCode == null && endTime != null)
               if (isTerminal) {
-                const normalized = normalizeTaskIdentity({
-                  ...detailData,
+                const result = {
                   task_id: fileId,
                   run_id: runInstanceId,
                   execution_status: STATUS_NAME[statusCode as number] ?? statusCode,
-                })
+                }
                 const aiMessage =
-                  normalized.run_id != null
-                    ? `临时执行完成（task_id=${normalized.task_id}，run_id=${normalized.run_id}）。Notice: 这是一次临时执行，不影响调度计划。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${normalized.task_id} -y`
-                    : `临时执行完成（task_id=${normalized.task_id}）。Notice: 这是一次临时执行，不影响调度计划。`
+                  `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
                 if (statusCode === 3 || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
+                  return
                 }
                 logOperation("task execute", { ok: true })
-                success(normalized, { format, aiMessage })
+                success(result, { format, aiMessage })
+                return
               }
               await new Promise((r) => setTimeout(r, pollMs))
             }

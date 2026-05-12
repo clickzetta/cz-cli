@@ -210,12 +210,6 @@ export function offlineTaskWithDownstream(config: StudioConfig, taskId: number, 
   })
 }
 
-export function getTaskDependencies(config: StudioConfig, params: GetTaskDependenciesParams) {
-  return studioRequest(config, "/ide-admin/v1/dataFileConfiguration/queryDependencyDetail", {
-    currentId: params.currentId,
-    fileIds: params.fileIds,
-  })
-}
 
 export interface DeleteTaskParams {
   scheduleTaskId: number
@@ -223,10 +217,11 @@ export interface DeleteTaskParams {
 }
 
 export function deleteTask(config: StudioConfig, params: DeleteTaskParams) {
-  return studioRequest(config, "/ide-admin/v1/scheduleTask/deleteTask", {
-    scheduleTaskId: params.scheduleTaskId,
-    projectId: params.projectId,
-    operateUser: String(config.userId),
+  return studioRequest(config, "/ide-admin/v1/dataFile/deleteFile", {
+    id: params.scheduleTaskId,
+    tenantId: config.tenantId,
+    updateBy: String(config.userId),
+    userId:config.userId
   })
 }
 

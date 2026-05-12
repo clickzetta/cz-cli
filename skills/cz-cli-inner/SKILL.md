@@ -70,6 +70,14 @@ cz-cli job result <job-id>                    Fetch job result set
 
 cz-cli status                                 Check connection status
 cz-cli profile list                           List connection profiles
+
+cz-cli datasource list [--type <type>] [--name <filter>]
+                                              List external data sources (type: mysql/kafka/redis/postgresql/...)
+cz-cli datasource catalogs <name_or_id>      List catalogs (databases/topics/buckets) in a data source
+cz-cli datasource objects <name_or_id> <catalog>
+                                              List objects (tables/topics/collections) in a catalog
+cz-cli datasource describe <name_or_id> <catalog> <object>
+                                              Show object metadata (columns, types)
 ```
 
 ## Output Formats
