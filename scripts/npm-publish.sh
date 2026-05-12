@@ -114,8 +114,12 @@ echo "Committing version bump..."
   cd "$REPO_ROOT"
   git config user.email "ci@clickzetta.com"
   git config user.name "ClickZetta CI"
+  BRANCH=$(git branch -r --contains HEAD --format='%(refname:short)' | grep -v HEAD | head -1 | sed 's|origin/||')
+  if [ -z "$BRANCH" ]; then
+    BRANCH="feat/cz-cli-ts-rewrite"
+  fi
   git add packages/npm/cz-cli/package.json
   git commit -m "chore: bump npm package version to ${VERSION}"
-  git push
+  git push origin HEAD:"$BRANCH"
 )
 echo "✓ Version bump committed"
