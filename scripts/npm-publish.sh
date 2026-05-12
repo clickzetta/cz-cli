@@ -112,6 +112,8 @@ echo ""
 echo "Committing version bump..."
 (
   cd "$REPO_ROOT"
+  git config user.email "ci@clickzetta.com"
+  git config user.name "ClickZetta CI"
   git add packages/npm/cz-cli/package.json
   git commit -m "chore: bump npm package version to ${VERSION}"
   git push
