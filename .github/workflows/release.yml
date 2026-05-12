@@ -69,18 +69,21 @@ jobs:
       - name: Sync clickzetta-skills
         shell: bash
         run: |
+          set -x
+          WORK_DIR="$(pwd)"
           SKILLS_SRC="$(mktemp -d)/clickzetta-skills"
           curl -sL https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz | tar -xz -C "$(dirname "$SKILLS_SRC")"
           mv "$(dirname "$SKILLS_SRC")/clickzetta-skills-main" "$SKILLS_SRC"
-          echo "=== contents ==="
-          ls "$SKILLS_SRC"
-          mkdir -p skills/external
-          for dir in "$SKILLS_SRC"/clickzetta-*/; do
-            if [ -f "$dir/SKILL.md" ]; then
-              cp -r "$dir" skills/external/
+          mkdir -p "$WORK_DIR/skills/external"
+          count=0
+          for name in $(ls "$SKILLS_SRC" | grep '^clickzetta-'); do
+            if [ -f "$SKILLS_SRC/$name/SKILL.md" ]; then
+              cp -r "$SKILLS_SRC/$name" "$WORK_DIR/skills/external/$name"
+              count=$((count + 1))
             fi
           done
-          echo "Synced $(ls -d skills/external/clickzetta-* 2>/dev/null | wc -l) skills from clickzetta-skills repo"
+          set +x
+          echo "Synced $count skills from clickzetta-skills repo"
 
       - uses: oven-sh/setup-bun@v2
         with:
