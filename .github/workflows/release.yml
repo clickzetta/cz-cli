@@ -71,10 +71,17 @@ jobs:
         run: |
           curl -sL https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz | tar -xz -C /tmp
           mv /tmp/clickzetta-skills-main /tmp/clickzetta-skills
+          echo "=== ls top-level ==="
           ls /tmp/clickzetta-skills/ | head -20
+          echo "=== check first skill ==="
+          ls -la /tmp/clickzetta-skills/clickzetta-batch-sync-pipeline/ 2>&1 | head -5
+          echo "=== file test ==="
+          test -f /tmp/clickzetta-skills/clickzetta-batch-sync-pipeline/SKILL.md && echo "EXISTS" || echo "NOT FOUND"
           mkdir -p skills/external
           for dir in /tmp/clickzetta-skills/clickzetta-*/; do
-            [ -f "$dir/SKILL.md" ] && cp -r "$dir" skills/external/
+            if [ -f "$dir/SKILL.md" ]; then
+              cp -r "$dir" skills/external/
+            fi
           done
           echo "Synced $(ls -d skills/external/clickzetta-* 2>/dev/null | wc -l) skills from clickzetta-skills repo"
 
