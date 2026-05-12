@@ -61,14 +61,11 @@ export interface CompanionSkill {
 
 function companionSkillsMarkdown(companions: CompanionSkill[] | undefined): string {
   if (!companions || companions.length === 0) {
-    return (
-      "No additional companion skills are bundled with this installation.\n" +
-      "Run `cz-cli install-skills` to check for skills from other sources (e.g. cz-mcp)."
-    )
+    return "No additional companion skills are bundled with this installation."
   }
 
   const lines: string[] = [
-    "The following companion skills can be installed alongside `cz-cli` via `cz-cli install-skills`:\n",
+    "The following companion skills are bundled with `cz-cli`:\n",
   ]
   for (const { name, description } of [...companions].sort((a, b) => a.name.localeCompare(b.name))) {
     if (description) {

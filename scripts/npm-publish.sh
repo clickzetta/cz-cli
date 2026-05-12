@@ -102,3 +102,18 @@ fi
 
 echo ""
 echo "✓ Published @clickzetta/cz-cli@${VERSION}"
+
+# ── Commit version bump back to repo ─────────────────────────────────────
+# This ensures optionalDependencies in package.json stays in sync with the
+# published version, so `npm install -g @clickzetta/cz-cli@latest` will
+# correctly update platform binary packages on subsequent installs.
+
+echo ""
+echo "Committing version bump..."
+(
+  cd "$REPO_ROOT"
+  git add packages/npm/cz-cli/package.json
+  git commit -m "chore: bump npm package version to ${VERSION}"
+  git push
+)
+echo "✓ Version bump committed"

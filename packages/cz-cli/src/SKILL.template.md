@@ -41,7 +41,7 @@ Consult **Command Risk Reference** below to determine whether a command qualifie
 > Check this routing table **before** executing any command or writing any code.
 > If the user intent matches a trigger below, **MUST** invoke the listed skill immediately and stop processing in cz-cli.
 
-The following companion skills can be installed alongside `cz-cli` via `cz-cli install-skills`:
+The following companion skills are bundled with `cz-cli`:
 
 - **lakehouse-python-sdk** — Lakehouse Python/Shell task engineering: develop, rewrite, optimize, troubleshoot. Covers connector, BulkLoad, IGS, Studio params, datasource, and CREATE TABLE DDL; MUST trigger on: develop/write/create/modify/rewrite/optimize Python or Shell task; BulkLoad batch upload; IGS realtime ingest; connector query/write; Python task error/diagnosis; CREATE TABLE / partition / bucket / index DDL.
 - **lakehouse-doc** — ClickZetta Lakehouse official documentation. Covers SQL syntax, data types, functions, DDL/DML commands, dynamic tables, materialized views, access control, VCluster, data lake, AI functions, etc. When the user writes or asks about SQL syntax or Lakehouse dialect specifics, **MUST** consult lakehouse-doc skill references first to ensure accuracy.

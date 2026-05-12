@@ -349,7 +349,6 @@ export function registerStaticCommands(): void {
       arguments: [{ name: "job-id", required: true }] },
     { name: "job result", kind: "command", description: "Fetch result set of a SQL job",
       arguments: [{ name: "job-id", required: true }] },
-    { name: "install-skills", kind: "command", description: "Install AI skills to coding tools" },
     { name: "ai-guide", kind: "command", description: "Generate AI-friendly command reference" },
   ])
 }
