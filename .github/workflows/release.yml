@@ -69,16 +69,13 @@ jobs:
       - name: Sync clickzetta-skills
         shell: bash
         run: |
-          curl -sL https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz | tar -xz -C /tmp
-          mv /tmp/clickzetta-skills-main /tmp/clickzetta-skills
-          echo "=== ls top-level ==="
-          ls /tmp/clickzetta-skills/ | head -20
-          echo "=== check first skill ==="
-          ls -la /tmp/clickzetta-skills/clickzetta-batch-sync-pipeline/ 2>&1 | head -5
-          echo "=== file test ==="
-          test -f /tmp/clickzetta-skills/clickzetta-batch-sync-pipeline/SKILL.md && echo "EXISTS" || echo "NOT FOUND"
+          SKILLS_SRC="$(mktemp -d)/clickzetta-skills"
+          curl -sL https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz | tar -xz -C "$(dirname "$SKILLS_SRC")"
+          mv "$(dirname "$SKILLS_SRC")/clickzetta-skills-main" "$SKILLS_SRC"
+          echo "=== contents ==="
+          ls "$SKILLS_SRC"
           mkdir -p skills/external
-          for dir in /tmp/clickzetta-skills/clickzetta-*/; do
+          for dir in "$SKILLS_SRC"/clickzetta-*/; do
             if [ -f "$dir/SKILL.md" ]; then
               cp -r "$dir" skills/external/
             fi
