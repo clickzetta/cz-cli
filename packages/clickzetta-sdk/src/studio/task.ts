@@ -33,6 +33,7 @@ export interface SaveTaskContentParams {
   updateBy: string
   instanceName: string
   replaceEscapedChars?: boolean
+  paramValueList?: unknown[]
 }
 
 export interface SaveTaskConfigParams {
@@ -133,7 +134,7 @@ export function saveTaskContent(config: StudioConfig, params: SaveTaskContentPar
       onlySaveContent: 1,
       projectId: params.projectId,
       updateBy: params.updateBy,
-      paramValueList: [],
+      paramValueList: params.paramValueList ?? [],
       instanceName: params.instanceName,
       ...(params.replaceEscapedChars !== undefined && { replace_escaped_chars: params.replaceEscapedChars }),
     },
@@ -192,6 +193,7 @@ export function onlineTask(config: StudioConfig, taskId: number, projectId: numb
   return studioRequest(config, "/ide-admin/v1/scheduleTask/onlineTask", {
     scheduleTaskId: taskId,
     projectId,
+    updatedBy: String(config.userId),
   })
 }
 

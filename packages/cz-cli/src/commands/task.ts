@@ -31,6 +31,18 @@ function formatIsoStartOfDay(value: string | undefined | null): string {
   return trimmed
 }
 
+function studioUrl(sc: { instanceName: string; baseUrl: string; workspaceName: string }, fileId: number): string {
+  let base = sc.baseUrl.replace(/^https?:\/\//, "")
+  // Path-based: xxx.clickzetta.com/api → xxx.clickzetta.com/app
+  if (base.endsWith("/api")) {
+    base = base.slice(0, -4) + "/app"
+  } else {
+    // Subdomain-based: uat-api.clickzetta.com → uat-app.clickzetta.com
+    base = base.replace("-api.", "-app.").replace("api.", "app.")
+  }
+  return `https://${sc.instanceName}.${base}/ide?workspace_name=${encodeURIComponent(sc.workspaceName)}&fileId=${fileId}`
+}
+
 const TASK_TYPE_MAP: Record<string, number> = {
   SQL: 4, LAKEHOUSE: 4, PYTHON: 7, SHELL: 5, JDBC: 15,
   SPARK: 400, FLOW: 500, INTEGRATION: 1, DI: 1,
@@ -47,6 +59,15 @@ function parseTaskType(value: string): number {
   const n = parseInt(value, 10)
   if (!isNaN(n)) return n
   throw new Error(`Unsupported task type: ${value}. Use SQL/PYTHON/SHELL/SPARK/FLOW or integer code.`)
+}
+
+const UI_ONLY_TYPES = new Set([400, 500, 1, 14, 16, 17, 280, 281, 291, 300, 301])
+
+async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> {
+  const detail = await getTaskDetail(sc, fileId)
+  const data = detail.data as Record<string, unknown> | undefined
+  const fileType = Number(data?.fileType ?? data?.file_type ?? 0)
+  return UI_ONLY_TYPES.has(fileType)
 }
 
 function normalizeCron(value: string): string {
@@ -283,7 +304,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               workspaceName: sc.workspaceName,
             })
             logOperation("task create", { ok: true })
-            success(resp.data, { format })
+            const data = resp.data as Record<string, unknown> | undefined
+            const newFileId = Number(data)
+            const url = newFileId ? studioUrl(sc, newFileId) : undefined
+            success({ id:data, studio_url: url }, { format })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -363,7 +387,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               schedule_config: scheduleConfig,
             }
             logOperation("task content", { ok: true })
-            success(merged, { format, aiMessage: t("task_content") })
+            success({ ...merged, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_content") })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -376,7 +400,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("task", { type: "string", demandOption: true })
             .option("content", { type: "string", describe: "Script content" })
-            .option("file", { alias: "f", type: "string", describe: "Read content from file" }),
+            .option("file", { alias: "f", type: "string", describe: "Read content from file" })
+            .option("params", { type: "string", describe: 'Runtime parameters as JSON object, e.g. \'{"a":"1","b":"2"}\'' }),
         async (argv) => {
           const format = argv.output
           try {
@@ -386,6 +411,37 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
+            if (await isUiOnlyTask(sc, fileId)) {
+              error("UI_ONLY_TASK", `This task type requires configuration via Studio UI.`, {
+                format,
+                aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
+              }); return
+            }
+            let paramValueList: unknown[] | undefined
+            if (argv.params) {
+              const raw = (argv.params as string).replace(/^'|'$/g, "")
+              let parsed: Record<string, string>
+              try { parsed = JSON.parse(raw) } catch {
+                // Try relaxed format: {key:value,key2:value2}
+                const relaxed = raw.replace(/^\{|\}$/g, "").trim()
+                if (!relaxed) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}. Use: --params '{"key":"value"}' or --params '{key:value}'`, { format }); return }
+                parsed = {}
+                for (const pair of relaxed.split(",")) {
+                  const idx = pair.indexOf(":")
+                  if (idx <= 0) { error("INVALID_ARGUMENTS", `--params invalid pair: '${pair.trim()}'. Use key:value format.`, { format }); return }
+                  parsed[pair.slice(0, idx).trim().replace(/^["']|["']$/g, "")] = pair.slice(idx + 1).trim().replace(/^["']|["']$/g, "")
+                }
+              }
+              paramValueList = Object.entries(parsed).map(([k, v]) => ({
+                encrypt: false,
+                id: String(Date.now() + Math.floor(Math.random() * 1000)),
+                ignore: false,
+                paramKey: k,
+                paramType: "manual",
+                paramValue: String(v),
+                ref: 0,
+              }))
+            }
             const resp = await saveTaskContent(sc, {
               dataFileId: fileId,
               dataFileContent: text,
@@ -393,9 +449,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               updateBy: String(sc.userId),
               instanceName: sc.instanceName,
               replaceEscapedChars: false,
+              ...(paramValueList && { paramValueList }),
             })
             logOperation("task save-content", { ok: true })
-            success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
+            success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -458,7 +515,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               configProperties: JSON.stringify(oldConfigProps),
             })
             logOperation("task save-cron", { ok: true })
-            success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
+            success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -481,7 +538,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("timeout", { type: "number", describe: "Execute timeout" })
             .option("timeout-unit", { type: "string", describe: "Timeout unit (m/s)" })
             .option("deps", { type: "string", choices: ["keep", "replace", "clear"], describe: "Dependency action" })
-            .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array (with --deps replace)" }),
+            .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array. Each item requires taskId (number) and taskName (string), e.g. '[{\"taskId\":123,\"taskName\":\"upstream_task\"}]'" }),
         async (argv) => {
           const format = argv.output
           try {
@@ -501,10 +558,30 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (depsAction === "clear") deps = []
             else if (depsAction === "replace") {
               const raw = argv["dep-tasks"] as string | undefined
-              deps = raw ? JSON.parse(raw).map((d: Record<string, unknown>) => ({
-                parseType: "1", dependencyProjectId: sc.projectId, depStrategy: d.dep_strategy ?? 0,
-                dependencyFileId: d.dependency_task_id, dependencyFileName: d.dependency_task_name,
-              })) : []
+              if (!raw) { deps = [] } else {
+                // Strip surrounding single quotes if shell passed them literally
+                const cleaned = raw.replace(/^'|'$/g, "")
+                let parsed: Record<string, unknown>[]
+                try { parsed = JSON.parse(cleaned) } catch {
+                  // Try relaxed format: [{key:value,key2:value2}]
+                  try {
+                    const fixed = cleaned.replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":').replace(/:\s*([^",\}\]]+)/g, (_, v) => `:"${v.trim()}"`)
+                    parsed = JSON.parse(fixed)
+                  } catch {
+                    error("INVALID_ARGUMENTS", `--dep-tasks is not valid JSON: ${raw}`, { format }); return
+                  }
+                }
+                deps = parsed.map((d, i) => {
+                  const fileId = d.taskId ?? d.dependency_task_id ?? d.dependencyFileId
+                  const fileName = d.taskName ?? d.dependency_task_name ?? d.dependencyFileName
+                  if (!fileId) { error("INVALID_ARGUMENTS", `--dep-tasks[${i}]: taskId is required`, { format }); return null }
+                  if (!fileName) { error("INVALID_ARGUMENTS", `--dep-tasks[${i}]: taskName is required`, { format }); return null }
+                  return {
+                    parseType: "1", dependencyProjectId: sc.projectId, depStrategy: d.dep_strategy ?? d.depStrategy ?? 0,
+                    dependencyFileId: fileId, dependencyFileName: fileName,
+                  }
+                }).filter(Boolean)
+              }
             } else {
               deps = (oldData.dataFileDependencyDTOS as unknown[]) ?? []
             }
@@ -531,7 +608,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               configProperties: oldData.configProperties ?? "{}",
             })
             logOperation("task save-config", { ok: true })
-            success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
+            success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
@@ -578,7 +655,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "online <task>",
+        ["deploy <task>", "online <task>"],
         "Publish/online a task",
         (y) =>
           y
@@ -601,6 +678,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 "Flow tasks cannot be published with task online. Use: cz-cli task flow submit <task>",
                 { format },
               )
+              return
             }
             if (!argv.yes) {
               const ok = await confirm(`Publish and online task ${fileId}?`)
@@ -622,16 +700,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               projectId: sc.projectId,
               updatedBy: String(sc.userId),
             })
-            await onlineTask(sc, fileId, sc.projectId)
             logOperation("task online", { ok: true })
-            success({ data: resp.data, status: "online" }, { format })
+            success({ data: resp.data, status: "online", studio_url: studioUrl(sc, fileId) }, { format })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
         },
       )
       .command(
-        "offline <task>",
+        ["undeploy <task>","offline <task>"],
         "Take a task offline (clears all run instances, irreversible)",
         (y) =>
           y
@@ -1198,7 +1275,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               replaceEscapedChars: false,
             })
             logOperation("task save (alias)", { ok: true })
-            success(resp.data, { format, aiMessage: t("task_save_online_reminder", fileId) })
+            success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
           }

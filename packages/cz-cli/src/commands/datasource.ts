@@ -41,6 +41,7 @@ const API = {
   NAMESPACES: "/ide-authority/v1/projectDataSources/listNamespaces",
   OBJECTS: "/ide-authority/v1/projectDataSources/listDataObjects",
   META_DETAIL: "/ide-authority/v1/projectDataSources/getDataObjectMeta",
+  TEST: "/ide-authority/v1/projectDataSources/testDatasource",
 }
 
 async function apiList(sc: StudioConfig, opts: { dsName?: string; dsType?: number; page?: number; pageSize?: number }) {
@@ -67,12 +68,44 @@ async function apiMetaDetail(sc: StudioConfig, datasourceId: number, namespace: 
   return studioRequest<unknown>(sc, API.META_DETAIL, { id: datasourceId, nameSpace: namespace, dataObjectName:tableName })
 }
 
+async function apiTestDatasource(sc: StudioConfig, ds: { id: number; dsType?: number; connectionParams?: unknown }) {
+  try {
+    const resp = await studioRequest<unknown>(sc, API.TEST, { id: ds.id, dsType: ds.dsType, env:"prod", connectionParams: ds.connectionParams })
+    return { connected: resp.data === true, message: null }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { connected: false, message: msg }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Resolve datasource by name or id
 // ---------------------------------------------------------------------------
-async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<{ id: number; name: string }> {
+interface ResolvedDatasource {
+  id: number
+  name: string
+  dsType?: number
+  connectionParams?: unknown
+}
+
+async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<ResolvedDatasource> {
   const n = Number(nameOrId)
-  if (Number.isFinite(n) && n > 0) return { id: n, name: nameOrId }
+  if (Number.isFinite(n) && n > 0) {
+    // Fetch detail by listing with no filter and finding by id
+    const resp = await apiList(sc, { pageSize: 100 })
+    const list = (resp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined
+      ?? (Array.isArray(resp.data) ? resp.data as Record<string, unknown>[] : [])
+    const match = list.find((ds) => Number(ds.id ?? ds.dsId) === n)
+    if (match) {
+      return {
+        id: n,
+        name: String(match.dsName ?? match.name ?? nameOrId),
+        dsType: match.dsType as number | undefined,
+        connectionParams: match.connectionParams,
+      }
+    }
+    return { id: n, name: nameOrId }
+  }
   // Search by name
   const resp = await apiList(sc, { dsName: nameOrId, pageSize: 50 })
   const list = (resp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined
@@ -80,7 +113,12 @@ async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<{ 
   const exact = list.find((ds) => String(ds.dsName ?? ds.name ?? "") === nameOrId)
   const match = exact ?? list[0]
   if (!match) throw new Error(`Datasource '${nameOrId}' not found`)
-  return { id: Number(match.id ?? match.dsId), name: String(match.dsName ?? match.name ?? nameOrId) }
+  return {
+    id: Number(match.id ?? match.dsId),
+    name: String(match.dsName ?? match.name ?? nameOrId),
+    dsType: match.dsType as number | undefined,
+    connectionParams: match.connectionParams,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +156,6 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
               status: ds.status,
               connectionParams: ds.connectionParams,
-              testStatus: ds.testStatus,
               testFailedReason:ds.testFailedReason
             }))
             logOperation("datasource list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
@@ -217,6 +254,34 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(resp.data, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource describe", { ok: false, timeMs: Date.now() - t0 })
+            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      // ── test ──────────────────────────────────────────────────────────
+      .command(
+        "test <datasource>",
+        "Test data source connectivity",
+        (y) =>
+          y.positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" }),
+        async (argv) => {
+          const format = argv.output
+          const t0 = Date.now()
+          try {
+            const sc = await getStudioContext(argv)
+            const ds = await resolveDatasource(sc, argv.datasource as string)
+            const result = await apiTestDatasource(sc, ds)
+            logOperation("datasource test", { ok: result.connected, timeMs: Date.now() - t0 })
+            if (result.connected) {
+              success({ datasource: ds.name, id: ds.id, connected: true }, { format, timeMs: Date.now() - t0 })
+            } else {
+              error("CONNECTION_FAILED", result.message ?? "Datasource connectivity test failed", {
+                format,
+                aiMessage: `Datasource '${ds.name}' (id=${ds.id}) is not reachable. Check network and connection parameters.`,
+              })
+            }
+          } catch (err) {
+            logOperation("datasource test", { ok: false, timeMs: Date.now() - t0 })
             error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
         },

@@ -37,8 +37,8 @@ cz-cli task save-content <task> --file <f>    Save task script
 cz-cli task save-config <task>                Save task non-cron config, like retry, dependency
 cz-cli task save-cron <task>                  Save task schedule config
 cz-cli task deps <task>                       Show task dependencies (draft)
-cz-cli task online <task>                     Publish a task
-cz-cli task offline <task>                    Take task offline (irreversible)
+cz-cli task deploy <task>                     Publish/deploy a task (alias: online)
+cz-cli task undeploy <task>                   Undeploy a task, irreversible (alias: offline)
 cz-cli task execute <task>                    Execute ad-hoc
 cz-cli task delete <task>                     Delete draft/offline task
 cz-cli task flow dag <task>                   Get flow DAG
@@ -78,6 +78,7 @@ cz-cli datasource objects <name_or_id> <catalog>
                                               List objects (tables/topics/collections) in a catalog
 cz-cli datasource describe <name_or_id> <catalog> <object>
                                               Show object metadata (columns, types)
+cz-cli datasource test <name_or_id>          Test data source connectivity
 ```
 
 ## Output Formats
@@ -92,9 +93,9 @@ cz-cli datasource describe <name_or_id> <catalog> <object>
 1. **SQL is async by default**. Use `--sync` for SELECT when you need data immediately.
 2. **Write operations require `--write` flag** (INSERT/UPDATE/DELETE/CREATE/DROP).
 3. **Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW).
-4. **Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task online` on flow nodes.
+4. **Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.
 5. **Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.
-6. **State-changing operations** (online/offline/execute/delete/refill): confirm intent with user first.
+6. **State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.
 7. **Multi-environment**: use `--profile <name>` to target a specific environment.
 8. **On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
 
