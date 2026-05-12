@@ -91,7 +91,9 @@ jobs:
 
       - name: Install dependencies
         timeout-minutes: 10
-        run: bun install
+        env:
+          HUSKY: "0"
+        run: bun install --frozen-lockfile
 
       - name: Build and upload ${{ matrix.os }} targets
         env:

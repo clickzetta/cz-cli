@@ -103,23 +103,6 @@ fi
 echo ""
 echo "✓ Published @clickzetta/cz-cli@${VERSION}"
 
-# ── Commit version bump back to repo ─────────────────────────────────────
-# This ensures optionalDependencies in package.json stays in sync with the
-# published version, so `npm install -g @clickzetta/cz-cli@latest` will
-# correctly update platform binary packages on subsequent installs.
-
-echo ""
-echo "Committing version bump..."
-(
-  cd "$REPO_ROOT"
-  git config user.email "ci@clickzetta.com"
-  git config user.name "ClickZetta CI"
-  BRANCH=$(git branch -r --contains HEAD --format='%(refname:short)' | grep -v HEAD | head -1 | sed 's|origin/||')
-  if [ -z "$BRANCH" ]; then
-    BRANCH="feat/cz-cli-ts-rewrite"
-  fi
-  git add packages/npm/cz-cli/package.json
-  git commit -m "chore: bump npm package version to ${VERSION}"
-  git push origin HEAD:"$BRANCH"
-)
-echo "✓ Version bump committed"
+# ── Version bump note ─────────────────────────────────────────────────────
+# package.json uses placeholder versions (0.1.0). The publish script injects
+# the real version at publish time. No commit back to the repo is needed.
