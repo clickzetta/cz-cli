@@ -69,7 +69,8 @@ jobs:
       - name: Sync clickzetta-skills
         shell: bash
         run: |
-          git clone --depth 1 https://github.com/clickzetta/clickzetta-skills.git /tmp/clickzetta-skills
+          git clone --depth 1 --branch main https://github.com/clickzetta/clickzetta-skills.git /tmp/clickzetta-skills
+          ls /tmp/clickzetta-skills/ | head -20
           mkdir -p skills/external
           for dir in /tmp/clickzetta-skills/clickzetta-*/; do
             [ -f "$dir/SKILL.md" ] && cp -r "$dir" skills/external/
