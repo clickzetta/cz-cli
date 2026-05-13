@@ -1,6 +1,6 @@
 ---
 name: cz-cli
-description: Route ALL ClickZetta Lakehouse operations to cz-cli: SQL, Studio tasks, tables, pipelines, profiles. Use when user mentions ClickZetta, Lakehouse, cz-cli, or needs profile/connection configuration.
+description: "Route ALL ClickZetta Lakehouse operations to cz-cli: SQL, Studio tasks, tables, pipelines, profiles. Use when user mentions ClickZetta, Lakehouse, cz-cli, or needs profile/connection configuration."
 ---
 
 # cz-cli — ClickZetta Lakehouse Subagent
