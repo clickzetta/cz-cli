@@ -144,15 +144,22 @@ const tests: TestCase[] = [
   {
     name: "CONNECTION_ERROR: classifyExecError produces ai_message for socket errors",
     run() {
-      // This is covered by the unit test (classify-error.test.ts).
-      // Here we verify the binary-level: status command returns JSON (not NO_PROFILE)
-      // even when the server is unreachable.
-      const r = run(["status"])
-      const j = parseJson(r.stdout)
-      if (!j) return { pass: false, detail: `not JSON: ${r.stdout.slice(0, 80)}` }
-      const code = (j.error as any)?.code
-      if (code === "NO_PROFILE") return { pass: false, detail: "unexpected NO_PROFILE with real profile" }
-      return { pass: true }
+      const { home, cleanup } = withFakeHome(
+        '[profiles.default]\n' +
+        'service = "127.0.0.1"\n' +
+        'protocol = "http"\n' +
+        'instance = "test"\n' +
+        'workspace = "test"\n' +
+        'pat = "invalid"\n',
+      )
+      try {
+        const r = run(["status"], { HOME: home })
+        const j = parseJson(r.stdout)
+        if (!j) return { pass: false, detail: `not JSON: ${r.stdout.slice(0, 80)}` }
+        const code = (j.error as any)?.code
+        if (code === "NO_PROFILE") return { pass: false, detail: "unexpected NO_PROFILE with fake profile" }
+        return { pass: true }
+      } finally { cleanup() }
     },
   },
 

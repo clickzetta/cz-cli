@@ -266,7 +266,7 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Co
 function globalConfigFile() {
   // cz-cli: check ~/.clickzetta/czcli.json first (legacy config file name)
   const czCliCandidates = ["czcli.json", "czcli.jsonc"].map((file) =>
-    path.join(os.homedir(), ".clickzetta", file),
+    path.join(Global.Path.home, ".clickzetta", file),
   )
   for (const file of czCliCandidates) {
     if (existsSync(file)) return file
@@ -345,7 +345,7 @@ export const layer = Layer.effect(
 
     const loadGlobal = Effect.fnUntraced(function* () {
       // Load from ~/.clickzetta/czcli.json
-      const clickzettaDir = path.join(os.homedir(), ".clickzetta")
+      const clickzettaDir = path.join(Global.Path.home, ".clickzetta")
       let result: Info = pipe(
         {},
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.json"))),
@@ -364,10 +364,13 @@ export const layer = Layer.effect(
             writeFileSync(profilesPath, toml)
             log.info("migrated legacy ClickZetta LLM config to [llm.clickzetta]", { path: profilesPath })
           }
-          const { providers, warnings } = parseProfilesToml(toml)
+          const { providers, defaultModel, warnings } = parseProfilesToml(toml)
           for (const w of warnings) log.warn(w, { path: profilesPath })
           if (Object.keys(providers).length > 0) {
             result = mergeDeep(result, { provider: providers } as any)
+          }
+          if (!result.model && defaultModel) {
+            result = mergeDeep(result, { model: defaultModel })
           }
         } catch (e) {
           log.warn("failed to read profiles.toml, LLM config may be incomplete", { path: profilesPath, error: String(e) })
@@ -473,6 +476,9 @@ export const layer = Layer.effect(
 
       const global = yield* getGlobal()
       yield* merge(Global.Path.config, global, "global")
+      for (const file of ConfigPaths.fileInDirectory(Global.Path.config, "opencode")) {
+        yield* merge(file, yield* loadFile(file), "global")
+      }
 
       if (Flag.CLICKZETTA_CONFIG) {
         yield* merge(Flag.CLICKZETTA_CONFIG, yield* loadFile(Flag.CLICKZETTA_CONFIG))

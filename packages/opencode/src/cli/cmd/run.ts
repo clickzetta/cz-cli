@@ -292,6 +292,10 @@ export const RunCommand = cmd({
         type: "string",
         describe: "model variant (provider-specific reasoning effort, e.g., high, max, minimal)",
       })
+      .option("timeout", {
+        type: "number",
+        describe: "LLM first-byte timeout in seconds for this run (defaults to 150 in --format a2a mode)",
+      })
       .option("thinking", {
         type: "boolean",
         describe: "show thinking blocks",
@@ -320,7 +324,7 @@ export const RunCommand = cmd({
       // Expand profile fields into CZ_* env vars so cz-tool picks up the right
       // credentials even when the profile uses username/password (no PAT).
       try {
-        const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+        const profilesPath = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta", "profiles.toml")
         const toml = parseToml(fs.readFileSync(profilesPath, "utf-8")) as Record<string, unknown>
         const profiles = toml.profiles as Record<string, Record<string, string>> | undefined
         const p = profiles?.[args.profile]
@@ -336,6 +340,15 @@ export const RunCommand = cmd({
           if (p.vcluster) process.env.CZ_VCLUSTER = p.vcluster
         }
       } catch {}
+    }
+    if (args.timeout !== undefined && (!(args.timeout > 0) || !Number.isFinite(args.timeout))) {
+      UI.error("--timeout must be a positive number of seconds")
+      process.exit(1)
+    }
+    if (args.timeout !== undefined) {
+      process.env.CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS = String(Math.round(args.timeout * 1000))
+    } else if (args.format === "a2a" && !process.env.CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS) {
+      process.env.CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS = "150000"
     }
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))

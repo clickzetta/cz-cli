@@ -15,6 +15,7 @@ default_llm = "clickzetta"
 provider = "clickzetta"
 api_key = "ck-test"
 base_url = "https://gateway.clickzetta.com"
+model = "deepseek-v4-pro"
 `)
 
     expect(result.providers).toEqual({
@@ -25,6 +26,7 @@ base_url = "https://gateway.clickzetta.com"
         },
       },
     })
+    expect(result.defaultModel).toBe("clickzetta/deepseek-v4-pro")
     expect(result.warnings).toEqual([])
   })
 
@@ -58,6 +60,7 @@ default_llm = "prod-openai"
 provider = "openai-compatible"
 api_key = "sk-prod"
 base_url = "https://prod.example.com/v1"
+model = "gpt-5"
 
 [llm.dev-openai]
 provider = "openai-compatible"
@@ -78,6 +81,20 @@ base_url = "https://api.anthropic.com"
         },
       },
     })
+    expect(result.defaultModel).toBe("openai-compatible/gpt-5")
+    expect(result.warnings).toEqual([])
+  })
+
+  test("does not derive a default model when default_llm has no model", () => {
+    const result = parseProfilesToml(`
+default_llm = "my-claude"
+
+[llm.my-claude]
+provider = "anthropic"
+api_key = "sk-ant"
+`)
+
+    expect(result.defaultModel).toBeUndefined()
     expect(result.warnings).toEqual([])
   })
 })

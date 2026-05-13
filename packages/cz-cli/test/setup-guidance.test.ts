@@ -3,7 +3,7 @@ import { spawnSync } from "child_process"
 import { mkdtempSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { accountLoginUrlForService } from "../src/commands/setup"
+import { accountLoginUrlForService, resolveOrAutoSelectOption } from "../src/commands/setup"
 
 function run(args: string[], home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))) {
   const result = spawnSync("bun", ["./src/main.ts", ...args], {
@@ -31,6 +31,21 @@ describe("setup guidance", () => {
     expect(accountLoginUrlForService("uat-api.clickzetta.com", "acct")).toBe(
       "https://acct.uat-accounts.clickzetta.com",
     )
+  })
+
+  test("resolveOrAutoSelectOption auto-selects the only discovered option", () => {
+    const result = resolveOrAutoSelectOption(undefined, [{ label: "one", value: "one" }], "instance")
+    expect(result.autoSelected).toBe(true)
+    expect(result.option).toEqual({ label: "one", value: "one" })
+  })
+
+  test("resolveOrAutoSelectOption waits for user choice when multiple options exist", () => {
+    const result = resolveOrAutoSelectOption(undefined, [
+      { label: "one", value: "one" },
+      { label: "two", value: "two" },
+    ], "instance")
+    expect(result.autoSelected).toBe(false)
+    expect(result.option).toBeUndefined()
   })
 
   test("setup --help explains both new-user and existing-account flows", () => {

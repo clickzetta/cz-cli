@@ -12,10 +12,12 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .positional("prompt", { type: "string", demandOption: true, describe: "Natural-language request" })
             .option("session", { type: "string", describe: "Session ID for multi-turn conversations" })
             .option("format", { type: "string", choices: ["default", "json", "a2a"], describe: "Output format (default=formatted, json=raw JSON events, a2a=agent-to-agent structured)" })
+            .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run (default: 150 in a2a mode)" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
             .option("agent", { type: "string", describe: "Agent to use" })
             .example("cz-cli agent run \"show tables\"", "One-shot query")
-            .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session"),
+            .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
+            .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout"),
         () => {
           // This handler is never reached — opencode kernel handles `agent run` directly.
           // This command definition exists only to provide correct --help output.

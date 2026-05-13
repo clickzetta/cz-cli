@@ -2,6 +2,7 @@ import { parse as parseToml } from "smol-toml"
 
 export interface ProfilesLlmResult {
   providers: Record<string, { options: { apiKey: string; baseURL?: string } }>
+  defaultModel?: string
   warnings: string[]
 }
 
@@ -15,6 +16,7 @@ interface ParsedLlmEntry {
   provider: (typeof VALID_PROVIDERS)[number]
   apiKey: string
   baseURL?: string
+  model?: string
 }
 
 const LEGACY_FIELDS = ["llm_provider", "llm_model", "llm_api_key", "llm_base_url"] as const
@@ -115,15 +117,16 @@ export function migrateLegacyClickzettaConfig(data: Record<string, unknown>): bo
 export function parseProfilesToml(toml: string): ProfilesLlmResult {
   const warnings: string[] = []
   const providers: ProfilesLlmResult["providers"] = {}
+  let defaultModel: string | undefined
 
   let parsed: unknown
   try {
     parsed = parseToml(toml)
   } catch (e) {
     warnings.push(`failed to parse profiles.toml: ${String(e)}`)
-    return { providers, warnings }
+    return { providers, defaultModel, warnings }
   }
-  if (!isRecord(parsed)) return { providers, warnings }
+  if (!isRecord(parsed)) return { providers, defaultModel, warnings }
 
   const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
   const defaultLlm = asString(parsed.default_llm)
@@ -175,6 +178,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
       provider: provider as (typeof VALID_PROVIDERS)[number],
       apiKey,
       baseURL: normalizeLlmBaseUrl(provider, baseUrl),
+      model: asString(raw.model),
     })
   }
 
@@ -200,13 +204,14 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
 
   const selectedDefault = defaultLlm ? parsedEntries.find((entry) => entry.name === defaultLlm) : undefined
   if (selectedDefault) {
+    defaultModel = selectedDefault.model ? `${selectedDefault.provider}/${selectedDefault.model}` : undefined
     providers[selectedDefault.provider] = {
       options: {
         apiKey: selectedDefault.apiKey,
         ...(selectedDefault.baseURL && { baseURL: selectedDefault.baseURL }),
       },
     }
-    return { providers, warnings }
+    return { providers, defaultModel, warnings }
   }
 
   if (legacyClickzettaProvider) {
@@ -221,7 +226,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
         ...(selected.baseURL && { baseURL: selected.baseURL }),
       },
     }
-    return { providers, warnings }
+    return { providers, defaultModel, warnings }
   }
 
   if (parsedEntries.length > 1) {
@@ -248,7 +253,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
     }
   }
 
-  return { providers, warnings }
+  return { providers, defaultModel, warnings }
 }
 
 export function hasUsableLlm(toml: string): ProfilesLlmGuardResult {

@@ -28,9 +28,10 @@ process.on("uncaughtException", (e) => {
 })
 
 const rawArgs = hideBin(process.argv)
+const clickzettaHome = process.env.CLICKZETTA_TEST_HOME || os.homedir()
 
 if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {
-  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+  const profilesPath = path.join(clickzettaHome, ".clickzetta", "profiles.toml")
   try {
     if (fs.existsSync(profilesPath)) {
       const [{ parse, stringify }, { migrateLegacyClickzettaConfig }] = await Promise.all([
@@ -70,9 +71,10 @@ if (rawArgs[0] === "setup") {
 }
 
 const isAgentSubcommand = rawArgs[0] === "agent" || rawArgs[0] === "run"
+const isHelpRequest = rawArgs.includes("--help") || rawArgs.includes("-h")
 
 // --help for agent/run: forward to cz-cli so TUI modules are never loaded.
-if (isAgentSubcommand && (rawArgs.includes("--help") || rawArgs.includes("-h"))) {
+if (isAgentSubcommand && isHelpRequest) {
   const { forward } = await import("./cli/cmd/forward")
   await forward(rawArgs)
 }
@@ -97,7 +99,7 @@ if (isAgentSubcommand && process.env.CLICKZETTA_PID) {
 // Only checks that profiles.toml exists; key validity is left to the command.
 // ---------------------------------------------------------------------------
 function checkProfile(): boolean {
-  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+  const profilesPath = path.join(clickzettaHome, ".clickzetta", "profiles.toml")
   try {
     const content = fs.readFileSync(profilesPath, "utf-8")
     return /^\[profiles\./m.test(content)
@@ -152,11 +154,11 @@ function exitNoProfile(): never {
 // Data commands (sql, table, schema, …) and --help/no-args — forward to
 // cz-cli so agent modules are never loaded for these paths.
 // ---------------------------------------------------------------------------
-const isHelpOrEmpty = rawArgs.length === 0 || ["--help", "-h"].includes(rawArgs[0])
+const isHelpOrEmpty = rawArgs.length === 0 || (rawArgs.length === 1 && ["--help", "-h"].includes(rawArgs[0]))
 const isDataCommand = !isAgentSubcommand && rawArgs[0] !== "setup" && rawArgs.length > 0 && !["--help", "-h", "--version", "-v"].includes(rawArgs[0])
 
 if (isHelpOrEmpty || isDataCommand) {
-  if (isDataCommand && !checkProfile()) exitNoProfile()
+  if (isDataCommand && !isHelpRequest && !checkProfile()) exitNoProfile()
 
   const { forward } = await import("./cli/cmd/forward")
   await forward(isHelpOrEmpty ? ["--help"] : rawArgs)

@@ -1,10 +1,12 @@
 import type { Argv } from "yargs"
 import { createInterface } from "node:readline"
-import { listUserWorkspaces, toServiceUrl } from "@clickzetta/sdk"
+import { JobStatus, getToken, listUserWorkspaces, toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { loadProfiles, saveProfiles, setTelemetry, type ProfileEntry } from "../connection/profile-store.js"
+import { execSql, isQueryResult } from "./exec.js"
+import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
 
 const REGISTER_URLS = [
   "https://accounts.clickzetta.com/register?ref=cz-cli",
@@ -31,6 +33,7 @@ interface SetupAuthContext {
   userId: number
   tenantId: number
   username: string
+  password: string
   service: string
   serviceUrl: string
 }
@@ -40,19 +43,28 @@ interface InstanceOption {
   value: string
   instanceId: number
   instanceName: string
+  cspId: number
+  regionId: number
 }
 
 interface WorkspaceOption {
   label: string
   value: string
-  workspaceId: number
+  workspaceId: string
   projectId: number
   workspaceName: string
+  defaultSchemaName: string
+  defaultVclusterName: string
 }
 
 interface NamedOption {
   label: string
   value: string
+}
+
+type ResolvedOption<T extends NamedOption> = {
+  option?: T
+  autoSelected: boolean
 }
 
 function askYesNo(question: string): Promise<boolean> {
@@ -170,33 +182,7 @@ function setupValue(argv: Record<string, unknown>, key: string): string {
   return typeof camelValue === "string" ? camelValue.trim() : ""
 }
 
-function stripProtocol(value: string): string {
-  return value.replace(/^https?:\/\//, "")
-}
-
-function extractRootDomain(host: string): string {
-  for (const suffix of [".clickzetta.com", ".singdata.com", ".clickzetta-inc.com"]) {
-    if (host.endsWith(suffix)) return suffix.slice(1)
-  }
-  const parts = host.split(".")
-  return parts.length >= 2 ? parts.slice(-2).join(".") : host
-}
-
-function detectServiceEnv(host: string): string {
-  const clean = stripProtocol(host)
-  if (clean === "api.clickzetta.com" || clean === "api.singdata.com") return ""
-  const match = clean.match(/^([^.]+)-api\./) ?? clean.match(/^([^.]+)\.api\./)
-  return match?.[1] ?? ""
-}
-
-export function accountLoginUrlForService(service: string, accountName: string): string {
-  const host = stripProtocol(service)
-  const rootDomain = extractRootDomain(host)
-  const env = detectServiceEnv(host)
-  return env
-    ? `https://${accountName}.${env}-accounts.${rootDomain}`
-    : `https://${accountName}.accounts.${rootDomain}`
-}
+export { accountLoginUrlForService }
 
 function decodeJwtPayload(token: string): Record<string, unknown> {
   try {
@@ -214,51 +200,19 @@ function coerceInt(value: unknown): number {
   return Number.isFinite(number) ? Math.trunc(number) : 0
 }
 
-function extractJwtFromResponse(headers: Headers, payload: Record<string, unknown>): string {
-  const data = (payload.data ?? {}) as Record<string, unknown>
-  const setCookie = headers.get("set-cookie") || ""
-  const cookieMatch = setCookie.match(/(?:X-ClickZetta-Token|x-clickzetta-token)=([^;]+)/)
-  const token = [
-    headers.get("x-refresh-jwt") || "",
-    headers.get("x-clickzetta-token") || "",
-    String(data.token ?? ""),
-    String(data.jwt ?? ""),
-    String(data.accessToken ?? ""),
-    String(payload.token ?? ""),
-    cookieMatch?.[1] ?? "",
-  ].find((item) => item.trim())
-  return token?.trim() ?? ""
-}
-
 async function loginWithExistingAccount(
   username: string,
   password: string,
   accountName: string,
   service: string,
 ): Promise<SetupAuthContext> {
-  const loginUrl = `${accountLoginUrlForService(service, accountName)}/login`
-  const response = await fetch(loginUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/plain, */*",
-    },
-    body: JSON.stringify({ username, password, accountDisplayName: accountName }),
-    signal: AbortSignal.timeout(20_000),
-  })
-  if (!response.ok) {
-    throw new Error(`ACCOUNT_LOGIN_FAILED: HTTP ${response.status}`)
-  }
-  const payload = await response.json() as Record<string, unknown>
-  const code = String(payload.code ?? "")
-  if (!["0", "200"].includes(code)) {
-    throw new Error(`ACCOUNT_LOGIN_FAILED: ${String(payload.message ?? "login failed")}`)
-  }
-  const token = extractJwtFromResponse(response.headers, payload)
-  if (!token) throw new Error("ACCOUNT_LOGIN_FAILED: token not found in login response")
-  const data = (payload.data ?? {}) as Record<string, unknown>
+  const { data, serviceHost, serviceUrl, token } = await loginByAccountSite(
+    accountName,
+    username,
+    password,
+    service,
+  )
   const jwt = decodeJwtPayload(token)
-  const serviceUrl = toServiceUrl(stripProtocol(service))
   const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
   if (!tenantId) {
     throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
@@ -268,7 +222,8 @@ async function loginWithExistingAccount(
     userId: coerceInt(jwt.userId ?? jwt.user_id ?? data.userId ?? data.id),
     tenantId,
     username: String(jwt.userName ?? data.username ?? username),
-    service: stripProtocol(service),
+    password,
+    service: serviceHost,
     serviceUrl,
   }
 }
@@ -304,6 +259,8 @@ function unwrapArray(payload: Record<string, unknown>): Record<string, unknown>[
 }
 
 function filterLakehouseInstances(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const filteredByServiceId = rows.filter((row) => coerceInt(row.serviceId) === 1)
+  if (filteredByServiceId.length > 0) return filteredByServiceId
   const filtered = rows.filter((row) => {
     const haystack = [
       row.serviceType,
@@ -352,6 +309,8 @@ async function listInstances(auth: SetupAuthContext): Promise<InstanceOption[]> 
             value: instanceName,
             instanceId,
             instanceName,
+            cspId: coerceInt(row.cspId),
+            regionId: coerceInt(row.regionId),
           }
         : null
     })
@@ -372,13 +331,28 @@ async function listWorkspaces(
     instance.instanceName,
   )
   return rows
-    .map((row) => ({
-      label: row.workspaceName,
-      value: row.workspaceName,
-      workspaceId: row.workspaceId,
-      projectId: row.projectId,
-      workspaceName: row.workspaceName,
-    }))
+    .map((row) => {
+      const rawRow = row as unknown as Record<string, unknown>
+      const workspaceName = String(rawRow.workspaceName ?? rawRow.showName ?? rawRow.projectName ?? "").trim()
+      const workspaceId = String(
+        (Array.isArray(rawRow.workspaceIds) ? rawRow.workspaceIds[0] : undefined)
+          ?? rawRow.workspaceId
+          ?? "",
+      ).trim()
+      const projectId = coerceInt(rawRow.projectId)
+      return workspaceName && workspaceId
+        ? {
+            label: workspaceName,
+            value: workspaceName,
+            workspaceId,
+            projectId,
+            workspaceName,
+            defaultSchemaName: String(rawRow.defaultSchemaName ?? "").trim(),
+            defaultVclusterName: String(rawRow.defaultVcName ?? rawRow.defaultVclusterName ?? "").trim(),
+          }
+        : null
+    })
+    .filter((item): item is WorkspaceOption => item !== null)
     .sort((left, right) => left.workspaceName.localeCompare(right.workspaceName))
 }
 
@@ -391,7 +365,6 @@ function studioHeaders(
     "Content-Type": "application/json",
     Accept: "application/json, text/plain, */*",
     "X-Clickzetta-Token": auth.token,
-    "x-clickzetta-token": auth.token,
     userId: String(auth.userId),
     instanceId: String(instance.instanceId),
     accountId: String(auth.tenantId),
@@ -405,20 +378,98 @@ function studioHeaders(
   }
 }
 
+function cspRegion(instance: InstanceOption): string {
+  return instance.cspId > 0 && instance.regionId > 0 ? `${instance.cspId}-${instance.regionId}` : ""
+}
+
+function dedupeOptions(options: NamedOption[]): NamedOption[] {
+  return Array.from(new Map(options.map((option) => [option.value, option])).values())
+    .sort((left, right) => left.value.localeCompare(right.value))
+}
+
+async function listSchemasByStudioApi(
+  auth: SetupAuthContext,
+  instance: InstanceOption,
+  workspace: WorkspaceOption,
+): Promise<NamedOption[]> {
+  const region = cspRegion(instance)
+  if (!region) return []
+  const payload = await requestJson(
+    `${auth.serviceUrl}/clickzetta-groot/api/v1/entity/centre/schema/list?env=PROD`,
+    {
+      method: "POST",
+      headers: studioHeaders(auth, instance, workspace),
+      body: JSON.stringify({
+        workspace: workspace.workspaceName,
+        cspRegion: region,
+      }),
+    },
+  )
+  return dedupeOptions(
+    unwrapArray(payload)
+      .map((row) => String(row.entityName ?? row.schemaName ?? row.name ?? row.schema ?? "").trim())
+      .filter(Boolean)
+      .map((name) => ({ label: name, value: name })),
+  )
+}
+
 async function listSchemas(
   auth: SetupAuthContext,
   instance: InstanceOption,
   workspace: WorkspaceOption,
 ): Promise<NamedOption[]> {
-  const payload = await requestJson(
-    `${auth.serviceUrl}/clickzetta-groot/api/v1/entity/centre/schema/list?env=PROD`,
-    { method: "GET", headers: studioHeaders(auth, instance, workspace) },
+  try {
+    const studioOptions = await listSchemasByStudioApi(auth, instance, workspace)
+    if (studioOptions.length > 0) return studioOptions
+  } catch {}
+  const schemaFallback = workspace.defaultSchemaName || "public"
+  const vclusterCandidates = Array.from(
+    new Set(
+      [
+        workspace.defaultVclusterName,
+        "default",
+        "DEFAULT",
+      ]
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
   )
-  return unwrapArray(payload)
-    .map((row) => String(row.schemaName ?? row.name ?? row.schema ?? ""))
-    .filter(Boolean)
-    .map((name) => ({ label: name, value: name }))
-    .sort((left, right) => left.value.localeCompare(right.value))
+  for (const vcluster of vclusterCandidates) {
+    const config = {
+      pat: "",
+      username: auth.username,
+      password: auth.password,
+      service: auth.service,
+      protocol: "https",
+      instance: instance.instanceName,
+      workspace: workspace.workspaceName,
+      schema: schemaFallback,
+      vcluster,
+    }
+    const token = await getToken(config)
+    const result = await execSql(
+      {
+        config,
+        token,
+        clientOpts: {
+          baseUrl: toServiceUrl(config.service, config.protocol),
+          token: token.token,
+          customHeaders: { instanceName: config.instance },
+        },
+      },
+      "SHOW SCHEMAS",
+      { timeoutMs: 20_000 },
+    )
+    if (!isQueryResult(result) || result.status !== JobStatus.SUCCEEDED) continue
+    const options = dedupeOptions(
+      result.rows
+        .map((row) => String(row.schema_name ?? row.name ?? Object.values(row)[0] ?? "").trim())
+        .filter(Boolean)
+        .map((name) => ({ label: name, value: name })),
+    )
+    if (options.length > 0) return options
+  }
+  return schemaFallback ? [{ label: schemaFallback, value: schemaFallback }] : []
 }
 
 async function listVclusters(
@@ -429,7 +480,9 @@ async function listVclusters(
   const headers = studioHeaders(auth, instance, workspace)
   const body = JSON.stringify({
     instanceId: instance.instanceId,
-    workspaceId: String(workspace.workspaceId),
+    workspaceId: workspace.workspaceId,
+    workspaceName: workspace.workspaceName,
+    ...(cspRegion(instance) ? { cspRegion: cspRegion(instance) } : {}),
   })
   let payload: Record<string, unknown>
   try {
@@ -447,6 +500,9 @@ async function listVclusters(
     .map((row) => String(row.code ?? row.vcCode ?? row.name ?? row.vclusterName ?? ""))
     .filter(Boolean)
     .map((name) => ({ label: name, value: name }))
+    .reduce<NamedOption[]>((acc, option) => (
+      acc.some((item) => item.value === option.value) ? acc : [...acc, option]
+    ), [])
     .sort((left, right) => left.value.localeCompare(right.value))
 }
 
@@ -460,6 +516,20 @@ function resolveOption<T extends NamedOption>(
     throw new Error(`Invalid ${field}: ${provided}`)
   }
   return option
+}
+
+export function resolveOrAutoSelectOption<T extends NamedOption>(
+  provided: string | undefined,
+  options: T[],
+  field: string,
+): ResolvedOption<T> {
+  if (provided) return { option: resolveOption(provided, options, field), autoSelected: false }
+  if (options.length === 1) return { option: options[0], autoSelected: true }
+  return { autoSelected: false }
+}
+
+function announceAutoSelected(field: string, value: string): void {
+  process.stderr.write(`Only one ${field} found, using ${value}.\n`)
 }
 
 async function chooseOptionTTY(question: string, options: NamedOption[], allowCustom = false): Promise<string> {
@@ -478,7 +548,7 @@ async function runExistingAccountFlowTTY(
   const password = setupValue(argv, "password") || await prompt("Password: ")
   const accountName = setupValue(argv, "account-name") || await prompt("Account name: ")
   const service = setupValue(argv, "service") || await chooseOptionTTY(
-    "Choose service endpoint",
+    "Choose service endpoint or account console host",
     SERVICE_ENDPOINTS.map((value) => ({ label: value, value })),
     true,
   )
@@ -488,27 +558,43 @@ async function runExistingAccountFlowTTY(
     error("SETUP_DISCOVERY_FAILED", "No Lakehouse instances found under the selected service.", { format })
     return
   }
-  const instanceName = setupValue(argv, "instance") || await chooseOptionTTY("Choose instance", instances)
-  const instance = resolveOption(instanceName, instances, "instance")
+  const chosenInstance = resolveOrAutoSelectOption(setupValue(argv, "instance") || undefined, instances, "instance")
+  const instance = chosenInstance.option
+    ?? resolveOption(await chooseOptionTTY("Choose instance", instances), instances, "instance")
+  if (chosenInstance.autoSelected) announceAutoSelected("instance", instance.instanceName)
   const workspaces = await listWorkspaces(auth, instance)
   if (workspaces.length === 0) {
     error("SETUP_DISCOVERY_FAILED", "No workspaces found under the selected instance.", { format })
     return
   }
-  const workspaceName = setupValue(argv, "workspace") || await chooseOptionTTY("Choose workspace", workspaces)
-  const workspace = resolveOption(workspaceName, workspaces, "workspace")
+  const chosenWorkspace = resolveOrAutoSelectOption(
+    setupValue(argv, "workspace") || undefined,
+    workspaces,
+    "workspace",
+  )
+  const workspace = chosenWorkspace.option
+    ?? resolveOption(await chooseOptionTTY("Choose workspace", workspaces), workspaces, "workspace")
+  if (chosenWorkspace.autoSelected) announceAutoSelected("workspace", workspace.workspaceName)
   const schemas = await listSchemas(auth, instance, workspace)
   const vclusters = await listVclusters(auth, instance, workspace)
-  const schema = setupValue(argv, "schema") || (
-    schemas.length ? await chooseOptionTTY("Choose schema", schemas, true) : await prompt("Schema: ")
-  )
-  const vcluster = setupValue(argv, "vcluster") || (
-    vclusters.length ? await chooseOptionTTY("Choose vcluster", vclusters, true) : await prompt("Vcluster: ")
-  )
+  const chosenSchema = resolveOrAutoSelectOption(setupValue(argv, "schema") || undefined, schemas, "schema")
+  const schema = chosenSchema.option
+    ? chosenSchema.option.value
+    : schemas.length
+      ? await chooseOptionTTY("Choose schema", schemas, true)
+      : await prompt("Schema: ")
+  if (chosenSchema.autoSelected) announceAutoSelected("schema", schema)
+  const chosenVcluster = resolveOrAutoSelectOption(setupValue(argv, "vcluster") || undefined, vclusters, "vcluster")
+  const vcluster = chosenVcluster.option
+    ? chosenVcluster.option.value
+    : vclusters.length
+      ? await chooseOptionTTY("Choose vcluster", vclusters, true)
+      : await prompt("Vcluster: ")
+  if (chosenVcluster.autoSelected) announceAutoSelected("vcluster", vcluster)
   const profile: ProfileEntry = {
     username,
     password,
-    service: stripProtocol(service),
+    service: auth.service,
     protocol: "https",
     instance: instance.instanceName,
     workspace: workspace.workspaceName,
@@ -568,7 +654,7 @@ async function runExistingAccountFlowNonTTY(
     setupNeedsInput(
       format,
       "service",
-      "Choose a service endpoint. After that, cz-cli can log in and list available instances for you to choose from.",
+      "Choose a service endpoint or account console host. After that, cz-cli can log in and list available instances for you to choose from.",
       ["service"],
       [...SERVICE_ENDPOINTS.map((value) => ({ label: value, value })), { label: "Other", value: OTHER_SERVICE }],
       {
@@ -723,7 +809,7 @@ async function runExistingAccountFlowNonTTY(
   const profile: ProfileEntry = {
     username,
     password,
-    service: stripProtocol(service),
+    service: auth.service,
     protocol: "https",
     instance: instance.instanceName,
     workspace: workspace.workspaceName,
@@ -772,7 +858,7 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           "    2. Run `cz-cli setup --credential <BASE64_CREDENTIAL>`\n\n" +
           "  Already have ClickZetta account:\n" +
           "    1. Provide username, password, and account name\n" +
-          "    2. Choose a service endpoint\n" +
+          "    2. Choose a service endpoint or account console host\n" +
           "    3. cz-cli lists instance -> workspace -> schema -> vcluster\n" +
           "    4. Confirm selections and save the profile\n\n" +
           "  Non-TTY / agent mode:\n" +
@@ -892,7 +978,7 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
       process.stderr.write(
         "\nExisting account flow:\n" +
         "  1. Enter username, password, and account name\n" +
-        "  2. Choose a service endpoint\n" +
+        "  2. Choose a service endpoint or account console host\n" +
         "  3. Choose instance -> workspace -> schema -> vcluster\n\n",
       )
 

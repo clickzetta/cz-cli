@@ -6,7 +6,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
 import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl } from "../../config/profiles-llm"
 import { cmd } from "./cmd"
 
-const CLICKZETTA_DIR = path.join(os.homedir(), ".clickzetta")
+const CLICKZETTA_DIR = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta")
 const PROFILES_PATH = path.join(CLICKZETTA_DIR, "profiles.toml")
 
 const VALID_PROVIDERS = [
@@ -391,7 +391,11 @@ const LlmAddCommand = cmd({
         alias: ["llm-provider"],
         describe: `provider: ${VALID_PROVIDERS.join(", ")}`,
       })
-      .option("model", { type: "string", alias: ["llm-model"], describe: "model ID (e.g. claude-sonnet-4-6)" })
+      .option("model", {
+        type: "string",
+        alias: ["llm-model"],
+        describe: "model ID to use by default when this entry is selected via default_llm and config.model is unset",
+      })
       .option("api-key", { type: "string", alias: ["llm-api-key"], describe: "API key for the provider" })
       .option("base-url", {
         type: "string",

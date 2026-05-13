@@ -1119,6 +1119,13 @@ export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
   }
 }
 
+function agentTimeoutOverrideMs() {
+  const raw = process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"]
+  if (!raw) return undefined
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
 const layer: Layer.Layer<
   Service,
   never,
@@ -1136,6 +1143,7 @@ const layer: Layer.Layer<
       Effect.gen(function* () {
         using _ = log.time("state")
         const bridge = yield* EffectBridge.make()
+        const plugins = yield* plugin.list()
         const cfg = yield* config.get()
         const modelsDev = yield* Effect.promise(() => ModelsDev.get())
         const database = mapValues(modelsDev, fromModelsDevProvider)
@@ -1177,10 +1185,7 @@ const layer: Layer.Layer<
           providers[providerID] = mergeDeep(match, provider)
         }
 
-        // load plugins first so config() hook runs before reading cfg.provider
-        const plugins = yield* plugin.list()
-
-        // now read config providers - includes any modifications from plugin config() hook
+        // read config after plugin config() hooks have had a chance to mutate it
         const configProviders = Object.entries(cfg.provider ?? {})
         const disabled = new Set(cfg.disabled_providers ?? [])
         const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
@@ -1352,6 +1357,14 @@ const layer: Layer.Layer<
           if (provider.name) partial.name = provider.name
           if (provider.options) partial.options = provider.options
           mergeProvider(providerID, partial)
+        }
+
+        const timeoutOverride = agentTimeoutOverrideMs()
+        if (timeoutOverride) {
+          for (const provider of Object.values(providers)) {
+            if (provider.options.timeout !== undefined) continue
+            provider.options.timeout = timeoutOverride
+          }
         }
 
         const gitlab = ProviderID.make("gitlab")

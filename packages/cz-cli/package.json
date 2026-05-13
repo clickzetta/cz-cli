@@ -10,6 +10,7 @@
     "cz-cli": "./src/main.ts"
   },
   "scripts": {
+    "typecheck": "tsgo --noEmit",
     "test:e2e": "bun test/e2e.ts",
     "test:e2e:full": "bun test/e2e-full.ts",
     "test:e2e:routing": "bun test/e2e-routing.ts",

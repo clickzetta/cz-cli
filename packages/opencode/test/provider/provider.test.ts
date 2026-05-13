@@ -8,6 +8,7 @@ import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
 import { Provider } from "../../src/provider"
+import { Config } from "../../src/config"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Filesystem } from "../../src/util"
 import { Env } from "../../src/env"
@@ -17,6 +18,7 @@ import { makeRuntime } from "../../src/effect/run-service"
 
 const env = makeRuntime(Env.Service, Env.defaultLayer)
 const set = (k: string, v: string) => env.runSync((svc) => svc.set(k, v))
+const clearConfig = (wait = false) => AppRuntime.runPromise(Config.Service.use((svc) => svc.invalidate(wait)))
 
 async function run<A, E>(fn: (provider: Provider.Interface) => Effect.Effect<A, E, never>) {
   return AppRuntime.runPromise(
@@ -111,6 +113,75 @@ test("provider loaded from config with apiKey option", async () => {
     fn: async () => {
       const providers = await list()
       expect(providers[ProviderID.anthropic]).toBeDefined()
+    },
+  })
+})
+
+test("agent run timeout env applies when provider timeout is unset", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const previous = process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"]
+      process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"] = "150000"
+      try {
+        const providers = await list()
+        expect(providers[ProviderID.anthropic]).toBeDefined()
+        expect(providers[ProviderID.anthropic].options.timeout).toBe(150000)
+      } finally {
+        if (previous === undefined) delete process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"]
+        else process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"] = previous
+      }
+    },
+  })
+})
+
+test("configured provider timeout wins over agent run timeout env", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            anthropic: {
+              options: {
+                timeout: 30000,
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const previous = process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"]
+      process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"] = "150000"
+      try {
+        const providers = await list()
+        expect(providers[ProviderID.anthropic]).toBeDefined()
+        expect(providers[ProviderID.anthropic].options.timeout).toBe(30000)
+      } finally {
+        if (previous === undefined) delete process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"]
+        else process.env["CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS"] = previous
+      }
     },
   })
 })
@@ -465,6 +536,58 @@ test("defaultModel respects config model setting", async () => {
       expect(String(model.modelID)).toBe("claude-sonnet-4-20250514")
     },
   })
+})
+
+test("defaultModel falls back to default_llm model bridge when config.model is unset", async () => {
+  await using home = await tmpdir({
+    init: async (dir) => {
+      const clickzettaDir = path.join(dir, ".clickzetta")
+      await mkdir(clickzettaDir, { recursive: true })
+      await Bun.write(
+        path.join(clickzettaDir, "profiles.toml"),
+        [
+          'default_llm = "clickzetta"',
+          "",
+          "[llm.clickzetta]",
+          'provider = "clickzetta"',
+          'api_key = "ck-test"',
+          'base_url = "https://gateway.clickzetta.com"',
+          'model = "deepseek-v4-pro"',
+          "",
+        ].join("\n"),
+      )
+    },
+  })
+  const previousHome = process.env["CLICKZETTA_TEST_HOME"]
+  process.env["CLICKZETTA_TEST_HOME"] = home.path
+
+  try {
+    await clearConfig(true)
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+          }),
+        )
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = await defaultModel()
+        expect(model).toEqual({
+          providerID: ProviderID.clickzetta,
+          modelID: ModelID.make("deepseek-v4-pro"),
+        })
+      },
+    })
+  } finally {
+    if (previousHome === undefined) delete process.env["CLICKZETTA_TEST_HOME"]
+    else process.env["CLICKZETTA_TEST_HOME"] = previousHome
+    await clearConfig(true)
+  }
 })
 
 test("provider with baseURL from config", async () => {
@@ -2407,7 +2530,7 @@ test("cloudflare-ai-gateway forwards config metadata options", async () => {
 test("plugin config providers persist after instance dispose", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
-      const root = path.join(dir, ".opencode", "plugin")
+      const root = path.join(dir, ".clickzetta", "plugin")
       await mkdir(root, { recursive: true })
       await Bun.write(
         path.join(root, "demo-provider.ts"),
@@ -2466,7 +2589,7 @@ test("plugin config providers persist after instance dispose", async () => {
 test("plugin config enabled and disabled providers are honored", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
-      const root = path.join(dir, ".opencode", "plugin")
+      const root = path.join(dir, ".clickzetta", "plugin")
       await mkdir(root, { recursive: true })
       await Bun.write(
         path.join(root, "provider-filter.ts"),

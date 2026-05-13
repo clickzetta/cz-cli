@@ -8,6 +8,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { loadProfiles, saveProfiles, type ProfileEntry } from "../connection/profile-store.js"
+import { loginByAccountSite } from "./account-login.js"
 
 // ---------------------------------------------------------------------------
 // Data interfaces
@@ -238,48 +239,16 @@ function coerceInt(value: unknown, fallback = 0): number {
   } catch { return fallback }
 }
 
-function extractJwtFromResponse(
-  headers: Headers, payload: Record<string, unknown>,
-): string {
-  const data = (payload.data ?? {}) as Record<string, unknown>
-  const candidates: string[] = [
-    headers.get("x-refresh-jwt") || "",
-    headers.get("x-clickzetta-token") || "",
-    String(data.token ?? ""),
-    String(data.jwt ?? ""),
-    String(data.accessToken ?? ""),
-    String(payload.token ?? ""),
-  ]
-  // Parse Set-Cookie header for token
-  const setCookie = headers.get("set-cookie") || ""
-  const cookieMatch = setCookie.match(/(?:X-ClickZetta-Token|x-clickzetta-token)=([^;]+)/)
-  if (cookieMatch) candidates.push(cookieMatch[1])
-
-  for (const item of candidates) {
-    const token = (item || "").trim()
-    if (token) return token
-  }
-  return ""
-}
-
 async function loginWithPasswordRaw(
-  instance: string, username: string, password: string, url: string, timeoutSeconds = 20,
-): Promise<{ token: string; data: Record<string, unknown> }> {
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/plain, */*" },
-    body: JSON.stringify({ username, password, accountDisplayName: instance }),
-    signal: AbortSignal.timeout(timeoutSeconds * 1000),
-  })
-  if (!resp.ok) throw new Error(`ACCOUNT_LOGIN_FAILED: HTTP ${resp.status}`)
-  const payload = await resp.json() as Record<string, unknown>
-  const code = String(payload.code ?? "")
-  if (code !== "0" && code !== "200") {
-    throw new Error(`ACCOUNT_LOGIN_FAILED: ${payload.message ?? "login failed"}`)
+  instance: string, username: string, password: string, accountLoginUrl: string, timeoutSeconds = 20,
+): Promise<{ token: string; data: Record<string, unknown>; serviceHost: string; serviceUrl: string }> {
+  const login = await loginByAccountSite(instance, username, password, accountLoginUrl, timeoutSeconds * 1000, accountLoginUrl)
+  return {
+    token: login.token,
+    data: login.data,
+    serviceHost: login.serviceHost,
+    serviceUrl: login.serviceUrl,
   }
-  const token = extractJwtFromResponse(resp.headers, payload)
-  if (!token) throw new Error("ACCOUNT_LOGIN_FAILED: token not found in login response")
-  return { token, data: (payload.data ?? {}) as Record<string, unknown> }
 }
 
 async function loginByAccount(
@@ -288,9 +257,9 @@ async function loginByAccount(
   if (!info.accountLoginUrl || !info.accountDisplayName) {
     throw new Error("account login requires account URL")
   }
-  const { token, data } = await loginWithPasswordRaw(
+  const { token, data, serviceUrl } = await loginWithPasswordRaw(
     info.accountDisplayName, username, password,
-    `${info.accountLoginUrl}/login`, timeout,
+    info.accountLoginUrl, timeout,
   )
   const jp = decodeJwtPayload(token)
   return {
@@ -300,7 +269,7 @@ async function loginByAccount(
     instanceId: 0,
     username: String(jp.userName ?? data.username ?? username),
     accountDisplayName: info.accountDisplayName,
-    serviceUrl: info.serviceUrl,
+    serviceUrl: info.serviceUrl || serviceUrl,
     centerRegion: info.centerRegion,
   }
 }
@@ -362,8 +331,8 @@ async function authenticate(
     // Fallback: use env_token as account for account-level login
     if (info.envToken) {
       const accountLoginUrl = `https://${info.envToken}.accounts.${info.rootDomain}`
-      const { token, data } = await loginWithPasswordRaw(
-        info.envToken, username, password, `${accountLoginUrl}/login`, timeout,
+      const { token, data, serviceUrl } = await loginWithPasswordRaw(
+        info.envToken, username, password, accountLoginUrl, timeout,
       )
       const jp = decodeJwtPayload(token)
       return {
@@ -373,7 +342,7 @@ async function authenticate(
         instanceId: 0,
         username: String(jp.userName ?? data.username ?? username),
         accountDisplayName: info.envToken,
-        serviceUrl: info.serviceUrl,
+        serviceUrl: info.serviceUrl || serviceUrl,
         centerRegion: info.centerRegion,
       }
     }
@@ -495,11 +464,14 @@ async function loadInstances(auth: AuthResult): Promise<InstanceItem[]> {
       "/clickzetta-portal/service/listInstances",
       { accountId: auth.tenantId },
     )
-    return (data || []).map((item) => ({
-      instance_id: coerceInt(item.id),
-      instance_name: String(item.name ?? ""),
-      region_id: coerceInt(item.regionId),
-    })).sort((a, b) => a.instance_name.localeCompare(b.instance_name) || a.instance_id - b.instance_id)
+    return (data || [])
+      .filter((item) => coerceInt(item.serviceId) === 1)
+      .map((item) => ({
+        instance_id: coerceInt(item.id),
+        instance_name: String(item.name ?? ""),
+        region_id: coerceInt(item.regionId),
+      }))
+      .sort((a, b) => a.instance_name.localeCompare(b.instance_name) || a.instance_id - b.instance_id)
   } catch { return [] }
 }
 
@@ -531,17 +503,26 @@ async function ensureIdentity(auth: AuthResult): Promise<AuthResult> {
 
 async function listWorkspacesForInstance(
   auth: AuthResult, instanceName: string, instanceId: number, regionKey: string,
-): Promise<{ workspace_name: string; workspace_id: number; project_id: number }[]> {
+): Promise<{ workspace_name: string; workspace_id: string; project_id: number }[]> {
   const fixed = await ensureIdentity(auth)
   const rows = await listUserWorkspaces(
     fixed.serviceUrl, fixed.token, fixed.userId, fixed.tenantId,
     instanceId, instanceName,
   )
-  return (rows || []).map((row) => ({
-    workspace_name: row.workspaceName || "",
-    workspace_id: row.workspaceId || 0,
-    project_id: row.projectId || 0,
-  })).sort((a, b) => a.workspace_name.localeCompare(b.workspace_name))
+  return (rows || [])
+    .map((row) => {
+      const rawRow = row as unknown as Record<string, unknown>
+      const workspace_name = String(rawRow.workspaceName ?? rawRow.showName ?? rawRow.projectName ?? "").trim()
+      const workspace_id = String(
+        (Array.isArray(rawRow.workspaceIds) ? rawRow.workspaceIds[0] : undefined)
+          ?? rawRow.workspaceId
+          ?? "",
+      ).trim()
+      const project_id = coerceInt(rawRow.projectId)
+      return workspace_name && workspace_id ? { workspace_name, workspace_id, project_id } : null
+    })
+    .filter((item): item is { workspace_name: string; workspace_id: string; project_id: number } => item !== null)
+    .sort((a, b) => a.workspace_name.localeCompare(b.workspace_name))
 }
 
 function resolveServiceHost(serviceHost: string, regionKey: string): string {
@@ -583,6 +564,17 @@ const INTERACTIVE_TIMEOUT_MS = 180_000 // 3 minutes
 const QUICKSTART_EXEMPT_COMMANDS = new Set([
   "profile", "ai-guide", "--help", "--version",
 ])
+
+function shouldSkipQuickstart(args: string[]): boolean {
+  if (args.some((arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v")) {
+    return true
+  }
+  for (const arg of args) {
+    if (QUICKSTART_EXEMPT_COMMANDS.has(arg)) return true
+    if (!arg.startsWith("-")) break
+  }
+  return false
+}
 
 function decodeCredentialString(encoded: string): Record<string, unknown> {
   const raw = encoded.trim()
@@ -745,11 +737,7 @@ async function interactiveQuickstart(): Promise<boolean> {
  * Returns true if the quickstart ran (whether successful or not).
  */
 export function maybeRunQuickstart(args: string[]): boolean {
-  // Skip for exempt commands
-  for (const arg of args) {
-    if (QUICKSTART_EXEMPT_COMMANDS.has(arg)) return false
-    if (!arg.startsWith("-")) break
-  }
+  if (shouldSkipQuickstart(args)) return false
 
   if (hasAnyProfile()) return false
 
@@ -780,10 +768,7 @@ export function maybeRunQuickstart(args: string[]): boolean {
  * Async version of maybeRunQuickstart for use in async CLI entry points.
  */
 export async function maybeRunQuickstartAsync(args: string[]): Promise<boolean> {
-  for (const arg of args) {
-    if (QUICKSTART_EXEMPT_COMMANDS.has(arg)) return false
-    if (!arg.startsWith("-")) break
-  }
+  if (shouldSkipQuickstart(args)) return false
 
   if (hasAnyProfile()) return false
 

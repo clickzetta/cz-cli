@@ -46,6 +46,7 @@ import { Bus } from "../bus"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
+import { Filesystem } from "@/util"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -156,7 +157,20 @@ export const layer: Layer.Layer<
         const matches = dirs.flatMap((dir) =>
           Glob.scanSync("{tool,tools}/*.{js,ts}", { cwd: dir, absolute: true, dot: true, symlink: true }),
         )
-        if (matches.length) yield* config.waitForDependencies()
+        if (
+          matches.length &&
+          (yield* Effect.promise(() =>
+            Promise.all(
+              dirs.map(async (dir) => {
+                if (!matches.some((match) => match.startsWith(`${dir}${path.sep}`))) return false
+                if (!(await Filesystem.exists(path.join(dir, "package.json")))) return false
+                return !(await Filesystem.exists(path.join(dir, "node_modules")))
+              }),
+            ).then((items) => items.some(Boolean)),
+          ))
+        ) {
+          yield* config.waitForDependencies()
+        }
         for (const match of matches) {
           const namespace = path.basename(match, path.extname(match))
           const mod = yield* Effect.promise(

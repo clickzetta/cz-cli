@@ -74,7 +74,7 @@ import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
 import { errorMessage } from "@/util/error"
 import { PluginLoader } from "./loader"
-import { parsePluginSpecifier, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
+import { parsePluginSpecifier, pluginSource, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
 import { registerAdaptor } from "@/control-plane/adaptors"
 import type { WorkspaceAdaptor } from "@/control-plane/types"
 
@@ -227,7 +227,9 @@ export const layer = Layer.effect(
         if (Flag.CLICKZETTA_PURE && cfg.plugin_origins?.length) {
           log.info("skipping external plugins in pure mode", { count: cfg.plugin_origins.length })
         }
-        if (plugins.length) yield* config.waitForDependencies()
+        if (plugins.some((origin) => pluginSource(Array.isArray(origin.spec) ? origin.spec[0] : origin.spec) === "npm")) {
+          yield* config.waitForDependencies()
+        }
 
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({
