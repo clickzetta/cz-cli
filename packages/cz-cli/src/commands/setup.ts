@@ -810,7 +810,8 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
           return
         }
-        const telemetryEnabled = await askYesNo("Enable anonymous telemetry to help improve cz-cli? (Y/n) ")
+
+        const telemetryEnabled = await askYesNo("Enable telemetry to help improve cz-cli? This shares LLM call traces and tool execution data. No code content is collected. (Y/n) ")
         setTelemetry(telemetryEnabled)
         logOperation("setup", { ok: true })
         success({

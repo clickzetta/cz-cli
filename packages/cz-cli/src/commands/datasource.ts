@@ -42,6 +42,7 @@ const API = {
   OBJECTS: "/ide-authority/v1/projectDataSources/listDataObjects",
   META_DETAIL: "/ide-authority/v1/projectDataSources/getDataObjectMeta",
   TEST: "/ide-authority/v1/projectDataSources/testDatasource",
+  SAMPLE: "/ide-authority/v1/projectDataSources/getSampleData",
 }
 
 async function apiList(sc: StudioConfig, opts: { dsName?: string; dsType?: number; page?: number; pageSize?: number }) {
@@ -76,6 +77,15 @@ async function apiTestDatasource(sc: StudioConfig, ds: { id: number; dsType?: nu
     const msg = err instanceof Error ? err.message : String(err)
     return { connected: false, message: msg }
   }
+}
+
+async function apiSampleData(sc: StudioConfig, params: { id: number; nameSpace: string; dataObjectName: string; dsType?: number; partitions?: string }) {
+  return studioRequest<{ fieldNames?: string[]; rows?: unknown[][] }>(sc, API.SAMPLE, {
+    id: params.id,
+    nameSpace: params.nameSpace,
+    dataObjectName: params.dataObjectName,
+    options: { dsType: params.dsType},
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +292,42 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             }
           } catch (err) {
             logOperation("datasource test", { ok: false, timeMs: Date.now() - t0 })
+            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      // ── sample ────────────────────────────────────────────────────────
+      .command(
+        "sample <datasource> <catalog> <object>",
+        "Get sample data from an object",
+        (y) =>
+          y
+            .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
+            .positional("catalog", { type: "string", demandOption: true, describe: "Catalog (namespace/database)" })
+            .positional("object", { type: "string", demandOption: true, describe: "Object name (table/topic)" }),
+        async (argv) => {
+          const format = argv.output
+          const t0 = Date.now()
+          try {
+            const sc = await getStudioContext(argv)
+            const ds = await resolveDatasource(sc, argv.datasource as string)
+            const resp = await apiSampleData(sc, {
+              id: ds.id,
+              nameSpace: argv.catalog as string,
+              dataObjectName: argv.object as string,
+              dsType: ds.dsType,
+            })
+            const data = resp.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+            if (!data?.fieldNames || !data?.rows) {
+              success(data ?? {}, { format, timeMs: Date.now() - t0 }); return
+            }
+            const rows = data.rows.map((row) =>
+              Object.fromEntries(data.fieldNames!.map((col, i) => [col, row[i]]))
+            )
+            logOperation("datasource sample", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
+            success(rows, { format, timeMs: Date.now() - t0 })
+          } catch (err) {
+            logOperation("datasource sample", { ok: false, timeMs: Date.now() - t0 })
             error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
         },

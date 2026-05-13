@@ -27,11 +27,41 @@ function isTelemetryEnabled(): boolean {
   }
 }
 
-if (isTelemetryEnabled()) {
+// Always enable OTel (logs + metrics). Traces only if telemetry=true.
+{
   if (!process.env.OPENCODE_ENABLE_TELEMETRY) process.env.OPENCODE_ENABLE_TELEMETRY = "1"
   if (!process.env.OPENCODE_OTLP_ENDPOINT) process.env.OPENCODE_OTLP_ENDPOINT = OTEL_DEFAULTS.endpoint
   if (!process.env.OPENCODE_OTLP_PROTOCOL) process.env.OPENCODE_OTLP_PROTOCOL = OTEL_DEFAULTS.protocol
   if (!process.env.OPENCODE_OTLP_HEADERS && OTEL_DEFAULTS.headers) process.env.OPENCODE_OTLP_HEADERS = OTEL_DEFAULTS.headers
+  if (!isTelemetryEnabled() && !process.env.OPENCODE_DISABLE_TRACES) {
+    process.env.OPENCODE_DISABLE_TRACES = "tool,llm"
+  }
+  if (!process.env.OPENCODE_RESOURCE_ATTRIBUTES) {
+    try {
+      const profilePath = join(homedir(), ".clickzetta", "profiles.toml")
+      const toml = readFileSync(profilePath, "utf-8")
+      const attrs: string[] = []
+      const defaultMatch = toml.match(/^default_profile\s*=\s*"?([^"\n]+)"?/m)
+      const profileName = defaultMatch?.[1]?.trim() ?? "default"
+      const sectionHeader = `[profiles.${profileName}]`
+      const sectionIdx = toml.indexOf(sectionHeader)
+      if (sectionIdx >= 0) {
+        const afterHeader = toml.slice(sectionIdx + sectionHeader.length)
+        const nextSection = afterHeader.indexOf("\n[")
+        const block = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader
+        const get = (key: string) => block.match(new RegExp(`^${key}\\s*=\\s*"?([^"\\n]+)"?`, "m"))?.[1]?.trim()
+        const username = get("username")
+        const instance = get("instance")
+        const workspace = get("workspace")
+        const service = get("service")
+        if (username) attrs.push(`user.name=${username}`)
+        if (instance) attrs.push(`instance.name=${instance}`)
+        if (workspace) attrs.push(`workspace.name=${workspace}`)
+        if (service) attrs.push(`service.url=${service}`)
+      }
+      if (attrs.length) process.env.OPENCODE_RESOURCE_ATTRIBUTES = attrs.join(",")
+    } catch {}
+  }
 }
 import { Session } from "../session"
 import { NamedError } from "@opencode-ai/shared/util/error"

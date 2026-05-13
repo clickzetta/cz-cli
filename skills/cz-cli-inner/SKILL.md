@@ -79,6 +79,8 @@ cz-cli datasource objects <name_or_id> <catalog>
 cz-cli datasource describe <name_or_id> <catalog> <object>
                                               Show object metadata (columns, types)
 cz-cli datasource test <name_or_id>          Test data source connectivity
+cz-cli datasource sample <name_or_id> <catalog> <object>
+                                              Get sample data from an object
 ```
 
 ## Output Formats
