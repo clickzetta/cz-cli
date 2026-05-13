@@ -1,17 +1,22 @@
 export function formatJson(data: unknown): string {
-  return JSON.stringify(data, jsonReplacer)
+  return stringifyJson(data)
 }
 
 export function formatPretty(data: unknown): string {
-  return JSON.stringify(data, jsonReplacer, 2)
+  return stringifyJson(data, 2)
 }
 
 /** Replacer matching Python's json.dumps(default=str) behavior */
 function jsonReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "number" && !Number.isFinite(value)) return String(value)
   if (typeof value === "bigint") return String(value)
   if (value instanceof Date) return value.toISOString()
   if (value instanceof Buffer || value instanceof Uint8Array) return Buffer.from(value).toString("base64")
   return value
+}
+
+function stringifyJson(data: unknown, space?: number): string {
+  return JSON.stringify(data, jsonReplacer, space)
 }
 
 export function formatTable(columns: string[], rows: Record<string, unknown>[]): string {
@@ -29,7 +34,7 @@ export function formatTable(columns: string[], rows: Record<string, unknown>[]):
     const sr: Record<string, string> = {}
     for (const c of columns) {
       const val = row[c]
-      const s = val === null || val === undefined ? "" : (typeof val === "object" ? JSON.stringify(val) : String(val))
+      const s = val === null || val === undefined ? "" : (typeof val === "object" ? stringifyJson(val) : String(val))
       sr[c] = s
       colWidths[c] = Math.max(colWidths[c], s.length)
     }
@@ -52,7 +57,7 @@ export function formatTableNoHeader(columns: string[], rows: Record<string, unkn
   for (const row of rows) {
     lines.push(columns.map((c) => {
       const val = row[c]
-      return val === null || val === undefined ? "" : (typeof val === "object" ? JSON.stringify(val) : String(val))
+      return val === null || val === undefined ? "" : (typeof val === "object" ? stringifyJson(val) : String(val))
     }).join("\t"))
   }
   return lines.join("\n")
@@ -67,7 +72,7 @@ export function formatCsv(columns: string[], rows: Record<string, unknown>[]): s
         .map((c) => {
           const val = row[c]
           if (val === null || val === undefined) return ""
-          if (typeof val === "object") return csvEscape(JSON.stringify(val))
+          if (typeof val === "object") return csvEscape(stringifyJson(val))
           return csvEscape(String(val))
         })
         .join(","),
@@ -84,7 +89,7 @@ export function formatCsvNoHeader(columns: string[], rows: Record<string, unknow
         .map((c) => {
           const val = row[c]
           if (val === null || val === undefined) return ""
-          if (typeof val === "object") return csvEscape(JSON.stringify(val))
+          if (typeof val === "object") return csvEscape(stringifyJson(val))
           return csvEscape(String(val))
         })
         .join(","),
@@ -94,7 +99,7 @@ export function formatCsvNoHeader(columns: string[], rows: Record<string, unknow
 }
 
 export function formatJsonl(rows: Record<string, unknown>[]): string {
-  return rows.map((row) => JSON.stringify(row)).join("\n")
+  return rows.map((row) => stringifyJson(row)).join("\n")
 }
 
 export function formatToon(data: unknown): string {

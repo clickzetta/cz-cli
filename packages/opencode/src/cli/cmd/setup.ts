@@ -4,6 +4,7 @@ import path from "path"
 import readline from "readline"
 import { xdgData } from "xdg-basedir"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
+import { createCli, registerSetupCommand } from "@clickzetta/cli"
 import { cmd } from "./cmd"
 
 export const SetupCommand = cmd({
@@ -49,8 +50,55 @@ interface Credential {
   aimeshEndpointBaseUrl?: string
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function parseCredential(base64: string): Credential {
   return JSON.parse(Buffer.from(base64, "base64").toString("utf-8"))
+}
+
+export function applyCredentialToProfiles(
+  existing: Record<string, unknown>,
+  cred: Credential,
+  profileName: string,
+): Record<string, unknown> {
+  const profiles = isRecord(existing.profiles) ? { ...existing.profiles } : {}
+  const currentProfile = isRecord(profiles[profileName]) ? { ...profiles[profileName] } : {}
+  delete currentProfile.api_key
+  delete currentProfile.aimesh_endpoint
+  profiles[profileName] = {
+    ...currentProfile,
+    ...(cred.instanceName && { instance: cred.instanceName }),
+    ...(cred.workspaceName && { workspace: cred.workspaceName }),
+    ...(cred.schema && { schema: cred.schema }),
+    ...(cred.virtualCluster && { vcluster: cred.virtualCluster }),
+    ...(cred.accessToken && { pat: cred.accessToken }),
+    ...(cred.service && { service: cred.service }),
+    protocol: cred.service?.startsWith("http://") ? "http" : "https",
+    ...(cred.username && { username: cred.username }),
+  }
+
+  const next = {
+    ...existing,
+    default_profile: profileName,
+    profiles,
+  }
+  if (!cred.apiKey && !cred.aimeshEndpointBaseUrl) return next
+
+  const llms = isRecord(existing.llm) ? { ...existing.llm } : {}
+  const clickzetta = isRecord(llms.clickzetta) ? { ...llms.clickzetta } : {}
+  llms.clickzetta = {
+    ...clickzetta,
+    provider: "clickzetta",
+    ...(cred.apiKey && { api_key: cred.apiKey }),
+    ...(cred.aimeshEndpointBaseUrl && { base_url: cred.aimeshEndpointBaseUrl }),
+  }
+  return {
+    ...next,
+    ...(!existing.default_llm && { default_llm: "clickzetta" }),
+    llm: llms,
+  }
 }
 
 function writeProfile(cred: Credential, profileName: string): void {
@@ -61,23 +109,7 @@ function writeProfile(cred: Credential, profileName: string): void {
     try { existing = parseTOML(readFileSync(PROFILES_PATH, "utf-8")) as Record<string, unknown> } catch {}
   }
 
-  const profiles = ((existing.profiles ?? {}) as Record<string, Record<string, unknown>>)
-  profiles[profileName] = {
-    ...(cred.instanceName && { instance: cred.instanceName }),
-    ...(cred.workspaceName && { workspace: cred.workspaceName }),
-    ...(cred.schema && { schema: cred.schema }),
-    ...(cred.virtualCluster && { vcluster: cred.virtualCluster }),
-    ...(cred.accessToken && { pat: cred.accessToken }),
-    ...(cred.service && { service: cred.service }),
-    protocol: cred.service?.startsWith("https") ? "https" : "http",
-    ...(cred.username && { username: cred.username }),
-    ...(cred.apiKey && { api_key: cred.apiKey }),
-    ...(cred.aimeshEndpointBaseUrl && { aimesh_endpoint: cred.aimeshEndpointBaseUrl }),
-  }
-
-  existing.default_profile = profileName
-  existing.profiles = profiles
-  writeFileSync(PROFILES_PATH, stringifyTOML(existing))
+  writeFileSync(PROFILES_PATH, stringifyTOML(applyCredentialToProfiles(existing, cred, profileName)))
 }
 
 function writeAuth(apiKey: string): void {
@@ -113,92 +145,13 @@ function prompt(question: string): Promise<string> {
 }
 
 export async function setup(args: readonly string[]): Promise<never> {
-  const credIdx = args.indexOf("--credential")
-  const nameIdx = args.indexOf("--profile-name")
-  const profileName = nameIdx >= 0 && nameIdx + 1 < args.length ? args[nameIdx + 1] : "default"
-
-  let base64: string
-
-  if (credIdx >= 0 && credIdx + 1 < args.length) {
-    base64 = args[credIdx + 1]
-  } else if (process.stdin.isTTY) {
-    process.stderr.write("\n  ClickZetta Lakehouse Setup\n\n")
-    process.stderr.write("  Paste your credential string (base64) from the registration page:\n\n")
-    base64 = await prompt("  credential: ")
-    if (!base64) {
-      process.stderr.write("\n  No credential provided. Register at:\n")
-      process.stderr.write("    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n")
-      process.stderr.write("    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n")
-      process.exit(1)
-    }
-  } else {
-    process.stdout.write(JSON.stringify({
-      error: {
-        code: "NO_CREDENTIAL",
-        message: "No credential provided. Use: cz-cli setup --credential <base64_string>",
-        register_urls: [
-          "https://accounts.clickzetta.com/register?ref=cz-cli",
-          "https://accounts.singdata.com/register?ref=cz-cli",
-        ],
-      },
-    }) + "\n")
-    process.exit(1)
-  }
-
-  let cred: Credential
-  try {
-    cred = parseCredential(base64)
-  } catch {
-    process.stderr.write("  Error: invalid credential string (not valid base64 JSON)\n")
-    process.stderr.write("  Get a valid credential from:\n")
-    process.stderr.write("    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n")
-    process.stderr.write("    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n")
-    process.exit(1)
-  }
-
-  if (!cred.instanceName && !cred.service) {
-    process.stderr.write("  Error: credential missing required fields (instanceName or service)\n")
-    process.stderr.write("  Get a valid credential from:\n")
-    process.stderr.write("    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n")
-    process.stderr.write("    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n")
-    process.exit(1)
-  }
-
-  writeProfile(cred, profileName)
-  if (cred.apiKey) writeAuth(cred.apiKey)
-
-  // Telemetry opt-in: only ask if not already configured
-  let existing: Record<string, unknown> = {}
-  if (existsSync(PROFILES_PATH)) {
-    try { existing = parseTOML(readFileSync(PROFILES_PATH, "utf-8")) as Record<string, unknown> } catch {}
-  }
-  if (!("telemetry" in existing)) {
-    let telemetryEnabled = true
-    if (process.stdin.isTTY) {
-      const answer = await prompt("  Enable anonymous telemetry to help improve cz-cli? (Y/n) ")
-      telemetryEnabled = answer.toLowerCase() !== "n"
-    }
-    writeTelemetry(telemetryEnabled)
-  }
-
-  if (process.stdin.isTTY) {
-    process.stderr.write(`\n  ✓ Profile '${profileName}' created\n`)
-    process.stderr.write(`    instance:  ${cred.instanceName ?? "-"}\n`)
-    process.stderr.write(`    workspace: ${cred.workspaceName ?? "-"}\n`)
-    process.stderr.write(`    service:   ${cred.service ?? "-"}\n`)
-    process.stderr.write(`    user:      ${cred.username ?? "-"}\n\n`)
-  } else {
-    process.stdout.write(JSON.stringify({
-      data: {
-        message: `Profile '${profileName}' created successfully.`,
-        profile: profileName,
-        instance: cred.instanceName,
-        workspace: cred.workspaceName,
-        schema: cred.schema,
-        vcluster: cred.virtualCluster,
-      },
-    }) + "\n")
-  }
-
-  process.exit(0)
+  const normalized = args.flatMap((arg, index) => {
+    if (arg !== "--profile-name") return [arg]
+    if (index + 1 >= args.length) return ["--name"]
+    return ["--name"]
+  })
+  const cli = createCli(["setup", ...normalized])
+  registerSetupCommand(cli)
+  await cli.demandCommand(1, "").help().parseAsync()
+  process.exit(process.exitCode ?? 0)
 }

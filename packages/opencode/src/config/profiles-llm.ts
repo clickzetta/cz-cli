@@ -10,9 +10,17 @@ export interface ProfilesLlmGuardResult {
   warnings: string[]
 }
 
+interface ParsedLlmEntry {
+  name: string
+  provider: (typeof VALID_PROVIDERS)[number]
+  apiKey: string
+  baseURL?: string
+}
+
 const LEGACY_FIELDS = ["llm_provider", "llm_model", "llm_api_key", "llm_base_url"] as const
 
 const VALID_PROVIDERS = [
+  "clickzetta",
   "anthropic",
   "openai",
   "openai-compatible",
@@ -39,6 +47,71 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
+function getProfiles(data: Record<string, unknown>) {
+  return isRecord(data.profiles) ? data.profiles : {}
+}
+
+function getLlms(data: Record<string, unknown>) {
+  return isRecord(data.llm) ? data.llm : {}
+}
+
+function getProfileSection(data: Record<string, unknown>, name: string) {
+  const profiles = getProfiles(data)
+  return isRecord(profiles[name]) ? profiles[name] : undefined
+}
+
+function getClickzettaLegacyFields(profileSection: Record<string, unknown> | undefined) {
+  return {
+    apiKey: profileSection ? asString(profileSection.api_key) : undefined,
+    baseUrl: profileSection ? asString(profileSection.aimesh_endpoint) : undefined,
+  }
+}
+
+export function migrateLegacyClickzettaConfig(data: Record<string, unknown>): boolean {
+  const defaultProfile = process.env.CZ_PROFILE ?? asString(data.default_profile) ?? "default"
+  const profileSection = getProfileSection(data, defaultProfile)
+  const legacy = getClickzettaLegacyFields(profileSection)
+  if (!legacy.apiKey && !legacy.baseUrl) return false
+
+  const llms = getLlms(data)
+  const clickzetta = isRecord(llms.clickzetta) ? { ...llms.clickzetta } : {}
+  let changed = false
+
+  if (clickzetta.provider !== "clickzetta") {
+    clickzetta.provider = "clickzetta"
+    changed = true
+  }
+  if (legacy.apiKey && clickzetta.api_key !== legacy.apiKey) {
+    clickzetta.api_key = legacy.apiKey
+    changed = true
+  }
+  if (legacy.baseUrl && clickzetta.base_url !== legacy.baseUrl) {
+    clickzetta.base_url = legacy.baseUrl
+    changed = true
+  }
+  if (!asString(data.default_llm)) {
+    data.default_llm = "clickzetta"
+    changed = true
+  }
+
+  if (profileSection) {
+    if ("api_key" in profileSection) {
+      delete profileSection.api_key
+      changed = true
+    }
+    if ("aimesh_endpoint" in profileSection) {
+      delete profileSection.aimesh_endpoint
+      changed = true
+    }
+  }
+
+  data.llm = {
+    ...llms,
+    clickzetta,
+  }
+  return changed
+}
+
 export function parseProfilesToml(toml: string): ProfilesLlmResult {
   const warnings: string[] = []
   const providers: ProfilesLlmResult["providers"] = {}
@@ -54,9 +127,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
 
   const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
   const defaultLlm = asString(parsed.default_llm)
-
-  const profiles = isRecord(parsed.profiles) ? parsed.profiles : {}
-  const profileSection = isRecord(profiles[defaultProfile]) ? profiles[defaultProfile] : undefined
+  const profileSection = getProfileSection(parsed, defaultProfile)
 
   if (profileSection) {
     const hasLegacy = LEGACY_FIELDS.some((f) => f in profileSection)
@@ -69,19 +140,26 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
     }
   }
 
-  if (profileSection) {
-    const aimeshEndpoint = asString(profileSection.aimesh_endpoint)
-    const apiKey = asString(profileSection.api_key)
-    if (aimeshEndpoint || apiKey) {
-      const baseURL = normalizeLlmBaseUrl("clickzetta", aimeshEndpoint)
-      const opts: { baseURL?: string; apiKey?: string } = {}
-      if (baseURL) opts.baseURL = baseURL
-      if (apiKey) opts.apiKey = apiKey
-      providers["clickzetta"] = { options: opts as { apiKey: string; baseURL?: string } }
-    }
+  const legacyClickzetta = getClickzettaLegacyFields(profileSection)
+  const legacyClickzettaProvider = legacyClickzetta.apiKey || legacyClickzetta.baseUrl
+    ? {
+        provider: "clickzetta" as const,
+        options: {
+          ...(legacyClickzetta.apiKey && { apiKey: legacyClickzetta.apiKey }),
+          ...(normalizeLlmBaseUrl("clickzetta", legacyClickzetta.baseUrl) && {
+            baseURL: normalizeLlmBaseUrl("clickzetta", legacyClickzetta.baseUrl),
+          }),
+        } as { apiKey: string; baseURL?: string },
+      }
+    : null
+  if (legacyClickzetta.apiKey || legacyClickzetta.baseUrl) {
+    warnings.push(
+      `found deprecated [profiles.${defaultProfile}].api_key/aimesh_endpoint; migrate them to [llm.clickzetta]`,
+    )
   }
 
-  const llms = isRecord(parsed.llm) ? parsed.llm : {}
+  const llms = getLlms(parsed)
+  const parsedEntries: ParsedLlmEntry[] = []
   for (const [name, raw] of Object.entries(llms)) {
     if (!isRecord(raw)) continue
     const provider = asString(raw.provider)
@@ -92,21 +170,80 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
       warnings.push(`[llm.${name}] has unknown provider "${provider}" — skipped`)
       continue
     }
-    const baseURL = normalizeLlmBaseUrl(provider, baseUrl)
-    providers[provider] = { options: { apiKey, ...(baseURL && { baseURL }) } }
+    parsedEntries.push({
+      name,
+      provider: provider as (typeof VALID_PROVIDERS)[number],
+      apiKey,
+      baseURL: normalizeLlmBaseUrl(provider, baseUrl),
+    })
   }
+
+  const entriesByProvider = parsedEntries.reduce<Record<string, ParsedLlmEntry[]>>((result, entry) => {
+    result[entry.provider] = [...(result[entry.provider] ?? []), entry]
+    return result
+  }, {})
 
   if (defaultLlm) {
     const entry = llms[defaultLlm]
     if (!isRecord(entry)) {
-      warnings.push(`default_llm = "${defaultLlm}" but [llm.${defaultLlm}] is not defined — falling back to ClickZetta`)
+      warnings.push(`default_llm = "${defaultLlm}" but [llm.${defaultLlm}] is not defined`)
     } else {
       const provider = asString(entry.provider)
       const apiKey = asString(entry.api_key)
       if (!provider || !apiKey) {
-        warnings.push(`[llm.${defaultLlm}] missing required fields — falling back to ClickZetta`)
+        warnings.push(`[llm.${defaultLlm}] missing required fields`)
       } else if (!VALID_PROVIDERS.includes(provider as (typeof VALID_PROVIDERS)[number])) {
-        warnings.push(`[llm.${defaultLlm}] unknown provider "${provider}" — falling back to ClickZetta`)
+        warnings.push(`[llm.${defaultLlm}] unknown provider "${provider}"`)
+      }
+    }
+  }
+
+  const selectedDefault = defaultLlm ? parsedEntries.find((entry) => entry.name === defaultLlm) : undefined
+  if (selectedDefault) {
+    providers[selectedDefault.provider] = {
+      options: {
+        apiKey: selectedDefault.apiKey,
+        ...(selectedDefault.baseURL && { baseURL: selectedDefault.baseURL }),
+      },
+    }
+    return { providers, warnings }
+  }
+
+  if (legacyClickzettaProvider) {
+    providers.clickzetta = { options: legacyClickzettaProvider.options }
+  }
+
+  if (parsedEntries.length === 1) {
+    const selected = parsedEntries[0]
+    providers[selected.provider] = {
+      options: {
+        apiKey: selected.apiKey,
+        ...(selected.baseURL && { baseURL: selected.baseURL }),
+      },
+    }
+    return { providers, warnings }
+  }
+
+  if (parsedEntries.length > 1) {
+    warnings.push(
+      "multiple [llm.*] entries are configured but default_llm is not set; using one entry per provider until you run `cz-cli agent llm use <name>`",
+    )
+  }
+
+  for (const [provider, entries] of Object.entries(entriesByProvider)) {
+    const selected = entries[0]
+    if (!selected) continue
+    if (entries.length > 1) {
+      warnings.push(
+        `multiple [llm.*] entries use provider "${provider}" but default_llm does not select one; using [llm.${selected.name}]`,
+      )
+    }
+    if (!providers[selected.provider]) {
+      providers[selected.provider] = {
+        options: {
+          apiKey: selected.apiKey,
+          ...(selected.baseURL && { baseURL: selected.baseURL }),
+        },
       }
     }
   }
@@ -125,11 +262,11 @@ export function hasUsableLlm(toml: string): ProfilesLlmGuardResult {
   if (!isRecord(parsed)) return { hasValidConfig: false, warnings }
 
   const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
-  const profiles = isRecord(parsed.profiles) ? parsed.profiles : {}
-  const profileSection = isRecord(profiles[defaultProfile]) ? profiles[defaultProfile] : undefined
-  const llms = isRecord(parsed.llm) ? parsed.llm : {}
+  const profileSection = getProfileSection(parsed, defaultProfile)
+  const llms = getLlms(parsed)
 
-  if (profileSection && (asString(profileSection.api_key) || asString(profileSection.aimesh_endpoint))) {
+  const legacyClickzetta = getClickzettaLegacyFields(profileSection)
+  if (legacyClickzetta.apiKey || legacyClickzetta.baseUrl) {
     return { hasValidConfig: true, warnings }
   }
 

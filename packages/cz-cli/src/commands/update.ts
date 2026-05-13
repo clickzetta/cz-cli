@@ -7,7 +7,7 @@
 
 import { execSync } from "node:child_process"
 import { existsSync } from "node:fs"
-import { homedir } from "node:os"
+import { homedir, platform } from "node:os"
 import { resolve, join } from "node:path"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
@@ -87,6 +87,18 @@ function updateViaBinary(version: string): boolean {
   }
 }
 
+function migrateProfilesAfterUpdate(installType: InstallType): void {
+  if (installType !== "binary") return
+  const binary = join(homedir(), ".local", "bin", platform() === "win32" ? "cz-cli.exe" : "cz-cli")
+  if (!existsSync(binary)) return
+  try {
+    execSync(`"${binary}"`, {
+      env: { ...process.env, CLICKZETTA_MIGRATE_PROFILES_ONLY: "1" },
+      stdio: "ignore",
+    })
+  } catch {}
+}
+
 export function registerUpdateCommand(cli: Argv) {
   cli.command(
     "update",
@@ -125,6 +137,7 @@ export function registerUpdateCommand(cli: Argv) {
       }
 
       if (ok) {
+        migrateProfilesAfterUpdate(installType)
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } else {
         process.stderr.write("Update failed. Try manually:\n")

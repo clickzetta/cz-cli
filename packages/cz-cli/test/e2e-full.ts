@@ -91,7 +91,7 @@ const tests: Test[] = [
   { name: "MISSING SQL", cmd: "sql", check: all(single, exitCode(2)) },
 
   // === Volume ===
-  { name: "SHOW VOLUME", cmd: 'sql "SHOW USER VOLUME DIRECTORY" --sync', check: all(single, ok) },
+  { name: "SHOW VOLUME", cmd: 'sql "SHOW USER VOLUME DIRECTORY" --sync --no-limit', check: all(single, ok) },
 
   // === Task/Runs ===
   { name: "TASK LIST", cmd: "task list", check: single },

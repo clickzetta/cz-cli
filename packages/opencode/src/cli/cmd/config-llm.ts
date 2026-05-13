@@ -3,13 +3,28 @@ import os from "os"
 import path from "path"
 import type { Argv } from "yargs"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
+import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl } from "../../config/profiles-llm"
 import { cmd } from "./cmd"
 
 const CLICKZETTA_DIR = path.join(os.homedir(), ".clickzetta")
 const PROFILES_PATH = path.join(CLICKZETTA_DIR, "profiles.toml")
 
-const VALID_PROVIDERS = ["anthropic", "openai", "openai-compatible", "bedrock", "google", "azure"] as const
+const VALID_PROVIDERS = [
+  "clickzetta",
+  "anthropic",
+  "openai",
+  "openai-compatible",
+  "bedrock",
+  "google",
+  "azure",
+  "openrouter",
+] as const
 const LEGACY_FIELDS = ["llm_provider", "llm_model", "llm_api_key", "llm_base_url"] as const
+const TESTABLE_PROVIDERS = ["clickzetta", "openai", "openai-compatible", "openrouter"] as const
+const DEFAULT_BASE_URLS = {
+  openai: "https://api.openai.com",
+  openrouter: "https://openrouter.ai/api",
+} as const
 
 type TomlRecord = Record<string, unknown>
 
@@ -22,7 +37,10 @@ function readProfiles(): TomlRecord {
   try {
     const content = readFileSync(PROFILES_PATH, "utf-8")
     const parsed = parseToml(content)
-    return isRecord(parsed) ? parsed : {}
+    if (!isRecord(parsed)) return {}
+    if (!migrateLegacyClickzettaConfig(parsed)) return parsed
+    writeProfiles(parsed)
+    return parsed
   } catch {
     return {}
   }
@@ -51,6 +69,135 @@ function mask(value: string | undefined): string | null {
   if (!value) return null
   if (value.length <= 8) return value.slice(0, 2) + "..."
   return value.slice(0, 8) + "..."
+}
+
+function onboarding() {
+  return {
+    clickzetta_builtin: [
+      "cz-cli setup --credential <base64_string>",
+    ],
+    external_llm: [
+      "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
+      "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+    ],
+    verify: [
+      "cz-cli agent llm test",
+      "cz-cli agent llm test <NAME>",
+    ],
+    lakehouse_setup: [
+      "cz-cli setup",
+      "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+    ],
+  }
+}
+
+function writeOnboarding() {
+  const guide = onboarding()
+  process.stderr.write("  No LLM configured yet.\n")
+  process.stderr.write("  ClickZetta built-in LLM:\n")
+  for (const step of guide.clickzetta_builtin) process.stderr.write(`    ${step}\n`)
+  process.stderr.write("\n")
+  process.stderr.write("  External LLMs:\n")
+  for (const step of guide.external_llm) process.stderr.write(`    ${step}\n`)
+  process.stderr.write("\n")
+  process.stderr.write("  Verify after adding one:\n")
+  for (const step of guide.verify) process.stderr.write(`    ${step}\n`)
+  process.stderr.write("\n")
+  process.stderr.write("  Note: Lakehouse connection setup is separate:\n")
+  for (const step of guide.lakehouse_setup) process.stderr.write(`    ${step}\n`)
+  process.stderr.write("\n")
+}
+
+function getOnboardingData() {
+  return {
+    onboarding: onboarding(),
+  }
+}
+
+function truncate(value: string): string {
+  if (value.length <= 240) return value
+  return value.slice(0, 237) + "..."
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+function responseDetail(text: string): string | null {
+  const parsed = safeJson(text)
+  if (parsed !== undefined) return truncate(JSON.stringify(parsed))
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  return truncate(trimmed)
+}
+
+function firstModelIds(body: unknown): string[] {
+  if (!isRecord(body) || !Array.isArray(body.data)) return []
+  return body.data.flatMap((item) => {
+    if (!isRecord(item)) return []
+    return typeof item.id === "string" ? [item.id] : []
+  })
+}
+
+function completionSummary(body: unknown): string | null {
+  if (!isRecord(body) || !Array.isArray(body.choices)) return null
+  const first = body.choices[0]
+  if (!isRecord(first) || !isRecord(first.message)) return null
+  return typeof first.message.content === "string" ? truncate(first.message.content) : null
+}
+
+function resolveBaseUrl(provider: string, baseUrl: string | undefined): string | undefined {
+  if (provider === "openai") {
+    return normalizeLlmBaseUrl(provider, baseUrl ?? DEFAULT_BASE_URLS.openai)
+  }
+  if (provider === "openrouter") {
+    return normalizeLlmBaseUrl("openai-compatible", baseUrl ?? DEFAULT_BASE_URLS.openrouter)
+  }
+  return normalizeLlmBaseUrl(provider, baseUrl)
+}
+
+function resolveEntryName(data: TomlRecord): string | undefined {
+  return typeof data.default_llm === "string" ? data.default_llm : undefined
+}
+
+function resolveLlmTarget(data: TomlRecord, name?: string) {
+  const llms = getLlms(data)
+  const targetName = name ?? resolveEntryName(data)
+  if (targetName && isRecord(llms[targetName])) {
+    const entry = llms[targetName]
+    return {
+      name: targetName,
+      provider: typeof entry.provider === "string" ? entry.provider : undefined,
+      apiKey: typeof entry.api_key === "string" ? entry.api_key : undefined,
+      baseUrl: typeof entry.base_url === "string" ? entry.base_url : undefined,
+      model: typeof entry.model === "string" ? entry.model : undefined,
+      source: "llm" as const,
+    }
+  }
+
+  const profileName = getDefaultProfileName(data)
+  const profile = getProfileSection(data, profileName)
+  if (
+    !name &&
+    profile &&
+    typeof profile.api_key === "string" &&
+    typeof profile.aimesh_endpoint === "string"
+  ) {
+    return {
+      name: "clickzetta",
+      provider: "clickzetta",
+      apiKey: profile.api_key,
+      baseUrl: profile.aimesh_endpoint,
+      model: undefined,
+      source: "legacy-profile" as const,
+    }
+  }
+
+  return undefined
 }
 
 function fail(isTTY: boolean, code: string, message: string, extra: Record<string, unknown> = {}): never {
@@ -86,11 +233,14 @@ function describeActive(data: TomlRecord): { kind: "llm" | "clickzetta" | "none"
   }
   const profileName = getDefaultProfileName(data)
   const profile = getProfileSection(data, profileName)
-  if (profile && typeof profile.api_key === "string") {
+  if (
+    profile &&
+    (typeof profile.api_key === "string" || typeof profile.aimesh_endpoint === "string")
+  ) {
     return {
       kind: "clickzetta",
       name: profileName,
-      detail: `ClickZetta built-in (profile "${profileName}") — deepseek-v4-pro`,
+      detail: `ClickZetta legacy profile fields (profile "${profileName}")`,
     }
   }
   return { kind: "none", name: "", detail: "none configured" }
@@ -109,7 +259,7 @@ const LlmListCommand = cmd({
     const defaultLlm = typeof data.default_llm === "string" ? data.default_llm : null
     if (isTTY) {
       if (names.length === 0) {
-        process.stderr.write("  (no user-defined LLMs — falling back to ClickZetta built-in)\n")
+        process.stderr.write("  (no [llm.*] entries configured)\n")
       } else {
         for (const n of names) {
           const marker = n === defaultLlm ? "* " : "  "
@@ -126,7 +276,7 @@ const LlmListCommand = cmd({
 // ─── show ─────────────────────────────────────────────────────────────────────
 const LlmShowCommand = cmd({
   command: "show",
-  describe: "show the active LLM, all defined LLMs, and the ClickZetta fallback",
+  describe: "show the active LLM, all defined LLMs, and any legacy ClickZetta fields",
   async handler() {
     const isTTY = process.stderr.isTTY
     const data = readProfiles()
@@ -162,7 +312,9 @@ const LlmShowCommand = cmd({
       })
     }
 
-    const clickzetta = profileSection
+    const clickzetta =
+      profileSection &&
+      (typeof profileSection.api_key === "string" || typeof profileSection.aimesh_endpoint === "string")
       ? {
           profile: profileName,
           api_key: typeof profileSection.api_key === "string" ? mask(profileSection.api_key) : null,
@@ -178,7 +330,7 @@ const LlmShowCommand = cmd({
       } else if (active.kind === "clickzetta") {
         process.stderr.write(`  Active: ${active.detail}\n`)
       } else {
-        process.stderr.write("  Active: (none) — run `cz-cli setup` or `cz-cli agent llm add`\n")
+        process.stderr.write("  Active: (none)\n")
       }
       process.stderr.write("\n")
 
@@ -195,17 +347,14 @@ const LlmShowCommand = cmd({
       }
 
       if (clickzetta) {
-        process.stderr.write("  ClickZetta built-in (fallback):\n")
+        process.stderr.write("  Legacy ClickZetta profile fields:\n")
         process.stderr.write(`    profile:         ${clickzetta.profile}\n`)
         process.stderr.write(`    api_key:         ${clickzetta.api_key ?? "(not set)"}\n`)
         process.stderr.write(`    aimesh_endpoint: ${clickzetta.aimesh_endpoint ?? "(not set)"}\n\n`)
       }
 
       if (entries.length === 0) {
-        process.stderr.write("  Add your own LLM:\n")
-        process.stderr.write(
-          "    cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use\n\n",
-        )
+        writeOnboarding()
       }
 
       if (legacyHints.length > 0) {
@@ -221,6 +370,7 @@ const LlmShowCommand = cmd({
             llms: entries,
             clickzetta,
             legacy_fields: legacyHints,
+            ...getOnboardingData(),
           },
         }) + "\n",
       )
@@ -288,7 +438,10 @@ const LlmAddCommand = cmd({
     if (opts.provider) entry.provider = opts.provider
     if (opts.model) entry.model = opts.model
     if (opts.apiKey) entry.api_key = opts.apiKey
-    if (opts.baseUrl) entry.base_url = opts.baseUrl
+    if (opts.baseUrl) {
+      const provider = typeof entry.provider === "string" ? entry.provider : ""
+      entry.base_url = resolveBaseUrl(provider, opts.baseUrl) ?? opts.baseUrl
+    }
 
     // Validate that a newly-added entry has the required pair.
     if (isNew) {
@@ -301,6 +454,16 @@ const LlmAddCommand = cmd({
           { missing },
         )
       }
+    }
+    if (entry.provider === "openai-compatible" && typeof entry.base_url !== "string") {
+      fail(
+        isTTY,
+        "PROVIDER_REQUIRES_BASE_URL",
+        '[llm.' + name + '] uses provider "openai-compatible" and requires --base-url.\n' +
+          "  Example: cz-cli agent llm add " + name +
+          " --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+        { provider: entry.provider, required: ["base_url"] },
+      )
     }
 
     llms[name] = entry
@@ -329,6 +492,137 @@ const LlmAddCommand = cmd({
       model: opts.model,
       base_url: opts.baseUrl,
       used: !!opts.use,
+    })
+  },
+})
+
+// ─── test ─────────────────────────────────────────────────────────────────────
+const LlmTestCommand = cmd({
+  command: "test [name]",
+  describe: "test the active or named LLM entry with a lightweight connectivity probe",
+  builder: (yargs: Argv) =>
+    yargs.positional("name", { type: "string", describe: "entry name; defaults to default_llm" }),
+  async handler(args) {
+    const isTTY = process.stderr.isTTY
+    const name = typeof args.name === "string" ? args.name : undefined
+    const data = readProfiles()
+    const target = resolveLlmTarget(data, name)
+
+    if (!target) {
+      const guide = onboarding()
+      fail(
+        isTTY,
+        "NO_ACTIVE_LLM",
+        "No active LLM is configured. Run `cz-cli agent llm show` for setup paths.",
+        {
+          ...guide,
+        },
+      )
+    }
+
+    if (!target.provider || !TESTABLE_PROVIDERS.includes(target.provider as (typeof TESTABLE_PROVIDERS)[number])) {
+      fail(
+        isTTY,
+        "UNSUPPORTED_PROVIDER_TEST",
+        `[llm.${target.name}] uses provider "${target.provider ?? "unknown"}". ` +
+          "Testing is currently supported for clickzetta, openai, openai-compatible, and openrouter.",
+        {
+          provider: target.provider ?? null,
+          supported_providers: [...TESTABLE_PROVIDERS],
+        },
+      )
+    }
+
+    if (!target.apiKey) {
+      fail(
+        isTTY,
+        "MISSING_API_KEY",
+        `[llm.${target.name}] is missing api_key. Update it with \`cz-cli agent llm add ${target.name} --api-key <API_KEY>\`.`,
+      )
+    }
+
+    const baseUrl = resolveBaseUrl(target.provider, target.baseUrl)
+    if (!baseUrl) {
+      fail(
+        isTTY,
+        "MISSING_BASE_URL",
+        `[llm.${target.name}] needs a base_url before it can be tested.\n` +
+          `  Update it with: cz-cli agent llm add ${target.name} --base-url https://your-gateway.example.com/v1`,
+      )
+    }
+
+    const usesChatProbe = target.provider === "clickzetta"
+    const url = usesChatProbe ? baseUrl + "/chat/completions" : baseUrl + "/models"
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: usesChatProbe ? "POST" : "GET",
+        headers: {
+          authorization: `Bearer ${target.apiKey}`,
+          accept: "application/json",
+          ...(usesChatProbe ? { "content-type": "application/json" } : {}),
+        },
+        ...(usesChatProbe
+          ? {
+              body: JSON.stringify({
+                messages: [{ role: "user", content: "ping" }],
+                max_tokens: 1,
+                stream: false,
+              }),
+            }
+          : {}),
+      })
+    } catch (error) {
+      fail(
+        isTTY,
+        "LLM_TEST_REQUEST_FAILED",
+        `Could not reach ${url}: ${error instanceof Error ? error.message : String(error)}`,
+        { provider: target.provider, url },
+      )
+    }
+
+    const text = await response.text()
+    if (!response.ok) {
+      fail(
+        isTTY,
+        "LLM_TEST_HTTP_ERROR",
+        `LLM test failed with HTTP ${response.status} for ${url}${responseDetail(text) ? `: ${responseDetail(text)}` : ""}`,
+        {
+          provider: target.provider,
+          url,
+          status: response.status,
+          detail: responseDetail(text),
+        },
+      )
+    }
+
+    const body = safeJson(text)
+    const models = firstModelIds(body)
+    const completion = usesChatProbe ? completionSummary(body) : null
+    const ttyOut = [
+      `\n  [llm.${target.name}] test passed`,
+      `    provider: ${target.provider}`,
+      `    url:      ${url}`,
+      usesChatProbe
+        ? `    response: ${completion ?? "(endpoint reachable; completion returned)"}`
+        : models.length > 0
+          ? `    models:   ${models.slice(0, 5).join(", ")}`
+          : "    models:   (endpoint reachable; no model IDs returned)",
+      "",
+      "",
+    ].join("\n")
+
+    ok(isTTY, ttyOut, {
+      message: `[llm.${target.name}] test passed.`,
+      name: target.name,
+      provider: target.provider,
+      url,
+      model: target.model ?? null,
+      probe: usesChatProbe ? "chat.completions" : "models",
+      sample_models: models.slice(0, 5),
+      sample_response: completion,
+      model_count: models.length,
+      source: target.source,
     })
   },
 })
@@ -377,7 +671,7 @@ const LlmRemoveCommand = cmd({
     const clearedDefault = data.default_llm === name
     if (clearedDefault) delete data.default_llm
     writeProfiles(data)
-    const note = clearedDefault ? " (also cleared default_llm — falling back to ClickZetta)" : ""
+    const note = clearedDefault ? " (also cleared default_llm)" : ""
     ok(isTTY, `\n  [llm.${name}] removed.${note}\n\n`, {
       message: `[llm.${name}] removed.`,
       removed: true,
@@ -389,14 +683,14 @@ const LlmRemoveCommand = cmd({
 // ─── reset ────────────────────────────────────────────────────────────────────
 const LlmResetCommand = cmd({
   command: "reset",
-  describe: "clear default_llm so cz-cli falls back to the ClickZetta built-in LLM",
+  describe: "clear top-level default_llm",
   async handler() {
     const isTTY = process.stderr.isTTY
     const data = readProfiles()
     const had = "default_llm" in data
     delete data.default_llm
     writeProfiles(data)
-    const msg = had ? "default_llm cleared — using ClickZetta built-in LLM." : "default_llm was not set."
+    const msg = had ? "default_llm cleared." : "default_llm was not set."
     ok(isTTY, `\n  ${msg}\n\n`, { message: msg, had_default: had })
   },
 })
@@ -445,12 +739,13 @@ export const AgentLlmCommand = cmd({
   command: "llm",
   aliases: ["config"],
   describe:
-    "manage LLMs used by the agent (user-defined [llm.*] in ~/.clickzetta/profiles.toml). Falls back to the ClickZetta built-in LLM when none is selected.",
+    "manage LLMs used by the agent ([llm.*] in ~/.clickzetta/profiles.toml).",
   builder: (yargs: Argv) =>
     yargs
       .command(LlmListCommand)
       .command(LlmShowCommand)
       .command(LlmAddCommand)
+      .command(LlmTestCommand)
       .command(LlmUseCommand)
       .command(LlmRemoveCommand)
       .command(LlmResetCommand)
@@ -461,10 +756,34 @@ export const AgentLlmCommand = cmd({
         "$0 llm add my-claude --provider anthropic --api-key sk-ant-... --use",
         "add Claude and select it (model auto-selected from provider defaults)",
       )
+      .example("$0 llm test", "test the active LLM entry")
+      .example("$0 llm test my-openai", "test a specific OpenAI-style entry")
       .example("$0 llm use my-openai", "switch to a different entry")
-      .example("$0 llm reset", "fall back to the ClickZetta built-in LLM"),
+      .example("$0 llm reset", "clear default_llm")
+      .epilogue(
+        "LLM onboarding:\n" +
+        "  ClickZetta built-in LLM: `cz-cli setup --credential <base64_string>`\n" +
+        "  OpenAI:                  `cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use`\n" +
+        "  OpenAI-compatible:       `cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use`\n" +
+        "  Verify:                  `cz-cli agent llm test [name]`\n" +
+        "  Lakehouse connection is separate: `cz-cli setup` or `cz-cli setup --username ... --password ... --account-name ...`",
+      ),
   async handler() {},
 })
+
+export async function runLlm(args: readonly string[]): Promise<never> {
+  const { default: yargs } = await import("yargs")
+  await yargs(args)
+    .scriptName("cz-cli agent")
+    .command(AgentLlmCommand)
+    .demandCommand(1, "")
+    .strictCommands()
+    .strict(false)
+    .help("help", "show help")
+    .alias("help", "h")
+    .parseAsync()
+  process.exit(0)
+}
 
 // Back-compat export — callers that still import AgentConfigCommand get the new command.
 export const AgentConfigCommand = AgentLlmCommand

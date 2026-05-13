@@ -1,6 +1,11 @@
 // Minimal static imports — only what's needed before the fast-path exits.
 // Agent-specific modules are loaded dynamically below so data commands
 // (sql, table, …) don't pay the cost of loading the full agent bundle.
+// TODO(cz-cli-boundary): opencode currently acts as the outer shell for the
+// shipped `cz-cli` binary (routing, profile gating, setup/llm fast paths,
+// migrations). This package boundary is confusing. Either rename this shell to
+// reflect its role, or move the product entrypoint responsibilities into
+// packages/cz-cli so the package ownership matches the user-facing CLI.
 import { hideBin } from "yargs/helpers"
 import { EOL } from "os"
 import os from "os"
@@ -23,6 +28,28 @@ process.on("uncaughtException", (e) => {
 })
 
 const rawArgs = hideBin(process.argv)
+
+if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {
+  const profilesPath = path.join(os.homedir(), ".clickzetta", "profiles.toml")
+  try {
+    if (fs.existsSync(profilesPath)) {
+      const [{ parse, stringify }, { migrateLegacyClickzettaConfig }] = await Promise.all([
+        import("smol-toml"),
+        import("./config/profiles-llm"),
+      ])
+      const parsed = parse(fs.readFileSync(profilesPath, "utf-8"))
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        !Array.isArray(parsed) &&
+        migrateLegacyClickzettaConfig(parsed as Record<string, unknown>)
+      ) {
+        fs.writeFileSync(profilesPath, stringify(parsed) + "\n")
+      }
+    }
+  } catch {}
+  process.exit(0)
+}
 
 // --version fast path
 if (["--version", "-v"].includes(rawArgs[0])) {
@@ -50,6 +77,14 @@ if (isAgentSubcommand && (rawArgs.includes("--help") || rawArgs.includes("-h")))
   await forward(rawArgs)
 }
 
+if (
+  rawArgs[0] === "agent" &&
+  ["llm", "config"].includes(rawArgs[1] ?? "")
+) {
+  const { runLlm } = await import("./cli/cmd/config-llm")
+  await runLlm(rawArgs.slice(1))
+}
+
 // Prevent recursive agent invocation: if we're already inside an agent session,
 // block nested `cz-cli agent` / `cz-cli run` calls.
 if (isAgentSubcommand && process.env.CLICKZETTA_PID) {
@@ -58,7 +93,7 @@ if (isAgentSubcommand && process.env.CLICKZETTA_PID) {
 }
 
 // ---------------------------------------------------------------------------
-// Profile check — shared by both data commands and agent commands.
+// Profile check — only for ClickZetta Lakehouse/data commands.
 // Only checks that profiles.toml exists; key validity is left to the command.
 // ---------------------------------------------------------------------------
 function checkProfile(): boolean {
@@ -76,23 +111,37 @@ function exitNoProfile(): never {
   if (isTTY) {
     process.stderr.write(
       "\n  No ClickZetta profile configured.\n" +
-      "  Run:\n\n" +
-      "    cz-cli setup                              # interactive setup (TTY)\n" +
-      "    cz-cli setup --credential <base64_string>  # from registration token\n\n" +
+      "  Run one of the following:\n\n" +
+      "    cz-cli setup\n" +
+      "      Interactive setup. Choose either:\n" +
+      "      - New user: paste the registration credential\n" +
+      "      - Already have ClickZetta account: enter username/password/account name,\n" +
+      "        then choose service -> instance -> workspace -> schema -> vcluster\n\n" +
+      "    cz-cli setup --credential <base64_string>\n" +
+      "      New-user fast path from registration token\n\n" +
+      "    cz-cli setup --username <username> --password <password> --account-name <account_name>\n" +
+      "      Existing-account non-TTY flow; cz-cli will tell you the next required step\n\n" +
       "  Register at:\n" +
       "    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n" +
-      "    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n",
+      "    https://accounts.singdata.com/register?ref=cz-cli (International)\n\n" +
+      "  LLM configuration is separate:\n" +
+      "    cz-cli agent llm --help\n\n",
     )
   } else {
     process.stdout.write(JSON.stringify({
       error: {
         code: "NO_PROFILE",
         message: "No ClickZetta profile configured.",
-        next_step: "cz-cli setup --credential <base64_string>",
+        next_step: "cz-cli setup",
+        next_steps: [
+          "cz-cli setup --credential <base64_string>",
+          "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+        ],
         register_urls: [
           "https://accounts.clickzetta.com/register?ref=cz-cli",
           "https://accounts.singdata.com/register?ref=cz-cli",
         ],
+        llm_help: "cz-cli agent llm --help",
       },
     }) + "\n")
   }
@@ -111,13 +160,6 @@ if (isHelpOrEmpty || isDataCommand) {
 
   const { forward } = await import("./cli/cmd/forward")
   await forward(isHelpOrEmpty ? ["--help"] : rawArgs)
-}
-
-// ---------------------------------------------------------------------------
-// Agent commands — validate profile then load all agent modules.
-// ---------------------------------------------------------------------------
-if (isAgentSubcommand) {
-  if (!checkProfile()) exitNoProfile()
 }
 
 // Dynamic imports — only reached for `cz-cli agent …` or `cz-cli --help`
@@ -182,10 +224,11 @@ const cli = yargs(args)
   .alias("version", "v")
   .epilogue(
     "LLM configuration:\n" +
-    "  Default: ClickZetta built-in LLM (configured by `cz-cli setup --credential <base64>`).\n" +
+    "  `cz-cli setup --credential <base64>` creates [llm.clickzetta] and selects it by default.\n" +
     "  Add Claude/OpenAI/etc: `cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use`\n" +
-    "           supports anthropic, openai, bedrock, google, azure, openai-compatible (third-party relays via --base-url).\n" +
+    "           supports clickzetta, anthropic, openai, bedrock, google, azure, openai-compatible, openrouter.\n" +
     "  Inspect: `cz-cli agent llm show`\n" +
+    "  Test:    `cz-cli agent llm test [name]`\n" +
     "  Manage:  `cz-cli agent llm --help`"
   )
   .option("print-logs", {

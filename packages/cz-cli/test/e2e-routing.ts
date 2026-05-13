@@ -8,7 +8,8 @@ import { mkdirSync, writeFileSync, rmSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 
-const BINARY = process.env.CZ_CLI_BIN ?? "cz-cli"
+const BINARY = process.env.CZ_CLI_BIN ?? process.execPath
+const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["../opencode/src/index.ts"]
 
 const PASS = "\x1b[32m✓\x1b[0m"
 const FAIL = "\x1b[31m✗\x1b[0m"
@@ -16,7 +17,7 @@ const FAIL = "\x1b[31m✗\x1b[0m"
 interface Result { stdout: string; stderr: string; exitCode: number }
 
 function run(args: string[], env?: Record<string, string>): Result {
-  const r = spawnSync(BINARY, args, {
+  const r = spawnSync(BINARY, [...BINARY_ENTRY, ...args], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...env },
@@ -63,6 +64,10 @@ const tests: TestCase[] = [
         if (!j) return { pass: false, detail: `not JSON: ${r.stdout.slice(0, 80)}` }
         const code = (j.error as any)?.code
         if (code !== "NO_PROFILE") return { pass: false, detail: `error.code=${code}` }
+        const nextSteps = (j.error as any)?.next_steps
+        if (!Array.isArray(nextSteps) || nextSteps.length < 2) {
+          return { pass: false, detail: `missing next_steps: ${JSON.stringify(j)}` }
+        }
         return { pass: true }
       } finally { cleanup() }
     },
@@ -172,6 +177,44 @@ const tests: TestCase[] = [
         const r = run(["setup", "--help"], { HOME: home })
         // setup --help should not require a profile
         if (r.stderr.includes("NO_PROFILE")) return { pass: false, detail: "setup --help should not require profile" }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "SETUP: non-TTY without args returns staged account guidance",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const r = run(["setup"], { HOME: home })
+        const j = parseJson(r.stdout)
+        if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
+        if (!j) return { pass: false, detail: `not JSON: ${r.stdout.slice(0, 120)}` }
+        if (j.step !== "account_fields") return { pass: false, detail: `step=${String(j.step)}` }
+        if (j.status !== "needs_input") return { pass: false, detail: `status=${String(j.status)}` }
+        if (!Array.isArray(j.next_steps) || j.next_steps.length === 0) {
+          return { pass: false, detail: `missing next_steps: ${JSON.stringify(j)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "SETUP: non-TTY existing account missing service returns service options",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const r = run(["setup", "--username", "u", "--password", "p", "--account-name", "acct"], { HOME: home })
+        const j = parseJson(r.stdout)
+        if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
+        if (!j) return { pass: false, detail: `not JSON: ${r.stdout.slice(0, 120)}` }
+        if (j.step !== "service") return { pass: false, detail: `step=${String(j.step)}` }
+        if (!Array.isArray(j.options) || j.options.length === 0) {
+          return { pass: false, detail: "missing service options" }
+        }
+        if (!Array.isArray(j.next_steps) || j.next_steps.length === 0) {
+          return { pass: false, detail: `missing next_steps: ${JSON.stringify(j)}` }
+        }
         return { pass: true }
       } finally { cleanup() }
     },

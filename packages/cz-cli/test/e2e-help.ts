@@ -5,14 +5,15 @@
  */
 import { spawnSync } from "child_process"
 
-const BINARY = process.env.CZ_CLI_BIN ?? "cz-cli"
+const BINARY = process.env.CZ_CLI_BIN ?? process.execPath
+const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["../opencode/src/index.ts"]
 const PASS = "\x1b[32m✓\x1b[0m"
 const FAIL = "\x1b[31m✗\x1b[0m"
 
 interface Result { stdout: string; stderr: string; exitCode: number }
 
 function run(args: string[]): Result {
-  const r = spawnSync(BINARY, args, {
+  const r = spawnSync(BINARY, [...BINARY_ENTRY, ...args], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
@@ -196,6 +197,12 @@ const cases: HelpCase[] = [
     expectHeader: "cz-cli profile quickstart",
     expectOptions: ["--credential"],
   },
+  {
+    args: ["setup", "--help"],
+    expectHeader: "cz-cli setup",
+    expectOptions: ["--credential", "--account-name", "--username", "--password", "--service"],
+    expectCommands: ["Already have ClickZetta account", "Choose a service endpoint", "instance -> workspace -> schema -> vcluster"],
+  },
 
   // job
   {
@@ -243,7 +250,7 @@ const cases: HelpCase[] = [
   {
     args: ["runs", "deps", "--help"],
     expectHeader: "cz-cli runs deps",
-    expectOptions: ["task", "--parent-level", "--child-level"],
+    expectOptions: ["id", "--parent-level", "--child-level"],
   },
   {
     args: ["runs", "stop", "--help"],
@@ -321,22 +328,22 @@ const cases: HelpCase[] = [
   {
     args: ["task", "save-config", "--help"],
     expectHeader: "cz-cli task save-config",
-    expectOptions: ["task", "--cron", "--vc"],
+    expectOptions: ["task", "--vc", "--retry-count"],
   },
   {
     args: ["task", "deps", "--help"],
     expectHeader: "cz-cli task deps",
-    expectOptions: ["task", "--parent-level", "--child-level"],
+    expectOptions: ["task"],
   },
   {
     args: ["task", "online", "--help"],
-    expectHeader: "cz-cli task online",
+    expectHeader: "cz-cli task deploy",
     expectOptions: ["task", "--yes"],
   },
   {
     args: ["task", "offline", "--help"],
-    expectHeader: "cz-cli task offline",
-    expectOptions: ["task", "--yes"],
+    expectHeader: "cz-cli task undeploy",
+    expectOptions: ["task", "--yes", "--with-downstream"],
   },
   {
     args: ["task", "execute", "--help"],

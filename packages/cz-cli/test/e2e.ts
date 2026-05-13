@@ -78,6 +78,8 @@ const tests: TestCase[] = [
   { name: "sync mode", cmd: 'sql "SELECT 42 as answer" --sync', assert: all(assertSingleLine, assertOk) },
   { name: "async/hybrid mode", cmd: 'sql "SELECT 1"', assert: all(assertSingleLine, assertOk) },
   { name: "multi-statement", cmd: 'sql "SET cz.sql.timezone=UTC; SELECT 1 as x" --sync', assert: assertSingleLine },
+  { name: "double-quoted SQL text", cmd: `sql 'select "abc";' --sync`, assert: all(assertSingleLine, assertOk) },
+  { name: "trailing comment after statement", cmd: `sql "select 'abc', 1 + 1; --comment" --sync`, assert: all(assertSingleLine, assertOk) },
   { name: "variable substitution", cmd: 'sql "SELECT %(val)s as v" --variable val=42 --sync', assert: assertSingleLine },
   { name: "write protection", cmd: 'sql "INSERT INTO nonexist VALUES(1)"', assert: all(assertSingleLine, assertError("WRITE_NOT_ALLOWED")) },
   { name: "missing SQL error", cmd: "sql", assert: all(assertSingleLine, assertError("USAGE_ERROR")) },
@@ -138,7 +140,7 @@ const tests: TestCase[] = [
   }},
 
   // === 11. Volume SQL (correct syntax) ===
-  { name: "SHOW USER VOLUME", cmd: 'sql "SHOW USER VOLUME DIRECTORY" --sync', assert: all(assertSingleLine, assertOk) },
+  { name: "SHOW USER VOLUME", cmd: 'sql "SHOW USER VOLUME DIRECTORY" --sync --no-limit', assert: all(assertSingleLine, assertOk) },
 
   // === 12. Task/Runs (requires Studio access) ===
   { name: "task list", cmd: "task list", assert: assertSingleLine },

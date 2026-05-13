@@ -11,8 +11,8 @@ import { Env } from "../env"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { Instance, type InstanceContext } from "../project/instance"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
-import { existsSync, readFileSync } from "fs"
-import { parseProfilesToml } from "./profiles-llm"
+import { existsSync, readFileSync, writeFileSync } from "fs"
+import { migrateLegacyClickzettaConfig, parseProfilesToml } from "./profiles-llm"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { Account } from "@/account/account"
@@ -352,12 +352,18 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.jsonc"))),
       )
 
-      // Read AI provider config from profiles.toml
-      // Supports: ClickZetta built-in (api_key + aimesh_endpoint) and user-defined [llm.*] entries
+      // Read AI provider config from profiles.toml.
+      // Legacy profile-level ClickZetta fields are migrated to [llm.clickzetta] on read.
       const profilesPath = path.join(clickzettaDir, "profiles.toml")
       if (existsSync(profilesPath)) {
         try {
-          const toml = readFileSync(profilesPath, "utf-8")
+          let toml = readFileSync(profilesPath, "utf-8")
+          const parsedToml = parseTOML(toml)
+          if (isRecord(parsedToml) && migrateLegacyClickzettaConfig(parsedToml)) {
+            toml = stringifyTOML(parsedToml) + "\n"
+            writeFileSync(profilesPath, toml)
+            log.info("migrated legacy ClickZetta LLM config to [llm.clickzetta]", { path: profilesPath })
+          }
           const { providers, warnings } = parseProfilesToml(toml)
           for (const w of warnings) log.warn(w, { path: profilesPath })
           if (Object.keys(providers).length > 0) {

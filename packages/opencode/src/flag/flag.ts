@@ -5,6 +5,10 @@ function truthy(key: string) {
   return value === "true" || value === "1"
 }
 
+function truthyAny(...keys: string[]) {
+  return keys.some(truthy)
+}
+
 function falsy(key: string) {
   const value = process.env[key]?.toLowerCase()
   return value === "false" || value === "0"
@@ -38,7 +42,10 @@ export const Flag = {
   CLICKZETTA_DISABLE_TERMINAL_TITLE: truthy("CLICKZETTA_DISABLE_TERMINAL_TITLE"),
   CLICKZETTA_SHOW_TTFD: truthy("CLICKZETTA_SHOW_TTFD"),
   CLICKZETTA_PERMISSION: process.env["CLICKZETTA_PERMISSION"],
-  CLICKZETTA_DISABLE_DEFAULT_PLUGINS: truthy("CLICKZETTA_DISABLE_DEFAULT_PLUGINS"),
+  CLICKZETTA_DISABLE_DEFAULT_PLUGINS: truthyAny(
+    "CLICKZETTA_DISABLE_DEFAULT_PLUGINS",
+    "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+  ),
   CLICKZETTA_DISABLE_LSP_DOWNLOAD: truthy("CLICKZETTA_DISABLE_LSP_DOWNLOAD"),
   CLICKZETTA_ENABLE_EXPERIMENTAL_MODELS: truthy("CLICKZETTA_ENABLE_EXPERIMENTAL_MODELS"),
   CLICKZETTA_DISABLE_AUTOCOMPACT: truthy("CLICKZETTA_DISABLE_AUTOCOMPACT"),

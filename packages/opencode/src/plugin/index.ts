@@ -11,9 +11,6 @@ import { Log } from "../util"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
-import { OtelPlugin as _OtelPlugin } from "@devtheops/opencode-plugin-otel"
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const OtelPlugin = _OtelPlugin as any
 import { OTEL_DEFAULTS } from "./otel-defaults"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -79,15 +76,27 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Plugin") {}
 
 // Built-in plugins that are directly imported (not installed from npm)
-const INTERNAL_PLUGINS: PluginInstance[] = [
+const CORE_INTERNAL_PLUGINS: PluginInstance[] = [
   CodexAuthPlugin,
   CopilotAuthPlugin,
   GitlabAuthPlugin,
   PoeAuthPlugin,
   CloudflareWorkersAuthPlugin,
   CloudflareAIGatewayAuthPlugin,
-  OtelPlugin,
 ]
+
+async function getInternalPlugins() {
+  const plugins = [...CORE_INTERNAL_PLUGINS]
+  if (Flag.CLICKZETTA_DISABLE_DEFAULT_PLUGINS) return plugins
+  try {
+    const pluginPackage = "@devtheops/opencode-plugin-otel"
+    const mod = (await import(pluginPackage)) as { OtelPlugin?: PluginInstance }
+    if (mod.OtelPlugin) plugins.push(mod.OtelPlugin)
+  } catch (error) {
+    log.warn("failed to load optional OTel plugin", { error: errorMessage(error) })
+  }
+  return plugins
+}
 
 function isServerPlugin(value: unknown): value is PluginInstance {
   return typeof value === "function"
@@ -173,7 +182,7 @@ export const layer = Layer.effect(
           $: typeof Bun === "undefined" ? undefined : Bun.$,
         }
 
-        for (const plugin of INTERNAL_PLUGINS) {
+        for (const plugin of yield* Effect.promise(() => getInternalPlugins())) {
           log.info("loading internal plugin", { name: plugin.name })
           const init = yield* Effect.tryPromise({
             try: () => plugin(input),

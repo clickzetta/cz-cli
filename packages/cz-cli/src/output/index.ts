@@ -110,7 +110,7 @@ function emit(payload: unknown, format?: string, field?: string): string {
     const obj = payload as Record<string, unknown>
     const extracted = extractField(obj, field)
     if (extracted !== undefined) {
-      return typeof extracted === "object" ? JSON.stringify(extracted) : String(extracted)
+      return typeof extracted === "object" ? formatJson(extracted) : String(extracted)
     }
     // Field not found → output empty (matching Python behavior)
     return ""
@@ -249,7 +249,7 @@ function emitAsJsonl(payload: unknown): string {
         return formatJsonl(data as Record<string, unknown>[])
       }
       // Primitive array — one JSON value per line
-      return data.map((v) => JSON.stringify(v)).join("\n")
+      return data.map((v) => formatJson(v)).join("\n")
     }
   }
   return formatJson(payload)

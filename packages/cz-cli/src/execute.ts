@@ -96,16 +96,28 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   return { exitCode, output: chunks.join("") }
 }
 
-function splitArgs(input: string): string[] {
+export function splitArgs(input: string): string[] {
   const args: string[] = []
   let current = ""
   let quote = ""
-  for (const ch of input) {
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
     if (quote) {
+      if (quote === '"' && ch === "\\" && i + 1 < input.length) {
+        const next = input[i + 1]
+        if (next === '"' || next === "\\") {
+          current += next
+          i++
+          continue
+        }
+      }
       if (ch === quote) quote = ""
       else current += ch
     } else if (ch === '"' || ch === "'") {
       quote = ch
+    } else if (ch === "\\" && i + 1 < input.length) {
+      current += input[i + 1]
+      i++
     } else if (ch === " " || ch === "\t") {
       if (current) { args.push(current); current = "" }
     } else {

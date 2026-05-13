@@ -86,5 +86,19 @@ export function splitSql(query: string): string[] {
   }
 
   if (b < query.length) ret.push(query.slice(b))
-  return ret
+  return ret.filter((statement) => {
+    let rest = statement.trim()
+    while (rest.startsWith("--") || rest.startsWith("/*")) {
+      if (rest.startsWith("--")) {
+        const newline = rest.indexOf("\n")
+        if (newline === -1) return false
+        rest = rest.slice(newline + 1).trim()
+        continue
+      }
+      const end = rest.indexOf("*/")
+      if (end === -1) return false
+      rest = rest.slice(end + 2).trim()
+    }
+    return rest.length > 0
+  })
 }

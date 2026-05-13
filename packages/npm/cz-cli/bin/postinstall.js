@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
+const { execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -9,6 +10,7 @@ const home = os.homedir();
 const platform = os.platform();
 const arch = os.arch() === "x64" ? "x64" : "arm64";
 const pkgName = `@clickzetta/cz-cli-${platform}-${arch}`;
+const binName = platform === "win32" ? "cz-cli.exe" : "cz-cli";
 
 try {
   const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));
@@ -77,6 +79,13 @@ try {
       fs.cpSync(src, dest, { recursive: true });
     } catch (e) {}
   }
+
+  try {
+    execFileSync(path.join(pkgDir, "bin", binName), [], {
+      stdio: "ignore",
+      env: { ...process.env, CLICKZETTA_MIGRATE_PROFILES_ONLY: "1" },
+    });
+  } catch (e) {}
 } catch (e) {
   // Non-fatal: don't block npm install
 }
