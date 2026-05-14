@@ -58,7 +58,7 @@ export async function execSql(
     timeoutMs?: number
   },
 ): Promise<QueryResult | ExecResult> {
-  const normalizedSql = sql.trimEnd().endsWith(";") ? sql : sql + ";"
+  const normalizedSql = sql + "\n;"
   const jobId = newJobId(ctx.config.workspace, ctx.token.instanceId)
   const submitResp = await submitJob(ctx.clientOpts, {
     sql: normalizedSql,
