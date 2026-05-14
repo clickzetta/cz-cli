@@ -47,7 +47,10 @@ export interface DeleteFolderParams {
 
 export function deleteFolder(config: StudioConfig, params: DeleteFolderParams) {
   return studioRequest(config, "/ide-admin/v1/dataFolder/delete", {
-    folderId: params.folderId,
+    id: params.folderId,
+    tenantId: config.tenantId,
     projectId: params.projectId,
-  })
+    updateBy:String(config.userId),
+    env: 'prod'
+  },{ workspaceName: config.workspaceName})
 }
