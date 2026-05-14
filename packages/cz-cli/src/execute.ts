@@ -87,7 +87,7 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   const exitCode = process.exitCode ?? 0
   process.stdout.write = originalStdoutWrite
   process.stderr.write = originalStderrWrite
-  process.exitCode = savedExitCode
+  process.exitCode = savedExitCode ?? 0
   outputState.field = undefined
 
   const output = chunks.join("")
