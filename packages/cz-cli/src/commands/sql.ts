@@ -84,6 +84,12 @@ function parseKvPairs(pairs: string[]): Record<string, string> {
   return result
 }
 
+function extractSchema(raw: string): string {
+  let schema = raw.split(".").pop() ?? raw
+  if (schema.startsWith("`") && schema.endsWith("`")) schema = schema.slice(1, -1)
+  return schema
+}
+
 function extractTableNames(sql: string): string[] {
   const tables: string[] = []
   const re = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([\w.`"]+)/gi
@@ -168,6 +174,7 @@ async function executeSingle(
   sql: string,
   argv: SqlArgs,
   hints: Record<string, string>,
+  configStatements?: string[],
 ): Promise<void> {
   const isWrite = WRITE_RE.test(sql)
   const isSelect = SELECT_RE.test(sql)
@@ -194,7 +201,7 @@ async function executeSingle(
   if (!argv.sync) {
     const asyncHints = { ...hints }
     if (argv.timeout) asyncHints["sdk.job.timeout"] = String(argv.timeout)
-    const r = await execSqlWithRetry(ctx, sql, { hints: asyncHints, asynchronous: true })
+    const r = await execSqlWithRetry(ctx, sql, { hints: asyncHints, asynchronous: true, configStatements })
     logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
     if (isQueryResult(r)) {
       await emitResult(r, sql, argv, ctx, t0)
@@ -214,10 +221,10 @@ async function executeSingle(
     const serverHints = { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit) }
     const probeLimit = rowLimit + 1
     const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
-    let r = await execSqlWithRetry(ctx, probeSql, { hints: serverHints, timeoutMs: argv.timeout * 1000 })
+    let r = await execSqlWithRetry(ctx, probeSql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements })
     // Retry without LIMIT if injection caused syntax error
     if (isQueryResult(r) && r.status === JobStatus.FAILED && /syntax/i.test(r.errorMessage ?? "") && /LIMIT/i.test(r.errorMessage ?? "")) {
-      r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000 })
+      r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
@@ -263,7 +270,7 @@ async function executeSingle(
     if (limitMatch) {
       const userLimit = parseInt(limitMatch[1], 10)
       const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
-      const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000 })
+      const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000, configStatements })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
@@ -281,7 +288,7 @@ async function executeSingle(
   }
 
   // General case: SHOW, write, or other
-  const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000 })
+  const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000, configStatements })
   if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
@@ -421,27 +428,46 @@ async function handler(argv: SqlArgs): Promise<void> {
     // Multi-statement: execute all, return all results in batch mode or last result otherwise
     if (statements.length > 1) {
       const accumulatedHints = { ...hints }
+      const configStatements: string[] = []
       for (let i = 0; i < statements.length; i++) {
         const stmt = statements[i]
         // Extract SET statements as hints for subsequent statements
         const setMatch = stmt.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
         if (setMatch) {
           accumulatedHints[setMatch[1]] = setMatch[2].replace(/;$/, "").trim()
+          configStatements.push(stmt)
+          continue
+        }
+        // Extract USE statements to update session context client-side
+        const useMatch = stmt.match(/^\s*USE\s+/i)
+        if (useMatch) {
+          const normalized = stmt.replace(/\s+/g, " ").trim()
+          const lower = normalized.toLowerCase()
+          if (lower.startsWith("use vcluster ")) {
+            ctx.config.vcluster = normalized.slice("use vcluster ".length).replace(/;$/, "").trim()
+          } else if (lower.startsWith("use workspace ")) {
+            ctx.config.workspace = normalized.slice("use workspace ".length).replace(/;$/, "").trim()
+          } else if (lower.startsWith("use schema ")) {
+            ctx.config.schema = extractSchema(normalized.slice("use schema ".length).replace(/;$/, "").trim())
+          } else if (lower.startsWith("use ")) {
+            ctx.config.schema = extractSchema(normalized.slice("use ".length).replace(/;$/, "").trim())
+          }
+          configStatements.push(stmt)
           continue
         }
         if (argv.batch) {
           // Batch mode: output every statement's result
-          await executeSingle(ctx, stmt, argv, accumulatedHints)
+          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements)
         } else if (i < statements.length - 1) {
           // Non-batch: silently execute intermediate statements
-          const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000 })
+          const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
           if (isQueryResult(r) && r.status === JobStatus.FAILED) {
             logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format })
             return
           }
         } else {
-          await executeSingle(ctx, stmt, argv, accumulatedHints)
+          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements)
         }
       }
     } else {

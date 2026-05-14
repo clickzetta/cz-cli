@@ -56,6 +56,7 @@ export async function execSql(
     hints?: Record<string, string>
     asynchronous?: boolean
     timeoutMs?: number
+    configStatements?: string[]
   },
 ): Promise<QueryResult | ExecResult> {
   const normalizedSql = sql + "\n;"
@@ -70,6 +71,7 @@ export async function execSql(
     jobId,
     hints: opts?.hints?.query_tag ? opts.hints : { query_tag: `cz-cli@v${VERSION}`, ...opts?.hints },
     asynchronous: opts?.asynchronous,
+    configStatements: opts?.configStatements,
   })
   if (opts?.asynchronous) {
     return { jobId: jobId.id, status: "RUNNING" as const }
@@ -162,6 +164,7 @@ export async function execSqlWithRetry(
     hints?: Record<string, string>
     asynchronous?: boolean
     timeoutMs?: number
+    configStatements?: string[]
   },
 ): Promise<QueryResult | ExecResult> {
   try {
