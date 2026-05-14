@@ -9,7 +9,7 @@ import { join } from "path"
 import { tmpdir } from "os"
 
 const BINARY = process.env.CZ_CLI_BIN ?? process.execPath
-const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["../opencode/src/index.ts"]
+const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["./src/main.ts"]
 
 const PASS = "\x1b[32m✓\x1b[0m"
 const FAIL = "\x1b[31m✗\x1b[0m"
@@ -136,6 +136,24 @@ const tests: TestCase[] = [
         // (it will fail with NO_PROFILE instead)
         const r = run(["agent", "run"], { HOME: home, CLICKZETTA_PID: "" })
         if (r.stderr.includes("nested agent")) return { pass: false, detail: "should not be blocked" }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+
+  {
+    name: "LLM_ALIAS: llm test routes without requiring a ClickZetta profile",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const r = run(["llm", "test"], { HOME: home })
+        const j = parseJson(r.stdout)
+        if (r.stderr.includes("No ClickZetta profile configured")) {
+          return { pass: false, detail: `unexpected stderr: ${r.stderr.slice(0, 120)}` }
+        }
+        if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+          return { pass: false, detail: `unexpected output: ${r.stdout.slice(0, 160)}` }
+        }
         return { pass: true }
       } finally { cleanup() }
     },

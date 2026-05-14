@@ -16,6 +16,7 @@ function run(
     env: {
       ...process.env,
       HOME: home,
+      CLICKZETTA_TEST_HOME: home,
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -71,7 +72,7 @@ describe("llm guidance", () => {
     expect(json.data.name).toBe("my-openai")
     expect(json.data.used).toBe(true)
 
-    const profilesPath = join(home, ".clickzetta", "profiles.toml")
+    const profilesPath = join(result.home, ".clickzetta", "profiles.toml")
     expect(existsSync(profilesPath)).toBe(true)
     const profiles = readFileSync(profilesPath, "utf-8")
     expect(profiles).toContain('default_llm = "my-openai"')

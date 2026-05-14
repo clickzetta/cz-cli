@@ -534,18 +534,18 @@ export class Agent implements ACPAgent {
     log.info("initialize", { protocolVersion: params.protocolVersion })
 
     const authMethod: AuthMethod = {
-      description: "Run `opencode auth login` in the terminal",
-      name: "Login with opencode",
-      id: "opencode-login",
+      description: "Run `cz-cli auth login` in the terminal",
+      name: "Login with cz-cli",
+      id: "cz-cli-login",
     }
 
     // If client supports terminal-auth capability, use that instead.
     if (params.clientCapabilities?._meta?.["terminal-auth"] === true) {
       authMethod._meta = {
         "terminal-auth": {
-          command: "opencode",
+          command: "cz-cli",
           args: ["auth", "login"],
-          label: "OpenCode Login",
+          label: "ClickZetta Login",
         },
       }
     }

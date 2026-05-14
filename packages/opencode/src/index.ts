@@ -30,6 +30,12 @@ process.on("uncaughtException", (e) => {
 const rawArgs = hideBin(process.argv)
 const clickzettaHome = process.env.CLICKZETTA_TEST_HOME || os.homedir()
 
+if (process.env.CLICKZETTA_AGENT_RUNTIME !== "1") {
+  const { runCli } = await import("@clickzetta/cli")
+  await runCli(rawArgs)
+  process.exit(process.exitCode ?? 0)
+}
+
 if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {
   const profilesPath = path.join(clickzettaHome, ".clickzetta", "profiles.toml")
   try {

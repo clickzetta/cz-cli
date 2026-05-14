@@ -19,7 +19,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
             .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout"),
         () => {
-          // This handler is never reached — opencode kernel handles `agent run` directly.
+          // This handler is never reached — cz-cli delegates runtime execution to the internal agent kernel.
           // This command definition exists only to provide correct --help output.
         },
       )

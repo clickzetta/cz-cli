@@ -1,5 +1,9 @@
 import type { Argv } from "yargs"
 import { createInterface } from "node:readline"
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { JobStatus, getCurrentUser, getToken, listUserWorkspaces, loginWithPassword, toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
@@ -75,6 +79,8 @@ const SERVICE_ENDPOINTS = [
 
 const OTHER_SERVICE = "__custom__"
 const SETUP_FLOW = ["account_fields", "service", "instance", "workspace", "schema", "vcluster", "complete"] as const
+const PROFILES_DIR = join(homedir(), ".clickzetta")
+const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
 
 interface SetupAuthContext {
   token: string
@@ -161,6 +167,67 @@ function saveProfile(profileName: string, profile: ProfileEntry): void {
   }
   profiles[profileName] = profile
   saveProfiles(profiles)
+}
+
+function loadFullFile(): Record<string, unknown> {
+  try {
+    return parseTOML(readFileSync(PROFILES_FILE, "utf-8")) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function saveFullFile(data: Record<string, unknown>): void {
+  mkdirSync(PROFILES_DIR, { recursive: true })
+  const content = stringifyTOML(data)
+  const tmp = PROFILES_FILE + ".tmp." + Date.now()
+  writeFileSync(tmp, content, "utf-8")
+  renameSync(tmp, PROFILES_FILE)
+}
+
+function applyCredentialToProfiles(
+  existing: Record<string, unknown>,
+  cred: Record<string, unknown>,
+  profileName: string,
+): Record<string, unknown> {
+  const profiles = (existing.profiles ?? {}) as Record<string, ProfileEntry>
+  const currentProfile = (profiles[profileName] ?? {}) as ProfileEntry
+  const next = {
+    ...existing,
+    default_profile: profileName,
+    profiles: {
+      ...profiles,
+      [profileName]: {
+        ...currentProfile,
+        instance: String(cred.instanceName),
+        workspace: String(cred.workspaceName ?? "default"),
+        schema: String(cred.schema ?? "public"),
+        vcluster: String(cred.virtualCluster ?? "default"),
+        pat: String(cred.accessToken),
+        service: String(cred.service ?? "dev-api.clickzetta.com"),
+        protocol: String(cred.protocol ?? "https"),
+      },
+    },
+  }
+  const apiKey = typeof cred.apiKey === "string" ? cred.apiKey : undefined
+  const aimeshEndpointBaseUrl =
+    typeof cred.aimeshEndpointBaseUrl === "string" ? cred.aimeshEndpointBaseUrl : undefined
+  if (!apiKey && !aimeshEndpointBaseUrl) return next
+  const llm = (existing.llm ?? {}) as Record<string, unknown>
+  const clickzetta = ((llm.clickzetta ?? {}) as Record<string, unknown>)
+  return {
+    ...next,
+    default_llm: typeof existing.default_llm === "string" ? existing.default_llm : "clickzetta",
+    llm: {
+      ...llm,
+      clickzetta: {
+        ...clickzetta,
+        provider: "clickzetta",
+        ...(apiKey && { api_key: apiKey }),
+        ...(aimeshEndpointBaseUrl && { base_url: aimeshEndpointBaseUrl }),
+      },
+    },
+  }
 }
 
 function quoteShell(value: string): string {
@@ -1053,7 +1120,13 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           protocol: (cred.protocol as string) ?? "https",
         }
         try {
-          saveProfile(profileName, profile)
+          const data = loadFullFile()
+          const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+          if (profiles[profileName]) {
+            error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use a different name or delete it first.`, { format })
+            return
+          }
+          saveFullFile(applyCredentialToProfiles(data, cred, profileName))
         } catch (e) {
           error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
           return
@@ -1132,7 +1205,13 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           protocol: (cred.protocol as string) ?? "https",
         }
         try {
-          saveProfile(profileName, profile)
+          const data = loadFullFile()
+          const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+          if (profiles[profileName]) {
+            error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use a different name or delete it first.`, { format })
+            return
+          }
+          saveFullFile(applyCredentialToProfiles(data, cred, profileName))
         } catch (e) {
           error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
           return

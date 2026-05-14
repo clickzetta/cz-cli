@@ -9,7 +9,7 @@ function run(args: string[]) {
   const result = spawnSync("bun", ["./src/index.ts", ...args], {
     cwd: import.meta.dir + "/../../",
     encoding: "utf-8",
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home },
     stdio: ["ignore", "pipe", "pipe"],
   })
   return {
@@ -23,7 +23,7 @@ test("update forwards to cz-cli without requiring a clickzetta profile", () => {
   const result = run(["update"])
   expect(result.stderr).not.toContain("No ClickZetta profile configured")
   expect(result.stdout).not.toContain("No ClickZetta profile configured")
-  expect(result.stdout).toContain("Cannot update development build.")
+  expect(result.stderr).toContain("Cannot update development build.")
 })
 
 test("profile commands forward without requiring a clickzetta profile", () => {

@@ -31,6 +31,14 @@ try {
     path.join(home, ".singclaw", "workspace", "skills"),
   ];
 
+  for (const dir of agentDirs) {
+    for (const legacy of ["czagent", "czcli", "cz-cli-v2"]) {
+      try {
+        fs.rmSync(path.join(dir, legacy), { recursive: true, force: true });
+      } catch (e) {}
+    }
+  }
+
   // Cleanup: fix cz-cli-v2 → cz-cli in existing skill files (bug introduced in 57a49fcdc)
   for (const dir of agentDirs) {
     const skillFile = path.join(dir, "cz-cli", "SKILL.md");

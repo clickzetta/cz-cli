@@ -1,4 +1,5 @@
 export { VERSION } from "./version.js"
+export { runCli } from "./run-cli.js"
 export { resolveConnectionConfig } from "./connection/config.js"
 export { parseJdbcUrl } from "./connection/jdbc.js"
 export { loadProfiles, saveProfiles, getDefaultProfileName, getProfileConfig } from "./connection/profile-store.js"

@@ -104,7 +104,6 @@ if [ ! -f "$CZAGENT_CONFIG" ]; then
     mkdir -p "$HOME/.clickzetta"
     cat > "$CZAGENT_CONFIG" << 'EOF'
 {
-  "$schema": "https://opencode.ai/config.json",
   "formatter": false,
   "skills": {
     "paths": ["~/.clickzetta/skills"]
@@ -149,9 +148,11 @@ CZCLI_SKILL_SRC="$SCRIPT_DIR/skills/cz-cli"
 LAKEHOUSE_SKILL_SRC="$SCRIPT_DIR/skills/lakehouse-doc"
 if [ -d "$CZCLI_SKILL_SRC" ]; then
     AGENT_DIRS="$HOME/.claude/skills $HOME/.codex/skills $HOME/.cursor/skills $HOME/.kiro/skills $HOME/.openclaw/workspace/skills $HOME/.singclaw/workspace/skills"
-    # Clean up old czcli/czagent skill directories
+    # Clean up legacy skill directory names before copying the current cz-cli skill.
     for agent_dir in $AGENT_DIRS; do
         rm -rf "$agent_dir/czagent"
+        rm -rf "$agent_dir/czcli"
+        rm -rf "$agent_dir/cz-cli-v2"
     done
     for agent_dir in $AGENT_DIRS; do
         mkdir -p "$agent_dir"

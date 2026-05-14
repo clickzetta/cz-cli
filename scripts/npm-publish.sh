@@ -65,7 +65,8 @@ for platform in "${PLATFORMS[@]}"; do
 
   set_version "$pkg_dir/package.json"
 
-  # Copy binary
+  # Recreate bin/ from scratch so stale binaries from older layouts are never published.
+  rm -rf "$pkg_dir/bin"
   mkdir -p "$pkg_dir/bin"
   if [ "$platform" = "win32-x64" ]; then
     cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli.exe" "$pkg_dir/bin/cz-cli.exe"

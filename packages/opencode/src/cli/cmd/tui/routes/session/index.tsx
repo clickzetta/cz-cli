@@ -254,7 +254,7 @@ export function Session() {
         `  ${blue}◆ cz-cli${reset}`,
         ``,
         `  ${dim}Session ${reset}${bold}${title}${reset}`,
-        `  ${dim}Continue${reset} ${bold}czcli -s ${session()?.id}${reset}`,
+        `  ${dim}Continue${reset} ${bold}cz-cli -s ${session()?.id}${reset}`,
         ``,
       ].join("\n"),
     )

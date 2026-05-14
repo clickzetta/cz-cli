@@ -6,7 +6,7 @@
 import { spawnSync } from "child_process"
 
 const BINARY = process.env.CZ_CLI_BIN ?? process.execPath
-const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["../opencode/src/index.ts"]
+const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["./src/main.ts"]
 const PASS = "\x1b[32m✓\x1b[0m"
 const FAIL = "\x1b[31m✗\x1b[0m"
 
@@ -416,7 +416,7 @@ const cases: HelpCase[] = [
     expectOptions: ["task", "--yes"],
   },
 
-  // agent (top-level description only — agent subcommands go through opencode)
+  // agent (top-level description only — agent subcommands are executed by the internal runtime)
   {
     args: ["agent", "--help"],
     expectHeader: "cz-cli agent",

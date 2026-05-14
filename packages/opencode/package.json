@@ -17,9 +17,6 @@
     "dev:temporary": "bun run --conditions=browser ./src/temporary.ts",
     "db": "bun drizzle-kit"
   },
-  "bin": {
-    "opencode": "./bin/opencode"
-  },
   "exports": {
     "./*": "./src/*.ts"
   },
