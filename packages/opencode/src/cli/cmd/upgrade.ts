@@ -5,9 +5,9 @@ import { Effect } from "effect"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Installation } from "@/installation"
 
-export const UpgradeCommand = {
-  command: "upgrade [target]",
-  describe: "upgrade cz-cli to the latest or a specific version",
+export const UpdateCommand = {
+  command: "update [target]",
+  describe: "update cz-cli to the latest or a specific version",
   builder: (yargs: Argv) => {
     return yargs.positional("target", {
       describe: "version to upgrade to, for ex '0.1.48' or 'v0.1.48'",

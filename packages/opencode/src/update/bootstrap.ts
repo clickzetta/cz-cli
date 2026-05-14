@@ -56,8 +56,9 @@ const CLICKZETTA_DIR = ".clickzetta"
 const INSTALL_METADATA_FILE = "install.json"
 const UPDATE_STATE_FILE = "update-check.json"
 const DEFAULT_UPDATE_INTERVAL_MS = 12 * 60 * 60 * 1000
+const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 const SUPPORTED_AUTO_UPGRADE_METHODS = new Set<InstallMethod>(["curl", "npm", "pnpm", "yarn", "bun"])
-const SKIP_COMMANDS = new Set(["setup", "upgrade", "uninstall"])
+const SKIP_COMMANDS = new Set(["setup", "update", "uninstall"])
 const NPM_METHODS = new Set<InstallMethod>(["npm", "pnpm", "yarn", "bun"])
 
 function homeDirectory(home?: string, env: NodeJS.ProcessEnv = process.env) {
@@ -114,6 +115,29 @@ async function writeJson(file: string, value: unknown) {
   await fs.writeFile(file, JSON.stringify(value, null, 2) + "\n")
 }
 
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit = {},
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetchImpl(input, {
+      ...init,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function resolveIntervalMs(value: string | undefined) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_UPDATE_INTERVAL_MS
+}
+
 export function installMethodFromExecPath(execPath: string, home?: string, env: NodeJS.ProcessEnv = process.env): InstallMethod {
   const root = homeDirectory(home, env)
   if (execPath === path.join(root, ".local", "bin", "cz-cli")) return "curl"
@@ -123,18 +147,18 @@ export function installMethodFromExecPath(execPath: string, home?: string, env: 
 
 export async function latestVersionForMethod(method: InstallMethod, fetchImpl: typeof fetch = fetch) {
   if (NPM_METHODS.has(method)) {
-    const response = await fetchImpl("https://registry.npmjs.org/@clickzetta/cz-cli/latest", {
+    const response = await fetchWithTimeout("https://registry.npmjs.org/@clickzetta/cz-cli/latest", {
       headers: { Accept: "application/json" },
-    })
+    }, fetchImpl)
     if (!response.ok) throw new Error(`Failed to fetch npm latest version: ${response.status}`)
     const payload = (await response.json()) as { version?: string }
     if (!payload.version) throw new Error("npm registry latest version is missing")
     return payload.version
   }
 
-  const response = await fetchImpl("https://api.github.com/repos/clickzetta/cz-cli/releases/latest", {
+  const response = await fetchWithTimeout("https://api.github.com/repos/clickzetta/cz-cli/releases/latest", {
     headers: { Accept: "application/vnd.github+json" },
-  })
+  }, fetchImpl)
   if (!response.ok) throw new Error(`Failed to fetch GitHub latest release: ${response.status}`)
   const payload = (await response.json()) as { tag_name?: string }
   const version = payload.tag_name?.replace(/^v/, "")
@@ -143,7 +167,7 @@ export async function latestVersionForMethod(method: InstallMethod, fetchImpl: t
 }
 
 async function upgradeViaInstallScript(target: string, fetchImpl: typeof fetch = fetch) {
-  const response = await fetchImpl("https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh")
+  const response = await fetchWithTimeout("https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh", {}, fetchImpl)
   if (!response.ok) throw new Error(`Failed to download install script: ${response.status}`)
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-"))
   const script = path.join(temp, "install.sh")
@@ -300,7 +324,7 @@ export async function maybeAutoUpdate(input: {
   if (autoupdate === false) return
 
   const now = input.now ?? Date.now()
-  const intervalMs = input.intervalMs ?? Number(env.CLICKZETTA_UPDATE_INTERVAL_MS || DEFAULT_UPDATE_INTERVAL_MS)
+  const intervalMs = input.intervalMs ?? resolveIntervalMs(env.CLICKZETTA_UPDATE_INTERVAL_MS)
   const paths = updatePaths(undefined, env)
   const state = ((await readObject(paths.state)) as UpdateState) ?? {}
   if (state.last_checked_at !== undefined && now - state.last_checked_at < intervalMs) return

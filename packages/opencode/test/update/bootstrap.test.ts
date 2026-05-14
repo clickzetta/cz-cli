@@ -55,9 +55,9 @@ describe("update bootstrap", () => {
     expect(config.autoupdate).toBe(false)
   })
 
-  test("skips autoupdate for setup, upgrade, help, version, and one-shot restart env", () => {
+  test("skips autoupdate for setup, update, help, version, and one-shot restart env", () => {
     expect(shouldSkipAutoUpdateCommand({ args: ["setup"] })).toBe(true)
-    expect(shouldSkipAutoUpdateCommand({ args: ["upgrade"] })).toBe(true)
+    expect(shouldSkipAutoUpdateCommand({ args: ["update"] })).toBe(true)
     expect(shouldSkipAutoUpdateCommand({ args: ["--help"] })).toBe(true)
     expect(shouldSkipAutoUpdateCommand({ args: ["--version"] })).toBe(true)
     expect(
@@ -146,6 +146,38 @@ describe("update bootstrap", () => {
       fetchImpl,
       now: 6_000,
       intervalMs: 5_000,
+    })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(0)
+  })
+
+  test("falls back to the default interval when CLICKZETTA_UPDATE_INTERVAL_MS is invalid", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+    const stateDir = path.join(home, ".local", "state", "clickzetta")
+    await fs.mkdir(stateDir, { recursive: true })
+    await fs.writeFile(
+      path.join(stateDir, "update-check.json"),
+      JSON.stringify({
+        last_checked_at: 5_000,
+        last_result: "up-to-date",
+      }),
+    )
+
+    const fetchImpl = mock(async () =>
+      new Response(JSON.stringify({ tag_name: "v9.9.9" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    ) as unknown as typeof fetch
+
+    await maybeAutoUpdate({
+      args: ["sql"],
+      env: {
+        HOME: home,
+        CLICKZETTA_AUTOUPDATE: "notify",
+        CLICKZETTA_UPDATE_INTERVAL_MS: "NaN",
+      },
+      fetchImpl,
+      now: 6_000,
     })
 
     expect(fetchImpl).toHaveBeenCalledTimes(0)
