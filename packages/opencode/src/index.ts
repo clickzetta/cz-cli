@@ -87,6 +87,11 @@ if (
   await runLlm(rawArgs.slice(1))
 }
 
+if (["llm", "config"].includes(rawArgs[0] ?? "")) {
+  const { runLlm } = await import("./cli/cmd/config-llm")
+  await runLlm(["llm", ...rawArgs.slice(1)])
+}
+
 // Prevent recursive agent invocation: if we're already inside an agent session,
 // block nested `cz-cli agent` / `cz-cli run` calls.
 if (isAgentSubcommand && process.env.CLICKZETTA_PID) {
@@ -154,11 +159,43 @@ function exitNoProfile(): never {
 // Data commands (sql, table, schema, …) and --help/no-args — forward to
 // cz-cli so agent modules are never loaded for these paths.
 // ---------------------------------------------------------------------------
+const FORWARDED_CLI_COMMANDS = new Set([
+  "sql",
+  "schema",
+  "table",
+  "workspace",
+  "status",
+  "profile",
+  "task",
+  "runs",
+  "attempts",
+  "job",
+  "update",
+  "ai-guide",
+  "datasource",
+])
+const PROFILE_REQUIRED_COMMANDS = new Set([
+  "sql",
+  "schema",
+  "table",
+  "workspace",
+  "status",
+  "task",
+  "runs",
+  "attempts",
+  "job",
+  "datasource",
+])
 const isHelpOrEmpty = rawArgs.length === 0 || (rawArgs.length === 1 && ["--help", "-h"].includes(rawArgs[0]))
-const isDataCommand = !isAgentSubcommand && rawArgs[0] !== "setup" && rawArgs.length > 0 && !["--help", "-h", "--version", "-v"].includes(rawArgs[0])
+const isForwardedCliCommand =
+  !isAgentSubcommand &&
+  rawArgs.length > 0 &&
+  FORWARDED_CLI_COMMANDS.has(rawArgs[0] ?? "")
 
-if (isHelpOrEmpty || isDataCommand) {
-  if (isDataCommand && !isHelpRequest && !checkProfile()) exitNoProfile()
+if (isHelpOrEmpty || isForwardedCliCommand) {
+  if (isForwardedCliCommand && PROFILE_REQUIRED_COMMANDS.has(rawArgs[0] ?? "") && !isHelpRequest && !checkProfile()) {
+    exitNoProfile()
+  }
 
   const { forward } = await import("./cli/cmd/forward")
   await forward(isHelpOrEmpty ? ["--help"] : rawArgs)

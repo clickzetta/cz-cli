@@ -309,6 +309,47 @@ test("bridges default_llm model into config.model when config.model is unset", a
   }
 })
 
+test("bridges default_llm openai-compatible entry into config provider and model", async () => {
+  await using home = await tmpdir({
+    init: async (dir) => {
+      const clickzettaDir = path.join(dir, ".clickzetta")
+      await fs.mkdir(clickzettaDir, { recursive: true })
+      await Filesystem.write(
+        path.join(clickzettaDir, "profiles.toml"),
+        [
+          'default_llm = "codzen"',
+          "",
+          "[llm.codzen]",
+          'provider = "openai-compatible"',
+          'api_key = "sk-codzen"',
+          'base_url = "https://codzen.ai/v1"',
+          'model = "glm-5.1"',
+          "",
+        ].join("\n"),
+      )
+    },
+  })
+  const previousHome = process.env["CLICKZETTA_TEST_HOME"]
+  process.env["CLICKZETTA_TEST_HOME"] = home.path
+
+  try {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const config = await load()
+        expect(config.model).toBe("openai-compatible/glm-5.1")
+        expect(config.provider?.["openai-compatible"]?.options?.apiKey).toBe("sk-codzen")
+        expect(config.provider?.["openai-compatible"]?.options?.baseURL).toBe("https://codzen.ai/v1")
+        expect(config.provider?.["openai-compatible"]?.models?.["glm-5.1"]?.name).toBe("glm-5.1")
+      },
+    })
+  } finally {
+    if (previousHome === undefined) delete process.env["CLICKZETTA_TEST_HOME"]
+    else process.env["CLICKZETTA_TEST_HOME"] = previousHome
+  }
+})
+
 test("explicit config.model overrides default_llm model bridge", async () => {
   await using home = await tmpdir({
     init: async (dir) => {

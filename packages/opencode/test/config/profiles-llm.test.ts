@@ -79,10 +79,60 @@ base_url = "https://api.anthropic.com"
           apiKey: "sk-prod",
           baseURL: "https://prod.example.com/v1",
         },
+        name: "prod-openai",
+        npm: "@ai-sdk/openai-compatible",
+        api: "https://prod.example.com/v1",
+        env: [],
+        models: {
+          "gpt-5": {
+            name: "gpt-5",
+            tool_call: true,
+            reasoning: false,
+            attachment: false,
+            temperature: true,
+            limit: { context: 128000, output: 16384 },
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
       },
     })
     expect(result.defaultModel).toBe("openai-compatible/gpt-5")
     expect(result.warnings).toEqual([])
+  })
+
+  test("bridges selected openai-compatible entry into a runnable provider model", () => {
+    const result = parseProfilesToml(`
+default_llm = "codzen"
+
+[llm.codzen]
+provider = "openai-compatible"
+api_key = "sk-codzen"
+base_url = "https://codzen.ai/v1"
+model = "glm-5.1"
+`)
+
+    expect(result.providers["openai-compatible"]).toEqual({
+      options: {
+        apiKey: "sk-codzen",
+        baseURL: "https://codzen.ai/v1",
+      },
+      name: "codzen",
+      npm: "@ai-sdk/openai-compatible",
+      api: "https://codzen.ai/v1",
+      env: [],
+      models: {
+        "glm-5.1": {
+          name: "glm-5.1",
+          tool_call: true,
+          reasoning: false,
+          attachment: false,
+          temperature: true,
+          limit: { context: 128000, output: 16384 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    })
+    expect(result.defaultModel).toBe("openai-compatible/glm-5.1")
   })
 
   test("does not derive a default model when default_llm has no model", () => {

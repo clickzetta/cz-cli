@@ -582,6 +582,62 @@ test("defaultModel falls back to default_llm model bridge when config.model is u
   }
 })
 
+test("defaultModel resolves openai-compatible model from profiles.toml bridge", async () => {
+  await using home = await tmpdir({
+    init: async (dir) => {
+      const clickzettaDir = path.join(dir, ".clickzetta")
+      await mkdir(clickzettaDir, { recursive: true })
+      await Bun.write(
+        path.join(clickzettaDir, "profiles.toml"),
+        [
+          'default_llm = "codzen"',
+          "",
+          "[llm.codzen]",
+          'provider = "openai-compatible"',
+          'api_key = "sk-codzen"',
+          'base_url = "https://codzen.ai/v1"',
+          'model = "glm-5.1"',
+          "",
+        ].join("\n"),
+      )
+    },
+  })
+  const previousHome = process.env["CLICKZETTA_TEST_HOME"]
+  process.env["CLICKZETTA_TEST_HOME"] = home.path
+
+  try {
+    await clearConfig(true)
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+          }),
+        )
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const providers = await list()
+        expect(providers[ProviderID.make("openai-compatible")]).toBeDefined()
+        expect(providers[ProviderID.make("openai-compatible")].options.baseURL).toBe("https://codzen.ai/v1")
+
+        const model = await defaultModel()
+        expect(model).toEqual({
+          providerID: ProviderID.make("openai-compatible"),
+          modelID: ModelID.make("glm-5.1"),
+        })
+      },
+    })
+  } finally {
+    if (previousHome === undefined) delete process.env["CLICKZETTA_TEST_HOME"]
+    else process.env["CLICKZETTA_TEST_HOME"] = previousHome
+    await clearConfig(true)
+  }
+})
+
 test("provider with baseURL from config", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

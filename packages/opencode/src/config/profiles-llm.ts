@@ -1,7 +1,28 @@
 import { parse as parseToml } from "smol-toml"
 
 export interface ProfilesLlmResult {
-  providers: Record<string, { options: { apiKey: string; baseURL?: string } }>
+  providers: Record<
+    string,
+    {
+      options: { apiKey: string; baseURL?: string }
+      name?: string
+      npm?: string
+      api?: string
+      env?: string[]
+      models?: Record<
+        string,
+        {
+          name?: string
+          tool_call: boolean
+          reasoning: boolean
+          attachment: boolean
+          temperature: boolean
+          limit: { context: number; output: number }
+          modalities: { input: string[]; output: string[] }
+        }
+      >
+    }
+  >
   defaultModel?: string
   warnings: string[]
 }
@@ -47,6 +68,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+function customProviderFromEntry(entry: ParsedLlmEntry) {
+  if (!entry.model) return undefined
+  if (entry.provider === "clickzetta") return undefined
+  return {
+    name: entry.name,
+    npm: entry.provider === "openai-compatible" ? "@ai-sdk/openai-compatible" : undefined,
+    api: entry.baseURL,
+    env: [],
+    models: {
+      [entry.model]: {
+        name: entry.model,
+        tool_call: true,
+        reasoning: false,
+        attachment: false,
+        temperature: true,
+        limit: { context: 128000, output: 16384 },
+        modalities: { input: ["text"], output: ["text"] },
+      },
+    },
+  }
 }
 
 function getProfiles(data: Record<string, unknown>) {
@@ -210,6 +253,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
         apiKey: selectedDefault.apiKey,
         ...(selectedDefault.baseURL && { baseURL: selectedDefault.baseURL }),
       },
+      ...customProviderFromEntry(selectedDefault),
     }
     return { providers, defaultModel, warnings }
   }
