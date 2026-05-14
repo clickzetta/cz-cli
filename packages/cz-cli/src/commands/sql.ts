@@ -37,6 +37,7 @@ interface SqlArgs extends GlobalArgs {
   N?: boolean
   "limit": boolean
   batch: boolean
+  "dry-run": boolean
 }
 
 function truncateLargeFields(rows: Record<string, unknown>[], maxLen: number): Record<string, unknown>[] {
@@ -394,11 +395,29 @@ async function handler(argv: SqlArgs): Promise<void> {
   process.on("SIGINT", sigintHandler)
 
   try {
-    const ctx = await getExecContext(argv)
     const statements = splitSql(sql).map((s) => s.trim()).filter(Boolean)
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
     }
+    if (argv["dry-run"]) {
+      const ctx = await getExecContext(argv)
+      const results = await Promise.all(statements.map(async (stmt) => {
+        try {
+          const r = await execSql(ctx, `EXPLAIN ${stmt}`, { timeoutMs: argv.timeout * 1000 })
+          if (isQueryResult(r)) {
+            if (r.status === JobStatus.FAILED)
+              return { sql: stmt, status: "error", job_id: r.jobId, error: r.errorMessage ?? "EXPLAIN failed" }
+            return { sql: stmt, status: "ok", job_id: r.jobId }
+          }
+          return { sql: stmt, status: "ok", job_id: (r as { jobId?: string }).jobId }
+        } catch (err) {
+          return { sql: stmt, status: "error", error: err instanceof Error ? err.message : String(err) }
+        }
+      }))
+      success({ statements: results, count: statements.length }, { format })
+      return
+    }
+    const ctx = await getExecContext(argv)
     // Multi-statement: execute all, return all results in batch mode or last result otherwise
     if (statements.length > 1) {
       const accumulatedHints = { ...hints }
@@ -500,6 +519,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("N", { type: "boolean", hidden: true })
               .option("limit", { type: "boolean", default: true, describe: "Auto-truncate results to 100 rows. Use --no-limit to fetch all rows." })
               .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute multiple semicolon-separated statements sequentially" })
+              .option("dry-run", { type: "boolean", default: false, describe: "Split SQL and EXPLAIN each statement without executing. Reports ok/error per statement." })
               .epilogue([
                 "Examples:",
                 "  cz-cli sql \"SELECT * FROM orders LIMIT 10\" --sync",
