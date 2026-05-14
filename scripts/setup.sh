@@ -40,6 +40,19 @@ fi
 
 print_success "Installed to $INSTALL_DIR/$BINARY_NAME"
 
+mkdir -p "$HOME/.clickzetta"
+INSTALLED_VERSION=$("$INSTALL_DIR/$BINARY_NAME" --version 2>/dev/null || true)
+cat > "$HOME/.clickzetta/install.json" <<EOF
+{
+  "version": 1,
+  "method": "curl",
+  "installed_path": "$INSTALL_DIR/$BINARY_NAME",
+  "channel": "latest",
+  "binary_version": "$INSTALLED_VERSION",
+  "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+
 # Remove legacy czcli binary if present
 rm -f "$INSTALL_DIR/czcli" 2>/dev/null || true
 
@@ -101,7 +114,6 @@ fi
 # Initialize default czcli.json if not present
 CZAGENT_CONFIG="$HOME/.clickzetta/czcli.json"
 if [ ! -f "$CZAGENT_CONFIG" ]; then
-    mkdir -p "$HOME/.clickzetta"
     cat > "$CZAGENT_CONFIG" << 'EOF'
 {
   "formatter": false,

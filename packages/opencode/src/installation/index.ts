@@ -3,8 +3,15 @@ import z from "zod"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "../flag/flag"
 import { InstallationChannel, InstallationVersion } from "./version"
+import {
+  installMethodFromExecPath,
+  latestVersionForMethod,
+  performUpgrade,
+  readInstallMetadata,
+  type InstallMethod,
+} from "@/update/bootstrap"
 
-export type Method = "curl" | "npm" | "yarn" | "pnpm" | "bun" | "brew" | "scoop" | "choco" | "unknown"
+export type Method = InstallMethod
 
 export const Event = {
   Updated: BusEvent.define(
@@ -53,18 +60,23 @@ export const layer: Layer.Layer<Service> =
     Service,
     Effect.gen(function* () {
       const methodImpl = Effect.fn("Installation.method")(function* () {
-        return "unknown" as Method
+        const saved = yield* Effect.promise(() => readInstallMetadata())
+        return saved?.method ?? installMethodFromExecPath(process.execPath)
       })
 
-      // TODO: version check disabled — cz-cli has no update channel yet.
-      // When ready, point latest() at clickzetta/cz-code GitHub Releases.
-      const latestImpl = Effect.fn("Installation.latest")(function* (_installMethod?: Method) {
-        return InstallationVersion
-      }, Effect.orDie)
+      const latestImpl = Effect.fn("Installation.latest")(function* (installMethod?: Method) {
+        const method = installMethod ?? (yield* methodImpl())
+        return yield* Effect.tryPromise({
+          try: () => latestVersionForMethod(method),
+          catch: (error) => new UpgradeFailedError({ stderr: error instanceof Error ? error.message : String(error) }),
+        }).pipe(Effect.orElseSucceed(() => InstallationVersion))
+      })
 
-      // TODO: self-upgrade disabled — cz-cli is distributed via zip/tar.gz, no in-place upgrade path yet.
-      const upgradeImpl = Effect.fn("Installation.upgrade")(function* (_m: Method, _target: string) {
-        return yield* new UpgradeFailedError({ stderr: "In-place upgrade is not supported. Please download the latest release from GitHub." })
+      const upgradeImpl = Effect.fn("Installation.upgrade")(function* (method: Method, target: string) {
+        return yield* Effect.tryPromise({
+          try: () => performUpgrade(method, target),
+          catch: (error) => new UpgradeFailedError({ stderr: error instanceof Error ? error.message : String(error) }),
+        })
       })
 
       return Service.of({

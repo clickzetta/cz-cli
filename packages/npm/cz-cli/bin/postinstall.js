@@ -11,9 +11,20 @@ const platform = os.platform();
 const arch = os.arch() === "x64" ? "x64" : "arm64";
 const pkgName = `@clickzetta/cz-cli-${platform}-${arch}`;
 const binName = platform === "win32" ? "cz-cli.exe" : "cz-cli";
+const installFile = path.join(home, ".clickzetta", "install.json");
+
+function detectPackageManager() {
+  const userAgent = process.env.npm_config_user_agent || "";
+  if (userAgent.startsWith("pnpm/")) return "pnpm";
+  if (userAgent.startsWith("yarn/")) return "yarn";
+  if (userAgent.startsWith("bun/")) return "bun";
+  if (userAgent.startsWith("npm/")) return "npm";
+  return "npm";
+}
 
 try {
   const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));
+  const binPath = path.join(pkgDir, "bin", binName);
   const skillsSrc = path.join(pkgDir, "bin", "skills");
   if (!fs.existsSync(skillsSrc)) process.exit(0);
 
@@ -89,10 +100,35 @@ try {
   }
 
   try {
-    execFileSync(path.join(pkgDir, "bin", binName), [], {
+    execFileSync(binPath, [], {
       stdio: "ignore",
       env: { ...process.env, CLICKZETTA_MIGRATE_PROFILES_ONLY: "1" },
     });
+  } catch (e) {}
+
+  try {
+    const version = execFileSync(binPath, ["--version"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf-8",
+      env: process.env,
+    }).trim();
+    fs.mkdirSync(path.dirname(installFile), { recursive: true });
+    fs.writeFileSync(
+      installFile,
+      JSON.stringify(
+        {
+          version: 1,
+          method: detectPackageManager(),
+          installed_path: binPath,
+          channel: "latest",
+          binary_version: version,
+          updated_at: new Date().toISOString(),
+        },
+        null,
+        2
+      ) + "\n",
+      "utf-8"
+    );
   } catch (e) {}
 } catch (e) {
   // Non-fatal: don't block npm install

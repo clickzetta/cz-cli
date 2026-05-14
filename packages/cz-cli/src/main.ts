@@ -47,6 +47,8 @@ const track = (success: boolean, error?: string) =>
     response_bytes: (process as unknown as Record<string, unknown>).responseBytes as number | undefined,
   })
 
+await checkAndUpdate(cliArgs)
+
 try {
   await runCli(cliArgs)
   const lastError = (process as unknown as Record<string, unknown>).lastError as string | undefined
@@ -61,5 +63,3 @@ try {
 }
 
 if (process.exitCode) process.exit()
-
-checkAndUpdate().catch(() => {})

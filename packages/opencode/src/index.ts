@@ -13,6 +13,7 @@ import fs from "fs"
 import path from "path"
 import { Log } from "./util"
 import { errorMessage } from "./util/error"
+import { maybeAutoUpdate } from "./update/bootstrap"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -29,6 +30,10 @@ process.on("uncaughtException", (e) => {
 
 const rawArgs = hideBin(process.argv)
 const clickzettaHome = process.env.CLICKZETTA_TEST_HOME || os.homedir()
+
+await maybeAutoUpdate({
+  args: rawArgs,
+})
 
 if (process.env.CLICKZETTA_AGENT_RUNTIME !== "1") {
   const { runCli } = await import("@clickzetta/cli")
