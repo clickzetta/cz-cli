@@ -235,29 +235,6 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           },
         },
       }),
-    opencode: Effect.fnUntraced(function* (input: Info) {
-      const env = yield* dep.env()
-      const hasKey = iife(() => {
-        if (input.env.some((item) => env[item])) return true
-        return false
-      })
-      const ok =
-        hasKey ||
-        Boolean(yield* dep.auth(input.id)) ||
-        Boolean((yield* dep.config()).provider?.["opencode"]?.options?.apiKey)
-
-      if (!ok) {
-        for (const [key, value] of Object.entries(input.models)) {
-          if (value.cost.input === 0) continue
-          delete input.models[key]
-        }
-      }
-
-      return {
-        autoload: Object.keys(input.models).length > 0,
-        options: ok ? {} : { apiKey: "public" },
-      }
-    }),
     openai: () =>
       Effect.succeed({
         autoload: false,
@@ -1146,7 +1123,10 @@ const layer: Layer.Layer<
         const plugins = yield* plugin.list()
         const cfg = yield* config.get()
         const modelsDev = yield* Effect.promise(() => ModelsDev.get())
-        const database = mapValues(modelsDev, fromModelsDevProvider)
+        const database = mapValues(
+          Object.fromEntries(Object.entries(modelsDev).filter(([providerID]) => providerID !== "opencode")),
+          fromModelsDevProvider,
+        )
 
         // Inject ClickZetta as a first-class provider (not in models.dev).
         database["clickzetta"] = fromModelsDevProvider(CLICKZETTA_PROVIDER_ENTRY as unknown as ModelsDev.Provider)
@@ -1699,9 +1679,6 @@ const layer: Layer.Layer<
         "gemini-2.5-flash",
         "gpt-5-nano",
       ]
-      if (providerID.startsWith("opencode")) {
-        priority = ["gpt-5-nano"]
-      }
       if (providerID.startsWith("github-copilot")) {
         priority = ["gpt-5-mini", "claude-haiku-4.5", ...priority]
       }
@@ -1782,7 +1759,7 @@ export const defaultLayer = Layer.suspend(() =>
   ),
 )
 
-const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
+const priority = ["gpt-5", "claude-sonnet-4", "gemini-3-pro"]
 export function sort<T extends { id: string }>(models: T[]) {
   return sortBy(
     models,

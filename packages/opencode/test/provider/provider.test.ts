@@ -1,16 +1,14 @@
 import { test, expect } from "bun:test"
-import { mkdir, unlink } from "fs/promises"
+import { mkdir } from "fs/promises"
 import path from "path"
 
 import { tmpdir } from "../fixture/fixture"
-import { Global } from "../../src/global"
 import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
 import { Provider } from "../../src/provider"
 import { Config } from "../../src/config"
 import { ProviderID, ModelID } from "../../src/provider/schema"
-import { Filesystem } from "../../src/util"
 import { Env } from "../../src/env"
 import { Effect } from "effect"
 import { AppRuntime } from "../../src/effect/app-runtime"
@@ -55,12 +53,6 @@ async function getSmallModel(providerID: ProviderID) {
 
 async function defaultModel() {
   return run((provider) => provider.defaultModel())
-}
-
-function paid(providers: Awaited<ReturnType<typeof list>>) {
-  const item = providers[ProviderID.make("opencode")]
-  expect(item).toBeDefined()
-  return Object.values(item.models).filter((model) => model.cost.input > 0).length
 }
 
 test("provider loaded from env variable", async () => {
@@ -2623,24 +2615,8 @@ test("plugin config enabled and disabled providers are honored", async () => {
   })
 })
 
-test("opencode loader keeps paid models when config apiKey is present", async () => {
-  await using base = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "opencode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-        }),
-      )
-    },
-  })
-
-  const none = await Instance.provide({
-    directory: base.path,
-    fn: async () => paid(await list()),
-  })
-
-  await using keyed = await tmpdir({
+test("opencode provider is not exposed in clickzetta distribution", async () => {
+  await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -2658,76 +2634,11 @@ test("opencode loader keeps paid models when config apiKey is present", async ()
     },
   })
 
-  const keyedCount = await Instance.provide({
-    directory: keyed.path,
-    fn: async () => paid(await list()),
-  })
-
-  expect(none).toBe(0)
-  expect(keyedCount).toBeGreaterThan(0)
-})
-
-test("opencode loader keeps paid models when auth exists", async () => {
-  await using base = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "opencode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-        }),
-      )
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      expect(providers[ProviderID.make("opencode")]).toBeUndefined()
     },
   })
-
-  const none = await Instance.provide({
-    directory: base.path,
-    fn: async () => paid(await list()),
-  })
-
-  await using keyed = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "opencode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-        }),
-      )
-    },
-  })
-
-  const authPath = path.join(Global.Path.data, "auth.json")
-  let prev: string | undefined
-
-  try {
-    prev = await Filesystem.readText(authPath)
-  } catch {}
-
-  try {
-    await Filesystem.write(
-      authPath,
-      JSON.stringify({
-        opencode: {
-          type: "api",
-          key: "test-key",
-        },
-      }),
-    )
-
-    const keyedCount = await Instance.provide({
-      directory: keyed.path,
-      fn: async () => paid(await list()),
-    })
-
-    expect(none).toBe(0)
-    expect(keyedCount).toBeGreaterThan(0)
-  } finally {
-    if (prev !== undefined) {
-      await Filesystem.write(authPath, prev)
-    }
-    if (prev === undefined) {
-      try {
-        await unlink(authPath)
-      } catch {}
-    }
-  }
 })

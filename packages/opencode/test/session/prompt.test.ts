@@ -206,6 +206,15 @@ describe("session.prompt special characters", () => {
   test("handles filenames with # character", async () => {
     await using tmp = await tmpdir({
       git: true,
+      config: {
+        provider: {
+          openai: {
+            options: {
+              apiKey: "test-openai-key",
+            },
+          },
+        },
+      },
       init: async (dir) => {
         await Bun.write(path.join(dir, "file#name.txt"), "special content\n")
       },
@@ -444,7 +453,7 @@ describe("session.prompt agent variant", () => {
               const other = yield* prompt.prompt({
                 sessionID: session.id,
                 agent: "build",
-                model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
+                model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-sonnet-4-20250514") },
                 noReply: true,
                 parts: [{ type: "text", text: "hello" }],
               })

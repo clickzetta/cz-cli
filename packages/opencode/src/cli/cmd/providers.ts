@@ -348,7 +348,6 @@ export const ProvidersLoginCommand = cmd({
         )
 
         const priority: Record<string, number> = {
-          opencode: 0,
           openai: 1,
           "github-copilot": 2,
           google: 3,
@@ -375,7 +374,6 @@ export const ProvidersLoginCommand = cmd({
               label: x.name,
               value: x.id,
               hint: {
-                opencode: "recommended",
                 openai: "ChatGPT Plus/Pro or API key",
               }[x.id],
             })),
@@ -447,10 +445,6 @@ export const ProvidersLoginCommand = cmd({
               "Configure via opencode.json options (profile, region, endpoint) or\n" +
               "AWS environment variables (AWS_PROFILE, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_WEB_IDENTITY_TOKEN_FILE).",
           )
-        }
-
-        if (provider === "opencode") {
-          prompts.log.info("Create an api key at https://opencode.ai/auth")
         }
 
         if (provider === "vercel") {

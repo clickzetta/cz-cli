@@ -1624,20 +1624,6 @@ async function defaultModel(config: ACPConfig, cwd?: string): Promise<{ provider
 
   if (specified && !providers.length) return specified
 
-  const opencodeProvider = providers.find((p) => p.id === "opencode")
-  if (opencodeProvider) {
-    if (opencodeProvider.models["big-pickle"]) {
-      return { providerID: ProviderID.opencode, modelID: ModelID.make("big-pickle") }
-    }
-    const [best] = Provider.sort(Object.values(opencodeProvider.models))
-    if (best) {
-      return {
-        providerID: ProviderID.make(best.providerID),
-        modelID: ModelID.make(best.id),
-      }
-    }
-  }
-
   const models = providers.flatMap((p) => Object.values(p.models))
   const [best] = Provider.sort(models)
   if (best) {
@@ -1649,7 +1635,7 @@ async function defaultModel(config: ACPConfig, cwd?: string): Promise<{ provider
 
   if (specified) return specified
 
-  return { providerID: ProviderID.opencode, modelID: ModelID.make("big-pickle") }
+  throw new Error("no providers found")
 }
 
 function parseUri(

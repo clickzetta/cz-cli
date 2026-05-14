@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { createInterface } from "node:readline"
-import { JobStatus, getToken, listUserWorkspaces, toServiceUrl } from "@clickzetta/sdk"
+import { JobStatus, getCurrentUser, getToken, listUserWorkspaces, loginWithPassword, toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
@@ -205,23 +205,99 @@ async function loginWithExistingAccount(
   password: string,
   accountName: string,
   service: string,
+  instanceHint?: string,
 ): Promise<SetupAuthContext> {
-  const { data, serviceHost, serviceUrl, token } = await loginByAccountSite(
-    accountName,
-    username,
-    password,
-    service,
+  const candidates = Array.from(
+    new Set(
+      [instanceHint, accountName]
+        .map((value) => value?.trim() ?? "")
+        .filter(Boolean),
+    ),
   )
-  const jwt = decodeJwtPayload(token)
-  const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
-  if (!tenantId) {
-    throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
+  const errors: string[] = []
+
+  if (!isAccountConsoleInput(service)) {
+    for (const candidate of candidates) {
+      try {
+        return await loginWithInstanceCandidate(username, password, candidate, service)
+      } catch (error) {
+        errors.push(`INSTANCE_LOGIN_FAILED(${candidate}): ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
   }
+
+  try {
+    const { data, serviceHost, serviceUrl, token } = await loginByAccountSite(
+      accountName,
+      username,
+      password,
+      service,
+    )
+    const jwt = decodeJwtPayload(token)
+    const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
+    if (!tenantId) {
+      throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
+    }
+    return {
+      token,
+      userId: coerceInt(jwt.userId ?? jwt.user_id ?? data.userId ?? data.id),
+      tenantId,
+      username: String(jwt.userName ?? data.username ?? username),
+      password,
+      service: serviceHost,
+      serviceUrl,
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error))
+  }
+
+  if (errors.length === 1) {
+    throw new Error(errors[0]!)
+  }
+  throw new Error(errors.join("; fallback: "))
+}
+
+function isAccountConsoleInput(service: string): boolean {
+  const raw = service.trim()
+  const parsed = raw.startsWith("http://") || raw.startsWith("https://") ? new URL(raw) : null
+  const host = stripProtocol(service)
+  const path = parsed?.pathname ?? ""
+  return host.startsWith("accounts.")
+    || host.includes(".accounts.")
+    || host.includes("-accounts.")
+    || path.startsWith("/accounts/")
+    || path === "/accounts"
+}
+
+async function loginWithInstanceCandidate(
+  username: string,
+  password: string,
+  instanceName: string,
+  service: string,
+): Promise<SetupAuthContext> {
+  const serviceHost = stripProtocol(service)
+  const serviceUrl = toServiceUrl(service.trim())
+  const login = await loginWithPassword(serviceUrl, username, password, instanceName)
+  const jwt = decodeJwtPayload(login.token)
+  let userId = coerceInt(jwt.userId ?? jwt.user_id ?? login.userId)
+  let tenantId = coerceInt(jwt.accountId ?? jwt.tenantId)
+  let resolvedUsername = String(jwt.userName ?? username)
+
+  if (!tenantId) {
+    const user = await getCurrentUser(serviceUrl, login.token)
+    userId = userId || coerceInt(user.id)
+    tenantId = coerceInt(user.accountId)
+    resolvedUsername = user.name || resolvedUsername
+  }
+  if (!tenantId) {
+    throw new Error("tenant/account id not found")
+  }
+
   return {
-    token,
-    userId: coerceInt(jwt.userId ?? jwt.user_id ?? data.userId ?? data.id),
+    token: login.token,
+    userId,
     tenantId,
-    username: String(jwt.userName ?? data.username ?? username),
+    username: resolvedUsername,
     password,
     service: serviceHost,
     serviceUrl,
@@ -518,6 +594,11 @@ function resolveOption<T extends NamedOption>(
   return option
 }
 
+function findOption<T extends NamedOption>(provided: string | undefined, options: T[]): T | undefined {
+  if (!provided) return undefined
+  return options.find((item) => item.value === provided || item.label === provided)
+}
+
 export function resolveOrAutoSelectOption<T extends NamedOption>(
   provided: string | undefined,
   options: T[],
@@ -552,13 +633,23 @@ async function runExistingAccountFlowTTY(
     SERVICE_ENDPOINTS.map((value) => ({ label: value, value })),
     true,
   )
-  const auth = await loginWithExistingAccount(username, password, accountName, service)
+  const auth = await loginWithExistingAccount(
+    username,
+    password,
+    accountName,
+    service,
+    setupValue(argv, "instance") || undefined,
+  )
   const instances = await listInstances(auth)
   if (instances.length === 0) {
     error("SETUP_DISCOVERY_FAILED", "No Lakehouse instances found under the selected service.", { format })
     return
   }
-  const chosenInstance = resolveOrAutoSelectOption(setupValue(argv, "instance") || undefined, instances, "instance")
+  const instanceHint = setupValue(argv, "instance") || accountName
+  const hintedInstance = findOption(instanceHint || undefined, instances)
+  const chosenInstance = hintedInstance
+    ? { option: hintedInstance, autoSelected: !setupValue(argv, "instance") }
+    : resolveOrAutoSelectOption(setupValue(argv, "instance") || undefined, instances, "instance")
   const instance = chosenInstance.option
     ?? resolveOption(await chooseOptionTTY("Choose instance", instances), instances, "instance")
   if (chosenInstance.autoSelected) announceAutoSelected("instance", instance.instanceName)
@@ -677,18 +768,25 @@ async function runExistingAccountFlowNonTTY(
     )
     return
   }
-  const auth = await loginWithExistingAccount(username, password, accountName, service)
+  const auth = await loginWithExistingAccount(
+    username,
+    password,
+    accountName,
+    service,
+    setupValue(argv, "instance") || undefined,
+  )
   const instances = await listInstances(auth)
   if (instances.length === 0) {
     error("SETUP_DISCOVERY_FAILED", "No Lakehouse instances found under the selected service.", { format })
     return
   }
   const instanceName = setupValue(argv, "instance")
+  const inferredInstance = findOption(instanceName || accountName, instances)
   const instance = instanceName
     ? resolveOption(instanceName, instances, "instance")
     : instances.length === 1
       ? instances[0]!
-      : null
+      : inferredInstance ?? null
   if (!instance) {
     setupNeedsInput(format, "instance", "Choose an instance before continuing setup.", ["instance"], instances, {
       collected: {
