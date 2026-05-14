@@ -36,6 +36,7 @@ export function success(
 
   const output = emit(payload, opts?.format, opts?.field ?? outputState.field)
   if (output !== "") process.stdout.write(output + "\n")
+  ;(process as unknown as Record<string, unknown>).responseBytes = Buffer.byteLength(output, "utf-8")
   process.exitCode = EXIT_OK
 }
 
@@ -102,6 +103,7 @@ export function error(
   const output = emit(payload, opts?.format, opts?.field ?? outputState.field)
   process.stdout.write(output + "\n")
   process.exitCode = opts?.exitCode ?? EXIT_BIZ_ERROR
+  ;(process as unknown as Record<string, unknown>).lastError = message
 }
 
 function emit(payload: unknown, format?: string, field?: string): string {

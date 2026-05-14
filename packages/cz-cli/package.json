@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./otel-defaults": "./src/otel-defaults.ts"
   },
   "bin": {
     "cz-cli": "./src/main.ts"

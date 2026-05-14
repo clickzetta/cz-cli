@@ -15,6 +15,7 @@ import { OTEL_DEFAULTS } from "./otel-defaults"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
+import { InstallationVersion } from "../installation/version"
 
 // Read telemetry setting from ~/.clickzetta/profiles.toml top-level field
 function isTelemetryEnabled(): boolean {
@@ -59,6 +60,7 @@ function isTelemetryEnabled(): boolean {
         if (workspace) attrs.push(`workspace.name=${workspace}`)
         if (service) attrs.push(`service.url=${service}`)
       }
+      attrs.push(`service.version=${InstallationVersion}`)
       if (attrs.length) process.env.OPENCODE_RESOURCE_ATTRIBUTES = attrs.join(",")
     } catch {}
   }

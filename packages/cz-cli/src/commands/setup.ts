@@ -4,9 +4,57 @@ import { JobStatus, getCurrentUser, getToken, listUserWorkspaces, loginWithPassw
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { loadProfiles, saveProfiles, setTelemetry, type ProfileEntry } from "../connection/profile-store.js"
+import { loadProfiles, saveProfiles, setTelemetry, getTelemetry, type ProfileEntry } from "../connection/profile-store.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
+import { trackCommand } from "../telemetry.js"
+
+const setupStartMs = Date.now()
+
+const SENSITIVE_KEYS = new Set(["credential", "password", "pat"])
+
+/** Returns the telemetry value — skips prompt if already configured. */
+async function resolveTelemetry(): Promise<boolean> {
+  const existing = getTelemetry()
+  if (existing !== undefined) return existing
+  const chosen = await askYesNo("Enable telemetry to help improve cz-cli? This shares LLM call traces and tool execution data. No code content is collected. (Y/n) ")
+  setTelemetry(chosen)
+  return chosen
+}
+
+function trackSetup(opts: {
+  success: boolean
+  error?: string
+  telemetry?: boolean
+  collected?: Record<string, string | undefined>
+  argv?: Record<string, unknown>
+}): Promise<void> {
+  const attrs: Record<string, string> = {}
+  if (opts.collected?.username) attrs["user.id"] = opts.collected.username
+  if (opts.collected?.instance) attrs["instance.name"] = opts.collected.instance
+  if (opts.collected?.workspace) attrs["workspace.name"] = opts.collected.workspace
+  if (opts.collected?.service) attrs["service.url"] = opts.collected.service
+
+  const args: Record<string, string> = {}
+  if (opts.argv) {
+    for (const [k, v] of Object.entries(opts.argv)) {
+      if (SENSITIVE_KEYS.has(k) || k.startsWith("$") || k === "_" || typeof v === "undefined") continue
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        args[k] = String(v)
+      }
+    }
+  }
+  if (opts.telemetry !== undefined) args["telemetry"] = String(opts.telemetry)
+
+  return trackCommand({
+    command: "setup",
+    args: Object.keys(args).length > 0 ? args : undefined,
+    duration_ms: Date.now() - setupStartMs,
+    success: opts.success,
+    error: opts.error,
+    resourceAttributes: attrs,
+  })
+}
 
 const REGISTER_URLS = [
   "https://accounts.clickzetta.com/register?ref=cz-cli",
@@ -624,8 +672,10 @@ async function runExistingAccountFlowTTY(
   profileName: string,
   format: string,
   argv: Record<string, unknown>,
+  collected: Record<string, string | undefined>,
 ): Promise<void> {
   const username = setupValue(argv, "username") || await prompt("Username: ")
+  collected.username = username
   const password = setupValue(argv, "password") || await prompt("Password: ")
   const accountName = setupValue(argv, "account-name") || await prompt("Account name: ")
   const service = setupValue(argv, "service") || await chooseOptionTTY(
@@ -633,6 +683,7 @@ async function runExistingAccountFlowTTY(
     SERVICE_ENDPOINTS.map((value) => ({ label: value, value })),
     true,
   )
+  collected.service = service
   const auth = await loginWithExistingAccount(
     username,
     password,
@@ -652,6 +703,7 @@ async function runExistingAccountFlowTTY(
     : resolveOrAutoSelectOption(setupValue(argv, "instance") || undefined, instances, "instance")
   const instance = chosenInstance.option
     ?? resolveOption(await chooseOptionTTY("Choose instance", instances), instances, "instance")
+  collected.instance = instance.instanceName
   if (chosenInstance.autoSelected) announceAutoSelected("instance", instance.instanceName)
   const workspaces = await listWorkspaces(auth, instance)
   if (workspaces.length === 0) {
@@ -665,6 +717,7 @@ async function runExistingAccountFlowTTY(
   )
   const workspace = chosenWorkspace.option
     ?? resolveOption(await chooseOptionTTY("Choose workspace", workspaces), workspaces, "workspace")
+  collected.workspace = workspace.workspaceName
   if (chosenWorkspace.autoSelected) announceAutoSelected("workspace", workspace.workspaceName)
   const schemas = await listSchemas(auth, instance, workspace)
   const vclusters = await listVclusters(auth, instance, workspace)
@@ -693,8 +746,13 @@ async function runExistingAccountFlowTTY(
     vcluster,
   }
   saveProfile(profileName, profile)
-  const telemetryEnabled = await askYesNo("Enable anonymous telemetry to help improve cz-cli? (Y/n) ")
-  setTelemetry(telemetryEnabled)
+  const telemetryEnabled = await resolveTelemetry()
+  await trackSetup({
+    success: true,
+    telemetry: telemetryEnabled,
+    collected: { username, instance: instance.instanceName, workspace: workspace.workspaceName, service: auth.service },
+    argv: argv as Record<string, unknown>,
+  })
   logOperation("setup", { ok: true })
   success({
     message: `Profile '${profileName}' created successfully.`,
@@ -915,7 +973,13 @@ async function runExistingAccountFlowNonTTY(
     vcluster,
   }
   saveProfile(profileName, profile)
-  setTelemetry(true)
+  if (getTelemetry() === undefined) setTelemetry(true)
+  await trackSetup({
+    success: true,
+    telemetry: getTelemetry() ?? true,
+    collected: { username, instance: instance.instanceName, workspace: workspace.workspaceName, service: auth.service },
+    argv: argv as Record<string, unknown>,
+  })
   logOperation("setup", { ok: true })
   success({
     message: `Profile '${profileName}' created successfully.`,
@@ -995,8 +1059,13 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           return
         }
 
-        const telemetryEnabled = await askYesNo("Enable telemetry to help improve cz-cli? This shares LLM call traces and tool execution data. No code content is collected. (Y/n) ")
-        setTelemetry(telemetryEnabled)
+        const telemetryEnabled = await resolveTelemetry()
+        await trackSetup({
+          success: true,
+          telemetry: telemetryEnabled,
+          collected: { instance: instanceName, workspace: String(profile.workspace ?? ""), service: String(profile.service ?? ""), username: String(cred.username ?? "") },
+          argv: argv as unknown as Record<string, unknown>,
+        })
         logOperation("setup", { ok: true })
         success({
           message: `Profile '${profileName}' created successfully.`,
@@ -1013,7 +1082,14 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         try {
           await runExistingAccountFlowNonTTY(profileName, format, rawArgv)
         } catch (e) {
-          error("SETUP_FAILED", e instanceof Error ? e.message : String(e), { format })
+          const msg = e instanceof Error ? e.message : String(e)
+          await trackSetup({
+            success: false,
+            error: msg,
+            collected: { username: setupValue(rawArgv, "username") || undefined, instance: setupValue(rawArgv, "instance") || undefined, workspace: setupValue(rawArgv, "workspace") || undefined, service: setupValue(rawArgv, "service") || undefined },
+            argv: rawArgv,
+          })
+          error("SETUP_FAILED", msg, { format })
         }
         return
       }
@@ -1041,6 +1117,7 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         }
         const instanceName = cred.instanceName as string | undefined
         const accessToken = cred.accessToken as string | undefined
+        const username = cred.username as string | undefined
         if (!instanceName || !accessToken) {
           error("INVALID_CREDENTIAL", "Missing required fields: instanceName, accessToken", { format })
           return
@@ -1060,8 +1137,13 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
           return
         }
-        const telemetryEnabled = await askYesNo("Enable anonymous telemetry to help improve cz-cli? (Y/n) ")
-        setTelemetry(telemetryEnabled)
+        const telemetryEnabled = await resolveTelemetry()
+        await trackSetup({
+          success: true,
+          telemetry: telemetryEnabled,
+          collected: { instance: instanceName, workspace: String(profile.workspace ?? ""), service: String(profile.service ?? ""), username: String(username ?? "")},
+          argv: rawArgv,
+        })
         logOperation("setup", { ok: true })
         success({
           message: `Profile '${profileName}' created successfully.`,
@@ -1080,10 +1162,18 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         "  3. Choose instance -> workspace -> schema -> vcluster\n\n",
       )
 
+      const ttyCollected: Record<string, string | undefined> = {}
       try {
-        await runExistingAccountFlowTTY(profileName, format, rawArgv)
+        await runExistingAccountFlowTTY(profileName, format, rawArgv, ttyCollected)
       } catch (e) {
-        error("SETUP_FAILED", e instanceof Error ? e.message : String(e), { format })
+        const msg = e instanceof Error ? e.message : String(e)
+        await trackSetup({
+          success: false,
+          error: msg,
+          collected: ttyCollected,
+          argv: rawArgv,
+        })
+        error("SETUP_FAILED", msg, { format })
       }
     },
   )

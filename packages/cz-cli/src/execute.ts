@@ -19,6 +19,7 @@ import { registerAiGuideCommand } from "./commands/ai-guide.js"
 import { registerSetupCommand } from "./commands/setup.js"
 import { registerUpdateCommand } from "./commands/update.js"
 import { registerDatasourceCommand } from "./commands/datasource.js"
+import { trackCommand } from "./telemetry.js"
 
 export interface ExecuteResult {
   exitCode: number
@@ -40,6 +41,7 @@ export async function execute(command: string, extraArgs?: string[]): Promise<Ex
 }
 
 async function executeInternal(command: string, extraArgs?: string[]): Promise<ExecuteResult> {
+  const startMs = Date.now()
   const args = splitArgs(command)
   if (extraArgs) args.push(...extraArgs)
   if (!args.includes("--output") && !args.includes("-o")) {
@@ -93,7 +95,21 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   process.exitCode = savedExitCode
   outputState.field = undefined
 
-  return { exitCode, output: chunks.join("") }
+  const output = chunks.join("")
+  const positional = args.filter(a => !a.startsWith("-"))
+  const lastError = (process as unknown as Record<string, unknown>).lastError as string | undefined
+  if (positional[0] !== "setup") {
+    await trackCommand({
+      command: positional[0] ?? "unknown",
+      subcommand: positional[1],
+      duration_ms: Date.now() - startMs,
+      success: !exitCode,
+      error: exitCode ? lastError ?? `exit_code=${exitCode}` : undefined,
+      response_bytes: !exitCode ? Buffer.byteLength(output, "utf-8") : undefined,
+    })
+  }
+
+  return { exitCode, output }
 }
 
 export function splitArgs(input: string): string[] {

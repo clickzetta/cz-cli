@@ -131,6 +131,18 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
   }
 }
 
+/** Returns the current telemetry setting, or undefined if not yet configured. */
+export function getTelemetry(): boolean | undefined {
+  try {
+    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const data = parseTOML(text) as Record<string, unknown>
+    if (typeof data.telemetry === "boolean") return data.telemetry
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function setTelemetry(enabled: boolean): void {
   let existing: Record<string, unknown> = {}
   try {
