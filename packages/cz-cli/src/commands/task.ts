@@ -63,6 +63,47 @@ function parseTaskType(value: string): number {
 
 const UI_ONLY_TYPES = new Set([400, 500, 1, 14, 16, 17, 280, 281, 291, 300, 301])
 
+const SYSTEM_PARAM_NAMES = new Set([
+  "bizdate", "sys_biz_day", "sys_biz_datetime",
+  "sys_plan_day", "sys_plan_datetime", "sys_plan_timestamp",
+  "sys_task_id", "sys_task_name", "sys_task_owner",
+])
+
+function inferParamType(value: string): "manual" | "system" {
+  if (value.startsWith("$[")) return "system"
+  if (SYSTEM_PARAM_NAMES.has(value)) return "system"
+  return "manual"
+}
+
+function parseParamValueList(raw: string): unknown[] | null {
+  const cleaned = raw.replace(/^'|'$/g, "")
+  const tryJson = (): Record<string, string> | null => {
+    try { return JSON.parse(cleaned) } catch { return null }
+  }
+  const tryRelaxed = (): Record<string, string> | null => {
+    const relaxed = cleaned.replace(/^\{|\}$/g, "").trim()
+    if (!relaxed) return null
+    const pairs = relaxed.split(",").map((pair) => {
+      const idx = pair.indexOf(":")
+      if (idx <= 0) return null
+      return [pair.slice(0, idx).trim().replace(/^["']|["']$/g, ""), pair.slice(idx + 1).trim().replace(/^["']|["']$/g, "")] as [string, string]
+    })
+    if (pairs.some((p) => p === null)) return null
+    return Object.fromEntries(pairs as [string, string][])
+  }
+  const parsed = tryJson() ?? tryRelaxed()
+  if (!parsed) return null
+  return Object.entries(parsed).map(([k, v], i) => ({
+    encrypt: false,
+    id: String(Date.now() + i),
+    ignore: false,
+    paramKey: k,
+    paramType: inferParamType(v),
+    paramValue: v,
+    ref: 0,
+  }))
+}
+
 async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> {
   const detail = await getTaskDetail(sc, fileId)
   const data = detail.data as Record<string, unknown> | undefined
@@ -380,10 +421,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               configData.scheduleConfig ??
               configData.schedule_config ??
               configData) as Record<string, unknown>)
+            const rawParams = (detailObj.paramValueList ?? detailData.paramValueList) as unknown[] | undefined
+            const rawInputParams = (detailObj.inputParamValueList ?? detailData.inputParamValueList) as unknown[] | undefined
+            const rawOutputParams = (detailObj.outputParamValueList ?? detailData.outputParamValueList) as unknown[] | undefined
             const merged = {
               task_id: normalizedDetail.task_id ?? fileId,
               task_name: normalizedDetail.task_name,
               task_content: normalizedDetail.task_content ?? detailObj.fileContent ?? detailObj.dataFileContent,
+              params: Array.isArray(rawParams) && rawParams.length > 0 ? rawParams : undefined,
+              input_params: Array.isArray(rawInputParams) && rawInputParams.length > 0 ? rawInputParams : undefined,
+              output_params: Array.isArray(rawOutputParams) && rawOutputParams.length > 0 ? rawOutputParams : undefined,
               schedule_config: scheduleConfig,
             }
             logOperation("task content", { ok: true })
@@ -401,7 +448,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .positional("task", { type: "string", demandOption: true })
             .option("content", { type: "string", describe: "Script content" })
             .option("file", { alias: "f", type: "string", describe: "Read content from file" })
-            .option("params", { type: "string", describe: 'Runtime parameters as JSON object, e.g. \'{"a":"1","b":"2"}\'' }),
+            .option("params", { type: "string", describe: 'Runtime parameters as JSON object. Values starting with "$[" or matching system param names (bizdate, sys_biz_day, sys_plan_day, etc.) are treated as system/expression params automatically. e.g. \'{"city":"beijing","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}\'' }),
         async (argv) => {
           const format = argv.output
           try {
@@ -419,28 +466,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
             let paramValueList: unknown[] | undefined
             if (argv.params) {
-              const raw = (argv.params as string).replace(/^'|'$/g, "")
-              let parsed: Record<string, string>
-              try { parsed = JSON.parse(raw) } catch {
-                // Try relaxed format: {key:value,key2:value2}
-                const relaxed = raw.replace(/^\{|\}$/g, "").trim()
-                if (!relaxed) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}. Use: --params '{"key":"value"}' or --params '{key:value}'`, { format }); return }
-                parsed = {}
-                for (const pair of relaxed.split(",")) {
-                  const idx = pair.indexOf(":")
-                  if (idx <= 0) { error("INVALID_ARGUMENTS", `--params invalid pair: '${pair.trim()}'. Use key:value format.`, { format }); return }
-                  parsed[pair.slice(0, idx).trim().replace(/^["']|["']$/g, "")] = pair.slice(idx + 1).trim().replace(/^["']|["']$/g, "")
-                }
+              const result = parseParamValueList(argv.params as string)
+              if (!result) {
+                error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}. Use: --params '{"key":"value","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}'`, { format }); return
               }
-              paramValueList = Object.entries(parsed).map(([k, v]) => ({
-                encrypt: false,
-                id: String(Date.now() + Math.floor(Math.random() * 1000)),
-                ignore: false,
-                paramKey: k,
-                paramType: "manual",
-                paramValue: String(v),
-                ref: 0,
-              }))
+              paramValueList = result
             }
             const resp = await saveTaskContent(sc, {
               dataFileId: fileId,

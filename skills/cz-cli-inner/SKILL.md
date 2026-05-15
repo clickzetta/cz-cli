@@ -32,8 +32,8 @@ cz-cli workspace current                      Show current workspace
 
 cz-cli task list                              List Studio tasks
 cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW)
-cz-cli task content <task>                    Get task script and config
-cz-cli task save-content <task> --file <f>    Save task script
+cz-cli task content <task>                    Get task script, config and params (draft)
+cz-cli task save-content <task> --file <f>    Save task script; use --params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}' to set params (system params like bizdate/sys_plan_day/sys_biz_datetime etc. auto-detected)
 cz-cli task save-config <task>                Save task non-cron config, like retry, dependency
 cz-cli task save-cron <task>                  Save task schedule config
 cz-cli task deps <task>                       Show task dependencies (draft)

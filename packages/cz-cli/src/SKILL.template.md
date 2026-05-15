@@ -164,8 +164,8 @@ Key tools:
 ### Task Scheduling (Studio)
 - `cz-cli task list [--page N --page-size N]` — List tasks
 - `cz-cli task create <name> --type SQL|PYTHON|SHELL|SPARK|FLOW --folder F` — Create task
-- `cz-cli task content <name_or_id>` — Get task script (draft)
-- `cz-cli task save-content <name_or_id> --file script.sql` — Save script
+- `cz-cli task content <name_or_id>` — Get task script, config and params (draft); response includes `params` array with `paramType=system` (built-in params / time expressions) or `paramType=manual` (constants)
+- `cz-cli task save-content <name_or_id> --file script.sql [--params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}']` — Save script and optionally set params; system params (bizdate, sys_biz_day, sys_biz_datetime, sys_plan_day, sys_plan_datetime, sys_plan_timestamp, sys_task_id, sys_task_name, sys_task_owner) and time expressions starting with `$[` are auto-detected as `paramType=system`
 - `cz-cli task save-config <name_or_id> --cron "0 0 8 * * ? *"` — Save schedule (sec min hour day month week year)
 - `cz-cli task online <name_or_id> -y` — Publish task
 - `cz-cli task offline <name_or_id> -y` — Take offline (IRREVERSIBLE)
