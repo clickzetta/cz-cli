@@ -322,6 +322,7 @@ async function loginWithExistingAccount(
   service: string,
   instanceHint?: string,
 ): Promise<SetupAuthContext> {
+  const normalizedService = normalizeServiceValue(service)
   const candidates = Array.from(
     new Set(
       [instanceHint, accountName]
@@ -331,14 +332,15 @@ async function loginWithExistingAccount(
   )
   const errors: string[] = []
 
-  if (!isAccountConsoleInput(service)) {
+  if (!isAccountConsoleInput(normalizedService)) {
     for (const candidate of candidates) {
       try {
-        return await loginWithInstanceCandidate(username, password, candidate, service)
+        return await loginWithInstanceCandidate(username, password, candidate, normalizedService)
       } catch (error) {
         errors.push(`INSTANCE_LOGIN_FAILED(${candidate}): ${error instanceof Error ? error.message : String(error)}`)
       }
     }
+    throw new Error(errors.join("; "))
   }
 
   try {
@@ -346,7 +348,7 @@ async function loginWithExistingAccount(
       accountName,
       username,
       password,
-      service,
+      normalizedService,
     )
     const jwt = decodeJwtPayload(token)
     const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
@@ -369,7 +371,7 @@ async function loginWithExistingAccount(
   if (errors.length === 1) {
     throw new Error(errors[0]!)
   }
-  throw new Error(errors.join("; fallback: "))
+  throw new Error(errors.join("; "))
 }
 
 function isAccountConsoleInput(service: string): boolean {
@@ -390,8 +392,8 @@ async function loginWithInstanceCandidate(
   instanceName: string,
   service: string,
 ): Promise<SetupAuthContext> {
-  const serviceHost = stripProtocol(service)
-  const serviceUrl = toServiceUrl(service.trim())
+  const normalizedService = normalizeServiceValue(service)
+  const serviceUrl = toServiceUrl(normalizedService)
   const login = await loginWithPassword(serviceUrl, username, password, instanceName)
   const jwt = decodeJwtPayload(login.token)
   let userId = coerceInt(jwt.userId ?? jwt.user_id ?? login.userId)
@@ -414,7 +416,7 @@ async function loginWithInstanceCandidate(
     tenantId,
     username: resolvedUsername,
     password,
-    service: serviceHost,
+    service: normalizedService,
     serviceUrl,
   }
 }
@@ -714,6 +716,10 @@ function findOption<T extends NamedOption>(provided: string | undefined, options
   return options.find((item) => item.value === provided || item.label === provided)
 }
 
+function normalizeServiceValue(service: string): string {
+  return service.trim().replace(/\/+$/, "")
+}
+
 export function resolveOrAutoSelectOption<T extends NamedOption>(
   provided: string | undefined,
   options: T[],
@@ -750,7 +756,7 @@ async function runExistingAccountFlowTTY(
     SERVICE_ENDPOINTS.map((value) => ({ label: value, value })),
     true,
   )
-  collected.service = service
+  collected.service = normalizeServiceValue(service)
   const auth = await loginWithExistingAccount(
     username,
     password,
@@ -917,7 +923,7 @@ async function runExistingAccountFlowNonTTY(
       collected: {
         username,
         account_name: accountName,
-        service: stripProtocol(service),
+        service: normalizeServiceValue(service),
       },
       next_steps: [
         buildSetupCommand(
@@ -950,7 +956,7 @@ async function runExistingAccountFlowNonTTY(
       collected: {
         username,
         account_name: accountName,
-        service: stripProtocol(service),
+        service: normalizeServiceValue(service),
         instance: instance.instanceName,
       },
       next_steps: [
@@ -977,7 +983,7 @@ async function runExistingAccountFlowNonTTY(
       collected: {
         username,
         account_name: accountName,
-        service: stripProtocol(service),
+        service: normalizeServiceValue(service),
         instance: instance.instanceName,
         workspace: workspace.workspaceName,
       },
@@ -1006,7 +1012,7 @@ async function runExistingAccountFlowNonTTY(
       collected: {
         username,
         account_name: accountName,
-        service: stripProtocol(service),
+        service: normalizeServiceValue(service),
         instance: instance.instanceName,
         workspace: workspace.workspaceName,
         schema,

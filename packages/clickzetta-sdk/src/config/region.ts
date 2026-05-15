@@ -1,5 +1,5 @@
 export function detectEnv(service: string): string {
-  const host = service.replace("https://", "").replace("http://", "")
+  const host = service.replace("https://", "").replace("http://", "").split("/")[0] ?? ""
   if (host.startsWith("dev-api.")) return "dev"
   if (host.startsWith("sit-api.")) return "sit"
   if (host.startsWith("uat-api.")) return "uat"
@@ -13,7 +13,9 @@ export function detectEnv(service: string): string {
 }
 
 export function toServiceUrl(service: string, protocol: string = "https"): string {
-  if (service.startsWith("https://") || service.startsWith("http://")) return service
+  if (service.startsWith("https://") || service.startsWith("http://")) {
+    return service.replace(/\/+$/, "")
+  }
   const proto = protocol.toLowerCase()
   return `${proto === "http" ? "http" : "https"}://${service}`
 }

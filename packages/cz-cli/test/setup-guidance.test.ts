@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { spawn, spawnSync } from "child_process"
-import { mkdtempSync } from "fs"
+import { mkdtempSync, readFileSync } from "fs"
 import { createServer } from "http"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -46,6 +46,10 @@ function firstJson(output: string) {
   return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
 }
 
+function readProfiles(home: string) {
+  return readFileSync(join(home, ".clickzetta", "profiles.toml"), "utf-8")
+}
+
 const servers = new Set<ReturnType<typeof createServer>>()
 
 afterAll(() => {
@@ -59,6 +63,12 @@ describe("setup guidance", () => {
     )
     expect(accountLoginUrlForService("uat-api.clickzetta.com", "acct")).toBe(
       "https://acct.uat-accounts.clickzetta.com",
+    )
+  })
+
+  test("builds account login urls from full service urls with api paths", () => {
+    expect(accountLoginUrlForService("https://fumi-cn-south-1-huaweicloud.clickzetta.com/api", "acct")).toBe(
+      "https://acct.accounts.clickzetta.com",
     )
   })
 
@@ -196,7 +206,83 @@ describe("setup guidance", () => {
     expect(json.collected).toEqual({
       username: "u",
       account_name: "acct",
-      service: `127.0.0.1:${address.port}`,
+      service: `http://127.0.0.1:${address.port}`,
+      instance: "acct",
+    })
+  })
+
+  test("existing-account setup preserves full service urls with api paths", async () => {
+    const server = createServer(async (request, response) => {
+      if (request.url === "/api/clickzetta-portal/user/loginSingle" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: {
+            token: "header.eyJ1c2VySWQiOjEsImFjY291bnRJZCI6M30.signature",
+            userId: 1,
+            instanceId: 11,
+            expireTime: Date.now() + 60_000,
+          },
+        }))
+        return
+      }
+      if (request.url === "/api/clickzetta-portal/service/serviceInstanceList?accountId=3") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: [
+            { serviceId: 1, instanceId: 11, instanceName: "acct", cspId: 1, regionId: 1 },
+          ],
+        }))
+        return
+      }
+      if (request.url === "/api/ide-authority/v1/workspace/listUserWorkspaces" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: [
+            {
+              workspaceName: "ws1",
+              workspaceId: "wid-1",
+              projectId: 9,
+              defaultSchemaName: "public",
+              defaultVcName: "DEFAULT",
+            },
+            {
+              workspaceName: "ws2",
+              workspaceId: "wid-2",
+              projectId: 10,
+              defaultSchemaName: "public",
+              defaultVcName: "DEFAULT",
+            },
+          ],
+        }))
+        return
+      }
+      response.writeHead(404, { "content-type": "application/json" })
+      response.end(JSON.stringify({ code: 404, message: "not found" }))
+    })
+    servers.add(server)
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+
+    const service = `http://127.0.0.1:${address.port}/api`
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("workspace")
+    expect(json.collected).toEqual({
+      username: "u",
+      account_name: "acct",
+      service,
       instance: "acct",
     })
   })
@@ -281,5 +367,85 @@ describe("setup guidance", () => {
     expect((json.data as Record<string, unknown>).workspace).toBe("ws1")
     expect((json.data as Record<string, unknown>).schema).toBe("public")
     expect((json.data as Record<string, unknown>).vcluster).toBe("DEFAULT")
+  })
+
+  test("existing-account setup saves full service urls with api paths into the profile", async () => {
+    const server = createServer(async (request, response) => {
+      if (request.url === "/api/clickzetta-portal/user/loginSingle" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: {
+            token: "header.eyJ1c2VySWQiOjEsImFjY291bnRJZCI6M30.signature",
+            userId: 1,
+            instanceId: 11,
+            expireTime: Date.now() + 60_000,
+          },
+        }))
+        return
+      }
+      if (request.url === "/api/clickzetta-portal/service/serviceInstanceList?accountId=3") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: [{ serviceId: 1, instanceId: 11, instanceName: "acct", cspId: 1, regionId: 1 }],
+        }))
+        return
+      }
+      if (request.url === "/api/ide-authority/v1/workspace/listUserWorkspaces" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: [
+            {
+              workspaceName: "ws1",
+              workspaceId: "wid-1",
+              projectId: 9,
+              defaultSchemaName: "public",
+              defaultVcName: "DEFAULT",
+            },
+          ],
+        }))
+        return
+      }
+      if (request.url === "/api/clickzetta-groot/api/v1/entity/centre/schema/list?env=PROD" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: [{ entityName: "public" }],
+        }))
+        return
+      }
+      if (request.url === "/api/clickzetta-lakeconsole/api/v1/vcluster/centre/list" && request.method === "POST") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({
+          code: 0,
+          data: [{ code: "DEFAULT" }],
+        }))
+        return
+      }
+      response.writeHead(404, { "content-type": "application/json" })
+      response.end(JSON.stringify({ code: 404, message: "not found" }))
+    })
+    servers.add(server)
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    const home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))
+    const service = `http://127.0.0.1:${address.port}/api/`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+      "--workspace", "ws1",
+      "--schema", "public",
+      "--vcluster", "DEFAULT",
+    ], home)
+
+    expect(result.exitCode).toBe(0)
+    expect(readProfiles(home)).toContain(`service = "http://127.0.0.1:${address.port}/api"`)
   })
 })
