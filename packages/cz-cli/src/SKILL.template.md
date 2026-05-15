@@ -74,6 +74,13 @@ After saving, tell the user: "The task has been saved as a draft. Scheduling is 
 
 **Exception**: If the user's original request *explicitly* authorized all subsequent steps (e.g. "create and immediately go live", "develop and run it now"), AND Rule 1 already confirmed that intent at the start, the Agent may proceed through the authorized steps without stopping again at each phase. Do not re-ask for confirmation that was already given.
 
+### Rule 3.1 — 补数/回填/重跑历史数据 → `runs refill` (NOT `task`)
+
+When the user says "补数", "回填", "重跑历史", "backfill", "re-run historical", or "re-process date range":
+- **MUST** use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD [-y]`
+- This command is under `runs`, **NOT** under `task` — do not look for it in task subcommands
+- Requires the task to already be published (online); draft tasks cannot be backfilled
+
 ### Rule 4 — Paginated results are not complete data
 
 All `list` commands return only page 1 by default (typically 10 items). The `ai_message` field in the response contains the total count and the command to fetch the next page — treat it as the authoritative next-step hint and follow it. Never treat a first-page result as the full dataset.
@@ -169,13 +176,13 @@ Key tools:
 - `cz-cli task save-config <name_or_id> --cron "0 0 8 * * ? *"` — Save schedule (sec min hour day month week year)
 - `cz-cli task online <name_or_id> -y` — Publish task
 - `cz-cli task offline <name_or_id> -y` — Take offline (IRREVERSIBLE)
-- `cz-cli task execute <name_or_id>` — Ad-hoc execution
+- `cz-cli task execute <name_or_id> [--param KEY=VAL ...]` — Ad-hoc execution; auto-loads saved `manual` params as defaults (system params like `bizdate` are NOT auto-injected in adhoc mode — pass them explicitly via `--param`); warns if unresolved `${placeholders}` remain after merge (SQL tasks will fail, Python/Shell silently keep literal strings)
 - `cz-cli task flow dag <flow>` / `task flow create-node` / `task flow bind` / `task flow submit` — Flow operations
 
 ### Runs & Attempts
 - `cz-cli runs list [--task T --status S --run-type SCHEDULE|REFILL --from D --to D]`
 - `cz-cli runs detail <run_id_or_task>` / `cz-cli runs logs <run_id_or_task>` / `cz-cli runs wait <id> --timeout N`
-- `cz-cli runs stop <id> -y` / `cz-cli runs refill <task> --from D --to D` / `cz-cli runs stats --from D --to D`
+- `cz-cli runs refill <task> --from D --to D [-y]` — **补数/回填**: re-run scheduled instances for a historical date range (task must be online). `D` accepts `YYYY-MM-DD` (day boundary: `--from` = start of day, `--to` = 23:59:59) or `YYYY-MM-DDTHH:MM:SS` for exact datetime — **use ISO datetime for hourly/minutely tasks** to avoid missing instances
 - `cz-cli attempts list <run_id_or_task>` / `cz-cli attempts log <run_id_or_task> [--attempt-id N]`
 
 ### Agent (AI Agent)

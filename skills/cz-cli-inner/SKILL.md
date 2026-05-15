@@ -39,7 +39,7 @@ cz-cli task save-cron <task>                  Save task schedule config
 cz-cli task deps <task>                       Show task dependencies (draft)
 cz-cli task deploy <task>                     Publish/deploy a task (alias: online)
 cz-cli task undeploy <task>                   Undeploy a task, irreversible (alias: offline)
-cz-cli task execute <task>                    Execute ad-hoc
+cz-cli task execute <task>                    Execute ad-hoc; auto-uses saved manual params as defaults (--param KEY=VAL overrides); warns if unresolved ${placeholders} remain (SQL will fail, Python/Shell silently keeps literal string)
 cz-cli task delete <task>                     Delete draft/offline task
 cz-cli task flow dag <task>                   Get flow DAG
 cz-cli task flow create-node <task>           Add node to flow
@@ -58,7 +58,7 @@ cz-cli runs wait <id>                         Poll until complete
 cz-cli runs logs <id>                         Get execution log
 cz-cli runs deps <task>                       Published dependencies
 cz-cli runs stop <id>                         Stop a running instance
-cz-cli runs refill <task>                     Backfill date range
+cz-cli runs refill <task> --from D --to D    Backfill date range. D accepts YYYY-MM-DD (day boundary) or YYYY-MM-DDTHH:MM:SS (exact datetime for hourly/minutely tasks)
 cz-cli runs rerun <id>                        Rerun failed instance
 cz-cli runs stats                             Run statistics summary
 
@@ -100,6 +100,7 @@ cz-cli datasource sample <name_or_id> <catalog> <object>
 6. **State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.
 7. **Multi-environment**: use `--profile <name>` to target a specific environment.
 8. **On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
+9. **补数/回填/重跑历史数据 → `runs refill`**: when user says "补数", "回填", "重跑历史", "backfill", "re-run historical data", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.
 
 ## Companion Skills
 

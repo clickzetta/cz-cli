@@ -361,8 +361,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
-            .option("from", { type: "string", describe: "Backfill start (YYYY-MM-DD or ISO)" })
-            .option("to", { type: "string", describe: "Backfill end (YYYY-MM-DD or ISO)" })
+            .option("from", { type: "string", describe: "Backfill start. Accepts YYYY-MM-DD (start of day) or ISO datetime YYYY-MM-DDTHH:MM:SS for sub-day schedules (hourly/minutely)." })
+            .option("to", { type: "string", describe: "Backfill end. Accepts YYYY-MM-DD (end of day, 23:59:59) or ISO datetime YYYY-MM-DDTHH:MM:SS. For hourly/minutely tasks use exact datetime to avoid missing instances." })
             .option("vc", { type: "string", default: "DEFAULT", describe: "VC code" })
             .option("name", { type: "string", describe: "Backfill job name" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),

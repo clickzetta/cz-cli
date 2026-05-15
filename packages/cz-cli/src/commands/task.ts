@@ -803,22 +803,22 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             let content = argv.content as string | undefined
             if (argv.file) content = readFileSync(argv.file as string, "utf-8")
-            let params: Record<string, string> | undefined
+            // Build params from --param flags
+            const cliParams: Record<string, string> = {}
             if (argv.param && argv.param.length > 0) {
-              params = {}
               for (const p of argv.param) {
                 const eqIdx = p.indexOf("=")
-                if (eqIdx > 0) params[p.slice(0, eqIdx)] = p.slice(eqIdx + 1)
+                if (eqIdx > 0) cliParams[p.slice(0, eqIdx)] = p.slice(eqIdx + 1)
               }
             }
-            // Resolve VC: --vc > task detail default_vc_name > profile vcluster
+            // Resolve VC + content + saved paramValueList from task detail
             let vcCode = argv.vc as string | undefined
+            const detail = await getTaskDetail(sc, fileId)
+            const data = detail.data as Record<string, unknown> | undefined
+            const taskDetail = (
+              typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
+            ) as Record<string, unknown> | undefined
             if (!vcCode) {
-              const detail = await getTaskDetail(sc, fileId)
-              const data = detail.data as Record<string, unknown> | undefined
-              const taskDetail = (
-                typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
-              ) as Record<string, unknown> | undefined
               vcCode = (taskDetail?.defaultVcName ??
                 taskDetail?.default_vc_name ??
                 taskDetail?.etlVcCode ??
@@ -827,25 +827,34 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const config = resolveConnectionConfig(argv as Record<string, unknown>)
                 vcCode = config.vcluster || undefined
               }
-              if (!content) {
-                content = (taskDetail?.taskContent ??
-                  taskDetail?.fileContent ??
-                  data?.content ??
-                  "") as string
-              }
-            } else if (!content) {
-              const detail = await getTaskDetail(sc, fileId)
-              const data = detail.data as Record<string, unknown> | undefined
-              const taskDetail = (
-                typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
-              ) as Record<string, unknown> | undefined
+            }
+            if (!content) {
               content = (taskDetail?.taskContent ??
+                taskDetail?.fileContent ??
                 taskDetail?.task_content ??
                 taskDetail?.dataFileContent ??
-                taskDetail?.data_file_content ??
-                data?.dataFileContent ??
                 data?.content ??
                 "") as string
+            }
+            // Merge saved paramValueList as defaults (--param overrides)
+            const savedParamList = (data?.paramValueList ?? taskDetail?.paramValueList) as {paramKey: string, paramValue: string, paramType: string}[] | undefined
+            const savedDefaults: Record<string, string> = {}
+            if (Array.isArray(savedParamList)) {
+              for (const p of savedParamList) {
+                if (p.paramKey && p.paramType === "manual") savedDefaults[p.paramKey] = p.paramValue
+              }
+            }
+            const params = Object.keys(cliParams).length > 0 || Object.keys(savedDefaults).length > 0
+              ? { ...savedDefaults, ...cliParams }
+              : undefined
+            // Warn if content has unresolved ${...} placeholders after merging
+            const unresolvedPlaceholders = (content ?? "").match(/\$\{[^}]+\}/g)
+              ?.filter((ph) => {
+                const key = ph.slice(2, -1)
+                return !params?.[key] && !SYSTEM_PARAM_NAMES.has(key)
+              }) ?? []
+            if (unresolvedPlaceholders.length > 0) {
+              process.stderr.write(`Warning: unresolved placeholders in script: ${unresolvedPlaceholders.join(", ")}. SQL tasks will fail; Python/Shell tasks will use literal placeholder strings.\n`)
             }
             if (!content) {
               error(
