@@ -20,6 +20,7 @@ import { logger } from "./logger.js"
 import { ConfigurationException } from "./tool-registry.js"
 import type { StudioConfig } from "./config/profile.js"
 import { LakehouseClient } from "./lakehouse-client.js"
+import { withDefaultQueryTag } from "./trace.js"
 
 // Re-export StudioConfig so existing callers that import from server.js keep working.
 export type { StudioConfig } from "./config/profile.js"
@@ -203,10 +204,9 @@ export class LakehouseDB {
   // server_core.py:85-100
   private _ensureDefaultHints(): void {
     if (this.connectionConfig && !this.connectionConfig.hints) {
-      this.connectionConfig.hints = {
+      this.connectionConfig.hints = withDefaultQueryTag({
         "sdk.job.timeout": 300,
-        "query_tag": "mcp-server",
-      }
+      })
     }
   }
 

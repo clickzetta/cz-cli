@@ -159,6 +159,24 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: "AGENT_LLM: llm management commands are not blocked by NO_ACTIVE_LLM gating",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const add = run(["agent", "llm", "add", "relay", "--provider", "openai-compatible", "--base-url", "https://gateway.example/v1", "--api-key", "sk-test", "--use"], { HOME: home })
+        const show = run(["agent", "llm", "show"], { HOME: home })
+        if (add.exitCode !== 0) return { pass: false, detail: `add exit=${add.exitCode} stdout=${add.stdout.slice(0, 120)}` }
+        if (add.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"")) return { pass: false, detail: "llm add was blocked by NO_ACTIVE_LLM" }
+        if (show.exitCode !== 0) return { pass: false, detail: `show exit=${show.exitCode} stdout=${show.stdout.slice(0, 120)}` }
+        if (show.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"")) return { pass: false, detail: "llm show was blocked by NO_ACTIVE_LLM" }
+        if (!show.stdout.includes("\"provider\":\"openai-compatible\"")) {
+          return { pass: false, detail: `unexpected show output: ${show.stdout.slice(0, 160)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
     name: "AGENT_RUN: no active LLM returns NO_ACTIVE_LLM instead of runtime URL errors",
     run() {
       const { home, cleanup } = withFakeHome()
@@ -172,6 +190,38 @@ const tests: TestCase[] = [
         if (r.stdout.includes("undefined/chat/completions") || r.stderr.includes("undefined/chat/completions")) {
           return { pass: false, detail: "leaked raw runtime URL parse error" }
         }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "AGENT_TUI: bare agent without active LLM returns NO_ACTIVE_LLM instead of usage error",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const r = run(["agent"], { HOME: home, CLICKZETTA_PID: "" })
+        const j = parseJson(r.stdout)
+        if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
+        if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+          return { pass: false, detail: `unexpected output: ${r.stdout.slice(0, 160)} stderr=${r.stderr.slice(0, 120)}` }
+        }
+        if (r.stdout.includes("USAGE_ERROR") || r.stderr.includes("usage error")) {
+          return { pass: false, detail: "bare agent still hit usage error path" }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "AGENT_HELP: agent run --help bypasses NO_ACTIVE_LLM gating",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const r = run(["agent", "run", "--help"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const combined = r.stdout + r.stderr
+        if (r.exitCode !== 0) return { pass: false, detail: `exitCode=${r.exitCode}` }
+        if (!combined.includes("cz-cli agent run")) return { pass: false, detail: `missing help header: ${combined.slice(0, 120)}` }
+        if (combined.includes("NO_ACTIVE_LLM")) return { pass: false, detail: "help path was blocked by NO_ACTIVE_LLM" }
         return { pass: true }
       } finally { cleanup() }
     },

@@ -146,7 +146,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const defaultProfile = data.default_profile as string | undefined
             const profile = profiles[argv.name as string]
             if (!profile) {
-              error("PROFILE_NOT_FOUND", `Profile '${argv.name}' not found`, { format })
+              return error("PROFILE_NOT_FOUND", `Profile '${argv.name}' not found`, { format })
             }
             const result: Record<string, unknown> = {
               name: argv.name,
@@ -189,7 +189,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
             const name = argv.name as string
             if (profiles[name]) {
-              error("PROFILE_EXISTS", `Profile '${name}' already exists`, { format })
+              return error("PROFILE_EXISTS", `Profile '${name}' already exists`, { format })
             }
             let jdbcCfg: JdbcConfig | undefined
             if (argv.jdbc) {
@@ -203,15 +203,15 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const hasPat = Boolean(argv.pat)
             const hasUserPwd = Boolean(resolvedUsername && resolvedPassword)
             if (hasPat && (resolvedUsername || resolvedPassword)) {
-              error("INVALID_ARGUMENTS", "Cannot specify both --pat and --username/--password.", { format, exitCode: 2 })
+              return error("INVALID_ARGUMENTS", "Cannot specify both --pat and --username/--password.", { format, exitCode: 2 })
             }
             if (!hasPat && !hasUserPwd) {
-              error("INVALID_ARGUMENTS", "Provide either --pat or both --username and --password.", { format, exitCode: 2 })
+              return error("INVALID_ARGUMENTS", "Provide either --pat or both --username and --password.", { format, exitCode: 2 })
             }
             const inst = argv.instance ?? jdbcCfg?.instance ?? ""
             const ws = argv.workspace ?? jdbcCfg?.workspace ?? ""
             if (!inst || !ws) {
-              error("INVALID_ARGUMENTS", "Both --instance and --workspace are required.", { format, exitCode: 2 })
+              return error("INVALID_ARGUMENTS", "Both --instance and --workspace are required.", { format, exitCode: 2 })
             }
             const profileObj: ProfileEntry = {
               service: argv.service ?? jdbcCfg?.service ?? "dev-api.clickzetta.com",
@@ -291,13 +291,13 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const key = argv.key as string
             const value = argv.value as string
             if (!profiles[name]) {
-              error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
+              return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             }
             if (!VALID_UPDATE_KEYS.includes(key) && !key.startsWith("header.")) {
-              error("INVALID_KEY", `Invalid key '${key}'. Valid: ${VALID_UPDATE_KEYS.join(", ")}, header.<NAME>`, { format })
+              return error("INVALID_KEY", `Invalid key '${key}'. Valid: ${VALID_UPDATE_KEYS.join(", ")}, header.<NAME>`, { format })
             }
             if (key === "protocol" && !["http", "https"].includes(value.toLowerCase())) {
-              error("INVALID_ARGUMENTS", "protocol must be http or https", { format })
+              return error("INVALID_ARGUMENTS", "protocol must be http or https", { format })
             }
             if (key.startsWith("header.")) {
               const headerName = key.slice(7)
@@ -346,7 +346,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
             const name = argv.name as string
             if (!profiles[name]) {
-              error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
+              return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             }
             delete profiles[name]
             data.profiles = profiles
@@ -369,7 +369,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
             const name = argv.name as string
             if (!profiles[name]) {
-              error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
+              return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             }
             data.default_profile = name
             saveFullFile(data)
@@ -428,7 +428,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             "https://accounts.singdata.com/register?ref=cz-cli (International)",
           ]
           if (!argv.credential) {
-            success({
+            return success({
               message: "No Lakehouse credential provided. Please register for an account first.",
               register_urls: REGISTER_URLS,
               next_step: "After registration you will receive a base64-encoded credential string. Run: cz-cli profile quickstart --credential <YOUR_CREDENTIAL_STRING>",
@@ -439,18 +439,18 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const decoded = Buffer.from(argv.credential as string, "base64").toString("utf-8")
             cred = JSON.parse(decoded) as Record<string, unknown>
           } catch (e) {
-            error("INVALID_CREDENTIAL", `Invalid base64 or JSON: ${e instanceof Error ? e.message : String(e)}`, { format })
+            return error("INVALID_CREDENTIAL", `Invalid base64 or JSON: ${e instanceof Error ? e.message : String(e)}`, { format })
           }
           const instanceName = cred!.instanceName as string | undefined
           const accessToken = cred!.accessToken as string | undefined
           if (!instanceName || !accessToken) {
-            error("INVALID_CREDENTIAL", "Missing required fields in credential: instanceName, accessToken", { format })
+            return error("INVALID_CREDENTIAL", "Missing required fields in credential: instanceName, accessToken", { format })
           }
           const profileName = argv["profile-name"] as string
           const data = loadFullFile()
           const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
           if (profiles[profileName]) {
-            error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use a different name or delete it first.`, { format })
+            return error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use a different name or delete it first.`, { format })
           }
           const profileObj: ProfileEntry = {
             instance: instanceName!,
@@ -474,10 +474,10 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               })
               const r = await execSql(ctx, "SELECT 1", { timeoutMs: 30000 })
               if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-                error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
+                return error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
               }
             } catch (e) {
-              error("CONNECTION_FAILED", `Failed to connect: ${e instanceof Error ? e.message : String(e)}`, { format })
+              return error("CONNECTION_FAILED", `Failed to connect: ${e instanceof Error ? e.message : String(e)}`, { format })
             }
           }
           profiles[profileName] = profileObj

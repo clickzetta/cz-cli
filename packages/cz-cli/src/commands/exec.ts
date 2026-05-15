@@ -1,5 +1,4 @@
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
-import { VERSION } from "../version.js"
 import {
   getToken,
   clearTokenCache,
@@ -17,6 +16,7 @@ import {
   type QueryResult,
   JobStatus,
 } from "@clickzetta/sdk"
+import { currentTraceContext, defaultQueryTag } from "../trace.js"
 
 export interface ExecContext {
   config: ConnectionConfig
@@ -49,6 +49,16 @@ export interface ExecResult {
   status: "RUNNING"
 }
 
+export function buildExecHints(
+  hints?: Record<string, string>,
+  traceContext = currentTraceContext(),
+) {
+  if (Object.prototype.hasOwnProperty.call(hints ?? {}, "query_tag")) {
+    return hints
+  }
+  return { query_tag: defaultQueryTag(traceContext), ...hints } satisfies Record<string, string>
+}
+
 export async function execSql(
   ctx: ExecContext,
   sql: string,
@@ -61,6 +71,7 @@ export async function execSql(
 ): Promise<QueryResult | ExecResult> {
   const normalizedSql = sql + "\n;"
   const jobId = newJobId(ctx.config.workspace, ctx.token.instanceId)
+  const traceContext = currentTraceContext()
   const submitResp = await submitJob(ctx.clientOpts, {
     sql: normalizedSql,
     workspace: ctx.config.workspace,
@@ -69,9 +80,10 @@ export async function execSql(
     instanceName: ctx.config.instance,
     instanceId: ctx.token.instanceId,
     jobId,
-    hints: opts?.hints?.query_tag ? opts.hints : { query_tag: `cz-cli@v${VERSION}`, ...opts?.hints },
+    hints: buildExecHints(opts?.hints, traceContext),
     asynchronous: opts?.asynchronous,
     configStatements: opts?.configStatements,
+    traceparent: traceContext.traceparent,
   })
   if (opts?.asynchronous) {
     return { jobId: jobId.id, status: "RUNNING" as const }

@@ -31,6 +31,8 @@ const mockExecute = mock(async (_sql: string, _opts?: unknown): Promise<QueryRes
   }
 })
 
+const executeCalls: Array<{ sql: string; opts?: unknown }> = []
+
 // We need to mock the SqlSession constructor so that instances use mockExecute.
 // Bun supports mock.module for ESM mocks.
 await mock.module("@clickzetta/sdk", () => {
@@ -46,6 +48,7 @@ await mock.module("@clickzetta/sdk", () => {
     }
 
     execute(sql: string, opts?: unknown): Promise<QueryResult> {
+      executeCalls.push({ sql, opts })
       return mockExecute(sql, opts)
     }
   }
@@ -83,6 +86,8 @@ function makeConfig() {
 describe("LakehouseClient", () => {
   beforeEach(() => {
     mockExecute.mockClear()
+    executeCalls.length = 0
+    delete process.env.CLICKZETTA_TRACEPARENT
   })
 
   it("isConnected() returns false before connect()", () => {
@@ -160,6 +165,19 @@ describe("LakehouseClient", () => {
     // (we can't inspect the mock session directly, but we verify no throw)
     expect(mockExecute).toHaveBeenCalledTimes(1)
   })
+
+  it("runSql sends default trace query_tag in hints", async () => {
+    process.env.CLICKZETTA_TRACEPARENT = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+    const client = new LakehouseClient(makeConfig())
+    client.connect()
+
+    await client.runSql("SELECT 1")
+
+    const call = executeCalls.at(-1)
+    const hints = (call?.opts as { params?: { hints?: Record<string, unknown> } })?.params?.hints
+    expect(hints?.["query_tag"]).toMatch(/^00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-[0-9a-f]{16}-01$/)
+    expect(String(hints?.["query_tag"])).not.toContain("-bbbbbbbbbbbbbbbb-")
+  })
 })
 
 describe("createLakehouseClientFromToken", () => {
@@ -201,6 +219,10 @@ describe("createLakehouseClientFromToken", () => {
 })
 
 describe("StudioConfigManager.fromToken", () => {
+  beforeEach(() => {
+    delete process.env.CLICKZETTA_TRACEPARENT
+  })
+
   it("sets token and defaults correctly", () => {
     const config = StudioConfigManager.fromToken("tok", {
       instance: "inst",
@@ -230,6 +252,7 @@ describe("StudioConfigManager.fromToken", () => {
     expect(config.hints).toBeDefined()
     // Use bracket access since toHaveProperty uses dot-path notation
     expect((config.hints as Record<string, unknown>)["sdk.job.timeout"]).toBe(300)
+    expect(String((config.hints as Record<string, unknown>)["query_tag"])).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/)
   })
 })
 

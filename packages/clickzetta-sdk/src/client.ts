@@ -1,5 +1,6 @@
 import { ClickZettaApiError, type ApiResponse } from "./types/api.js"
 import type { ConnectionConfig } from "./types/index.js"
+import { currentTraceparent } from "./traceparent.js"
 
 const SDK_VERSION = "0.1.0"
 const MAX_RETRIES = 3
@@ -11,6 +12,7 @@ export interface ClientOptions {
   baseUrl: string
   token?: string
   customHeaders?: Record<string, string>
+  traceparent?: string
   timeout?: number
   /**
    * Optional connection config. When present, a 401 response will
@@ -53,6 +55,7 @@ function buildHeaders(opts: ClientOptions): Record<string, string> {
     "User-Agent": `tssdk/${SDK_VERSION}`,
     // client.py:293 — trace id header, required by the gateway for correlation
     "requestId": generateRequestId(),
+    "traceparent": opts.traceparent ?? currentTraceparent(),
     ...opts.customHeaders,
   }
   if (opts.token) {

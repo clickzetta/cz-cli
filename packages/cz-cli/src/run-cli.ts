@@ -3,6 +3,7 @@ import { spawn } from "node:child_process"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { createTraceparent } from "@clickzetta/sdk"
 import { createCli } from "./cli.js"
 import { registerCommands } from "./register-commands.js"
 
@@ -204,6 +205,7 @@ async function delegateToAgentRuntime(rawArgs: string[]): Promise<never> {
     env: {
       ...process.env,
       CLICKZETTA_AGENT_RUNTIME: "1",
+      CLICKZETTA_TRACEPARENT: createTraceparent(process.env.CLICKZETTA_TRACEPARENT),
     },
   })
   const exitCode = await new Promise<number>((resolve, reject) => {
@@ -224,15 +226,17 @@ function normalizeCliArgs(rawArgs: string[]) {
   const args = rawArgs.length === 0 ? ["--help"] : rawArgs
   const command = args[0] ?? ""
   const isHelpRequest = args.includes("--help") || args.includes("-h")
+  const runtimeArgs = command === "agent" && args.length === 1 ? ["run"] : args
   return {
     args,
+    runtimeArgs,
     command,
     isHelpRequest,
     shouldDelegateToAgentRuntime:
       command === "run" ||
       command === "llm" ||
       command === "config" ||
-      (command === "agent" && !isHelpRequest && ["run", "llm", "config"].includes(args[1] ?? "")),
+      (command === "agent" && !isHelpRequest && (args.length === 1 || ["run", "llm", "config"].includes(args[1] ?? ""))),
   }
 }
 
@@ -249,14 +253,20 @@ export function classifyCliArgs(rawArgs: string[]) {
 
 export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRuntime): Promise<void> {
   const normalized = normalizeCliArgs(rawArgs)
+  const isAgentSessionEntry =
+    !normalized.isHelpRequest &&
+    (
+      normalized.command === "run" ||
+      (normalized.command === "agent" && normalized.args.length === 1) ||
+      (normalized.command === "agent" && normalized.args[1] === "run")
+    )
 
   if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {
     await migrateProfilesOnlyAndExit()
   }
 
   if (
-    normalized.shouldDelegateToAgentRuntime &&
-    (normalized.command === "run" || (normalized.command === "agent" && normalized.args[1] === "run")) &&
+    isAgentSessionEntry &&
     !process.env.CLICKZETTA_PID &&
     !(await hasConfiguredLlm())
   ) {
@@ -264,7 +274,7 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   }
 
   if (normalized.shouldDelegateToAgentRuntime) {
-    await delegateToAgentRuntime(normalized.args)
+    await delegateToAgentRuntime(normalized.runtimeArgs)
   }
 
   if (

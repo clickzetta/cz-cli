@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import type { ConnectionConfig } from "@clickzetta/sdk"
+import { withDefaultQueryTag } from "../trace.js"
 
 // ---------------------------------------------------------------------------
 // StudioConfig — mirrors studio_config_manager.py StudioConfig dataclass
@@ -64,16 +65,15 @@ export interface StudioConfig {
 // Default hints — studio_config_manager.py:60-72 _get_default_hints
 // ---------------------------------------------------------------------------
 function getDefaultHints(): Record<string, unknown> {
-  return {
+  return withDefaultQueryTag({
     "sdk.job.timeout": 300,
-    "query_tag": "Query from MCP Server",
     "cz.storage.parquet.vector.index.read.memory.cache": "true",
     "cz.storage.parquet.vector.index.read.local.cache": "false",
     "spark.sql.ansi.enabled": "true",
     "spark.sql.storeAssignmentPolicy": "ANSI",
     "cz.sql.allowComplexTypeInSelect": "true",
     "cz.sql.allowCollectionInDataFrame": "true",
-  }
+  })
 }
 
 // ---------------------------------------------------------------------------

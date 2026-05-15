@@ -2,8 +2,13 @@
 import { checkAndUpdate } from "./auto-update.js"
 import { runCli } from "./run-cli.js"
 import { trackCommand } from "./telemetry.js"
+import { createTraceparent } from "@clickzetta/sdk"
 
 const startMs = Date.now()
+
+if (!process.env.CLICKZETTA_TRACEPARENT) {
+  process.env.CLICKZETTA_TRACEPARENT = createTraceparent()
+}
 
 process.on("SIGINT", () => {
   process.stdout.write(JSON.stringify({ error: { code: "ABORTED", message: "Operation aborted by user." } }) + "\n")

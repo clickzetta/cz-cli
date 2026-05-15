@@ -29,6 +29,7 @@ import open from "open"
 import { Effect, Exit, Layer, Option, Context, Stream } from "effect"
 import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
+import { currentTraceparent } from "@/util/traceparent"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 
@@ -309,14 +310,24 @@ export const layer = Layer.effect(
           name: "StreamableHTTP",
           transport: new StreamableHTTPClientTransport(new URL(mcp.url), {
             authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            requestInit: {
+              headers: {
+                ...mcp.headers,
+                traceparent: currentTraceparent(),
+              },
+            },
           }),
         },
         {
           name: "SSE",
           transport: new SSEClientTransport(new URL(mcp.url), {
             authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            requestInit: {
+              headers: {
+                ...mcp.headers,
+                traceparent: currentTraceparent(),
+              },
+            },
           }),
         },
       ]

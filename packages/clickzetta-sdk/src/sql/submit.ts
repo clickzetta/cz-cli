@@ -51,6 +51,11 @@ export interface SubmitJobParams {
    * compatibility with callers that don't run through SqlSession.
    */
   contextJson?: Record<string, unknown>
+  /**
+   * Reuses a single trace context for both request headers and SQL hints.
+   * When omitted, the HTTP client derives its own traceparent as usual.
+   */
+  traceparent?: string
 }
 
 export async function submitJob(
@@ -74,6 +79,7 @@ export async function submitJob(
     priority = 0,
     configStatements = [],
     contextJson,
+    traceparent,
   } = params
 
   const hybridPollingTimeout =
@@ -144,6 +150,6 @@ export async function submitJob(
 
   const body = { jobDesc }
 
-  const resp = await requestRaw(opts, "/lh/submitJob", body)
+  const resp = await requestRaw({ ...opts, traceparent }, "/lh/submitJob", body)
   return resp
 }

@@ -28,6 +28,7 @@ export * from "./studio/folder.js"
 export * from "./studio/schedule.js"
 export * from "./workspace/workspace.js"
 export * from "./agent/chat.js"
+export * from "./traceparent.js"
 
 // dbapi.py:28-29 — DB-API 2.0 module-level constants
 /** DB-API 2.0 API level (dbapi.py:27). */
