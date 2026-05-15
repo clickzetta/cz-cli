@@ -23,8 +23,8 @@ type MessageKey =
 
 const MESSAGES: Record<MessageKey, [zh: string, en: string]> = {
   task_content: [
-    "这是草稿态数据(content + schedule config)",
-    "This is draft data (content + schedule config).",
+    "这是草稿态数据(content + schedule config + params)。params 字段包含任务参数列表，paramType=system 表示系统内置参数或时间表达式，paramType=manual 表示常量。",
+    "This is draft data (content + schedule config + params). The params field lists task parameters; paramType=system means a built-in system param or time expression, paramType=manual means a constant value.",
   ],
   task_deps: [
     "这是草稿态依赖关系。",
