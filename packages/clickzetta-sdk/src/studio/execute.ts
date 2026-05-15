@@ -15,6 +15,9 @@ export interface ExecuteAdhocParams {
   adhocVcId: number
   dataFileContent: string
   params?: unknown
+  datasourceId?: number
+  sessionSchemaName?: string
+  dsType?: number
 }
 
 export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
@@ -32,6 +35,9 @@ export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
     adhocVcId: params.adhocVcId,
     dataFileContent: params.dataFileContent,
     params: params.params,
+    ...(params.datasourceId != null && { datasourceId: params.datasourceId }),
+    ...(params.sessionSchemaName != null && { sessionSchemaName: params.sessionSchemaName }),
+    ...(params.dsType != null && { dsType: params.dsType }),
   },
     {
       env: "prod",

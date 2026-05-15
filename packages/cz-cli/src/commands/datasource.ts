@@ -15,15 +15,17 @@ const DS_TYPE_MAP: Record<string, number> = {
   selectdb: 16, tidb: 17, mariadb: 18, polardb: 19, hologres: 20,
   db2: 21, greenplum: 22, oracle: 25, dm: 26, cos: 27, redis: 43,
   databricks: 44, automq: 45, redshift: 46, s3: 38, dynamodb: 51,
+  aurora_mysql: 39, aurora_postgresql: 40, polardb_postgresql: 48,
 }
 
 const DS_TYPE_NAMES: Record<number, string> = {
   1: "LakeHouse", 2: "Kafka", 3: "Hive", 4: "ClickHouse", 5: "MySQL",
   7: "PostgreSQL", 8: "SqlServer", 9: "Oss", 10: "Hbase", 11: "Odps",
   12: "MongoDB", 13: "ElasticSearch7", 14: "Doris", 15: "StarRocks",
-  16: "SelectDB", 17: "TiDB", 18: "MariaDB", 19: "PolarDB", 20: "Hologres",
+  16: "SelectDB", 17: "TiDB", 18: "MariaDB", 19: "PolarDB MySQL", 20: "Hologres",
   21: "DB2", 22: "Greenplum", 25: "Oracle", 26: "DM", 27: "COS",
-  38: "S3", 43: "Redis", 44: "Databricks", 45: "AutoMQ", 46: "Redshift",
+  38: "S3", 39: "Aurora MySQL", 40: "Aurora PostgreSQL", 43: "Redis",
+  44: "Databricks", 45: "AutoMQ", 46: "Redshift", 48: "PolarDB PostgreSQL",
   51: "DynamoDB",
 }
 
@@ -91,14 +93,14 @@ async function apiSampleData(sc: StudioConfig, params: { id: number; nameSpace: 
 // ---------------------------------------------------------------------------
 // Resolve datasource by name or id
 // ---------------------------------------------------------------------------
-interface ResolvedDatasource {
+export interface ResolvedDatasource {
   id: number
   name: string
   dsType?: number
   connectionParams?: unknown
 }
 
-async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<ResolvedDatasource> {
+export async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<ResolvedDatasource> {
   const n = Number(nameOrId)
   if (Number.isFinite(n) && n > 0) {
     // Fetch detail by listing with no filter and finding by id
