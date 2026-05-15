@@ -8,6 +8,10 @@ on:
         description: "Release version (e.g. 0.1.0)"
         required: false
         type: string
+      ref:
+        description: "Git ref to release from (branch, tag, or commit SHA)"
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -21,19 +25,33 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      ref: ${{ steps.version.outputs.ref }}
+      sha: ${{ steps.checkout.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Determine version
         id: version
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
           else
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            if [ -n "${{ inputs.ref }}" ]; then
+              echo "ref=${{ inputs.ref }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+            fi
           fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.ref }}
+
+      - name: Resolve checkout SHA
+        id: checkout
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
@@ -42,6 +60,7 @@ jobs:
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "${{ steps.version.outputs.tag }}" \
             --generate-notes \
+            --target "${{ steps.checkout.outputs.sha }}" \
             --repo "${{ github.repository }}" || true
 
   build:
@@ -65,6 +84,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.sha }}
 
       - name: Sync clickzetta-skills
         shell: bash
@@ -107,6 +128,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.sha }}
 
       - name: Upload install script
         env:
@@ -121,6 +144,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.sha }}
 
       - uses: actions/setup-node@v4
         with:
