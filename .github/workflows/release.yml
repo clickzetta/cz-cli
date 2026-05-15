@@ -49,18 +49,24 @@ jobs:
         with:
           ref: ${{ steps.version.outputs.ref }}
 
+      - name: Setup Git Committer
+        id: setup-git-committer
+        uses: ./.github/actions/setup-git-committer
+        with:
+          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
+          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+
       - name: Resolve checkout SHA
         id: checkout
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.setup-git-committer.outputs.token }}
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "${{ steps.version.outputs.tag }}" \
             --generate-notes \
-            --target "${{ steps.checkout.outputs.sha }}" \
             --repo "${{ github.repository }}" || true
 
   build:
@@ -86,6 +92,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.create-release.outputs.sha }}
+
+      - name: Setup Git Committer
+        id: setup-git-committer
+        uses: ./.github/actions/setup-git-committer
+        with:
+          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
+          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
 
       - name: Sync clickzetta-skills
         shell: bash
@@ -120,7 +133,7 @@ jobs:
         env:
           OPENCODE_VERSION: ${{ needs.create-release.outputs.version }}
           OPENCODE_RELEASE: "1"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.setup-git-committer.outputs.token }}
         run: cd packages/opencode && bun run script/build.ts
 
   upload-installer:
@@ -131,9 +144,16 @@ jobs:
         with:
           ref: ${{ needs.create-release.outputs.sha }}
 
+      - name: Setup Git Committer
+        id: setup-git-committer
+        uses: ./.github/actions/setup-git-committer
+        with:
+          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
+          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+
       - name: Upload install script
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.setup-git-committer.outputs.token }}
         run: |
           gh release upload "${{ needs.create-release.outputs.tag }}" \
             scripts/install.sh \
@@ -147,6 +167,13 @@ jobs:
         with:
           ref: ${{ needs.create-release.outputs.sha }}
 
+      - name: Setup Git Committer
+        id: setup-git-committer
+        uses: ./.github/actions/setup-git-committer
+        with:
+          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
+          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -154,7 +181,7 @@ jobs:
 
       - name: Download release binaries
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.setup-git-committer.outputs.token }}
           VERSION: ${{ needs.create-release.outputs.version }}
           TAG: ${{ needs.create-release.outputs.tag }}
         run: |
