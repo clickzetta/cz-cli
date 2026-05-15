@@ -158,6 +158,24 @@ const tests: TestCase[] = [
       } finally { cleanup() }
     },
   },
+  {
+    name: "AGENT_RUN: no active LLM returns NO_ACTIVE_LLM instead of runtime URL errors",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const r = run(["agent", "run", "hello"], { HOME: home, CLICKZETTA_PID: "" })
+        const j = parseJson(r.stdout)
+        if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
+        if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+          return { pass: false, detail: `unexpected output: ${r.stdout.slice(0, 160)}` }
+        }
+        if (r.stdout.includes("undefined/chat/completions") || r.stderr.includes("undefined/chat/completions")) {
+          return { pass: false, detail: "leaked raw runtime URL parse error" }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
 
   {
     name: "CONNECTION_ERROR: classifyExecError produces ai_message for socket errors",

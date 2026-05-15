@@ -31,6 +31,25 @@ const PROFILE_REQUIRED_COMMANDS = new Set([
   "datasource",
 ])
 
+const LLM_ONBOARDING = {
+  clickzetta_builtin: [
+    "cz-cli setup --credential <base64_string>",
+  ],
+  external_llm: [
+    "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
+    "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+  ],
+  verify: [
+    "cz-cli agent llm show",
+    "cz-cli agent llm test",
+    "cz-cli agent llm test <NAME>",
+  ],
+  lakehouse_setup: [
+    "cz-cli setup",
+    "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+  ],
+} as const
+
 function noProfilePayload() {
   return {
     error: {
@@ -46,6 +65,16 @@ function noProfilePayload() {
         "https://accounts.singdata.com/register?ref=cz-cli",
       ],
       llm_help: "cz-cli agent llm --help",
+    },
+  }
+}
+
+function noActiveLlmPayload() {
+  return {
+    error: {
+      code: "NO_ACTIVE_LLM",
+      message: "No active LLM is configured. Run `cz-cli agent llm show` for setup paths.",
+      ...LLM_ONBOARDING,
     },
   }
 }
@@ -71,9 +100,39 @@ function noProfileTtyMessage() {
   )
 }
 
+function noActiveLlmTtyMessage() {
+  return (
+    "\n  No active LLM is configured.\n" +
+    "  Run `cz-cli agent llm show` to inspect the current state, or set one up with:\n\n" +
+    "  ClickZetta built-in LLM:\n" +
+    "    cz-cli setup --credential <base64_string>\n\n" +
+    "  External LLMs:\n" +
+    "    cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use\n" +
+    "    cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use\n\n" +
+    "  Verify after adding one:\n" +
+    "    cz-cli agent llm show\n" +
+    "    cz-cli agent llm test\n" +
+    "    cz-cli agent llm test <NAME>\n\n" +
+    "  Lakehouse connection setup is separate:\n" +
+    "    cz-cli setup\n" +
+    "    cz-cli setup --username <username> --password <password> --account-name <account_name>\n\n"
+  )
+}
+
 function hasConfiguredProfile() {
   try {
     return /^\[profiles\./m.test(readFileSync(join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml"), "utf-8"))
+  } catch {
+    return false
+  }
+}
+
+async function hasConfiguredLlm() {
+  try {
+    const profilesPath = join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
+    const content = readFileSync(profilesPath, "utf-8")
+    const { hasUsableLlm } = await import("../../opencode/src/config/profiles-llm.ts")
+    return hasUsableLlm(content).hasValidConfig
   } catch {
     return false
   }
@@ -84,6 +143,15 @@ export function emitNoProfile(runtime: CliRuntime): never {
     runtime.stderr.write(noProfileTtyMessage())
   } else {
     runtime.stdout.write(JSON.stringify(noProfilePayload()) + "\n")
+  }
+  return runtime.exit(1)
+}
+
+export function emitNoActiveLlm(runtime: CliRuntime): never {
+  if (runtime.stderr.isTTY) {
+    runtime.stderr.write(noActiveLlmTtyMessage())
+  } else {
+    runtime.stdout.write(JSON.stringify(noActiveLlmPayload()) + "\n")
   }
   return runtime.exit(1)
 }
@@ -184,6 +252,15 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
 
   if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {
     await migrateProfilesOnlyAndExit()
+  }
+
+  if (
+    normalized.shouldDelegateToAgentRuntime &&
+    (normalized.command === "run" || (normalized.command === "agent" && normalized.args[1] === "run")) &&
+    !process.env.CLICKZETTA_PID &&
+    !(await hasConfiguredLlm())
+  ) {
+    return emitNoActiveLlm(runtime)
   }
 
   if (normalized.shouldDelegateToAgentRuntime) {

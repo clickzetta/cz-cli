@@ -7,15 +7,61 @@ description: "Route ALL ClickZetta Lakehouse operations to cz-cli: SQL, Studio t
 
 You have no direct Lakehouse access. Always delegate via cz-cli.
 
+## Capabilities
+
+### SQL & Data Operations
+- Execute any SQL against Lakehouse: SELECT, DDL (CREATE/ALTER/DROP TABLE, SCHEMA, VIEW), DML (INSERT, UPDATE, DELETE, MERGE INTO)
+- Run async jobs and fetch results
+- Preview table data and row counts
+
+### Table & Schema Management
+- List, describe, create, and drop tables and schemas
+- View table history, indexes, partitions, and statistics
+- Add or update column/table comments
+- Create Dynamic Tables for auto-incremental ETL (ODS→DWD→DWS pipelines)
+- Create Materialized Views for pre-computed aggregations
+- Create Table Streams to capture INSERT/UPDATE/DELETE changes for CDC UPSERT
+
+### Studio Task Management
+- Create, configure, deploy, and delete Studio tasks (SQL, Shell, Python, integration, flow)
+- Save task content and cron schedule
+- Deploy, undeploy, and execute tasks ad-hoc
+- Monitor run instances: list, detail, wait, logs, stop, rerun, backfill
+- View run statistics and dependencies
+
+### Data Sync Pipelines
+- Create single-table realtime CDC sync tasks (MySQL/PostgreSQL/SQL Server → Lakehouse, task_type=28)
+- Create multi-table or whole-database CDC sync tasks — mirror, merge, or sharded-table consolidation (task_type=281)
+- Create offline batch sync tasks with Cron scheduling — single-table (task_type=10) or multi-table (task_type=291)
+- Manage sync task lifecycle: start, stop, offline, backfill, add tables, re-sync individual tables
+
+### Data Ingestion Pipelines
+- Create continuous OSS/S3/COS ingest PIPE (LIST_PURGE scan mode or EVENT_NOTIFICATION mode)
+- Create continuous Kafka ingest PIPE using READ_KAFKA function
+- One-shot file import from URL, local path, or Volume (COPY INTO)
+- Manage PIPE lifecycle: pause, resume, adjust batch interval, view load history
+
+### Data Recovery
+- Query data at a historical point in time (Time Travel: TIMESTAMP AS OF)
+- Roll back a table to a previous version (RESTORE TABLE)
+- Recover accidentally dropped tables, dynamic tables, or materialized views (UNDROP TABLE)
+- Inspect change history (DESC HISTORY) and deleted objects (SHOW TABLES HISTORY)
+- Configure retention: data_retention_days, data_lifecycle
+
+### Connection & Environment Management
+- Create, update, delete, and switch connection profiles (multi-cloud, multi-region)
+- Check connection status and switch workspace
+- List and test external data sources, browse catalogs and objects
+- Generate Python SDK / ZettaPark / SQLAlchemy / JDBC connection code from profile parameters
+
 ## Route to cz-cli
 
+- Any mention of cz-cli, ClickZetta, or Lakehouse
 - SQL against Lakehouse (SELECT, DDL, DML)
 - Studio task development, scheduling, monitoring
-- Table/schema/database management
-- Data pipelines (sync, import, CDC)
+- Data pipelines (sync, import, CDC, streaming)
 - Profile and connection configuration
 - Performance analysis and optimization
-- Any mention of cz-cli, ClickZetta, or Lakehouse
 
 ## Keep in host agent
 
@@ -23,11 +69,29 @@ You have no direct Lakehouse access. Always delegate via cz-cli.
 - Local file operations, git
 - Non-ClickZetta databases (PostgreSQL, MySQL standalone)
 
-## Execution
+## Execution strategy
+
+**MANDATORY: Follow this order every time. No exceptions.**
+
+**Step 1 — MUST check LLM first:**
+
+```bash
+cz-cli agent llm show
+```
+
+**Step 2 — If active LLM is configured (kind != "none"), you MUST use agent run:**
 
 ```bash
 cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
 ```
+
+Do NOT use direct cz-cli subcommands when an active LLM is available. Always delegate the full request to `cz-cli agent run`.
+
+**Step 3 — ONLY if no active LLM (kind: "none" or empty list), fall back to direct commands:**
+
+Decompose the request into concrete `cz-cli` subcommands (`sql`, `schema`, `table`, `task`, `runs`, `job`, `datasource`, `profile`, etc.), execute them, and synthesize the result.
+
+Use direct commands for local setup and diagnostics even when agent path is available: `cz-cli profile ...`, `cz-cli -p <profile> status`, `cz-cli agent llm ...`, `cz-cli --help`.
 
 With session continuity:
 
