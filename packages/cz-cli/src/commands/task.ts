@@ -21,6 +21,7 @@ import { resolveTaskId, resolveNodeId, resolveFolderIdByName } from "../resolver
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
+import { resolveDatasource } from "./datasource.js"
 import { convertAgentCron } from "../cron-adapter.js"
 
 function formatIsoStartOfDay(value: string | undefined | null): string {
@@ -799,7 +800,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("content", { type: "string", describe: "Override script content" })
             .option("file", { alias: "f", type: "string", describe: "Read override content from file" })
             .option("param", { type: "array", string: true, describe: "Parameter KEY=VALUE" })
-            .option("datasource", { type: "number", describe: "Datasource ID for JDBC tasks (auto-resolved from task config if omitted)" })
+            .option("datasource", { type: "string", describe: "Datasource name or ID for JDBC tasks (auto-resolved from task config if omitted)" })
             .option("database", { type: "string", describe: "Database/schema to USE for JDBC tasks (auto-resolved from task config if omitted)" })
             .option("max-wait-seconds", {
               type: "number",
@@ -858,18 +859,23 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const params = Object.keys(cliParams).length > 0 || Object.keys(savedDefaults).length > 0
               ? { ...savedDefaults, ...cliParams }
               : undefined
-            // Resolve JDBC datasource config from adhocConfigs (--datasource/--database override)
+            // Parse adhocConfigs for JDBC datasource binding
             const adhocConfigsRaw = data?.adhocConfigs ?? taskDetail?.adhocConfigs
             const adhocConfigs = (() => {
               if (!adhocConfigsRaw) return null
               try { return JSON.parse(String(adhocConfigsRaw)) as Record<string, unknown> } catch { return null }
             })()
-            const datasourceId = argv.datasource != null
-              ? Number(argv.datasource)
-              : (adhocConfigs?.datasourceId as number | undefined)
+            // Resolve JDBC datasource: --datasource flag > adhocConfigs > none
+            // When --datasource is provided, look up dsType automatically via datasource API
+            let datasourceId = adhocConfigs?.datasourceId as number | undefined
+            let dsType = adhocConfigs?.dsType as number | undefined
             const sessionSchemaName = (argv.database as string | undefined)
               ?? (adhocConfigs?.sessionSchemaName as string | undefined)
-            const dsType = adhocConfigs?.dsType as number | undefined
+            if (argv.datasource != null) {
+              const resolved = await resolveDatasource(sc, String(argv.datasource))
+              datasourceId = resolved.id
+              dsType = resolved.dsType ?? dsType
+            }
             // Warn if content has unresolved ${...} placeholders after merging
             const unresolvedPlaceholders = (content ?? "").match(/\$\{[^}]+\}/g)
               ?.filter((ph) => {

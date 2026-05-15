@@ -91,14 +91,14 @@ async function apiSampleData(sc: StudioConfig, params: { id: number; nameSpace: 
 // ---------------------------------------------------------------------------
 // Resolve datasource by name or id
 // ---------------------------------------------------------------------------
-interface ResolvedDatasource {
+export interface ResolvedDatasource {
   id: number
   name: string
   dsType?: number
   connectionParams?: unknown
 }
 
-async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<ResolvedDatasource> {
+export async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<ResolvedDatasource> {
   const n = Number(nameOrId)
   if (Number.isFinite(n) && n > 0) {
     // Fetch detail by listing with no filter and finding by id
