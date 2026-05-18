@@ -199,6 +199,7 @@ function applyCredentialToProfiles(
       ...profiles,
       [profileName]: {
         ...currentProfile,
+        username: String(cred.username ?? ""),
         instance: String(cred.instanceName),
         workspace: String(cred.workspaceName ?? "default"),
         schema: String(cred.schema ?? "public"),

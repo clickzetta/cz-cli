@@ -8,6 +8,7 @@ import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
 import { DialogVariant } from "./dialog-variant"
 import { useKeybind } from "../context/keybind"
 import * as fuzzysort from "fuzzysort"
+import { persistDefaultLlmModel } from "@/config/profiles-llm"
 
 export function useConnected() {
   const sync = useSync()
@@ -140,6 +141,7 @@ export function DialogModel(props: { providerID?: string }) {
 
   function onSelect(providerID: string, modelID: string) {
     local.model.set({ providerID, modelID }, { recent: true })
+    persistDefaultLlmModel(modelID)
     const list = local.model.variant.list()
     const cur = local.model.variant.selected()
     if (cur === "default" || (cur && list.includes(cur))) {

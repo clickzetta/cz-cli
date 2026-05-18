@@ -359,11 +359,7 @@ function parseResultSet(
 
   // No data and no location — DDL result
   if (!resultSet.data && !resultSet.location) {
-    return {
-      columns: [{ name: "message", type: "STRING" }],
-      rows: [{ message: "OPERATION SUCCEED" }],
-      isAsync: false,
-    }
+    return { columns: [], rows: [], isAsync: false }
   }
 
   const columnCount = columns.length

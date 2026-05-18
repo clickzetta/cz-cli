@@ -85,5 +85,5 @@ export function formatTraceQueryTag(context: Pick<TraceContext, "traceparent">) 
 }
 
 export function currentTraceparent() {
-  return createTraceparent(process.env.CLICKZETTA_TRACEPARENT)
+  return process.env.CLICKZETTA_TRACEPARENT ?? createTraceparent()
 }

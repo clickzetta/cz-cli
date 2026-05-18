@@ -1,4 +1,7 @@
-import { parse as parseToml } from "smol-toml"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import os from "os"
+import path from "path"
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
 
 export interface ProfilesLlmResult {
   providers: Record<
@@ -53,6 +56,9 @@ const VALID_PROVIDERS = [
   "openrouter",
 ] as const
 
+const CLICKZETTA_DIR = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta")
+const PROFILES_PATH = path.join(CLICKZETTA_DIR, "profiles.toml")
+
 export function normalizeLlmBaseUrl(provider: string, url: string | undefined): string | undefined {
   if (!url) return undefined
   let baseURL = url.replace(/\/+$/, "")
@@ -98,6 +104,31 @@ function getProfiles(data: Record<string, unknown>) {
 
 function getLlms(data: Record<string, unknown>) {
   return isRecord(data.llm) ? data.llm : {}
+}
+
+export function setDefaultLlmModel(data: Record<string, unknown>, model: string): boolean {
+  const defaultLlm = asString(data.default_llm)
+  if (!defaultLlm) return false
+  const llms = getLlms(data)
+  const entry = llms[defaultLlm]
+  if (!isRecord(entry)) return false
+  entry.model = model
+  return true
+}
+
+export function persistDefaultLlmModel(model: string): boolean {
+  if (!existsSync(PROFILES_PATH)) return false
+  let parsed: unknown
+  try {
+    parsed = parseToml(readFileSync(PROFILES_PATH, "utf-8"))
+  } catch {
+    return false
+  }
+  if (!isRecord(parsed)) return false
+  if (!setDefaultLlmModel(parsed, model)) return false
+  mkdirSync(CLICKZETTA_DIR, { recursive: true })
+  writeFileSync(PROFILES_PATH, stringifyToml(parsed as never) + "\n")
+  return true
 }
 
 function getProfileSection(data: Record<string, unknown>, name: string) {

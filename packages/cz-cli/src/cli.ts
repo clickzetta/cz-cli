@@ -111,8 +111,8 @@ export function createCli(args: string[]) {
         const KNOWN_COMMANDS = new Set(["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "setup", "update", "ai-guide","datasource"])
         const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => !KNOWN_FLAGS.has(a))
         if (unknownFlags.length > 0) return `Unknown argument: ${unknownFlags[0]}`
-        const unknownCmds = args.filter((a) => !a.startsWith("-")).filter((a) => !KNOWN_COMMANDS.has(a))
-        if (unknownCmds.length > 0) return `Unknown argument: ${unknownCmds[0]}`
+        const topLevelCmd = args.find((a) => !a.startsWith("-"))
+        if (topLevelCmd !== undefined && !KNOWN_COMMANDS.has(topLevelCmd)) return `Unknown argument: ${topLevelCmd}`
         return "Unknown argument"
       })()
       const output = JSON.stringify({

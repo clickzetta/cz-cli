@@ -236,7 +236,7 @@ function normalizeCliArgs(rawArgs: string[]) {
       command === "run" ||
       command === "llm" ||
       command === "config" ||
-      (command === "agent" && !isHelpRequest && (args.length === 1 || ["run", "llm", "config"].includes(args[1] ?? ""))),
+      (command === "agent" && !isHelpRequest && (args.length === 1 || ["run", "llm", "config", "session", "stats", "export"].includes(args[1] ?? ""))),
   }
 }
 

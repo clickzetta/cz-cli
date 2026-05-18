@@ -10,18 +10,76 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("prompt", { type: "string", demandOption: true, describe: "Natural-language request" })
-            .option("session", { type: "string", describe: "Session ID for multi-turn conversations" })
+            .option("session", { alias: "s", type: "string", describe: "Session ID to continue" })
+            .option("continue", { alias: "c", type: "boolean", describe: "Continue the last session" })
+            .option("fork", { type: "boolean", describe: "Fork the session before continuing (requires --continue or --session)" })
+            .option("title", { type: "string", describe: "Title for the session" })
+            .option("model", { alias: "m", type: "string", describe: "Model to use in the format of provider/model" })
+            .option("agent", { type: "string", describe: "Agent to use" })
+            .option("file", { alias: "f", type: "string", array: true, describe: "File(s) to attach to message" })
             .option("format", { type: "string", choices: ["default", "json", "a2a"], describe: "Output format (default=formatted, json=raw JSON events, a2a=agent-to-agent structured)" })
             .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run (default: 150 in a2a mode)" })
+            .option("thinking", { type: "boolean", default: false, describe: "Show thinking blocks" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
-            .option("agent", { type: "string", describe: "Agent to use" })
             .example("cz-cli agent run \"show tables\"", "One-shot query")
             .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
+            .example("cz-cli agent run \"more details\" --continue", "Continue last session")
             .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout"),
         () => {
           // This handler is never reached — cz-cli delegates runtime execution to the internal agent kernel.
           // This command definition exists only to provide correct --help output.
         },
+      )
+      .command(
+        "session",
+        "Manage agent sessions",
+        (y) =>
+          y
+            .command(
+              "list",
+              "List sessions",
+              (s) =>
+                s
+                  .option("max-count", { alias: "n", type: "number", describe: "Limit to N most recent sessions" })
+                  .option("format", { type: "string", choices: ["table", "json"], default: "table", describe: "Output format" })
+                  .example("cz-cli agent session list", "List all sessions")
+                  .example("cz-cli agent session list -n 10", "List 10 most recent sessions")
+                  .example("cz-cli agent session list --format json", "Output as JSON"),
+              () => {},
+            )
+            .command(
+              "delete <sessionID>",
+              "Delete a session",
+              (s) => s.positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to delete" }),
+              () => {},
+            )
+            .demandCommand(1, "")
+            .strict(false),
+        () => {},
+      )
+      .command(
+        "export [sessionID]",
+        "Export session conversation as JSON",
+        (y) =>
+          y
+            .positional("sessionID", { type: "string", describe: "Session ID to export (defaults to last session)" })
+            .option("sanitize", { type: "boolean", describe: "Redact sensitive transcript and file data" })
+            .example("cz-cli agent export", "Export last session")
+            .example("cz-cli agent export abc123", "Export specific session")
+            .example("cz-cli agent export abc123 --sanitize", "Export with sensitive data redacted"),
+        () => {},
+      )
+      .command(
+        "stats",
+        "Show token usage and cost statistics",
+        (y) =>
+          y
+            .option("days", { type: "number", describe: "Show stats for the last N days (default: all time)" })
+            .option("tools", { type: "number", describe: "Number of top tools to show (default: all)" })
+            .example("cz-cli agent stats", "Show all-time usage")
+            .example("cz-cli agent stats --days 7", "Show last 7 days")
+            .example("cz-cli agent stats --days 30 --tools 10", "Last 30 days, top 10 tools"),
+        () => {},
       )
       .command(
         "llm",
@@ -80,6 +138,12 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .strictCommands().strictOptions().demandCommand(1, "")
       .example("cz-cli agent run \"create a daily sync task\"", "One-shot (scripts, CI)")
       .example("cz-cli agent run \"describe sales\" --session s1", "Conversational (reuse context)")
+      .example("cz-cli agent run \"more details\" --continue", "Continue last session")
+      .example("cz-cli agent session list", "List all sessions")
+      .example("cz-cli agent session list -n 10 --format json", "Recent sessions as JSON")
+      .example("cz-cli agent session delete <sessionID>", "Delete a session")
+      .example("cz-cli agent export <sessionID>", "Export session as JSON")
+      .example("cz-cli agent stats --days 7", "Token usage for last 7 days")
       .example("cz-cli agent llm --help", "See LLM onboarding, examples, and testing commands")
       .strict(false),
   )

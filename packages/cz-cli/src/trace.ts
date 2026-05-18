@@ -1,11 +1,12 @@
-import {
-  createTraceContext,
-  formatTraceQueryTag,
-  parseTraceparent,
-} from "@clickzetta/sdk"
+import { createTraceContext, formatTraceQueryTag, parseTraceparent, type TraceContext } from "@clickzetta/sdk"
 
-export function currentTraceContext() {
-  return createTraceContext(process.env.CLICKZETTA_TRACEPARENT)
+export function currentTraceContext(): TraceContext {
+  const tp = process.env.CLICKZETTA_TRACEPARENT
+  const parsed = parseTraceparent(tp)
+  if (parsed) {
+    return { ...parsed, traceparent: tp!, parentSpanId: "" }
+  }
+  return createTraceContext()
 }
 
 export function defaultQueryTag(traceContext = currentTraceContext()) {

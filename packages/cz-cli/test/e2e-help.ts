@@ -420,12 +420,37 @@ const cases: HelpCase[] = [
   {
     args: ["agent", "--help"],
     expectHeader: "cz-cli agent",
-    expectOptions: ["run", "llm"],
+    expectCommands: ["run", "session", "export", "stats", "llm"],
   },
   {
     args: ["agent", "run", "--help"],
     expectHeader: "cz-cli agent run",
-    expectOptions: ["--format", "--session", "--timeout", "--dangerously-skip-permissions"],
+    expectOptions: ["--format", "--session", "--timeout", "--dangerously-skip-permissions", "--continue", "--model", "--file"],
+  },
+  {
+    args: ["agent", "session", "--help"],
+    expectHeader: "cz-cli agent session",
+    expectCommands: ["list", "delete"],
+  },
+  {
+    args: ["agent", "session", "list", "--help"],
+    expectHeader: "cz-cli agent session list",
+    expectOptions: ["--max-count", "--format"],
+  },
+  {
+    args: ["agent", "session", "delete", "--help"],
+    expectHeader: "cz-cli agent session delete",
+    expectOptions: ["sessionID"],
+  },
+  {
+    args: ["agent", "export", "--help"],
+    expectHeader: "cz-cli agent export",
+    expectOptions: ["sessionID", "--sanitize"],
+  },
+  {
+    args: ["agent", "stats", "--help"],
+    expectHeader: "cz-cli agent stats",
+    expectOptions: ["--days", "--tools"],
   },
 
   // setup

@@ -3,6 +3,7 @@ import { join } from "path"
 import { homedir } from "os"
 import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
+import { currentTraceContext } from "./trace.js"
 
 interface CommandEvent {
   command: string
@@ -50,6 +51,7 @@ export function trackCommand(event: CommandEvent): Promise<void> {
   try {
     const resourceAttrs = event.resourceAttributes ?? getResourceAttributes()
     const now = Date.now()
+    const traceContext = currentTraceContext()
     const body = {
       resourceLogs: [{
         resource: {
@@ -62,6 +64,8 @@ export function trackCommand(event: CommandEvent): Promise<void> {
         scopeLogs: [{
           scope: { name: "cz-cli.command" },
           logRecords: [{
+            traceId: traceContext.traceId,
+            spanId: traceContext.spanId,
             timeUnixNano: String(now * 1_000_000),
             observedTimeUnixNano: String(now * 1_000_000),
             severityNumber: event.success ? 9 : 17, // INFO : ERROR

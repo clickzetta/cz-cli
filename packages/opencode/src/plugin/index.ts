@@ -11,6 +11,7 @@ import { Log } from "../util"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
+import { OtelPlugin } from "./otel"
 import { OTEL_DEFAULTS } from "./otel-defaults"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -33,7 +34,8 @@ function isTelemetryEnabled(): boolean {
   if (!process.env.OPENCODE_ENABLE_TELEMETRY) process.env.OPENCODE_ENABLE_TELEMETRY = "1"
   if (!process.env.OPENCODE_OTLP_ENDPOINT) process.env.OPENCODE_OTLP_ENDPOINT = OTEL_DEFAULTS.endpoint
   if (!process.env.OPENCODE_OTLP_PROTOCOL) process.env.OPENCODE_OTLP_PROTOCOL = OTEL_DEFAULTS.protocol
-  if (!process.env.OPENCODE_OTLP_HEADERS && OTEL_DEFAULTS.headers) process.env.OPENCODE_OTLP_HEADERS = OTEL_DEFAULTS.headers
+  if (!process.env.OPENCODE_OTLP_HEADERS && OTEL_DEFAULTS.headers)
+    process.env.OPENCODE_OTLP_HEADERS = OTEL_DEFAULTS.headers
   if (!isTelemetryEnabled() && !process.env.OPENCODE_DISABLE_TRACES) {
     process.env.OPENCODE_DISABLE_TRACES = "tool,llm"
   }
@@ -120,13 +122,7 @@ const CORE_INTERNAL_PLUGINS: PluginInstance[] = [
 async function getInternalPlugins() {
   const plugins = [...CORE_INTERNAL_PLUGINS]
   if (Flag.CLICKZETTA_DISABLE_DEFAULT_PLUGINS) return plugins
-  try {
-    const pluginPackage = "@devtheops/opencode-plugin-otel"
-    const mod = (await import(pluginPackage)) as { OtelPlugin?: PluginInstance }
-    if (mod.OtelPlugin) plugins.push(mod.OtelPlugin)
-  } catch (error) {
-    log.warn("failed to load optional OTel plugin", { error: errorMessage(error) })
-  }
+  plugins.push(OtelPlugin)
   return plugins
 }
 
@@ -229,7 +225,9 @@ export const layer = Layer.effect(
         if (Flag.CLICKZETTA_PURE && cfg.plugin_origins?.length) {
           log.info("skipping external plugins in pure mode", { count: cfg.plugin_origins.length })
         }
-        if (plugins.some((origin) => pluginSource(Array.isArray(origin.spec) ? origin.spec[0] : origin.spec) === "npm")) {
+        if (
+          plugins.some((origin) => pluginSource(Array.isArray(origin.spec) ? origin.spec[0] : origin.spec) === "npm")
+        ) {
           yield* config.waitForDependencies()
         }
 

@@ -4,6 +4,7 @@ import { OtlpLogger, OtlpSerialization } from "effect/unstable/observability"
 import * as EffectLogger from "./logger"
 import { Flag } from "@/flag/flag"
 import { InstallationChannel, InstallationVersion } from "@/installation/version"
+import { getSessionSpanRef } from "@/plugin/otel/context"
 
 const base = Flag.OTEL_EXPORTER_OTLP_ENDPOINT
 export const enabled = !!base
@@ -28,14 +29,31 @@ const resource = {
   },
 }
 
+function withSessionTraceFallback(inner: Logger.Logger<unknown, void>): Logger.Logger<unknown, void> {
+  return Logger.make((options) => {
+    if (!options.fiber.currentSpan) {
+      const ref = getSessionSpanRef()
+      if (ref) {
+        const patched = Object.create(options.fiber)
+        patched.currentSpan = { traceId: ref.traceId, spanId: ref.spanId }
+        return inner.log({ ...options, fiber: patched })
+      }
+    }
+    return inner.log(options)
+  })
+}
+
 const logs = Logger.layer(
   [
     EffectLogger.logger,
-    OtlpLogger.make({
-      url: `${base}/v1/logs`,
-      resource,
-      headers,
-    }),
+    Effect.map(
+      OtlpLogger.make({
+        url: `${base}/v1/logs`,
+        resource,
+        headers,
+      }),
+      withSessionTraceFallback,
+    ),
   ],
   { mergeWithExisting: false },
 ).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer))
@@ -45,17 +63,11 @@ const traces = async () => {
   const OTLP = await import("@opentelemetry/exporter-trace-otlp-http")
   const SdkBase = await import("@opentelemetry/sdk-trace-base")
 
-  // @effect/opentelemetry creates a NodeTracerProvider but never calls
-  // register(), so the global @opentelemetry/api context manager stays
-  // as the no-op default. Non-Effect code (like the AI SDK) that calls
-  // tracer.startActiveSpan() relies on context.active() to find the
-  // parent span — without a real context manager every span starts a
-  // new trace. Registering AsyncLocalStorageContextManager fixes this.
   const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks")
-  const { context } = await import("@opentelemetry/api")
+  const otelApi = await import("@opentelemetry/api")
   const mgr = new AsyncLocalStorageContextManager()
   mgr.enable()
-  context.setGlobalContextManager(mgr)
+  otelApi.context.setGlobalContextManager(mgr)
 
   return NodeSdk.layer(() => ({
     resource,
