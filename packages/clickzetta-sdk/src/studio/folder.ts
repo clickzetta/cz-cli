@@ -25,7 +25,7 @@ export function listFolders(config: StudioConfig, params: ListFoldersParams) {
     ...(params.parentFolderId !== undefined && { parentFolderId: params.parentFolderId }),
     ...(params.folderName !== undefined && { folderName: params.folderName }),
     ...(params.folderType !== undefined && { folderType: params.folderType }),
-  })
+  },{workspaceName:config.workspaceName})
 }
 
 export function createFolder(config: StudioConfig, params: CreateFolderParams) {

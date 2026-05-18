@@ -83,7 +83,7 @@ export function listTasks(config: StudioConfig, params: ListTasksParams) {
     ...(folderId !== undefined && { folderId }),
     ...(fileName !== undefined && { fileName }),
     ...(fileType !== undefined && { fileType }),
-  })
+  }, {workspaceName:config.workspaceName})
 }
 
 export function createTask(config: StudioConfig, params: CreateTaskParams) {
