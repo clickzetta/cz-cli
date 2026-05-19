@@ -35,9 +35,18 @@ export const OtelPlugin: Plugin = Object.assign(
     }
 
     let sdk: OtelSdk | undefined
-    try {
-      sdk = await initOtelSdk(endpoint, headers, resourceAttrs)
-    } catch {}
+    if (endpoint) {
+      try {
+        sdk = await initOtelSdk(endpoint, headers, resourceAttrs)
+      } catch {}
+    }
+
+    if (sdk) {
+      const flush = () => sdk!.shutdown().catch(() => {})
+      process.on("beforeExit", flush)
+      process.on("SIGTERM", () => flush().finally(() => process.exit(0)))
+      process.on("SIGINT", () => flush().finally(() => process.exit(130)))
+    }
 
     return {
       async event({ event }: { event: { type: string; properties: Record<string, any> } }) {

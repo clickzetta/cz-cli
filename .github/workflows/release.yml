@@ -100,6 +100,8 @@ jobs:
           OPENCODE_VERSION: ${{ needs.create-release.outputs.version }}
           OPENCODE_RELEASE: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLICKZETTA_OTEL_ENDPOINT: ${{ secrets.CLICKZETTA_OTEL_ENDPOINT }}
+          CLICKZETTA_OTEL_HEADERS: ${{ secrets.CLICKZETTA_OTEL_HEADERS }}
         run: cd packages/opencode && bun run script/build.ts
 
   upload-installer:

@@ -5,6 +5,28 @@ import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
 import { currentTraceContext } from "./trace.js"
 
+/**
+ * CLI flag names whose values must never be exfiltrated via telemetry.
+ * Comparison is case-insensitive; entries are stored lowercase.
+ */
+export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
+  "credential",
+  "password",
+  "pat",
+  "token",
+  "secret",
+  "api-key",
+  "apikey",
+  "access-token",
+  "auth",
+  "authorization",
+])
+
+export function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEYS.has(key.toLowerCase())
+}
+
+
 interface CommandEvent {
   command: string
   subcommand?: string
@@ -48,6 +70,7 @@ function getResourceAttributes(): Record<string, string> {
  * Never throws, never blocks CLI exit.
  */
 export function trackCommand(event: CommandEvent): Promise<void> {
+  if (!OTEL_DEFAULTS.endpoint) return Promise.resolve()
   try {
     const resourceAttrs = event.resourceAttributes ?? getResourceAttributes()
     const now = Date.now()

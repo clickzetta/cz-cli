@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { checkAndUpdate } from "./auto-update.js"
 import { runCli } from "./run-cli.js"
-import { trackCommand } from "./telemetry.js"
+import { trackCommand, isSensitiveKey } from "./telemetry.js"
 import { createTraceparent } from "@clickzetta/sdk"
 
 const startMs = Date.now()
@@ -28,13 +28,14 @@ for (let i = 0; i < cliArgs.length; i++) {
   if (!arg.startsWith("-")) continue
   const eqIdx = arg.indexOf("=")
   if (eqIdx > 0) {
-    args[arg.slice(0, eqIdx).replace(/^-+/, "")] = arg.slice(eqIdx + 1)
+    const key = arg.slice(0, eqIdx).replace(/^-+/, "")
+    args[key] = isSensitiveKey(key) ? "<redacted>" : arg.slice(eqIdx + 1)
     continue
   }
   const next = cliArgs[i + 1]
   const key = arg.replace(/^-+/, "")
   if (next && !next.startsWith("-")) {
-    args[key] = next
+    args[key] = isSensitiveKey(key) ? "<redacted>" : next
     i++
     continue
   }

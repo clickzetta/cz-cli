@@ -24,6 +24,7 @@ export function createCli(args: string[]) {
   return yargs(args)
     .scriptName("cz-cli")
     .version(VERSION)
+    .exitProcess(false)
     .option("profile", {
       alias: "p",
       type: "string",

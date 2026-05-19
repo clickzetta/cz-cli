@@ -11,11 +11,9 @@ import { logOperation } from "../logger.js"
 import { loadProfiles, saveProfiles, setTelemetry, getTelemetry, type ProfileEntry } from "../connection/profile-store.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
-import { trackCommand } from "../telemetry.js"
+import { trackCommand, isSensitiveKey } from "../telemetry.js"
 
 const setupStartMs = Date.now()
-
-const SENSITIVE_KEYS = new Set(["credential", "password", "pat"])
 
 /** Returns the telemetry value — skips prompt if already configured. */
 async function resolveTelemetry(): Promise<boolean> {
@@ -42,7 +40,7 @@ function trackSetup(opts: {
   const args: Record<string, string> = {}
   if (opts.argv) {
     for (const [k, v] of Object.entries(opts.argv)) {
-      if (SENSITIVE_KEYS.has(k) || k.startsWith("$") || k === "_" || typeof v === "undefined") continue
+      if (isSensitiveKey(k) || k.startsWith("$") || k === "_" || typeof v === "undefined") continue
       if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
         args[k] = String(v)
       }
@@ -789,7 +787,14 @@ async function runExistingAccountFlowTTY(
 ): Promise<void> {
   const username = setupValue(argv, "username") || await prompt("Username: ")
   collected.username = username
-  const password = setupValue(argv, "password") || await prompt("Password: ")
+  let password = setupValue(argv, "password")
+  if (!password) {
+    process.stderr.write(
+      "Note: the password is stored in plaintext at ~/.clickzetta/profiles.toml (mode 0600). " +
+        "Use --pat for token-based auth to avoid storing your password.\n",
+    )
+    password = await prompt("Password: ")
+  }
   const accountName = setupValue(argv, "account-name") || await prompt("Account name: ")
   const service = setupValue(argv, "service") || await chooseOptionTTY(
     "Choose service endpoint or account console host",
@@ -797,13 +802,27 @@ async function runExistingAccountFlowTTY(
     true,
   )
   collected.service = normalizeServiceValue(service)
-  const auth = await loginWithExistingAccount(
-    username,
-    password,
-    accountName,
-    service,
-    setupValue(argv, "instance") || undefined,
-  )
+  let auth: SetupAuthContext
+  try {
+    auth = await loginWithExistingAccount(
+      username,
+      password,
+      accountName,
+      service,
+      setupValue(argv, "instance") || undefined,
+    )
+  } catch (loginError) {
+    if (!isAccountConsoleInput(normalizeServiceValue(service))) {
+      process.stderr.write(
+        `Login failed (${loginError instanceof Error ? loginError.message : String(loginError)}).\n` +
+        "For direct API endpoints, an instance name is required to authenticate.\n",
+      )
+      const instanceName = await prompt("Instance name: ")
+      auth = await loginWithExistingAccount(username, password, accountName, service, instanceName)
+    } else {
+      throw loginError
+    }
+  }
   const instances = await listInstances(auth)
   if (instances.length === 0) {
     error("SETUP_DISCOVERY_FAILED", "No Lakehouse instances found under the selected service.", { format })

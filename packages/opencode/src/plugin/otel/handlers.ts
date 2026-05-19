@@ -9,6 +9,16 @@ let promptSpan: Span | undefined
 const stepSpans = new Map<string, Span>()
 const toolSpans = new Map<string, Span>()
 
+// Parse OPENCODE_DISABLE_TRACES once. Value is comma-separated categories,
+// e.g. "tool,llm". Logs and metrics are never affected.
+const disabledTraceCategories: ReadonlySet<string> = new Set(
+  (process.env.OPENCODE_DISABLE_TRACES ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+)
+
+function tracingEnabled(category: string): boolean {
+  return !disabledTraceCategories.has(category)
+}
+
 function endPromptSpan() {
   if (!promptSpan) return
   promptSpan.end()
@@ -66,11 +76,13 @@ function onSessionDeleted(props: Record<string, any>) {
 function onPrompt(props: Record<string, any>) {
   endPromptSpan()
 
-  const span = tracer.startSpan("prompt", {
-    attributes: { "prompt.length": props.text?.length ?? 0 },
-  })
-  promptSpan = span
-  setCurrentSessionSpanContext(span.spanContext())
+  if (tracingEnabled("prompt")) {
+    const span = tracer.startSpan("prompt", {
+      attributes: { "prompt.length": props.text?.length ?? 0 },
+    })
+    promptSpan = span
+    setCurrentSessionSpanContext(span.spanContext())
+  }
 
   m.messageCounter.add(1)
   emitLog(SeverityNumber.INFO, "user.prompt", { "prompt.length": String(props.text?.length ?? 0) })
@@ -79,6 +91,7 @@ function onPrompt(props: Record<string, any>) {
 function onStepStarted(props: Record<string, any>) {
   const stepId = props.id
   if (!stepId) return
+  if (!tracingEnabled("llm")) return
   const span = tracer.startSpan(
     "llm.step",
     { attributes: { "step.id": stepId, "model.id": props.model ?? "" } },
@@ -110,6 +123,10 @@ function onStepEnded(props: Record<string, any>) {
 function onToolCalled(props: Record<string, any>) {
   const toolId = props.id
   if (!toolId) return
+  if (!tracingEnabled("tool")) {
+    m.toolCallCounter.add(1, { name: props.name ?? "unknown" })
+    return
+  }
   const span = tracer.startSpan(
     "tool.call",
     { attributes: { "tool.id": toolId, "tool.name": props.name ?? "" } },

@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs"
+import { readFileSync, mkdirSync, writeFileSync, renameSync, chmodSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
@@ -6,6 +6,24 @@ import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
 
 const PROFILES_DIR = join(homedir(), ".clickzetta")
 const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
+
+/**
+ * Atomically write profiles.toml and tighten its mode to 0600.
+ * The profile file may contain plaintext credentials (password / PAT), so it
+ * must never be world-readable. chmod is a no-op on Windows but harmless.
+ */
+function writeProfilesFile(content: string): void {
+  const dir = dirname(PROFILES_FILE)
+  mkdirSync(dir, { recursive: true })
+  const tmpFile = PROFILES_FILE + ".tmp." + Date.now()
+  writeFileSync(tmpFile, content, { encoding: "utf-8", mode: 0o600 })
+  renameSync(tmpFile, PROFILES_FILE)
+  try {
+    chmodSync(PROFILES_FILE, 0o600)
+  } catch {
+    // best-effort: filesystems without POSIX modes (FAT, some network mounts) just skip
+  }
+}
 
 export type ProfileEntry = Record<string, unknown>
 
@@ -34,13 +52,7 @@ export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
 
   existing.profiles = profiles
   const content = stringifyTOML(existing)
-
-  const dir = dirname(PROFILES_FILE)
-  mkdirSync(dir, { recursive: true })
-
-  const tmpFile = PROFILES_FILE + ".tmp." + Date.now()
-  writeFileSync(tmpFile, content, "utf-8")
-  renameSync(tmpFile, PROFILES_FILE)
+  writeProfilesFile(content)
 }
 
 export function getDefaultProfileName(): string | undefined {
@@ -151,9 +163,5 @@ export function setTelemetry(enabled: boolean): void {
   } catch {}
   existing.telemetry = enabled
   const content = stringifyTOML(existing)
-  const dir = dirname(PROFILES_FILE)
-  mkdirSync(dir, { recursive: true })
-  const tmpFile = PROFILES_FILE + ".tmp." + Date.now()
-  writeFileSync(tmpFile, content, "utf-8")
-  renameSync(tmpFile, PROFILES_FILE)
+  writeProfilesFile(content)
 }

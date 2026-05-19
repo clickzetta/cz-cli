@@ -218,6 +218,10 @@ for (let i = 0; i < targets.length; i++) {
       CLICKZETTA_RIPGREP_WORKER_PATH: rgPath,
       CLICKZETTA_CHANNEL: `'${Script.channel}'`,
       CLICKZETTA_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
+      // OTel collector credentials are injected at build time from CI secrets.
+      // Local/dev builds inject empty strings, which causes telemetry to no-op.
+      CLICKZETTA_OTEL_ENDPOINT: JSON.stringify(process.env.CLICKZETTA_OTEL_ENDPOINT ?? ""),
+      CLICKZETTA_OTEL_HEADERS: JSON.stringify(process.env.CLICKZETTA_OTEL_HEADERS ?? ""),
     },
   })
 
