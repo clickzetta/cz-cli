@@ -21,8 +21,33 @@ export function initHandlers(logger: Logger) {
   _logger = logger
 }
 
-function emitLog(severity: SeverityNumber, body: string, attrs?: Record<string, string>) {
-  _logger?.emit({ severityNumber: severity, body, attributes: attrs, context: getSessionOtelContext() })
+function sessionAttributes(
+  sessionID?: string,
+  attrs?: Record<string, string | number | boolean>,
+) {
+  return {
+    ...(sessionID ? { "opencode.session.id": sessionID } : {}),
+    ...attrs,
+  }
+}
+
+function emitLog(input: {
+  severityNumber: SeverityNumber
+  severityText: string
+  body: string
+  eventName: string
+  attributes?: Record<string, string | number | boolean>
+}) {
+  _logger?.emit({
+    severityNumber: input.severityNumber,
+    severityText: input.severityText,
+    body: input.body,
+    attributes: {
+      "event.name": input.eventName,
+      ...input.attributes,
+    },
+    context: getSessionOtelContext(),
+  })
 }
 
 function endPromptSpan() {
@@ -36,33 +61,60 @@ export function handleEvent(event: { type: string; properties: Record<string, an
     const p = event.properties
     switch (event.type) {
       case "session.created":
-        emitLog(SeverityNumber.INFO, "session.created", { "session.id": p.sessionID ?? "" })
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "Session created",
+          eventName: "opencode.session.created",
+          attributes: sessionAttributes(p.sessionID),
+        })
         break
       case "session.deleted":
         endPromptSpan()
         setCurrentSessionSpanContext(undefined)
-        emitLog(SeverityNumber.INFO, "session.deleted", { "session.id": p.sessionID ?? "" })
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "Session deleted",
+          eventName: "opencode.session.deleted",
+          attributes: sessionAttributes(p.sessionID),
+        })
         break
       case "session.status": {
         const statusType = p.status?.type
         if (statusType === "busy") {
           endPromptSpan()
           if (tracingEnabled("prompt")) {
-            const span = tracer.startSpan("prompt", { attributes: { "session.id": p.sessionID ?? "" } })
+            const span = tracer.startSpan("prompt", { attributes: { "opencode.session.id": p.sessionID ?? "" } })
             promptSpan = span
             setCurrentSessionSpanContext(span.spanContext())
           }
-          emitLog(SeverityNumber.INFO, "user.prompt", { "session.id": p.sessionID ?? "" })
-        } else if (statusType === "idle") {
-          endPromptSpan()
+          emitLog({
+            severityNumber: SeverityNumber.INFO,
+            severityText: "INFO",
+            body: "User prompt started",
+            eventName: "opencode.session.prompt.started",
+            attributes: sessionAttributes(p.sessionID, {
+              "gen_ai.conversation.id": p.sessionID ?? "",
+              "gen_ai.operation.name": "chat",
+            }),
+          })
+          break
         }
+        if (statusType === "idle") endPromptSpan()
         break
       }
       case "session.idle":
         endPromptSpan()
-        emitLog(SeverityNumber.INFO, "session.idle", { "session.id": p.sessionID ?? "" })
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "Session idle",
+          eventName: "opencode.session.idle",
+          attributes: sessionAttributes(p.sessionID),
+        })
         break
-    }
+      }
   } catch {}
 }
 

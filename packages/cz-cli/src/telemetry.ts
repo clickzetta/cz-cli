@@ -30,12 +30,52 @@ export function isSensitiveKey(key: string): boolean {
 interface CommandEvent {
   command: string
   subcommand?: string
-  args?: Record<string, string>
+  args?: Record<string, string | number | boolean>
   duration_ms: number
   success: boolean
   error?: string
   response_bytes?: number
   resourceAttributes?: Record<string, string>
+}
+
+type OtlpValue =
+  | { stringValue: string }
+  | { boolValue: boolean }
+  | { intValue: string }
+  | { doubleValue: number }
+
+function otlpValue(value: string | number | boolean): OtlpValue {
+  if (typeof value === "string") return { stringValue: value }
+  if (typeof value === "boolean") return { boolValue: value }
+  if (Number.isInteger(value)) return { intValue: String(value) }
+  return { doubleValue: value }
+}
+
+function commandName(event: CommandEvent) {
+  return event.subcommand ? `${event.command} ${event.subcommand}` : event.command
+}
+
+function commandBody(event: CommandEvent) {
+  return `Command ${commandName(event)} ${event.success ? "completed" : "failed"}`
+}
+
+function commandAttributes(event: CommandEvent) {
+  return [
+    { key: "event.name", value: { stringValue: "cz_cli.command.execution" } },
+    { key: "cz_cli.command.name", value: { stringValue: event.command } },
+    ...(event.subcommand ? [{ key: "cz_cli.command.subcommand", value: { stringValue: event.subcommand } }] : []),
+    ...(event.args
+      ? Object.entries(event.args).map(([key, value]) => ({
+          key: `cz_cli.command.arg.${key}`,
+          value: otlpValue(value),
+        }))
+      : []),
+    { key: "cz_cli.command.duration_ms", value: { intValue: String(Math.round(event.duration_ms)) } },
+    ...(event.response_bytes != null
+      ? [{ key: "cz_cli.command.response_bytes", value: { intValue: String(event.response_bytes) } }]
+      : []),
+    ...(event.error ? [{ key: "cz_cli.command.error", value: { stringValue: event.error } }] : []),
+  ]
 }
 
 function getResourceAttributes(): Record<string, string> {
@@ -93,17 +133,8 @@ export function trackCommand(event: CommandEvent): Promise<void> {
             observedTimeUnixNano: String(now * 1_000_000),
             severityNumber: event.success ? 9 : 17, // INFO : ERROR
             severityText: event.success ? "INFO" : "ERROR",
-            body: { stringValue: "command_executed" },
-            attributes: [
-              { key: "event.name", value: { stringValue: "command_executed" } },
-              { key: "command", value: { stringValue: event.command } },
-              ...(event.subcommand ? [{ key: "subcommand", value: { stringValue: event.subcommand } }] : []),
-              ...(event.args ? [{ key: "args", value: { stringValue: JSON.stringify(event.args) } }] : []),
-              { key: "duration_ms", value: { intValue: String(Math.round(event.duration_ms)) } },
-              { key: "success", value: { boolValue: event.success } },
-              ...(event.error ? [{ key: "error", value: { stringValue: event.error } }] : []),
-              ...(event.response_bytes != null ? [{ key: "response_bytes", value: { intValue: String(event.response_bytes) } }] : []),
-            ],
+            body: { stringValue: commandBody(event) },
+            attributes: commandAttributes(event),
           }],
         }],
       }],
