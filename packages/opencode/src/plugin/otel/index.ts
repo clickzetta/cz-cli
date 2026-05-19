@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { OTEL_DEFAULTS } from "../otel-defaults"
 import { initOtelSdk, type OtelSdk } from "./setup"
-import { handleEvent, shutdown as shutdownHandlers } from "./handlers"
+import { handleEvent, initHandlers, shutdown as shutdownHandlers } from "./handlers"
 import { getCurrentSessionTraceparent } from "./context"
 import { createTraceparent } from "@clickzetta/sdk"
 import { InstallationVersion } from "@/installation/version"
@@ -15,6 +15,14 @@ function parseHeaders(raw?: string): Record<string, string> {
     if (eqIdx > 0) result[part.slice(0, eqIdx).trim()] = part.slice(eqIdx + 1).trim()
   }
   return result
+}
+
+let globalFlush: (() => Promise<void>) | undefined
+
+export async function flushOtel(): Promise<void> {
+  const fn = (globalThis as any).__otelFlush as (() => Promise<void>) | undefined
+  if (fn) await fn()
+  else if (globalFlush) await globalFlush()
 }
 
 export const OtelPlugin: Plugin = Object.assign(
@@ -42,7 +50,10 @@ export const OtelPlugin: Plugin = Object.assign(
     }
 
     if (sdk) {
+      initHandlers(sdk.logger)
       const flush = () => sdk!.shutdown().catch(() => {})
+      globalFlush = flush
+      ;(globalThis as any).__otelFlush = flush
       process.on("beforeExit", flush)
       process.on("SIGTERM", () => flush().finally(() => process.exit(0)))
       process.on("SIGINT", () => flush().finally(() => process.exit(130)))

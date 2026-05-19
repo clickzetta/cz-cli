@@ -14,6 +14,7 @@ import path from "path"
 import { Log } from "./util"
 import { errorMessage } from "./util/error"
 import { maybeAutoUpdate } from "./update/bootstrap"
+import { flushOtel } from "./plugin/otel"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -458,5 +459,6 @@ try {
   // Most notably, some docker-container-based MCP servers don't handle such signals unless
   // run using `docker run --init`.
   // Explicitly exit to avoid any hanging subprocesses.
+  await flushOtel()
   process.exit()
 }
