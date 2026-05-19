@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -24,7 +24,33 @@ function runSetupWithCredential(credential: Record<string, unknown>) {
     },
   )
   const profilesPath = join(home, ".clickzetta", "profiles.toml")
-  const profiles = parseToml(readFileSync(profilesPath, "utf-8")) as Record<string, unknown>
+  const profiles = existsSync(profilesPath)
+    ? parseToml(readFileSync(profilesPath, "utf-8")) as Record<string, unknown>
+    : {}
+  return { result, profiles }
+}
+
+function runSetup(args: string[]) {
+  const home = mkdtempSync(join(tmpdir(), "cz-cli-setup-jdbc-"))
+  mkdirSync(join(home, ".clickzetta"), { recursive: true })
+  const result = spawnSync(
+    "bun",
+    ["src/main.ts", "setup", ...args],
+    {
+      cwd: import.meta.dir + "/..",
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        CLICKZETTA_SKIP_TELEMETRY_PROMPT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  )
+  const profilesPath = join(home, ".clickzetta", "profiles.toml")
+  const profiles = existsSync(profilesPath)
+    ? parseToml(readFileSync(profilesPath, "utf-8")) as Record<string, unknown>
+    : {}
   return { result, profiles }
 }
 
@@ -54,6 +80,7 @@ describe("setup --credential", () => {
     })
     expect(profiles.profiles).toEqual({
       uat: {
+        username: "UAT_TEST",
         instance: "jnsxwfyr",
         workspace: "wanxin_test_04",
         schema: "clickzetta_account",
@@ -61,6 +88,31 @@ describe("setup --credential", () => {
         pat: "czt_test_pat",
         service: "https://uat-api.clickzetta.com",
         protocol: "https",
+      },
+    })
+  })
+})
+
+describe("setup --login-method custom --login <jdbc>", () => {
+  test("writes a profile directly from a complete JDBC connection string", () => {
+    const { result, profiles } = runSetup([
+      "--name", "jdbc",
+      "--login-method", "custom",
+      "--login", "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?username=alice&password=secret&schema=public&virtualCluster=DEFAULT",
+    ])
+
+    expect(result.status).toBe(0)
+    expect(profiles.default_profile).toBe("jdbc")
+    expect(profiles.profiles).toEqual({
+      jdbc: {
+        username: "alice",
+        password: "secret",
+        service: "cn-hangzhou-alicloud.api.clickzetta.com",
+        protocol: "https",
+        instance: "00000000",
+        workspace: "workspace",
+        schema: "public",
+        vcluster: "DEFAULT",
       },
     })
   })

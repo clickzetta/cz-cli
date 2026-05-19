@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { createInterface } from "node:readline"
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
@@ -8,7 +8,8 @@ import { JobStatus, getCurrentUser, getToken, listUserWorkspaces, loginWithPassw
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { loadProfiles, saveProfiles, setTelemetry, getTelemetry, type ProfileEntry } from "../connection/profile-store.js"
+import { setTelemetry, getTelemetry, type ProfileEntry } from "../connection/profile-store.js"
+import { parseJdbcUrl } from "../connection/jdbc.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
 import { trackCommand, isSensitiveKey } from "../telemetry.js"
@@ -63,6 +64,20 @@ const REGISTER_URLS = [
   "https://accounts.singdata.com/register?ref=cz-cli",
 ]
 
+export const JDBC_EXAMPLE =
+  "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?username=<username>&password=<password>&schema=public&virtualCluster=DEFAULT"
+
+export const SETUP_LOGIN_METHODS = [
+  { label: "ClickZetta - https://accounts.clickzetta.com/login", value: "clickzetta" },
+  { label: "Singdata  - https://accounts.singdata.com/login", value: "singdata" },
+  { label: "Custom URL - Enter a login page URL or paste a JDBC connection string", value: "custom" },
+] as const
+
+const LOGIN_METHOD_URLS = {
+  clickzetta: "https://accounts.clickzetta.com/login",
+  singdata: "https://accounts.singdata.com/login",
+} as const
+
 const SERVICE_ENDPOINTS = [
   "cn-shanghai-alicloud.api.clickzetta.com",
   "cn-beijing-alicloud.api.clickzetta.com",
@@ -76,9 +91,11 @@ const SERVICE_ENDPOINTS = [
 ] as const
 
 const OTHER_SERVICE = "__custom__"
-const SETUP_FLOW = ["account_fields", "service", "instance", "workspace", "schema", "vcluster", "complete"] as const
+const SETUP_FLOW = ["login_method", "credentials", "instance", "workspace", "schema", "vcluster", "complete"] as const
 const PROFILES_DIR = join(homedir(), ".clickzetta")
 const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
+
+type SetupLoginMethod = (typeof SETUP_LOGIN_METHODS)[number]["value"]
 
 interface SetupAuthContext {
   token: string
@@ -159,12 +176,19 @@ function decodeCredential(credential: string): Record<string, unknown> {
 }
 
 function saveProfile(profileName: string, profile: ProfileEntry): void {
-  const profiles = loadProfiles()
+  const data = loadFullFile()
+  const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
   if (profiles[profileName]) {
     throw new Error(`Profile '${profileName}' already exists. Use --name <other> or delete it first.`)
   }
-  profiles[profileName] = profile
-  saveProfiles(profiles)
+  saveFullFile({
+    ...data,
+    default_profile: profileName,
+    profiles: {
+      ...profiles,
+      [profileName]: profile,
+    },
+  })
 }
 
 function loadFullFile(): Record<string, unknown> {
@@ -179,8 +203,11 @@ function saveFullFile(data: Record<string, unknown>): void {
   mkdirSync(PROFILES_DIR, { recursive: true })
   const content = stringifyTOML(data)
   const tmp = PROFILES_FILE + ".tmp." + Date.now()
-  writeFileSync(tmp, content, "utf-8")
+  writeFileSync(tmp, content, { encoding: "utf-8", mode: 0o600 })
   renameSync(tmp, PROFILES_FILE)
+  try {
+    chmodSync(PROFILES_FILE, 0o600)
+  } catch {}
 }
 
 function applyCredentialToProfiles(
@@ -253,8 +280,41 @@ function buildSetupCommand(
   return parts.join(" ")
 }
 
+function buildSetupCommandWithRequired(
+  args: Record<string, string | undefined>,
+  required: string[],
+): string {
+  const placeholders: Record<string, string> = {
+    login: "<LOGIN_URL_OR_JDBC>",
+    username: "<USERNAME>",
+    password: "<PASSWORD>",
+    vcluster: "<VCLUSTER>",
+    "account-name": "<ACCOUNT_NAME>",
+  }
+  const parts = ["cz-cli setup"]
+  for (const [key, value] of Object.entries(args)) {
+    if (!value) continue
+    if (required.includes(key)) continue
+    if (key === "login-method") {
+      parts.push("--login-method " + value)
+      continue
+    }
+    if (key === "password") {
+      parts.push("--password <PASSWORD>")
+      continue
+    }
+    parts.push(`--${key} ${quoteShell(value)}`)
+  }
+  for (const key of required) {
+    parts.push(`--${key} ${placeholders[key] ?? `<${key.toUpperCase()}>`}`)
+  }
+  return parts.join(" ")
+}
+
 function setupContext(argv: Record<string, unknown>) {
   return {
+    loginMethod: setupValue(argv, "login-method") || undefined,
+    login: setupValue(argv, "login") || undefined,
     username: setupValue(argv, "username") || undefined,
     password: setupValue(argv, "password") || undefined,
     accountName: setupValue(argv, "account-name") || undefined,
@@ -297,6 +357,111 @@ function setupValue(argv: Record<string, unknown>, key: string): string {
 }
 
 export { accountLoginUrlForService }
+
+function normalizeLoginMethod(value: string | undefined): SetupLoginMethod | undefined {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  return SETUP_LOGIN_METHODS.find((option) => option.value === normalized)?.value
+}
+
+function hasLegacySetupArgs(argv: Record<string, unknown>): boolean {
+  return [
+    "username",
+    "password",
+    "account-name",
+    "service",
+    "instance",
+    "workspace",
+    "schema",
+    "vcluster",
+  ].some((key) => !!setupValue(argv, key))
+}
+
+function normalizeLoginInput(input: string): string {
+  const raw = input.trim()
+  if (!raw) return ""
+  if (raw.startsWith("jdbc:clickzetta://")) return raw
+  const withProtocol = raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`
+  const parsed = new URL(withProtocol)
+  parsed.hash = ""
+  parsed.search = ""
+  parsed.pathname = parsed.pathname.replace(/\/login\/?$/i, "") || "/"
+  return parsed.toString().replace(/\/$/, "")
+}
+
+function loginUrlForMethod(method: SetupLoginMethod): string {
+  if (method === "custom") return ""
+  return normalizeLoginInput(LOGIN_METHOD_URLS[method])
+}
+
+function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
+  const parsed = parseJdbcUrl(login)
+  if (!parsed?.instance || !parsed.service || !parsed.workspace) return undefined
+  const username = setupValue(argv, "username") || parsed.username || ""
+  const password = setupValue(argv, "password") || parsed.password || ""
+  const schema = setupValue(argv, "schema") || parsed.schema || "public"
+  const vcluster = setupValue(argv, "vcluster") || parsed.vcluster || ""
+  const protocol = parsed.protocol === "http" ? "http" : "https"
+  const collected = {
+    login_method: "custom",
+    service: parsed.service,
+    instance: parsed.instance,
+    workspace: parsed.workspace,
+    schema,
+  }
+  const missing = [
+    !username ? "username" : "",
+    !password ? "password" : "",
+    !vcluster ? "vcluster" : "",
+  ].filter(Boolean)
+  return {
+    collected,
+    missing,
+    profile: {
+      username,
+      password,
+      service: parsed.service,
+      protocol,
+      instance: parsed.instance,
+      workspace: parsed.workspace,
+      schema,
+      vcluster,
+    } satisfies ProfileEntry,
+  }
+}
+
+function saveJdbcProfile(
+  profileName: string,
+  format: string,
+  argv: Record<string, unknown>,
+  telemetry: boolean,
+  parsed: NonNullable<ReturnType<typeof parseJdbcSetupProfile>>,
+): Promise<void> {
+  saveProfile(profileName, parsed.profile)
+  if (getTelemetry() === undefined) setTelemetry(telemetry)
+  return trackSetup({
+    success: true,
+    telemetry,
+    collected: {
+      username: String(parsed.profile.username ?? ""),
+      instance: String(parsed.profile.instance ?? ""),
+      workspace: String(parsed.profile.workspace ?? ""),
+      service: String(parsed.profile.service ?? ""),
+    },
+    argv,
+  }).then(() => {
+    logOperation("setup", { ok: true })
+    success({
+      message: `Profile '${profileName}' created successfully.`,
+      step: "complete",
+      profile_name: profileName,
+      instance: parsed.profile.instance,
+      workspace: parsed.profile.workspace,
+      schema: parsed.profile.schema,
+      vcluster: parsed.profile.vcluster,
+    }, { format })
+  })
+}
 
 function decodeJwtPayload(token: string): Record<string, unknown> {
   try {
@@ -343,11 +508,16 @@ async function loginWithExistingAccount(
   }
 
   try {
+    const accountLoginUrl = normalizedService.startsWith("http://") || normalizedService.startsWith("https://")
+      ? normalizeLoginInput(normalizedService)
+      : undefined
     const { data, serviceHost, serviceUrl, token } = await loginByAccountSite(
       accountName,
       username,
       password,
       normalizedService,
+      20_000,
+      accountLoginUrl,
     )
     const jwt = decodeJwtPayload(token)
     const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
@@ -779,6 +949,250 @@ async function chooseOptionTTY(question: string, options: NamedOption[], allowCu
   return chosen
 }
 
+async function runModernSetupFlowTTY(
+  profileName: string,
+  format: string,
+  argv: Record<string, unknown>,
+  collected: Record<string, string | undefined>,
+): Promise<void> {
+  const method = normalizeLoginMethod(setupValue(argv, "login-method"))
+    ?? normalizeLoginMethod(await promptSelect("Choose a login method:", SETUP_LOGIN_METHODS.map((option) => ({ ...option }))))
+  if (!method) {
+    throw new Error("Invalid login method")
+  }
+  collected.login_method = method
+  if (method === "custom") {
+    const login = normalizeLoginInput(
+      setupValue(argv, "login")
+        || await prompt(`Enter a login page URL or paste a JDBC connection string\nExample: ${JDBC_EXAMPLE}\n> `),
+    )
+    if (!login) {
+      error("SETUP_FAILED", "A login page URL or JDBC connection string is required.", { format })
+      return
+    }
+    if (login.startsWith("jdbc:clickzetta://")) {
+      const parsed = parseJdbcSetupProfile(argv, login)
+      if (!parsed) {
+        error("SETUP_FAILED", "Invalid JDBC connection string.", { format })
+        return
+      }
+      if (!String(parsed.profile.username ?? "").trim()) {
+        parsed.profile.username = await prompt("Username: ")
+      }
+      if (!String(parsed.profile.password ?? "").trim()) {
+        process.stderr.write(
+          "Note: the password is stored in plaintext at ~/.clickzetta/profiles.toml (mode 0600). " +
+            "Use --pat for token-based auth to avoid storing your password.\n",
+        )
+        parsed.profile.password = await prompt("Password: ")
+      }
+      if (!String(parsed.profile.vcluster ?? "").trim()) {
+        parsed.profile.vcluster = await prompt("Vcluster: ")
+      }
+      await saveJdbcProfile(
+        profileName,
+        format,
+        argv,
+        await resolveTelemetry(),
+        {
+          ...parsed,
+          profile: {
+            ...parsed.profile,
+            username: String(parsed.profile.username ?? "").trim(),
+            password: String(parsed.profile.password ?? "").trim(),
+            vcluster: String(parsed.profile.vcluster ?? "").trim(),
+          },
+        },
+      )
+      return
+    }
+    await runExistingAccountFlowTTY(
+      profileName,
+      format,
+      {
+        ...argv,
+        service: login,
+      },
+      collected,
+    )
+    return
+  }
+  await runExistingAccountFlowTTY(
+    profileName,
+    format,
+    {
+      ...argv,
+      service: loginUrlForMethod(method),
+    },
+    collected,
+  )
+}
+
+async function runModernSetupFlowNonTTY(
+  profileName: string,
+  format: string,
+  argv: Record<string, unknown>,
+): Promise<void> {
+  const context = setupContext(argv)
+  const method = normalizeLoginMethod(context.loginMethod)
+  if (!method) {
+    setupNeedsInput(
+      format,
+      "login_method",
+      "Choose a login method before continuing setup.",
+      ["login_method"],
+      SETUP_LOGIN_METHODS.map((option) => ({ ...option })),
+      {
+        next_steps: [
+          "cz-cli setup --login-method clickzetta",
+          "cz-cli setup --login-method singdata",
+          "cz-cli setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
+        ],
+      },
+    )
+    return
+  }
+  if (method === "custom") {
+    const login = normalizeLoginInput(context.login ?? "")
+    if (!login) {
+      setupNeedsInput(
+        format,
+        "credentials",
+        "Enter a login page URL or paste a JDBC connection string.",
+        ["login"],
+        undefined,
+        {
+          jdbc_example: JDBC_EXAMPLE,
+          collected: { login_method: "custom" },
+          next_steps: [
+            buildSetupCommandWithRequired(
+              {
+                "login-method": "custom",
+                login: JDBC_EXAMPLE,
+              },
+              [],
+            ),
+            "cz-cli setup --login-method custom --login <LOGIN_PAGE_URL>",
+          ],
+        },
+      )
+      return
+    }
+    if (login.startsWith("jdbc:clickzetta://")) {
+      const parsed = parseJdbcSetupProfile(argv, login)
+      if (!parsed) {
+        error("SETUP_FAILED", "Invalid JDBC connection string.", { format })
+        return
+      }
+      if (parsed.missing.length > 0) {
+        setupNeedsInput(
+          format,
+          "credentials",
+          "Fill in the missing JDBC fields before the profile can be saved.",
+          parsed.missing,
+          undefined,
+          {
+            jdbc_example: JDBC_EXAMPLE,
+            collected: parsed.collected,
+            next_steps: [
+              buildSetupCommandWithRequired(
+                {
+                  "login-method": "custom",
+                  login,
+                  username: String(parsed.profile.username ?? "") || undefined,
+                  password: String(parsed.profile.password ?? "") || undefined,
+                  vcluster: String(parsed.profile.vcluster ?? "") || undefined,
+                },
+                parsed.missing,
+              ),
+            ],
+          },
+        )
+        return
+      }
+      await saveJdbcProfile(profileName, format, argv, getTelemetry() ?? true, parsed)
+      return
+    }
+    const missing = [
+      !context.username ? "username" : "",
+      !context.password ? "password" : "",
+      !context.accountName ? "account_name" : "",
+    ].filter(Boolean)
+    if (missing.length > 0) {
+      setupNeedsInput(
+        format,
+        "credentials",
+        "Sign in with your custom ClickZetta or Singdata login page.",
+        missing,
+        undefined,
+        {
+          collected: { login_method: "custom" },
+          next_steps: [
+            buildSetupCommandWithRequired(
+              {
+                "login-method": "custom",
+                login,
+                username: context.username,
+                password: context.password,
+                "account-name": context.accountName,
+              },
+              missing.map((field) => field === "account_name" ? "account-name" : field),
+            ),
+          ],
+        },
+      )
+      return
+    }
+    await runExistingAccountFlowNonTTY(
+      profileName,
+      format,
+      {
+        ...argv,
+        login,
+        service: login,
+      },
+    )
+    return
+  }
+  const missing = [
+    !context.username ? "username" : "",
+    !context.password ? "password" : "",
+    !context.accountName ? "account_name" : "",
+  ].filter(Boolean)
+  if (missing.length > 0) {
+    setupNeedsInput(
+      format,
+      "credentials",
+      `Sign in to ${method === "clickzetta" ? "ClickZetta" : "Singdata"} before continuing setup.`,
+      missing,
+      undefined,
+      {
+        collected: { login_method: method },
+        next_steps: [
+          buildSetupCommandWithRequired(
+            {
+              "login-method": method,
+              username: context.username,
+              password: context.password,
+              "account-name": context.accountName,
+            },
+            missing.map((field) => field === "account_name" ? "account-name" : field),
+          ),
+        ],
+      },
+    )
+    return
+  }
+  await runExistingAccountFlowNonTTY(
+    profileName,
+    format,
+    {
+      ...argv,
+      service: loginUrlForMethod(method),
+    },
+  )
+}
+
 async function runExistingAccountFlowTTY(
   profileName: string,
   format: string,
@@ -1132,33 +1546,38 @@ async function runExistingAccountFlowNonTTY(
 export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
   cli.command(
     "setup",
-    "Configure a ClickZetta profile for either a new user or an existing account",
+    "Configure a ClickZetta or Singdata profile from a login page or JDBC connection string",
     (yargs) =>
       yargs
         .option("credential", { type: "string", describe: "Base64-encoded registration credential" })
         .option("name", { type: "string", default: "default", describe: "Profile name to create" })
+        .option("login-method", {
+          type: "string",
+          choices: SETUP_LOGIN_METHODS.map((option) => option.value),
+          describe: "Choose ClickZetta, Singdata, or a custom setup flow",
+        })
+        .option("login", { type: "string", describe: "Custom login page URL or JDBC connection string" })
         .option("account-name", { type: "string", describe: "Account name for existing ClickZetta users" })
         .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" })
         .example(
-          "$0 setup --credential <BASE64_CREDENTIAL>",
-          "New user: create a profile directly from the registration credential",
+          "$0 setup --login-method clickzetta",
+          "Start the ClickZetta login flow",
         )
         .example(
-          "$0 setup --username <USERNAME> --password <PASSWORD> --account-name <ACCOUNT_NAME> --service <SERVICE_ENDPOINT>",
-          "Existing user: start with account login, then let cz-cli list instance/workspace/schema/vcluster step by step",
+          "$0 setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
+          "Use a custom login page URL or JDBC connection string",
         )
         .epilogue(
-          "Setup flows:\n" +
-          "  New user:\n" +
-          "    1. Register and get a base64 credential\n" +
-          "    2. Run `cz-cli setup --credential <BASE64_CREDENTIAL>`\n\n" +
-          "  Already have ClickZetta account:\n" +
-          "    1. Provide username, password, and account name\n" +
-          "    2. Choose a service endpoint or account console host\n" +
-          "    3. cz-cli lists instance -> workspace -> schema -> vcluster\n" +
-          "    4. Confirm selections and save the profile\n\n" +
-          "  Non-TTY / agent mode:\n" +
-          "    Re-run `cz-cli setup` with the fields requested in the JSON response until step=complete.",
+          "Choose a login method:\n" +
+          "1. ClickZetta - https://accounts.clickzetta.com/login\n" +
+          "2. Singdata  - https://accounts.singdata.com/login\n" +
+          "3. Custom URL - Enter a login page URL or paste a JDBC connection string\n\n" +
+          "JDBC example:\n" +
+          `${JDBC_EXAMPLE}\n\n` +
+          "Compatibility:\n" +
+          "  `cz-cli setup --credential <BASE64_CREDENTIAL>` still works if you already have a registration credential.\n\n" +
+          "Non-TTY / agent mode:\n" +
+          "  Re-run `cz-cli setup` with the fields requested in the JSON response until step=complete.",
         ),
     async (argv) => {
       const format = argv.output
@@ -1218,9 +1637,16 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
       }
 
       const rawArgv = argv as unknown as Record<string, unknown>
+      const shouldUseModernFlow = !!normalizeLoginMethod(setupValue(rawArgv, "login-method"))
+        || !!setupValue(rawArgv, "login")
+        || !hasLegacySetupArgs(rawArgv)
       if (!process.stdin.isTTY) {
         try {
-          await runExistingAccountFlowNonTTY(profileName, format, rawArgv)
+          if (shouldUseModernFlow) {
+            await runModernSetupFlowNonTTY(profileName, format, rawArgv)
+          } else {
+            await runExistingAccountFlowNonTTY(profileName, format, rawArgv)
+          }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           await trackSetup({
@@ -1234,83 +1660,13 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         return
       }
 
-      const mode = await promptSelect("Choose setup mode", [
-        { label: "New user", value: "new" },
-        { label: "Already have ClickZetta account", value: "existing" },
-      ])
-      if (mode === "new") {
-        process.stderr.write(`\nRegister at one of the following URLs:\n  - ${REGISTER_URLS[0]}\n  - ${REGISTER_URLS[1]}\n\n`)
-        const credential = await prompt("Paste your base64 credential: ")
-        if (!credential) {
-          error("NO_CREDENTIAL", "No credential provided.", {
-            format,
-            extra: { register_urls: REGISTER_URLS, next_step: "cz-cli setup --credential <YOUR_CREDENTIAL>" },
-          })
-          return
-        }
-        let cred: Record<string, unknown>
-        try {
-          cred = decodeCredential(credential)
-        } catch (e) {
-          error("INVALID_CREDENTIAL", `Invalid base64 or JSON: ${e instanceof Error ? e.message : String(e)}`, { format })
-          return
-        }
-        const instanceName = cred.instanceName as string | undefined
-        const accessToken = cred.accessToken as string | undefined
-        const username = cred.username as string | undefined
-        if (!instanceName || !accessToken) {
-          error("INVALID_CREDENTIAL", "Missing required fields: instanceName, accessToken", { format })
-          return
-        }
-        const profile: ProfileEntry = {
-          instance: instanceName,
-          workspace: (cred.workspaceName as string) ?? "default",
-          schema: (cred.schema as string) ?? "public",
-          vcluster: (cred.virtualCluster as string) ?? "default",
-          pat: accessToken,
-          service: (cred.service as string) ?? "dev-api.clickzetta.com",
-          protocol: (cred.protocol as string) ?? "https",
-        }
-        try {
-          const data = loadFullFile()
-          const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
-          if (profiles[profileName]) {
-            error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use a different name or delete it first.`, { format })
-            return
-          }
-          saveFullFile(applyCredentialToProfiles(data, cred, profileName))
-        } catch (e) {
-          error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
-          return
-        }
-        const telemetryEnabled = await resolveTelemetry()
-        await trackSetup({
-          success: true,
-          telemetry: telemetryEnabled,
-          collected: { instance: instanceName, workspace: String(profile.workspace ?? ""), service: String(profile.service ?? ""), username: String(username ?? "")},
-          argv: rawArgv,
-        })
-        logOperation("setup", { ok: true })
-        success({
-          message: `Profile '${profileName}' created successfully.`,
-          profile_name: profileName,
-          instance: instanceName,
-          workspace: profile.workspace,
-          schema: profile.schema,
-        }, { format })
-        return
-      }
-
-      process.stderr.write(
-        "\nExisting account flow:\n" +
-        "  1. Enter username, password, and account name\n" +
-        "  2. Choose a service endpoint or account console host\n" +
-        "  3. Choose instance -> workspace -> schema -> vcluster\n\n",
-      )
-
       const ttyCollected: Record<string, string | undefined> = {}
       try {
-        await runExistingAccountFlowTTY(profileName, format, rawArgv, ttyCollected)
+        if (shouldUseModernFlow) {
+          await runModernSetupFlowTTY(profileName, format, rawArgv, ttyCollected)
+        } else {
+          await runExistingAccountFlowTTY(profileName, format, rawArgv, ttyCollected)
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         await trackSetup({

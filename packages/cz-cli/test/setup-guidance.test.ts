@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync } from "fs"
 import { createServer } from "http"
 import { tmpdir } from "os"
 import { join } from "path"
-import { accountLoginUrlForService, resolveOrAutoSelectOption } from "../src/commands/setup"
+import { JDBC_EXAMPLE, SETUP_LOGIN_METHODS, accountLoginUrlForService, resolveOrAutoSelectOption } from "../src/commands/setup"
 
 function run(args: string[], home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))) {
   const result = spawnSync("bun", ["./src/main.ts", ...args], {
@@ -57,6 +57,23 @@ afterAll(() => {
 })
 
 describe("setup guidance", () => {
+  test("shares the new login-method copy across TTY and staged setup", () => {
+    expect(SETUP_LOGIN_METHODS).toEqual([
+      {
+        label: "ClickZetta - https://accounts.clickzetta.com/login",
+        value: "clickzetta",
+      },
+      {
+        label: "Singdata  - https://accounts.singdata.com/login",
+        value: "singdata",
+      },
+      {
+        label: "Custom URL - Enter a login page URL or paste a JDBC connection string",
+        value: "custom",
+      },
+    ])
+  })
+
   test("builds account login urls for region and uat api services", () => {
     expect(accountLoginUrlForService("cn-shanghai-alicloud.api.clickzetta.com", "acct")).toBe(
       "https://acct.cn-shanghai-alicloud-accounts.clickzetta.com",
@@ -87,38 +104,66 @@ describe("setup guidance", () => {
     expect(result.option).toBeUndefined()
   })
 
-  test("setup --help explains both new-user and existing-account flows", () => {
+  test("setup --help explains the login-method flow and JDBC example", () => {
     const result = run(["setup", "--help"])
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain("Already have ClickZetta account")
-    expect(result.stdout).toContain("username, password, and account name")
-    expect(result.stdout).toContain("instance -> workspace -> schema -> vcluster")
-    expect(result.stdout).toContain("Non-TTY / agent mode")
+    expect(result.stdout).toContain("Choose a login method:")
+    expect(result.stdout).toContain("1. ClickZetta - https://accounts.clickzetta.com/login")
+    expect(result.stdout).toContain("2. Singdata  - https://accounts.singdata.com/login")
+    expect(result.stdout).toContain("3. Custom URL - Enter a login page URL or paste a JDBC connection string")
+    expect(result.stdout.replace(/\s+/g, "")).toContain(JDBC_EXAMPLE.replace(/\s+/g, ""))
   })
 
-  test("non-TTY setup with no args returns staged guidance with next_steps", () => {
+  test("non-TTY setup with no args returns staged login-method guidance", () => {
     const result = run(["setup"])
     expect(result.exitCode).toBe(1)
     const json = firstJson(result.stdout)
-    expect(json.step).toBe("account_fields")
+    expect(json.step).toBe("login_method")
     expect(json.status).toBe("needs_input")
-    expect(json.flow).toEqual(["account_fields", "service", "instance", "workspace", "schema", "vcluster", "complete"])
+    expect(json.flow).toEqual(["login_method", "credentials", "instance", "workspace", "schema", "vcluster", "complete"])
+    expect(json.options).toEqual(SETUP_LOGIN_METHODS)
     expect(json.next_steps).toEqual([
-      "cz-cli setup --credential <BASE64_CREDENTIAL>",
-      "cz-cli setup --username <USERNAME> --password <PASSWORD> --account-name <ACCOUNT_NAME>",
+      "cz-cli setup --login-method clickzetta",
+      "cz-cli setup --login-method singdata",
+      "cz-cli setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
     ])
   })
 
-  test("non-TTY existing-account setup returns next step command when service is missing", () => {
-    const result = run(["setup", "--username", "u", "--password", "p", "--account-name", "acct"])
+  test("non-TTY custom setup asks for a login URL or JDBC string", () => {
+    const result = run(["setup", "--login-method", "custom"])
     expect(result.exitCode).toBe(1)
     const json = firstJson(result.stdout)
-    expect(json.step).toBe("service")
+    expect(json.step).toBe("credentials")
     expect(json.status).toBe("needs_input")
-    expect(Array.isArray(json.options)).toBe(true)
-    expect(json.collected).toEqual({ username: "u", account_name: "acct" })
+    expect(json.required).toEqual(["login"])
+    expect(json.jdbc_example).toBe(JDBC_EXAMPLE)
+    expect(json.collected).toEqual({ login_method: "custom" })
     expect(json.next_steps).toEqual([
-      'cz-cli setup --username "u" --password <PASSWORD> --account-name "acct" --service <SERVICE_ENDPOINT>',
+      `cz-cli setup --login-method custom --login ${JSON.stringify(JDBC_EXAMPLE)}`,
+      "cz-cli setup --login-method custom --login <LOGIN_PAGE_URL>",
+    ])
+  })
+
+  test("non-TTY JDBC setup asks only for the missing required fields", () => {
+    const result = run([
+      "setup",
+      "--login-method", "custom",
+      "--login", "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?schema=public",
+    ])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("credentials")
+    expect(json.status).toBe("needs_input")
+    expect(json.required).toEqual(["username", "password", "vcluster"])
+    expect(json.collected).toEqual({
+      login_method: "custom",
+      service: "cn-hangzhou-alicloud.api.clickzetta.com",
+      instance: "00000000",
+      workspace: "workspace",
+      schema: "public",
+    })
+    expect(json.next_steps).toEqual([
+      'cz-cli setup --login-method custom --login "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?schema=public" --username <USERNAME> --password <PASSWORD> --vcluster <VCLUSTER>',
     ])
   })
 

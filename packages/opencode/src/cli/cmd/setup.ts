@@ -9,20 +9,21 @@ import { cmd } from "./cmd"
 
 export const SetupCommand = cmd({
   command: "setup",
-  describe: "configure ClickZetta profile from a registration credential",
+  describe: "configure a ClickZetta or Singdata profile from a login page or JDBC connection string",
   builder: (yargs) =>
     yargs
       .usage("cz-cli setup")
       .option("credential", {
         type: "string",
-        describe: "base64-encoded credential string from the registration page",
+        describe: "base64-encoded registration credential (compatibility path)",
       })
       .option("profile-name", {
         type: "string",
         describe: "profile name to write (default: 'default')",
         default: "default",
       })
-      .example("cz-cli setup --credential <base64>", "configure from registration token")
+      .example("cz-cli setup --login-method clickzetta", "start the ClickZetta login flow")
+      .example("cz-cli setup --login-method custom --login <LOGIN_URL_OR_JDBC>", "use a custom login page URL or JDBC connection string")
       .example("cz-cli setup", "interactive setup (TTY only)"),
   handler: async (args) => {
     const argv: string[] = []

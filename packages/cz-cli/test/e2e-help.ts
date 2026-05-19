@@ -200,8 +200,14 @@ const cases: HelpCase[] = [
   {
     args: ["setup", "--help"],
     expectHeader: "cz-cli setup",
-    expectOptions: ["--credential", "--account-name", "--username", "--password", "--service"],
-    expectCommands: ["Already have ClickZetta account", "Choose a service endpoint", "instance -> workspace -> schema -> vcluster"],
+    expectOptions: ["--credential", "--login-method", "--login", "--account-name", "--username", "--password"],
+    expectCommands: [
+      "Choose a login method:",
+      "ClickZetta - https://accounts.clickzetta.com/login",
+      "Singdata  - https://accounts.singdata.com/login",
+      "Custom URL - Enter a login page URL or paste a JDBC connection string",
+      "JDBC example:",
+    ],
   },
 
   // job
