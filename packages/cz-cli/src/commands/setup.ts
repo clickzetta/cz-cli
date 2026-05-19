@@ -572,6 +572,45 @@ function studioHeaders(
   }
 }
 
+async function tryFetchAndSaveClickzettaApiKey(
+  serviceUrl: string,
+  token: string,
+  instanceName: string,
+): Promise<void> {
+  try {
+    const url = `${serviceUrl}/clickzetta-portal/user/findOrCreateApiKey?instanceName=${encodeURIComponent(instanceName)}`
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "X-Clickzetta-Token": token,
+      },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) return
+    const payload = await response.json() as Record<string, unknown>
+    if ((payload.code !== 0 && payload.code !== "0") || typeof payload.data !== "string" || !payload.data) return
+    const apiKey = payload.data
+    const data = loadFullFile()
+    const llm = (data.llm ?? {}) as Record<string, unknown>
+    const existing = (llm.clickzetta ?? {}) as Record<string, unknown>
+    saveFullFile({
+      ...data,
+      default_llm: typeof data.default_llm === "string" ? data.default_llm : "clickzetta",
+      llm: {
+        ...llm,
+        clickzetta: {
+          ...existing,
+          provider: "clickzetta",
+          api_key: apiKey,
+        },
+      },
+    })
+  } catch {
+    // best-effort: never block setup
+  }
+}
+
 function cspRegion(instance: InstanceOption): string {
   return instance.cspId > 0 && instance.regionId > 0 ? `${instance.cspId}-${instance.regionId}` : ""
 }
@@ -820,6 +859,7 @@ async function runExistingAccountFlowTTY(
     vcluster,
   }
   saveProfile(profileName, profile)
+  await tryFetchAndSaveClickzettaApiKey(auth.serviceUrl, auth.token, instance.instanceName)
   const telemetryEnabled = await resolveTelemetry()
   await trackSetup({
     success: true,
@@ -1047,6 +1087,7 @@ async function runExistingAccountFlowNonTTY(
     vcluster,
   }
   saveProfile(profileName, profile)
+  await tryFetchAndSaveClickzettaApiKey(auth.serviceUrl, auth.token, instance.instanceName)
   if (getTelemetry() === undefined) setTelemetry(true)
   await trackSetup({
     success: true,

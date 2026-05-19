@@ -89,9 +89,9 @@ describe("update bootstrap", () => {
     expect(result.kind).toBe("notify")
   })
 
-  test("returns upgrade when autoupdate is true and the install method is managed", () => {
+  test("returns upgrade when autoupdate is unset and the install method is managed", () => {
     const result = resolveUpdateAction({
-      autoupdate: true,
+      autoupdate: undefined,
       channel: "latest",
       currentVersion: "0.3.31",
       latestVersion: "0.3.32",

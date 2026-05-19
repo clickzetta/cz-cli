@@ -269,7 +269,8 @@ export function shouldSkipAutoUpdateCommand(input: {
 }
 
 export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
-  if (input.autoupdate === false) return { kind: "skip", reason: "disabled" }
+  const autoupdate = input.autoupdate ?? true
+  if (autoupdate === false) return { kind: "skip", reason: "disabled" }
   if (input.channel !== "latest") return { kind: "skip", reason: "channel" }
   const latestVersion = input.latestVersion
   if (!semver.valid(input.currentVersion) || !latestVersion || !semver.valid(latestVersion)) {
@@ -281,7 +282,7 @@ export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   if (!semver.gt(latestVersion, input.currentVersion)) {
     return { kind: "skip", reason: "up-to-date" }
   }
-  if (input.autoupdate === true && input.method && SUPPORTED_AUTO_UPGRADE_METHODS.has(input.method)) {
+  if (autoupdate === true && input.method && SUPPORTED_AUTO_UPGRADE_METHODS.has(input.method)) {
     return { kind: "upgrade", reason: "managed-install" }
   }
   return { kind: "notify", reason: "update-available" }
@@ -320,7 +321,7 @@ export async function maybeAutoUpdate(input: {
   if (shouldSkipAutoUpdateCommand({ args: input.args, env })) return
 
   const config = await loadBootstrapConfig({ env })
-  const autoupdate = config.autoupdate ?? "notify"
+  const autoupdate = config.autoupdate ?? true
   if (autoupdate === false) return
 
   const now = input.now ?? Date.now()

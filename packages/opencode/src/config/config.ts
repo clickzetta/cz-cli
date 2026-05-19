@@ -127,7 +127,7 @@ export const Info = z
       .union([z.boolean(), z.literal("notify")])
       .optional()
       .describe(
-        "Automatically update to the latest version. Set to true to auto-update, false to disable, or 'notify' to show update notifications",
+        "Automatically update to the latest version. Defaults to true. Set to false to disable, or 'notify' to show update notifications without upgrading",
       ),
     disabled_providers: z.array(z.string()).optional().describe("Disable providers that are loaded automatically"),
     enabled_providers: z
