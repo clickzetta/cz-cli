@@ -13,7 +13,7 @@ import {
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error } from "../output/index.js"
+import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
@@ -134,6 +134,11 @@ function normalizeScheduleClock(value: string, label: string): string {
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
+}
+
+function reportTaskError(err: unknown, format: string | undefined): void {
+  if (isHandledCliError(err)) return
+  error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +278,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               extra: { pagination: { page: argv.page, page_size: pageSize, total, total_pages: totalPages } },
             })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -310,7 +315,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               extra: { pagination: { page: argv.page, page_size: argv["page-size"], total, total_pages: totalPages } },
             })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -351,7 +356,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const url = newFileId ? studioUrl(sc, newFileId) : undefined
             success({ id:data, studio_url: url }, { format })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -386,7 +391,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               throw createErr
             }
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -446,7 +451,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task content", { ok: true })
             success({ ...merged, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_content") })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -494,7 +499,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task save-content", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -557,7 +562,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task save-cron", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -650,7 +655,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task save-config", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -690,7 +695,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task deps", { ok: true })
             success(result, { format, aiMessage: t("task_deps") })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -743,7 +748,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task online", { ok: true })
             success({ data: resp.data, status: "online", studio_url: studioUrl(sc, fileId) }, { format })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -782,7 +787,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task offline", { ok: true })
             success({ data: resp.data, status: "offline" }, { format })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -966,7 +971,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               { format },
             )
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -985,7 +990,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow dag", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1022,7 +1027,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow create-node", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1051,7 +1056,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow remove-node", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1081,7 +1086,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow bind", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1104,7 +1109,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow unbind", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1130,7 +1135,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow node-detail", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1169,7 +1174,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow node-save", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1207,7 +1212,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow node-save-config", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1228,7 +1233,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow submit", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1255,7 +1260,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 logOperation("task flow instances", { ok: true })
                 success(resp.data, { format })
               } catch (err) {
-                error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+                reportTaskError(err, format)
               }
             },
           )
@@ -1289,7 +1294,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task delete-folder", { ok: true })
             success(resp, { format })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -1316,7 +1321,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task delete", { ok: true })
             success(resp, { format })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )
@@ -1348,7 +1353,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task save (alias)", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
-            error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportTaskError(err, format)
           }
         },
       )

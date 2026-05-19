@@ -1,7 +1,7 @@
 import type { Argv } from "yargs"
 import { studioRequest, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error } from "../output/index.js"
+import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 
@@ -79,6 +79,11 @@ async function apiTestDatasource(sc: StudioConfig, ds: { id: number; dsType?: nu
     const msg = err instanceof Error ? err.message : String(err)
     return { connected: false, message: msg }
   }
+}
+
+function reportDatasourceError(err: unknown, format: string | undefined): void {
+  if (isHandledCliError(err)) return
+  error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
 }
 
 async function apiSampleData(sc: StudioConfig, params: { id: number; nameSpace: string; dataObjectName: string; dsType?: number; partitions?: string }) {
@@ -177,7 +182,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             })
           } catch (err) {
             logOperation("datasource list", { ok: false, timeMs: Date.now() - t0 })
-            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportDatasourceError(err, format)
           }
         },
       )
@@ -206,7 +211,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(list, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource catalogs", { ok: false, timeMs: Date.now() - t0 })
-            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportDatasourceError(err, format)
           }
         },
       )
@@ -242,7 +247,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(names, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource objects", { ok: false, timeMs: Date.now() - t0 })
-            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportDatasourceError(err, format)
           }
         },
       )
@@ -266,7 +271,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(resp.data, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource describe", { ok: false, timeMs: Date.now() - t0 })
-            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportDatasourceError(err, format)
           }
         },
       )
@@ -294,7 +299,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             }
           } catch (err) {
             logOperation("datasource test", { ok: false, timeMs: Date.now() - t0 })
-            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportDatasourceError(err, format)
           }
         },
       )
@@ -330,7 +335,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(rows, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource sample", { ok: false, timeMs: Date.now() - t0 })
-            error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportDatasourceError(err, format)
           }
         },
       )

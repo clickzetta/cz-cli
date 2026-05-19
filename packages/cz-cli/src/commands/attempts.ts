@@ -1,7 +1,7 @@
 import type { Argv } from "yargs"
 import { listAttempts, getAttemptLog, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error } from "../output/index.js"
+import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { resolveRunIdOrTaskName, resolveLatestRunId } from "../resolver.js"
@@ -22,6 +22,11 @@ function convertExecution(data: Record<string, unknown>): Record<string, unknown
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
+}
+
+function reportAttemptsError(err: unknown, format: string | undefined): void {
+  if (isHandledCliError(err)) return
+  error("ATTEMPTS_ERROR", err instanceof Error ? err.message : String(err), { format })
 }
 
 async function resolveAttemptId(
@@ -77,7 +82,7 @@ async function logHandler(argv: Record<string, unknown>): Promise<void> {
     logOperation("attempts log", { ok: true })
     success(normalized, { format })
   } catch (err) {
-    error("ATTEMPTS_ERROR", err instanceof Error ? err.message : String(err), { format })
+    reportAttemptsError(err, format)
   }
 }
 
@@ -142,7 +147,7 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("attempts list", { ok: true })
             success(normalized, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total }, selected_run_id: runId, run_id: runId } })
           } catch (err) {
-            error("ATTEMPTS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportAttemptsError(err, format)
           }
         },
       )

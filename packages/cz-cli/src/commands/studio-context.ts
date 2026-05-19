@@ -1,7 +1,7 @@
 import type { StudioConfig } from "@clickzetta/sdk"
 import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv } from "@clickzetta/sdk"
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
-import { error } from "../output/index.js"
+import { handledError } from "../output/index.js"
 
 export async function getStudioContext(args: Partial<CliArgs> & { output?: string }): Promise<StudioConfig> {
   const format = args.output ?? "json"
@@ -13,7 +13,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { output?: strin
   const tenantId = user.accountId
 
   if (!config.workspace) {
-    error("NO_WORKSPACE", "Workspace is required for studio commands. Use --workspace or set it in your profile.", { format })
+    handledError("NO_WORKSPACE", "Workspace is required for studio commands. Use --workspace or set it in your profile.", { format })
   }
 
   const ws = await getWorkspaceByName(
@@ -27,13 +27,11 @@ export async function getStudioContext(args: Partial<CliArgs> & { output?: strin
   )
 
   if (!ws) {
-    error("WORKSPACE_NOT_FOUND", `Workspace '${config.workspace}' not found.`, { format })
-    return undefined as never
+    handledError("WORKSPACE_NOT_FOUND", `Workspace '${config.workspace}' not found.`, { format })
   }
 
   if (!ws.projectId) {
-    error("PROJECT_NOT_FOUND", `Workspace '${config.workspace}' has no associated project.`, { format })
-    return undefined as never
+    handledError("PROJECT_NOT_FOUND", `Workspace '${config.workspace}' has no associated project.`, { format })
   }
 
   return {

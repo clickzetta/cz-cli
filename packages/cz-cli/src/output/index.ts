@@ -4,6 +4,15 @@ export const EXIT_OK = 0
 export const EXIT_BIZ_ERROR = 1
 export const EXIT_USAGE_ERROR = 2
 
+export class HandledCliError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
 /** Set by the CLI arg parser; success/error use it for --field extraction */
 export const outputState = { field: undefined as string | undefined }
 
@@ -104,6 +113,19 @@ export function error(
   process.stdout.write(output + "\n")
   process.exitCode = opts?.exitCode ?? EXIT_BIZ_ERROR
   ;(process as unknown as Record<string, unknown>).lastError = message
+}
+
+export function handledError(
+  code: string,
+  message: string,
+  opts?: OutputOptions & { exitCode?: number },
+): never {
+  error(code, message, opts)
+  throw new HandledCliError(code, message)
+}
+
+export function isHandledCliError(err: unknown): err is HandledCliError {
+  return err instanceof HandledCliError
 }
 
 function emit(payload: unknown, format?: string, field?: string): string {

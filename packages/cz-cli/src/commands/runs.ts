@@ -7,7 +7,7 @@ import {
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error } from "../output/index.js"
+import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
@@ -109,6 +109,11 @@ async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
 }
 
+function reportRunsError(err: unknown, format: string | undefined): void {
+  if (isHandledCliError(err)) return
+  error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+}
+
 export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
   cli.command("runs", "Manage task run instances", (yargs) =>
     yargs
@@ -157,7 +162,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("runs list", { ok: true })
             success(items, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total } } })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -205,7 +210,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("runs detail", { ok: true })
             success(normalized, { format, aiMessage })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -253,7 +258,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             }
             error("RUN_WAIT_TIMEOUT", `Run ${runId} did not reach terminal state within ${maxAttempts} attempts.`, { format })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -292,7 +297,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("runs logs", { ok: true })
             success(normalized, { format })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -320,7 +325,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("runs deps", { ok: true })
             success(relation, { format, aiMessage: t("runs_deps") })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -351,7 +356,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             )
             success(normalized, { format })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -404,7 +409,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("runs refill", { ok: true })
             success(refillData, { format, aiMessage: t("runs_refill", String(refillRunId)) })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -421,7 +426,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             logOperation("runs rerun", { ok: true })
             success(resp.data, { format })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
@@ -450,7 +455,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const statsData = Array.isArray(resp.data) ? convertRunStats(resp.data) : resp.data
             success(statsData, { format })
           } catch (err) {
-            error("RUNS_ERROR", err instanceof Error ? err.message : String(err), { format })
+            reportRunsError(err, format)
           }
         },
       )
