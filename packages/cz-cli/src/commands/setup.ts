@@ -975,6 +975,73 @@ async function chooseOptionTTY(question: string, options: NamedOption[], allowCu
   return chosen
 }
 
+const REGISTER_URL_CLICKZETTA = "https://accounts.clickzetta.com/register?ref=cz-cli"
+
+async function runLoginUrlFlowTTY(
+  profileName: string,
+  format: string,
+  argv: Record<string, unknown>,
+  loginUrl: string,
+  showRegister: boolean,
+): Promise<void> {
+  const urlWithRef = appendRef(loginUrl)
+  process.stderr.write(`\nLogin at: ${urlWithRef}\n`)
+  if (showRegister) {
+    process.stderr.write(`New user? Register at: ${REGISTER_URL_CLICKZETTA}\n`)
+  }
+  openBrowser(urlWithRef)
+  const raw = await prompt("\nPaste your credential here: ")
+  if (!raw.trim()) {
+    error("SETUP_FAILED", "No credential provided.", { format })
+    return
+  }
+  let cred: Record<string, unknown>
+  try {
+    cred = decodeCredential(raw.trim())
+  } catch (e) {
+    error("INVALID_CREDENTIAL", `Invalid credential: ${e instanceof Error ? e.message : String(e)}`, { format })
+    return
+  }
+  const instanceName = cred.instanceName as string | undefined
+  const accessToken = cred.accessToken as string | undefined
+  if (!instanceName || !accessToken) {
+    error("INVALID_CREDENTIAL", "Missing required fields: instanceName, accessToken", { format })
+    return
+  }
+  try {
+    const data = loadFullFile()
+    const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+    if (profiles[profileName]) {
+      error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use --name <other> or delete it first.`, { format })
+      return
+    }
+    saveFullFile(applyCredentialToProfiles(data, cred, profileName))
+  } catch (e) {
+    error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
+    return
+  }
+  const telemetryEnabled = await resolveTelemetry()
+  await trackSetup({
+    success: true,
+    telemetry: telemetryEnabled,
+    collected: {
+      instance: instanceName,
+      workspace: String(cred.workspaceName ?? ""),
+      service: String(cred.service ?? ""),
+      username: String(cred.username ?? ""),
+    },
+    argv: argv as Record<string, unknown>,
+  })
+  logOperation("setup", { ok: true })
+  success({
+    message: `Profile '${profileName}' created successfully.`,
+    profile_name: profileName,
+    instance: instanceName,
+    workspace: String(cred.workspaceName ?? "default"),
+    schema: String(cred.schema ?? "public"),
+  }, { format })
+}
+
 async function runModernSetupFlowTTY(
   profileName: string,
   format: string,
