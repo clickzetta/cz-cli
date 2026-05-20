@@ -1,0 +1,12 @@
+diff --git a/index-8978gvk3.js b/index-8978gvk3.js
+index dc58f84df6ac2874f41d3424c450f24fd4855d4d..f62c652292bf751a2738f9339ee7f6769b282d7d 100644
+--- a/index-8978gvk3.js
++++ b/index-8978gvk3.js
+@@ -19938,6 +19938,7 @@ Captured output:
+       return true;
+     }
+     if (mouseEvent.type === "up" && this.currentSelection?.isDragging) {
++      this.updateSelection(maybeRenderable, mouseEvent.x, mouseEvent.y);
+       if (maybeRenderable) {
+         const event2 = new MouseEvent(maybeRenderable, {
+           ...mouseEvent,
