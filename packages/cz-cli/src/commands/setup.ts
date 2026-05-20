@@ -157,11 +157,14 @@ function prompt(question: string): Promise<string> {
   })
 }
 
-async function promptSelect(question: string, options: NamedOption[]): Promise<string> {
+async function promptSelect(question: string, options: NamedOption[], footer?: string): Promise<string> {
   process.stderr.write(`\n${question}\n`)
   options.forEach((option, index) => {
     process.stderr.write(`  ${index + 1}) ${option.label}\n`)
   })
+  if (footer) {
+    process.stderr.write(`\n${footer}\n`)
+  }
   for (;;) {
     const answer = await prompt("Enter choice (number): ")
     const index = Number.parseInt(answer, 10) - 1
@@ -387,6 +390,27 @@ function normalizeLoginInput(input: string): string {
   parsed.search = ""
   parsed.pathname = parsed.pathname.replace(/\/login\/?$/i, "") || "/"
   return parsed.toString().replace(/\/$/, "")
+}
+
+function appendRef(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.searchParams.set("ref", "cz-cli")
+    return parsed.toString()
+  } catch {
+    return url + (url.includes("?") ? "&" : "?") + "ref=cz-cli"
+  }
+}
+
+function openBrowser(url: string): void {
+  const { platform } = process
+  const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open"
+  try {
+    const { spawn } = require("node:child_process") as typeof import("node:child_process")
+    spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref()
+  } catch {
+    // best-effort: user has the URL printed anyway
+  }
 }
 
 function loginUrlForMethod(method: SetupLoginMethod): string {
@@ -956,7 +980,11 @@ async function runModernSetupFlowTTY(
   collected: Record<string, string | undefined>,
 ): Promise<void> {
   const method = normalizeLoginMethod(setupValue(argv, "login-method"))
-    ?? normalizeLoginMethod(await promptSelect("Choose a login method:", SETUP_LOGIN_METHODS.map((option) => ({ ...option }))))
+    ?? normalizeLoginMethod(await promptSelect(
+        "Choose a login method:",
+        SETUP_LOGIN_METHODS.map((option) => ({ ...option })),
+        `Examples:\n\nJDBC:\n${JDBC_EXAMPLE}`,
+      ))
   if (!method) {
     throw new Error("Invalid login method")
   }
