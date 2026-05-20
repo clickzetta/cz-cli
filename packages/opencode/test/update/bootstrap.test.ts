@@ -6,6 +6,7 @@ import {
   loadBootstrapConfig,
   maybeAutoUpdate,
   resolveUpdateAction,
+  restartArgs,
   shouldSkipAutoUpdateCommand,
 } from "../../src/update/bootstrap"
 
@@ -181,5 +182,34 @@ describe("update bootstrap", () => {
     })
 
     expect(fetchImpl).toHaveBeenCalledTimes(0)
+  })
+
+  describe("restartArgs", () => {
+    test("binary mode: strips virtual /$bunfs/ entry from argv", () => {
+      // In a compiled bun binary: execPath is the real binary, argv[0] is "bun"
+      const execPath = "/usr/local/bin/cz-cli"
+      const argv = ["bun", "/$bunfs/root/cz-cli", "agent", "--profile", "default"]
+      expect(restartArgs(execPath, argv)).toEqual(["agent", "--profile", "default"])
+    })
+
+    test("binary mode: works with no user args", () => {
+      const execPath = "/home/user/.local/bin/cz-cli"
+      const argv = ["bun", "/$bunfs/root/cz-cli"]
+      expect(restartArgs(execPath, argv)).toEqual([])
+    })
+
+    test("dev mode: keeps script path in args", () => {
+      // In dev mode: execPath === argv[0] (both point to bun runtime)
+      const execPath = "/opt/homebrew/bin/bun"
+      const argv = ["/opt/homebrew/bin/bun", "/workspace/src/index.ts", "agent"]
+      expect(restartArgs(execPath, argv)).toEqual(["/workspace/src/index.ts", "agent"])
+    })
+
+    test("binary mode on Windows: works the same way", () => {
+      // bun binary on Windows still uses /$bunfs/ prefix (forward slashes, virtual path)
+      const execPath = "C:\\Users\\user\\AppData\\Local\\cz-cli.exe"
+      const argv = ["bun", "/$bunfs/root/cz-cli.exe", "sql", "--query", "SELECT 1"]
+      expect(restartArgs(execPath, argv)).toEqual(["sql", "--query", "SELECT 1"])
+    })
   })
 })

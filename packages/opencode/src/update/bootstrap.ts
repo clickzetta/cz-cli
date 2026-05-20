@@ -215,11 +215,24 @@ export async function performUpgrade(method: InstallMethod, target: string, fetc
 }
 
 function restartCurrentProcess(env: NodeJS.ProcessEnv = process.env) {
-  const result = spawnSync(process.execPath, process.argv.slice(1), {
+  // In a compiled bun binary, process.argv is ["bun", "/$bunfs/root/<name>", ...userArgs]
+  // and process.execPath is the real binary path. The virtual /$bunfs/ entry at argv[1]
+  // must be skipped — passing it to the re-exec'd binary causes yargs to reject it as an
+  // unknown argument. In dev mode (bun run script.ts), argv[0] === execPath so slice(1)
+  // is correct. We detect binary mode by checking whether execPath differs from argv[0].
+  const args = restartArgs(process.execPath, process.argv)
+  const result = spawnSync(process.execPath, args, {
     stdio: "inherit",
     env: { ...env, CLICKZETTA_SKIP_UPDATE_ONCE: "1" },
   })
   process.exit(result.status ?? 1)
+}
+
+export function restartArgs(execPath: string, argv: string[]): string[] {
+  // binary mode: execPath is the real binary, argv[0] is "bun" (differs from execPath)
+  // dev mode:    execPath === argv[0] (both point to the bun runtime)
+  const isBinary = execPath !== argv[0]
+  return argv.slice(isBinary ? 2 : 1)
 }
 
 export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.ProcessEnv } = {}): Promise<BootstrapConfig> {
