@@ -418,6 +418,10 @@ function loginUrlForMethod(method: SetupLoginMethod): string {
   return normalizeLoginInput(LOGIN_METHOD_URLS[method])
 }
 
+function loginDisplayUrlForMethod(method: Exclude<SetupLoginMethod, "custom">): string {
+  return LOGIN_METHOD_URLS[method]
+}
+
 function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
   const parsed = parseJdbcUrl(login)
   if (!parsed?.instance || !parsed.service) return undefined
@@ -1059,10 +1063,9 @@ async function runModernSetupFlowTTY(
   }
   collected.login_method = method
   if (method === "custom") {
-    const login = normalizeLoginInput(
-      setupValue(argv, "login")
-        || await prompt(`Enter a login page URL or paste a JDBC connection string\nExample: ${JDBC_EXAMPLE}\n> `),
-    )
+    const rawInput = setupValue(argv, "login")
+      || await prompt(`Enter a login page URL or paste a JDBC connection string\nExample: ${JDBC_EXAMPLE}\n> `)
+    const login = normalizeLoginInput(rawInput)
     if (!login) {
       error("SETUP_FAILED", "A login page URL or JDBC connection string is required.", { format })
       return
@@ -1108,11 +1111,11 @@ async function runModernSetupFlowTTY(
       return
     }
     // custom URL (non-JDBC): show login URL with ?ref=cz-cli, paste credential
-    await runLoginUrlFlowTTY(profileName, format, argv, login, false)
+    await runLoginUrlFlowTTY(profileName, format, argv, rawInput, false)
     return
   }
   // clickzetta or singdata: show official login URL, paste credential
-  const loginUrl = loginUrlForMethod(method)
+  const loginUrl = loginDisplayUrlForMethod(method as Exclude<SetupLoginMethod, "custom">)
   await runLoginUrlFlowTTY(profileName, format, argv, loginUrl, method === "clickzetta")
 }
 
@@ -1189,6 +1192,7 @@ async function runModernSetupFlowNonTTY(
                   login,
                   username: String(parsed.profile.username ?? "") || undefined,
                   password: String(parsed.profile.password ?? "") || undefined,
+                  workspace: String(parsed.profile.workspace ?? "") || undefined,
                   vcluster: String(parsed.profile.vcluster ?? "") || undefined,
                 },
                 parsed.missing,
@@ -1201,83 +1205,39 @@ async function runModernSetupFlowNonTTY(
       await saveJdbcProfile(profileName, format, argv, getTelemetry() ?? true, parsed)
       return
     }
-    const missing = [
-      !context.username ? "username" : "",
-      !context.password ? "password" : "",
-      !context.accountName ? "account_name" : "",
-    ].filter(Boolean)
-    if (missing.length > 0) {
-      setupNeedsInput(
-        format,
-        "credentials",
-        "Sign in with your custom ClickZetta or Singdata login page.",
-        missing,
-        undefined,
-        {
-          collected: { login_method: "custom" },
-          next_steps: [
-            buildSetupCommandWithRequired(
-              {
-                "login-method": "custom",
-                login,
-                username: context.username,
-                password: context.password,
-                "account-name": context.accountName,
-              },
-              missing.map((field) => field === "account_name" ? "account-name" : field),
-            ),
-          ],
-        },
-      )
-      return
-    }
-    await runExistingAccountFlowNonTTY(
-      profileName,
-      format,
-      {
-        ...argv,
-        login,
-        service: login,
-      },
-    )
-    return
-  }
-  const missing = [
-    !context.username ? "username" : "",
-    !context.password ? "password" : "",
-    !context.accountName ? "account_name" : "",
-  ].filter(Boolean)
-  if (missing.length > 0) {
+    // custom URL (non-JDBC): return login URL with ?ref=cz-cli
+    const rawLogin = context.login ?? login
     setupNeedsInput(
       format,
       "credentials",
-      `Sign in to ${method === "clickzetta" ? "ClickZetta" : "Singdata"} before continuing setup.`,
-      missing,
+      `Log in at ${appendRef(rawLogin)} and paste your credential to continue.`,
+      ["credential"],
       undefined,
       {
-        collected: { login_method: method },
-        next_steps: [
-          buildSetupCommandWithRequired(
-            {
-              "login-method": method,
-              username: context.username,
-              password: context.password,
-              "account-name": context.accountName,
-            },
-            missing.map((field) => field === "account_name" ? "account-name" : field),
-          ),
-        ],
+        login_url: appendRef(rawLogin),
+        collected: { login_method: "custom" },
+        next_steps: ["cz-cli setup --credential <BASE64_CREDENTIAL>"],
       },
     )
     return
   }
-  await runExistingAccountFlowNonTTY(
-    profileName,
+  // clickzetta or singdata: return login URL for user to authenticate and get credential
+  const loginUrl = loginDisplayUrlForMethod(method as Exclude<SetupLoginMethod, "custom">)
+  const extra: Record<string, unknown> = {
+    login_url: appendRef(loginUrl),
+    collected: { login_method: method },
+    next_steps: ["cz-cli setup --credential <BASE64_CREDENTIAL>"],
+  }
+  if (method === "clickzetta") {
+    extra.register_url = REGISTER_URL_CLICKZETTA
+  }
+  setupNeedsInput(
     format,
-    {
-      ...argv,
-      service: loginUrlForMethod(method),
-    },
+    "credentials",
+    `Log in at ${appendRef(loginUrl)} and paste your credential to continue.`,
+    ["credential"],
+    undefined,
+    extra,
   )
 }
 

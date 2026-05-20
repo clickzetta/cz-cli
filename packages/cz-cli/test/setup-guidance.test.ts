@@ -163,7 +163,7 @@ describe("setup guidance", () => {
       schema: "public",
     })
     expect(json.next_steps).toEqual([
-      'cz-cli setup --login-method custom --login "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?schema=public" --username <USERNAME> --password <PASSWORD> --vcluster <VCLUSTER>',
+      'cz-cli setup --login-method custom --login "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?schema=public" --workspace "workspace" --username <USERNAME> --password <PASSWORD> --vcluster <VCLUSTER>',
     ])
   })
 
@@ -178,6 +178,43 @@ describe("setup guidance", () => {
     expect(json.step).toBe("credentials")
     expect(json.status).toBe("needs_input")
     expect((json.required as string[]).includes("workspace")).toBe(true)
+  })
+
+  test("non-TTY clickzetta setup returns login_url instead of credential fields", () => {
+    const result = run(["setup", "--login-method", "clickzetta"])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("credentials")
+    expect(json.status).toBe("needs_input")
+    expect(json.login_url).toBe("https://accounts.clickzetta.com/login?ref=cz-cli")
+    expect(json.register_url).toBe("https://accounts.clickzetta.com/register?ref=cz-cli")
+    expect(json.required).toEqual(["credential"])
+    expect(json.next_steps).toEqual(["cz-cli setup --credential <BASE64_CREDENTIAL>"])
+  })
+
+  test("non-TTY singdata setup returns login_url without register_url", () => {
+    const result = run(["setup", "--login-method", "singdata"])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("credentials")
+    expect(json.status).toBe("needs_input")
+    expect(json.login_url).toBe("https://accounts.singdata.com/login?ref=cz-cli")
+    expect(json.register_url).toBeUndefined()
+    expect(json.required).toEqual(["credential"])
+  })
+
+  test("non-TTY custom URL (non-JDBC) returns login_url with ref appended", () => {
+    const result = run([
+      "setup",
+      "--login-method", "custom",
+      "--login", "https://mycompany.clickzetta.com/login",
+    ])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("credentials")
+    expect(json.status).toBe("needs_input")
+    expect(json.login_url).toBe("https://mycompany.clickzetta.com/login?ref=cz-cli")
+    expect(json.required).toEqual(["credential"])
   })
 
   test("existing-account setup falls back to instance login for api services", async () => {
