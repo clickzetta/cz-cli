@@ -1126,11 +1126,11 @@ export function Prompt(props: PromptProps) {
                           </text>
                           <text fg={theme.textMuted}>{currentProviderLabel()}</text>
                           <text fg={theme.textMuted}>·</text>
-                          <text fg={theme.accent} bold>{currentProfileLabel}</text>
+                          <text fg={theme.accent}>{currentProfileLabel}</text>
                           <Show when={showVariant()}>
                             <text fg={theme.textMuted}>·</text>
                             <text>
-                              <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
+                              <text fg={theme.warning}>{local.model.variant.current()}</text>
                             </text>
                           </Show>
                         </box>
