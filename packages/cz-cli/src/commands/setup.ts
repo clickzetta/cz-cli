@@ -5,11 +5,11 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from "n
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
-import { JobStatus, getCurrentUser, getToken, listUserWorkspaces, loginWithPassword, toServiceUrl } from "@clickzetta/sdk"
+import { JobStatus, getCurrentUser, DEFAULT_CONNECTION, getToken, listUserWorkspaces, loginWithPassword, toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { setTelemetry, getTelemetry, type ProfileEntry } from "../connection/profile-store.js"
+import { setTelemetry, getTelemetry, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
@@ -30,11 +30,12 @@ function trackSetup(opts: {
   success: boolean
   error?: string
   telemetry?: boolean
+  userId?: number
   collected?: Record<string, string | undefined>
   argv?: Record<string, unknown>
 }): Promise<void> {
   const attrs: Record<string, string> = {}
-  if (opts.collected?.username) attrs["enduser.name"] = opts.collected.username
+  if (opts.userId) attrs["enduser.id"] = String(opts.userId)
   if (opts.collected?.instance) attrs["instance.name"] = opts.collected.instance
   if (opts.collected?.workspace) attrs["workspace.name"] = opts.collected.workspace
   if (opts.collected?.service) attrs["service.url"] = opts.collected.service
@@ -470,7 +471,7 @@ function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
   }
 }
 
-function saveJdbcProfile(
+async function saveJdbcProfile(
   profileName: string,
   format: string,
   argv: Record<string, unknown>,
@@ -479,9 +480,17 @@ function saveJdbcProfile(
 ): Promise<void> {
   saveProfile(profileName, parsed.profile)
   if (getTelemetry() === undefined) setTelemetry(telemetry)
+  let userId: number | undefined
+  try {
+    const serviceUrl = toServiceUrl(String(parsed.profile.service ?? ""), parsed.profile.protocol === "http" ? "http" : "https")
+    const token = await getToken({ ...DEFAULT_CONNECTION, username: String(parsed.profile.username ?? ""), password: String(parsed.profile.password ?? ""), instance: String(parsed.profile.instance ?? ""), service: serviceUrl })
+    userId = token.userId || undefined
+    if (userId) patchProfileUserId(profileName, userId)
+  } catch {}
   return trackSetup({
     success: true,
     telemetry,
+    userId,
     collected: {
       username: String(parsed.profile.username ?? ""),
       instance: String(parsed.profile.instance ?? ""),
@@ -1032,10 +1041,19 @@ async function runLoginUrlFlowTTY(
     error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
     return
   }
+  // Fetch userId from token for telemetry enduser.id
+  let userId: number | undefined
+  try {
+    const serviceUrl = toServiceUrl(String(cred.service ?? ""), "https")
+    const token = await getToken({ ...DEFAULT_CONNECTION, pat: accessToken, instance: instanceName, service: serviceUrl })
+    userId = token.userId || undefined
+    if (userId) patchProfileUserId(profileName, userId)
+  } catch {}
   const telemetryEnabled = await resolveTelemetry()
   await trackSetup({
     success: true,
     telemetry: telemetryEnabled,
+    userId,
     collected: {
       instance: instanceName,
       workspace: String(cred.workspaceName ?? ""),
@@ -1359,6 +1377,7 @@ async function runExistingAccountFlowTTY(
   await trackSetup({
     success: true,
     telemetry: telemetryEnabled,
+    userId: auth.userId || undefined,
     collected: { username, instance: instance.instanceName, workspace: workspace.workspaceName, service: auth.service },
     argv: argv as Record<string, unknown>,
   })
@@ -1588,6 +1607,7 @@ async function runExistingAccountFlowNonTTY(
   await trackSetup({
     success: true,
     telemetry: getTelemetry() ?? true,
+    userId: auth.userId || undefined,
     collected: { username, instance: instance.instanceName, workspace: workspace.workspaceName, service: auth.service },
     argv: argv as Record<string, unknown>,
   })
@@ -1682,9 +1702,17 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         }
 
         const telemetryEnabled = await resolveTelemetry()
+        let userId: number | undefined
+        try {
+          const serviceUrl = toServiceUrl(String(cred.service ?? ""), "https")
+          const token = await getToken({ ...DEFAULT_CONNECTION, pat: accessToken, instance: instanceName, service: serviceUrl })
+          userId = token.userId || undefined
+          if (userId) patchProfileUserId(profileName, userId)
+        } catch {}
         await trackSetup({
           success: true,
           telemetry: telemetryEnabled,
+          userId,
           collected: { instance: instanceName, workspace: String(profile.workspace ?? ""), service: String(profile.service ?? ""), username: String(cred.username ?? "") },
           argv: argv as unknown as Record<string, unknown>,
         })
