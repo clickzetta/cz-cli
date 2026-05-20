@@ -167,6 +167,19 @@ describe("setup guidance", () => {
     ])
   })
 
+  test("non-TTY JDBC setup without workspace asks for it", () => {
+    const result = run([
+      "setup",
+      "--login-method", "custom",
+      "--login", "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/?username=alice&password=secret&virtualCluster=DEFAULT",
+    ])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("credentials")
+    expect(json.status).toBe("needs_input")
+    expect((json.required as string[]).includes("workspace")).toBe(true)
+  })
+
   test("existing-account setup falls back to instance login for api services", async () => {
     const server = createServer(async (request, response) => {
       if (request.url === "/clickzetta-portal/user/loginSingle" && request.method === "POST") {

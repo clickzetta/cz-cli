@@ -420,22 +420,24 @@ function loginUrlForMethod(method: SetupLoginMethod): string {
 
 function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
   const parsed = parseJdbcUrl(login)
-  if (!parsed?.instance || !parsed.service || !parsed.workspace) return undefined
+  if (!parsed?.instance || !parsed.service) return undefined
   const username = setupValue(argv, "username") || parsed.username || ""
   const password = setupValue(argv, "password") || parsed.password || ""
+  const workspace = setupValue(argv, "workspace") || parsed.workspace || ""
   const schema = setupValue(argv, "schema") || parsed.schema || "public"
   const vcluster = setupValue(argv, "vcluster") || parsed.vcluster || ""
   const protocol = parsed.protocol === "http" ? "http" : "https"
-  const collected = {
+  const collected: Record<string, string> = {
     login_method: "custom",
     service: parsed.service,
     instance: parsed.instance,
-    workspace: parsed.workspace,
-    schema,
   }
+  if (workspace) collected.workspace = workspace
+  if (schema) collected.schema = schema
   const missing = [
     !username ? "username" : "",
     !password ? "password" : "",
+    !workspace ? "workspace" : "",
     !vcluster ? "vcluster" : "",
   ].filter(Boolean)
   return {
@@ -447,7 +449,7 @@ function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
       service: parsed.service,
       protocol,
       instance: parsed.instance,
-      workspace: parsed.workspace,
+      workspace,
       schema,
       vcluster,
     } satisfies ProfileEntry,
@@ -1014,6 +1016,9 @@ async function runModernSetupFlowTTY(
         )
         parsed.profile.password = await prompt("Password: ")
       }
+      if (!String(parsed.profile.workspace ?? "").trim()) {
+        parsed.profile.workspace = await prompt("Workspace: ")
+      }
       if (!String(parsed.profile.vcluster ?? "").trim()) {
         parsed.profile.vcluster = await prompt("Vcluster: ")
       }
@@ -1028,6 +1033,7 @@ async function runModernSetupFlowTTY(
             ...parsed.profile,
             username: String(parsed.profile.username ?? "").trim(),
             password: String(parsed.profile.password ?? "").trim(),
+            workspace: String(parsed.profile.workspace ?? "").trim(),
             vcluster: String(parsed.profile.vcluster ?? "").trim(),
           },
         },
