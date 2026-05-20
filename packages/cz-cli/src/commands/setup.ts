@@ -1107,26 +1107,13 @@ async function runModernSetupFlowTTY(
       )
       return
     }
-    await runExistingAccountFlowTTY(
-      profileName,
-      format,
-      {
-        ...argv,
-        service: login,
-      },
-      collected,
-    )
+    // custom URL (non-JDBC): show login URL with ?ref=cz-cli, paste credential
+    await runLoginUrlFlowTTY(profileName, format, argv, login, false)
     return
   }
-  await runExistingAccountFlowTTY(
-    profileName,
-    format,
-    {
-      ...argv,
-      service: loginUrlForMethod(method),
-    },
-    collected,
-  )
+  // clickzetta or singdata: show official login URL, paste credential
+  const loginUrl = loginUrlForMethod(method)
+  await runLoginUrlFlowTTY(profileName, format, argv, loginUrl, method === "clickzetta")
 }
 
 async function runModernSetupFlowNonTTY(
