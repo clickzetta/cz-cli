@@ -8,7 +8,9 @@
   "scripts": {
     "postinstall": "node bin/postinstall.js"
   },
-  "files": ["bin/"],
+  "files": [
+    "bin/"
+  ],
   "optionalDependencies": {
     "@clickzetta/cz-cli-darwin-arm64": "0.1.0",
     "@clickzetta/cz-cli-darwin-x64": "0.1.0",
@@ -21,5 +23,14 @@
     "type": "git",
     "url": "https://github.com/clickzetta/cz-cli.git"
   },
-  "keywords": ["clickzetta", "lakehouse", "cli", "ai-agent"]
+  "keywords": [
+    "clickzetta",
+    "lakehouse",
+    "cli",
+    "ai-agent"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }
