@@ -37,8 +37,12 @@ await maybeAutoUpdate({
 })
 
 if (process.env.CLICKZETTA_AGENT_RUNTIME !== "1") {
-  const { runCli } = await import("@clickzetta/cli")
-  await runCli(rawArgs)
+  const { createTraceparent } = await import("@clickzetta/sdk")
+  if (!process.env.CLICKZETTA_TRACEPARENT) {
+    process.env.CLICKZETTA_TRACEPARENT = createTraceparent()
+  }
+  const { runCliWithTracking } = await import("@clickzetta/cli")
+  await runCliWithTracking(rawArgs)
   process.exit(process.exitCode ?? 0)
 }
 

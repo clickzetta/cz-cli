@@ -35,7 +35,7 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
     success: false,
     error: "exit_code=1",
     response_bytes: 456,
-    resourceAttributes: { "user.id": "alice" },
+    resourceAttributes: { "username": "alice" },
   })
 
   expect(request?.url).toBe("https://otel.example/v1/logs")

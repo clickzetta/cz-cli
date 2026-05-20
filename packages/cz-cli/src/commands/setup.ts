@@ -1,5 +1,6 @@
 import type { Argv } from "yargs"
-import { createInterface } from "node:readline"
+import * as p from "@clack/prompts"
+import { spawn } from "node:child_process"
 import { readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -33,7 +34,7 @@ function trackSetup(opts: {
   argv?: Record<string, unknown>
 }): Promise<void> {
   const attrs: Record<string, string> = {}
-  if (opts.collected?.username) attrs["user.id"] = opts.collected.username
+  if (opts.collected?.username) attrs["username"] = opts.collected.username
   if (opts.collected?.instance) attrs["instance.name"] = opts.collected.instance
   if (opts.collected?.workspace) attrs["workspace.name"] = opts.collected.workspace
   if (opts.collected?.service) attrs["service.url"] = opts.collected.service
@@ -59,10 +60,7 @@ function trackSetup(opts: {
   })
 }
 
-const REGISTER_URLS = [
-  "https://accounts.clickzetta.com/register?ref=cz-cli",
-  "https://accounts.singdata.com/register?ref=cz-cli",
-]
+const REGISTER_URL_CLICKZETTA = "https://accounts.clickzetta.com/register?ref=cz-cli"
 
 export const JDBC_EXAMPLE =
   "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?username=<username>&password=<password>&schema=public&virtualCluster=DEFAULT"
@@ -136,41 +134,41 @@ type ResolvedOption<T extends NamedOption> = {
   autoSelected: boolean
 }
 
-function askYesNo(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return Promise.resolve(true)
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close()
-      resolve(answer.trim().toLowerCase() !== "n")
-    })
-  })
+function cancelledError(): never {
+  p.cancel("Setup cancelled.")
+  process.exit(0)
 }
 
-function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close()
-      resolve(answer.trim())
-    })
-  })
+async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
+  if (!process.stdin.isTTY) return true
+  const result = await p.confirm({ message: question, initialValue: defaultYes })
+  if (p.isCancel(result)) cancelledError()
+  return result
 }
 
-async function promptSelect(question: string, options: NamedOption[], footer?: string): Promise<string> {
-  process.stderr.write(`\n${question}\n`)
-  options.forEach((option, index) => {
-    process.stderr.write(`  ${index + 1}) ${option.label}\n`)
+async function prompt(question: string, opts?: { placeholder?: string; mask?: boolean }): Promise<string> {
+  if (!process.stdin.isTTY) return ""
+  if (opts?.mask) {
+    const result = await p.password({ message: question })
+    if (p.isCancel(result)) cancelledError()
+    return result
+  }
+  const result = await p.text({
+    message: question,
+    placeholder: opts?.placeholder,
   })
-  if (footer) {
-    process.stderr.write(`\n${footer}\n`)
-  }
-  for (;;) {
-    const answer = await prompt("Enter choice (number): ")
-    const index = Number.parseInt(answer, 10) - 1
-    if (index >= 0 && index < options.length) return options[index]!.value
-    process.stderr.write("Invalid choice. Try again.\n")
-  }
+  if (p.isCancel(result)) cancelledError()
+  return result
+}
+
+async function promptSelect(question: string, options: NamedOption[], _footer?: string): Promise<string> {
+  if (!process.stdin.isTTY) return options[0]!.value
+  const result = await p.select({
+    message: question,
+    options: options.map((o) => ({ label: o.label, value: o.value })),
+  })
+  if (p.isCancel(result)) cancelledError()
+  return result as string
 }
 
 function decodeCredential(credential: string): Record<string, unknown> {
@@ -227,7 +225,7 @@ function applyCredentialToProfiles(
       ...profiles,
       [profileName]: {
         ...currentProfile,
-        username: String(cred.username ?? ""),
+        ...(cred.username ? { username: String(cred.username) } : {}),
         instance: String(cred.instanceName),
         workspace: String(cred.workspaceName ?? "default"),
         schema: String(cred.schema ?? "public"),
@@ -406,7 +404,6 @@ function openBrowser(url: string): void {
   const { platform } = process
   const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open"
   try {
-    const { spawn } = require("node:child_process") as typeof import("node:child_process")
     spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref()
   } catch {
     // best-effort: user has the URL printed anyway
@@ -420,6 +417,18 @@ function loginUrlForMethod(method: SetupLoginMethod): string {
 
 function loginDisplayUrlForMethod(method: Exclude<SetupLoginMethod, "custom">): string {
   return LOGIN_METHOD_URLS[method]
+}
+
+function toLoginUrl(baseUrl: string): string {
+  try {
+    const parsed = new URL(baseUrl)
+    if (!parsed.pathname.replace(/\/$/, "").toLowerCase().endsWith("/login")) {
+      parsed.pathname = (parsed.pathname.replace(/\/$/, "") || "") + "/login"
+    }
+    return parsed.toString()
+  } catch {
+    return baseUrl.replace(/\/?$/, "/login")
+  }
 }
 
 function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
@@ -973,28 +982,26 @@ function announceAutoSelected(field: string, value: string): void {
 }
 
 async function chooseOptionTTY(question: string, options: NamedOption[], allowCustom = false): Promise<string> {
-  const choices = allowCustom ? [...options, { label: "Other", value: OTHER_SERVICE }] : options
+  const choices = allowCustom
+    ? [...options, { label: "Other (enter manually)", value: OTHER_SERVICE }]
+    : options
   const chosen = await promptSelect(question, choices)
-  if (chosen === OTHER_SERVICE) return await prompt("Enter custom value: ")
+  if (chosen === OTHER_SERVICE) return await prompt("Enter custom value:")
   return chosen
 }
 
-const REGISTER_URL_CLICKZETTA = "https://accounts.clickzetta.com/register?ref=cz-cli"
 
 async function runLoginUrlFlowTTY(
   profileName: string,
   format: string,
   argv: Record<string, unknown>,
   loginUrl: string,
-  showRegister: boolean,
+  urlLabel = "Login at:",
 ): Promise<void> {
   const urlWithRef = appendRef(loginUrl)
-  process.stderr.write(`\nLogin at: ${urlWithRef}\n`)
-  if (showRegister) {
-    process.stderr.write(`New user? Register at: ${REGISTER_URL_CLICKZETTA}\n`)
-  }
+  p.note(urlWithRef, urlLabel)
   openBrowser(urlWithRef)
-  const raw = await prompt("\nPaste your credential here: ")
+  const raw = await prompt("Paste your credential here:", { placeholder: "eyJ..." })
   if (!raw.trim()) {
     error("SETUP_FAILED", "No credential provided.", { format })
     return
@@ -1052,6 +1059,16 @@ async function runModernSetupFlowTTY(
   argv: Record<string, unknown>,
   collected: Record<string, string | undefined>,
 ): Promise<void> {
+  p.intro("cz-cli setup")
+  const isNewUser = !normalizeLoginMethod(setupValue(argv, "login-method"))
+    && !setupValue(argv, "login")
+    && await askYesNo("Are you a new user? (y/N) ", false)
+
+  if (isNewUser) {
+    await runLoginUrlFlowTTY(profileName, format, argv, REGISTER_URL_CLICKZETTA, "Register at:")
+    return
+  }
+
   const method = normalizeLoginMethod(setupValue(argv, "login-method"))
     ?? normalizeLoginMethod(await promptSelect(
         "Choose a login method:",
@@ -1064,7 +1081,9 @@ async function runModernSetupFlowTTY(
   collected.login_method = method
   if (method === "custom") {
     const rawInput = setupValue(argv, "login")
-      || await prompt(`Enter a login page URL or paste a JDBC connection string\nExample: ${JDBC_EXAMPLE}\n> `)
+      || await prompt("Enter a login page URL or JDBC connection string:", {
+          placeholder: JDBC_EXAMPLE,
+        })
     const login = normalizeLoginInput(rawInput)
     if (!login) {
       error("SETUP_FAILED", "A login page URL or JDBC connection string is required.", { format })
@@ -1077,20 +1096,16 @@ async function runModernSetupFlowTTY(
         return
       }
       if (!String(parsed.profile.username ?? "").trim()) {
-        parsed.profile.username = await prompt("Username: ")
+        parsed.profile.username = await prompt("Username:")
       }
       if (!String(parsed.profile.password ?? "").trim()) {
-        process.stderr.write(
-          "Note: the password is stored in plaintext at ~/.clickzetta/profiles.toml (mode 0600). " +
-            "Use --pat for token-based auth to avoid storing your password.\n",
-        )
-        parsed.profile.password = await prompt("Password: ")
+        parsed.profile.password = await prompt("Password:", { mask: true })
       }
       if (!String(parsed.profile.workspace ?? "").trim()) {
-        parsed.profile.workspace = await prompt("Workspace: ")
+        parsed.profile.workspace = await prompt("Workspace:")
       }
       if (!String(parsed.profile.vcluster ?? "").trim()) {
-        parsed.profile.vcluster = await prompt("Vcluster: ")
+        parsed.profile.vcluster = await prompt("Virtual cluster:", { placeholder: "DEFAULT" })
       }
       await saveJdbcProfile(
         profileName,
@@ -1110,13 +1125,13 @@ async function runModernSetupFlowTTY(
       )
       return
     }
-    // custom URL (non-JDBC): show login URL with ?ref=cz-cli, paste credential
-    await runLoginUrlFlowTTY(profileName, format, argv, rawInput, false)
+    // custom URL (non-JDBC): normalize to base, append /login, open browser
+    await runLoginUrlFlowTTY(profileName, format, argv, toLoginUrl(login))
     return
   }
   // clickzetta or singdata: show official login URL, paste credential
   const loginUrl = loginDisplayUrlForMethod(method as Exclude<SetupLoginMethod, "custom">)
-  await runLoginUrlFlowTTY(profileName, format, argv, loginUrl, method === "clickzetta")
+  await runLoginUrlFlowTTY(profileName, format, argv, loginUrl)
 }
 
 async function runModernSetupFlowNonTTY(
@@ -1205,16 +1220,16 @@ async function runModernSetupFlowNonTTY(
       await saveJdbcProfile(profileName, format, argv, getTelemetry() ?? true, parsed)
       return
     }
-    // custom URL (non-JDBC): return login URL with ?ref=cz-cli
-    const rawLogin = context.login ?? login
+    // custom URL (non-JDBC): return login URL with /login?ref=cz-cli
+    const loginUrl = toLoginUrl(login)
     setupNeedsInput(
       format,
       "credentials",
-      `Log in at ${appendRef(rawLogin)} and paste your credential to continue.`,
+      `Log in at ${appendRef(loginUrl)} and paste your credential to continue.`,
       ["credential"],
       undefined,
       {
-        login_url: appendRef(rawLogin),
+        login_url: appendRef(loginUrl),
         collected: { login_method: "custom" },
         next_steps: ["cz-cli setup --credential <BASE64_CREDENTIAL>"],
       },
@@ -1247,17 +1262,14 @@ async function runExistingAccountFlowTTY(
   argv: Record<string, unknown>,
   collected: Record<string, string | undefined>,
 ): Promise<void> {
-  const username = setupValue(argv, "username") || await prompt("Username: ")
+  p.intro("cz-cli setup")
+  const username = setupValue(argv, "username") || await prompt("Username:")
   collected.username = username
   let password = setupValue(argv, "password")
   if (!password) {
-    process.stderr.write(
-      "Note: the password is stored in plaintext at ~/.clickzetta/profiles.toml (mode 0600). " +
-        "Use --pat for token-based auth to avoid storing your password.\n",
-    )
-    password = await prompt("Password: ")
+    password = await prompt("Password:", { mask: true })
   }
-  const accountName = setupValue(argv, "account-name") || await prompt("Account name: ")
+  const accountName = setupValue(argv, "account-name") || await prompt("Account name:")
   const service = setupValue(argv, "service") || await chooseOptionTTY(
     "Choose service endpoint or account console host",
     SERVICE_ENDPOINTS.map((value) => ({ label: value, value })),
@@ -1376,7 +1388,7 @@ async function runExistingAccountFlowNonTTY(
       ["username", "password", "account_name"],
       undefined,
       {
-        register_urls: REGISTER_URLS,
+        register_url: REGISTER_URL_CLICKZETTA,
         next_steps: [
           "cz-cli setup --credential <BASE64_CREDENTIAL>",
           buildSetupCommand(
@@ -1708,12 +1720,31 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         return
       }
 
+      let resolvedProfileName = profileName
+      {
+        const data = loadFullFile()
+        const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+        if (profiles[resolvedProfileName]) {
+          const existingNames = Object.keys(profiles).join(", ")
+          p.note(
+            `Tip: use --name <new_name> to skip this step next time (existing: ${existingNames}).`,
+            `Profile '${resolvedProfileName}' already exists`,
+          )
+          const newName = await prompt("Enter a new profile name:", { placeholder: "my-profile" })
+          if (!newName.trim()) {
+            error("SETUP_FAILED", `Profile '${resolvedProfileName}' already exists. Use --name <other> to create a new profile.`, { format })
+            return
+          }
+          resolvedProfileName = newName.trim()
+        }
+      }
+
       const ttyCollected: Record<string, string | undefined> = {}
       try {
         if (shouldUseModernFlow) {
-          await runModernSetupFlowTTY(profileName, format, rawArgv, ttyCollected)
+          await runModernSetupFlowTTY(resolvedProfileName, format, rawArgv, ttyCollected)
         } else {
-          await runExistingAccountFlowTTY(profileName, format, rawArgv, ttyCollected)
+          await runExistingAccountFlowTTY(resolvedProfileName, format, rawArgv, ttyCollected)
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)

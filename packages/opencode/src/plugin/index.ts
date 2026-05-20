@@ -62,7 +62,7 @@ function isTelemetryEnabled(): boolean {
         const instance = get("instance")
         const workspace = get("workspace")
         const service = get("service")
-        if (username) attrs.push(`user.name=${username}`)
+        if (username) attrs.push(`username=${username}`)
         if (instance) attrs.push(`instance.name=${instance}`)
         if (workspace) attrs.push(`workspace.name=${workspace}`)
         if (service) attrs.push(`service.url=${service}`)

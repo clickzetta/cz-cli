@@ -2,12 +2,33 @@ import { metrics } from "@opentelemetry/api"
 
 const meter = metrics.getMeter("opencode")
 
-export const sessionCounter = meter.createCounter("session.count", { description: "Number of sessions created" })
-export const messageCounter = meter.createCounter("message.count", { description: "Number of messages sent" })
-export const tokenUsage = meter.createCounter("token.usage", { description: "Token usage by type" })
-export const toolCallCounter = meter.createCounter("tool.call.count", { description: "Number of tool calls" })
-export const toolCallDuration = meter.createHistogram("tool.call.duration_ms", {
-  description: "Tool call duration in ms",
+// GenAI semantic conventions: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/
+export const tokenUsage = meter.createHistogram("gen_ai.client.token.usage", {
+  description: "Measures number of input and output tokens used",
+  unit: "{token}",
 })
-export const llmCallDuration = meter.createHistogram("llm.call.duration_ms", { description: "LLM call duration in ms" })
-export const errorCounter = meter.createCounter("error.count", { description: "Number of errors" })
+
+export const operationDuration = meter.createHistogram("gen_ai.client.operation.duration", {
+  description: "GenAI operation duration",
+  unit: "s",
+})
+
+export const sessionCounter = meter.createCounter("opencode.session.count", {
+  description: "Number of sessions created",
+  unit: "{session}",
+})
+
+export const toolCallCounter = meter.createCounter("opencode.tool.call.count", {
+  description: "Number of tool calls",
+  unit: "{call}",
+})
+
+export const toolCallDuration = meter.createHistogram("opencode.tool.call.duration", {
+  description: "Tool call duration",
+  unit: "s",
+})
+
+export const errorCounter = meter.createCounter("opencode.error.count", {
+  description: "Number of errors by source",
+  unit: "{error}",
+})

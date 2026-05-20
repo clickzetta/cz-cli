@@ -31,7 +31,7 @@ export const OtelPlugin: Plugin = Object.assign(
     const headers = parseHeaders(process.env.OPENCODE_OTLP_HEADERS ?? OTEL_DEFAULTS.headers)
 
     const resourceAttrs: Record<string, string> = {
-      "service.name": "opencode",
+      "service.name": "cz-agent",
       "service.version": InstallationVersion,
       "opencode.client": Flag.CLICKZETTA_CLIENT ?? "unknown",
     }

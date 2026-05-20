@@ -1,6 +1,7 @@
-import { trace, type Span } from "@opentelemetry/api"
+import { trace, SpanStatusCode, type Span } from "@opentelemetry/api"
 import { SeverityNumber, type Logger } from "@opentelemetry/api-logs"
 import { setCurrentSessionSpanContext, getSessionOtelContext } from "./context"
+import * as m from "./metrics"
 
 const tracer = trace.getTracer("opencode")
 
@@ -16,6 +17,9 @@ function tracingEnabled(category: string): boolean {
 
 let _logger: Logger | undefined
 let promptSpan: Span | undefined
+const stepSpans = new Map<string, Span>()
+const toolSpans = new Map<string, Span>()
+const sessionStartMs = new Map<string, number>()
 
 export function initHandlers(logger: Logger) {
   _logger = logger
@@ -61,25 +65,35 @@ export function handleEvent(event: { type: string; properties: Record<string, an
     const p = event.properties
     switch (event.type) {
       case "session.created":
+        m.sessionCounter.add(1)
+        if (p.sessionID) sessionStartMs.set(p.sessionID, Date.now())
         emitLog({
           severityNumber: SeverityNumber.INFO,
           severityText: "INFO",
-          body: "Session created",
+          body: "session.created",
           eventName: "opencode.session.created",
           attributes: sessionAttributes(p.sessionID),
         })
         break
-      case "session.deleted":
+
+      case "session.deleted": {
         endPromptSpan()
         setCurrentSessionSpanContext(undefined)
+        const startMs = p.sessionID ? sessionStartMs.get(p.sessionID) : undefined
+        const durationMs = startMs ? Date.now() - startMs : undefined
+        if (p.sessionID) sessionStartMs.delete(p.sessionID)
         emitLog({
           severityNumber: SeverityNumber.INFO,
           severityText: "INFO",
-          body: "Session deleted",
+          body: "session.deleted",
           eventName: "opencode.session.deleted",
-          attributes: sessionAttributes(p.sessionID),
+          attributes: sessionAttributes(p.sessionID, {
+            ...(durationMs != null ? { "opencode.session.duration_ms": durationMs } : {}),
+          }),
         })
         break
+      }
+
       case "session.status": {
         const statusType = p.status?.type
         if (statusType === "busy") {
@@ -92,7 +106,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
           emitLog({
             severityNumber: SeverityNumber.INFO,
             severityText: "INFO",
-            body: "User prompt started",
+            body: "session.prompt.started",
             eventName: "opencode.session.prompt.started",
             attributes: sessionAttributes(p.sessionID, {
               "gen_ai.conversation.id": p.sessionID ?? "",
@@ -104,21 +118,127 @@ export function handleEvent(event: { type: string; properties: Record<string, an
         if (statusType === "idle") endPromptSpan()
         break
       }
+
       case "session.idle":
         endPromptSpan()
         emitLog({
           severityNumber: SeverityNumber.INFO,
           severityText: "INFO",
-          body: "Session idle",
+          body: "session.idle",
           eventName: "opencode.session.idle",
           attributes: sessionAttributes(p.sessionID),
         })
         break
+
+      // LLM step started: open a "chat {model}" span per GenAI spec
+      case "v2.step.started": {
+        if (!tracingEnabled("llm")) break
+        const spanName = `chat ${p.model ?? "unknown"}`
+        const span = tracer.startSpan(spanName, {
+          attributes: {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": p.providerID ?? "",
+            "gen_ai.request.model": p.model ?? "",
+            "opencode.session.id": p.sessionID ?? "",
+          },
+        }, getSessionOtelContext())
+        stepSpans.set(p.stepId, span)
+        break
       }
+
+      // LLM step finished: close span, emit log, record metrics
+      case "v2.step.ended": {
+        const span = stepSpans.get(p.stepId)
+        if (span) {
+          span.setAttributes({
+            "gen_ai.response.model": p.model ?? "",
+            "gen_ai.response.finish_reasons": p.finishReason ?? "unknown",
+            "gen_ai.usage.input_tokens": p.tokens?.input ?? 0,
+            "gen_ai.usage.output_tokens": p.tokens?.output ?? 0,
+            "gen_ai.usage.cache_read.input_tokens": p.tokens?.cache?.read ?? 0,
+            "gen_ai.usage.cache_creation.input_tokens": p.tokens?.cache?.write ?? 0,
+            "gen_ai.usage.reasoning.output_tokens": p.tokens?.reasoning ?? 0,
+          })
+          span.end()
+          stepSpans.delete(p.stepId)
+        }
+        const tokens = p.tokens ?? {}
+        if (tokens.input) m.tokenUsage.record(tokens.input, { "gen_ai.token.type": "input", "gen_ai.provider.name": p.providerID ?? "", "gen_ai.request.model": p.model ?? "" })
+        if (tokens.output) m.tokenUsage.record(tokens.output, { "gen_ai.token.type": "output", "gen_ai.provider.name": p.providerID ?? "", "gen_ai.request.model": p.model ?? "" })
+        if (p.durationMs) m.operationDuration.record(p.durationMs / 1000, { "gen_ai.operation.name": "chat", "gen_ai.provider.name": p.providerID ?? "", "gen_ai.request.model": p.model ?? "" })
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "llm.step.finished",
+          eventName: "opencode.llm.step.finished",
+          attributes: sessionAttributes(p.sessionID, {
+            "gen_ai.provider.name": p.providerID ?? "",
+            "gen_ai.request.model": p.model ?? "",
+            "gen_ai.response.finish_reasons": p.finishReason ?? "unknown",
+            "gen_ai.usage.input_tokens": tokens.input ?? 0,
+            "gen_ai.usage.output_tokens": tokens.output ?? 0,
+            "gen_ai.usage.cache_read.input_tokens": tokens.cache?.read ?? 0,
+            "gen_ai.usage.cache_creation.input_tokens": tokens.cache?.write ?? 0,
+            "gen_ai.usage.reasoning.output_tokens": tokens.reasoning ?? 0,
+            "opencode.llm.cost": p.cost ?? 0,
+            "opencode.llm.duration_ms": p.durationMs ?? 0,
+          }),
+        })
+        break
+      }
+
+      // Tool call started: open "execute_tool {name}" span per GenAI spec
+      case "v2.tool.called": {
+        m.toolCallCounter.add(1, { "gen_ai.tool.name": p.name ?? "unknown" })
+        if (!tracingEnabled("tool")) break
+        const span = tracer.startSpan(`execute_tool ${p.name ?? "unknown"}`, {
+          attributes: {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": p.name ?? "",
+            "gen_ai.tool.call.id": p.id ?? "",
+            "opencode.session.id": p.sessionID ?? "",
+          },
+        }, getSessionOtelContext())
+        toolSpans.set(p.id, span)
+        break
+      }
+
+      // Tool call finished (success or error)
+      case "v2.tool.ended": {
+        const span = toolSpans.get(p.id)
+        if (span) {
+          if (!p.success) {
+            span.setStatus({ code: SpanStatusCode.ERROR, message: p.error ?? "unknown" })
+            m.errorCounter.add(1, { source: "tool", "gen_ai.tool.name": p.name ?? "unknown" })
+          }
+          span.end()
+          toolSpans.delete(p.id)
+        }
+        if (p.durationMs) m.toolCallDuration.record(p.durationMs / 1000, { "gen_ai.tool.name": p.name ?? "unknown" })
+        emitLog({
+          severityNumber: p.success ? SeverityNumber.INFO : SeverityNumber.ERROR,
+          severityText: p.success ? "INFO" : "ERROR",
+          body: p.success ? "tool.call.completed" : "tool.call.failed",
+          eventName: "opencode.tool.finished",
+          attributes: sessionAttributes(p.sessionID, {
+            "gen_ai.tool.name": p.name ?? "",
+            "gen_ai.tool.call.id": p.id ?? "",
+            "opencode.tool.duration_ms": p.durationMs ?? 0,
+            ...(p.error ? { "error.message": p.error } : {}),
+          }),
+        })
+        break
+      }
+    }
   } catch {}
 }
 
 export function shutdown() {
   endPromptSpan()
+  for (const span of stepSpans.values()) span.end()
+  for (const span of toolSpans.values()) span.end()
+  stepSpans.clear()
+  toolSpans.clear()
+  sessionStartMs.clear()
   setCurrentSessionSpanContext(undefined)
 }

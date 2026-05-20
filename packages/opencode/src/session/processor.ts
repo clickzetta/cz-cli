@@ -60,6 +60,8 @@ type ToolCall = {
   partID: MessageV2.ToolPart["id"]
   messageID: MessageV2.ToolPart["messageID"]
   sessionID: MessageV2.ToolPart["sessionID"]
+  toolName: string
+  startMs: number
   done: Deferred.Deferred<void>
 }
 
@@ -71,6 +73,8 @@ interface ProcessorContext extends Input {
   needsCompaction: boolean
   currentText: MessageV2.TextPart | undefined
   reasoningMap: Record<string, MessageV2.ReasoningPart>
+  stepStartMs: number
+  currentStepId: string | undefined
 }
 
 type StreamEvent = Event
@@ -121,6 +125,8 @@ export const layer: Layer.Layer<
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
+        stepStartMs: Date.now(),
+        currentStepId: undefined,
       }
       let aborted = false
       const slog = log.clone().tag("sessionID", input.sessionID).tag("messageID", input.assistantMessage.id)
@@ -192,6 +198,15 @@ export const layer: Layer.Layer<
           },
         })
         yield* settleToolCall(toolCallID)
+        yield* bus.publish(Session.Event.ToolEnded, {
+          sessionID: match.call.sessionID,
+          messageID: match.call.messageID,
+          id: toolCallID,
+          name: match.call.toolName,
+          success: true,
+          durationMs: Date.now() - match.call.startMs,
+          output: output.output || undefined,
+        }).pipe(Effect.ignore)
       })
 
       const failToolCall = Effect.fn("SessionProcessor.failToolCall")(function* (toolCallID: string, error: unknown) {
@@ -210,6 +225,15 @@ export const layer: Layer.Layer<
           ctx.blocked = ctx.shouldBreak
         }
         yield* settleToolCall(toolCallID)
+        yield* bus.publish(Session.Event.ToolEnded, {
+          sessionID: match.call.sessionID,
+          messageID: match.call.messageID,
+          id: toolCallID,
+          name: match.call.toolName,
+          success: false,
+          durationMs: Date.now() - match.call.startMs,
+          error: errorMessage(error),
+        }).pipe(Effect.ignore)
         return true
       })
 
@@ -275,6 +299,8 @@ export const layer: Layer.Layer<
               partID: part.id,
               messageID: part.messageID,
               sessionID: part.sessionID,
+              toolName: value.toolName,
+              startMs: Date.now(),
             }
             return
 
@@ -301,6 +327,13 @@ export const layer: Layer.Layer<
                 ? { ...value.providerMetadata, providerExecuted: true }
                 : value.providerMetadata,
             }))
+            yield* bus.publish(Session.Event.ToolCalled, {
+              sessionID: ctx.sessionID,
+              messageID: ctx.assistantMessage.id,
+              id: value.toolCallId,
+              name: value.toolName,
+              input: value.input,
+            }).pipe(Effect.ignore)
 
             const parts = MessageV2.parts(ctx.assistantMessage.id)
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
@@ -345,6 +378,8 @@ export const layer: Layer.Layer<
 
           case "start-step":
             if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
+            ctx.stepStartMs = Date.now()
+            ctx.currentStepId = PartID.ascending()
             yield* session.updatePart({
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
@@ -352,6 +387,13 @@ export const layer: Layer.Layer<
               snapshot: ctx.snapshot,
               type: "step-start",
             })
+            yield* bus.publish(Session.Event.LlmStepStarted, {
+              sessionID: ctx.sessionID,
+              messageID: ctx.assistantMessage.id,
+              stepId: ctx.currentStepId,
+              model: ctx.model.id,
+              providerID: ctx.model.providerID,
+            }).pipe(Effect.ignore)
             return
 
           case "finish-step": {
@@ -374,6 +416,19 @@ export const layer: Layer.Layer<
               cost: usage.cost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
+            yield* bus.publish(Session.Event.LlmStepEnded, {
+              sessionID: ctx.sessionID,
+              messageID: ctx.assistantMessage.id,
+              stepId: ctx.currentStepId ?? PartID.ascending(),
+              model: ctx.model.id,
+              providerID: ctx.model.providerID,
+              finishReason: value.finishReason ?? "unknown",
+              tokens: usage.tokens,
+              cost: usage.cost,
+              durationMs: Date.now() - ctx.stepStartMs,
+              responseText: ctx.currentText?.text || undefined,
+            }).pipe(Effect.ignore)
+            ctx.currentStepId = undefined
             if (ctx.snapshot) {
               const patch = yield* snapshot.patch(ctx.snapshot)
               if (patch.files.length) {

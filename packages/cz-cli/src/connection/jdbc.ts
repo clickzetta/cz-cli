@@ -1,7 +1,7 @@
 import type { ConnectionConfig } from "@clickzetta/sdk"
 
 export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefined {
-  let url = jdbc
+  let url = jdbc.trim()
   if (url.startsWith("jdbc:")) url = url.slice(5)
   let parsed: URL
   try {
@@ -11,17 +11,17 @@ export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefine
   }
 
   const hostParts = parsed.hostname.split(".")
-  if (hostParts.length < 4) return undefined
+  // Need at least instance + one service segment (e.g. "instance.host.com")
+  if (hostParts.length < 2 || !hostParts[0]) return undefined
 
   const instance = hostParts[0]
   const service = hostParts.slice(1).join(".")
-  const workspace = parsed.pathname.replace(/^\//, "") || undefined
+  if (!service) return undefined
+
+  const workspace = parsed.pathname.replace(/^\//, "").split("/")[0] || undefined
   const params = parsed.searchParams
 
-  const result: Partial<ConnectionConfig> = {
-    instance,
-    service,
-  }
+  const result: Partial<ConnectionConfig> = { instance, service }
   if (workspace) result.workspace = workspace
   if (params.get("username")) result.username = params.get("username")!
   if (params.get("password")) result.password = params.get("password")!

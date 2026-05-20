@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { createTraceparent } from "@clickzetta/sdk"
 import { createCli } from "./cli.js"
 import { registerCommands } from "./register-commands.js"
+import { trackCommand, parseTrackingArgs } from "./telemetry.js"
 
 interface CliRuntime {
   stdout: Pick<typeof process.stdout, "write" | "isTTY">
@@ -332,4 +333,46 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   }
 
   await parseRegisteredCommands(normalized.args)
+}
+
+/**
+ * Binary entry point wrapper: runs the CLI and emits a command telemetry event on completion.
+ *
+ * Use this instead of runCli() when the caller is the compiled binary entry point
+ * (opencode/src/index.ts). Do NOT use inside execute.ts or other programmatic callers —
+ * those paths have their own trackCommand calls and would double-track.
+ *
+ * Expects rawArgs = hideBin(process.argv) (i.e. process.argv.slice(2)).
+ *
+ * Note: agent/run commands call delegateToAgentRuntime() → process.exit() inside runCli(),
+ * so they never reach the track() call here. That is intentional — agent commands are
+ * tracked separately by the opencode session telemetry pipeline.
+ */
+export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
+  const startMs = Date.now()
+  const { positional, args } = parseTrackingArgs(rawArgs)
+
+  const track = (success: boolean, error?: string) =>
+    trackCommand({
+      command: positional[0] ?? "unknown",
+      subcommand: positional[1],
+      args: Object.keys(args).length > 0 ? args : undefined,
+      duration_ms: Date.now() - startMs,
+      success,
+      error,
+      response_bytes: (process as unknown as Record<string, unknown>).responseBytes as number | undefined,
+    })
+
+  try {
+    await runCli(rawArgs)
+    const lastError = (process as unknown as Record<string, unknown>).lastError as string | undefined
+    if (positional[0] !== "setup") {
+      await track(!process.exitCode, process.exitCode ? lastError ?? `exit_code=${process.exitCode}` : undefined)
+    }
+  } catch (error) {
+    if (positional[0] !== "setup") {
+      await track(false, error instanceof Error ? error.message : `exit_code=${process.exitCode ?? 1}`)
+    }
+    throw error
+  }
 }

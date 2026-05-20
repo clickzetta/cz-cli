@@ -209,6 +209,7 @@
         "cz-cli": "./src/main.ts",
       },
       "dependencies": {
+        "@clack/prompts": "1.0.0-alpha.1",
         "@clickzetta/sdk": "workspace:*",
         "smol-toml": "1.6.1",
         "yargs": "18.0.0",

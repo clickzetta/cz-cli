@@ -249,6 +249,59 @@ export const Event = {
       error: MessageV2.Assistant.shape.error,
     }),
   ),
+  LlmStepStarted: BusEvent.define(
+    "v2.step.started",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      stepId: z.string(),
+      model: z.string(),
+      providerID: z.string(),
+    }),
+  ),
+  LlmStepEnded: BusEvent.define(
+    "v2.step.ended",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      stepId: z.string(),
+      model: z.string(),
+      providerID: z.string(),
+      finishReason: z.string(),
+      tokens: z.object({
+        input: z.number(),
+        output: z.number(),
+        reasoning: z.number(),
+        cache: z.object({ read: z.number(), write: z.number() }),
+      }),
+      cost: z.number(),
+      durationMs: z.number(),
+      responseText: z.string().optional(),
+    }),
+  ),
+  ToolCalled: BusEvent.define(
+    "v2.tool.called",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      id: z.string(),
+      name: z.string(),
+      input: z.unknown().optional(),
+    }),
+  ),
+  ToolEnded: BusEvent.define(
+    "v2.tool.ended",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      id: z.string(),
+      name: z.string(),
+      success: z.boolean(),
+      durationMs: z.number(),
+      error: z.string().optional(),
+      output: z.string().optional(),
+    }),
+  ),
 }
 
 export function plan(input: { slug: string; time: { created: number } }) {

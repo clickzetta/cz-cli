@@ -26,6 +26,42 @@ export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(key.toLowerCase())
 }
 
+/**
+ * Parse raw CLI args into positional tokens and a flag map suitable for telemetry.
+ * Expects args already sliced to user-visible tokens (i.e. process.argv.slice(2) or hideBin output).
+ */
+export function parseTrackingArgs(rawArgs: string[]): {
+  positional: string[]
+  args: Record<string, string>
+} {
+  const positional = rawArgs.filter((arg) => !arg.startsWith("-"))
+  const args: Record<string, string> = {}
+
+  if (positional.length > 2) {
+    args["_positional"] = positional.slice(2).join(" ")
+  }
+
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i]
+    if (!arg.startsWith("-")) continue
+    const eqIdx = arg.indexOf("=")
+    if (eqIdx > 0) {
+      const key = arg.slice(0, eqIdx).replace(/^-+/, "")
+      args[key] = isSensitiveKey(key) ? "<redacted>" : arg.slice(eqIdx + 1)
+      continue
+    }
+    const next = rawArgs[i + 1]
+    const key = arg.replace(/^-+/, "")
+    if (next && !next.startsWith("-")) {
+      args[key] = isSensitiveKey(key) ? "<redacted>" : next
+      i++
+      continue
+    }
+    args[key] = "true"
+  }
+
+  return { positional, args }
+}
 
 interface CommandEvent {
   command: string
@@ -95,7 +131,7 @@ function getResourceAttributes(): Record<string, string> {
     const instance = get("instance")
     const workspace = get("workspace")
     const service = get("service")
-    if (username) attrs["user.id"] = username
+    if (username) attrs["username"] = username
     if (instance) attrs["instance.name"] = instance
     if (workspace) attrs["workspace.name"] = workspace
     if (service) attrs["service.url"] = service
