@@ -51,6 +51,27 @@ const LLM_ONBOARDING = {
   ],
 } as const
 
+const AGENT_FLAGS = new Set(["debug", "d", "help", "h", "version"])
+const AGENT_FLAGS_WITH_VALUES = new Set([
+  "profile",
+  "p",
+  "jdbc",
+  "pat",
+  "username",
+  "password",
+  "service",
+  "protocol",
+  "instance",
+  "workspace",
+  "schema",
+  "s",
+  "vcluster",
+  "v",
+  "output",
+  "o",
+  "field",
+])
+
 function noProfilePayload() {
   return {
     error: {
@@ -222,21 +243,45 @@ async function parseRegisteredCommands(args: string[]): Promise<void> {
   await registerCommands(createCli(args)).demandCommand(1, "").help().parseAsync()
 }
 
+function agentSubcommand(args: string[]) {
+  for (let index = 1; index < args.length; index++) {
+    const value = args[index]
+    if (!value) continue
+    if (value === "--") return
+    if (!value.startsWith("-")) return value
+    const flag = value.replace(/^-+/, "").split("=")[0]
+    if (!flag || AGENT_FLAGS.has(flag) || value.includes("=")) continue
+    if (AGENT_FLAGS_WITH_VALUES.has(flag)) index++
+  }
+}
+
 function normalizeCliArgs(rawArgs: string[]) {
   const args = rawArgs.length === 0 ? ["--help"] : rawArgs
   const command = args[0] ?? ""
   const isHelpRequest = args.includes("--help") || args.includes("-h")
-  const runtimeArgs = command === "agent" && args.length === 1 ? ["run"] : args
+  const subcommand = command === "agent" ? agentSubcommand(args) : undefined
+  const bareAgentInvocation = command === "agent" && !subcommand
   return {
     args,
-    runtimeArgs,
+    runtimeArgs: args,
     command,
     isHelpRequest,
+    subcommand,
     shouldDelegateToAgentRuntime:
       command === "run" ||
       command === "llm" ||
       command === "config" ||
-      (command === "agent" && !isHelpRequest && (args.length === 1 || ["run", "llm", "config", "session", "stats", "export"].includes(args[1] ?? ""))),
+      (command === "agent" &&
+        !isHelpRequest &&
+        (bareAgentInvocation || ["run", "llm", "config", "session", "stats", "export"].includes(subcommand ?? ""))),
+  }
+}
+
+function profileOverrideFromArgs(args: string[]) {
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]
+    if (value === "--profile") return args[index + 1]
+    if (value?.startsWith("--profile=")) return value.slice("--profile=".length)
   }
 }
 
@@ -253,12 +298,13 @@ export function classifyCliArgs(rawArgs: string[]) {
 
 export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRuntime): Promise<void> {
   const normalized = normalizeCliArgs(rawArgs)
+  const profileOverride = profileOverrideFromArgs(normalized.args)
+  if (profileOverride) process.env.CZ_PROFILE = profileOverride
   const isAgentSessionEntry =
     !normalized.isHelpRequest &&
     (
       normalized.command === "run" ||
-      (normalized.command === "agent" && normalized.args.length === 1) ||
-      (normalized.command === "agent" && normalized.args[1] === "run")
+      (normalized.command === "agent" && (!normalized.subcommand || normalized.subcommand === "run"))
     )
 
   if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {

@@ -15,6 +15,7 @@ import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
+import { applyClickZettaProfile } from "../clickzetta-profile"
 
 declare global {
   const CLICKZETTA_WORKER_PATH: string
@@ -99,6 +100,10 @@ export const TuiThreadCommand = cmd({
       .option("agent", {
         type: "string",
         describe: "agent to use",
+      })
+      .option("profile", {
+        type: "string",
+        describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
       }),
   handler: async (args) => {
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
@@ -114,6 +119,8 @@ export const TuiThreadCommand = cmd({
         process.exitCode = 1
         return
       }
+
+      applyClickZettaProfile(args.profile)
 
       // Resolve relative --dir paths from PWD, then use the real cwd after
       // chdir so the thread and worker share the same directory key.

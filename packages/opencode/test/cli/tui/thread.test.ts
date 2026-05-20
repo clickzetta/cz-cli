@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { tmpdir } from "../../fixture/fixture"
@@ -14,6 +14,7 @@ const stop = new Error("stop")
 const seen = {
   tui: [] as string[],
 }
+const originalEnv = { ...process.env }
 
 function setup() {
   // Intentionally avoid mock.module() here: Bun keeps module overrides in cache
@@ -43,11 +44,16 @@ function setup() {
 }
 
 describe("tui thread", () => {
-  afterEach(() => {
-    mock.restore()
+  beforeEach(() => {
+    process.env = { ...originalEnv }
   })
 
-  async function call(project?: string) {
+  afterEach(() => {
+    mock.restore()
+    process.env = { ...originalEnv }
+  })
+
+  async function call(project?: string, profile?: string) {
     const { TuiThreadCommand } = await import("../../../src/cli/cmd/tui/thread")
     const args: Parameters<NonNullable<typeof TuiThreadCommand.handler>>[0] = {
       _: [],
@@ -60,6 +66,7 @@ describe("tui thread", () => {
       continue: false,
       fork: false,
       dir: undefined,
+      profile,
       port: 0,
       hostname: "127.0.0.1",
       mdns: false,
@@ -70,7 +77,7 @@ describe("tui thread", () => {
     return TuiThreadCommand.handler(args)
   }
 
-  async function check(project?: string) {
+  async function check(project?: string, profile?: string) {
     setup()
     await using tmp = await tmpdir({ git: true })
     const cwd = process.cwd()
@@ -81,6 +88,11 @@ describe("tui thread", () => {
     const type = process.platform === "win32" ? "junction" : "dir"
     seen.tui.length = 0
     await fs.symlink(tmp.path, link, type)
+    await fs.mkdir(path.join(tmp.path, ".clickzetta"), { recursive: true })
+    await fs.writeFile(
+      path.join(tmp.path, ".clickzetta", "profiles.toml"),
+      'default_profile = "default"\n\n[profiles.czcli]\nusername = "alice"\npassword = "secret"\nservice = "example.clickzetta.com"\nprotocol = "https"\ninstance = "workspace"\nworkspace = "quick_start"\nschema = "public"\nvcluster = "DEFAULT"\n',
+    )
 
     Object.defineProperty(process.stdin, "isTTY", {
       configurable: true,
@@ -97,7 +109,8 @@ describe("tui thread", () => {
     try {
       process.chdir(tmp.path)
       process.env.PWD = link
-      await expect(call(project)).rejects.toBe(stop)
+      process.env.CLICKZETTA_TEST_HOME = tmp.path
+      await expect(call(project, profile)).rejects.toBe(stop)
       expect(seen.tui[0]).toBe(tmp.path)
     } finally {
       process.chdir(cwd)
@@ -116,5 +129,14 @@ describe("tui thread", () => {
 
   test("uses the real cwd after resolving a relative project from PWD", async () => {
     await check(".")
+  })
+
+  test("accepts --profile on the bare TUI entry and expands profile env", async () => {
+    await check(undefined, "czcli")
+    expect(process.env.CZ_PROFILE).toBe("czcli")
+    expect(process.env.CZ_USERNAME).toBe("alice")
+    expect(process.env.CZ_PASSWORD).toBe("secret")
+    expect(process.env.CZ_SERVICE).toBe("example.clickzetta.com")
+    expect(process.env.CZ_WORKSPACE).toBe("quick_start")
   })
 })

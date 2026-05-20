@@ -13,9 +13,6 @@ import { Provider } from "../../provider"
 import { Agent } from "../../agent/agent"
 import { Permission } from "../../permission"
 import { Tool } from "../../tool"
-import fs from "fs"
-import os from "os"
-import { parse as parseToml } from "smol-toml"
 import { GlobTool } from "../../tool/glob"
 import { GrepTool } from "../../tool/grep"
 import { ReadTool } from "../../tool/read"
@@ -30,6 +27,7 @@ import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util"
 import { AppRuntime } from "@/effect/app-runtime"
+import { applyClickZettaProfile } from "./clickzetta-profile"
 
 type ToolProps<T> = {
   input: Tool.InferParameters<T>
@@ -319,28 +317,7 @@ export const RunCommand = cmd({
     }
     process.env.CLICKZETTA_AGENT_RUNNING = String(process.pid)
 
-    if (args.profile) {
-      process.env.CZ_PROFILE = args.profile
-      // Expand profile fields into CZ_* env vars so cz-tool picks up the right
-      // credentials even when the profile uses username/password (no PAT).
-      try {
-        const profilesPath = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta", "profiles.toml")
-        const toml = parseToml(fs.readFileSync(profilesPath, "utf-8")) as Record<string, unknown>
-        const profiles = toml.profiles as Record<string, Record<string, string>> | undefined
-        const p = profiles?.[args.profile]
-        if (p) {
-          if (p.pat) process.env.CZ_PAT = p.pat
-          if (p.username) process.env.CZ_USERNAME = p.username
-          if (p.password) process.env.CZ_PASSWORD = p.password
-          if (p.service) process.env.CZ_SERVICE = p.service
-          if (p.protocol) process.env.CZ_PROTOCOL = p.protocol
-          if (p.instance) process.env.CZ_INSTANCE = p.instance
-          if (p.workspace) process.env.CZ_WORKSPACE = p.workspace
-          if (p.schema) process.env.CZ_SCHEMA = p.schema
-          if (p.vcluster) process.env.CZ_VCLUSTER = p.vcluster
-        }
-      } catch {}
-    }
+    applyClickZettaProfile(args.profile)
     if (args.timeout !== undefined && (!(args.timeout > 0) || !Number.isFinite(args.timeout))) {
       UI.error("--timeout must be a positive number of seconds")
       process.exit(1)

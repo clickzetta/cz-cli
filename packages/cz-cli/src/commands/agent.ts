@@ -2,8 +2,12 @@ import type { Argv } from "yargs"
 import type { GlobalArgs } from "../cli.js"
 
 export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("agent", "AI agent — run sessions, configure LLMs, manage tasks (Lakehouse setup and LLM setup are separate)", (yargs) =>
+  cli.command("agent", "AI agent — run sessions, configure LLMs, manage tasks, and optionally override default_profile for the current session", (yargs) =>
     yargs
+      .option("profile", {
+        type: "string",
+        describe: "ClickZetta connection profile to use when launching the default agent/TUI (overrides default_profile in profiles.toml)",
+      })
       .command(
         "run <prompt>",
         "Run AI agent with a natural-language prompt",
@@ -21,7 +25,12 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run (default: 150 in a2a mode)" })
             .option("thinking", { type: "boolean", default: false, describe: "Show thinking blocks" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
+            .option("profile", {
+              type: "string",
+              describe: "ClickZetta connection profile to use for this run (overrides default_profile in profiles.toml)",
+            })
             .example("cz-cli agent run \"show tables\"", "One-shot query")
+            .example("cz-cli agent run \"show tables\" --profile staging", "Run the agent against a non-default ClickZetta profile")
             .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
             .example("cz-cli agent run \"more details\" --continue", "Continue last session")
             .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout"),
@@ -137,6 +146,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       )
       .strictCommands().strictOptions().demandCommand(1, "")
       .example("cz-cli agent run \"create a daily sync task\"", "One-shot (scripts, CI)")
+      .example("cz-cli agent --profile staging", "Open the interactive agent/TUI with the staging ClickZetta profile")
       .example("cz-cli agent run \"describe sales\" --session s1", "Conversational (reuse context)")
       .example("cz-cli agent run \"more details\" --continue", "Continue last session")
       .example("cz-cli agent session list", "List all sessions")
@@ -145,6 +155,11 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .example("cz-cli agent export <sessionID>", "Export session as JSON")
       .example("cz-cli agent stats --days 7", "Token usage for last 7 days")
       .example("cz-cli agent llm --help", "See LLM onboarding, examples, and testing commands")
+      .epilogue(
+        "Profile selection:\n" +
+        "  `--profile <name>` overrides `default_profile` from ~/.clickzetta/profiles.toml for the launched agent session.\n" +
+        "  Use it with either `cz-cli agent --profile <name>` for the interactive TUI or `cz-cli agent run ... --profile <name>` for one-shot runs.",
+      )
       .strict(false),
   )
 }

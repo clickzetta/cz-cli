@@ -59,6 +59,19 @@ const VALID_PROVIDERS = [
 const CLICKZETTA_DIR = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta")
 const PROFILES_PATH = path.join(CLICKZETTA_DIR, "profiles.toml")
 
+export function resolveCurrentProfileLabel(): string {
+  if (process.env.CZ_PROFILE) return process.env.CZ_PROFILE
+  const profilesPath = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta", "profiles.toml")
+  if (!existsSync(profilesPath)) return "default"
+  try {
+    const parsed = parseToml(readFileSync(profilesPath, "utf-8"))
+    if (!isRecord(parsed)) return "default"
+    return asString(parsed.default_profile) ?? "default"
+  } catch {
+    return "default"
+  }
+}
+
 export function normalizeLlmBaseUrl(provider: string, url: string | undefined): string | undefined {
   if (!url) return undefined
   let baseURL = url.replace(/\/+$/, "")
