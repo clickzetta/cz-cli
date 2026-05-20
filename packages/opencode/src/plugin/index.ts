@@ -58,11 +58,11 @@ function isTelemetryEnabled(): boolean {
         const nextSection = afterHeader.indexOf("\n[")
         const block = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader
         const get = (key: string) => block.match(new RegExp(`^${key}\\s*=\\s*"?([^"\\n]+)"?`, "m"))?.[1]?.trim()
-        const username = get("username")
+        const userId = get("user_id")
         const instance = get("instance")
         const workspace = get("workspace")
         const service = get("service")
-        if (username) attrs.push(`username=${username}`)
+        if (userId) attrs.push(`enduser.id=${userId}`)
         if (instance) attrs.push(`instance.name=${instance}`)
         if (workspace) attrs.push(`workspace.name=${workspace}`)
         if (service) attrs.push(`service.url=${service}`)

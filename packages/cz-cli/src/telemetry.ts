@@ -127,11 +127,11 @@ function getResourceAttributes(): Record<string, string> {
     const block = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader
     const get = (key: string) => block.match(new RegExp(`^${key}\\s*=\\s*"?([^"\\n]+)"?`, "m"))?.[1]?.trim()
     const attrs: Record<string, string> = {}
-    const username = get("username")
+    const userId = get("user_id")
     const instance = get("instance")
     const workspace = get("workspace")
     const service = get("service")
-    if (username) attrs["username"] = username
+    if (userId) attrs["enduser.id"] = userId
     if (instance) attrs["instance.name"] = instance
     if (workspace) attrs["workspace.name"] = workspace
     if (service) attrs["service.url"] = service

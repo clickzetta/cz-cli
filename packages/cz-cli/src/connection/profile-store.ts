@@ -165,3 +165,29 @@ export function setTelemetry(enabled: boolean): void {
   const content = stringifyTOML(existing)
   writeProfilesFile(content)
 }
+
+/**
+ * Write userId into the active profile entry so it can be used as enduser.id
+ * in telemetry. No-op if the profile already has user_id — never throws.
+ */
+export function patchProfileUserId(profileName: string | undefined, userId: number): void {
+  try {
+    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const data = parseTOML(text) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+
+    const name = profileName
+      ?? (typeof data.default_profile === "string" ? data.default_profile : undefined)
+      ?? Object.keys(profiles)[0]
+    if (!name || !profiles[name]) return
+
+    // Already has user_id — done forever
+    if (profiles[name]["user_id"] != null) return
+
+    profiles[name]["user_id"] = userId
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block the CLI
+  }
+}

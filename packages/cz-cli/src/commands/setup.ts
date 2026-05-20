@@ -34,7 +34,7 @@ function trackSetup(opts: {
   argv?: Record<string, unknown>
 }): Promise<void> {
   const attrs: Record<string, string> = {}
-  if (opts.collected?.username) attrs["username"] = opts.collected.username
+  if (opts.collected?.username) attrs["enduser.name"] = opts.collected.username
   if (opts.collected?.instance) attrs["instance.name"] = opts.collected.instance
   if (opts.collected?.workspace) attrs["workspace.name"] = opts.collected.workspace
   if (opts.collected?.service) attrs["service.url"] = opts.collected.service
@@ -226,6 +226,7 @@ function applyCredentialToProfiles(
       [profileName]: {
         ...currentProfile,
         ...(cred.username ? { username: String(cred.username) } : {}),
+        ...(cred.userId != null ? { user_id: Number(cred.userId) } : {}),
         instance: String(cred.instanceName),
         workspace: String(cred.workspaceName ?? "default"),
         schema: String(cred.schema ?? "public"),
@@ -1350,6 +1351,7 @@ async function runExistingAccountFlowTTY(
     workspace: workspace.workspaceName,
     schema,
     vcluster,
+    ...(auth.userId ? { user_id: auth.userId } : {}),
   }
   saveProfile(profileName, profile)
   await tryFetchAndSaveClickzettaApiKey(auth.serviceUrl, auth.token, instance.instanceName)
@@ -1578,6 +1580,7 @@ async function runExistingAccountFlowNonTTY(
     workspace: workspace.workspaceName,
     schema,
     vcluster,
+    ...(auth.userId ? { user_id: auth.userId } : {}),
   }
   saveProfile(profileName, profile)
   await tryFetchAndSaveClickzettaApiKey(auth.serviceUrl, auth.token, instance.instanceName)

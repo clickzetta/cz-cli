@@ -17,6 +17,7 @@ import {
   JobStatus,
 } from "@clickzetta/sdk"
 import { currentTraceContext, defaultQueryTag } from "../trace.js"
+import { patchProfileUserId } from "../connection/profile-store.js"
 
 export interface ExecContext {
   config: ConnectionConfig
@@ -36,6 +37,8 @@ export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContex
     throw new Error("Workspace is required. Provide --workspace or configure it in your profile.")
   }
   const token = await getToken(config)
+  // Persist userId to profile for telemetry (enduser.id). Fire-and-forget.
+  if (token.userId) patchProfileUserId(args.profile, token.userId)
   const clientOpts: ClientOptions = {
     baseUrl: toServiceUrl(config.service, config.protocol),
     token: token.token,
