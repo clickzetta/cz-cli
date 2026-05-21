@@ -18,6 +18,7 @@ import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
 import { resolveTaskId, resolveNodeId, resolveFolderIdByName } from "../resolver.js"
+import { studioUrl } from "./studio-url.js"
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
@@ -32,17 +33,7 @@ function formatIsoStartOfDay(value: string | undefined | null): string {
   return trimmed
 }
 
-function studioUrl(sc: { instanceName: string; baseUrl: string; workspaceName: string }, fileId: number): string {
-  let base = sc.baseUrl.replace(/^https?:\/\//, "")
-  // Path-based: xxx.clickzetta.com/api → xxx.clickzetta.com/app
-  if (base.endsWith("/api")) {
-    base = base.slice(0, -4) + "/app"
-  } else {
-    // Subdomain-based: uat-api.clickzetta.com → uat-app.clickzetta.com
-    base = base.replace("-api.", "-app.").replace("api.", "app.")
-  }
-  return `https://${sc.instanceName}.${base}/ide?workspace_name=${encodeURIComponent(sc.workspaceName)}&fileId=${fileId}`
-}
+
 
 const TASK_TYPE_MAP: Record<string, number> = {
   SQL: 4, LAKEHOUSE: 4, PYTHON: 7, SHELL: 5, JDBC: 15,

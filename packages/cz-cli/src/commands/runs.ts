@@ -12,6 +12,7 @@ import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
 import { resolveTaskId, resolveRunIdOrTaskName } from "../resolver.js"
+import { opsUrl } from "./studio-url.js"
 import { normalizeRunIdentity, normalizeRunIdentityList } from "../identity.js"
 import { t } from "../locale.js"
 
@@ -208,7 +209,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             }
             normalized.schedule_config = scheduleConfig
             logOperation("runs detail", { ok: true })
-            success(normalized, { format, aiMessage })
+            success({ ...normalized, ops_url: opsUrl(sc, runId) }, { format, aiMessage })
           } catch (err) {
             reportRunsError(err, format)
           }
@@ -293,7 +294,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               ...(argv.offset != null ? { offset: argv.offset as number } : {}),
             })
             const logData = (logResp.data as Record<string, unknown>) ?? {}
-            const normalized = { ...convertFields(logData, EXECUTION_FIELDS), execution_id: attemptId }
+            const normalized = { ...convertFields(logData, EXECUTION_FIELDS), execution_id: attemptId, ops_url: opsUrl(sc, runId) + "?tab=executeLog" }
             logOperation("runs logs", { ok: true })
             success(normalized, { format })
           } catch (err) {

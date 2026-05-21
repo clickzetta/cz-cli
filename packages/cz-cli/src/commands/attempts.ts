@@ -5,6 +5,7 @@ import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { resolveRunIdOrTaskName, resolveLatestRunId } from "../resolver.js"
+import { opsUrl } from "./studio-url.js"
 
 const EXECUTION_FIELDS: Record<string, string> = {
   scheduleTaskId: "task_id", scheduleInstanceId: "task_run_id", executeLogId: "execution_id",
@@ -78,7 +79,7 @@ async function logHandler(argv: Record<string, unknown>): Promise<void> {
     }
     const resp = await getAttemptLog(sc, logParams)
     const logData = (resp.data as Record<string, unknown>) ?? {}
-    const normalized = { ...convertExecution(logData), execution_id: attemptId }
+    const normalized = { ...convertExecution(logData), execution_id: attemptId, ops_url: opsUrl(sc, runId) + "?tab=executeLog" }
     logOperation("attempts log", { ok: true })
     success(normalized, { format })
   } catch (err) {
@@ -145,7 +146,7 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
               ` for run_id=${runId}.` +
               ` For next page: cz-cli attempts list ${runId} --page ${(argv.page as number) + 1} --page-size ${pageSize}`
             logOperation("attempts list", { ok: true })
-            success(normalized, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total }, selected_run_id: runId, run_id: runId } })
+            success(normalized, { format, aiMessage, extra: { pagination: { page: argv.page, page_size: pageSize, total }, selected_run_id: runId, run_id: runId, ops_url: opsUrl(sc, runId) + "?tab=executeLog" } })
           } catch (err) {
             reportAttemptsError(err, format)
           }
