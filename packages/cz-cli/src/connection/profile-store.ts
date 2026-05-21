@@ -4,8 +4,9 @@ import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
 
-const PROFILES_DIR = join(homedir(), ".clickzetta")
-const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
+function profilesFile() {
+  return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
+}
 
 /**
  * Atomically write profiles.toml and tighten its mode to 0600.
@@ -13,13 +14,14 @@ const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
  * must never be world-readable. chmod is a no-op on Windows but harmless.
  */
 function writeProfilesFile(content: string): void {
-  const dir = dirname(PROFILES_FILE)
+  const file = profilesFile()
+  const dir = dirname(file)
   mkdirSync(dir, { recursive: true })
-  const tmpFile = PROFILES_FILE + ".tmp." + Date.now()
+  const tmpFile = file + ".tmp." + Date.now()
   writeFileSync(tmpFile, content, { encoding: "utf-8", mode: 0o600 })
-  renameSync(tmpFile, PROFILES_FILE)
+  renameSync(tmpFile, file)
   try {
-    chmodSync(PROFILES_FILE, 0o600)
+    chmodSync(file, 0o600)
   } catch {
     // best-effort: filesystems without POSIX modes (FAT, some network mounts) just skip
   }
@@ -29,7 +31,7 @@ export type ProfileEntry = Record<string, unknown>
 
 export function loadProfiles(): Record<string, ProfileEntry> {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text)
     const profiles = data.profiles
     if (profiles && typeof profiles === "object" && !Array.isArray(profiles)) {
@@ -44,7 +46,7 @@ export function loadProfiles(): Record<string, ProfileEntry> {
 export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
   let existing: Record<string, unknown> = {}
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     existing = parseTOML(text) as Record<string, unknown>
   } catch {
     // file doesn't exist or is invalid — start fresh
@@ -57,7 +59,7 @@ export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
 
 export function getDefaultProfileName(): string | undefined {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text)
     const name = data.default_profile
     return typeof name === "string" ? name : undefined
@@ -131,7 +133,7 @@ function normalizeProtocol(value?: string): string {
 
 export function readAgentEndpoint(profileName?: string): string | undefined {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text) as Record<string, unknown>
     const name = profileName ?? (data.default_profile as string | undefined) ?? Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
     if (!name) return undefined
@@ -146,7 +148,7 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
 /** Returns the current telemetry setting, or undefined if not yet configured. */
 export function getTelemetry(): boolean | undefined {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text) as Record<string, unknown>
     if (typeof data.telemetry === "boolean") return data.telemetry
     return undefined
@@ -158,7 +160,7 @@ export function getTelemetry(): boolean | undefined {
 export function setTelemetry(enabled: boolean): void {
   let existing: Record<string, unknown> = {}
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     existing = parseTOML(text) as Record<string, unknown>
   } catch {}
   existing.telemetry = enabled
@@ -172,7 +174,7 @@ export function setTelemetry(enabled: boolean): void {
  */
 export function patchProfileUserId(profileName: string | undefined, userId: number): void {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text) as Record<string, unknown>
     const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
 

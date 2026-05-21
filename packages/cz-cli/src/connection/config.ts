@@ -17,7 +17,8 @@ export interface CliArgs {
 }
 
 export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): ConnectionConfig {
-  const profileCfg = getProfileConfig(cliArgs.profile) ?? (cliArgs.profile ? undefined : getProfileConfig())
+  const profileName = cliArgs.profile ?? process.env.CZ_PROFILE
+  const profileCfg = getProfileConfig(profileName) ?? (profileName ? undefined : getProfileConfig())
   const envCfg = getEnvConfig()
   const jdbcCfg = cliArgs.jdbcUrl ? parseJdbcUrl(cliArgs.jdbcUrl) : undefined
 
