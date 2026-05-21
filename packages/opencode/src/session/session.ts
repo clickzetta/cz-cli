@@ -257,6 +257,7 @@ export const Event = {
       stepId: z.string(),
       model: z.string(),
       providerID: z.string(),
+      inputText: z.string().optional(),
     }),
   ),
   LlmStepEnded: BusEvent.define(
@@ -277,6 +278,11 @@ export const Event = {
       cost: z.number(),
       durationMs: z.number(),
       responseText: z.string().optional(),
+      toolCalls: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        arguments: z.unknown(),
+      })).optional(),
     }),
   ),
   ToolCalled: BusEvent.define(

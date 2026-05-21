@@ -5,6 +5,37 @@ import * as m from "./metrics"
 
 const tracer = trace.getTracer("opencode")
 
+// OTel span attribute value limit — keep content under 32KB to avoid
+// collector rejections while still capturing useful context.
+const ATTR_VALUE_LIMIT = 32 * 1024
+
+function truncateAttr(value: string): string {
+  if (value.length <= ATTR_VALUE_LIMIT) return value
+  return value.slice(0, ATTR_VALUE_LIMIT) + "...[truncated]"
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function buildOutputMessages(p: Record<string, any>): string | undefined {
+  const parts: Array<Record<string, unknown>> = []
+  if (p.responseText) {
+    parts.push({ type: "text", content: p.responseText })
+  }
+  if (p.toolCalls?.length) {
+    for (const tc of p.toolCalls) {
+      parts.push({ type: "tool_call", id: tc.id, name: tc.name, arguments: tc.arguments })
+    }
+  }
+  if (parts.length === 0) return undefined
+  return JSON.stringify([{ role: "assistant", parts, finish_reason: p.finishReason ?? "unknown" }])
+}
+
 // Parse OPENCODE_DISABLE_TRACES once. Value is comma-separated categories,
 // e.g. "tool,llm". Logs and metrics are never affected.
 const disabledTraceCategories: ReadonlySet<string> = new Set(
@@ -17,12 +48,14 @@ function tracingEnabled(category: string): boolean {
 
 let _logger: Logger | undefined
 let promptSpan: Span | undefined
+let _recordContent = true
 const stepSpans = new Map<string, Span>()
 const toolSpans = new Map<string, Span>()
 const sessionStartMs = new Map<string, number>()
 
-export function initHandlers(logger: Logger) {
+export function initHandlers(logger: Logger, recordContent?: boolean) {
   _logger = logger
+  _recordContent = recordContent ?? true
 }
 
 function sessionAttributes(
@@ -140,6 +173,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
             "gen_ai.provider.name": p.providerID ?? "",
             "gen_ai.request.model": p.model ?? "",
             "opencode.session.id": p.sessionID ?? "",
+            ...(p.inputText && _recordContent ? { "gen_ai.input.messages": truncateAttr(JSON.stringify([{ role: "user", parts: [{ type: "text", content: p.inputText }] }])) } : {}),
           },
         }, getSessionOtelContext())
         stepSpans.set(p.stepId, span)
@@ -150,6 +184,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
       case "v2.step.ended": {
         const span = stepSpans.get(p.stepId)
         if (span) {
+          const outputMessages = buildOutputMessages(p)
           span.setAttributes({
             "gen_ai.response.model": p.model ?? "",
             "gen_ai.response.finish_reasons": p.finishReason ?? "unknown",
@@ -158,6 +193,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
             "gen_ai.usage.cache_read.input_tokens": p.tokens?.cache?.read ?? 0,
             "gen_ai.usage.cache_creation.input_tokens": p.tokens?.cache?.write ?? 0,
             "gen_ai.usage.reasoning.output_tokens": p.tokens?.reasoning ?? 0,
+            ...(outputMessages && _recordContent ? { "gen_ai.output.messages": truncateAttr(outputMessages) } : {}),
           })
           span.end()
           stepSpans.delete(p.stepId)
@@ -191,12 +227,14 @@ export function handleEvent(event: { type: string; properties: Record<string, an
       case "v2.tool.called": {
         m.toolCallCounter.add(1, { "gen_ai.tool.name": p.name ?? "unknown" })
         if (!tracingEnabled("tool")) break
+        const toolInput = _recordContent && p.input != null ? safeStringify(p.input) : undefined
         const span = tracer.startSpan(`execute_tool ${p.name ?? "unknown"}`, {
           attributes: {
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": p.name ?? "",
             "gen_ai.tool.call.id": p.id ?? "",
             "opencode.session.id": p.sessionID ?? "",
+            ...(toolInput ? { "gen_ai.tool.call.arguments": toolInput } : {}),
           },
         }, getSessionOtelContext())
         toolSpans.set(p.id, span)
@@ -211,6 +249,8 @@ export function handleEvent(event: { type: string; properties: Record<string, an
             span.setStatus({ code: SpanStatusCode.ERROR, message: p.error ?? "unknown" })
             m.errorCounter.add(1, { source: "tool", "gen_ai.tool.name": p.name ?? "unknown" })
           }
+          if (_recordContent && p.output) span.setAttribute("gen_ai.tool.call.result", truncateAttr(p.output))
+          if (p.error) span.setAttribute("error.message", p.error)
           span.end()
           toolSpans.delete(p.id)
         }

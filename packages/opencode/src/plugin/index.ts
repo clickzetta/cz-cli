@@ -29,7 +29,8 @@ function isTelemetryEnabled(): boolean {
   }
 }
 
-// Always enable OTel (logs + metrics). Traces only if telemetry=true.
+// Always enable OTel (logs + metrics + trace structure).
+// Content recording (message bodies, tool args/results) requires telemetry=true.
 // Skip entirely when no collector endpoint is configured (open-source builds
 // ship without baked-in credentials).
 {
@@ -40,9 +41,6 @@ function isTelemetryEnabled(): boolean {
     if (!process.env.OPENCODE_OTLP_PROTOCOL) process.env.OPENCODE_OTLP_PROTOCOL = OTEL_DEFAULTS.protocol
     if (!process.env.OPENCODE_OTLP_HEADERS && OTEL_DEFAULTS.headers)
       process.env.OPENCODE_OTLP_HEADERS = OTEL_DEFAULTS.headers
-    if (!isTelemetryEnabled() && !process.env.OPENCODE_DISABLE_TRACES) {
-      process.env.OPENCODE_DISABLE_TRACES = "tool,llm"
-    }
   }
   if (!process.env.OPENCODE_RESOURCE_ATTRIBUTES) {
     try {

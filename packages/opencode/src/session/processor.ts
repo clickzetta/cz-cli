@@ -72,9 +72,12 @@ interface ProcessorContext extends Input {
   blocked: boolean
   needsCompaction: boolean
   currentText: MessageV2.TextPart | undefined
+  lastStepText: string | undefined
+  stepToolCalls: Array<{ id: string; name: string; arguments: unknown }>
   reasoningMap: Record<string, MessageV2.ReasoningPart>
   stepStartMs: number
   currentStepId: string | undefined
+  inputText: string | undefined
 }
 
 type StreamEvent = Event
@@ -124,9 +127,12 @@ export const layer: Layer.Layer<
         blocked: false,
         needsCompaction: false,
         currentText: undefined,
+        lastStepText: undefined,
+        stepToolCalls: [],
         reasoningMap: {},
         stepStartMs: Date.now(),
         currentStepId: undefined,
+        inputText: undefined,
       }
       let aborted = false
       const slog = log.clone().tag("sessionID", input.sessionID).tag("messageID", input.assistantMessage.id)
@@ -334,6 +340,7 @@ export const layer: Layer.Layer<
               name: value.toolName,
               input: value.input,
             }).pipe(Effect.ignore)
+            ctx.stepToolCalls.push({ id: value.toolCallId, name: value.toolName, arguments: value.input })
 
             const parts = MessageV2.parts(ctx.assistantMessage.id)
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
@@ -380,6 +387,8 @@ export const layer: Layer.Layer<
             if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
             ctx.stepStartMs = Date.now()
             ctx.currentStepId = PartID.ascending()
+            ctx.lastStepText = undefined
+            ctx.stepToolCalls = []
             yield* session.updatePart({
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
@@ -393,6 +402,7 @@ export const layer: Layer.Layer<
               stepId: ctx.currentStepId,
               model: ctx.model.id,
               providerID: ctx.model.providerID,
+              inputText: ctx.inputText,
             }).pipe(Effect.ignore)
             return
 
@@ -426,8 +436,10 @@ export const layer: Layer.Layer<
               tokens: usage.tokens,
               cost: usage.cost,
               durationMs: Date.now() - ctx.stepStartMs,
-              responseText: ctx.currentText?.text || undefined,
+              responseText: ctx.lastStepText || ctx.currentText?.text || undefined,
+              toolCalls: ctx.stepToolCalls.length > 0 ? ctx.stepToolCalls : undefined,
             }).pipe(Effect.ignore)
+            ctx.lastStepText = undefined
             ctx.currentStepId = undefined
             if (ctx.snapshot) {
               const patch = yield* snapshot.patch(ctx.snapshot)
@@ -503,6 +515,7 @@ export const layer: Layer.Layer<
             }
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePart(ctx.currentText)
+            ctx.lastStepText = ctx.currentText.text
             ctx.currentText = undefined
             return
 
@@ -595,6 +608,7 @@ export const layer: Layer.Layer<
         slog.info("process")
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        ctx.inputText = extractUserText(streamInput)
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
@@ -670,5 +684,17 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Config.defaultLayer),
   ),
 )
+
+function extractUserText(streamInput: LLM.StreamInput): string | undefined {
+  const lastUserMsg = [...streamInput.messages].reverse().find((m) => m.role === "user")
+  if (!lastUserMsg) return undefined
+  if (typeof lastUserMsg.content === "string") return lastUserMsg.content
+  if (!Array.isArray(lastUserMsg.content)) return undefined
+  const texts: string[] = []
+  for (const part of lastUserMsg.content) {
+    if (part.type === "text") texts.push(part.text)
+  }
+  return texts.length > 0 ? texts.join("\n") : undefined
+}
 
 export * as SessionProcessor from "./processor"

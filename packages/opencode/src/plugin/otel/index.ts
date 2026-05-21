@@ -6,6 +6,9 @@ import { getCurrentSessionTraceparent } from "./context"
 import { createTraceparent } from "@clickzetta/sdk"
 import { InstallationVersion } from "@/installation/version"
 import { Flag } from "@/flag/flag"
+import { readFileSync } from "fs"
+import { join } from "path"
+import { homedir } from "os"
 
 function parseHeaders(raw?: string): Record<string, string> {
   if (!raw) return {}
@@ -15,6 +18,15 @@ function parseHeaders(raw?: string): Record<string, string> {
     if (eqIdx > 0) result[part.slice(0, eqIdx).trim()] = part.slice(eqIdx + 1).trim()
   }
   return result
+}
+
+function shouldRecordContent(): boolean {
+  try {
+    const text = readFileSync(join(homedir(), ".clickzetta", "profiles.toml"), "utf-8")
+    return /^telemetry\s*=\s*true/m.test(text)
+  } catch {
+    return true
+  }
 }
 
 let globalFlush: (() => Promise<void>) | undefined
@@ -50,7 +62,7 @@ export const OtelPlugin: Plugin = Object.assign(
     }
 
     if (sdk) {
-      initHandlers(sdk.logger)
+      initHandlers(sdk.logger, shouldRecordContent())
       const flush = () => sdk!.shutdown().catch(() => {})
       globalFlush = flush
       ;(globalThis as any).__otelFlush = flush
