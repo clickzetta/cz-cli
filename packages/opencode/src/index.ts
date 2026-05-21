@@ -6,7 +6,7 @@
 // migrations). This package boundary is confusing. Either rename this shell to
 // reflect its role, or move the product entrypoint responsibilities into
 // packages/cz-cli so the package ownership matches the user-facing CLI.
-import { hideBin } from "yargs/helpers"
+import { restartArgs } from "./update/bootstrap"
 import { EOL } from "os"
 import os from "os"
 import fs from "fs"
@@ -29,7 +29,7 @@ process.on("uncaughtException", (e) => {
   })
 })
 
-const rawArgs = hideBin(process.argv)
+const rawArgs = restartArgs(process.execPath, process.argv)
 const clickzettaHome = process.env.CLICKZETTA_TEST_HOME || os.homedir()
 
 await maybeAutoUpdate({

@@ -3,15 +3,13 @@
 
 const { execFileSync } = require("child_process");
 const fs = require("fs");
-const path = require("path");
 const os = require("os");
+const path = require("path");
+const { DEFAULT_FALLBACK_ROOT, ensureInstalledBinary, getPlatformSpec } = require("./platform");
 
 const home = os.homedir();
-const platform = os.platform();
-const arch = os.arch() === "x64" ? "x64" : "arm64";
-const pkgName = `@clickzetta/cz-cli-${platform}-${arch}`;
-const binName = platform === "win32" ? "cz-cli.exe" : "cz-cli";
 const installFile = path.join(home, ".clickzetta", "install.json");
+const version = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8")).version;
 
 function detectPackageManager() {
   const userAgent = process.env.npm_config_user_agent || "";
@@ -22,17 +20,20 @@ function detectPackageManager() {
   return "npm";
 }
 
-try {
-  const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));
-  const binPath = path.join(pkgDir, "bin", binName);
-  const skillsSrc = path.join(pkgDir, "bin", "skills");
-  if (!fs.existsSync(skillsSrc)) process.exit(0);
+async function main() {
+  const spec = getPlatformSpec();
+  if (!spec) return;
 
-  const skills = fs.readdirSync(skillsSrc).filter((name) =>
-    fs.statSync(path.join(skillsSrc, name)).isDirectory()
-  );
+  const installed = await ensureInstalledBinary({
+    spec,
+    version,
+    fallbackRoot: DEFAULT_FALLBACK_ROOT,
+  });
+  const skillsSrc = path.join(installed.rootDir, "skills");
+  const skills = fs.existsSync(skillsSrc)
+    ? fs.readdirSync(skillsSrc).filter((name) => fs.statSync(path.join(skillsSrc, name)).isDirectory())
+    : [];
 
-  // 1. cz-cli skill → external agent directories (subagent registration)
   const agentDirs = [
     path.join(home, ".claude", "skills"),
     path.join(home, ".kiro", "skills"),
@@ -50,7 +51,6 @@ try {
     }
   }
 
-  // Cleanup: fix cz-cli-v2 → cz-cli in existing skill files (bug introduced in 57a49fcdc)
   for (const dir of agentDirs) {
     const skillFile = path.join(dir, "cz-cli", "SKILL.md");
     try {
@@ -75,17 +75,17 @@ try {
     }
   }
 
-  // 2. All other skills → ~/.clickzetta/skills/.builtin/ (cz-cli managed, safe to overwrite)
   const internalDest = path.join(home, ".clickzetta", "skills", ".builtin");
   fs.mkdirSync(internalDest, { recursive: true });
 
-  // Migrate: remove legacy skills that were previously installed directly in ~/.clickzetta/skills/
   const legacyDir = path.join(home, ".clickzetta", "skills");
   for (const name of skills) {
     if (name === "cz-cli") continue;
     const legacy = path.join(legacyDir, name);
     if (fs.existsSync(legacy) && fs.statSync(legacy).isDirectory()) {
-      try { fs.rmSync(legacy, { recursive: true, force: true }); } catch (e) {}
+      try {
+        fs.rmSync(legacy, { recursive: true, force: true });
+      } catch (e) {}
     }
   }
 
@@ -100,14 +100,14 @@ try {
   }
 
   try {
-    execFileSync(binPath, [], {
+    execFileSync(installed.binPath, [], {
       stdio: "ignore",
       env: { ...process.env, CLICKZETTA_MIGRATE_PROFILES_ONLY: "1" },
     });
   } catch (e) {}
 
   try {
-    const version = execFileSync(binPath, ["--version"], {
+    const binaryVersion = execFileSync(installed.binPath, ["--version"], {
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf-8",
       env: process.env,
@@ -119,17 +119,24 @@ try {
         {
           version: 1,
           method: detectPackageManager(),
-          installed_path: binPath,
+          installed_path: installed.binPath,
           channel: "latest",
-          binary_version: version,
+          binary_version: binaryVersion,
           updated_at: new Date().toISOString(),
         },
         null,
-        2
+        2,
       ) + "\n",
-      "utf-8"
+      "utf-8",
     );
   } catch (e) {}
-} catch (e) {
-  // Non-fatal: don't block npm install
 }
+
+main().catch((error) => {
+  process.stderr.write(
+    `Failed to install cz-cli binary: ${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.stderr.write("npm installed the launcher package, but the platform binary could not be prepared from npm.\n");
+  process.stderr.write("Check npm config for omit=optional / optional=false and ensure npm registry access works.\n");
+  process.exit(1);
+});

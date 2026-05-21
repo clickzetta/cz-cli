@@ -1,14 +1,14 @@
 import yargs from "yargs"
 import { TuiThreadCommand } from "./cli/cmd/tui/thread"
 import { InstallationVersion } from "./installation/version"
-import { hideBin } from "yargs/helpers"
+import { restartArgs } from "./update/bootstrap"
 import { Log } from "./node"
 
 Log.init({
   print: false,
 })
 
-const cli = yargs(hideBin(process.argv))
+const cli = yargs(restartArgs(process.execPath, process.argv))
   .parserConfiguration({ "populate--": true })
   .scriptName("opencode")
   .wrap(100)

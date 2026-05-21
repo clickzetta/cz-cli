@@ -2,22 +2,23 @@
 "use strict";
 
 const { execFileSync } = require("child_process");
-const path = require("path");
-const os = require("os");
+const { DEFAULT_FALLBACK_ROOT, getPlatformSpec, resolveInstalledBinary } = require("./platform");
 
-const platform = os.platform();
-const arch = os.arch() === "x64" ? "x64" : "arm64";
-const pkgName = `@clickzetta/cz-cli-${platform}-${arch}`;
-const binName = platform === "win32" ? "cz-cli.exe" : "cz-cli";
+const spec = getPlatformSpec();
 
 try {
-  const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));
-  const binPath = path.join(pkgDir, "bin", binName);
-  execFileSync(binPath, process.argv.slice(2), { stdio: "inherit", env: process.env });
+  const installed = resolveInstalledBinary({
+    spec,
+    fallbackRoot: DEFAULT_FALLBACK_ROOT,
+  });
+  if (!installed) throw new Error("missing binary");
+
+  execFileSync(installed.binPath, process.argv.slice(2), { stdio: "inherit", env: process.env });
 } catch (e) {
   if (e.status !== undefined) process.exit(e.status);
-  console.error(`Error: Platform binary not found (${pkgName}).`);
-  console.error(`Fix: npm install -g @clickzetta/cz-cli@latest`);
-  console.error(`Or:  curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh`);
+  console.error(`Error: Platform binary not found (${spec ? spec.packageName : "unsupported-platform"}).`);
+  console.error("Fix: reinstall with npm so postinstall can repair the platform binary from npm registry");
+  console.error("  npm install -g @clickzetta/cz-cli@latest --ignore-scripts=false");
+  console.error("If this still fails, check npm config for omit=optional / optional=false and registry access.");
   process.exit(1);
 }
