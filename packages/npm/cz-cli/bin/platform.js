@@ -167,16 +167,19 @@ async function ensureInstalledBinary({
   resolvePackageDir: resolvePackageDirOverride,
   existsSync = fs.existsSync,
   installFromNpmRegistry: installFromNpmRegistryOverride = installFromNpmRegistry,
+  force = false,
 } = {}) {
   if (!spec) throw new Error(`Unsupported platform/arch: ${os.platform()}/${os.arch()}`);
 
-  const installed = resolveInstalledBinary({
-    spec,
-    fallbackRoot,
-    resolvePackageDirFn: resolvePackageDirOverride || resolvePackageDir,
-    existsSync,
-  });
-  if (installed) return installed;
+  if (!force) {
+    const installed = resolveInstalledBinary({
+      spec,
+      fallbackRoot,
+      resolvePackageDirFn: resolvePackageDirOverride || resolvePackageDir,
+      existsSync,
+    });
+    if (installed) return installed;
+  }
 
   const destinationDir = path.join(fallbackRoot, `${spec.platform}-${spec.arch}`);
   fs.rmSync(destinationDir, { recursive: true, force: true });

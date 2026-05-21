@@ -24,10 +24,14 @@ async function main() {
   const spec = getPlatformSpec();
   if (!spec) return;
 
+  // Always force re-install during postinstall to ensure the platform binary
+  // matches the version being installed. Without this, npm may keep a stale
+  // optionalDependency binary from a previous version.
   const installed = await ensureInstalledBinary({
     spec,
     version,
     fallbackRoot: DEFAULT_FALLBACK_ROOT,
+    force: true,
   });
   const skillsSrc = path.join(installed.rootDir, "skills");
   const skills = fs.existsSync(skillsSrc)
