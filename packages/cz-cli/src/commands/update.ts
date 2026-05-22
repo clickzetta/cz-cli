@@ -57,14 +57,14 @@ async function fetchLatestVersion(): Promise<string | null> {
 }
 
 function updateViaNpm(): boolean {
+  const registry = "--registry https://registry.npmjs.org"
   try {
     process.stderr.write("Updating via npm...\n")
-    execSync(`npm install -g ${NPM_PACKAGE}@latest --ignore-scripts=false`, { stdio: "inherit" })
+    execSync(`npm install -g ${NPM_PACKAGE}@latest --ignore-scripts=false ${registry}`, { stdio: "inherit" })
     return true
   } catch {
-    // Retry without strict dependency resolution (works around unrelated broken global packages)
     try {
-      execSync(`npm install -g ${NPM_PACKAGE}@latest --force`, { stdio: "inherit" })
+      execSync(`npm install -g ${NPM_PACKAGE}@latest --force ${registry}`, { stdio: "inherit" })
       return true
     } catch {
       return false
