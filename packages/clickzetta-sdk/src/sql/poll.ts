@@ -340,7 +340,7 @@ export function coerceValue(value: string | null, typeCategory: string, timezone
 function parseResultSet(
   resultSet: LhResultSet | undefined,
   timezone?: string,
-): { columns: ColumnSchema[]; rows: Record<string, unknown>[]; isAsync: boolean } {
+): { columns: ColumnSchema[]; rows: unknown[][]; isAsync: boolean } {
   if (!resultSet) {
     return { columns: [], rows: [], isAsync: false }
   }
@@ -376,11 +376,11 @@ function parseResultSet(
     // query_result.py:260-269 — TEXT branch.
     const rawRows = textToRows(resultSet.data.data, columnCount)
     const rows = rawRows.map((rawRow) => {
-      const record: Record<string, unknown> = {}
+      const row: unknown[] = []
       for (let i = 0; i < columns.length; i++) {
-        record[columns[i].name] = coerceValue(rawRow[i] ?? null, columns[i].type, timezone)
+        row.push(coerceValue(rawRow[i] ?? null, columns[i].type, timezone))
       }
-      return record
+      return row
     })
     return { columns, rows, isAsync: false }
   }
@@ -436,11 +436,11 @@ export async function parseJobResponse(
     } else {
       const rawRows = await fetchTextFromUrls(urls, columns.length)
       finalRows = rawRows.map((rawRow) => {
-        const record: Record<string, unknown> = {}
+        const row: unknown[] = []
         for (let i = 0; i < columns.length; i++) {
-          record[columns[i].name] = coerceValue(rawRow[i] ?? null, columns[i].type)
+          row.push(coerceValue(rawRow[i] ?? null, columns[i].type))
         }
-        return record
+        return row
       })
     }
   }

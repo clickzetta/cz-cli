@@ -13,11 +13,12 @@ import { getExecContext, isQueryResult } from "./exec.js"
 const DEFAULT_FIELD_MAX = 3000
 const DEFAULT_ROW_LIMIT = 100
 
-function truncateLargeFields(rows: Record<string, unknown>[], maxLen: number): Record<string, unknown>[] {
+function truncateLargeFields(rows: unknown[][], maxLen: number): unknown[][] {
   for (const row of rows) {
-    for (const [key, val] of Object.entries(row)) {
+    for (let i = 0; i < row.length; i++) {
+      const val = row[i]
       if (typeof val === "string" && val.length > maxLen) {
-        row[key] = val.slice(0, maxLen) + `...(truncated, ${val.length} chars)`
+        row[i] = val.slice(0, maxLen) + `...(truncated, ${val.length} chars)`
       }
     }
   }

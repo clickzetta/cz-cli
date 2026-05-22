@@ -3,7 +3,7 @@ import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 
@@ -38,8 +38,8 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
               aiMessage = `Results limited to ${limit} of ${r.rows.length} schemas. Use --limit to adjust or --like to filter.`
             }
             const normalized = rows.map((row) => ({
-              name: row["schema_name"] ?? row["name"] ?? Object.values(row)[0] ?? "",
-              type: row["type"] ?? "",
+              name: row[0] ?? "",
+              type: row[1] ?? "",
             }))
             logOperation("schema list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
@@ -67,9 +67,9 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
               logOperation("schema describe", { sql: infoSql, ok: false, timeMs: Date.now() - t0 })
               error("SCHEMA_NOT_FOUND", `Schema '${name}' not found`, { format }); return
             }
-            const schemaType = infoRows.length > 0 ? (Object.values(infoRows[0])[1] ?? "") : ""
+            const schemaType = infoRows.length > 0 ? (infoRows[0][1] ?? "") : ""
             const tableRows = isQueryResult(tablesR) && tablesR.status === JobStatus.SUCCEEDED ? tablesR.rows : []
-            const tables = tableRows.map((row) => Object.values(row)[0])
+            const tables = tableRows.map((row) => row[0])
             logOperation("schema describe", { sql: infoSql, ok: true, timeMs: Date.now() - t0 })
             success({ name, type: schemaType, table_count: tables.length, tables }, { format, timeMs: Date.now() - t0 })
           } catch (err) {

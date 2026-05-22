@@ -24,7 +24,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
               const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
               error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
-            const workspaces = r.rows.map((row) => Object.values(row)[0])
+            const workspaces = r.rows.map((row) => row[0])
             success(workspaces, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
@@ -48,7 +48,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
               logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
               error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
-            const ws = r.rows[0] ? Object.values(r.rows[0])[0] : null
+            const ws = r.rows[0] ? r.rows[0][0] : null
             if (!ws) {
               logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
               error("NO_RESULT", "No current workspace set. Use `cz-cli workspace use <name>` to set one.", {

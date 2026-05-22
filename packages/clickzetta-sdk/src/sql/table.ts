@@ -20,7 +20,7 @@ export function createTable(workspace: string, tableName: string, instance: stri
  * RowIterator wraps a QueryResult and provides iteration over rows.
  */
 export class RowIterator {
-  private _rows: Record<string, unknown>[]
+  private _rows: unknown[][]
   private _index = 0
   readonly totalRows: number
 
@@ -29,9 +29,9 @@ export class RowIterator {
     this.totalRows = result.rowCount
   }
 
-  [Symbol.iterator](): Iterator<Record<string, unknown>> {
+  [Symbol.iterator](): Iterator<unknown[]> {
     return {
-      next: (): IteratorResult<Record<string, unknown>> => {
+      next: (): IteratorResult<unknown[]> => {
         if (this._index < this._rows.length) {
           return { value: this._rows[this._index++], done: false }
         }
@@ -40,7 +40,7 @@ export class RowIterator {
     }
   }
 
-  toArray(): Record<string, unknown>[] {
+  toArray(): unknown[][] {
     return [...this._rows]
   }
 }
@@ -53,11 +53,11 @@ export class EmptyRowIterator extends RowIterator {
     super({ jobId: "", status: JobStatus.SUCCEEDED, columns: [], rows: [], rowCount: 0, affectedRows: 0 })
   }
 
-  override [Symbol.iterator](): Iterator<Record<string, unknown>> {
+  override [Symbol.iterator](): Iterator<unknown[]> {
     return { next: () => ({ value: undefined, done: true as const }) }
   }
 
-  override toArray(): Record<string, unknown>[] {
+  override toArray(): unknown[][] {
     return []
   }
 }

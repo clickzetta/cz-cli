@@ -364,7 +364,7 @@ export async function genVolumeResult(outcome: VolumeOutcome): Promise<QueryResu
   const { mkdir, stat, open } = await import("node:fs/promises")
   const nodePath = await import("node:path")
 
-  const rows: Record<string, unknown>[] = []
+  const rows: unknown[][] = []
   const command = outcome.request.command.toUpperCase()
 
   if (command === "GET") {
@@ -401,7 +401,7 @@ export async function genVolumeResult(outcome: VolumeOutcome): Promise<QueryResu
 
       console.info(`get volume success, volume_path:${volumeFiles[i]}, local_path:${localPath}`)
       const fileSize = (await stat(localPath)).size
-      rows.push({ "0": volumeFiles[i], "1": localPath, "2": fileSize })
+      rows.push([volumeFiles[i], localPath, fileSize])
     }
   } else if (command === "PUT") {
     // client.py:995-1032
@@ -459,7 +459,7 @@ export async function genVolumeResult(outcome: VolumeOutcome): Promise<QueryResu
         }
 
         const fileSize = (await stat(localPath)).size
-        rows.push({ "0": localPath, "1": volumeFile, "2": fileSize })
+        rows.push([localPath, volumeFile, fileSize])
       }
     }
   }

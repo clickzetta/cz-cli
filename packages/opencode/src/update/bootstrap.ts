@@ -229,10 +229,10 @@ function restartCurrentProcess(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export function restartArgs(execPath: string, argv: string[]): string[] {
-  // binary mode: execPath is the real binary, argv[0] is "bun" (differs from execPath)
-  // dev mode:    execPath === argv[0] (both point to the bun runtime)
-  const isBinary = execPath !== argv[0]
-  return argv.slice(isBinary ? 2 : 1)
+  // binary mode: argv = [bun, cz-cli-binary, ...userArgs] — execPath differs from argv[0]
+  // dev mode:    argv = [bun, script.ts, ...userArgs] — execPath === argv[0]
+  // Both cases: user args start at argv[2]
+  return argv.slice(2)
 }
 
 export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.ProcessEnv } = {}): Promise<BootstrapConfig> {

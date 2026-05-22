@@ -40,22 +40,22 @@ function getMasker(column: string): Masker | undefined {
 
 export function maskRows(
   columns: string[],
-  rows: Record<string, unknown>[],
-): Record<string, unknown>[] {
-  const maskers = new Map<string, Masker>()
-  for (const col of columns) {
-    const fn = getMasker(col)
-    if (fn) maskers.set(col, fn)
+  rows: unknown[][],
+): unknown[][] {
+  const maskers = new Map<number, Masker>()
+  for (let i = 0; i < columns.length; i++) {
+    const fn = getMasker(columns[i])
+    if (fn) maskers.set(i, fn)
   }
 
   if (maskers.size === 0) return rows
 
   return rows.map((row) => {
-    const masked = { ...row }
-    for (const [col, fn] of maskers) {
-      const val = masked[col]
+    const masked = [...row]
+    for (const [idx, fn] of maskers) {
+      const val = masked[idx]
       if (val != null && typeof val === "string") {
-        masked[col] = fn(val)
+        masked[idx] = fn(val)
       }
     }
     return masked

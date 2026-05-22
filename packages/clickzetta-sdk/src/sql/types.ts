@@ -22,7 +22,7 @@ export interface QueryResult {
   jobId: string
   status: JobStatus
   columns: ColumnSchema[]
-  rows: Record<string, unknown>[]
+  rows: unknown[][]
   rowCount: number
   affectedRows: number
   errorCode?: string

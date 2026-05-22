@@ -149,13 +149,13 @@ export function decodeArrowPayload(
   base64Chunks: string[],
   metadataColumns: ColumnSchema[],
   timezone?: string,
-): { columns: ColumnSchema[]; rows: Record<string, unknown>[] } {
+): { columns: ColumnSchema[]; rows: unknown[][] } {
   if (!base64Chunks || base64Chunks.length === 0) {
     return { columns: metadataColumns, rows: [] }
   }
 
   let resolvedColumns = metadataColumns
-  const allRows: Record<string, unknown>[] = []
+  const allRows: unknown[][] = []
 
   for (const chunk of base64Chunks) {
     const bytes = base64ToBytes(chunk)
@@ -176,11 +176,11 @@ export function decodeArrowPayload(
 
     const rowCount = table.numRows
     for (let r = 0; r < rowCount; r++) {
-      const record: Record<string, unknown> = {}
+      const row: unknown[] = []
       for (let c = 0; c < resolvedColumns.length; c++) {
-        record[resolvedColumns[c]!.name] = colArrays[c]![r] ?? null
+        row.push(colArrays[c]![r] ?? null)
       }
-      allRows.push(record)
+      allRows.push(row)
     }
   }
 
@@ -195,9 +195,9 @@ export async function fetchArrowFromUrls(
   urls: string[],
   metadataColumns: ColumnSchema[],
   timezone?: string,
-): Promise<{ columns: ColumnSchema[]; rows: Record<string, unknown>[] }> {
+): Promise<{ columns: ColumnSchema[]; rows: unknown[][] }> {
   let resolvedColumns = metadataColumns
-  const allRows: Record<string, unknown>[] = []
+  const allRows: unknown[][] = []
 
   for (const url of urls) {
     const resp = await fetch(url)
@@ -217,11 +217,11 @@ export async function fetchArrowFromUrls(
       colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type, timezone))
     }
     for (let r = 0; r < table.numRows; r++) {
-      const record: Record<string, unknown> = {}
+      const row: unknown[] = []
       for (let c = 0; c < resolvedColumns.length; c++) {
-        record[resolvedColumns[c]!.name] = colArrays[c]![r] ?? null
+        row.push(colArrays[c]![r] ?? null)
       }
-      allRows.push(record)
+      allRows.push(row)
     }
   }
 

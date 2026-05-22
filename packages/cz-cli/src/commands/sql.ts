@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { splitSql, JobStatus, request, requestRaw, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
+import { splitSql, stripLeadingComment, JobStatus, request, requestRaw, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
@@ -29,6 +29,7 @@ interface SqlArgs extends GlobalArgs {
   execute?: string
   stdin: boolean
   sync: boolean
+  async: boolean
   timeout: number
   variable?: string[]
   set?: string[]
@@ -40,19 +41,20 @@ interface SqlArgs extends GlobalArgs {
   "dry-run": boolean
 }
 
-function truncateLargeFields(rows: Record<string, unknown>[], maxLen: number): Record<string, unknown>[] {
+function truncateLargeFields(rows: unknown[][], maxLen: number): unknown[][] {
   for (const row of rows) {
-    for (const [key, val] of Object.entries(row)) {
+    for (let i = 0; i < row.length; i++) {
+      const val = row[i]
       if (typeof val === "string" && val.length > maxLen) {
         const suffix = `...(truncated, ${val.length} chars)`
-        row[key] = val.slice(0, maxLen - suffix.length) + suffix
+        row[i] = val.slice(0, maxLen - suffix.length) + suffix
       } else if (val instanceof Buffer || val instanceof Uint8Array) {
         const s = Buffer.from(val).toString("utf-8")
         if (s.length > maxLen) {
           const suffix = `...(truncated, ${s.length} chars)`
-          row[key] = s.slice(0, maxLen - suffix.length) + suffix
+          row[i] = s.slice(0, maxLen - suffix.length) + suffix
         } else {
-          row[key] = s
+          row[i] = s
         }
       }
     }
@@ -128,7 +130,7 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
     if (TABLE_NOT_FOUND_RE.test(errMsg)) {
       const r = await execSql(ctx, "SHOW TABLES")
       if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-        const tables = r.rows.map((row) => Object.values(row)[0])
+        const tables = r.rows.map((row) => row[0])
         return { tables }
       }
     }
@@ -138,7 +140,7 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
         const table = validateIdentifier(m[1], "table name")
         const r = await execSql(ctx, `DESC TABLE ${table}`)
         if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-          const cols = r.rows.map((row) => Object.values(row)[0])
+          const cols = r.rows.map((row) => row[0])
           return { table, columns: cols }
         }
       }
@@ -175,12 +177,39 @@ async function executeSingle(
   argv: SqlArgs,
   hints: Record<string, string>,
   configStatements?: string[],
+  onJobId?: (id: string) => void,
 ): Promise<void> {
+  const format = argv.output
+
+  // Intercept SET statements — these are client-side session directives, not executable SQL
+  const setMatch = sql.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
+  if (setMatch) {
+    success({ set: `${setMatch[1]}=${setMatch[2].replace(/;$/, "").trim()}` }, { format, timeMs: 0 })
+    return
+  }
+
+  // Intercept USE statements — client-side context switch
+  const useMatch = sql.match(/^\s*USE\s+/i)
+  if (useMatch) {
+    const normalized = sql.replace(/\s+/g, " ").trim()
+    const lower = normalized.toLowerCase()
+    if (lower.startsWith("use vcluster ")) {
+      ctx.config.vcluster = normalized.slice("use vcluster ".length).replace(/;$/, "").trim()
+    } else if (lower.startsWith("use workspace ")) {
+      ctx.config.workspace = normalized.slice("use workspace ".length).replace(/;$/, "").trim()
+    } else if (lower.startsWith("use schema ")) {
+      ctx.config.schema = extractSchema(normalized.slice("use schema ".length).replace(/;$/, "").trim())
+    } else if (lower.startsWith("use ")) {
+      ctx.config.schema = extractSchema(normalized.slice("use ".length).replace(/;$/, "").trim())
+    }
+    success({ use: normalized }, { format, timeMs: 0 })
+    return
+  }
+
   const isWrite = WRITE_RE.test(sql)
   const isSelect = SELECT_RE.test(sql)
   const isShow = SHOW_RE.test(sql)
   const hasLimit = LIMIT_RE.test(sql)
-  const format = argv.output
   const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
   const rowLimit = !argv.limit ? Infinity : DEFAULT_ROW_LIMIT
   const t0 = Date.now()
@@ -198,10 +227,10 @@ async function executeSingle(
     }); return
   }
 
-  if (!argv.sync) {
+  if (!argv.sync || argv.async) {
     const asyncHints = { ...hints }
     if (argv.timeout) asyncHints["sdk.job.timeout"] = String(argv.timeout)
-    const r = await execSqlWithRetry(ctx, sql, { hints: asyncHints, asynchronous: true, configStatements })
+    const r = await execSqlWithRetry(ctx, sql, { hints: asyncHints, asynchronous: true, configStatements, onJobId })
     logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
     if (isQueryResult(r)) {
       await emitResult(r, sql, argv, ctx, t0)
@@ -221,10 +250,10 @@ async function executeSingle(
     const serverHints = { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit) }
     const probeLimit = rowLimit + 1
     const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
-    let r = await execSqlWithRetry(ctx, probeSql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements })
+    let r = await execSqlWithRetry(ctx, probeSql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
     // Retry without LIMIT if injection caused syntax error
     if (isQueryResult(r) && r.status === JobStatus.FAILED && /syntax/i.test(r.errorMessage ?? "") && /LIMIT/i.test(r.errorMessage ?? "")) {
-      r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements })
+      r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
@@ -270,7 +299,7 @@ async function executeSingle(
     if (limitMatch) {
       const userLimit = parseInt(limitMatch[1], 10)
       const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
-      const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000, configStatements })
+      const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
@@ -288,7 +317,7 @@ async function executeSingle(
   }
 
   // General case: SHOW, write, or other
-  const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000, configStatements })
+  const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
   if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
@@ -353,11 +382,7 @@ async function emitResult(
 }
 
 async function handler(argv: SqlArgs): Promise<void> {
-  let format = argv.output
-
-  if (argv.batch) {
-    format = "text"
-  }
+  const format = argv.output
 
   if (argv["job-profile"]) {
     const ctx = await getExecContext(argv)
@@ -402,7 +427,7 @@ async function handler(argv: SqlArgs): Promise<void> {
   process.on("SIGINT", sigintHandler)
 
   try {
-    const statements = splitSql(sql).map((s) => s.trim()).filter(Boolean)
+    const statements = splitSql(sql).map((s) => s.trim()).filter((s) => s && stripLeadingComment(s))
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
     }
@@ -456,8 +481,27 @@ async function handler(argv: SqlArgs): Promise<void> {
           continue
         }
         if (argv.batch) {
-          // Batch mode: output every statement's result
-          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements)
+          // Batch mode: emit per-statement result with index and sql
+          const t0 = Date.now()
+          try {
+            const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
+            if (isQueryResult(r) && r.status === JobStatus.FAILED) {
+              const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: r.errorMessage ?? "Query failed" }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              process.stdout.write(JSON.stringify(line) + "\n")
+              logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
+            } else if (isQueryResult(r)) {
+              const columns = r.columns.map((c) => c.name)
+              const rows = maskRows(columns, r.rows)
+              const line = { index: i, sql: stmt, columns, rows, count: rows.length, affected: r.affectedRows, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              process.stdout.write(JSON.stringify(line) + "\n")
+              logOperation("sql", { sql: stmt, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
+            }
+          } catch (err) {
+            const { code, message } = classifyExecError(err)
+            const line = { index: i, sql: stmt, error: { code, message }, time_ms: Date.now() - t0 }
+            process.stdout.write(JSON.stringify(line) + "\n")
+            logOperation("sql", { sql: stmt, ok: false, errorCode: code })
+          }
         } else if (i < statements.length - 1) {
           // Non-batch: silently execute intermediate statements
           const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
@@ -467,16 +511,16 @@ async function handler(argv: SqlArgs): Promise<void> {
             return
           }
         } else {
-          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements)
+          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements, (id) => { currentJobId = id })
         }
       }
     } else {
-      await executeSingle(ctx, statements[0], argv, hints ?? {})
+      await executeSingle(ctx, statements[0], argv, hints ?? {}, undefined, (id) => { currentJobId = id })
     }
   } catch (err) {
-    const { code, message, aiMessage } = classifyExecError(err)
+    const { code, message, aiMessage, jobId } = classifyExecError(err)
     logOperation("sql", { sql, ok: false, errorCode: code })
-    error(code, message, { format, debug: argv.debug, ...(aiMessage && { aiMessage }) })
+    error(code, message, { format, debug: argv.debug, ...(aiMessage && { aiMessage }), ...(jobId && { extra: { job_id: jobId } }) })
   } finally {
     process.removeListener("SIGINT", sigintHandler)
   }
@@ -536,7 +580,8 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })
               .option("execute", { alias: "e", type: "string", describe: "SQL string (alternative to positional argument)" })
               .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
-              .option("sync", { type: "boolean", default: false, describe: "Wait for query result before returning. Without --sync, returns a job_id immediately (async). Use --sync for SELECT queries when you need the data." })
+              .option("sync", { type: "boolean", default: true, describe: "Wait for query result before returning (default). Use --no-sync or --async for large queries that may take a long time." })
+              .option("async", { type: "boolean", default: false, describe: "Return job_id immediately without waiting for results. Use for large/long-running queries." })
               .option("timeout", { type: "number", default: 300, describe: "Job timeout in seconds (default: 300)" })
               .option("variable", { type: "array", string: true, describe: "Variable substitution: --variable KEY=VALUE. Use %(KEY)s in SQL." })
               .option("set", { type: "array", string: true, describe: "Query hint: --set KEY=VALUE (e.g. --set cz.sql.timezone=UTC)" })
@@ -548,13 +593,14 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("dry-run", { type: "boolean", default: false, describe: "Split SQL and EXPLAIN each statement without executing. Reports ok/error per statement." })
               .epilogue([
                 "Examples:",
-                "  cz-cli sql \"SELECT * FROM orders LIMIT 10\" --sync",
-                "  cz-cli sql \"INSERT INTO t VALUES(1)\" --write --sync",
-                "  cz-cli sql \"SELECT %(col)s FROM t\" --variable col=id --sync",
-                "  cz-cli sql -f query.sql --sync --no-limit",
+                "  cz-cli sql \"SELECT * FROM orders LIMIT 10\"",
+                "  cz-cli sql \"INSERT INTO t VALUES(1)\" --write",
+                "  cz-cli sql \"SELECT %(col)s FROM t\" --variable col=id",
+                "  cz-cli sql -f query.sql --no-limit",
+                "  cz-cli sql \"SELECT * FROM huge_table\" --async",
                 "",
                 "SQL input priority: positional > -e/--execute > -f/--file > --stdin",
-                "Default mode is async (returns job_id). Use --sync to wait for results.",
+                "Default mode is sync (waits for results). Use --async for large/long-running queries.",
               ].join("\n")),
           (argv) => handler(argv as unknown as SqlArgs),
         ),

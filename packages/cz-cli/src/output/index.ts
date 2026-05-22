@@ -51,7 +51,7 @@ export function success(
 
 export function successRows(
   columns: string[],
-  rows: Record<string, unknown>[],
+  rows: unknown[][],
   opts?: OutputOptions & { affected?: number; timeMs?: number; noHeader?: boolean },
 ): void {
   const payload: Record<string, unknown> = {
@@ -223,18 +223,19 @@ function emitAsTable(payload: unknown): string {
   if (payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>
     const data = obj.data
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
+    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null && !Array.isArray(data[0])) {
       const columns = Object.keys(data[0] as Record<string, unknown>)
-      return formatTable(columns, data as Record<string, unknown>[])
+      const rows = (data as Record<string, unknown>[]).map((r) => columns.map((c) => r[c]))
+      return formatTable(columns, rows)
     }
     if (Array.isArray(data) && data.length > 0) {
-      // Primitive array — wrap each item as {value: item}
-      const rows = data.map((v) => ({ value: v === null || v === undefined ? "" : String(v) }))
+      const rows = data.map((v) => [v === null || v === undefined ? "" : String(v)])
       return formatTable(["value"], rows)
     }
     if (data && typeof data === "object" && !Array.isArray(data)) {
       const columns = Object.keys(data as Record<string, unknown>)
-      return formatTable(columns, [data as Record<string, unknown>])
+      const row = columns.map((c) => (data as Record<string, unknown>)[c])
+      return formatTable(columns, [row])
     }
   }
   return formatPretty(payload)
@@ -244,17 +245,19 @@ function emitAsCsv(payload: unknown): string {
   if (payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>
     const data = obj.data
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
+    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null && !Array.isArray(data[0])) {
       const columns = Object.keys(data[0] as Record<string, unknown>)
-      return formatCsv(columns, data as Record<string, unknown>[])
+      const rows = (data as Record<string, unknown>[]).map((r) => columns.map((c) => r[c]))
+      return formatCsv(columns, rows)
     }
     if (Array.isArray(data) && data.length > 0) {
-      const rows = data.map((v) => ({ value: v === null || v === undefined ? "" : String(v) }))
+      const rows = data.map((v) => [v === null || v === undefined ? "" : String(v)])
       return formatCsv(["value"], rows)
     }
     if (data && typeof data === "object" && !Array.isArray(data)) {
       const columns = Object.keys(data as Record<string, unknown>)
-      return formatCsv(columns, [data as Record<string, unknown>])
+      const row = columns.map((c) => (data as Record<string, unknown>)[c])
+      return formatCsv(columns, [row])
     }
   }
   return formatPretty(payload)
@@ -265,14 +268,10 @@ function emitAsJsonl(payload: unknown): string {
     const obj = payload as Record<string, unknown>
     const rows = obj.rows
     if (Array.isArray(rows)) {
-      return formatJsonl(rows as Record<string, unknown>[])
+      return formatJsonl(rows as unknown[][])
     }
     const data = obj.data
     if (Array.isArray(data)) {
-      if (data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
-        return formatJsonl(data as Record<string, unknown>[])
-      }
-      // Primitive array — one JSON value per line
       return data.map((v) => formatJson(v)).join("\n")
     }
   }
@@ -283,16 +282,18 @@ function emitAsText(payload: unknown): string {
   if (payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>
     const data = obj.data
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
+    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null && !Array.isArray(data[0])) {
       const columns = Object.keys(data[0] as Record<string, unknown>)
-      return formatText(columns, data as Record<string, unknown>[])
+      const rows = (data as Record<string, unknown>[]).map((r) => columns.map((c) => r[c]))
+      return formatText(columns, rows)
     }
     if (Array.isArray(data) && data.length > 0) {
       return data.map((v) => (v === null || v === undefined ? "" : String(v))).join("\n")
     }
     if (data && typeof data === "object" && !Array.isArray(data)) {
       const columns = Object.keys(data as Record<string, unknown>)
-      return formatText(columns, [data as Record<string, unknown>])
+      const row = columns.map((c) => (data as Record<string, unknown>)[c])
+      return formatText(columns, [row])
     }
   }
   return formatJson(payload)
