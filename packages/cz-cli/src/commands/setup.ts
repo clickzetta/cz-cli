@@ -1098,8 +1098,13 @@ async function runModernSetupFlowTTY(
         error("SETUP_FAILED", "A registration URL is required.", { format })
         return
       }
-      registerUrl = normalizeLoginInput(rawUrl)
-      if (!registerUrl) {
+      const trimmed = rawUrl.trim()
+      const withProtocol = trimmed.startsWith("http://") || trimmed.startsWith("https://") ? trimmed : `https://${trimmed}`
+      try {
+        const parsed = new URL(withProtocol)
+        parsed.hash = ""
+        registerUrl = parsed.toString().replace(/\/$/, "")
+      } catch {
         error("SETUP_FAILED", "Invalid registration URL.", { format })
         return
       }
