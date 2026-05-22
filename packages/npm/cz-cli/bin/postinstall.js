@@ -20,7 +20,31 @@ function detectPackageManager() {
   return "npm";
 }
 
+function cleanupOutdatedBinaries() {
+  try {
+    const { execSync } = require("child_process");
+    const output = execSync("which -a cz-cli", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (!output) return;
+    const paths = output.split("\n").filter(Boolean);
+    for (const p of paths) {
+      // Skip paths managed by npm or bun — only remove standalone/orphan binaries
+      if (p.includes("node_modules") || p.includes(".bun")) continue;
+      try {
+        fs.unlinkSync(p);
+        process.stderr.write(`Removed outdated cz-cli binary: ${p}\n`);
+      } catch (e) {
+        // Permission denied or other error — skip silently
+      }
+    }
+  } catch (e) {
+    // which not found or no cz-cli in PATH — nothing to clean
+  }
+}
+
 async function main() {
+  // Clean up outdated standalone cz-cli binaries that may shadow this npm installation
+  cleanupOutdatedBinaries();
+
   const spec = getPlatformSpec();
   if (!spec) return;
 
