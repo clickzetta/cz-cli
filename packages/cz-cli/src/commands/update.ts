@@ -10,7 +10,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { existsSync, unlinkSync } from "node:fs"
+import { existsSync, unlinkSync, readSync, openSync, closeSync } from "node:fs"
 import { homedir, platform } from "node:os"
 import { join } from "node:path"
 import type { Argv } from "yargs"
@@ -20,6 +20,21 @@ const REPO = "clickzetta/cz-cli"
 const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`
 const NPM_PACKAGE = "@clickzetta/cz-cli"
 const REGISTRY = "--registry https://registry.npmjs.org"
+
+function confirm(prompt: string): boolean {
+  process.stderr.write(`${prompt} [y/N] `)
+  const buf = Buffer.alloc(64)
+  const fd = openSync("/dev/tty", "r")
+  try {
+    const n = readSync(fd, buf, 0, 64, null)
+    const answer = buf.toString("utf-8", 0, n).trim().toLowerCase()
+    return answer === "y" || answer === "yes"
+  } catch {
+    return false
+  } finally {
+    closeSync(fd)
+  }
+}
 
 function hasNpmGlobal(): boolean {
   try {
@@ -168,8 +183,11 @@ export function registerUpdateCommand(cli: Argv) {
         // Clean up any stale non-npm binaries
         const stale = findStaleBinaries().filter((p) => !p.includes("node_modules") && !p.includes(".bun"))
         if (stale.length > 0) {
-          process.stderr.write("Cleaning up stale binaries...\n")
-          stale.forEach(removeStaleBinary)
+          process.stderr.write("Found stale cz-cli binaries not managed by npm:\n")
+          stale.forEach((p) => process.stderr.write(`  ${p}\n`))
+          if (confirm("Remove them to avoid conflicts?")) {
+            stale.forEach(removeStaleBinary)
+          }
         }
         if (updateViaNpm()) {
           migrateProfilesAfterUpdate()
@@ -185,8 +203,11 @@ export function registerUpdateCommand(cli: Argv) {
         // Clean up any stale non-bun binaries
         const stale = findStaleBinaries().filter((p) => !p.includes(".bun") && !p.includes("node_modules"))
         if (stale.length > 0) {
-          process.stderr.write("Cleaning up stale binaries...\n")
-          stale.forEach(removeStaleBinary)
+          process.stderr.write("Found stale cz-cli binaries not managed by bun:\n")
+          stale.forEach((p) => process.stderr.write(`  ${p}\n`))
+          if (confirm("Remove them to avoid conflicts?")) {
+            stale.forEach(removeStaleBinary)
+          }
         }
         if (updateViaBun()) {
           migrateProfilesAfterUpdate()
@@ -201,8 +222,16 @@ export function registerUpdateCommand(cli: Argv) {
       // Step 5: Neither npm nor bun — clean up all stale binaries, then install via npm
       const allBinaries = findStaleBinaries()
       if (allBinaries.length > 0) {
-        process.stderr.write("No npm/bun installation found. Cleaning up stale binaries...\n")
-        allBinaries.forEach(removeStaleBinary)
+        process.stderr.write("No npm/bun installation found. Found stale cz-cli binaries:\n")
+        allBinaries.forEach((p) => process.stderr.write(`  ${p}\n`))
+        if (confirm("Remove them before reinstalling?")) {
+          allBinaries.forEach(removeStaleBinary)
+        } else {
+          process.stderr.write("Aborted. Remove old binaries manually, then run:\n")
+          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@latest ${REGISTRY}\n`)
+          process.exitCode = 1
+          return
+        }
       }
 
       // Verify cleanup
