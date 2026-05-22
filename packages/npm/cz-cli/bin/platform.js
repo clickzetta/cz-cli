@@ -133,10 +133,15 @@ async function installFromNpmRegistry({
 } = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cz-cli-npm-pack-"));
 
+  const cleanEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith("npm_")),
+  );
+
   try {
     const packed = execFileSync("npm", ["pack", `${packageName}@${version}`, "--silent"], {
       cwd: tempRoot,
       encoding: "utf-8",
+      env: cleanEnv,
       stdio: ["ignore", "pipe", "pipe"],
     })
       .trim()
@@ -171,14 +176,32 @@ async function ensureInstalledBinary({
 } = {}) {
   if (!spec) throw new Error(`Unsupported platform/arch: ${os.platform()}/${os.arch()}`);
 
+  const resolveFn = resolvePackageDirOverride || resolvePackageDir;
+
   if (!force) {
     const installed = resolveInstalledBinary({
       spec,
       fallbackRoot,
-      resolvePackageDirFn: resolvePackageDirOverride || resolvePackageDir,
+      resolvePackageDirFn: resolveFn,
       existsSync,
     });
     if (installed) return installed;
+  }
+
+  // When force is true, still prefer the optionalDependency package if its
+  // version matches — avoids a nested npm pack call that can fail inside
+  // postinstall (inherited npm env/lock conflicts).
+  if (force) {
+    const pkgDir = resolveFn(spec);
+    if (pkgDir) {
+      try {
+        const pkgJson = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf-8"));
+        if (pkgJson.version === version) {
+          const packaged = resolveBinaryFromRoot(path.join(pkgDir, "bin"), spec, existsSync);
+          if (packaged) return { ...packaged, source: "package" };
+        }
+      } catch {}
+    }
   }
 
   const destinationDir = path.join(fallbackRoot, `${spec.platform}-${spec.arch}`);

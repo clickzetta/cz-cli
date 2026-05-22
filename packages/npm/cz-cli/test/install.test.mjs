@@ -91,3 +91,76 @@ test("getPlatformSpec rejects unsupported package combinations", async () => {
   assert.equal(getPlatformSpec({ platform: "win32", arch: "arm64" }), null)
   assert.equal(getPlatformSpec({ platform: "freebsd", arch: "x64" }), null)
 })
+
+test("ensureInstalledBinary with force=true skips npm pack when package version matches", async () => {
+  const { ensureInstalledBinary } = await loadModule()
+  const fs = await import("node:fs")
+  const os = await import("node:os")
+  let installedFromRegistry = false
+
+  const tmpDir = fs.default.mkdtempSync(path.join(os.default.tmpdir(), "cz-test-"))
+  fs.default.mkdirSync(path.join(tmpDir, "bin"), { recursive: true })
+  fs.default.writeFileSync(path.join(tmpDir, "bin", "cz-cli"), "")
+  fs.default.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ version: "0.3.58" }))
+
+  try {
+    const result = await ensureInstalledBinary({
+      spec: {
+        platform: "darwin",
+        arch: "arm64",
+        packageName: "@clickzetta/cz-cli-darwin-arm64",
+        binaryName: "cz-cli",
+      },
+      version: "0.3.58",
+      force: true,
+      resolvePackageDir: () => tmpDir,
+      installFromNpmRegistry: async () => {
+        installedFromRegistry = true
+      },
+    })
+
+    assert.equal(result.source, "package")
+    assert.equal(installedFromRegistry, false)
+  } finally {
+    fs.default.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("ensureInstalledBinary with force=true falls back to npm pack when version mismatches", async () => {
+  const { ensureInstalledBinary } = await loadModule()
+  const fs = await import("node:fs")
+  const os = await import("node:os")
+  let installedFromRegistry = false
+  const fallbackRoot = fs.default.mkdtempSync(path.join(os.default.tmpdir(), "cz-test-fb-"))
+
+  const tmpDir = fs.default.mkdtempSync(path.join(os.default.tmpdir(), "cz-test-old-"))
+  fs.default.mkdirSync(path.join(tmpDir, "bin"), { recursive: true })
+  fs.default.writeFileSync(path.join(tmpDir, "bin", "cz-cli"), "")
+  fs.default.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ version: "0.3.57" }))
+
+  try {
+    const result = await ensureInstalledBinary({
+      fallbackRoot,
+      spec: {
+        platform: "darwin",
+        arch: "arm64",
+        packageName: "@clickzetta/cz-cli-darwin-arm64",
+        binaryName: "cz-cli",
+      },
+      version: "0.3.58",
+      force: true,
+      resolvePackageDir: () => tmpDir,
+      installFromNpmRegistry: async ({ destinationDir }) => {
+        fs.default.mkdirSync(destinationDir, { recursive: true })
+        fs.default.writeFileSync(path.join(destinationDir, "cz-cli"), "")
+        installedFromRegistry = true
+      },
+    })
+
+    assert.equal(installedFromRegistry, true)
+    assert.equal(result.source, "fallback")
+  } finally {
+    fs.default.rmSync(tmpDir, { recursive: true, force: true })
+    fs.default.rmSync(fallbackRoot, { recursive: true, force: true })
+  }
+})

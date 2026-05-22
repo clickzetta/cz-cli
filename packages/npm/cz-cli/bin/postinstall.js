@@ -24,9 +24,9 @@ async function main() {
   const spec = getPlatformSpec();
   if (!spec) return;
 
-  // Always force re-install during postinstall to ensure the platform binary
-  // matches the version being installed. Without this, npm may keep a stale
-  // optionalDependency binary from a previous version.
+  // Force re-install to ensure the platform binary matches the version being
+  // installed. ensureInstalledBinary will prefer the optionalDependency package
+  // when available, falling back to npm pack only when necessary.
   const installed = await ensureInstalledBinary({
     spec,
     version,
