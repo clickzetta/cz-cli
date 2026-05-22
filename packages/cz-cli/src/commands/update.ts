@@ -183,9 +183,9 @@ export function registerUpdateCommand(cli: Argv) {
         // Clean up any stale non-npm binaries
         const stale = findStaleBinaries().filter((p) => !p.includes("node_modules") && !p.includes(".bun"))
         if (stale.length > 0) {
-          process.stderr.write("Found stale cz-cli binaries not managed by npm:\n")
+          process.stderr.write("Found outdated cz-cli binaries not managed by npm:\n")
           stale.forEach((p) => process.stderr.write(`  ${p}\n`))
-          if (confirm("Remove them to avoid conflicts?")) {
+          if (confirm("Remove these outdated binaries to avoid conflicts?")) {
             stale.forEach(removeStaleBinary)
           }
         }
@@ -203,9 +203,9 @@ export function registerUpdateCommand(cli: Argv) {
         // Clean up any stale non-bun binaries
         const stale = findStaleBinaries().filter((p) => !p.includes(".bun") && !p.includes("node_modules"))
         if (stale.length > 0) {
-          process.stderr.write("Found stale cz-cli binaries not managed by bun:\n")
+          process.stderr.write("Found outdated cz-cli binaries not managed by bun:\n")
           stale.forEach((p) => process.stderr.write(`  ${p}\n`))
-          if (confirm("Remove them to avoid conflicts?")) {
+          if (confirm("Remove these outdated binaries to avoid conflicts?")) {
             stale.forEach(removeStaleBinary)
           }
         }
@@ -222,9 +222,9 @@ export function registerUpdateCommand(cli: Argv) {
       // Step 5: Neither npm nor bun — clean up all stale binaries, then install via npm
       const allBinaries = findStaleBinaries()
       if (allBinaries.length > 0) {
-        process.stderr.write("No npm/bun installation found. Found stale cz-cli binaries:\n")
+        process.stderr.write("No npm/bun installation found. Found outdated cz-cli binaries:\n")
         allBinaries.forEach((p) => process.stderr.write(`  ${p}\n`))
-        if (confirm("Remove them before reinstalling?")) {
+        if (confirm("Remove these outdated binaries before reinstalling?")) {
           allBinaries.forEach(removeStaleBinary)
         } else {
           process.stderr.write("Aborted. Remove old binaries manually, then run:\n")
