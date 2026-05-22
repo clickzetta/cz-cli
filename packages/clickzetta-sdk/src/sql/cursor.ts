@@ -119,18 +119,18 @@ export class Cursor {
   /**
    * Fetch one row from the result set.
    */
-  fetchone(): Record<string, unknown> | null {
+  fetchone(): unknown[] | null {
     if (!this._queryResult) throw new ProgrammingError("No result")
     if (this._rowIndex >= this._queryResult.rows.length) return null
-    return this._queryResult.rows[this._rowIndex++]
+    return this._queryResult.rows[this._rowIndex++] as unknown[]
   }
 
   /**
    * Fetch multiple rows from the result set.
    */
-  fetchmany(size?: number): Record<string, unknown>[] {
+  fetchmany(size?: number): unknown[][] {
     const count = size ?? this.arraysize
-    const result: Record<string, unknown>[] = []
+    const result: unknown[][] = []
     for (let i = 0; i < count; i++) {
       const row = this.fetchone()
       if (row === null) break
@@ -142,11 +142,11 @@ export class Cursor {
   /**
    * Fetch all remaining rows from the result set.
    */
-  fetchall(): Record<string, unknown>[] {
+  fetchall(): unknown[][] {
     if (!this._queryResult) throw new ProgrammingError("No result")
     const remaining = this._queryResult.rows.slice(this._rowIndex)
     this._rowIndex = this._queryResult.rows.length
-    return remaining
+    return remaining as unknown[][]
   }
 
   /**
@@ -199,13 +199,13 @@ export class Cursor {
   /** No-op for DB-API compatibility. */
   setoutputsize(_size: unknown, _column?: unknown): void {}
 
-  [Symbol.iterator](): Iterator<Record<string, unknown>> {
+  [Symbol.iterator](): Iterator<unknown[]> {
     if (!this._queryResult) throw new ProgrammingError("No result")
     let idx = this._rowIndex
     const rows = this._queryResult.rows
     return {
-      next(): IteratorResult<Record<string, unknown>> {
-        if (idx < rows.length) return { value: rows[idx++], done: false }
+      next(): IteratorResult<unknown[]> {
+        if (idx < rows.length) return { value: rows[idx++] as unknown[], done: false }
         return { value: undefined, done: true }
       },
     }

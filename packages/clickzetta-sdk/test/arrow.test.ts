@@ -29,8 +29,8 @@ describe("decodeArrowPayload (query_result.py:57-80)", () => {
     ]
     const { rows } = decodeArrowPayload([b64], columns)
     expect(rows.length).toBe(3)
-    expect(rows[0]).toEqual({ id: 1, name: "a", score: 1.5 })
-    expect(rows[2]).toEqual({ id: 3, name: "c", score: 3.5 })
+    expect(rows[0]).toEqual([1, "a", 1.5])
+    expect(rows[2]).toEqual([3, "c", 3.5])
   })
 
   it("returns empty rows when chunks is empty", () => {

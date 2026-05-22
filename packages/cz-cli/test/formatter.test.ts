@@ -13,6 +13,6 @@ describe("JSON formatters preserve non-finite numbers", () => {
   })
 
   test("formatJsonl preserves NaN rows", () => {
-    expect(formatJsonl([{ value: Number.NaN }])).toBe('{"value":"NaN"}')
+    expect(formatJsonl([[Number.NaN]])).toBe('["NaN"]')
   })
 })

@@ -4,7 +4,7 @@ import { JobStatus, request } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError } from "./exec.js"
+import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -14,8 +14,9 @@ function parseDescribeResult(result: import("@clickzetta/sdk").QueryResult) {
   const metadata: Record<string, unknown> = {}
   let inMetadata = false
 
-  for (const row of result.rows) {
-    const colName = row["col_name"] ?? row["COL_NAME"] ?? row[Object.keys(row)[0]]
+  const records = rowsToRecords(result)
+  for (const row of records) {
+    const colName = row["col_name"] ?? row["COL_NAME"] ?? Object.values(row)[0]
     if (!inMetadata) {
       if (
         String(colName ?? "").toLowerCase() === "# detailed table information" ||
@@ -74,7 +75,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
               aiMessage = `Results truncated to ${limit} rows (more available). Use --limit to increase.`
             }
             const normalized = rows.map((row) => {
-              const name = row["table_name"] ?? row["name"] ?? Object.values(row)[0] ?? ""
+              const name = row[0] ?? ""
               return { name }
             })
             logOperation("table list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
@@ -167,7 +168,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
               logOperation("table stats", { sql, ok: false, timeMs: Date.now() - t0 })
               error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
-            const rowCount = r.rows[0]?.row_count ?? r.rows[0]?.[Object.keys(r.rows[0])[0]] ?? 0
+            const rowCount = r.rows[0]?.[0] ?? 0
 
             // Fetch job summary via /lh/getJob (matches Python's conn.get_job_summary)
             let jobSummary: Record<string, unknown> | undefined
@@ -228,13 +229,14 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
               logOperation("table history", { sql, ok: false, timeMs: Date.now() - t0 })
               error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
             }
+            const records = rowsToRecords(r)
             let aiMessage: string | undefined
-            let rows = r.rows
-            if (rows.length > limit) {
-              rows = rows.slice(0, limit)
+            let recordSlice = records
+            if (records.length > limit) {
+              recordSlice = records.slice(0, limit)
               aiMessage = `Results limited to ${limit} records (more available). Use --limit to adjust or --like/--in to filter.`
             }
-            const normalized = rows.map((row) => ({
+            const normalized = recordSlice.map((row) => ({
               schema: row["schema_name"] ?? "",
               table: row["table_name"] ?? "",
               create_time: row["create_time"] ?? "",

@@ -74,6 +74,7 @@ function updateViaNpm(): boolean {
 
 function updateViaBinary(version: string): boolean {
   const installUrl = `https://github.com/${REPO}/releases/latest/download/install.sh`
+  const binary = join(homedir(), ".local", "bin", platform() === "win32" ? "cz-cli.exe" : "cz-cli")
   try {
     process.stderr.write("Downloading and installing update...\n")
     const tmpScript = execSync("mktemp", { encoding: "utf-8" }).trim()
@@ -87,6 +88,16 @@ function updateViaBinary(version: string): boolean {
       timeout: 300_000,
     })
     execSync(`rm -f "${tmpScript}"`, { stdio: "ignore" })
+  } catch {
+    return false
+  }
+  // Verify the binary was actually updated
+  try {
+    const installed = execSync(`"${binary}" --version`, { encoding: "utf-8", timeout: 10_000 }).trim()
+    if (installed !== version) {
+      process.stderr.write(`Verification failed: expected ${version}, got ${installed}.\n`)
+      return false
+    }
     return true
   } catch {
     return false

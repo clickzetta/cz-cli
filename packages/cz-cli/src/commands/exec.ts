@@ -70,10 +70,12 @@ export async function execSql(
     asynchronous?: boolean
     timeoutMs?: number
     configStatements?: string[]
+    onJobId?: (id: string) => void
   },
 ): Promise<QueryResult | ExecResult> {
   const normalizedSql = sql + "\n;"
   const jobId = newJobId(ctx.config.workspace, ctx.token.instanceId)
+  opts?.onJobId?.(jobId.id)
   const traceContext = currentTraceContext()
   const submitResp = await submitJob(ctx.clientOpts, {
     sql: normalizedSql,
@@ -138,13 +140,15 @@ function isNetworkError(err: unknown): boolean {
  * Classify an error into a structured { code, message, aiMessage } tuple
  * suitable for passing directly to the output error() function.
  */
-export function classifyExecError(err: unknown): { code: string; message: string; aiMessage: string } {
+export function classifyExecError(err: unknown): { code: string; message: string; aiMessage: string; jobId?: string } {
   const message = err instanceof Error ? err.message : String(err)
+  const jobId = (err as { jobId?: string })?.jobId
   if (isAuthError(err)) {
     return {
       code: "AUTH_ERROR",
       message,
       aiMessage: "Authentication failed. The API key may be invalid or expired. Ask the user to run: cz-cli setup --credential <base64_string>",
+      jobId,
     }
   }
   if (err instanceof Error && err.message.startsWith("Authentication required")) {
@@ -152,6 +156,7 @@ export function classifyExecError(err: unknown): { code: string; message: string
       code: "NO_CREDENTIALS",
       message,
       aiMessage: "No credentials configured. Ask the user to run: cz-cli setup --credential <base64_string>",
+      jobId,
     }
   }
   if (isNetworkError(err)) {
@@ -159,12 +164,14 @@ export function classifyExecError(err: unknown): { code: string; message: string
       code: "CONNECTION_ERROR",
       message,
       aiMessage: "Cannot connect to ClickZetta. Check network connectivity and verify the instance/service URL in the profile.",
+      jobId,
     }
   }
   return {
     code: "EXEC_ERROR",
     message,
     aiMessage: "",
+    jobId,
   }
 }
 
@@ -180,6 +187,7 @@ export async function execSqlWithRetry(
     asynchronous?: boolean
     timeoutMs?: number
     configStatements?: string[]
+    onJobId?: (id: string) => void
   },
 ): Promise<QueryResult | ExecResult> {
   try {
@@ -226,4 +234,16 @@ export function validateIdentifier(name: string, label: string): string {
     throw new Error(`Invalid ${label}: ${name}`)
   }
   return name
+}
+
+/** Convert array-based rows to Record objects for named column access. */
+export function rowsToRecords(result: QueryResult): Record<string, unknown>[] {
+  const colNames = result.columns.map((c) => c.name)
+  return result.rows.map((row) => {
+    const record: Record<string, unknown> = {}
+    for (let i = 0; i < colNames.length; i++) {
+      record[colNames[i]] = (row as unknown[])[i]
+    }
+    return record
+  })
 }

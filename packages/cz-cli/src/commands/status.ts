@@ -24,11 +24,11 @@ export function registerStatusCommand(cli: Argv<GlobalArgs>): void {
 
         const workspace =
           isQueryResult(wsResult) && wsResult.status === JobStatus.SUCCEEDED && wsResult.rows[0]
-            ? Object.values(wsResult.rows[0])[0]
+            ? wsResult.rows[0][0]
             : null
         const schema =
           isQueryResult(schemaResult) && schemaResult.status === JobStatus.SUCCEEDED && schemaResult.rows[0]
-            ? Object.values(schemaResult.rows[0])[0]
+            ? schemaResult.rows[0][0]
             : null
 
         logOperation("status", { ok: true, timeMs: Date.now() - t0 })

@@ -395,10 +395,10 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 execSql(ctx, "SELECT current_schema() AS schema"),
               ])
               if (isQueryResult(wsR) && wsR.status === JobStatus.SUCCEEDED && wsR.rows.length > 0) {
-                info.workspace = Object.values(wsR.rows[0])[0]
+                info.workspace = wsR.rows[0][0]
               }
               if (isQueryResult(schR) && schR.status === JobStatus.SUCCEEDED && schR.rows.length > 0) {
-                info.schema = Object.values(schR.rows[0])[0]
+                info.schema = schR.rows[0][0]
               }
               info.connected = true
             } catch (connErr) {

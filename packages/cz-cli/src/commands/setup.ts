@@ -913,7 +913,7 @@ async function listSchemas(
     if (!isQueryResult(result) || result.status !== JobStatus.SUCCEEDED) continue
     const options = dedupeOptions(
       result.rows
-        .map((row) => String(row.schema_name ?? row.name ?? Object.values(row)[0] ?? "").trim())
+        .map((row) => String(row[0] ?? "").trim())
         .filter(Boolean)
         .map((name) => ({ label: name, value: name })),
     )
