@@ -7,7 +7,7 @@ import {
   shouldResubmitWithNewJobId,
 } from "./errors.js"
 import { toClickZettaError, OperationalError } from "../types/errors.js"
-import { decodeArrowPayload, fetchArrowFromUrls } from "./arrow.js"
+import { decodeArrowPayload, deduplicateColumns, fetchArrowFromUrls } from "./arrow.js"
 
 const TERMINAL_STATES = new Set(["SUCCEED", "FAILED", "CANCELLED"])
 
@@ -375,14 +375,15 @@ function parseResultSet(
     }
     // query_result.py:260-269 — TEXT branch.
     const rawRows = textToRows(resultSet.data.data, columnCount)
+    const dedupedColumns = deduplicateColumns(columns)
     const rows = rawRows.map((rawRow) => {
-      const row: unknown[] = []
-      for (let i = 0; i < columns.length; i++) {
-        row.push(coerceValue(rawRow[i] ?? null, columns[i].type, timezone))
+      const record: Record<string, unknown> = {}
+      for (let i = 0; i < dedupedColumns.length; i++) {
+        record[dedupedColumns[i].name] = coerceValue(rawRow[i] ?? null, dedupedColumns[i].type, timezone)
       }
       return row
     })
-    return { columns, rows, isAsync: false }
+    return { columns: dedupedColumns, rows, isAsync: false }
   }
 
   // Data in presigned URLs — mark as needing async fetch

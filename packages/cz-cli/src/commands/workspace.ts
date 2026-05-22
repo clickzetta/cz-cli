@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
@@ -7,7 +8,7 @@ import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, classifyExecError } from "./exec.js"
 
 export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("workspace", "Manage workspace", (yargs) =>
+  cli.command("workspace", "Manage workspace", (yargs) => {
     yargs
       .command(
         "list",
@@ -115,6 +116,6 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "workspace")
+  })
 }

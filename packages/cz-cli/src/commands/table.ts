@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
 import { JobStatus, request } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
@@ -39,7 +40,7 @@ function parseDescribeResult(result: import("@clickzetta/sdk").QueryResult) {
 }
 
 export function registerTableCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("table", "Manage tables", (yargs) =>
+  cli.command("table", "Manage tables", (yargs) => {
     yargs
       .command(
         "list",
@@ -307,6 +308,6 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "table")
+  })
 }

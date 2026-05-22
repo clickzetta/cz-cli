@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { studioRequest, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error, isHandledCliError } from "../output/index.js"
@@ -142,7 +143,7 @@ export async function resolveDatasource(sc: StudioConfig, nameOrId: string): Pro
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("datasource", "Manage external data sources", (yargs) =>
+  cli.command("datasource", "Manage external data sources", (yargs) => {
     yargs
       // ── list ──────────────────────────────────────────────────────────
       .command(
@@ -339,6 +340,6 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "datasource")
+  })
 }

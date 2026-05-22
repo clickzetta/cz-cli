@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { listAttempts, getAttemptLog, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error, isHandledCliError } from "../output/index.js"
@@ -96,7 +97,7 @@ const logOptions = (y: Argv) =>
     .option("offset", { type: "number", default: 0, describe: "Log byte offset for paginating large logs" })
 
 export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("attempts", "Manage attempt records", (yargs) =>
+  cli.command("attempts", "Manage attempt records", (yargs) => {
     yargs
       .command(
         "list [id]",
@@ -154,6 +155,6 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command("log [id]", "Get attempt log", logOptions, logHandler)
       .command("logs [id]", "Get attempt log (alias)", logOptions, logHandler)
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "attempts")
+  })
 }

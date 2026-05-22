@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import {
   listRuns, getRunDetail, stopRun, rerunInstance,
   createBackfill, getInstanceRelation,
@@ -116,7 +117,7 @@ function reportRunsError(err: unknown, format: string | undefined): void {
 }
 
 export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("runs", "Manage task run instances", (yargs) =>
+  cli.command("runs", "Manage task run instances", (yargs) => {
     yargs
       .command(
         "list",
@@ -460,6 +461,6 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "runs")
+  })
 }

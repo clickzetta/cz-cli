@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
@@ -8,7 +9,7 @@ import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExe
 const DEFAULT_LIMIT = 100
 
 export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("schema", "Manage schemas", (yargs) =>
+  cli.command("schema", "Manage schemas", (yargs) => {
     yargs
       .command(
         "list",
@@ -128,6 +129,6 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "schema")
+  })
 }

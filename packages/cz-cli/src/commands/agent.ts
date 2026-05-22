@@ -62,7 +62,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
               (s) => s.positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to delete" }),
               () => {},
             )
-            .demandCommand(1, "")
+            .demandCommand(1, "Missing subcommand for 'agent session'. Available: list, delete")
             .strict(false),
         () => {},
       )
@@ -144,7 +144,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
           ),
         () => {},
       )
-      .strictCommands().strictOptions().demandCommand(1, "")
+      .strictCommands().strictOptions().demandCommand(1, "Missing subcommand for 'agent'. Available: run, session, export, stats, llm")
       .example("cz-cli agent run \"create a daily sync task\"", "One-shot (scripts, CI)")
       .example("cz-cli agent --profile staging", "Open the interactive agent/TUI with the staging ClickZetta profile")
       .example("cz-cli agent run \"describe sales\" --session s1", "Conversational (reuse context)")

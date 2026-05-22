@@ -107,7 +107,7 @@ export function createCli(args: string[]) {
     .fail((msg, err, yargs) => {
       if (err) throw err
       const aiMessage = "Run the command with --help to see available options and usage."
-      const message = msg ?? (() => {
+      const message = (msg && msg.trim() !== "") ? msg : (() => {
         const KNOWN_FLAGS = new Set(["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "output", "o", "field", "debug", "d", "help", "h", "version"])
         const KNOWN_COMMANDS = new Set(["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "setup", "update", "ai-guide","datasource"])
         const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => !KNOWN_FLAGS.has(a))

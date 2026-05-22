@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -496,6 +497,6 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         },
       )
     registerBootstrapCommands(yargs)
-    return yargs.strictCommands().strictOptions().demandCommand(1, "")
+    return commandGroup(yargs, "profile")
   })
 }

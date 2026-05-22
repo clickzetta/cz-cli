@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import {
   requestRaw, pollJobResult,
   type ClientOptions, type JobID, type QueryResult,
@@ -55,7 +56,7 @@ async function getJobStatus(opts: ClientOptions, jobId: JobID): Promise<RawJobRe
 }
 
 export function registerJobCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("job", "Job performance tools", (yargs) =>
+  cli.command("job", "Job performance tools", (yargs) => {
     yargs
       .command(
         "status <job-id>",
@@ -130,6 +131,6 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands().strictOptions().demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "job")
+  })
 }

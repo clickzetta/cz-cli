@@ -1,8 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs"
-import { spawn } from "node:child_process"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join } from "node:path"
 import { createTraceparent } from "@clickzetta/sdk"
 import { createCli } from "./cli.js"
 import { registerCommands } from "./register-commands.js"
@@ -199,45 +197,12 @@ async function migrateProfilesOnlyAndExit(): Promise<never> {
   process.exit(0)
 }
 
-function agentRuntimeCommand(rawArgs: string[]) {
-  const entry = process.argv[1] ?? ""
-  const preloadArgs = process.execArgv.flatMap((arg, index, list) => {
-    if (arg === "--preload") return index + 1 < list.length ? [arg, list[index + 1]!] : []
-    if (arg.startsWith("--preload=")) return [arg]
-    return []
-  })
-  if (entry.endsWith(".ts")) {
-    const current = fileURLToPath(new URL(import.meta.url))
-    const opencodeEntry = resolve(dirname(current), "../../opencode/src/index.ts")
-    return {
-      command: process.execPath,
-      args: [...preloadArgs, opencodeEntry, ...rawArgs],
-    }
-  }
-  return {
-    command: process.execPath,
-    args: [...preloadArgs, ...rawArgs],
-  }
-}
-
 async function delegateToAgentRuntime(rawArgs: string[]): Promise<never> {
-  const runtime = agentRuntimeCommand(rawArgs)
-  const child = spawn(runtime.command, runtime.args, {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      CLICKZETTA_AGENT_RUNTIME: "1",
-      CLICKZETTA_TRACEPARENT: createTraceparent(process.env.CLICKZETTA_TRACEPARENT),
-    },
-  })
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject)
-    child.once("exit", (code, signal) => {
-      if (signal) resolve(1)
-      else resolve(code ?? 0)
-    })
-  })
-  process.exit(exitCode)
+  process.env.CLICKZETTA_AGENT_RUNTIME = "1"
+  process.env.CLICKZETTA_TRACEPARENT = createTraceparent(process.env.CLICKZETTA_TRACEPARENT)
+  const { main } = await import("../../opencode/src/main.ts")
+  const code = await main(rawArgs)
+  process.exit(code)
 }
 
 async function parseRegisteredCommands(args: string[]): Promise<void> {

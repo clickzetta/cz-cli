@@ -1,6 +1,7 @@
 export { VERSION } from "./version.js"
 export { runCli, runCliWithTracking } from "./run-cli.js"
 export { trackCommand, isSensitiveKey, parseTrackingArgs } from "./telemetry.js"
+export { commandGroup } from "./command-group.js"
 export { resolveConnectionConfig } from "./connection/config.js"
 export { parseJdbcUrl } from "./connection/jdbc.js"
 export { loadProfiles, saveProfiles, getDefaultProfileName, getProfileConfig } from "./connection/profile-store.js"

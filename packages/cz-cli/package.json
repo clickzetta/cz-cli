@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./otel-defaults": "./src/otel-defaults.ts"
+    "./otel-defaults": "./src/otel-defaults.ts",
+    "./command-group": "./src/command-group.ts"
   },
   "bin": {
     "cz-cli": "./src/main.ts"

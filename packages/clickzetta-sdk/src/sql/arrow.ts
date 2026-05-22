@@ -138,6 +138,24 @@ function schemaFromArrow(arrowSchema: Schema, fallback: ColumnSchema[]): ColumnS
 }
 
 /**
+ * Deduplicate column names in-place. Mirrors query_result.py:67-73.
+ * First occurrence keeps original name; subsequent duplicates become `name_index`.
+ */
+export function deduplicateColumns(columns: ColumnSchema[]): ColumnSchema[] {
+  const seen = new Map<string, number>()
+  const result: ColumnSchema[] = []
+  for (let i = 0; i < columns.length; i++) {
+    let name = columns[i]!.name
+    if (seen.has(name)) {
+      name = `${name}_${i}`
+    }
+    seen.set(name, i)
+    result.push({ name, type: columns[i]!.type })
+  }
+  return result
+}
+
+/**
  * Decode a list of base64-encoded Arrow IPC messages (one per element of
  * `resultSet.data.data`) into rows keyed by column name.
  *
@@ -154,8 +172,8 @@ export function decodeArrowPayload(
     return { columns: metadataColumns, rows: [] }
   }
 
-  let resolvedColumns = metadataColumns
-  const allRows: unknown[][] = []
+  let resolvedColumns = deduplicateColumns(metadataColumns)
+  const allRows: Record<string, unknown>[] = []
 
   for (const chunk of base64Chunks) {
     const bytes = base64ToBytes(chunk)
@@ -166,11 +184,11 @@ export function decodeArrowPayload(
       resolvedColumns = schemaFromArrow(table.schema, metadataColumns)
     }
 
-    // Collect per-column arrays (same as safe_to_py_list in py:30-37).
+    // Collect per-column arrays using positional index (not name) to handle
+    // duplicate column names correctly. Mirrors py:40-54 arrow_table_to_rows.
     const colArrays: unknown[][] = []
     for (let ci = 0; ci < resolvedColumns.length; ci++) {
-      const name = table.schema.fields[ci]?.name ?? resolvedColumns[ci]!.name
-      const vec = table.getChild(name) as Vector<DataType> | null
+      const vec = table.getChildAt(ci) as Vector<DataType> | null
       colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type, timezone))
     }
 
@@ -195,9 +213,9 @@ export async function fetchArrowFromUrls(
   urls: string[],
   metadataColumns: ColumnSchema[],
   timezone?: string,
-): Promise<{ columns: ColumnSchema[]; rows: unknown[][] }> {
-  let resolvedColumns = metadataColumns
-  const allRows: unknown[][] = []
+): Promise<{ columns: ColumnSchema[]; rows: Record<string, unknown>[] }> {
+  let resolvedColumns = deduplicateColumns(metadataColumns)
+  const allRows: Record<string, unknown>[] = []
 
   for (const url of urls) {
     const resp = await fetch(url)
@@ -212,8 +230,7 @@ export async function fetchArrowFromUrls(
 
     const colArrays: unknown[][] = []
     for (let ci = 0; ci < resolvedColumns.length; ci++) {
-      const name = table.schema.fields[ci]?.name ?? resolvedColumns[ci]!.name
-      const vec = table.getChild(name) as Vector<DataType> | null
+      const vec = table.getChildAt(ci) as Vector<DataType> | null
       colArrays.push(columnToArray(vec, resolvedColumns[ci]!.type, timezone))
     }
     for (let r = 0; r < table.numRows; r++) {

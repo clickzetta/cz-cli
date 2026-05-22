@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
 import {
   listTasks, createTask, getTaskDetail, getTaskConfigDetail,
@@ -216,7 +217,7 @@ function convertConfigFields(data: Record<string, unknown>): Record<string, unkn
 }
 
 export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("task", "Manage Studio tasks", (yargs) =>
+  cli.command("task", "Manage Studio tasks", (yargs) => {
     yargs
       .command(
         "list",
@@ -1257,7 +1258,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .strictCommands()
           .strictOptions()
-          .demandCommand(1, ""),
+          .demandCommand(1, "Missing subcommand for 'task flow'. Available: list, detail, submit, instances, node-save-config"),
       )
       .command(
         "delete-folder <folder>",
@@ -1348,8 +1349,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .strictCommands()
-      .strictOptions()
-      .demandCommand(1, ""),
-  )
+    return commandGroup(yargs, "task")
+  })
 }
