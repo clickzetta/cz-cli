@@ -15,18 +15,18 @@ default_llm = "clickzetta"
 provider = "clickzetta"
 api_key = "ck-test"
 base_url = "https://gateway.clickzetta.com"
-model = "deepseek-v4-pro"
+model = "deepseek/deepseek-v4-pro"
 `)
 
     expect(result.providers).toEqual({
       clickzetta: {
         options: {
           apiKey: "ck-test",
-          baseURL: "https://gateway.clickzetta.com/v1",
+          baseURL: "https://gateway.clickzetta.com/gateway/v1",
         },
       },
     })
-    expect(result.defaultModel).toBe("clickzetta/deepseek-v4-pro")
+    expect(result.defaultModel).toBe("clickzetta/deepseek/deepseek-v4-pro")
     expect(result.warnings).toEqual([])
   })
 
@@ -43,7 +43,7 @@ aimesh_endpoint = "https://legacy.clickzetta.com"
       clickzetta: {
         options: {
           apiKey: "legacy-key",
-          baseURL: "https://legacy.clickzetta.com/v1",
+          baseURL: "https://legacy.clickzetta.com/gateway/v1",
         },
       },
     })
@@ -93,6 +93,12 @@ base_url = "https://api.anthropic.com"
             limit: { context: 128000, output: 16384 },
             modalities: { input: ["text"], output: ["text"] },
           },
+        },
+      },
+      anthropic: {
+        options: {
+          apiKey: "sk-ant",
+          baseURL: "https://api.anthropic.com/v1",
         },
       },
     })
@@ -190,7 +196,7 @@ aimesh_endpoint = "https://legacy.clickzetta.com"
 
 [llm.clickzetta]
 provider = "clickzetta"
-model = "deepseek-v4-pro"
+model = "deepseek/deepseek-v4-pro"
 `) as Record<string, unknown>
 
     expect(migrateLegacyClickzettaConfig(data)).toBe(true)
@@ -203,7 +209,7 @@ model = "deepseek-v4-pro"
       llm: {
         clickzetta: {
           provider: "clickzetta",
-          model: "deepseek-v4-pro",
+          model: "deepseek/deepseek-v4-pro",
           api_key: "legacy-key",
           base_url: "https://legacy.clickzetta.com",
         },

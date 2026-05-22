@@ -58,7 +58,7 @@ describe("applyCredentialToProfiles", () => {
         llm: {
           clickzetta: {
             provider: "clickzetta",
-            model: "deepseek-v4-pro",
+            model: "deepseek/deepseek-v4-pro",
           },
         },
       },
@@ -84,7 +84,7 @@ describe("applyCredentialToProfiles", () => {
       llm: {
         clickzetta: {
           provider: "clickzetta",
-          model: "deepseek-v4-pro",
+          model: "deepseek/deepseek-v4-pro",
           api_key: "new-key",
           base_url: "https://new.clickzetta.com",
         },

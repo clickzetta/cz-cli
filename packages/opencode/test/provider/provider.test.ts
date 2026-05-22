@@ -544,7 +544,7 @@ test("defaultModel falls back to default_llm model bridge when config.model is u
           'provider = "clickzetta"',
           'api_key = "ck-test"',
           'base_url = "https://gateway.clickzetta.com"',
-          'model = "deepseek-v4-pro"',
+          'model = "deepseek/deepseek-v4-pro"',
           "",
         ].join("\n"),
       )
@@ -571,7 +571,7 @@ test("defaultModel falls back to default_llm model bridge when config.model is u
         const model = await defaultModel()
         expect(model).toEqual({
           providerID: ProviderID.clickzetta,
-          modelID: ModelID.make("deepseek-v4-pro"),
+          modelID: ModelID.make("deepseek/deepseek-v4-pro"),
         })
       },
     })

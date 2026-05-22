@@ -75,7 +75,12 @@ export function resolveCurrentProfileLabel(): string {
 export function normalizeLlmBaseUrl(provider: string, url: string | undefined): string | undefined {
   if (!url) return undefined
   let baseURL = url.replace(/\/+$/, "")
-  const needsVersionPrefix = ["anthropic", "openai", "openai-compatible", "clickzetta"].includes(provider)
+  if (provider === "clickzetta") {
+    if (!/\/gateway(\/|$)/.test(baseURL)) baseURL += "/gateway"
+    if (!/\/v\d+(\/|$)/.test(baseURL)) baseURL += "/v1"
+    return baseURL
+  }
+  const needsVersionPrefix = ["anthropic", "openai", "openai-compatible"].includes(provider)
   const hasVersionPath = /\/v\d+(\/|$)/.test(baseURL) || /\/openai(\/|$)/.test(baseURL)
   if (needsVersionPrefix && !hasVersionPath) baseURL += "/v1"
   return baseURL
@@ -298,6 +303,17 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
         ...(selectedDefault.baseURL && { baseURL: selectedDefault.baseURL }),
       },
       ...customProviderFromEntry(selectedDefault),
+    }
+    for (const entry of parsedEntries) {
+      if (entry === selectedDefault) continue
+      if (!providers[entry.provider]) {
+        providers[entry.provider] = {
+          options: {
+            apiKey: entry.apiKey,
+            ...(entry.baseURL && { baseURL: entry.baseURL }),
+          },
+        }
+      }
     }
     return { providers, defaultModel, warnings }
   }

@@ -283,7 +283,7 @@ test("bridges default_llm model into config.model when config.model is unset", a
           'provider = "clickzetta"',
           'api_key = "ck-test"',
           'base_url = "https://gateway.clickzetta.com"',
-          'model = "deepseek-v4-pro"',
+          'model = "deepseek/deepseek-v4-pro"',
           "",
         ].join("\n"),
       )
@@ -298,9 +298,9 @@ test("bridges default_llm model into config.model when config.model is unset", a
       directory: tmp.path,
       fn: async () => {
         const config = await load()
-        expect(config.model).toBe("clickzetta/deepseek-v4-pro")
+        expect(config.model).toBe("clickzetta/deepseek/deepseek-v4-pro")
         expect(config.provider?.clickzetta?.options?.apiKey).toBe("ck-test")
-        expect(config.provider?.clickzetta?.options?.baseURL).toBe("https://gateway.clickzetta.com/v1")
+        expect(config.provider?.clickzetta?.options?.baseURL).toBe("https://gateway.clickzetta.com/gateway/v1")
       },
     })
   } finally {
@@ -364,7 +364,7 @@ test("explicit config.model overrides default_llm model bridge", async () => {
           'provider = "clickzetta"',
           'api_key = "ck-test"',
           'base_url = "https://gateway.clickzetta.com"',
-          'model = "deepseek-v4-pro"',
+          'model = "deepseek/deepseek-v4-pro"',
           "",
         ].join("\n"),
       )
