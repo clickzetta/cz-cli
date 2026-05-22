@@ -1084,7 +1084,27 @@ async function runModernSetupFlowTTY(
     && await askYesNo("Are you a new user? (y/N) ", false)
 
   if (isNewUser) {
-    await runLoginUrlFlowTTY(profileName, format, argv, REGISTER_URL_CLICKZETTA, "Register at:")
+    const registerChoice = await promptSelect(
+      "Choose a registration method:",
+      [
+        { label: `ClickZetta - ${REGISTER_URL_CLICKZETTA}`, value: "default" },
+        { label: "Custom URL - Enter a registration page URL", value: "custom" },
+      ],
+    )
+    let registerUrl = REGISTER_URL_CLICKZETTA
+    if (registerChoice === "custom") {
+      const rawUrl = await prompt("Enter registration page URL:", { placeholder: "https://your-domain.com/register" })
+      if (!rawUrl.trim()) {
+        error("SETUP_FAILED", "A registration URL is required.", { format })
+        return
+      }
+      registerUrl = normalizeLoginInput(rawUrl)
+      if (!registerUrl) {
+        error("SETUP_FAILED", "Invalid registration URL.", { format })
+        return
+      }
+    }
+    await runLoginUrlFlowTTY(profileName, format, argv, registerUrl, "Register at:")
     return
   }
 
