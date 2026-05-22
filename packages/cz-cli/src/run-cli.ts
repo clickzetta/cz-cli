@@ -373,6 +373,6 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
     if (positional[0] !== "setup") {
       await track(false, error instanceof Error ? error.message : `exit_code=${process.exitCode ?? 1}`)
     }
-    throw error
+    if (!process.exitCode) throw error
   }
 }

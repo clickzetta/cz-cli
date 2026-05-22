@@ -1087,13 +1087,13 @@ async function runModernSetupFlowTTY(
     const registerChoice = await promptSelect(
       "Choose a registration method:",
       [
-        { label: `ClickZetta - ${REGISTER_URL_CLICKZETTA}`, value: "default" },
+        { label: "ClickZetta - https://accounts.clickzetta.com/register", value: "default" },
         { label: "Custom URL - Enter a registration page URL", value: "custom" },
       ],
     )
     let registerUrl = REGISTER_URL_CLICKZETTA
     if (registerChoice === "custom") {
-      const rawUrl = await prompt("Enter registration page URL:", { placeholder: "https://your-domain.com/register" })
+      const rawUrl = await prompt("Enter account console base URL:", { placeholder: "https://accounts.your-domain.com" })
       if (!rawUrl.trim()) {
         error("SETUP_FAILED", "A registration URL is required.", { format })
         return
@@ -1103,6 +1103,10 @@ async function runModernSetupFlowTTY(
       try {
         const parsed = new URL(withProtocol)
         parsed.hash = ""
+        parsed.search = ""
+        if (!parsed.pathname.replace(/\/$/, "").toLowerCase().endsWith("/register")) {
+          parsed.pathname = parsed.pathname.replace(/\/$/, "") + "/register"
+        }
         registerUrl = parsed.toString().replace(/\/$/, "")
       } catch {
         error("SETUP_FAILED", "Invalid registration URL.", { format })
