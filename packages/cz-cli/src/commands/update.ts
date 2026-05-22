@@ -10,7 +10,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { existsSync, unlinkSync, readSync, openSync, closeSync } from "node:fs"
+import { existsSync, unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync } from "node:fs"
 import { homedir, platform } from "node:os"
 import { join } from "node:path"
 import type { Argv } from "yargs"
@@ -61,6 +61,28 @@ function findStaleBinaries(): string[] {
   } catch {
     return []
   }
+}
+
+function isPackageManagerBinary(p: string): boolean {
+  if (p.includes("node_modules") || p.includes(".bun")) return true
+  // Check npm global bin prefix
+  try {
+    const npmPrefix = execSync("npm prefix -g", { encoding: "utf-8", stdio: "pipe" }).trim()
+    if (p.startsWith(npmPrefix)) return true
+  } catch {}
+  // Check bun global bin
+  try {
+    const bunBin = execSync("bun pm bin -g", { encoding: "utf-8", stdio: "pipe" }).trim()
+    if (p.startsWith(bunBin)) return true
+  } catch {}
+  // Check if symlink pointing into node_modules
+  try {
+    if (lstatSync(p).isSymbolicLink()) {
+      const target = readlinkSync(p)
+      if (target.includes("node_modules")) return true
+    }
+  } catch {}
+  return false
 }
 
 function removeStaleBinary(path: string): boolean {
@@ -181,7 +203,7 @@ export function registerUpdateCommand(cli: Argv) {
       // Step 4: If managed by npm or bun, uninstall first then reinstall
       if (npm) {
         // Clean up any stale non-npm binaries
-        const stale = findStaleBinaries().filter((p) => !p.includes("node_modules") && !p.includes(".bun"))
+        const stale = findStaleBinaries().filter((p) => !isPackageManagerBinary(p))
         if (stale.length > 0) {
           process.stderr.write("Found outdated cz-cli binaries not managed by npm:\n")
           stale.forEach((p) => process.stderr.write(`  ${p}\n`))
@@ -201,7 +223,7 @@ export function registerUpdateCommand(cli: Argv) {
 
       if (bun) {
         // Clean up any stale non-bun binaries
-        const stale = findStaleBinaries().filter((p) => !p.includes(".bun") && !p.includes("node_modules"))
+        const stale = findStaleBinaries().filter((p) => !isPackageManagerBinary(p))
         if (stale.length > 0) {
           process.stderr.write("Found outdated cz-cli binaries not managed by bun:\n")
           stale.forEach((p) => process.stderr.write(`  ${p}\n`))
