@@ -1,8 +1,9 @@
 /**
  * `cz-cli update` — manually update cz-cli to the latest version.
  *
- * Detects installation method (npm global vs standalone binary) and uses
- * the appropriate update mechanism.
+ * Detects installation method (npm global, bun global, or standalone binary)
+ * and uses the appropriate update mechanism. Detects conflicts when both npm
+ * and bun have the package installed globally.
  */
 
 import { execSync } from "node:child_process"
@@ -15,28 +16,60 @@ import { VERSION } from "../version.js"
 const REPO = "clickzetta/cz-cli"
 const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`
 const NPM_PACKAGE = "@clickzetta/cz-cli"
+const REGISTRY = "--registry https://registry.npmjs.org"
 
-type InstallType = "npm-global" | "binary" | "dev"
+type InstallType = "npm" | "bun" | "binary" | "dev"
 
-function detectInstallType(): InstallType {
+function hasNpmGlobal(): boolean {
+  try {
+    execSync(`npm list -g ${NPM_PACKAGE} --depth=0`, { stdio: "pipe" })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function hasBunGlobal(): boolean {
+  try {
+    const bunBin = execSync("bun pm bin -g", { encoding: "utf-8", stdio: "pipe" }).trim()
+    return existsSync(join(bunBin, "cz-cli"))
+  } catch {
+    return false
+  }
+}
+
+function detectInstallType(): InstallType | "conflict" {
   const argv1 = process.argv[1] ?? ""
   if (argv1.endsWith(".ts")) return "dev"
 
-  // Check if running from a node_modules path (npm global install)
   const exe = resolve(argv1)
-  if (exe.includes("node_modules")) return "npm-global"
 
-  // Check if the binary is in ~/.local/bin (standalone install)
+  // Check if running from bun global bin
+  try {
+    const bunBin = execSync("bun pm bin -g", { encoding: "utf-8", stdio: "pipe" }).trim()
+    if (exe.startsWith(bunBin)) {
+      if (hasNpmGlobal()) return "conflict"
+      return "bun"
+    }
+  } catch {}
+
+  // Check if running from npm global (node_modules path)
+  if (exe.includes("node_modules")) {
+    if (hasBunGlobal()) return "conflict"
+    return "npm"
+  }
+
+  // Check standalone binary
   const installDir = resolve(join(homedir(), ".local", "bin"))
   if (exe.startsWith(installDir)) return "binary"
 
-  // Fallback: check if npm knows about the package
-  try {
-    execSync(`npm list -g ${NPM_PACKAGE} --depth=0`, { stdio: "pipe" })
-    return "npm-global"
-  } catch {
-    return "binary"
-  }
+  // Fallback detection
+  const npm = hasNpmGlobal()
+  const bun = hasBunGlobal()
+  if (npm && bun) return "conflict"
+  if (bun) return "bun"
+  if (npm) return "npm"
+  return "binary"
 }
 
 async function fetchLatestVersion(): Promise<string | null> {
@@ -57,18 +90,27 @@ async function fetchLatestVersion(): Promise<string | null> {
 }
 
 function updateViaNpm(): boolean {
-  const registry = "--registry https://registry.npmjs.org"
   try {
     process.stderr.write("Updating via npm...\n")
-    execSync(`npm install -g ${NPM_PACKAGE}@latest --ignore-scripts=false ${registry}`, { stdio: "inherit" })
+    execSync(`npm install -g ${NPM_PACKAGE}@latest --ignore-scripts=false ${REGISTRY}`, { stdio: "inherit" })
     return true
   } catch {
     try {
-      execSync(`npm install -g ${NPM_PACKAGE}@latest --force ${registry}`, { stdio: "inherit" })
+      execSync(`npm install -g ${NPM_PACKAGE}@latest --force ${REGISTRY}`, { stdio: "inherit" })
       return true
     } catch {
       return false
     }
+  }
+}
+
+function updateViaBun(): boolean {
+  try {
+    process.stderr.write("Updating via bun...\n")
+    execSync(`bun install -g ${NPM_PACKAGE}@latest`, { stdio: "inherit" })
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -91,7 +133,6 @@ function updateViaBinary(version: string): boolean {
   } catch {
     return false
   }
-  // Verify the binary was actually updated
   try {
     const installed = execSync(`"${binary}" --version`, { encoding: "utf-8", timeout: 10_000 }).trim()
     if (installed !== version) {
@@ -131,6 +172,18 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
+      if (installType === "conflict") {
+        process.stderr.write(
+          "Conflict: cz-cli is installed via both npm and bun.\n" +
+          "Please uninstall one to avoid version conflicts:\n" +
+          `  npm uninstall -g ${NPM_PACKAGE}\n` +
+          "  or\n" +
+          `  bun remove -g ${NPM_PACKAGE}\n`,
+        )
+        process.exitCode = 1
+        return
+      }
+
       process.stderr.write("Checking for updates...\n")
       const latest = await fetchLatestVersion()
       if (!latest) {
@@ -147,7 +200,9 @@ export function registerUpdateCommand(cli: Argv) {
       process.stderr.write(`New version available: ${VERSION} → ${latest}\n`)
 
       let ok: boolean
-      if (installType === "npm-global") {
+      if (installType === "bun") {
+        ok = updateViaBun()
+      } else if (installType === "npm") {
         ok = updateViaNpm()
       } else {
         ok = updateViaBinary(latest)
@@ -158,8 +213,10 @@ export function registerUpdateCommand(cli: Argv) {
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } else {
         process.stderr.write("Update failed. Try manually:\n")
-        if (installType === "npm-global") {
-          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@latest\n`)
+        if (installType === "bun") {
+          process.stderr.write(`  bun install -g ${NPM_PACKAGE}@latest\n`)
+        } else if (installType === "npm") {
+          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@latest ${REGISTRY}\n`)
         } else {
           process.stderr.write(`  curl -fsSL https://github.com/${REPO}/releases/latest/download/install.sh | sh\n`)
         }
