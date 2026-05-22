@@ -21,23 +21,16 @@ function detectPackageManager() {
 }
 
 function cleanupOutdatedBinaries() {
+  // Only remove standalone binaries in ~/.local/bin that are not symlinks
+  // (npm/bun create symlinks in their bin dirs, standalone installs are real files)
+  const localBin = path.join(home, ".local", "bin", "cz-cli");
   try {
-    const { execSync } = require("child_process");
-    const output = execSync("which -a cz-cli", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    if (!output) return;
-    const paths = output.split("\n").filter(Boolean);
-    for (const p of paths) {
-      // Skip paths managed by npm or bun — only remove standalone/orphan binaries
-      if (p.includes("node_modules") || p.includes(".bun")) continue;
-      try {
-        fs.unlinkSync(p);
-        process.stderr.write(`Removed outdated cz-cli binary: ${p}\n`);
-      } catch (e) {
-        // Permission denied or other error — skip silently
-      }
+    if (fs.existsSync(localBin) && !fs.lstatSync(localBin).isSymbolicLink()) {
+      fs.unlinkSync(localBin);
+      process.stderr.write(`Removed outdated standalone binary: ${localBin}\n`);
     }
   } catch (e) {
-    // which not found or no cz-cli in PATH — nothing to clean
+    // Permission denied or other error — skip silently
   }
 }
 
