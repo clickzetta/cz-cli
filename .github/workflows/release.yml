@@ -70,7 +70,7 @@ jobs:
           set -x
           WORK_DIR="$(pwd)"
           SKILLS_SRC="$(mktemp -d)/clickzetta-skills"
-          curl -sL https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz | tar -xz -C "$(dirname "$SKILLS_SRC")"
+          curl -sSL --retry 3 --retry-delay 5 --max-time 60 https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz | tar -xz -C "$(dirname "$SKILLS_SRC")"
           mv "$(dirname "$SKILLS_SRC")/clickzetta-skills-main" "$SKILLS_SRC"
           mkdir -p "$WORK_DIR/skills/external"
           count=0
