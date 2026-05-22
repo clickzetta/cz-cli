@@ -9,7 +9,6 @@
 #   cz-cli-darwin-x64/bin/cz-cli
 #   cz-cli-linux-arm64/bin/cz-cli
 #   cz-cli-linux-x64/bin/cz-cli
-#   cz-cli-win32-x64/bin/cz-cli.exe
 #
 # Environment:
 #   NPM_TOKEN — npm auth token (required)
@@ -30,7 +29,6 @@ PLATFORMS=(
   "darwin-x64"
   "linux-arm64"
   "linux-x64"
-  "win32-x64"
 )
 
 echo "Publishing @clickzetta/cz-cli v${VERSION}"
@@ -68,12 +66,8 @@ for platform in "${PLATFORMS[@]}"; do
   # Recreate bin/ from scratch so stale binaries from older layouts are never published.
   rm -rf "$pkg_dir/bin"
   mkdir -p "$pkg_dir/bin"
-  if [ "$platform" = "win32-x64" ]; then
-    cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli.exe" "$pkg_dir/bin/cz-cli.exe"
-  else
-    cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli" "$pkg_dir/bin/cz-cli"
-    chmod +x "$pkg_dir/bin/cz-cli"
-  fi
+  cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli" "$pkg_dir/bin/cz-cli"
+  chmod +x "$pkg_dir/bin/cz-cli"
 
   # Copy skills if present
   if [ -d "$ARTIFACTS/cz-cli-${platform}/skills" ]; then

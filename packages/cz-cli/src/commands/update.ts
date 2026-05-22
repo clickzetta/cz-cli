@@ -76,11 +76,17 @@ function updateViaBinary(version: string): boolean {
   const installUrl = `https://github.com/${REPO}/releases/latest/download/install.sh`
   try {
     process.stderr.write("Downloading and installing update...\n")
-    execSync(`curl -fsSL "${installUrl}" | sh`, {
+    const tmpScript = execSync("mktemp", { encoding: "utf-8" }).trim()
+    execSync(`curl -fsSL --retry 2 -o "${tmpScript}" "${installUrl}"`, {
+      stdio: ["ignore", "inherit", "inherit"],
+      timeout: 60_000,
+    })
+    execSync(`sh "${tmpScript}"`, {
       env: { ...process.env, CZ_VERSION: version, NON_INTERACTIVE: "1", SKIP_PATH_PROMPT: "1" },
       stdio: ["ignore", "inherit", "inherit"],
       timeout: 300_000,
     })
+    execSync(`rm -f "${tmpScript}"`, { stdio: "ignore" })
     return true
   } catch {
     return false
