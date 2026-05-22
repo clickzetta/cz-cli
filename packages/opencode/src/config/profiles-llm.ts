@@ -3,6 +3,12 @@ import os from "os"
 import path from "path"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
 
+export interface LlmEntry {
+  name: string
+  provider: string
+  model?: string
+}
+
 export interface ProfilesLlmResult {
   providers: Record<
     string,
@@ -26,6 +32,8 @@ export interface ProfilesLlmResult {
       >
     }
   >
+  entries: LlmEntry[]
+  defaultLlmEntry?: string
   defaultModel?: string
   warnings: string[]
 }
@@ -209,6 +217,7 @@ export function migrateLegacyClickzettaConfig(data: Record<string, unknown>): bo
 export function parseProfilesToml(toml: string): ProfilesLlmResult {
   const warnings: string[] = []
   const providers: ProfilesLlmResult["providers"] = {}
+  const resultEntries: LlmEntry[] = []
   let defaultModel: string | undefined
 
   let parsed: unknown
@@ -216,9 +225,9 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
     parsed = parseToml(toml)
   } catch (e) {
     warnings.push(`failed to parse profiles.toml: ${String(e)}`)
-    return { providers, defaultModel, warnings }
+    return { providers, entries: resultEntries, defaultLlmEntry: undefined, defaultModel, warnings }
   }
-  if (!isRecord(parsed)) return { providers, defaultModel, warnings }
+  if (!isRecord(parsed)) return { providers, entries: resultEntries, defaultLlmEntry: undefined, defaultModel, warnings }
 
   const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
   const defaultLlm = asString(parsed.default_llm)
@@ -279,6 +288,10 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
     return result
   }, {})
 
+  for (const entry of parsedEntries) {
+    resultEntries.push({ name: entry.name, provider: entry.provider, model: entry.model })
+  }
+
   if (defaultLlm) {
     const entry = llms[defaultLlm]
     if (!isRecord(entry)) {
@@ -315,7 +328,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
         }
       }
     }
-    return { providers, defaultModel, warnings }
+    return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
   }
 
   if (legacyClickzettaProvider) {
@@ -330,7 +343,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
         ...(selected.baseURL && { baseURL: selected.baseURL }),
       },
     }
-    return { providers, defaultModel, warnings }
+    return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
   }
 
   if (parsedEntries.length > 1) {
@@ -357,7 +370,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
     }
   }
 
-  return { providers, defaultModel, warnings }
+  return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
 }
 
 export function hasUsableLlm(toml: string): ProfilesLlmGuardResult {

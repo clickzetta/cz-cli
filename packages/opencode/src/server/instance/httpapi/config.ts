@@ -37,12 +37,16 @@ export const ConfigApi = HttpApi.make("config")
 export const configHandlers = Layer.unwrap(
   Effect.gen(function* () {
     const svc = yield* Provider.Service
+    const cfgSvc = yield* Config.Service
 
     const providers = Effect.fn("ConfigHttpApi.providers")(function* () {
+      const config = yield* cfgSvc.get()
       const providers = yield* svc.list()
       return {
         providers: Object.values(providers),
         default: Provider.defaultModelIDs(providers),
+        entries: (config as any).llm_entries ?? [],
+        defaultEntry: (config as any).default_llm_entry,
       }
     })
 

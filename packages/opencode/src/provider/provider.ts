@@ -995,6 +995,16 @@ export type ListResult = Types.DeepMutable<Schema.Schema.Type<typeof ListResult>
 export const ConfigProvidersResult = Schema.Struct({
   providers: Schema.Array(Info),
   default: DefaultModelIDs,
+  entries: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        provider: Schema.String,
+        model: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  defaultEntry: Schema.optional(Schema.String),
 }).pipe(withStatics((s) => ({ zod: zod(s) })))
 export type ConfigProvidersResult = Types.DeepMutable<Schema.Schema.Type<typeof ConfigProvidersResult>>
 

@@ -78,10 +78,14 @@ export const ConfigRoutes = lazy(() =>
       async (c) =>
         jsonRequest("ConfigRoutes.providers", c, function* () {
           const svc = yield* Provider.Service
+          const cfg = yield* Config.Service
+          const config = yield* cfg.get()
           const providers = yield* svc.list()
           return {
             providers: Object.values(providers),
             default: Provider.defaultModelIDs(providers),
+            entries: (config as any).llm_entries ?? [],
+            defaultEntry: (config as any).default_llm_entry,
           }
         }),
     ),

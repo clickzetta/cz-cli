@@ -364,10 +364,13 @@ export const layer = Layer.effect(
             writeFileSync(profilesPath, toml)
             log.info("migrated legacy ClickZetta LLM config to [llm.clickzetta]", { path: profilesPath })
           }
-          const { providers, defaultModel, warnings } = parseProfilesToml(toml)
+          const { providers, entries, defaultLlmEntry, defaultModel, warnings } = parseProfilesToml(toml)
           for (const w of warnings) log.warn(w, { path: profilesPath })
           if (Object.keys(providers).length > 0) {
             result = mergeDeep(result, { provider: providers } as any)
+          }
+          if (entries.length > 0) {
+            result = mergeDeep(result, { llm_entries: entries, default_llm_entry: defaultLlmEntry } as any)
           }
           if (!result.model && defaultModel) {
             result = mergeDeep(result, { model: defaultModel })

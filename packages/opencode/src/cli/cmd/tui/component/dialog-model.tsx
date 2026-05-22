@@ -67,46 +67,87 @@ export function DialogModel(props: { providerID?: string }) {
       "Recent",
     )
 
-    const providerOptions = pipe(
-      sync.data.provider,
-      sortBy(
-        (provider) => provider.id !== "opencode",
-        (provider) => provider.name,
-      ),
-      flatMap((provider) =>
-        pipe(
-          provider.models,
-          entries(),
-          filter(([_, info]) => info.status !== "deprecated"),
-          filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-          map(([model, info]) => ({
-            value: { providerID: provider.id, modelID: model },
-            title: info.name ?? model,
-            description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-              ? "(Favorite)"
-              : undefined,
-            category: connected() ? provider.name : undefined,
-            disabled: provider.id === "opencode" && model.includes("-nano"),
-            footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
-            onSelect() {
-              onSelect(provider.id, model)
-            },
-          })),
-          filter((x) => {
-            if (!showSections) return true
-            if (favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
-              return false
-            if (recents.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
-              return false
-            return true
+    const llmEntries = sync.data.llm_entries
+
+    const providerOptions = llmEntries.length > 0
+      ? pipe(
+          llmEntries,
+          flatMap((entry) => {
+            const provider = sync.data.provider.find((x) => x.id === entry.provider)
+            if (!provider) return []
+            return pipe(
+              provider.models,
+              entries(),
+              filter(([_, info]) => info.status !== "deprecated"),
+              filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
+              map(([model, info]) => ({
+                value: { providerID: provider.id, modelID: model },
+                title: info.name ?? model,
+                description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
+                  ? "(Favorite)"
+                  : undefined,
+                category: connected() ? entry.name : undefined,
+                disabled: provider.id === "opencode" && model.includes("-nano"),
+                footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+                onSelect() {
+                  onSelect(provider.id, model)
+                },
+              })),
+              filter((x) => {
+                if (!showSections) return true
+                if (favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
+                  return false
+                if (recents.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
+                  return false
+                return true
+              }),
+              sortBy(
+                (x) => x.footer !== "Free",
+                (x) => x.title,
+              ),
+            )
           }),
+        )
+      : pipe(
+          sync.data.provider,
           sortBy(
-            (x) => x.footer !== "Free",
-            (x) => x.title,
+            (provider) => provider.id !== "opencode",
+            (provider) => provider.name,
           ),
-        ),
-      ),
-    )
+          flatMap((provider) =>
+            pipe(
+              provider.models,
+              entries(),
+              filter(([_, info]) => info.status !== "deprecated"),
+              filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
+              map(([model, info]) => ({
+                value: { providerID: provider.id, modelID: model },
+                title: info.name ?? model,
+                description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
+                  ? "(Favorite)"
+                  : undefined,
+                category: connected() ? provider.name : undefined,
+                disabled: provider.id === "opencode" && model.includes("-nano"),
+                footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+                onSelect() {
+                  onSelect(provider.id, model)
+                },
+              })),
+              filter((x) => {
+                if (!showSections) return true
+                if (favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
+                  return false
+                if (recents.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
+                  return false
+                return true
+              }),
+              sortBy(
+                (x) => x.footer !== "Free",
+                (x) => x.title,
+              ),
+            ),
+          ),
+        )
 
     const popularProviders = !connected()
       ? pipe(

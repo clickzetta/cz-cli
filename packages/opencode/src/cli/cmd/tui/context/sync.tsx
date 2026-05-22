@@ -41,6 +41,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       provider_next: ProviderListResponse
       console_state: ConsoleState
       provider_auth: Record<string, ProviderAuthMethod[]>
+      llm_entries: Array<{ name: string; provider: string; model?: string }>
+      default_llm_entry: string | undefined
       agent: Agent[]
       command: Command[]
       permission: {
@@ -83,6 +85,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
       console_state: emptyConsoleState,
       provider_auth: {},
+      llm_entries: [],
+      default_llm_entry: undefined,
       config: {},
       status: "loading",
       agent: [],
@@ -411,6 +415,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             batch(() => {
               setStore("provider", reconcile(providers.providers))
               setStore("provider_default", reconcile(providers.default))
+              setStore("llm_entries", reconcile((providers as any).entries ?? []))
+              setStore("default_llm_entry", (providers as any).defaultEntry)
               setStore("provider_next", reconcile(providerList))
               setStore("console_state", reconcile(consoleState))
               setStore("agent", reconcile(agents))
