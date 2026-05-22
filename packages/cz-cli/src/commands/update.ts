@@ -10,7 +10,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, unlinkSync, readSync, openSync, closeSync } from "node:fs"
 import { homedir, platform } from "node:os"
 import { join } from "node:path"
 import type { Argv } from "yargs"
@@ -93,22 +93,6 @@ async function fetchLatestVersion(): Promise<string | null> {
   } catch {
     return null
   }
-}
-
-function getInstalledBinaryVersion(): string | null {
-  try {
-    const meta = JSON.parse(
-      readFileSync(join(homedir(), ".clickzetta", "install.json"), "utf-8"),
-    )
-    if (meta.installed_path && existsSync(meta.installed_path)) {
-      return execSync(`"${meta.installed_path}" --version`, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 5000,
-      }).trim()
-    }
-  } catch {}
-  return null
 }
 
 function updateViaNpm(): boolean {
@@ -215,27 +199,15 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      if (ok) {
-        migrateProfilesAfterUpdate(installType)
-        // Verify the binary actually updated — npm exit 0 doesn't guarantee
-        // the platform binary changed (optionalDep may fail silently).
-        const actualVersion = getInstalledBinaryVersion()
-        if (actualVersion && actualVersion !== latest && !actualVersion.includes(latest)) {
-          process.stderr.write(
-            `⚠ npm reported success but binary is still ${actualVersion} (expected ${latest}).\n` +
-            `  This usually means the platform package was not updated.\n` +
-            `  Try: npm install -g ${NPM_PACKAGE}@latest --force\n`,
-          )
-          process.exitCode = 1
-        } else {
-          process.stderr.write(`✓ Updated to ${actualVersion || latest}.\n`)
-        }
-      } else {
-        process.stderr.write("Update failed. Try manually:\n")
-        if (installType === "npm-global") {
-          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@latest\n`)
-        } else {
-          process.stderr.write(`  curl -fsSL https://github.com/${REPO}/releases/latest/download/install.sh | sh\n`)
+      if (bun) {
+        // Clean up any stale non-bun binaries
+        const stale = findStaleBinaries().filter((p) => !p.includes(".bun") && !p.includes("node_modules"))
+        if (stale.length > 0) {
+          process.stderr.write("Found outdated cz-cli binaries not managed by bun:\n")
+          stale.forEach((p) => process.stderr.write(`  ${p}\n`))
+          if (confirm("Remove these outdated binaries to avoid conflicts?")) {
+            stale.forEach(removeStaleBinary)
+          }
         }
         if (updateViaBun()) {
           migrateProfilesAfterUpdate()

@@ -377,9 +377,9 @@ function parseResultSet(
     const rawRows = textToRows(resultSet.data.data, columnCount)
     const dedupedColumns = deduplicateColumns(columns)
     const rows = rawRows.map((rawRow) => {
-      const record: Record<string, unknown> = {}
+      const row: unknown[] = []
       for (let i = 0; i < dedupedColumns.length; i++) {
-        record[dedupedColumns[i].name] = coerceValue(rawRow[i] ?? null, dedupedColumns[i].type, timezone)
+        row.push(coerceValue(rawRow[i] ?? null, dedupedColumns[i].type, timezone))
       }
       return row
     })

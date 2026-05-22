@@ -173,7 +173,7 @@ export function decodeArrowPayload(
   }
 
   let resolvedColumns = deduplicateColumns(metadataColumns)
-  const allRows: Record<string, unknown>[] = []
+  const allRows: unknown[][] = []
 
   for (const chunk of base64Chunks) {
     const bytes = base64ToBytes(chunk)
@@ -213,9 +213,9 @@ export async function fetchArrowFromUrls(
   urls: string[],
   metadataColumns: ColumnSchema[],
   timezone?: string,
-): Promise<{ columns: ColumnSchema[]; rows: Record<string, unknown>[] }> {
+): Promise<{ columns: ColumnSchema[]; rows: unknown[][] }> {
   let resolvedColumns = deduplicateColumns(metadataColumns)
-  const allRows: Record<string, unknown>[] = []
+  const allRows: unknown[][] = []
 
   for (const url of urls) {
     const resp = await fetch(url)
