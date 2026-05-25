@@ -1090,15 +1090,13 @@ export function registerSetupCommand(yargs: Argv<GlobalArgs>): void {
 
       // Branch 3: non-TTY without credential — output guidance JSON and exit
       logOperation("setup", { ok: false, errorCode: "NO_CREDENTIAL" })
-      const payload = {
-                error: {
-          code: "NO_CREDENTIAL",
-          message: "Non-interactive environment detected. Provide --credential to create a profile.",
+      error("NO_CREDENTIAL", "Non-interactive environment detected. Provide --credential to create a profile.", {
+        format,
+        extra: {
+          register_urls: REGISTER_URLS,
+          next_step: "cz-cli setup --credential <BASE64_CREDENTIAL_STRING>",
         },
-        register_urls: REGISTER_URLS,
-        next_step: "cz-cli setup --credential <BASE64_CREDENTIAL_STRING>",
-      }
-      process.stdout.write(JSON.stringify(payload) + "\n")
+      })
       process.exit(1)
     },
   )

@@ -1,13 +1,6 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = []
-
-mock.module("../src/auth/token.js", () => ({
-  clearTokenCache() {},
-  forceRefreshToken: async () => {
-    throw new Error("unexpected token refresh")
-  },
-}))
 
 globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
   fetchCalls.push({ url: String(input), init })
@@ -20,6 +13,10 @@ globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => 
 const { requestRaw } = await import("../src/client.js")
 const { studioRequest } = await import("../src/studio/client.js")
 const { submitJob } = await import("../src/sql/submit.js")
+
+afterEach(() => {
+  delete process.env.CLICKZETTA_TRACEPARENT
+})
 
 function headerValue(init: RequestInit | undefined, key: string) {
   const headers = new Headers(init?.headers)
@@ -70,10 +67,14 @@ describe("traceparent propagation", () => {
       {
         baseUrl: "https://studio.invalid",
         token: "tok",
+        workspaceId: 1,
+        projectId: 2,
         instanceName: "inst",
         userId: 1,
         tenantId: 2,
         instanceId: 3,
+        workspaceName: "ws",
+        env: "dev",
       },
       "/ide-admin/v1/test",
       { ping: true },

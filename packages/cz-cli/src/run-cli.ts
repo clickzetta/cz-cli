@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { createTraceparent } from "@clickzetta/sdk"
 import { createCli } from "./cli.js"
+import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { trackCommand, parseTrackingArgs } from "./telemetry.js"
 
@@ -235,20 +236,22 @@ async function hasConfiguredLlm() {
   }
 }
 
-export function emitNoProfile(runtime: CliRuntime): never {
+export function emitNoProfile(runtime: CliRuntime, rawArgs?: string[]): never {
   if (runtime.stderr.isTTY) {
     runtime.stderr.write(noProfileTtyMessage())
   } else {
-    runtime.stdout.write(JSON.stringify(noProfilePayload()) + "\n")
+    const outputArgs = parseOutputArgs(rawArgs ?? [])
+    runtime.stdout.write(renderOutput(noProfilePayload(), outputArgs.format, outputArgs.field) + "\n")
   }
   return runtime.exit(1)
 }
 
-export function emitNoActiveLlm(runtime: CliRuntime): never {
+export function emitNoActiveLlm(runtime: CliRuntime, rawArgs?: string[]): never {
   if (runtime.stderr.isTTY) {
     runtime.stderr.write(noActiveLlmTtyMessage())
   } else {
-    runtime.stdout.write(JSON.stringify(noActiveLlmPayload()) + "\n")
+    const outputArgs = parseOutputArgs(rawArgs ?? [])
+    runtime.stdout.write(renderOutput(noActiveLlmPayload(), outputArgs.format, outputArgs.field) + "\n")
   }
   return runtime.exit(1)
 }
@@ -396,7 +399,7 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     !process.env.CLICKZETTA_PID &&
     !(await hasConfiguredLlm())
   ) {
-    return emitNoActiveLlm(runtime)
+    return emitNoActiveLlm(runtime, rawArgs)
   }
 
   if (normalized.shouldDelegateToAgentRuntime) {
@@ -408,7 +411,7 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     !normalized.isHelpRequest &&
     !hasConfiguredProfile()
   ) {
-    return emitNoProfile(runtime)
+    return emitNoProfile(runtime, rawArgs)
   }
 
   await parseRegisteredCommands(normalized.args)

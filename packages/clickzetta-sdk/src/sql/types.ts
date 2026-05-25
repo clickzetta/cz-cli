@@ -25,6 +25,7 @@ export interface QueryResult {
   rows: unknown[][]
   rowCount: number
   affectedRows: number
+  timeZone?: string
   errorCode?: string
   errorMessage?: string
 }

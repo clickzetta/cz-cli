@@ -5,6 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
+import { getShowTableName } from "./table.js"
 
 const DEFAULT_LIMIT = 100
 
@@ -69,8 +70,10 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
               error("SCHEMA_NOT_FOUND", `Schema '${name}' not found`, { format }); return
             }
             const schemaType = infoRows.length > 0 ? (infoRows[0][1] ?? "") : ""
-            const tableRows = isQueryResult(tablesR) && tablesR.status === JobStatus.SUCCEEDED ? tablesR.rows : []
-            const tables = tableRows.map((row) => row[0])
+            const tableResult = isQueryResult(tablesR) && tablesR.status === JobStatus.SUCCEEDED ? tablesR : undefined
+            const tableRows = tableResult?.rows ?? []
+            const tableRecords = tableResult ? rowsToRecords(tableResult) : []
+            const tables = tableRows.map((row, index) => getShowTableName(row, tableRecords[index] ?? {}))
             logOperation("schema describe", { sql: infoSql, ok: true, timeMs: Date.now() - t0 })
             success({ name, type: schemaType, table_count: tables.length, tables }, { format, timeMs: Date.now() - t0 })
           } catch (err) {

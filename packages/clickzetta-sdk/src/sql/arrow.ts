@@ -11,6 +11,7 @@
 
 import { tableFromIPC, type Schema, type DataType, type Data, type Vector } from "apache-arrow"
 import type { ColumnSchema } from "./types.js"
+import { normaliseTimestampValue } from "./time.js"
 
 /**
  * Base64 → Uint8Array. Node/Bun provide atob; we decode to bytes without
@@ -51,22 +52,8 @@ function normaliseArrowValue(value: unknown, typeCategory: string, timezone?: st
   if (value == null) return null
   const upper = typeCategory.toUpperCase()
 
-  // Timestamps: apply timezone conversion for TIMESTAMP_LTZ (matches Python as_timezone)
   if (upper === "TIMESTAMP_LTZ" || upper === "TIMESTAMP" || upper === "TIMESTAMP_NTZ") {
-    let date: Date
-    if (typeof value === "number") date = new Date(value)
-    else if (typeof value === "bigint") date = new Date(Number(value / 1_000_000n))
-    else if (value instanceof Date) date = value
-    else return String(value)
-
-    if (timezone && upper !== "TIMESTAMP_NTZ") {
-      try {
-        return date.toLocaleString("sv-SE", { timeZone: timezone }).replace(" ", "T")
-      } catch {
-        return date.toISOString()
-      }
-    }
-    return date.toISOString()
+    return normaliseTimestampValue(value, upper, timezone)
   }
 
   // DATE: apache-arrow returns Date object (days since epoch at midnight UTC)

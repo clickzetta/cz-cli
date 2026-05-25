@@ -498,6 +498,7 @@ export class SqlSession {
       return parseJobResponse(
         submitResp as Parameters<typeof parseJobResponse>[0],
         jobId,
+        this.timezoneHint,
       )
     }
     const result = await pollJobResult(clientOpts, jobId, {

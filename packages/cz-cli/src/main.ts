@@ -3,13 +3,15 @@
 import { checkAndUpdate } from "./auto-update.js"
 import { runCliWithTracking } from "./run-cli.js"
 import { createTraceparent } from "@clickzetta/sdk"
+import { parseOutputArgs, renderOutput } from "./output/index.js"
 
 if (!process.env.CLICKZETTA_TRACEPARENT) {
   process.env.CLICKZETTA_TRACEPARENT = createTraceparent()
 }
 
 process.on("SIGINT", () => {
-  process.stdout.write(JSON.stringify({ error: { code: "ABORTED", message: "Operation aborted by user." } }) + "\n")
+  const outputArgs = parseOutputArgs(process.argv.slice(2))
+  process.stdout.write(renderOutput({ error: { code: "ABORTED", message: "Operation aborted by user." } }, outputArgs.format, outputArgs.field) + "\n")
   process.exit(130)
 })
 

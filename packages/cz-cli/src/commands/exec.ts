@@ -74,6 +74,7 @@ export async function execSql(
   },
 ): Promise<QueryResult | ExecResult> {
   const normalizedSql = sql + "\n;"
+  const timezone = opts?.hints?.["cz.sql.timezone"]
   const jobId = newJobId(ctx.config.workspace, ctx.token.instanceId)
   opts?.onJobId?.(jobId.id)
   const traceContext = currentTraceContext()
@@ -98,9 +99,9 @@ export async function execSql(
   const raw = submitResp as { status?: { state?: string } }
   let result: QueryResult
   if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
-    result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId)
+    result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone)
   } else {
-    result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs })
+    result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
   }
 
   // Volume SQL (PUT/GET): process file transfers after getting the job result

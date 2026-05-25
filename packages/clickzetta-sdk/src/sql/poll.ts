@@ -8,6 +8,7 @@ import {
 } from "./errors.js"
 import { toClickZettaError, OperationalError } from "../types/errors.js"
 import { decodeArrowPayload, deduplicateColumns, fetchArrowFromUrls } from "./arrow.js"
+import { normaliseTimestampText, resolveResultTimezone } from "./time.js"
 
 const TERMINAL_STATES = new Set(["SUCCEED", "FAILED", "CANCELLED"])
 
@@ -227,28 +228,6 @@ export function hexToBytes(hex: string): Uint8Array {
 }
 
 /**
- * utils.py:278-300 as_timezone — apply timezone to a datetime string.
- * JS's Intl.DateTimeFormat can convert a UTC timestamp to a named timezone.
- * We return an ISO 8601 string with the offset suffix so callers can parse it.
- */
-function applyTimezone(isoStr: string, timezone: string): string {
-  try {
-    const d = new Date(isoStr)
-    if (Number.isNaN(d.getTime())) return isoStr
-    // Format in the target timezone and reconstruct an ISO-like string.
-    const fmt = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: timezone,
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-      fractionalSecondDigits: 3,
-    })
-    return fmt.format(d).replace(" ", "T")
-  } catch {
-    return isoStr
-  }
-}
-
-/**
  * Minimal type coercion to match Python connector behavior.
  * @param timezone Optional timezone hint (from SqlSession.timezoneHint) used
  *   to convert TIMESTAMP_LTZ values, mirroring utils.py:278-300 as_timezone.
@@ -286,13 +265,11 @@ export function coerceValue(value: string | null, typeCategory: string, timezone
   // TIMESTAMP_LTZ / TIMESTAMP (alias for LTZ): normalise space → "T",
   // then apply timezone if provided (utils.py:278-300 as_timezone).
   if (upper === "TIMESTAMP_LTZ" || upper === "TIMESTAMP") {
-    const iso = value.trim().replace(" ", "T")
-    if (timezone) return applyTimezone(iso, timezone)
-    return iso
+    return normaliseTimestampText(value, upper, timezone)
   }
   // TIMESTAMP_NTZ: wall-clock, no timezone conversion (utils.py:281-282).
   if (upper === "TIMESTAMP_NTZ") {
-    return value.trim().replace(" ", "T")
+    return normaliseTimestampText(value, upper)
   }
 
   // 二进制
@@ -340,12 +317,13 @@ export function coerceValue(value: string | null, typeCategory: string, timezone
 function parseResultSet(
   resultSet: LhResultSet | undefined,
   timezone?: string,
-): { columns: ColumnSchema[]; rows: unknown[][]; isAsync: boolean } {
+): { columns: ColumnSchema[]; rows: unknown[][]; isAsync: boolean; timeZone?: string; format: string } {
   if (!resultSet) {
-    return { columns: [], rows: [], isAsync: false }
+    return { columns: [], rows: [], isAsync: false, format: "ARROW" }
   }
 
   const metadata = resultSet.metadata
+  const timeZone = resolveResultTimezone(metadata?.timeZone, timezone)
   const fields = metadata?.fields ?? []
   const columns: ColumnSchema[] = fields.map((f) => {
     let type = f.type.category
@@ -359,7 +337,7 @@ function parseResultSet(
 
   // No data and no location — DDL result
   if (!resultSet.data && !resultSet.location) {
-    return { columns: [], rows: [], isAsync: false }
+    return { columns: [], rows: [], isAsync: false, timeZone, format: "ARROW" }
   }
 
   const columnCount = columns.length
@@ -370,8 +348,8 @@ function parseResultSet(
   if (resultSet.data?.data && resultSet.data.data.length > 0) {
     if (format === "ARROW") {
       // query_result.py:249-258 — Arrow IPC branch.
-      const { columns: arrowCols, rows } = decodeArrowPayload(resultSet.data.data, columns)
-      return { columns: arrowCols, rows, isAsync: false }
+      const { columns: arrowCols, rows } = decodeArrowPayload(resultSet.data.data, columns, timeZone)
+      return { columns: arrowCols, rows, isAsync: false, timeZone, format }
     }
     // query_result.py:260-269 — TEXT branch.
     const rawRows = textToRows(resultSet.data.data, columnCount)
@@ -379,20 +357,20 @@ function parseResultSet(
     const rows = rawRows.map((rawRow) => {
       const row: unknown[] = []
       for (let i = 0; i < dedupedColumns.length; i++) {
-        row.push(coerceValue(rawRow[i] ?? null, dedupedColumns[i].type, timezone))
+        row.push(coerceValue(rawRow[i] ?? null, dedupedColumns[i].type, timeZone))
       }
       return row
     })
-    return { columns: dedupedColumns, rows, isAsync: false }
+    return { columns: dedupedColumns, rows, isAsync: false, timeZone, format }
   }
 
   // Data in presigned URLs — mark as needing async fetch
   if (resultSet.location?.presignedUrls && resultSet.location.presignedUrls.length > 0) {
-    return { columns, rows: [], isAsync: true }
+    return { columns, rows: [], isAsync: true, timeZone, format }
   }
 
   // Empty result set
-  return { columns, rows: [], isAsync: false }
+  return { columns, rows: [], isAsync: false, timeZone, format }
 }
 
 
@@ -421,7 +399,7 @@ export async function parseJobResponse(
     }
   }
 
-  const { columns, rows, isAsync } = parseResultSet(raw.resultSet, timezone)
+  const { columns, rows, isAsync, timeZone, format } = parseResultSet(raw.resultSet, timezone)
 
   // If data is in presigned URLs, fetch it. The format on disk follows the
   // same `metadata.format` as embedded data (query_result.py:297,371,387).
@@ -429,9 +407,8 @@ export async function parseJobResponse(
   let finalRows = rows
   if (isAsync && raw.resultSet?.location?.presignedUrls) {
     const urls = raw.resultSet.location.presignedUrls
-    const format = (raw.resultSet.metadata?.format ?? "ARROW").toUpperCase()
     if (format === "ARROW") {
-      const decoded = await fetchArrowFromUrls(urls, columns)
+      const decoded = await fetchArrowFromUrls(urls, columns, timeZone)
       finalCols = decoded.columns
       finalRows = decoded.rows
     } else {
@@ -439,7 +416,7 @@ export async function parseJobResponse(
       finalRows = rawRows.map((rawRow) => {
         const row: unknown[] = []
         for (let i = 0; i < columns.length; i++) {
-          row.push(coerceValue(rawRow[i] ?? null, columns[i].type))
+          row.push(coerceValue(rawRow[i] ?? null, columns[i].type, timeZone))
         }
         return row
       })
@@ -453,6 +430,7 @@ export async function parseJobResponse(
     rows: finalRows,
     rowCount: finalRows.length,
     affectedRows: 0,
+    timeZone,
     errorCode: raw.status?.errorCode || undefined,
     errorMessage: raw.status?.errorMessage || raw.status?.message || undefined,
   }

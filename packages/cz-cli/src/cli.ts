@@ -1,6 +1,6 @@
 import yargs from "yargs"
 import { VERSION } from "./version.js"
-import { outputState } from "./output/index.js"
+import { outputState, parseOutputArgs, renderOutput } from "./output/index.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -115,10 +115,11 @@ export function createCli(args: string[]) {
         if (topLevelCmd !== undefined && !KNOWN_COMMANDS.has(topLevelCmd)) return `Unknown argument: ${topLevelCmd}`
         return "Unknown argument"
       })()
-      const output = JSON.stringify({
+      const outputArgs = parseOutputArgs(args)
+      const output = renderOutput({
         error: { code: "USAGE_ERROR", message },
         ai_message: aiMessage,
-      })
+      }, outputArgs.format, outputArgs.field)
       process.stdout.write(output + "\n")
       process.exitCode = 2
       throw new Error(msg ?? "usage error")

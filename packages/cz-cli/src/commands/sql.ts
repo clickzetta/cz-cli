@@ -2,7 +2,7 @@ import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
 import { splitSql, stripLeadingComment, JobStatus, request, requestRaw, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error } from "../output/index.js"
+import { success, successRows, error, parseOutputArgs, renderOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
@@ -244,16 +244,16 @@ async function executeSingle(
     return
   }
 
-  // Sync mode: SELECT without user LIMIT → inject LIMIT to guard
-  if (isSelect && !hasLimit && !isShow && rowLimit !== Infinity) {
-    // Set server-side row limit as safety guard
-    const serverHints = { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit) }
+  // Sync mode: SELECT/SHOW without user LIMIT → inject LIMIT probe when supported
+  if (isSelect && !hasLimit && rowLimit !== Infinity) {
+    // SHOW supports LIMIT, but server-side partial row hints are only for SELECT-like queries.
+    const probeHints = isShow ? hints : { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit) }
     const probeLimit = rowLimit + 1
     const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
-    let r = await execSqlWithRetry(ctx, probeSql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
+    let r = await execSqlWithRetry(ctx, probeSql, { hints: probeHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
     // Retry without LIMIT if injection caused syntax error
     if (isQueryResult(r) && r.status === JobStatus.FAILED && /syntax/i.test(r.errorMessage ?? "") && /LIMIT/i.test(r.errorMessage ?? "")) {
-      r = await execSqlWithRetry(ctx, sql, { hints: serverHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
+      r = await execSqlWithRetry(ctx, sql, { hints: probeHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
         await handleFailure(r, sql, ctx, format, t0)
@@ -270,6 +270,17 @@ async function executeSingle(
       return
     }
     if (r.rowCount > rowLimit) {
+      if (isShow) {
+        await emitResult(
+          { ...r, rows: r.rows.slice(0, rowLimit) },
+          sql,
+          argv,
+          ctx,
+          t0,
+          `SHOW results truncated to ${rowLimit} rows (more available). Use --no-limit to fetch all.`,
+        )
+        return
+      }
       const tables = extractTableNames(sql)
       let schemaExtra: Record<string, unknown> | undefined
       if (tables.length > 0) {
@@ -322,14 +333,6 @@ async function executeSingle(
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0)
     return
-  }
-
-  if (isShow && !!argv.limit && r.rowCount > rowLimit) {
-    logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
-    error("LIMIT_REQUIRED", `SHOW returned more than ${rowLimit} rows. Pass --no-limit to see all.`, {
-      format,
-      aiMessage: `Add --no-limit to retrieve all rows: cz-cli sql "${sql.trim()}" --no-limit`,
-    }); return
   }
 
   await emitResult(r, sql, argv, ctx, t0)
@@ -421,7 +424,7 @@ async function handler(argv: SqlArgs): Promise<void> {
   const sigintHandler = () => {
     const payload: Record<string, unknown> = { error: { code: "ABORTED", message: "Execution interrupted by user." } }
     if (currentJobId) payload.job_id = currentJobId
-    process.stdout.write(JSON.stringify(payload) + "\n")
+    process.stdout.write(renderOutput(payload, format, parseOutputArgs(process.argv.slice(2)).field) + "\n")
     process.exit(130)
   }
   process.on("SIGINT", sigintHandler)
@@ -487,19 +490,19 @@ async function handler(argv: SqlArgs): Promise<void> {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
               const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: r.errorMessage ?? "Query failed" }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
-              process.stdout.write(JSON.stringify(line) + "\n")
+              process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             } else if (isQueryResult(r)) {
               const columns = r.columns.map((c) => c.name)
               const rows = maskRows(columns, r.rows)
               const line = { index: i, sql: stmt, columns, rows, count: rows.length, affected: r.affectedRows, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
-              process.stdout.write(JSON.stringify(line) + "\n")
+              process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
               logOperation("sql", { sql: stmt, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             }
           } catch (err) {
             const { code, message } = classifyExecError(err)
             const line = { index: i, sql: stmt, error: { code, message }, time_ms: Date.now() - t0 }
-            process.stdout.write(JSON.stringify(line) + "\n")
+            process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
             logOperation("sql", { sql: stmt, ok: false, errorCode: code })
           }
         } else if (i < statements.length - 1) {

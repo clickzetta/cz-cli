@@ -142,6 +142,39 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: "PRETTY_NO_PROFILE: profile-gated commands honor --output pretty",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const result = run(["sql", "SELECT 1", "--output", "pretty"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        if (result.exitCode !== 1) return { pass: false, detail: `exit=${result.exitCode}` }
+        const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>
+        if ((parsed.error as { code?: string } | undefined)?.code !== "NO_PROFILE") {
+          return { pass: false, detail: `unexpected output=${result.stdout.slice(0, 160)}` }
+        }
+        if (!result.stdout.includes('\n  "error": {\n')) {
+          return { pass: false, detail: `not pretty=${result.stdout.slice(0, 160)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "PRETTY_USAGE_ERROR: parser failures honor --output pretty",
+    run() {
+      const result = run(["nope", "--output", "pretty"])
+      if (result.exitCode !== 2) return { pass: false, detail: `exit=${result.exitCode}` }
+      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>
+      if ((parsed.error as { code?: string } | undefined)?.code !== "USAGE_ERROR") {
+        return { pass: false, detail: `unexpected output=${result.stdout.slice(0, 160)}` }
+      }
+      if (!result.stdout.includes('\n  "error": {\n')) {
+        return { pass: false, detail: `not pretty=${result.stdout.slice(0, 160)}` }
+      }
+      return { pass: true }
+    },
+  },
+  {
     name: "LOCAL_COMMANDS: ungated local commands keep working without a profile",
     run() {
       const { home, cleanup } = withFakeHome()

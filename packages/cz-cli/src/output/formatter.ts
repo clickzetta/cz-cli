@@ -30,8 +30,7 @@ export function formatTable(columns: string[], rows: unknown[][]): string {
   for (const row of rows) {
     const sr: string[] = []
     for (let i = 0; i < columns.length; i++) {
-      const val = row[i]
-      const s = val === null || val === undefined ? "" : (typeof val === "object" ? stringifyJson(val) : String(val))
+      const s = formatFlatCell(row[i])
       sr.push(s)
       colWidths[i] = Math.max(colWidths[i], s.length)
     }
@@ -52,9 +51,7 @@ export function formatTableNoHeader(columns: string[], rows: unknown[][]): strin
   if (columns.length === 0 || rows.length === 0) return ""
   const lines: string[] = []
   for (const row of rows) {
-    lines.push(row.map((val) => {
-      return val === null || val === undefined ? "" : (typeof val === "object" ? stringifyJson(val) : String(val))
-    }).join("\t"))
+    lines.push(row.map(formatFlatCell).join("\t"))
   }
   return lines.join("\n")
 }
@@ -64,11 +61,7 @@ export function formatCsv(columns: string[], rows: unknown[][]): string {
   lines.push(columns.map(csvEscape).join(","))
   for (const row of rows) {
     lines.push(
-      row.map((val) => {
-        if (val === null || val === undefined) return ""
-        if (typeof val === "object") return csvEscape(stringifyJson(val))
-        return csvEscape(String(val))
-      }).join(","),
+      row.map(formatCsvCell).join(","),
     )
   }
   return lines.join("\n")
@@ -78,18 +71,14 @@ export function formatCsvNoHeader(columns: string[], rows: unknown[][]): string 
   const lines: string[] = []
   for (const row of rows) {
     lines.push(
-      row.map((val) => {
-        if (val === null || val === undefined) return ""
-        if (typeof val === "object") return csvEscape(stringifyJson(val))
-        return csvEscape(String(val))
-      }).join(","),
+      row.map(formatCsvCell).join(","),
     )
   }
   return lines.join("\n")
 }
 
-export function formatJsonl(rows: unknown[][]): string {
-  return rows.map((row) => stringifyJson(row)).join("\n")
+export function formatJsonl(items: unknown[]): string {
+  return items.map((item) => stringifyJson(item)).join("\n")
 }
 
 export function formatToon(data: unknown): string {
@@ -265,7 +254,7 @@ function tryTabularForm(arr: unknown[]): { cols: string[]; rows: unknown[][] } |
 
 const LOOKS_LIKE_NUMBER = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
 const LOOKS_LIKE_BOOL = /^(true|false)$/
-const LOOKS_LIKE_NULL = /^null$/
+const LOOKS_LIKE_NULL = /^null$/i
 const NEEDS_QUOTE_CHARS = /[,:"\\[\]{}\n]/
 
 /** Quote a scalar value for use as a dict value (after `: `). */
@@ -321,9 +310,33 @@ export function formatText(columns: string[], rows: unknown[][]): string {
   if (columns.length === 0 || rows.length === 0) return ""
   const lines: string[] = []
   for (const row of rows) {
-    lines.push(row.map((val) => {
-      return val === null || val === undefined ? "" : (typeof val === "object" ? JSON.stringify(val) : String(val))
-    }).join("\t"))
+    lines.push(row.map(formatFlatCell).join("\t"))
   }
   return lines.join("\n")
+}
+
+function formatFlatCell(value: unknown): string {
+  if (value === null || value === undefined) return "NULL"
+  if (typeof value === "string") return shouldQuoteFlatString(value) ? stringifyJson(value) : value
+  if (typeof value === "object") return stringifyJson(value)
+  return String(value)
+}
+
+function formatCsvCell(value: unknown): string {
+  if (value === null || value === undefined) return "NULL"
+  if (value === "") return '""'
+  if (typeof value === "string") return csvEscape(shouldQuoteFlatString(value) ? stringifyJson(value) : value)
+  if (typeof value === "object") return csvEscape(stringifyJson(value))
+  return csvEscape(String(value))
+}
+
+function shouldQuoteFlatString(value: string): boolean {
+  return (
+    value === "" ||
+    LOOKS_LIKE_NUMBER.test(value) ||
+    LOOKS_LIKE_BOOL.test(value) ||
+    LOOKS_LIKE_NULL.test(value) ||
+    value !== value.trim() ||
+    /["\\\t\n\r]/.test(value)
+  )
 }

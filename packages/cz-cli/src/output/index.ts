@@ -24,6 +24,8 @@ export interface OutputOptions {
   debug?: boolean
 }
 
+const ROW_ONLY_FORMATS = new Set(["table", "csv", "text", "jsonl"])
+
 const TRUTHY_VALUES = new Set(["1", "true", "TRUE", "yes", "YES"])
 
 export function shouldColorize(): boolean {
@@ -43,8 +45,10 @@ export function success(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
   if (opts?.extra) Object.assign(payload, opts.extra)
 
-  const output = emit(payload, opts?.format, opts?.field ?? outputState.field)
+  const field = opts?.field ?? outputState.field
+  const output = renderOutput(payload, opts?.format, field)
   if (output !== "") process.stdout.write(output + "\n")
+  writeAiMessageToStderr(opts?.format, field, opts?.aiMessage)
   ;(process as unknown as Record<string, unknown>).responseBytes = Buffer.byteLength(output, "utf-8")
   process.exitCode = EXIT_OK
 }
@@ -71,8 +75,9 @@ export function successRows(
 
   // --field extraction takes priority over format
   if (field) {
-    output = emit(payload, format, field)
+    output = renderOutput(payload, format, field)
     if (output !== "") process.stdout.write(output + "\n")
+    writeAiMessageToStderr(format, field, opts?.aiMessage)
     process.exitCode = EXIT_OK
     return
   }
@@ -84,12 +89,13 @@ export function successRows(
   } else if (format === "text") {
     output = formatText(columns, rows)
   } else if (format === "jsonl") {
-    output = formatJsonl(rows)
+    output = formatJsonl(rowsToRecords(columns, rows))
   } else {
-    output = emit(payload, format)
+    output = renderOutput(payload, format)
   }
 
   process.stdout.write(output + "\n")
+  writeAiMessageToStderr(format, field, opts?.aiMessage)
   process.exitCode = EXIT_OK
 }
 
@@ -109,7 +115,7 @@ export function error(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
   if (opts?.extra) Object.assign(payload, opts.extra)
 
-  const output = emit(payload, opts?.format, opts?.field ?? outputState.field)
+  const output = renderOutput(payload, opts?.format, opts?.field ?? outputState.field)
   process.stdout.write(output + "\n")
   process.exitCode = opts?.exitCode ?? EXIT_BIZ_ERROR
   ;(process as unknown as Record<string, unknown>).lastError = message
@@ -128,7 +134,7 @@ export function isHandledCliError(err: unknown): err is HandledCliError {
   return err instanceof HandledCliError
 }
 
-function emit(payload: unknown, format?: string, field?: string): string {
+export function renderOutput(payload: unknown, format?: string, field?: string): string {
   // --field extraction: search top-level → data (dict) → data[0] (list) → rows[0]
   if (field && payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>
@@ -268,11 +274,12 @@ function emitAsJsonl(payload: unknown): string {
     const obj = payload as Record<string, unknown>
     const rows = obj.rows
     if (Array.isArray(rows)) {
-      return formatJsonl(rows as unknown[][])
+      const columns = Array.isArray(obj.columns) ? obj.columns.filter((value): value is string => typeof value === "string") : []
+      return formatJsonl(columns.length > 0 ? rowsToRecords(columns, rows as unknown[][]) : rows)
     }
     const data = obj.data
     if (Array.isArray(data)) {
-      return data.map((v) => formatJson(v)).join("\n")
+      return formatJsonl(data)
     }
   }
   return formatJson(payload)
@@ -297,4 +304,38 @@ function emitAsText(payload: unknown): string {
     }
   }
   return formatJson(payload)
+}
+
+function rowsToRecords(columns: string[], rows: unknown[][]): Record<string, unknown>[] {
+  return rows.map((row) =>
+    Object.fromEntries(columns.map((column, index) => [column, row[index]])),
+  )
+}
+
+function writeAiMessageToStderr(format: string | undefined, field: string | undefined, aiMessage: string | undefined): void {
+  if (!aiMessage) return
+  if (!field && !ROW_ONLY_FORMATS.has(format ?? "json")) return
+  process.stderr.write(aiMessage + "\n")
+}
+
+export function parseOutputArgs(args: string[]): { format?: string; field?: string } {
+  let format: string | undefined
+  let field: string | undefined
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]
+    if (value === "--output" || value === "-o") {
+      format = args[index + 1]
+      index++
+      continue
+    }
+    if (value === "--field") {
+      field = args[index + 1]
+      index++
+      continue
+    }
+    if (value?.startsWith("--output=")) format = value.slice("--output=".length)
+    if (value?.startsWith("-o=")) format = value.slice(3)
+    if (value?.startsWith("--field=")) field = value.slice("--field=".length)
+  }
+  return { format, field }
 }

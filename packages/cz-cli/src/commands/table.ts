@@ -39,6 +39,17 @@ function parseDescribeResult(result: import("@clickzetta/sdk").QueryResult) {
   return { columns, metadata }
 }
 
+function readRecordValue(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key] ?? record[key.toLowerCase()] ?? record[key.toUpperCase()]
+    if (value !== undefined && value !== null && value !== "") return value
+  }
+}
+
+export function getShowTableName(row: unknown[], record: Record<string, unknown>) {
+  return readRecordValue(record, "table_name", "name") ?? row[1] ?? row[0] ?? ""
+}
+
 export function registerTableCommand(cli: Argv<GlobalArgs>): void {
   cli.command("table", "Manage tables", (yargs) => {
     yargs
@@ -75,10 +86,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
               rows = rows.slice(0, limit)
               aiMessage = `Results truncated to ${limit} rows (more available). Use --limit to increase.`
             }
-            const normalized = rows.map((row) => {
-              const name = row[0] ?? ""
-              return { name }
-            })
+            const records = rowsToRecords({ ...r, rows })
+            const normalized = rows.map((row, index) => ({ name: getShowTableName(row, records[index] ?? {}) }))
             logOperation("table list", { sql, ok: true, rows: normalized.length, timeMs: Date.now() - t0 })
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
