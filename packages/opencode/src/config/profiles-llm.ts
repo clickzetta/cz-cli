@@ -103,7 +103,7 @@ export interface LlmProbe {
 }
 
 const DEFAULT_PROBE_MODELS: Record<string, string> = {
-  clickzetta: "deepseek-v3",
+  clickzetta: "deepseek/deepseek-v4-pro",
   anthropic: "claude-haiku-4-5-20241022",
   openai: "gpt-4.1-mini",
   "openai-compatible": "gpt-4.1-mini",
