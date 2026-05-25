@@ -101,6 +101,104 @@ cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions --sessi
 
 Reuse `session_id` for follow-ups on the same topic. Omit `--session` to start fresh.
 
+## Async mode (non-TTY / long-running tasks)
+
+When running in non-TTY environments (e.g. as a subagent from Claude Code) or for long-running tasks, use async mode to avoid blocking:
+
+### Submit asynchronously
+
+```bash
+cz-cli agent run "<request>" --async --format a2a --dangerously-skip-permissions
+```
+
+Returns immediately with a session ID:
+```json
+{"session_id": "01JXF3K...", "status": "running", "message": "Session submitted asynchronously"}
+```
+
+Note: In non-TTY with `--format a2a` or `--format json`, async mode activates automatically (no `--async` flag needed).
+
+### Poll status
+
+```bash
+cz-cli agent session status <session_id>
+```
+
+Returns:
+```json
+{"session_id": "01JXF3K...", "status": "idle", "updated_at": 1748160000000}
+```
+
+- `"busy"` = still running
+- `"idle"` = completed
+
+### Retrieve full conversation (thinking + tool calls + text)
+
+```bash
+cz-cli agent export <session_id>
+```
+
+Returns complete session with all message parts:
+```json
+{
+  "info": { "id": "...", "title": "...", "time": {...} },
+  "messages": [
+    {
+      "info": { "role": "user" },
+      "parts": [{ "type": "text", "text": "original prompt" }]
+    },
+    {
+      "info": { "role": "assistant" },
+      "parts": [
+        { "type": "reasoning", "text": "thinking content..." },
+        { "type": "tool", "tool": "bash", "state": { "status": "completed", "input": {...}, "output": "..." } },
+        { "type": "text", "text": "final answer..." }
+      ]
+    }
+  ]
+}
+```
+
+Part types in export:
+- `reasoning` — LLM thinking/reasoning blocks
+- `tool` — tool calls with full input/output (bash, read, write, edit, glob, grep, etc.)
+- `text` — final text response
+- `step-start` / `step-finish` — step boundaries
+- `patch` — code diffs
+- `subtask` — delegated sub-tasks
+
+### Async workflow pattern
+
+```bash
+# 1. Submit
+SESSION=$(cz-cli agent run "complex analysis" --async --format a2a --dangerously-skip-permissions | jq -r '.session_id')
+
+# 2. Poll until done
+while [ "$(cz-cli agent session status $SESSION | jq -r '.status')" = "busy" ]; do
+  sleep 5
+done
+
+# 3. Get full result
+cz-cli agent export $SESSION
+```
+
+### With session continuity (async)
+
+```bash
+# First turn
+SESSION=$(cz-cli agent run "describe sales table" --async --format a2a --dangerously-skip-permissions | jq -r '.session_id')
+# ... wait for completion ...
+
+# Follow-up turn on same session
+cz-cli agent run "now show row counts" --async --format a2a --dangerously-skip-permissions --session $SESSION
+```
+
+### Important notes for async mode
+
+- **Permissions:** Always use `--dangerously-skip-permissions` — async mode cannot handle interactive permission prompts
+- **Server requirement:** An agent runtime server must be running (or will be started automatically)
+- **Error handling:** If session is already busy, returns `{"error": "session busy"}`
+
 ## Multi-environment (profiles)
 
 When the user specifies an environment or profile (e.g. "use uat_test", "on the test instance"):
