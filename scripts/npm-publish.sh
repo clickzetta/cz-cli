@@ -75,11 +75,22 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r "$ARTIFACTS/cz-cli-${platform}/skills" "$pkg_dir/bin/skills"
   fi
 
-  # Publish
+  # Publish (tolerate "already published" from partial prior runs)
   if [ -n "$DRY_RUN" ]; then
     echo "  [dry-run] npm publish --access public"
   else
-    (cd "$pkg_dir" && npm publish --access public)
+    set +e
+    publish_output=$(cd "$pkg_dir" && npm publish --access public 2>&1)
+    publish_rc=$?
+    set -e
+    if [ $publish_rc -ne 0 ]; then
+      if echo "$publish_output" | grep -q "cannot publish over the previously published"; then
+        echo "  ⚠ Already published @clickzetta/cz-cli-${platform}@${VERSION}, skipping."
+      else
+        echo "$publish_output" >&2
+        exit $publish_rc
+      fi
+    fi
   fi
   echo ""
 done
@@ -92,7 +103,18 @@ update_main_pkg
 if [ -n "$DRY_RUN" ]; then
   echo "  [dry-run] npm publish --access public"
 else
-  (cd "$NPM_DIR/cz-cli" && npm publish --access public)
+  set +e
+  publish_output=$(cd "$NPM_DIR/cz-cli" && npm publish --access public 2>&1)
+  publish_rc=$?
+  set -e
+  if [ $publish_rc -ne 0 ]; then
+    if echo "$publish_output" | grep -q "cannot publish over the previously published"; then
+      echo "  ⚠ Already published @clickzetta/cz-cli@${VERSION}, skipping."
+    else
+      echo "$publish_output" >&2
+      exit $publish_rc
+    fi
+  fi
 fi
 
 echo ""

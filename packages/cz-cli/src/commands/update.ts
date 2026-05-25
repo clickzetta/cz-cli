@@ -117,14 +117,14 @@ async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
-function updateViaNpm(): boolean {
+function updateViaNpm(version: string): boolean {
   try {
     process.stderr.write("Updating via npm...\n")
-    execSync(`npm install -g ${NPM_PACKAGE}@latest --ignore-scripts=false ${REGISTRY}`, { stdio: "inherit" })
+    execSync(`npm install -g ${NPM_PACKAGE}@${version} --ignore-scripts=false ${REGISTRY}`, { stdio: "inherit" })
     return true
   } catch {
     try {
-      execSync(`npm install -g ${NPM_PACKAGE}@latest --force ${REGISTRY}`, { stdio: "inherit" })
+      execSync(`npm install -g ${NPM_PACKAGE}@${version} --force ${REGISTRY}`, { stdio: "inherit" })
       return true
     } catch {
       return false
@@ -132,10 +132,10 @@ function updateViaNpm(): boolean {
   }
 }
 
-function updateViaBun(): boolean {
+function updateViaBun(version: string): boolean {
   try {
     process.stderr.write("Updating via bun...\n")
-    execSync(`bun install -g ${NPM_PACKAGE}@latest`, { stdio: "inherit" })
+    execSync(`bun install -g ${NPM_PACKAGE}@${version}`, { stdio: "inherit" })
     return true
   } catch {
     return false
@@ -211,11 +211,11 @@ export function registerUpdateCommand(cli: Argv) {
             stale.forEach(removeStaleBinary)
           }
         }
-        if (updateViaNpm()) {
+        if (updateViaNpm(latest)) {
           migrateProfilesAfterUpdate()
           process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
         } else {
-          process.stderr.write(`Update failed. Try manually:\n  npm install -g ${NPM_PACKAGE}@latest ${REGISTRY}\n`)
+          process.stderr.write(`Update failed. Try manually:\n  npm install -g ${NPM_PACKAGE}@${latest} ${REGISTRY}\n`)
           process.exitCode = 1
         }
         return
@@ -231,11 +231,11 @@ export function registerUpdateCommand(cli: Argv) {
             stale.forEach(removeStaleBinary)
           }
         }
-        if (updateViaBun()) {
+        if (updateViaBun(latest)) {
           migrateProfilesAfterUpdate()
           process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
         } else {
-          process.stderr.write(`Update failed. Try manually:\n  bun install -g ${NPM_PACKAGE}@latest\n`)
+          process.stderr.write(`Update failed. Try manually:\n  bun install -g ${NPM_PACKAGE}@${latest}\n`)
           process.exitCode = 1
         }
         return
@@ -250,7 +250,7 @@ export function registerUpdateCommand(cli: Argv) {
           allBinaries.forEach(removeStaleBinary)
         } else {
           process.stderr.write("Aborted. Remove old binaries manually, then run:\n")
-          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@latest ${REGISTRY}\n`)
+          process.stderr.write(`  npm install -g ${NPM_PACKAGE}@${latest} ${REGISTRY}\n`)
           process.exitCode = 1
           return
         }
@@ -261,18 +261,18 @@ export function registerUpdateCommand(cli: Argv) {
       if (remaining.length > 0) {
         process.stderr.write(`Could not remove all old binaries. Please delete manually:\n`)
         remaining.forEach((p) => process.stderr.write(`  rm ${p}\n`))
-        process.stderr.write(`Then run: npm install -g ${NPM_PACKAGE}@latest ${REGISTRY}\n`)
+        process.stderr.write(`Then run: npm install -g ${NPM_PACKAGE}@${latest} ${REGISTRY}\n`)
         process.exitCode = 1
         return
       }
 
       // Fresh install via npm
       process.stderr.write("Installing via npm...\n")
-      if (updateViaNpm()) {
+      if (updateViaNpm(latest)) {
         migrateProfilesAfterUpdate()
         process.stderr.write(`✓ Installed ${latest}. Restart your shell to use cz-cli.\n`)
       } else {
-        process.stderr.write(`Install failed. Try manually:\n  npm install -g ${NPM_PACKAGE}@latest ${REGISTRY}\n`)
+        process.stderr.write(`Install failed. Try manually:\n  npm install -g ${NPM_PACKAGE}@${latest} ${REGISTRY}\n`)
         process.exitCode = 1
       }
     },
