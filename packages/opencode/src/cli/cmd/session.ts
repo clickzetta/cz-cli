@@ -13,6 +13,7 @@ import path from "path"
 import { which } from "../../util/which"
 import { AppRuntime } from "@/effect/app-runtime"
 import { commandGroup } from "@clickzetta/cli/command-group"
+import { SessionStatus } from "../../session/status"
 
 function pagerCmd(): string[] {
   const lessOptions = ["-R", "-S"]
@@ -45,7 +46,7 @@ export const SessionCommand = cmd({
   command: "session",
   describe: "manage sessions",
   builder: (yargs: Argv) =>
-    commandGroup(yargs.command(SessionListCommand).command(SessionDeleteCommand), "agent session"),
+    commandGroup(yargs.command(SessionListCommand).command(SessionDeleteCommand).command(SessionStatusCommand), "agent session"),
   async handler() {},
 })
 
@@ -70,6 +71,41 @@ export const SessionDeleteCommand = cmd({
       }
       await AppRuntime.runPromise(Session.Service.use((svc) => svc.remove(sessionID)))
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Session ${args.sessionID} deleted` + UI.Style.TEXT_NORMAL)
+    })
+  },
+})
+
+export const SessionStatusCommand = cmd({
+  command: "status <sessionID>",
+  describe: "get session status (idle/busy)",
+  builder: (yargs: Argv) => {
+    return yargs.positional("sessionID", {
+      describe: "session ID to check",
+      type: "string",
+      demandOption: true,
+    })
+  },
+  handler: async (args) => {
+    await bootstrap(process.cwd(), async () => {
+      const sessionID = SessionID.make(args.sessionID)
+      try {
+        await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID)))
+      } catch {
+        process.stdout.write(JSON.stringify({ session_id: args.sessionID, error: "Session not found" }) + EOL)
+        process.exit(1)
+      }
+
+      const status = await AppRuntime.runPromise(
+        SessionStatus.Service.use((svc) => svc.get(sessionID)),
+      )
+
+      process.stdout.write(
+        JSON.stringify({
+          session_id: args.sessionID,
+          status: status?.type ?? "idle",
+          updated_at: Date.now(),
+        }) + EOL,
+      )
     })
   },
 })
