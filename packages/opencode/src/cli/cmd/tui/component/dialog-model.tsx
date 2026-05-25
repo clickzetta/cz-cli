@@ -1,10 +1,8 @@
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "@tui/context/local"
 import { useSync } from "@tui/context/sync"
-import { map, pipe, flatMap, entries, filter, sortBy, take } from "remeda"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useDialog } from "@tui/ui/dialog"
-import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
 import { DialogVariant } from "./dialog-variant"
 import { useKeybind } from "../context/keybind"
 import * as fuzzysort from "fuzzysort"
@@ -25,14 +23,15 @@ export function DialogModel(props: { providerID?: string }) {
   const [query, setQuery] = createSignal("")
 
   const connected = useConnected()
-  const providers = createDialogProviderOptions()
 
-  const showExtra = createMemo(() => connected() && !props.providerID)
+  const hasLlmEntries = createMemo(() => sync.data.llm_entries.length > 0)
+  const showExtra = createMemo(() => (connected() || hasLlmEntries()) && !props.providerID)
+  const llmOptionKey = (entryName: string, providerID: string, modelID: string) => `llm:${entryName}:${providerID}:${modelID}`
 
   const options = createMemo(() => {
     const needle = query().trim()
     const showSections = showExtra() && needle.length === 0
-    const favorites = connected() ? local.model.favorite() : []
+    const favorites = showExtra() ? local.model.favorite() : []
     const recents = local.model.recent()
 
     function toOptions(items: typeof favorites, category: string) {
@@ -44,7 +43,7 @@ export function DialogModel(props: { providerID?: string }) {
         if (!model) return []
         return [
           {
-            key: item,
+            key: `${category}:${provider.id}:${model.id}`,
             value: { providerID: provider.id, modelID: model.id },
             title: model.name ?? item.modelID,
             description: provider.name,
@@ -52,7 +51,7 @@ export function DialogModel(props: { providerID?: string }) {
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
             onSelect: () => {
-              onSelect(provider.id, model.id)
+              onSelect(undefined, provider.id, model.id)
             },
           },
         ]
@@ -69,105 +68,55 @@ export function DialogModel(props: { providerID?: string }) {
 
     const llmEntries = sync.data.llm_entries
 
-    const providerOptions = llmEntries.length > 0
-      ? pipe(
-          llmEntries,
-          flatMap((entry) => {
-            const provider = sync.data.provider.find((x) => x.id === entry.provider)
-            if (!provider) return []
-            return pipe(
-              provider.models,
-              entries(),
-              filter(([_, info]) => info.status !== "deprecated"),
-              filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-              map(([model, info]) => ({
-                value: { providerID: provider.id, modelID: model },
-                title: info.name ?? model,
-                description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-                  ? "(Favorite)"
-                  : undefined,
-                category: connected() ? entry.name : undefined,
-                disabled: provider.id === "opencode" && model.includes("-nano"),
-                footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
-                onSelect() {
-                  onSelect(provider.id, model)
-                },
-              })),
-              filter((x) => {
-                if (!showSections) return true
-                if (favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
-                  return false
-                if (recents.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
-                  return false
-                return true
-              }),
-              sortBy(
-                (x) => x.footer !== "Free",
-                (x) => x.title,
-              ),
-            )
-          }),
-        )
-      : pipe(
-          sync.data.provider,
-          sortBy(
-            (provider) => provider.id !== "opencode",
-            (provider) => provider.name,
-          ),
-          flatMap((provider) =>
-            pipe(
-              provider.models,
-              entries(),
-              filter(([_, info]) => info.status !== "deprecated"),
-              filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-              map(([model, info]) => ({
-                value: { providerID: provider.id, modelID: model },
-                title: info.name ?? model,
-                description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-                  ? "(Favorite)"
-                  : undefined,
-                category: connected() ? provider.name : undefined,
-                disabled: provider.id === "opencode" && model.includes("-nano"),
-                footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
-                onSelect() {
-                  onSelect(provider.id, model)
-                },
-              })),
-              filter((x) => {
-                if (!showSections) return true
-                if (favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
-                  return false
-                if (recents.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID))
-                  return false
-                return true
-              }),
-              sortBy(
-                (x) => x.footer !== "Free",
-                (x) => x.title,
-              ),
-            ),
-          ),
-        )
+    const providerOptions = llmEntries.flatMap((entry) => {
+      const provider = sync.data.provider.find((x) => x.id === entry.provider)
 
-    const popularProviders = !connected()
-      ? pipe(
-          providers(),
-          map((option) => ({
-            ...option,
-            category: "Popular providers",
-          })),
-          take(6),
-        )
-      : []
+      if (!entry.model && entry.provider === "clickzetta" && provider) {
+        return Object.entries(provider.models)
+          .filter(([_, info]) => info.status !== "deprecated")
+          .map(([modelID, info]) => ({
+            key: llmOptionKey(entry.name, entry.provider, modelID),
+            value: { providerID: entry.provider, modelID },
+            title: info.name ?? modelID,
+            description: undefined as string | undefined,
+            category: entry.name,
+            disabled: false,
+            footer: undefined as string | undefined,
+            onSelect() {
+              onSelect(entry.name, entry.provider, modelID)
+            },
+          }))
+      }
+
+      const modelInfo = entry.model ? provider?.models[entry.model] : undefined
+      const modelID = entry.model ?? Object.keys(provider?.models ?? {})[0] ?? ""
+      const defaultModelInfo = !entry.model && provider ? provider.models[modelID] : undefined
+      const title = entry.model
+        ? (modelInfo?.name ?? entry.model)
+        : ((defaultModelInfo?.name ?? modelID) || entry.provider)
+      return [{
+        key: llmOptionKey(entry.name, entry.provider, modelID),
+        value: { providerID: entry.provider, modelID },
+        title,
+        description: undefined as string | undefined,
+        category: entry.name,
+        disabled: false,
+        footer: undefined as string | undefined,
+        onSelect() {
+          onSelect(entry.name, entry.provider, modelID)
+        },
+      }]
+    })
 
     if (needle) {
-      return [
-        ...fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
-        ...fuzzysort.go(needle, popularProviders, { keys: ["title"] }).map((x) => x.obj),
-      ]
+      return fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj)
     }
 
-    return [...favoriteOptions, ...recentOptions, ...providerOptions, ...popularProviders]
+    if (llmEntries.length > 0) {
+      return providerOptions
+    }
+
+    return [...favoriteOptions, ...recentOptions, ...providerOptions]
   })
 
   const provider = createMemo(() =>
@@ -180,7 +129,14 @@ export function DialogModel(props: { providerID?: string }) {
     return value.name
   })
 
-  function onSelect(providerID: string, modelID: string) {
+  const currentKey = createMemo(() => {
+    const current = local.model.current()
+    const defaultEntry = sync.data.default_llm_entry
+    if (!current || !defaultEntry) return undefined
+    return llmOptionKey(defaultEntry, current.providerID, current.modelID)
+  })
+
+  function onSelect(entryName: string | undefined, providerID: string, modelID: string) {
     local.model.set({ providerID, modelID }, { recent: true })
     persistDefaultLlmModel(modelID)
     const list = local.model.variant.list()
@@ -201,16 +157,9 @@ export function DialogModel(props: { providerID?: string }) {
       options={options()}
       keybind={[
         {
-          keybind: keybind.all.model_provider_list?.[0],
-          title: connected() ? "Connect provider" : "View all providers",
-          onTrigger() {
-            dialog.replace(() => <DialogProvider />)
-          },
-        },
-        {
           keybind: keybind.all.model_favorite_toggle?.[0],
           title: "Favorite",
-          disabled: !connected(),
+          disabled: !showExtra(),
           onTrigger: (option) => {
             local.model.toggleFavorite(option.value as { providerID: string; modelID: string })
           },
@@ -220,6 +169,7 @@ export function DialogModel(props: { providerID?: string }) {
       flat={true}
       skipFilter={true}
       title={title()}
+      currentKey={currentKey()}
       current={local.model.current()}
     />
   )
