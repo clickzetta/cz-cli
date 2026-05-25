@@ -226,6 +226,48 @@ const tests: TestCase[] = [
       } finally { cleanup() }
     },
   },
+  {
+    name: "AGENT_FORMAT_FLAG: agent runtime commands accept global --format and reject legacy output flags",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        for (const args of [
+          ["agent", "run", "-o", "text", "hello"],
+          ["-o", "text", "agent", "run", "hello"],
+          ["llm", "-o", "text", "show"],
+        ] as const) {
+          const r = run([...args], { HOME: home, CLICKZETTA_TEST_HOME: home })
+          const j = parseJson(r.stdout)
+          if (r.exitCode !== 2) return { pass: false, detail: `${args.join(" ")} exit=${r.exitCode}` }
+          if ((j?.error as any)?.code !== "USAGE_ERROR") {
+            return { pass: false, detail: `${args.join(" ")} unexpected output=${r.stdout.slice(0, 160)}` }
+          }
+          const message = String((j?.error as any)?.message ?? "")
+          if (!message.includes("--format") || !message.includes("no longer supported")) {
+            return { pass: false, detail: `${args.join(" ")} message=${message}` }
+          }
+        }
+        for (const args of [
+          ["agent", "run", "--format", "text", "hello"],
+          ["--format", "text", "agent", "run", "hello"],
+          ["config", "--format", "json", "show"],
+        ] as const) {
+          const r = run([...args], { HOME: home, CLICKZETTA_TEST_HOME: home })
+          const j = parseJson(r.stdout)
+          if (args.at(0) === "config") {
+            if (r.exitCode !== 0) return { pass: false, detail: `${args.join(" ")} exit=${r.exitCode}` }
+            if (!r.stdout.includes("\"data\"")) return { pass: false, detail: `${args.join(" ")} stdout=${r.stdout.slice(0, 160)}` }
+            continue
+          }
+          if (r.exitCode !== 1) return { pass: false, detail: `${args.join(" ")} exit=${r.exitCode}` }
+          if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+            return { pass: false, detail: `${args.join(" ")} unexpected output=${r.stdout.slice(0, 160)}` }
+          }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
 
   {
     name: "CONNECTION_ERROR: classifyExecError produces ai_message for socket errors",
@@ -275,7 +317,7 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "SETUP: non-TTY without args returns staged account guidance",
+    name: "SETUP: non-TTY without args returns staged login-method guidance",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
@@ -283,7 +325,7 @@ const tests: TestCase[] = [
         const j = parseJson(r.stdout)
         if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
         if (!j) return { pass: false, detail: `not JSON: ${r.stdout.slice(0, 120)}` }
-        if (j.step !== "account_fields") return { pass: false, detail: `step=${String(j.step)}` }
+        if (j.step !== "login_method") return { pass: false, detail: `step=${String(j.step)}` }
         if (j.status !== "needs_input") return { pass: false, detail: `status=${String(j.status)}` }
         if (!Array.isArray(j.next_steps) || j.next_steps.length === 0) {
           return { pass: false, detail: `missing next_steps: ${JSON.stringify(j)}` }

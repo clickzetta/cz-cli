@@ -14,8 +14,8 @@ export interface GlobalArgs {
   workspace?: string
   schema?: string
   vcluster?: string
-  output: string
-  output_explicit?: boolean
+  format: string
+  format_explicit?: boolean
   field?: string
   debug: boolean
 }
@@ -73,8 +73,7 @@ export function createCli(args: string[]) {
       type: "string",
       describe: "Virtual cluster",
     })
-    .option("output", {
-      alias: "o",
+    .option("format", {
       type: "string",
       choices: ["json", "pretty", "table", "csv", "text", "jsonl", "toon"] as const,
       default: "json",
@@ -90,17 +89,17 @@ export function createCli(args: string[]) {
       default: false,
       describe: "Enable debug mode",
     })
-    .option("output_explicit", {
+    .option("format_explicit", {
       type: "boolean",
       hidden: true,
       default: false,
     })
     .middleware((argv) => {
       const rawArgs = args.map(a => String(a))
-      const hasExplicitOutput = rawArgs.some(
-        (a) => a === "-o" || a === "--output" || a.startsWith("--output=") || a.startsWith("-o=")
+      const hasExplicitFormat = rawArgs.some(
+        (a) => a === "--format" || a.startsWith("--format=")
       )
-      argv.output_explicit = hasExplicitOutput
+      argv.format_explicit = hasExplicitFormat
       outputState.field = argv.field as string | undefined
     }, /* applyBeforeValidation */ true)
     .strict()
@@ -108,7 +107,7 @@ export function createCli(args: string[]) {
       if (err) throw err
       const aiMessage = "Run the command with --help to see available options and usage."
       const message = (msg && msg.trim() !== "") ? msg : (() => {
-        const KNOWN_FLAGS = new Set(["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "output", "o", "field", "debug", "d", "help", "h", "version"])
+        const KNOWN_FLAGS = new Set(["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "format", "field", "debug", "d", "help", "h", "version"])
         const KNOWN_COMMANDS = new Set(["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "setup", "update", "ai-guide","datasource"])
         const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => !KNOWN_FLAGS.has(a))
         if (unknownFlags.length > 0) return `Unknown argument: ${unknownFlags[0]}`

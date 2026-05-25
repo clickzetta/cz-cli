@@ -27,7 +27,7 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
     command: "agent",
     subcommand: "run",
     args: {
-      output: "json",
+      format: "json",
       token: "<redacted>",
       telemetry: "true",
     },
@@ -65,7 +65,7 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
     { key: "event.name", value: { stringValue: "cz_cli.command.execution" } },
     { key: "cz_cli.command.name", value: { stringValue: "agent" } },
     { key: "cz_cli.command.subcommand", value: { stringValue: "run" } },
-    { key: "cz_cli.command.arg.output", value: { stringValue: "json" } },
+    { key: "cz_cli.command.arg.format", value: { stringValue: "json" } },
     { key: "cz_cli.command.arg.token", value: { stringValue: "<redacted>" } },
     { key: "cz_cli.command.arg.telemetry", value: { stringValue: "true" } },
     { key: "cz_cli.command.duration_ms", value: { intValue: "123" } },

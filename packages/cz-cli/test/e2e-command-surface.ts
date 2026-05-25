@@ -170,6 +170,20 @@ const tests: TestCase[] = [
       } finally { cleanup() }
     },
   },
+  {
+    name: "AIGUIDE: generated guide uses --format and excludes legacy output flags",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const aiGuide = run(["ai-guide"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const combined = aiGuide.stdout + aiGuide.stderr
+        if (aiGuide.exitCode !== 0) return { pass: false, detail: `exit=${aiGuide.exitCode}` }
+        if (!combined.includes("--format")) return { pass: false, detail: "missing --format" }
+        if (combined.includes("--output") || combined.includes("-o ")) return { pass: false, detail: `contains legacy output flag: ${combined.slice(0, 160)}` }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
 ]
 
 async function main() {

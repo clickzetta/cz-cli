@@ -49,7 +49,7 @@ async function resolveAttemptId(
 }
 
 async function logHandler(argv: Record<string, unknown>): Promise<void> {
-  const format = (argv as { output: string }).output
+  const format = (argv as { format: string }).format
   try {
     const sc = await ctx(argv)
     let runId: number
@@ -111,7 +111,7 @@ export function registerAttemptsCommand(cli: Argv<GlobalArgs>): void {
             .option("page-size", { type: "number", default: 10 })
             .option("limit", { type: "number", describe: "Alias of --page-size" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const pageSize = argv.limit ?? argv["page-size"]

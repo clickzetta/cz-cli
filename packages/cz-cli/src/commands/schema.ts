@@ -19,7 +19,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             .option("like", { type: "string", describe: "Filter pattern" })
             .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             let sql = "SHOW SCHEMAS"
@@ -55,7 +55,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
         "Describe a schema",
         (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const name = validateIdentifier(argv.name as string, "schema name")
@@ -84,7 +84,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
         "Create a schema",
         (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const name = validateIdentifier(argv.name as string, "schema name")
@@ -109,7 +109,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
         "Drop a schema",
         (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const name = validateIdentifier(argv.name as string, "schema name")

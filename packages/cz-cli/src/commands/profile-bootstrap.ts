@@ -833,7 +833,7 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
       "Authenticate via Studio URL and discover regions + instances",
       (y) => bootstrapOptions(y),
       async (argv) => {
-        const format = argv.output
+        const format = argv.format
         try {
           const { info, auth } = await authFromOpts(argv)
           const authMode = info.urlType === "account" ? "account_login"
@@ -888,7 +888,7 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
       "List workspaces for a region",
       (y) => bootstrapOptions(y).option("region", { type: "string", demandOption: true, describe: "Region id or alias" }),
       async (argv) => {
-        const format = argv.output
+        const format = argv.format
         try {
           const { info, auth } = await authFromOpts(argv)
           const { regions, resolvedEnv } = await loadRegions(auth)
@@ -937,7 +937,7 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
           .option("vcluster", { type: "string", default: "default", describe: "Virtual cluster" })
           .option("include-secret", { type: "boolean", default: false, describe: "Include plain password" }),
       async (argv) => {
-        const format = argv.output
+        const format = argv.format
         try {
           const { info, auth } = await authFromOpts(argv)
           const { regions, resolvedEnv } = await loadRegions(auth)
@@ -995,7 +995,7 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
         .option("profile-name", { type: "string", default: "default", describe: "Profile name to create" })
         .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" }),
       async (argv) => {
-        const format = argv.output
+        const format = argv.format
         const credentialStr = argv.credential as string | undefined
         const profileName = argv["profile-name"] as string
         const skipVerify = argv["skip-verify"] as boolean
@@ -1051,7 +1051,7 @@ export function registerSetupCommand(yargs: Argv<GlobalArgs>): void {
       .option("profile-name", { type: "string", default: "default", describe: "Profile name to create" })
       .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" }),
     async (argv) => {
-      const format = argv.output
+      const format = argv.format
       const credentialStr = argv.credential as string | undefined
       const profileName = argv["profile-name"] as string
       const skipVerify = argv["skip-verify"] as boolean

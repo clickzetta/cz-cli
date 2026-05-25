@@ -53,7 +53,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             .option("like", { type: "string", describe: "Filter pattern" })
             .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const limit = argv.limit ?? DEFAULT_LIMIT
@@ -83,7 +83,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
             const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
-            error(_ec, _em, { format: argv.output , ...(_ea && { aiMessage: _ea }) })
+            error(_ec, _em, { format: argv.format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -92,7 +92,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         "Describe a table",
         (y) => y.positional("name", { type: "string", demandOption: true, describe: "Table name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const sql = `DESC TABLE ${validateIdentifier(argv.name as string, "table name")}`
@@ -127,7 +127,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             .positional("name", { type: "string", demandOption: true, describe: "Table name" })
             .option("limit", { type: "number", default: DEFAULT_PREVIEW_LIMIT, describe: "Number of rows" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const limit = argv.limit ?? DEFAULT_PREVIEW_LIMIT
@@ -158,7 +158,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         "Get table row count and job summary",
         (y) => y.positional("name", { type: "string", demandOption: true, describe: "Table name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const sql = `SELECT COUNT(*) as row_count FROM ${validateIdentifier(argv.name as string, "table name")}`
@@ -213,7 +213,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             .option("like", { type: "string", describe: "Filter pattern" })
             .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const limit = argv.limit ?? DEFAULT_LIMIT
@@ -250,7 +250,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             success(normalized, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
             const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
-            error(_ec, _em, { format: argv.output , ...(_ea && { aiMessage: _ea }) })
+            error(_ec, _em, { format: argv.format , ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
@@ -262,7 +262,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             .positional("ddl", { type: "string", describe: "CREATE TABLE DDL statement (positional takes priority over --from-file)" })
             .option("from-file", { type: "string", describe: "Read DDL from a file path (used when positional DDL is not provided)" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             if (!argv.ddl && !argv["from-file"]) {
               error("MISSING_DDL", "Provide DDL as positional argument or use --from-file.", { format, exitCode: 2 })
@@ -289,7 +289,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         "Drop a table",
         (y) => y.positional("name", { type: "string", demandOption: true, describe: "Table name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const sql = `DROP TABLE ${validateIdentifier(argv.name as string, "table name")}`

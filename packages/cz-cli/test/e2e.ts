@@ -97,13 +97,13 @@ const tests: TestCase[] = [
   { name: "workspace current", cmd: "workspace current", assert: assertSingleLine },
 
   // === 7. Output formats ===
-  { name: "output json", cmd: "profile list --output json", assert: assertSingleLine },
-  { name: "output pretty", cmd: "profile list --output pretty", assert: (r) => {
+  { name: "output json", cmd: "profile list --format json", assert: assertSingleLine },
+  { name: "output pretty", cmd: "profile list --format pretty", assert: (r) => {
     try { const j = JSON.parse(r.output.trim()); return j.data ? null : "no data field" } catch { return `not valid JSON: ${r.output.slice(0, 40)}` }
   }},
-  { name: "output table", cmd: "profile list --output table", assert: (r) => r.output.trim() ? null : "empty output" },
-  { name: "output csv", cmd: "profile list --output csv", assert: (r) => r.output.trim() ? null : "empty output" },
-  { name: "output toon", cmd: "profile list --output toon", assert: (r) => r.output.trim() ? null : "empty output" },
+  { name: "output table", cmd: "profile list --format table", assert: (r) => r.output.trim() ? null : "empty output" },
+  { name: "output csv", cmd: "profile list --format csv", assert: (r) => r.output.trim() ? null : "empty output" },
+  { name: "output toon", cmd: "profile list --format toon", assert: (r) => r.output.trim() ? null : "empty output" },
   { name: "field extraction", cmd: "status --field connected", assert: (r) => r.output.trim() === "true" ? null : `expected 'true' got '${r.output.trim()}'` },
 
   // === 8. Error handling ===

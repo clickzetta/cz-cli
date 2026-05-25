@@ -12,7 +12,7 @@ export function registerStatusCommand(cli: Argv<GlobalArgs>): void {
     "Check connection status",
     () => {},
     async (argv) => {
-      const format = argv.output
+      const format = argv.format
       const t0 = Date.now()
       try {
         const ctx = await getExecContext(argv)

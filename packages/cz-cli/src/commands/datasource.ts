@@ -156,7 +156,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .option("page", { type: "number", default: 1, describe: "Page number" })
             .option("page-size", { type: "number", default: 20, describe: "Items per page" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const t0 = Date.now()
           try {
             const sc = await getStudioContext(argv)
@@ -196,7 +196,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
             .option("filter", { type: "string", describe: "Filter by name (fuzzy)" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const t0 = Date.now()
           try {
             const sc = await getStudioContext(argv)
@@ -226,7 +226,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .positional("catalog", { type: "string", demandOption: true, describe: "Catalog (namespace/database)" })
             .option("filter", { type: "string", describe: "Filter by name (fuzzy)" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const t0 = Date.now()
           try {
             const sc = await getStudioContext(argv)
@@ -262,7 +262,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .positional("catalog", { type: "string", demandOption: true, describe: "Catalog (namespace/database)" })
             .positional("object", { type: "string", demandOption: true, describe: "Object name (table/topic)" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const t0 = Date.now()
           try {
             const sc = await getStudioContext(argv)
@@ -283,7 +283,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y.positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const t0 = Date.now()
           try {
             const sc = await getStudioContext(argv)
@@ -314,7 +314,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .positional("catalog", { type: "string", demandOption: true, describe: "Catalog (namespace/database)" })
             .positional("object", { type: "string", demandOption: true, describe: "Object name (table/topic)" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const t0 = Date.now()
           try {
             const sc = await getStudioContext(argv)

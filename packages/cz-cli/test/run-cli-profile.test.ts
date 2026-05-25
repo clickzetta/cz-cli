@@ -13,4 +13,12 @@ describe("classifyCliArgs profile-aware agent routing", () => {
     expect(result.shouldDelegateToAgentRuntime).toBe(true)
     expect(result.runtimeArgs).toEqual(["agent", "--profile", "staging", "session", "list"])
   })
+
+  test("detects runtime delegation when global flags appear before agent", () => {
+    const result = classifyCliArgs(["--format", "text", "agent", "run", "hello"])
+    expect(result.shouldDelegateToAgentRuntime).toBe(true)
+    expect(result.command).toBe("agent")
+    expect(result.subcommand).toBe("run")
+    expect(result.runtimeArgs).toEqual(["agent", "--format", "text", "run", "hello"])
+  })
 })

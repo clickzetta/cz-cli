@@ -63,7 +63,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
         "Check status/summary of a SQL job",
         (y) => y.positional("job-id", { type: "string", demandOption: true, describe: "Job ID" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const jobId: JobID = {
@@ -94,7 +94,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             .option("limit", { type: "boolean", default: true, describe: "Limit results to 100 rows. Use --no-limit to fetch all rows." })
             .option("timeout", { type: "number", default: 300, describe: "Max seconds to wait for job completion. Returns an error if exceeded." }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const jobId: JobID = {

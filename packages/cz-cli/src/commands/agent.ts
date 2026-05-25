@@ -11,8 +11,11 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "run <prompt>",
         "Run AI agent with a natural-language prompt",
-        (y) =>
-          y
+        (y) => {
+          // Reset inherited global --format choices before defining agent-specific ones
+          const opts = (y as any).getOptions?.()
+          if (opts?.choices?.format) opts.choices.format = []
+          return y
             .positional("prompt", { type: "string", demandOption: true, describe: "Natural-language request" })
             .option("session", { alias: "s", type: "string", describe: "Session ID to continue" })
             .option("continue", { alias: "c", type: "boolean", describe: "Continue the last session" })
@@ -21,7 +24,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .option("model", { alias: "m", type: "string", describe: "Model to use in the format of provider/model" })
             .option("agent", { type: "string", describe: "Agent to use" })
             .option("file", { alias: "f", type: "string", array: true, describe: "File(s) to attach to message" })
-            .option("format", { type: "string", choices: ["default", "json", "a2a"], describe: "Output format (default=formatted, json=raw JSON events, a2a=agent-to-agent structured)" })
+            .option("format", { type: "string", choices: ["default", "json", "a2a"] as const, describe: "Output format (default=formatted, json=raw JSON events, a2a=agent-to-agent structured)" })
             .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run (default: 150 in a2a mode)" })
             .option("thinking", { type: "boolean", default: false, describe: "Show thinking blocks" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
@@ -33,7 +36,8 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .example("cz-cli agent run \"show tables\" --profile staging", "Run the agent against a non-default ClickZetta profile")
             .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
             .example("cz-cli agent run \"more details\" --continue", "Continue last session")
-            .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout"),
+            .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout")
+        },
         () => {
           // This handler is never reached — cz-cli delegates runtime execution to the internal agent kernel.
           // This command definition exists only to provide correct --help output.

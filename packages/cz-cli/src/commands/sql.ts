@@ -179,7 +179,7 @@ async function executeSingle(
   configStatements?: string[],
   onJobId?: (id: string) => void,
 ): Promise<void> {
-  const format = argv.output
+  const format = argv.format
 
   // Intercept SET statements — these are client-side session directives, not executable SQL
   const setMatch = sql.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
@@ -356,7 +356,7 @@ async function emitResult(
   t0: number,
   aiMessage?: string,
 ): Promise<void> {
-  const format = argv.output
+  const format = argv.format
   const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
   const isWrite = WRITE_RE.test(sql)
 
@@ -382,7 +382,7 @@ async function emitResult(
 }
 
 async function handler(argv: SqlArgs): Promise<void> {
-  const format = argv.output
+  const format = argv.format
 
   if (argv["job-profile"]) {
     const ctx = await getExecContext(argv)
@@ -537,7 +537,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           "Check async job status",
           (y) => y.positional("job-id", { type: "string", demandOption: true }),
           async (argv) => {
-            const format = (argv as unknown as SqlArgs).output
+            const format = (argv as unknown as SqlArgs).format
             try {
               const ctx = await getExecContext(argv as unknown as SqlArgs)
               const jobId: JobID = {

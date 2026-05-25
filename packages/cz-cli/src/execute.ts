@@ -31,8 +31,8 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   const startMs = Date.now()
   const args = splitArgs(command)
   if (extraArgs) args.push(...extraArgs)
-  if (!args.includes("--output") && !args.includes("-o")) {
-    args.push("--output", "json")
+  if (!args.includes("--format") && !args.some((arg) => arg.startsWith("--format="))) {
+    args.push("--format", "json")
   }
 
   const chunks: string[] = []

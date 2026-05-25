@@ -77,12 +77,12 @@ const tests: Test[] = [
   { name: "WORKSPACE CURRENT", cmd: "workspace current", check: single },
 
   // === Output Formats ===
-  { name: "JSON", cmd: "profile list --output json", check: single },
-  { name: "PRETTY", cmd: "profile list --output pretty", check: ok },
-  { name: "TABLE", cmd: "profile list --output table", check: (r) => r.output.trim() ? null : "empty" },
-  { name: "CSV", cmd: "profile list --output csv", check: (r) => r.output.trim() ? null : "empty" },
-  { name: "TOON", cmd: "profile list --output toon", check: (r) => r.output.trim() ? null : "empty" },
-  { name: "JSONL", cmd: "profile list --output jsonl", check: (r) => r.output.trim() ? null : "empty" },
+  { name: "JSON", cmd: "profile list --format json", check: single },
+  { name: "PRETTY", cmd: "profile list --format pretty", check: ok },
+  { name: "TABLE", cmd: "profile list --format table", check: (r) => r.output.trim() ? null : "empty" },
+  { name: "CSV", cmd: "profile list --format csv", check: (r) => r.output.trim() ? null : "empty" },
+  { name: "TOON", cmd: "profile list --format toon", check: (r) => r.output.trim() ? null : "empty" },
+  { name: "JSONL", cmd: "profile list --format jsonl", check: (r) => r.output.trim() ? null : "empty" },
   { name: "--field", cmd: "status --field connected", check: (r) => r.output.trim() === "true" ? null : `got: ${r.output.trim()}` },
 
   // === Error Handling ===

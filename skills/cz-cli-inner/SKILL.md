@@ -85,9 +85,9 @@ cz-cli datasource sample <name_or_id> <catalog> <object>
 
 ## Output Formats
 
-- `-o json` (default) — single-line JSON, best for parsing
-- `-o toon` — line-per-field, good for `grep`/`head`
-- `-o table` / `-o csv` / `-o pretty` — human-readable
+- `--format json` (default) — single-line JSON, best for parsing
+- `--format toon` — line-per-field, good for `grep`/`head`
+- `--format table` / `--format csv` / `--format pretty` — human-readable
 - `--field <name>` — extract one field as raw text
 
 ## Key Rules

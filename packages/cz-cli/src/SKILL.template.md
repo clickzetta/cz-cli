@@ -119,19 +119,19 @@ Display as a Markdown hyperlink: `[View in Studio](https://...)`. Show all studi
 
 ```bash
 # Async SQL: submit → poll → fetch result → preview first rows
-JOB=$(cz-cli sql "SELECT * FROM orders LIMIT 100" --field job_id) && cz-cli job status $JOB -o toon && cz-cli job result $JOB -o toon | head -12
+JOB=$(cz-cli sql "SELECT * FROM orders LIMIT 100" --field job_id) && cz-cli job status $JOB --format toon && cz-cli job result $JOB --format toon | head -12
 
 # Parallel: two independent lookups at the same time
-cz-cli task content my_task -o toon & cz-cli runs list --task my_task -o toon & wait
+cz-cli task content my_task --format toon & cz-cli runs list --task my_task --format toon & wait
 
 # Chain: save then verify
-cz-cli task save-content my_task --file script.sql && cz-cli task content my_task -o toon
+cz-cli task save-content my_task --file script.sql && cz-cli task content my_task --format toon
 ```
 
 Key tools:
 - `--field <name>` — extract one value as raw text: `cz-cli sql "..." --field job_id` → `2026042818122957849079780`
-- `-o toon` — line-per-field output, works with `grep`/`head`
-- `-o json` — single-line JSON, parse in code only (do NOT pipe to grep/head)
+- `--format toon` — line-per-field output, works with `grep`/`head`
+- `--format json` — single-line JSON, parse in code only (do NOT pipe to grep/head)
 
 **Shortcut**: Use `cz-cli sql --sync "..." > /tmp/res.json` to force synchronous execution (waits for results inline). Prefer `--sync` for simple/fast queries.
 

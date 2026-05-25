@@ -91,7 +91,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         "List all profiles",
         (y) => y.option("show-secret", { type: "boolean", default: false, describe: "Reveal secrets" }),
         (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -140,7 +140,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             .positional("name", { type: "string", demandOption: true })
             .option("show-secret", { type: "boolean", default: false, describe: "Reveal secrets" }),
         (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -184,7 +184,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             .option("header", { type: "string", array: true, describe: "Custom HTTP header KEY=VALUE (repeatable)" })
             .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -284,7 +284,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             .positional("key", { type: "string", demandOption: true, describe: "Field to update: pat | username | password | service | protocol | instance | workspace | schema | vcluster | header.<NAME>" })
             .positional("value", { type: "string", demandOption: true, describe: "New value" }),
         (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -341,7 +341,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         "Delete a profile",
         (y) => y.positional("name", { type: "string", demandOption: true }),
         (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -364,7 +364,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         "Set default profile",
         (y) => y.positional("name", { type: "string", demandOption: true }),
         (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -386,7 +386,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         "Show connection status",
         () => {},
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const info: Record<string, unknown> = { cli_version: VERSION }
           try {
             const ctx = await getExecContext(argv)
@@ -423,7 +423,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             .option("profile-name", { type: "string", default: "default", describe: "Profile name to create" })
             .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const REGISTER_URLS = [
             "https://accounts.clickzetta.com/register?ref=cz-cli (China)",
             "https://accounts.singdata.com/register?ref=cz-cli (International)",

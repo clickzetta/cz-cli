@@ -66,10 +66,86 @@ const AGENT_FLAGS_WITH_VALUES = new Set([
   "s",
   "vcluster",
   "v",
-  "output",
-  "o",
+  "format",
   "field",
 ])
+const GLOBAL_FLAGS = new Set(["debug", "d", "help", "h", "version"])
+const GLOBAL_FLAGS_WITH_VALUES = new Set([
+  "profile",
+  "p",
+  "jdbc",
+  "pat",
+  "username",
+  "password",
+  "service",
+  "protocol",
+  "instance",
+  "workspace",
+  "schema",
+  "s",
+  "vcluster",
+  "v",
+  "format",
+  "field",
+])
+
+const RUNTIME_COMMANDS = new Set(["run", "llm", "config"])
+const AGENT_RUNTIME_SUBCOMMANDS = new Set(["run", "llm", "config", "session", "stats", "export"])
+
+function usageErrorPayload(message: string) {
+  return {
+    error: { code: "USAGE_ERROR", message },
+    ai_message: "Run the command with --help to see available options and usage.",
+  }
+}
+
+function stripLegacyOutputFlag(args: string[]): { found: boolean; remaining: string[] } {
+  let found = false
+  const remaining: string[] = []
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]
+    if (value === "-o" || value === "--output") {
+      found = true
+      index++ // skip the value
+      continue
+    }
+    if (value?.startsWith("-o=") || value?.startsWith("--output=")) {
+      found = true
+      continue
+    }
+    remaining.push(value!)
+  }
+  return { found, remaining }
+}
+
+function runtimeOutputFlagMessage(command: string) {
+  return `-o/--output is no longer supported. Use --format instead: cz-cli ${command} --format <value>`
+}
+
+function extractGlobalFormatArgs(args: string[]) {
+  const formatArgs: string[] = []
+  const remaining: string[] = []
+
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]
+    if (value === "--format") {
+      formatArgs.push(value)
+      const next = args[index + 1]
+      if (next !== undefined) {
+        formatArgs.push(next)
+        index++
+      }
+      continue
+    }
+    if (value?.startsWith("--format=")) {
+      formatArgs.push(value)
+      continue
+    }
+    remaining.push(value)
+  }
+
+  return { formatArgs, remaining }
+}
 
 function noProfilePayload() {
   return {
@@ -177,6 +253,11 @@ export function emitNoActiveLlm(runtime: CliRuntime): never {
   return runtime.exit(1)
 }
 
+export function emitUsageError(runtime: CliRuntime, message: string): never {
+  runtime.stdout.write(JSON.stringify(usageErrorPayload(message)) + "\n")
+  return runtime.exit(2)
+}
+
 async function migrateProfilesOnlyAndExit(): Promise<never> {
   const profilesPath = join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
   try {
@@ -209,8 +290,8 @@ async function parseRegisteredCommands(args: string[]): Promise<void> {
   await registerCommands(createCli(args)).demandCommand(1, "").help().parseAsync()
 }
 
-function agentSubcommand(args: string[]) {
-  for (let index = 1; index < args.length; index++) {
+function agentSubcommand(args: string[], commandIndex: number) {
+  for (let index = commandIndex + 1; index < args.length; index++) {
     const value = args[index]
     if (!value) continue
     if (value === "--") return
@@ -222,24 +303,46 @@ function agentSubcommand(args: string[]) {
 }
 
 function normalizeCliArgs(rawArgs: string[]) {
-  const args = rawArgs.length === 0 ? ["--help"] : rawArgs
-  const command = args[0] ?? ""
-  const isHelpRequest = args.includes("--help") || args.includes("-h")
-  const subcommand = command === "agent" ? agentSubcommand(args) : undefined
+  const initialArgs = rawArgs.length === 0 ? ["--help"] : rawArgs
+  const { formatArgs, remaining } = extractGlobalFormatArgs(initialArgs)
+  const commandArgs = remaining
+  let command = ""
+  let commandIndex = -1
+  for (let index = 0; index < commandArgs.length; index++) {
+    const value = commandArgs[index]
+    if (!value) continue
+    if (value === "--") break
+    if (!value.startsWith("-")) {
+      command = value
+      commandIndex = index
+      break
+    }
+    const flag = value.replace(/^-+/, "").split("=")[0]
+    if (!flag || GLOBAL_FLAGS.has(flag) || value.includes("=")) continue
+    if (GLOBAL_FLAGS_WITH_VALUES.has(flag)) index++
+  }
+  const isHelpRequest = initialArgs.includes("--help") || initialArgs.includes("-h")
+  const subcommand = command === "agent" ? agentSubcommand(commandArgs, commandIndex) : undefined
   const bareAgentInvocation = command === "agent" && !subcommand
+  const runtimeArgs = formatArgs.length === 0 || commandIndex < 0
+    ? commandArgs
+    : [
+        ...commandArgs.slice(0, commandIndex),
+        commandArgs[commandIndex],
+        ...formatArgs,
+        ...commandArgs.slice(commandIndex + 1),
+      ]
   return {
-    args,
-    runtimeArgs: args,
+    args: initialArgs,
+    runtimeArgs,
     command,
     isHelpRequest,
     subcommand,
     shouldDelegateToAgentRuntime:
-      command === "run" ||
-      command === "llm" ||
-      command === "config" ||
+      RUNTIME_COMMANDS.has(command) ||
       (command === "agent" &&
         !isHelpRequest &&
-        (bareAgentInvocation || ["run", "llm", "config", "session", "stats", "export"].includes(subcommand ?? ""))),
+        (bareAgentInvocation || AGENT_RUNTIME_SUBCOMMANDS.has(subcommand ?? ""))),
   }
 }
 
@@ -276,6 +379,16 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
 
   if (process.env.CLICKZETTA_MIGRATE_PROFILES_ONLY === "1") {
     await migrateProfilesOnlyAndExit()
+  }
+
+  const legacy = stripLegacyOutputFlag(normalized.args)
+  if (legacy.found) {
+    const stripped = normalizeCliArgs(legacy.remaining)
+    const label = stripped.command === "agent" ? `agent ${stripped.subcommand ?? ""}`.trim() : stripped.command || "cz-cli"
+    const message = runtimeOutputFlagMessage(label)
+    const aiMessage = `-o/--output was removed. Replace with --format. Valid choices: ${label.startsWith("agent") ? "default, json, a2a" : "json, pretty, table, csv, text, jsonl, toon"}.`
+    runtime.stdout.write(JSON.stringify({ error: { code: "USAGE_ERROR", message }, ai_message: aiMessage }) + "\n")
+    return runtime.exit(2)
   }
 
   if (

@@ -238,7 +238,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 "Task type: SQL, PYTHON, SHELL, JDBC, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
             }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileType = argv.type ? String(parseTaskType(argv.type)) : undefined
@@ -283,7 +283,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("page-size", { type: "number", default: 10 })
             .option("parent", { type: "number", default: 0, describe: "Parent folder ID" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const resp = await listFolders(sc, {
@@ -326,7 +326,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("folder", { type: "string", default: "0", describe: "Folder ID or name" })
             .option("description", { type: "string", describe: "Task description" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const folderRaw = (argv.folder as string).trim()
@@ -360,7 +360,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .positional("name", { type: "string", demandOption: true })
             .option("parent", { type: "number", default: 0, describe: "Parent folder ID" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             try {
@@ -392,7 +392,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         "Get task content and config",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -457,7 +457,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("file", { alias: "f", type: "string", describe: "Read content from file" })
             .option("params", { type: "string", describe: 'Runtime parameters as JSON object. Values starting with "$[" or matching system param names (bizdate, sys_biz_day, sys_plan_day, etc.) are treated as system/expression params automatically. e.g. \'{"city":"beijing","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}\'' }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             if ((argv.content && argv.file) || (!argv.content && !argv.file)) {
               error("INVALID_ARGUMENTS", "Exactly one of --content or --file is required.", { format, exitCode: 2 })
@@ -506,7 +506,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
             .option("schema", { type: "string", describe: "Schema name" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -577,7 +577,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("deps", { type: "string", choices: ["keep", "replace", "clear"], describe: "Dependency action" })
             .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array. Each item requires taskId (number) and taskName (string), e.g. '[{\"taskId\":123,\"taskName\":\"upstream_task\"}]'" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vc-id", "schema", "timeout", "timeout-unit", "deps"] as const
             if (!configOpts.some((k) => argv[k] != null)) {
@@ -658,7 +658,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("task", { type: "string", demandOption: true }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -700,7 +700,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .version(false)
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -753,7 +753,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("with-downstream", { type: "boolean", default: false, describe: "Also offline downstream tasks" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -806,7 +806,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })
             .option("poll-interval", { type: "number", default: 5, describe: "Polling interval seconds" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -974,7 +974,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             "Get flow DAG",
             (y) => y.positional("task", { type: "string", demandOption: true }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -998,7 +998,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("dependency", { type: "string", describe: "Dependency node name" })
                 .option("content", { type: "string", describe: "Initial node content" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1032,7 +1032,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("name", { type: "string", describe: "Node name" })
                 .option("node-id", { type: "number", describe: "Node ID" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1061,7 +1061,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("upstream", { type: "string", demandOption: true, describe: "Upstream node name" })
                 .option("downstream", { type: "string", demandOption: true, describe: "Downstream node name" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1090,7 +1090,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .positional("task", { type: "string", demandOption: true })
                 .option("dependency-id", { alias: "dep-id", type: "number", demandOption: true }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1114,7 +1114,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("node-id", { type: "number", describe: "Node ID" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1142,7 +1142,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("content", { type: "string" })
                 .option("file", { alias: "f", type: "string" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 if (!argv.content && !argv.file) {
                   error("INVALID_ARGUMENTS", "Provide --content or --file.", { format, exitCode: 2 })
@@ -1182,7 +1182,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("vc", { type: "string" })
                 .option("schema", { type: "string" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1213,7 +1213,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             "Publish flow",
             (y) => y.positional("task", { type: "string", demandOption: true }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1239,7 +1239,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("node-id", { type: "number", describe: "Flow node ID" })
                 .option("node-instance-id", { type: "number", describe: "Flow node instance ID" }),
             async (argv) => {
-              const format = argv.output
+              const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -1268,7 +1268,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .positional("folder", { type: "string", demandOption: true, describe: "Folder name or ID" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv: Record<string, unknown>) => {
-          const format = (argv as { output: string }).output
+          const format = (argv as { format: string }).format
           try {
             const sc = await ctx(argv)
             const folderArg = String(argv.folder)
@@ -1298,7 +1298,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv: Record<string, unknown>) => {
-          const format = (argv as { output: string }).output
+          const format = (argv as { format: string }).format
           try {
             const sc = await ctx(argv)
             const taskId = await resolveTaskId(sc, String(argv.task), format)
@@ -1326,7 +1326,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("content", { type: "string" })
             .option("file", { alias: "f", type: "string" }),
         async (argv: Record<string, unknown>) => {
-          const format = (argv as { output: string }).output
+          const format = (argv as { format: string }).format
           try {
             if (!argv.content && !argv.file) {
               error("INVALID_ARGUMENTS", "Provide --content or --file.", { format, exitCode: 2 })

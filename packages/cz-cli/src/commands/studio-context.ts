@@ -3,8 +3,8 @@ import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv }
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import { handledError } from "../output/index.js"
 
-export async function getStudioContext(args: Partial<CliArgs> & { output?: string }): Promise<StudioConfig> {
-  const format = args.output ?? "json"
+export async function getStudioContext(args: Partial<CliArgs> & { format?: string }): Promise<StudioConfig> {
+  const format = args.format ?? "json"
   const config = resolveConnectionConfig(args)
   const token = await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)

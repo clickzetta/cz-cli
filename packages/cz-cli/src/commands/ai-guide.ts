@@ -13,7 +13,6 @@ export function registerAiGuideCommand(cli: Argv<GlobalArgs>): void {
         .option("wide", { type: "boolean", default: false, describe: "Include per-command option details" })
         .option("budget", { type: "number", describe: "Max payload size in chars" })
         .option("format", {
-          alias: "f",
           type: "string",
           choices: ["json", "pretty", "toon"] as const,
           default: "toon",
@@ -68,11 +67,11 @@ export function registerAiGuideCommand(cli: Argv<GlobalArgs>): void {
 
       // Default: output ai-guide JSON/toon payload
       const guide = buildAiGuide({ wide: argv.wide, budgetChars: argv.budget })
-      // Default to "toon" format when --output is not explicitly set by the user
+      // Default to "toon" format when neither --format nor the global formatter is explicitly set
       const effectiveFormat = argv.format !== "toon"
         ? argv.format
-        : (argv.output_explicit ? argv.output : "toon")
-      const useToon = effectiveFormat === "toon" || (!argv.output_explicit && argv.format === "toon")
+        : (argv.format_explicit ? argv.format : "toon")
+      const useToon = effectiveFormat === "toon" || (!argv.format_explicit && argv.format === "toon")
       const payload = useToon ? buildToonPayload(guide as unknown as Record<string, unknown>) : guide
       success(payload, { format: useToon ? "toon" : (effectiveFormat ?? "toon") })
     },

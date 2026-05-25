@@ -15,7 +15,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
         "List available workspaces",
         () => {},
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const sql = "SHOW WORKSPACES"
@@ -38,7 +38,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
         "Show current workspace",
         () => {},
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const ctx = await getExecContext(argv)
             const sql = "SELECT current_workspace()"
@@ -75,7 +75,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
             .option("schema", { type: "string", describe: "Default schema to set alongside workspace" })
             .option("persist", { type: "boolean", default: true, describe: "Save workspace to profile config (permanent). Use --no-persist to only show the SDK hint without saving." }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           const name = argv.name as string
           const schemaVal = argv.schema as string | undefined
           if (argv.persist) {

@@ -207,16 +207,16 @@ export function buildAiGuide(options?: { wide?: boolean; budgetChars?: number })
     description: "AI-Agent-friendly CLI for ClickZetta Lakehouse",
     global_options: {
       order: "Global options must appear before subcommand.",
-      usage_pattern: `${cliName} [GLOBAL_OPTIONS] <subcommand> [args] (or run ${cliName} <subcommand> [args] --output pretty)`,
+      usage_pattern: `${cliName} [GLOBAL_OPTIONS] <subcommand> [args] (or run ${cliName} <subcommand> [args] --format pretty)`,
       entry_commands: ["cz-cli", "clickzetta-cli"],
       options: [
         { flags: "--profile, -p", required: false, takes_value: true, help: "Profile name" },
-        { flags: "--output, -o", required: false, takes_value: true, help: "Output format", default: "json" },
+        { flags: "--format", required: false, takes_value: true, help: "Output format", default: "json" },
         { flags: "--debug, -d", required: false, takes_value: false, help: "Debug mode" },
       ],
       examples: [
         `${cliName} --profile dev sql "SELECT 1"`,
-        `${cliName} --output table task list --limit 5`,
+        `${cliName} --format table task list --limit 5`,
         `${cliName} runs list --task my_task --run-type REFILL --limit 1`,
       ],
     },
@@ -230,7 +230,7 @@ export function buildAiGuide(options?: { wide?: boolean; budgetChars?: number })
     output_format: {
       success: { ok: true, data: "...", time_ms: "N" },
       error: { ok: false, error: { code: "...", message: "..." } },
-      note: "Use -o pretty for colorized human-friendly JSON output.",
+      note: "Use --format pretty for colorized human-friendly JSON output.",
     },
     safety: {
       write_protection: "Write operations require --write. DELETE/UPDATE without WHERE are blocked.",

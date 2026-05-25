@@ -133,7 +133,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .option("page-size", { type: "number", default: 10 })
             .option("limit", { type: "number", describe: "Alias of --page-size" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const pageSize = argv.limit ?? argv["page-size"]
@@ -173,7 +173,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         "Get run detail",
         (y) => y.positional("id", { type: "string", demandOption: true }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
@@ -226,7 +226,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .option("interval", { type: "number", default: 5, describe: "Poll interval seconds" })
             .option("allow-timeout", { type: "boolean", default: false, describe: "Exit with success (code 0) when max polling attempts are reached, instead of returning an error" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
@@ -272,7 +272,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .positional("id", { type: "string", demandOption: true })
             .option("offset", { type: "number", describe: "Log byte offset" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
@@ -312,7 +312,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .option("parent-level", { type: "number", default: 1, describe: "Upstream dependency depth" })
             .option("child-level", { type: "number", default: 1, describe: "Downstream dependency depth" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
@@ -339,7 +339,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .positional("id", { type: "string", demandOption: true })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
@@ -374,7 +374,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .option("name", { type: "string", describe: "Backfill job name" })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const taskId = await resolveTaskId(sc, argv.task as string, format)
@@ -420,7 +420,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         "Rerun a failed instance",
         (y) => y.positional("id", { type: "string", demandOption: true }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
@@ -441,7 +441,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .option("from", { type: "string", describe: "Start time (ISO)" })
             .option("to", { type: "string", describe: "End time (ISO)" }),
         async (argv) => {
-          const format = argv.output
+          const format = argv.format
           try {
             const sc = await ctx(argv)
             const now = Date.now()

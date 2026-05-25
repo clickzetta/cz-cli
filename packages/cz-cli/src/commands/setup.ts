@@ -1692,7 +1692,7 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           "  Re-run `cz-cli setup` with the fields requested in the JSON response until step=complete.",
         ),
     async (argv) => {
-      const format = argv.output
+      const format = argv.format
       const profileName = argv.name as string
       if (argv.credential) {
         let cred: Record<string, unknown>
