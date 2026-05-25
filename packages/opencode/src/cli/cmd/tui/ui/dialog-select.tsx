@@ -12,6 +12,12 @@ import { Keybind } from "@/util"
 import { Locale } from "@/util"
 import { getScrollAcceleration } from "../util/scroll"
 import { useTuiConfig } from "../context/tui-config"
+import {
+  isDialogSelectOptionActive,
+  findDialogSelectOptionIndex,
+  isDialogSelectOptionCurrent,
+  resolveDialogSelectOptionKey,
+} from "./dialog-select-identity"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -30,10 +36,12 @@ export interface DialogSelectProps<T> {
     disabled?: boolean
     onTrigger: (option: DialogSelectOption<T>) => void
   }[]
+  currentKey?: string
   current?: T
 }
 
 export interface DialogSelectOption<T = any> {
+  key?: string
   title: string
   value: T
   description?: string
@@ -66,10 +74,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
   createEffect(
     on(
-      () => props.current,
-      (current) => {
+      [() => props.current, () => props.currentKey],
+      ([current, currentKey]) => {
         if (current) {
-          const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
+          const currentIndex = findDialogSelectOptionIndex(flat(), { current, currentKey })
           if (currentIndex >= 0) {
             setStore("selected", currentIndex)
           }
@@ -143,12 +151,12 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const selected = createMemo(() => flat()[store.selected])
 
   createEffect(
-    on([() => store.filter, () => props.current], ([filter, current]) => {
+    on([() => store.filter, () => props.current, () => props.currentKey], ([filter, current, currentKey]) => {
       setTimeout(() => {
         if (filter.length > 0) {
           moveTo(0, true)
         } else if (current) {
-          const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
+          const currentIndex = findDialogSelectOptionIndex(flat(), { current, currentKey })
           if (currentIndex >= 0) {
             moveTo(currentIndex, true)
           }
@@ -171,7 +179,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     if (option) props.onMove?.(option)
     if (!scroll) return
     const target = scroll.getChildren().find((child) => {
-      return child.id === JSON.stringify(selected()?.value)
+      return child.id === (option ? resolveDialogSelectOptionKey(option) : undefined)
     })
     if (!target) return
     const y = target.y - scroll.y
@@ -310,11 +318,16 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                 </Show>
                 <For each={options}>
                   {(option) => {
-                    const active = createMemo(() => isDeepEqual(option.value, selected()?.value))
-                    const current = createMemo(() => isDeepEqual(option.value, props.current))
+                    const active = createMemo(() => isDialogSelectOptionActive(option, selected()))
+                    const current = createMemo(() =>
+                      isDialogSelectOptionCurrent(option, {
+                        current: props.current,
+                        currentKey: props.currentKey,
+                      }),
+                    )
                     return (
                       <box
-                        id={JSON.stringify(option.value)}
+                        id={resolveDialogSelectOptionKey(option)}
                         flexDirection="row"
                         position="relative"
                         onMouseMove={() => {
@@ -326,12 +339,18 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                         }}
                         onMouseOver={() => {
                           if (store.input !== "mouse") return
-                          const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
+                          const index = findDialogSelectOptionIndex(flat(), {
+                            current: option.value,
+                            currentKey: option.key,
+                          })
                           if (index === -1) return
                           moveTo(index)
                         }}
                         onMouseDown={() => {
-                          const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
+                          const index = findDialogSelectOptionIndex(flat(), {
+                            current: option.value,
+                            currentKey: option.key,
+                          })
                           if (index === -1) return
                           moveTo(index)
                         }}
