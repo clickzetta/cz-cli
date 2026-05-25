@@ -16,6 +16,29 @@ const SUPPORTED_PACKAGES = new Set([
 ]);
 const DEFAULT_FALLBACK_ROOT = path.join(__dirname, "fallback");
 
+function formatError(error) {
+  if (error && typeof error === "object" && "stderr" in error && error.stderr) {
+    return String(error.stderr).trim();
+  }
+
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function getNpmInvocation(env = process.env) {
+  if (env.npm_execpath && path.isAbsolute(env.npm_execpath)) {
+    return {
+      command: process.execPath,
+      args: [env.npm_execpath],
+    };
+  }
+
+  return {
+    command: process.platform === "win32" ? "npm.cmd" : "npm",
+    args: [],
+  };
+}
+
 function normalizeArch(arch = os.arch()) {
   if (arch === "x64" || arch === "amd64") return "x64";
   if (arch === "arm64" || arch === "aarch64") return "arm64";
@@ -39,12 +62,22 @@ function getPlatformSpec({
   };
 }
 
-function resolvePackageDir(spec, resolve = require.resolve) {
+function resolvePackageDirDetailed(spec, resolve = require.resolve) {
   try {
-    return path.dirname(resolve(`${spec.packageName}/package.json`));
-  } catch {
-    return null;
+    return {
+      packageDir: path.dirname(resolve(`${spec.packageName}/package.json`)),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      packageDir: null,
+      error: formatError(error),
+    };
   }
+}
+
+function resolvePackageDir(spec, resolve = require.resolve) {
+  return resolvePackageDirDetailed(spec, resolve).packageDir;
 }
 
 function resolveBinaryFromRoot(rootDir, spec, existsSync = fs.existsSync) {
@@ -74,6 +107,75 @@ function resolveInstalledBinary({
   if (fallback) return { ...fallback, source: "fallback" };
 
   return null;
+}
+
+function inspectOptionalPackage({
+  spec,
+  version,
+  force = false,
+  resolvePackageDirFn,
+  existsSync = fs.existsSync,
+  readFileSync = fs.readFileSync,
+} = {}) {
+  const issues = [];
+  const packageDirInfo = resolvePackageDirFn
+    ? { packageDir: resolvePackageDirFn(spec), error: null }
+    : resolvePackageDirDetailed(spec);
+
+  if (!packageDirInfo.packageDir) {
+    issues.push(
+      packageDirInfo.error
+        ? `Optional dependency ${spec.packageName} is not installed: ${packageDirInfo.error}`
+        : `Optional dependency ${spec.packageName} is not installed.`,
+    );
+    return {
+      issues,
+      packageDir: null,
+      packageJsonVersion: null,
+      packaged: null,
+    };
+  }
+
+  const packaged = resolveBinaryFromRoot(path.join(packageDirInfo.packageDir, "bin"), spec, existsSync);
+  if (!packaged) {
+    issues.push(
+      `Optional dependency ${spec.packageName} was resolved to ${packageDirInfo.packageDir}, but ${spec.binaryName} is missing from bin/.`,
+    );
+  }
+
+  const packageJsonPath = path.join(packageDirInfo.packageDir, "package.json");
+  try {
+    const packageJsonVersion = JSON.parse(readFileSync(packageJsonPath, "utf-8")).version;
+    if (force && packaged && packageJsonVersion !== version) {
+      issues.push(
+        `Optional dependency ${spec.packageName} version mismatch: found ${packageJsonVersion}, expected ${version}.`,
+      );
+    }
+
+    return {
+      issues,
+      packageDir: packageDirInfo.packageDir,
+      packageJsonVersion,
+      packaged,
+    };
+  } catch (error) {
+    issues.push(`Optional dependency ${spec.packageName} package.json could not be read: ${formatError(error)}`);
+    return {
+      issues,
+      packageDir: packageDirInfo.packageDir,
+      packageJsonVersion: null,
+      packaged,
+    };
+  }
+}
+
+function createInstallFailure(spec, details) {
+  return new Error(
+    [
+      `Unable to install cz-cli binary for ${spec.platform}-${spec.arch} from package ${spec.packageName}.`,
+      ...details.map((detail) => `- ${detail}`),
+    ].join("\n"),
+  );
 }
 
 function parseOctal(buffer, start, end) {
@@ -132,13 +234,14 @@ async function installFromNpmRegistry({
   destinationDir,
 } = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cz-cli-npm-pack-"));
+  const npm = getNpmInvocation();
 
   const cleanEnv = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !k.startsWith("npm_")),
   );
 
   try {
-    const packed = execFileSync("npm", ["pack", `${packageName}@${version}`, "--silent"], {
+    const packed = execFileSync(npm.command, [...npm.args, "pack", `${packageName}@${version}`, "--silent"], {
       cwd: tempRoot,
       encoding: "utf-8",
       env: cleanEnv,
@@ -153,13 +256,7 @@ async function installFromNpmRegistry({
 
     extractBinFromTarball(path.join(tempRoot, packed), destinationDir);
   } catch (error) {
-    const detail =
-      error && typeof error === "object" && "stderr" in error && error.stderr
-        ? String(error.stderr).trim()
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    throw new Error(`npm registry self-heal failed for ${packageName}@${version}: ${detail}`);
+    throw new Error(`npm registry self-heal failed for ${packageName}@${version}: ${formatError(error)}`);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -176,43 +273,42 @@ async function ensureInstalledBinary({
 } = {}) {
   if (!spec) throw new Error(`Unsupported platform/arch: ${os.platform()}/${os.arch()}`);
 
-  const resolveFn = resolvePackageDirOverride || resolvePackageDir;
+  const optionalPackage = inspectOptionalPackage({
+    spec,
+    version,
+    force,
+    resolvePackageDirFn: resolvePackageDirOverride,
+    existsSync,
+  });
 
   if (!force) {
-    const installed = resolveInstalledBinary({
-      spec,
-      fallbackRoot,
-      resolvePackageDirFn: resolveFn,
-      existsSync,
-    });
-    if (installed) return installed;
+    if (optionalPackage.packaged) return { ...optionalPackage.packaged, source: "package" };
+
+    const fallback = resolveBinaryFromRoot(path.join(fallbackRoot, `${spec.platform}-${spec.arch}`), spec, existsSync);
+    if (fallback) return { ...fallback, source: "fallback" };
   }
 
   // When force is true, still prefer the optionalDependency package if its
   // version matches — avoids a nested npm pack call that can fail inside
   // postinstall (inherited npm env/lock conflicts).
-  if (force) {
-    const pkgDir = resolveFn(spec);
-    if (pkgDir) {
-      try {
-        const pkgJson = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf-8"));
-        if (pkgJson.version === version) {
-          const packaged = resolveBinaryFromRoot(path.join(pkgDir, "bin"), spec, existsSync);
-          if (packaged) return { ...packaged, source: "package" };
-        }
-      } catch {}
-    }
+  if (force && optionalPackage.packaged && optionalPackage.packageJsonVersion === version) {
+    return { ...optionalPackage.packaged, source: "package" };
   }
 
   const destinationDir = path.join(fallbackRoot, `${spec.platform}-${spec.arch}`);
   fs.rmSync(destinationDir, { recursive: true, force: true });
   fs.mkdirSync(destinationDir, { recursive: true });
-  await installFromNpmRegistryOverride({
-    packageName: spec.packageName,
-    version,
-    destinationDir,
-    binaryName: spec.binaryName,
-  });
+  let registryError = null;
+  try {
+    await installFromNpmRegistryOverride({
+      packageName: spec.packageName,
+      version,
+      destinationDir,
+      binaryName: spec.binaryName,
+    });
+  } catch (error) {
+    registryError = error;
+  }
 
   const fallback = resolveInstalledBinary({
     spec,
@@ -222,14 +318,18 @@ async function ensureInstalledBinary({
   });
   if (fallback) return fallback;
 
-  throw new Error(
-    `Unable to install cz-cli binary for ${spec.platform}-${spec.arch} from package ${spec.packageName} or npm registry fallback.`,
-  );
+  const details = optionalPackage.issues.slice();
+  if (registryError) details.push(formatError(registryError));
+  else details.push(`npm registry self-heal completed, but ${spec.binaryName} was not extracted into ${destinationDir}.`);
+
+  throw createInstallFailure(spec, details);
 }
 
 module.exports = {
   DEFAULT_FALLBACK_ROOT,
   ensureInstalledBinary,
+  getNpmInvocation,
   getPlatformSpec,
+  inspectOptionalPackage,
   resolveInstalledBinary,
 };

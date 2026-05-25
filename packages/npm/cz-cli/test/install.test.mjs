@@ -73,6 +73,27 @@ test("ensureInstalledBinary throws when packaged and registry fallback installs 
   )
 })
 
+test("ensureInstalledBinary reports optional dependency and registry fallback failures together", async () => {
+  const { ensureInstalledBinary } = await loadModule()
+
+  await assert.rejects(
+    ensureInstalledBinary({
+      fallbackRoot: "/tmp/fallback-root",
+      spec: {
+        platform: "win32",
+        arch: "x64",
+        packageName: "@clickzetta/definitely-missing-win32-x64",
+        binaryName: "cz-cli.exe",
+      },
+      installFromNpmRegistry: async () => {
+        throw new Error("npm registry self-heal failed for @clickzetta/definitely-missing-win32-x64@1.2.3: 404 Not Found")
+      },
+      version: "1.2.3",
+    }),
+    /Optional dependency @clickzetta\/definitely-missing-win32-x64 is not installed[\s\S]*404 Not Found/,
+  )
+})
+
 test("getPlatformSpec maps supported npm package names", async () => {
   const { getPlatformSpec } = await loadModule()
 
@@ -90,6 +111,32 @@ test("getPlatformSpec rejects unsupported package combinations", async () => {
   const { getPlatformSpec } = await loadModule()
   assert.equal(getPlatformSpec({ platform: "win32", arch: "arm64" }), null)
   assert.equal(getPlatformSpec({ platform: "freebsd", arch: "x64" }), null)
+})
+
+test("getNpmInvocation uses node + npm_execpath when available", async () => {
+  const { getNpmInvocation } = await loadModule()
+  const result = getNpmInvocation({ npm_execpath: "/tmp/npm-cli.js" })
+
+  assert.equal(result.command, process.execPath)
+  assert.deepEqual(result.args, ["/tmp/npm-cli.js"])
+})
+
+test("getNpmInvocation uses npm.cmd on Windows without npm_execpath", async () => {
+  const { getNpmInvocation } = await loadModule()
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")
+
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value: "win32",
+  })
+
+  try {
+    const result = getNpmInvocation({})
+    assert.equal(result.command, "npm.cmd")
+    assert.deepEqual(result.args, [])
+  } finally {
+    Object.defineProperty(process, "platform", platform)
+  }
 })
 
 test("ensureInstalledBinary with force=true skips npm pack when package version matches", async () => {

@@ -155,7 +155,7 @@ async function main() {
 
 main().catch((error) => {
   process.stderr.write(
-    `Failed to install cz-cli binary: ${error instanceof Error ? error.message : String(error)}\n`,
+    `Failed to install cz-cli binary:\n${error instanceof Error ? error.message : String(error)}\n`,
   );
   process.stderr.write("npm installed the launcher package, but the platform binary could not be prepared from npm.\n");
   process.stderr.write("Check npm config for omit=optional / optional=false and ensure npm registry access works.\n");
