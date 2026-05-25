@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "AI-Agent-friendly CLI for ClickZetta Lakehouse",
   "bin": {
-    "cz-cli": "bin/run.js"
+    "cz-cli": "bin/run.js",
+    "cz-agent": "bin/agent.js"
   },
   "scripts": {
     "postinstall": "node bin/postinstall.js"
