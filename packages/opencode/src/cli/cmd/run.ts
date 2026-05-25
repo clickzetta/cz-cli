@@ -433,7 +433,66 @@ export const RunCommand = cmd({
       }
     }
 
-    async function execute(sdk: OpencodeClient) {
+    async function execute(sdk: OpencodeClient): Promise<string | undefined> {
+      const isAsync = args.async || (!process.stdout.isTTY && (args.format === "a2a" || args.format === "json"))
+
+      if (isAsync) {
+        const agent = await (async () => {
+          if (!args.agent) return undefined
+          const name = args.agent
+          if (args.attach) {
+            const modes = await sdk.app
+              .agents(undefined, { throwOnError: true })
+              .then((x) => x.data ?? [])
+              .catch(() => undefined)
+            if (!modes) return undefined
+            const agent = modes.find((a) => a.name === name)
+            if (!agent || agent.mode === "subagent") return undefined
+            return name
+          }
+          const entry = await AppRuntime.runPromise(Agent.Service.use((svc) => svc.get(name)))
+          if (!entry || entry.mode === "subagent") return undefined
+          return name
+        })()
+
+        const sessionID = await session(sdk)
+        if (!sessionID) {
+          process.stdout.write(JSON.stringify({ error: "Session not found" }) + EOL)
+          process.exit(1)
+        }
+
+        try {
+          if (args.command) {
+            await sdk.session.command({
+              sessionID,
+              agent,
+              model: args.model,
+              command: args.command,
+              arguments: message,
+              variant: args.variant,
+            })
+          } else {
+            const model = args.model ? Provider.parseModel(args.model) : undefined
+            await sdk.session.promptAsync({
+              sessionID,
+              agent,
+              model,
+              variant: args.variant,
+              parts: [...files, { type: "text", text: message }],
+            })
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          process.stdout.write(JSON.stringify({ session_id: sessionID, status: "error", error: msg }) + EOL)
+          process.exit(1)
+        }
+
+        process.stdout.write(
+          JSON.stringify({ session_id: sessionID, status: "running", message: "Session submitted asynchronously" }) + EOL,
+        )
+        return sessionID
+      }
+
       function tool(part: ToolPart) {
         try {
           if (part.tool === "bash") return bash(props<typeof BashTool>(part))
@@ -709,6 +768,7 @@ export const RunCommand = cmd({
         if (error) output.error = error
         process.stdout.write(JSON.stringify(output) + EOL)
       }
+      return undefined
     }
 
     if (args.attach) {
@@ -720,7 +780,8 @@ export const RunCommand = cmd({
         return { Authorization: auth }
       })()
       const sdk = createOpencodeClient({ baseUrl: args.attach, directory, headers })
-      return await execute(sdk)
+      await execute(sdk)
+      return
     }
 
     await bootstrap(process.cwd(), async () => {
@@ -729,7 +790,22 @@ export const RunCommand = cmd({
         return Server.Default().app.fetch(request)
       }) as typeof globalThis.fetch
       const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
-      await execute(sdk)
+      const asyncSessionID = await execute(sdk)
+
+      if (asyncSessionID) {
+        // Async mode: server must stay alive until session completes processing.
+        // Subscribe to events and wait for idle signal.
+        const events = await sdk.event.subscribe()
+        for await (const event of events.stream) {
+          if (
+            event.type === "session.status" &&
+            event.properties.sessionID === asyncSessionID &&
+            event.properties.status.type === "idle"
+          ) {
+            break
+          }
+        }
+      }
     })
   },
 })
