@@ -69,7 +69,13 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
               (s) => s.positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to delete" }),
               () => {},
             )
-            .demandCommand(1, "Missing subcommand for 'agent session'. Available: list, delete")
+            .command(
+              "status <sessionID>",
+              "Get session status (idle/busy)",
+              (s) => s.positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to check" }),
+              () => {},
+            )
+            .demandCommand(1, "Missing subcommand for 'agent session'. Available: list, delete, status")
             .strict(false),
         () => {},
       )
@@ -159,6 +165,8 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .example("cz-cli agent session list", "List all sessions")
       .example("cz-cli agent session list -n 10 --format json", "Recent sessions as JSON")
       .example("cz-cli agent session delete <sessionID>", "Delete a session")
+      .example("cz-cli agent session status <sessionID>", "Check if session is idle/busy (async polling)")
+      .example("cz-cli agent run \"analyze\" --async --format a2a", "Async submit, returns session_id immediately")
       .example("cz-cli agent export <sessionID>", "Export session as JSON")
       .example("cz-cli agent stats --days 7", "Token usage for last 7 days")
       .example("cz-cli agent llm --help", "See LLM onboarding, examples, and testing commands")
