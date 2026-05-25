@@ -27,6 +27,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .option("format", { type: "string", choices: ["default", "json", "a2a"] as const, describe: "Output format (default=formatted, json=raw JSON events, a2a=agent-to-agent structured)" })
             .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run (default: 150 in a2a mode)" })
             .option("thinking", { type: "boolean", default: false, describe: "Show thinking blocks" })
+            .option("async", { type: "boolean", describe: "Submit asynchronously and return session ID immediately (default in non-TTY with a2a/json format)" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
             .option("profile", {
               type: "string",

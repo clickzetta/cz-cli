@@ -299,6 +299,11 @@ export const RunCommand = cmd({
         describe: "show thinking blocks",
         default: false,
       })
+      .option("async", {
+        type: "boolean",
+        describe: "submit asynchronously and return session ID immediately (default in non-TTY with a2a/json format)",
+        default: false,
+      })
       .option("dangerously-skip-permissions", {
         type: "boolean",
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
