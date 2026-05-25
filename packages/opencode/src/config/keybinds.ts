@@ -20,7 +20,6 @@ export const Keybinds = z
     session_rename: z.string().optional().default("ctrl+r").describe("Rename session"),
     session_delete: z.string().optional().default("ctrl+d").describe("Delete session"),
     stash_delete: z.string().optional().default("ctrl+d").describe("Delete stash entry"),
-    model_provider_list: z.string().optional().default("ctrl+a").describe("Open provider list from model dialog"),
     model_favorite_toggle: z.string().optional().default("ctrl+f").describe("Toggle model favorite status"),
     session_share: z.string().optional().default("none").describe("Share current session"),
     session_unshare: z.string().optional().default("none").describe("Unshare current session"),

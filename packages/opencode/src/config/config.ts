@@ -351,6 +351,8 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.json"))),
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.jsonc"))),
       )
+      // model is exclusively owned by profiles.toml; ignore any value from czcli.json
+      delete result.model
 
       // Read AI provider config from profiles.toml.
       // Legacy profile-level ClickZetta fields are migrated to [llm.clickzetta] on read.
@@ -372,8 +374,8 @@ export const layer = Layer.effect(
           if (entries.length > 0) {
             result = mergeDeep(result, { llm_entries: entries, default_llm_entry: defaultLlmEntry } as any)
           }
-          if (!result.model && defaultModel) {
-            result = mergeDeep(result, { model: defaultModel })
+          if (defaultModel) {
+            result.model = defaultModel as any
           }
         } catch (e) {
           log.warn("failed to read profiles.toml, LLM config may be incomplete", { path: profilesPath, error: String(e) })
@@ -478,6 +480,7 @@ export const layer = Layer.effect(
       }
 
       const global = yield* getGlobal()
+      const profilesModel = global.model
       yield* merge(Global.Path.config, global, "global")
       for (const file of ConfigPaths.fileInDirectory(Global.Path.config, "opencode")) {
         yield* merge(file, yield* loadFile(file), "global")
@@ -655,6 +658,11 @@ export const layer = Layer.effect(
       }
       if (Flag.CLICKZETTA_DISABLE_PRUNE) {
         result.compaction = { ...result.compaction, prune: false }
+      }
+
+      // model is exclusively owned by profiles.toml; discard any override from project/remote configs
+      if (profilesModel !== undefined) {
+        result.model = profilesModel as any
       }
 
       return {

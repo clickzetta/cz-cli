@@ -3,7 +3,7 @@ import os from "os"
 import path from "path"
 import type { Argv } from "yargs"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
-import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl } from "../../config/profiles-llm"
+import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl, buildLlmProbeRequest } from "../../config/profiles-llm"
 import { cmd } from "./cmd"
 
 const CLICKZETTA_DIR = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta")
@@ -20,7 +20,7 @@ const VALID_PROVIDERS = [
   "openrouter",
 ] as const
 const LEGACY_FIELDS = ["llm_provider", "llm_model", "llm_api_key", "llm_base_url"] as const
-const TESTABLE_PROVIDERS = ["clickzetta", "openai", "openai-compatible", "openrouter"] as const
+const TESTABLE_PROVIDERS = ["clickzetta", "anthropic", "openai", "openai-compatible", "openrouter", "google", "azure"] as const
 const DEFAULT_BASE_URLS = {
   openai: "https://api.openai.com",
   openrouter: "https://openrouter.ai/api",
@@ -135,19 +135,29 @@ function responseDetail(text: string): string | null {
   return truncate(trimmed)
 }
 
-function firstModelIds(body: unknown): string[] {
-  if (!isRecord(body) || !Array.isArray(body.data)) return []
-  return body.data.flatMap((item) => {
-    if (!isRecord(item)) return []
-    return typeof item.id === "string" ? [item.id] : []
-  })
-}
-
 function completionSummary(body: unknown): string | null {
   if (!isRecord(body) || !Array.isArray(body.choices)) return null
   const first = body.choices[0]
   if (!isRecord(first) || !isRecord(first.message)) return null
   return typeof first.message.content === "string" ? truncate(first.message.content) : null
+}
+
+function anthropicSummary(body: unknown): string | null {
+  if (!isRecord(body) || !Array.isArray(body.content)) return null
+  const first = body.content[0]
+  if (!isRecord(first) || first.type !== "text") return null
+  return typeof first.text === "string" ? truncate(first.text) : null
+}
+
+function googleSummary(body: unknown): string | null {
+  if (!isRecord(body) || !Array.isArray(body.candidates)) return null
+  const first = body.candidates[0]
+  if (!isRecord(first) || !isRecord(first.content)) return null
+  const parts = first.content.parts
+  if (!Array.isArray(parts)) return null
+  const part = parts[0]
+  if (!isRecord(part)) return null
+  return typeof part.text === "string" ? truncate(part.text) : null
 }
 
 function resolveBaseUrl(provider: string, baseUrl: string | undefined): string | undefined {
@@ -529,7 +539,7 @@ const LlmTestCommand = cmd({
         isTTY,
         "UNSUPPORTED_PROVIDER_TEST",
         `[llm.${target.name}] uses provider "${target.provider ?? "unknown"}". ` +
-          "Testing is currently supported for clickzetta, openai, openai-compatible, and openrouter.",
+          `Testing is currently supported for: ${TESTABLE_PROVIDERS.join(", ")}. Bedrock requires AWS SigV4 and cannot be probed this way.`,
         {
           provider: target.provider ?? null,
           supported_providers: [...TESTABLE_PROVIDERS],
@@ -545,8 +555,8 @@ const LlmTestCommand = cmd({
       )
     }
 
-    const baseUrl = resolveBaseUrl(target.provider, target.baseUrl)
-    if (!baseUrl) {
+    const probe = buildLlmProbeRequest(target.provider, target.baseUrl, target.apiKey, target.model)
+    if (!probe) {
       fail(
         isTTY,
         "MISSING_BASE_URL",
@@ -555,33 +565,22 @@ const LlmTestCommand = cmd({
       )
     }
 
-    const usesChatProbe = target.provider === "clickzetta"
-    const url = usesChatProbe ? baseUrl + "/chat/completions" : baseUrl + "/models"
+    const { url, method, headers, body: requestBody } = probe
     let response: Response
+    const displayUrl = url.replace(/[?&]key=[^&]+/, "?key=***")
+
     try {
       response = await fetch(url, {
-        method: usesChatProbe ? "POST" : "GET",
-        headers: {
-          authorization: `Bearer ${target.apiKey}`,
-          accept: "application/json",
-          ...(usesChatProbe ? { "content-type": "application/json" } : {}),
-        },
-        ...(usesChatProbe
-          ? {
-              body: JSON.stringify({
-                messages: [{ role: "user", content: "ping" }],
-                max_tokens: 1,
-                stream: false,
-              }),
-            }
-          : {}),
+        method,
+        headers,
+        body: requestBody,
       })
     } catch (error) {
       fail(
         isTTY,
         "LLM_TEST_REQUEST_FAILED",
-        `Could not reach ${url}: ${error instanceof Error ? error.message : String(error)}`,
-        { provider: target.provider, url },
+        `Could not reach ${displayUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        { provider: target.provider, url: displayUrl },
       )
     }
 
@@ -590,10 +589,10 @@ const LlmTestCommand = cmd({
       fail(
         isTTY,
         "LLM_TEST_HTTP_ERROR",
-        `LLM test failed with HTTP ${response.status} for ${url}${responseDetail(text) ? `: ${responseDetail(text)}` : ""}`,
+        `LLM test failed with HTTP ${response.status} for ${displayUrl}${responseDetail(text) ? `: ${responseDetail(text)}` : ""}`,
         {
           provider: target.provider,
-          url,
+          url: displayUrl,
           status: response.status,
           detail: responseDetail(text),
         },
@@ -601,17 +600,12 @@ const LlmTestCommand = cmd({
     }
 
     const body = safeJson(text)
-    const models = firstModelIds(body)
-    const completion = usesChatProbe ? completionSummary(body) : null
+    const completion = completionSummary(body) ?? anthropicSummary(body) ?? googleSummary(body)
     const ttyOut = [
       `\n  [llm.${target.name}] test passed`,
       `    provider: ${target.provider}`,
-      `    url:      ${url}`,
-      usesChatProbe
-        ? `    response: ${completion ?? "(endpoint reachable; completion returned)"}`
-        : models.length > 0
-          ? `    models:   ${models.slice(0, 5).join(", ")}`
-          : "    models:   (endpoint reachable; no model IDs returned)",
+      `    url:      ${displayUrl}`,
+      `    response: ${completion ?? "(endpoint reachable; completion returned)"}`,
       "",
       "",
     ].join("\n")
@@ -622,10 +616,8 @@ const LlmTestCommand = cmd({
       provider: target.provider,
       url,
       model: target.model ?? null,
-      probe: usesChatProbe ? "chat.completions" : "models",
-      sample_models: models.slice(0, 5),
+      probe: "chat.completions",
       sample_response: completion,
-      model_count: models.length,
       source: target.source,
     })
   },

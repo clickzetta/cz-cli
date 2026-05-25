@@ -3,6 +3,7 @@ import { spawnSync } from "child_process"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { buildLlmProbeRequest } from "../../../src/config/profiles-llm"
 
 function run(
   args: string[],
@@ -88,16 +89,22 @@ describe("llm guidance", () => {
 
   test("agent llm test verifies a GPT-compatible endpoint", () => {
     const origin = "https://mock-openai.example"
+    const apiKey = "sk-live"
+    const probe = buildLlmProbeRequest("openai", origin, apiKey)!
     const preload = join(mkdtempSync(join(tmpdir(), "opencode-llm-preload-")), "mock-fetch.ts")
     writeFileSync(
       preload,
       `globalThis.fetch = async (input, init) => {
   const req = new Request(input, init)
-  if (req.url === "${origin}/v1/models") {
-    if (req.headers.get("authorization") !== "Bearer sk-live") {
+  if (req.url === "${probe.url}") {
+    if (req.headers.get("authorization") !== "${probe.headers.authorization}") {
       return Response.json({ error: { message: "bad key" } }, { status: 401 })
     }
-    return Response.json({ data: [{ id: "gpt-5" }, { id: "gpt-4.1" }] })
+    const body = await req.json()
+    if (!Array.isArray(body.messages)) {
+      return Response.json({ error: { message: "missing messages" } }, { status: 400 })
+    }
+    return Response.json({ choices: [{ message: { content: "hello" } }] })
   }
   return new Response("not found", { status: 404 })
 }
@@ -114,7 +121,7 @@ describe("llm guidance", () => {
         "--provider",
         "openai",
         "--api-key",
-        "sk-live",
+        apiKey,
         "--base-url",
         origin,
         "--use",
@@ -128,21 +135,24 @@ describe("llm guidance", () => {
     const json = firstJson(result.stdout)
     expect(json.data.name).toBe("my-openai")
     expect(json.data.provider).toBe("openai")
-    expect(json.data.url).toBe(origin + "/v1/models")
-    expect(json.data.sample_models).toEqual(["gpt-5", "gpt-4.1"])
+    expect(json.data.url).toBe(probe.url)
+    expect(json.data.probe).toBe("chat.completions")
+    expect(json.data.sample_response).toBe("hello")
   })
 
   test("agent llm test uses chat completions probe for clickzetta", () => {
     const origin = "https://mock-clickzetta.example"
+    const apiKey = "ck-live"
+    const probe = buildLlmProbeRequest("clickzetta", origin, apiKey)!
     const preload = join(mkdtempSync(join(tmpdir(), "opencode-llm-preload-")), "mock-clickzetta-fetch.ts")
     writeFileSync(
       preload,
       `globalThis.fetch = async (input, init) => {
   const req = new Request(input, init)
-  if (req.url === "${origin}/v1/chat/completions") {
+  if (req.url === "${probe.url}") {
     const body = await req.json()
-    if (req.method !== "POST") return new Response("bad method", { status: 405 })
-    if (req.headers.get("authorization") !== "Bearer ck-live") {
+    if (req.method !== "${probe.method}") return new Response("bad method", { status: 405 })
+    if (req.headers.get("authorization") !== "${probe.headers.authorization}") {
       return Response.json({ error: { message: "bad key" } }, { status: 401 })
     }
     if (!Array.isArray(body.messages)) {
@@ -165,7 +175,7 @@ describe("llm guidance", () => {
         "--provider",
         "clickzetta",
         "--api-key",
-        "ck-live",
+        apiKey,
         "--base-url",
         origin,
         "--use",
@@ -178,8 +188,8 @@ describe("llm guidance", () => {
     expect(result.exitCode).toBe(0)
     const json = firstJson(result.stdout)
     expect(json.data.provider).toBe("clickzetta")
-    expect(json.data.url).toBe(origin + "/v1/chat/completions")
-    expect(json.data.probe).toBe("chat.completions")
+    expect(json.data.url).toBe(probe.url)
+    expect(json.data.probe).toBe(probe.kind)
     expect(json.data.sample_response).toBe("pong")
   })
 })

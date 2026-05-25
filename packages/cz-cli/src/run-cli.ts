@@ -246,8 +246,9 @@ function normalizeCliArgs(rawArgs: string[]) {
 function profileOverrideFromArgs(args: string[]) {
   for (let index = 0; index < args.length; index++) {
     const value = args[index]
-    if (value === "--profile") return args[index + 1]
+    if (value === "--profile" || value === "-p") return args[index + 1]
     if (value?.startsWith("--profile=")) return value.slice("--profile=".length)
+    if (value?.startsWith("-p=")) return value.slice(3)
   }
 }
 
