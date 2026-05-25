@@ -115,7 +115,7 @@ export function error(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
   if (opts?.extra) Object.assign(payload, opts.extra)
 
-  const output = renderOutput(payload, opts?.format, opts?.field ?? outputState.field)
+  const output = renderErrorOutput(payload, opts?.format, opts?.field ?? outputState.field)
   process.stdout.write(output + "\n")
   process.exitCode = opts?.exitCode ?? EXIT_BIZ_ERROR
   ;(process as unknown as Record<string, unknown>).lastError = message
@@ -164,6 +164,18 @@ export function renderOutput(payload: unknown, format?: string, field?: string):
     default:
       return formatJson(payload)
   }
+}
+
+function renderErrorOutput(payload: unknown, format?: string, field?: string): string {
+  if (!field && ROW_ONLY_FORMATS.has(format ?? "json") && payload && typeof payload === "object") {
+    const err = (payload as Record<string, unknown>).error
+    if (err && typeof err === "object") {
+      const code = (err as Record<string, unknown>).code
+      const message = (err as Record<string, unknown>).message
+      return `ERROR ${String(code ?? "ERROR")}: ${String(message ?? "Unknown error")}`
+    }
+  }
+  return renderOutput(payload, format, field)
 }
 
 function extractField(obj: Record<string, unknown>, field: string): unknown {

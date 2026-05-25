@@ -92,6 +92,85 @@ function extractSchema(raw: string): string {
   return schema
 }
 
+type UseStatement = {
+  kind: "schema" | "vcluster" | "workspace"
+  normalized: string
+  raw: string
+  target: string
+}
+
+function trimStatementTarget(raw: string): string {
+  return raw.replace(/;+$/, "").trim()
+}
+
+function parseUseStatement(sql: string): UseStatement | undefined {
+  const normalized = sql.replace(/\s+/g, " ").trim()
+  const lower = normalized.toLowerCase()
+  if (!lower.startsWith("use ")) return undefined
+  if (lower.startsWith("use vcluster ")) {
+    const target = trimStatementTarget(normalized.slice("use vcluster ".length))
+    return { kind: "vcluster", normalized, raw: target, target }
+  }
+  if (lower.startsWith("use workspace ")) {
+    const target = trimStatementTarget(normalized.slice("use workspace ".length))
+    return { kind: "workspace", normalized, raw: target, target }
+  }
+  const raw = trimStatementTarget(normalized.slice(lower.startsWith("use schema ") ? "use schema ".length : "use ".length))
+  return { kind: "schema", normalized, raw, target: extractSchema(raw) }
+}
+
+function useTargetExists(rows: unknown[][], target: string): boolean {
+  const normalizedTarget = target.trim().toLowerCase()
+  return rows.some((row) => Object.values(row).some((value) => String(value ?? "").trim().toLowerCase() === normalizedTarget))
+}
+
+async function applyUseStatement(
+  ctx: ExecContext,
+  use: UseStatement,
+  format: string,
+  hints?: Record<string, string>,
+  configStatements?: string[],
+  timeoutMs?: number,
+): Promise<boolean> {
+  if (use.kind === "workspace") {
+    ctx.config.workspace = use.target
+    return true
+  }
+
+  if (use.kind === "schema") {
+    const result = await execSqlWithRetry(ctx, `DESC SCHEMA ${use.raw}`, { hints, configStatements, timeoutMs })
+    if (!isQueryResult(result)) {
+      error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+      return false
+    }
+    if (result.status === JobStatus.FAILED) {
+      logOperation("sql", { sql: use.normalized, ok: false, errorCode: result.errorCode })
+      error(result.errorCode ?? "SCHEMA_NOT_FOUND", result.errorMessage ?? `Schema '${use.target}' does not exist.`, { format })
+      return false
+    }
+    ctx.config.schema = extractSchema(use.raw)
+    return true
+  }
+
+  const result = await execSqlWithRetry(ctx, "SHOW VCLUSTERS", { hints, configStatements, timeoutMs })
+  if (!isQueryResult(result)) {
+    error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format })
+    return false
+  }
+  if (result.status === JobStatus.FAILED) {
+    logOperation("sql", { sql: use.normalized, ok: false, errorCode: result.errorCode })
+    error(result.errorCode ?? "SQL_ERROR", result.errorMessage ?? "Query failed", { format })
+    return false
+  }
+  if (!useTargetExists(result.rows, use.target)) {
+    logOperation("sql", { sql: use.normalized, ok: false, errorCode: "VCLUSTER_NOT_FOUND" })
+    error("VCLUSTER_NOT_FOUND", `Vcluster '${use.target}' does not exist.`, { format })
+    return false
+  }
+  ctx.config.vcluster = use.target
+  return true
+}
+
 function extractTableNames(sql: string): string[] {
   const tables: string[] = []
   const re = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([\w.`"]+)/gi
@@ -189,20 +268,10 @@ async function executeSingle(
   }
 
   // Intercept USE statements — client-side context switch
-  const useMatch = sql.match(/^\s*USE\s+/i)
-  if (useMatch) {
-    const normalized = sql.replace(/\s+/g, " ").trim()
-    const lower = normalized.toLowerCase()
-    if (lower.startsWith("use vcluster ")) {
-      ctx.config.vcluster = normalized.slice("use vcluster ".length).replace(/;$/, "").trim()
-    } else if (lower.startsWith("use workspace ")) {
-      ctx.config.workspace = normalized.slice("use workspace ".length).replace(/;$/, "").trim()
-    } else if (lower.startsWith("use schema ")) {
-      ctx.config.schema = extractSchema(normalized.slice("use schema ".length).replace(/;$/, "").trim())
-    } else if (lower.startsWith("use ")) {
-      ctx.config.schema = extractSchema(normalized.slice("use ".length).replace(/;$/, "").trim())
-    }
-    success({ use: normalized }, { format, timeMs: 0 })
+  const use = parseUseStatement(sql)
+  if (use) {
+    if (!await applyUseStatement(ctx, use, format, hints, configStatements, argv.timeout * 1000)) return
+    success({ use: use.normalized }, { format, timeMs: 0 })
     return
   }
 
@@ -467,19 +536,9 @@ async function handler(argv: SqlArgs): Promise<void> {
           continue
         }
         // Extract USE statements to update session context client-side
-        const useMatch = stmt.match(/^\s*USE\s+/i)
-        if (useMatch) {
-          const normalized = stmt.replace(/\s+/g, " ").trim()
-          const lower = normalized.toLowerCase()
-          if (lower.startsWith("use vcluster ")) {
-            ctx.config.vcluster = normalized.slice("use vcluster ".length).replace(/;$/, "").trim()
-          } else if (lower.startsWith("use workspace ")) {
-            ctx.config.workspace = normalized.slice("use workspace ".length).replace(/;$/, "").trim()
-          } else if (lower.startsWith("use schema ")) {
-            ctx.config.schema = extractSchema(normalized.slice("use schema ".length).replace(/;$/, "").trim())
-          } else if (lower.startsWith("use ")) {
-            ctx.config.schema = extractSchema(normalized.slice("use ".length).replace(/;$/, "").trim())
-          }
+        const use = parseUseStatement(stmt)
+        if (use) {
+          if (!await applyUseStatement(ctx, use, format, accumulatedHints, configStatements, argv.timeout * 1000)) return
           configStatements.push(stmt)
           continue
         }
