@@ -12,7 +12,7 @@ import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { Instance, type InstanceContext } from "../project/instance"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
 import { existsSync, readFileSync, writeFileSync } from "fs"
-import { migrateLegacyClickzettaConfig, parseProfilesToml } from "./profiles-llm"
+import { migrateLegacyClickzettaConfig, parseProfilesToml, type LlmEntry } from "./profiles-llm"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { Account } from "@/account/account"
@@ -238,9 +238,11 @@ export const Info = z
   })
 
 export type Info = z.output<typeof Info> & {
-  // plugin_origins is derived state, not a persisted config field. It keeps each winning plugin spec together
-  // with the file and scope it came from so later runtime code can make location-sensitive decisions.
+  // plugin_origins is derived state, not a persisted config field.
   plugin_origins?: ConfigPlugin.Origin[]
+  // llm_entries and default_llm_entry are derived from profiles.toml, not persisted config fields.
+  llm_entries?: LlmEntry[]
+  default_llm_entry?: string
 }
 
 type State = {
@@ -372,7 +374,7 @@ export const layer = Layer.effect(
             result = mergeDeep(result, { provider: providers } as any)
           }
           if (entries.length > 0) {
-            result = mergeDeep(result, { llm_entries: entries, default_llm_entry: defaultLlmEntry } as any)
+            result = mergeDeep(result, { llm_entries: entries, default_llm_entry: defaultLlmEntry } as Info)
           }
           if (defaultModel) {
             result.model = defaultModel as any

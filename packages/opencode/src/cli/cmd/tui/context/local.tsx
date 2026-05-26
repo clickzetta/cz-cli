@@ -12,6 +12,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util"
+import { resolveDefaultModel } from "@/provider/model-resolution"
 
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
@@ -157,42 +158,25 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       const args = useArgs()
       const fallbackModel = createMemo(() => {
-        if (args.model) {
-          const { providerID, modelID } = parseModel(args.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
+        // Build providers map keyed by id for resolveDefaultModel.
+        const providers: Record<string, { id: string; models: Record<string, unknown> }> = {}
+        for (const p of sync.data.provider) providers[p.id] = p
 
-        if (sync.data.config.model) {
-          const { providerID, modelID } = parseModel(sync.data.config.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
-
-        for (const item of modelStore.recent) {
-          if (isModelValid(item)) {
-            return item
-          }
-        }
-
-        const provider = sync.data.provider[0]
-        if (!provider) return undefined
-        const defaultModel = sync.data.provider_default[provider.id]
-        const firstModel = Object.values(provider.models)[0]
-        const model = defaultModel ?? firstModel?.id
-        if (!model) return undefined
-        return {
-          providerID: provider.id,
-          modelID: model,
-        }
+        const result = resolveDefaultModel({
+          cliModel: args.model,
+          configModel: sync.data.config.model,
+          defaultLlmEntry: sync.data.default_llm_entry,
+          llmEntries: sync.data.llm_entries,
+          providers,
+          recent: modelStore.recent,
+          // TUI's per-provider default lookup, falling back to first model.
+          pickBest: (p) => sync.data.provider_default[p.id] ?? Object.keys(p.models)[0],
+          // TUI must validate explicit models against the runtime catalog so a
+          // stale config doesn't render a broken model selection.
+          trustExplicit: false,
+        })
+        if (!result) return undefined
+        return { providerID: result.providerID, modelID: result.modelID }
       })
 
       const currentModel = createMemo(() => {

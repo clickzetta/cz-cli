@@ -30,6 +30,7 @@ import { currentTraceparent } from "@/util/traceparent"
 
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
+import { resolveDefaultModel, type ModelRef } from "./model-resolution"
 
 const log = Log.create({ service: "provider" })
 
@@ -1764,35 +1765,34 @@ const layer: Layer.Layer<
 
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
-      if (cfg.model) return parseModel(cfg.model)
-
       const s = yield* InstanceState.get(state)
+
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
-        Effect.map((x): { providerID: ProviderID; modelID: ModelID }[] => {
+        Effect.map((x): ModelRef[] => {
           if (!isRecord(x) || !Array.isArray(x.recent)) return []
           return x.recent.flatMap((item) => {
             if (!isRecord(item)) return []
             if (typeof item.providerID !== "string") return []
             if (typeof item.modelID !== "string") return []
-            return [{ providerID: ProviderID.make(item.providerID), modelID: ModelID.make(item.modelID) }]
+            return [{ providerID: item.providerID, modelID: item.modelID }]
           })
         }),
-        Effect.catch(() => Effect.succeed([] as { providerID: ProviderID; modelID: ModelID }[])),
+        Effect.catch(() => Effect.succeed([] as ModelRef[])),
       )
-      for (const entry of recent) {
-        const provider = s.providers[entry.providerID]
-        if (!provider) continue
-        if (!provider.models[entry.modelID]) continue
-        return { providerID: entry.providerID, modelID: entry.modelID }
-      }
 
-      const provider = Object.values(s.providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
-      if (!provider) throw new Error("no providers found")
-      const [model] = sort(Object.values(provider.models))
-      if (!model) throw new Error("no models found")
+      const result = resolveDefaultModel({
+        configModel: cfg.model,
+        defaultLlmEntry: cfg.default_llm_entry,
+        llmEntries: cfg.llm_entries,
+        providers: s.providers,
+        recent,
+        allowedProviderIds: cfg.provider ? Object.keys(cfg.provider) : undefined,
+        pickBest: (provider) => sort(Object.values(provider.models) as { id: string }[])[0]?.id,
+      })
+      if (!result) throw new Error("no providers found")
       return {
-        providerID: provider.id,
-        modelID: model.id,
+        providerID: ProviderID.make(result.providerID),
+        modelID: ModelID.make(result.modelID),
       }
     })
 
