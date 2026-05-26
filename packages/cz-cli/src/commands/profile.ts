@@ -242,18 +242,25 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             }
             if (!argv["skip-verify"]) {
               try {
-                const ctx = await getExecContext({
-                  ...profileObj as Record<string, unknown>,
-                  pat: profileObj.pat as string | undefined,
-                  username: profileObj.username as string | undefined,
-                  password: profileObj.password as string | undefined,
-                  service: profileObj.service as string,
-                  instance: profileObj.instance as string,
-                  workspace: profileObj.workspace as string,
-                  schema: profileObj.schema as string,
-                  vcluster: profileObj.vcluster as string,
-                })
-                const r = await execSql(ctx, "SELECT 1", { timeoutMs: 30000 })
+                const verifyCfg: import("@clickzetta/sdk").ConnectionConfig = {
+                  pat: String(profileObj.pat ?? ""),
+                  username: String(profileObj.username ?? ""),
+                  password: String(profileObj.password ?? ""),
+                  service: String(profileObj.service ?? "dev-api.clickzetta.com"),
+                  protocol: String(profileObj.protocol ?? "https"),
+                  instance: String(profileObj.instance ?? ""),
+                  workspace: String(profileObj.workspace ?? ""),
+                  schema: String(profileObj.schema ?? "public"),
+                  vcluster: String(profileObj.vcluster ?? "default"),
+                }
+                const { getToken: getTokenSdk, toServiceUrl: toSvcUrl } = await import("@clickzetta/sdk")
+                const token = await getTokenSdk(verifyCfg)
+                const clientOpts = {
+                  baseUrl: toSvcUrl(verifyCfg.service, verifyCfg.protocol),
+                  token: token.token,
+                  customHeaders: { instanceName: verifyCfg.instance },
+                }
+                const r = await execSql({ config: verifyCfg, token, clientOpts }, "SELECT 1", { timeoutMs: 30000 })
                 if (isQueryResult(r) && r.status === JobStatus.FAILED) {
                   return error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
                 }
@@ -464,16 +471,25 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
           }
           if (!argv["skip-verify"]) {
             try {
-              const ctx = await getExecContext({
-                ...profileObj as Record<string, unknown>,
-                pat: profileObj.pat as string | undefined,
-                service: profileObj.service as string,
-                instance: profileObj.instance as string,
-                workspace: profileObj.workspace as string,
-                schema: profileObj.schema as string,
-                vcluster: profileObj.vcluster as string,
-              })
-              const r = await execSql(ctx, "SELECT 1", { timeoutMs: 30000 })
+              const verifyCfg: import("@clickzetta/sdk").ConnectionConfig = {
+                pat: String(profileObj.pat ?? ""),
+                username: "",
+                password: "",
+                service: String(profileObj.service ?? "dev-api.clickzetta.com"),
+                protocol: String(profileObj.protocol ?? "https"),
+                instance: String(profileObj.instance ?? ""),
+                workspace: String(profileObj.workspace ?? ""),
+                schema: String(profileObj.schema ?? "public"),
+                vcluster: String(profileObj.vcluster ?? "default"),
+              }
+              const { getToken: getTokenSdk, toServiceUrl: toSvcUrl } = await import("@clickzetta/sdk")
+              const token = await getTokenSdk(verifyCfg)
+              const clientOpts = {
+                baseUrl: toSvcUrl(verifyCfg.service, verifyCfg.protocol),
+                token: token.token,
+                customHeaders: { instanceName: verifyCfg.instance },
+              }
+              const r = await execSql({ config: verifyCfg, token, clientOpts }, "SELECT 1", { timeoutMs: 30000 })
               if (isQueryResult(r) && r.status === JobStatus.FAILED) {
                 return error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
               }
