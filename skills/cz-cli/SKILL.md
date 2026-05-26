@@ -1,274 +1,187 @@
 ---
 name: cz-cli
-description: "CLI tool for ClickZetta Lakehouse. Use this skill when the user needs to run SQL queries, develop or schedule Studio tasks, check run status and logs, or manage tables and schemas."
-generated_cli_version: "0.0.0-dev+202605250308"
-generated_with: "cz-cli-skill-generator/1.0.0"
-command_inventory_source: "click-command-tree"
-command_count: 51
+description: "Route ALL ClickZetta Lakehouse operations to cz-cli: SQL, Studio tasks, tables, pipelines, profiles. Use when user mentions ClickZetta, Lakehouse, cz-cli, or needs profile/connection configuration."
 ---
 
-# cz-cli Skill
+# cz-cli — ClickZetta Lakehouse Subagent
 
-> [!IMPORTANT]
-> **Fallback**: If `cz-cli` command not present, check for a bundled binary at `scripts/<platform>/cz-cli` (e.g. `scripts/macos-arm64/cz-cli`, `scripts/linux-x86_64/cz-cli`, `scripts/windows-x86_64/cz-cli.exe`). If found, use its absolute path directly. Otherwise run `pip3 install cz-cli -U` then use `cz-cli` from PATH.
+You have no direct Lakehouse access. Always delegate via cz-cli.
 
-## AI Agent Behavior Rules
+## Capabilities
 
-> [!IMPORTANT]
-> Read these rules before invoking any command.
+### SQL & Data Operations
+- Execute any SQL against Lakehouse: SELECT, DDL (CREATE/ALTER/DROP TABLE, SCHEMA, VIEW), DML (INSERT, UPDATE, DELETE, MERGE INTO)
+- Run async jobs and fetch results
+- Preview table data and row counts
 
-### Rule 0 — Initialize connection profile before first use
+### Table & Schema Management
+- List, describe, create, and drop tables and schemas
+- View table history, indexes, partitions, and statistics
+- Add or update column/table comments
+- Create Dynamic Tables for auto-incremental ETL (ODS→DWD→DWS pipelines)
+- Create Materialized Views for pre-computed aggregations
+- Create Table Streams to capture INSERT/UPDATE/DELETE changes for CDC UPSERT
 
-When any command returns error code `NO_PROFILE`, run `cz-cli setup --credential <base64>` if the credential string is available, or read `references/profile-setup.md` and follow the onboarding steps there. Always use the **AskUserQuestion tool** — never ask via plain text.
+### Studio Task Management
+- Create, configure, deploy, and delete Studio tasks (SQL, Shell, Python, integration, flow)
+- Save task content and cron schedule
+- Deploy, undeploy, and execute tasks ad-hoc
+- Monitor run instances: list, detail, wait, logs, stop, rerun, backfill
+- View run statistics and dependencies
 
-### Rule 1 — Clarify intent before any state-changing operation
+### Data Sync Pipelines
+- Create single-table realtime CDC sync tasks (MySQL/PostgreSQL/SQL Server → Lakehouse, task_type=28)
+- Create multi-table or whole-database CDC sync tasks — mirror, merge, or sharded-table consolidation (task_type=281)
+- Create offline batch sync tasks with Cron scheduling — single-table (task_type=10) or multi-table (task_type=291)
+- Manage sync task lifecycle: start, stop, offline, backfill, add tables, re-sync individual tables
 
-When a task involves an operation that changes system state (publishing a schedule, taking a task offline, triggering a run, deleting an object, etc.):
+### Data Ingestion Pipelines
+- Create continuous OSS/S3/COS ingest PIPE (LIST_PURGE scan mode or EVENT_NOTIFICATION mode)
+- Create continuous Kafka ingest PIPE using READ_KAFKA function
+- One-shot file import from URL, local path, or Volume (COPY INTO)
+- Manage PIPE lifecycle: pause, resume, adjust batch interval, view load history
 
-**Do NOT proceed without** explicitly understanding the user's intent on all three points:
-1. **Target**: Which task / table / run instance?
-2. **Purpose**: Why does this need to happen now?
-3. **Side-effect acknowledgment**: Does the user understand the impact (historical re-runs, schedule interruption, permanent deletion, etc.)?
+### Data Recovery
+- Query data at a historical point in time (Time Travel: TIMESTAMP AS OF)
+- Roll back a table to a previous version (RESTORE TABLE)
+- Recover accidentally dropped tables, dynamic tables, or materialized views (UNDROP TABLE)
+- Inspect change history (DESC HISTORY) and deleted objects (SHOW TABLES HISTORY)
+- Configure retention: data_retention_days, data_lifecycle
 
-Use the **AskUserQuestion tool** (not plain text) to confirm with the user, then wait for an explicit reply before executing.
+### Connection & Environment Management
+- Create, update, delete, and switch connection profiles (multi-cloud, multi-region)
+- Check connection status and switch workspace
+- List and test external data sources, browse catalogs and objects
+- Generate Python SDK / ZettaPark / SQLAlchemy / JDBC connection code from profile parameters
 
-Consult **Command Risk Reference** below to determine whether a command qualifies as state-changing.
+## Route to cz-cli
 
+- Any mention of cz-cli, ClickZetta, or Lakehouse
+- SQL against Lakehouse (SELECT, DDL, DML)
+- Studio task development, scheduling, monitoring
+- Data pipelines (sync, import, CDC, streaming)
+- Profile and connection configuration
+- Performance analysis and optimization
 
-### Rule 2 — Route to companion skill BEFORE acting (MUST)
+## Keep in host agent
 
-> [!IMPORTANT]
-> Check this routing table **before** executing any command or writing any code.
-> If the user intent matches a trigger below, **MUST** invoke the listed skill immediately and stop processing in cz-cli.
+- General programming unrelated to ClickZetta
+- Local file operations, git
+- Non-ClickZetta databases (PostgreSQL, MySQL standalone)
 
-The following companion skills are bundled with `cz-cli`:
+## Execution strategy
 
-- **lakehouse-python-sdk** — Lakehouse Python/Shell task engineering: develop, rewrite, optimize, troubleshoot. Covers connector, BulkLoad, IGS, Studio params, datasource, and CREATE TABLE DDL; MUST trigger on: develop/write/create/modify/rewrite/optimize Python or Shell task; BulkLoad batch upload; IGS realtime ingest; connector query/write; Python task error/diagnosis; CREATE TABLE / partition / bucket / index DDL.
-- **lakehouse-doc** — ClickZetta Lakehouse official documentation. Covers SQL syntax, data types, functions, DDL/DML commands, dynamic tables, materialized views, access control, VCluster, data lake, AI functions, etc. When the user writes or asks about SQL syntax or Lakehouse dialect specifics, **MUST** consult lakehouse-doc skill references first to ensure accuracy.
+**MANDATORY: Follow this order every time. No exceptions.**
 
-**If no row matches**: proceed with cz-cli commands directly.
-
-### Rule 2.1 — MUST consult lakehouse-doc skill for SQL commands
-
-When the user request involves any of the following, **MUST** consult **lakehouse-doc** skill references before answering or generating SQL:
-
-- Writing, modifying, or optimizing SQL statements (DDL / DML / DQL)
-- Asking about ClickZetta Lakehouse SQL dialect syntax, keywords, or function usage
-- Using data types, type casting, or datetime formats
-- Creating or altering tables, views, materialized views, dynamic tables, external tables
-- Data import/export (COPY INTO, PUT/GET, BulkLoad, Pipe)
-- Access control (GRANT / REVOKE), roles, permissions
-- VCluster configuration and management
-- Index creation and usage (inverted index, BloomFilter, vector index)
-- AI functions, vector search, semantic views
-- Information Schema system view queries
-
-**Rationale**: ClickZetta Lakehouse SQL dialect differs from standard SQL and other databases. Relying on general knowledge may produce incorrect syntax. Consulting lakehouse-doc significantly improves answer accuracy and confidence.
-
-### Rule 3 — Development ends at save; execution requires separate authorization
-
-When the user says "develop", "write", "create", or "modify" a task, the work is **complete once the script is saved successfully**.
-After saving, tell the user: "The task has been saved as a draft. Scheduling is not yet active. Let me know explicitly if you want to publish or execute it."
-
-**Do NOT** auto-publish, auto-trigger execution, or auto-submit a backfill after saving — even if those steps seem like the logical next thing. Every phase that produces a real side effect requires the user to express intent and grant authorization separately.
-
-**Exception**: If the user's original request *explicitly* authorized all subsequent steps (e.g. "create and immediately go live", "develop and run it now"), AND Rule 1 already confirmed that intent at the start, the Agent may proceed through the authorized steps without stopping again at each phase. Do not re-ask for confirmation that was already given.
-
-### Rule 3.1 — 补数/回填/重跑历史数据 → `runs refill` (NOT `task`)
-
-When the user says "补数", "回填", "重跑历史", "backfill", "re-run historical", or "re-process date range":
-- **MUST** use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD [-y]`
-- This command is under `runs`, **NOT** under `task` — do not look for it in task subcommands
-- Requires the task to already be published (online); draft tasks cannot be backfilled
-
-### Rule 4 — Paginated results are not complete data
-
-All `list` commands return only page 1 by default (typically 10 items). The `ai_message` field in the response contains the total count and the command to fetch the next page — treat it as the authoritative next-step hint and follow it. Never treat a first-page result as the full dataset.
-
-**Pagination termination rules**:
-- If the user only needs "latest / recent N items": stop after page 1, do not paginate.
-- If the user needs the full dataset: paginate until `ai_message` no longer contains a next-page hint.
-- **Safety limit**: auto-paginate at most **3 pages** (≈ 30 items). If more exist, surface the next-page command to the user and ask whether to continue.
-
-### Rule 5 — Always pass explicit task type when creating tasks
-
-When creating a task with `cz-cli task create`, **always** pass `--type` explicitly (`SQL` / `PYTHON` / `SHELL` / `SPARK` / `FLOW`).
-The Python SDK(connector/igs/bulkload) is using from clickzetta import connect instead of Zettapark's session.
-
-- **MUST NOT** rely on default task type.
-- If user intent says “Python task”, command must include `--type PYTHON`.
-- If `--type FLOW`, immediately switch to Rule 6 — use Flow-specific commands exclusively.
-
-### Rule 6 — Flow nodes use Flow-specific tools exclusively
-
-When the operation target is a Flow task or any of its child nodes (`task_type=500`, or user mentions "composite task / flow / workflow"):
-
-- **MUST** use Flow-specific commands: `task flow node-detail`, `task flow node-save`, `task flow node-save-config`, `task flow bind`, `task flow submit`, etc.
-- **MUST NOT** use `task save`, `task save-config`, `task detail`, or `task online` on Flow child nodes — these tools are for regular (non-Flow) tasks only and will produce incorrect results or errors.
-- **Decision rule**: if `task_type == 500` OR the user mentions flow/workflow context → use `task flow *` commands unconditionally.
-
-### Rule 7 — Always display studio_url in final report
-
-Responses from `task`, `runs`, and `executions` commands may include a `studio_url` field. When present, surface it in the end to the user so they can open the resource directly in Studio.
-
-Display as a Markdown hyperlink: `[View in Studio](https://...)`. Show all studio_url values returned across all commands in the same response — do not deduplicate.
-
-### Rule 8 — Maximize execution efficiency: parallel and chained commands
-
-**Independent commands → parallel.  Dependent commands → chain with `--field`.**
+**Step 1 — MUST check LLM first:**
 
 ```bash
-# Async SQL: submit → poll → fetch result → preview first rows
-JOB=$(cz-cli sql "SELECT * FROM orders LIMIT 100" --field job_id) && cz-cli job status $JOB --format toon && cz-cli job result $JOB --format toon | head -12
-
-# Parallel: two independent lookups at the same time
-cz-cli task content my_task --format toon & cz-cli runs list --task my_task --format toon & wait
-
-# Chain: save then verify
-cz-cli task save-content my_task --file script.sql && cz-cli task content my_task --format toon
+cz-cli agent llm show
 ```
 
-Key tools:
-- `--field <name>` — extract one value as raw text: `cz-cli sql "..." --field job_id` → `2026042818122957849079780`
-- `--format toon` — line-per-field output, works with `grep`/`head`
-- `--format json` — single-line JSON, parse in code only (do NOT pipe to grep/head)
+**Step 2 — If active LLM is configured (kind != "none"), you MUST use agent run:**
 
-**Shortcut**: Use `cz-cli sql --sync "..." > /tmp/res.json` to force synchronous execution (waits for results inline). Prefer `--sync` for simple/fast queries.
+```bash
+cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
+```
 
-## Command Quick Reference
+Do NOT use direct cz-cli subcommands when an active LLM is available. Always delegate the full request to `cz-cli agent run`.
 
-### Connection & Profile
-- `cz-cli profile create <name> --username U --password P --instance I --workspace W` — Create profile
-- `cz-cli profile create <name> --pat TOKEN --instance I --workspace W` — Create profile with PAT
-- `cz-cli profile list` — List all profiles
-- `cz-cli profile status` — Test connection, show workspace/schema
-- `cz-cli profile use <name>` — Set default profile
-- `cz-cli profile delete <name>` — Delete a profile
-- `cz-cli profile discover --studio-url URL --username U --password P` — Discover regions/instances
+**Step 3 — ONLY if no active LLM (kind: "none" or empty list), fall back to direct commands:**
 
-### SQL Execution
-- `cz-cli sql "SELECT * FROM t LIMIT 10"` — Execute SQL query
-- `cz-cli sql -f query.sql` — Execute SQL from file
-- `cz-cli sql --write "INSERT INTO t VALUES (...)"` — Write operation (requires --write)
-- `cz-cli sql --async "SELECT count(*) FROM big_table"` — Async execution, returns job_id
-- `cz-cli sql --sync "SELECT 1"` — Force synchronous execution
-- `cz-cli sql -e "SELECT * FROM t WHERE id = %(id)s" --variable id=123` — Variable substitution
+Decompose the request into concrete `cz-cli` subcommands (`sql`, `schema`, `table`, `task`, `runs`, `job`, `datasource`, `profile`, etc.), execute them, and synthesize the result.
 
-### Job Management (async SQL results)
-- `cz-cli job status <job_id>` — Check job status
-- `cz-cli job result <job_id>` — Fetch result set (waits if running, limited to 100 rows)
-- `cz-cli job result --no-limit <job_id>` — Fetch full result set
+Use direct commands for local setup and diagnostics even when agent path is available: `cz-cli profile ...`, `cz-cli -p <profile> status`, `cz-cli agent llm ...`, `cz-cli --help`.
 
-### Schema & Table
-- `cz-cli schema list` / `cz-cli schema describe <name>` / `cz-cli schema create <name>` / `cz-cli schema drop <name>`
-- `cz-cli table list [--schema S] [--like 'pattern%']` / `cz-cli table describe <name>` / `cz-cli table preview <name> [--limit N]`
-- `cz-cli table stats <name>` / `cz-cli table history [name]` / `cz-cli table create "DDL"` / `cz-cli table drop <name>`
+With session continuity:
 
-### Workspace
-- `cz-cli workspace current` — Show current workspace
-- `cz-cli workspace use <name> [--persist]` — Switch workspace
+```bash
+cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions --session <session_id>
+```
 
-### Task Scheduling (Studio)
-- `cz-cli task list [--page N --page-size N]` — List tasks
-- `cz-cli task create <name> --type SQL|PYTHON|SHELL|SPARK|FLOW --folder F` — Create task
-- `cz-cli task content <name_or_id>` — Get task script, config and params (draft); response includes `params` array with `paramType=system` (built-in params / time expressions) or `paramType=manual` (constants)
-- `cz-cli task save-content <name_or_id> --file script.sql [--params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}']` — Save script and optionally set params; system params (bizdate, sys_biz_day, sys_biz_datetime, sys_plan_day, sys_plan_datetime, sys_plan_timestamp, sys_task_id, sys_task_name, sys_task_owner) and time expressions starting with `$[` are auto-detected as `paramType=system`
-- `cz-cli task save-config <name_or_id> --cron "0 0 8 * * ? *"` — Save schedule (sec min hour day month week year)
-- `cz-cli task online <name_or_id> -y` — Publish task
-- `cz-cli task offline <name_or_id> -y` — Take offline (IRREVERSIBLE)
-- `cz-cli task execute <name_or_id> [--param KEY=VAL ...]` — Ad-hoc execution; auto-loads saved `manual` params as defaults (system params like `bizdate` are NOT auto-injected in adhoc mode — pass them explicitly via `--param`); warns if unresolved `${placeholders}` remain after merge (SQL tasks will fail, Python/Shell silently keep literal strings)
-- `cz-cli task flow dag <flow>` / `task flow create-node` / `task flow bind` / `task flow submit` — Flow operations
+Reuse `session_id` for follow-ups on the same topic. Omit `--session` to start fresh.
 
-### Runs & Attempts
-- `cz-cli runs list [--task T --status S --run-type SCHEDULE|REFILL --from D --to D]`
-- `cz-cli runs detail <run_id_or_task>` / `cz-cli runs logs <run_id_or_task>` / `cz-cli runs wait <id> --timeout N`
-- `cz-cli runs refill <task> --from D --to D [-y]` — **补数/回填**: re-run scheduled instances for a historical date range (task must be online). `D` accepts `YYYY-MM-DD` (day boundary: `--from` = start of day, `--to` = 23:59:59) or `YYYY-MM-DDTHH:MM:SS` for exact datetime — **use ISO datetime for hourly/minutely tasks** to avoid missing instances
-- `cz-cli attempts list <run_id_or_task>` / `cz-cli attempts log <run_id_or_task> [--attempt-id N]`
+## Multi-environment (profiles)
 
-### Agent (AI Agent)
-- `cz-cli agent run "<prompt>" [--session ID]` — Run AI agent with a natural-language prompt
-- `cz-cli agent llm` — Manage LLM providers
+When the user specifies an environment or profile (e.g. "use uat_test", "on the test instance"):
 
-## Command Inventory (Generated)
+```bash
+cz-cli agent run "<request>" --profile uat_test --format a2a --dangerously-skip-permissions
+```
 
-### `ai-guide`
-- `ai-guide` - Generate AI-friendly command reference
+Available profiles: read `~/.clickzetta/profiles.toml` or run `cz-cli profile list`.
 
-### `attempts`
-- `attempts` - Manage attempt records
-- `attempts list` - List attempts for a run
-- `attempts log` - Get attempt log
+## Adding a new profile
 
-### `job`
-- `job` - Job performance tools
-- `job result` - Fetch result set of a SQL job
-- `job status` - Check status/summary of a SQL job
+**Trigger conditions:** User says "configure new environment", "add profile", "can't connect", mentions an unknown profile name, or provides connection credentials.
 
-### `profile`
-- `profile` - Manage connection profiles
-- `profile create` - Create a profile
-- `profile delete` - Delete a profile
-- `profile detail` - Show profile details
-- `profile list` - List profiles
-- `profile update` - Update a profile
-- `profile use` - Set default profile
+### Step 1 — Collect information (guided Q&A)
 
-### `runs`
-- `runs` - Manage task run instances
-- `runs deps` - View run dependencies
-- `runs detail` - Get run detail
-- `runs list` - List run instances
-- `runs logs` - Get run logs
-- `runs refill` - Submit backfill job
-- `runs rerun` - Rerun a failed instance
-- `runs stats` - Get run statistics summary
-- `runs stop` - Stop a running instance
-- `runs wait` - Poll until run completes
+If all required fields are already provided, skip directly to Step 2.
 
-### `schema`
-- `schema` - Manage schemas
-- `schema create` - Create a schema
-- `schema describe` - Describe a schema
-- `schema drop` - Drop a schema
-- `schema list` - List schemas
+Otherwise, ask for missing ones. Accept all at once or prompt one by one.
 
-### `sql`
-- `sql` - Execute SQL against ClickZetta
-  - `cz-cli sql "SELECT 1"` — Run a simple query
-  - `cz-cli sql -e "SELECT * FROM t LIMIT 10" --sync` — Synchronous query
-  - `cz-cli sql -f query.sql --write` — Execute write SQL from file
+**Required fields:**
 
-### `table`
-- `table` - Manage tables
-- `table create` - Create a table from DDL
-- `table describe` - Describe a table
-- `table drop` - Drop a table
-- `table history` - Show table history
-- `table list` - List tables
-- `table preview` - Preview table data
-- `table stats` - Get table row count
+| Field | Question to ask | Example |
+|-------|----------------|---------|
+| `service` | Which cloud region? (see table below, or provide the service endpoint directly) | `cn-shanghai-alicloud.api.clickzetta.com` |
+| `instance` | What is the instance name? | `billingsh` |
+| `workspace` | What is the workspace name? | `meter_n_bill` |
+| `username` | What is the username? | `billing_admin` |
+| `password` | What is the password? | — |
+| `name` | What should this profile be named? (suggested format below) | `billingsh` |
 
-### `task`
-- `task` - Manage Studio tasks
-- `task content` - Get task content
-- `task create` - Create a new task
-- `task deps` - Show task dependencies
-- `task execute` - Execute a task ad-hoc
-- `task list` - List tasks
-- `task offline` - Take a task offline
-- `task online` - Publish a task
-- `task save-config` - Save task schedule config
-- `task save-content` - Save task script
+**Common service endpoints (offer as options):**
 
-### `workspace`
-- `workspace` - Manage workspaces
-- `workspace current` - Show current workspace
-- `workspace list` - List workspaces
+| Region | service | Suggested profile prefix |
+|--------|---------|--------------------------|
+| Alibaba Cloud East China 2 (Shanghai) | `cn-shanghai-alicloud.api.clickzetta.com` | `cn-shanghai` |
+| Tencent Cloud East China (Shanghai) | `ap-shanghai-tencentcloud.api.clickzetta.com` | `ap-shanghai` |
+| Tencent Cloud North China (Beijing) | `ap-beijing-tencentcloud.api.clickzetta.com` | `ap-beijing` |
+| Tencent Cloud South China (Guangzhou) | `ap-guangzhou-tencentcloud.api.clickzetta.com` | `ap-guangzhou` |
+| AWS China (Beijing) | `cn-north-1-aws.api.clickzetta.com` | `cn-north-1` |
 
-## Command Risk Reference
+**Inference rules (reduce unnecessary questions):**
+- If the user describes a cloud region in natural language (e.g. "Alibaba Cloud Shanghai", "Tencent Cloud Beijing", "阿里云上海", "腾讯云北京"), look up the service endpoint from the table above — do NOT ask the user to provide it again.
+- If the user hasn't provided a profile name, suggest `<prefix>-<instance>` using the prefix from the table (e.g. `cn-shanghai-billingsh`). Confirm with the user or proceed if they don't object.
 
-| Risk Level      | Commands                                         | Key Concern                                                     |
-|-----------------|--------------------------------------------------|-----------------------------------------------------------------|
-| 🔴 Irreversible | `task offline`, `schema drop`, `table drop`      | Cannot be undone; clears history or deletes objects permanently |
-| 🟠 High Impact  | `task online`, `runs refill`, `task flow submit` | Affects live schedule or re-runs historical data                |
-| 🟢 Safe         | All others                                       | No side effects                                                 |
+### Step 2 — Create profile
+
+Run `cz-cli profile create` with all collected fields:
+
+```bash
+cz-cli profile create <name> \
+  --username <username> \
+  --password <password> \
+  --instance <instance> \
+  --workspace <workspace> \
+  --service <service> \
+  --schema public \
+  --vcluster default
+```
+
+### Step 3 — Verify connection
+
+After creating, run:
+
+```bash
+cz-cli status --profile <name>
+```
+
+A successful response looks like:
+```json
+{"data": {"connected": true, "workspace": "...", "time_ms": ...}}
+```
+
+If it fails, report the error and ask the user to double-check credentials or service endpoint.
+
+## Error handling
+
+All errors in non-TTY mode output JSON to stdout:
+
+```json
+{"ok": false, "error": "NO_PROFILE", "next_steps": ["cz-cli setup --credential <base64>"]}
+```
+
+On `NO_PROFILE` error: check if a profile can be configured via username/password (see "Adding a new profile" above). If the user has a base64 credential instead, guide them to run `cz-cli setup --credential <base64>`. See `references/profile-setup.md`.
