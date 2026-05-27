@@ -124,13 +124,29 @@ Note: In non-TTY with `--format a2a` or `--format json`, async mode activates au
 cz-cli agent session status <session_id>
 ```
 
-Returns:
+While running:
 ```json
-{"session_id": "01JXF3K...", "status": "idle", "updated_at": 1748160000000}
+{"session_id": "01JXF3K...", "status": "busy", "progress": "$ cz-cli table list -o table"}
 ```
 
-- `"busy"` = still running
-- `"idle"` = completed
+Other progress examples you may see during polling:
+- `"💭 Thinking..."` — LLM is reasoning
+- `"✏ Generating response..."` — LLM is writing the reply
+- `"✱ Grep \"error\" · 3 matches"` — running a search tool
+- `"↻ Retry (attempt 2)"` — retrying a failed LLM call (paired with a `retry` field describing the reason)
+
+When complete:
+```json
+{"session_id": "01JXF3K...", "status": "idle", "result": "Here are the results:\n..."}
+```
+
+The `result` field is the final text reply. For full conversation details (thinking, tool calls, intermediate text), use `cz-cli agent export <session_id>`.
+
+If the session does not exist:
+```json
+{"session_id": "ses_invalid", "error": "Session not found"}
+```
+(exits with code 1)
 
 ### Retrieve full conversation (thinking + tool calls + text)
 
@@ -173,12 +189,19 @@ Part types in export:
 # 1. Submit
 SESSION=$(cz-cli agent run "complex analysis" --async --format a2a --dangerously-skip-permissions | jq -r '.session_id')
 
-# 2. Poll until done
-while [ "$(cz-cli agent session status $SESSION | jq -r '.status')" = "busy" ]; do
+# 2. Poll until done, printing progress along the way
+while true; do
+  STATUS=$(cz-cli agent session status $SESSION)
+  STATE=$(echo "$STATUS" | jq -r '.status')
+  if [ "$STATE" = "idle" ]; then
+    echo "$STATUS" | jq -r '.result'
+    break
+  fi
+  echo "$STATUS" | jq -r '.progress // empty'
   sleep 5
 done
 
-# 3. Get full result
+# Need full conversation (thinking + tool calls)?
 cz-cli agent export $SESSION
 ```
 
