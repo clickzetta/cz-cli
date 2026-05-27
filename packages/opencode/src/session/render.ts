@@ -115,7 +115,27 @@ function describeTool(part: MessageV2.ToolPart): PartDescription {
         return [{ content, status }]
       })
       const output = todos.map((item) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n")
-      return { icon: "#", title: "Todos", output }
+      const counts = { completed: 0, in_progress: 0, pending: 0 }
+      let active: string | undefined
+      for (const t of todos) {
+        if (t.status === "completed") counts.completed++
+        else if (t.status === "in_progress") {
+          counts.in_progress++
+          active ??= t.content
+        } else counts.pending++
+      }
+      const summary =
+        todos.length === 0
+          ? undefined
+          : active
+            ? `${counts.completed}/${todos.length} done · in-progress: ${active}`
+            : `${counts.completed}/${todos.length} done · ${counts.pending} pending`
+      return {
+        icon: "#",
+        title: "Todos",
+        ...(summary && { description: summary }),
+        output,
+      }
     }
     default: {
       const title =

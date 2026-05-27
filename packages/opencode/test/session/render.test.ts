@@ -292,6 +292,32 @@ describe("describePart", () => {
     expect(d.icon).toBe("#")
     expect(d.title).toBe("Todos")
     expect(d.output).toBe("[x] do A\n[ ] do B")
+    expect(d.description).toBe("1/2 done · 1 pending")
+  })
+
+  test("todowrite description surfaces in-progress task title", () => {
+    const d = describePart(
+      part<MessageV2.ToolPart>({
+        type: "tool",
+        callID: "call_1",
+        tool: "todowrite",
+        state: {
+          status: "completed",
+          input: {
+            todos: [
+              { content: "load skill", status: "in_progress" },
+              { content: "backfill", status: "pending" },
+              { content: "register schedule", status: "pending" },
+            ],
+          },
+          output: "",
+          title: "",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        },
+      }),
+    )
+    expect(d.description).toBe("0/3 done · in-progress: load skill")
   })
 
   test("unknown tool falls back to gear icon", () => {
