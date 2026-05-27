@@ -32,6 +32,7 @@ import * as Stream from "effect/Stream"
 import { Command } from "../command"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config"
+import { resolveCurrentProfileLabel } from "../config/profiles-llm"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
@@ -225,6 +226,16 @@ export const layer = Layer.effect(
     }) {
       const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
       if (!userMessage) return input.messages
+
+      const profileLabel = resolveCurrentProfileLabel()
+      userMessage.parts.push({
+        id: PartID.ascending(),
+        messageID: userMessage.info.id,
+        sessionID: userMessage.info.sessionID,
+        type: "text",
+        text: `<system-reminder>\nActive ClickZetta profile: ${profileLabel}\n</system-reminder>`,
+        synthetic: true,
+      })
 
       if (!Flag.CLICKZETTA_EXPERIMENTAL_PLAN_MODE) {
         if (input.agent.name === "plan") {
