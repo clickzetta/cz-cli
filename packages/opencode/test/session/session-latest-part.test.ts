@@ -36,6 +36,9 @@ const svc = {
   latestMessage(sessionID: SessionID) {
     return run(SessionNs.Service.use((s) => s.latestMessage(sessionID)))
   },
+  recentParts(sessionID: SessionID, limit: number) {
+    return run(SessionNs.Service.use((s) => s.recentParts(sessionID, limit)))
+  },
 }
 
 async function addUser(sessionID: SessionID) {
@@ -296,6 +299,52 @@ describe("Session.Service.latestMessage", () => {
         expect(result!.parts.length).toBe(1)
         expect((result!.parts[0] as MessageV2.TextPart).text).toBe("hi there")
 
+        await svc.remove(session.id)
+      },
+    })
+  })
+})
+
+describe("Session.Service.recentParts", () => {
+  test("returns N most recent parts in DESC order", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await svc.create({})
+        const messageID = await addUser(session.id)
+
+        const ids: string[] = []
+        for (let i = 0; i < 5; i++) {
+          const id = PartID.ascending()
+          ids.push(id)
+          await svc.updatePart({
+            id,
+            sessionID: session.id,
+            messageID,
+            type: "text",
+            text: `text-${i}`,
+          })
+        }
+
+        const recent = await svc.recentParts(session.id, 3)
+        expect(recent).toHaveLength(3)
+        // DESC order: most recent first
+        expect(recent[0].id).toBe(ids[4])
+        expect(recent[1].id).toBe(ids[3])
+        expect(recent[2].id).toBe(ids[2])
+
+        await svc.remove(session.id)
+      },
+    })
+  })
+
+  test("returns empty array for empty session", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await svc.create({})
+        const recent = await svc.recentParts(session.id, 10)
+        expect(recent).toEqual([])
         await svc.remove(session.id)
       },
     })

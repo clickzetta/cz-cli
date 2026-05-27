@@ -423,6 +423,7 @@ export interface Interface {
   readonly latestPart: (sessionID: SessionID) => Effect.Effect<MessageV2.Part | undefined>
   readonly lastTextPart: (sessionID: SessionID) => Effect.Effect<MessageV2.TextPart | undefined>
   readonly latestMessage: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts | undefined>
+  readonly recentParts: (sessionID: SessionID, limit: number) => Effect.Effect<MessageV2.Part[]>
   readonly updatePart: <T extends MessageV2.Part>(part: T) => Effect.Effect<T>
   readonly updatePartDelta: (input: {
     sessionID: SessionID
@@ -628,6 +629,27 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       return result.items.at(-1)
     })
 
+    const recentParts: Interface["recentParts"] = Effect.fn("Session.recentParts")(function* (sessionID, limit) {
+      const rows = Database.use((db) =>
+        db
+          .select()
+          .from(PartTable)
+          .where(eq(PartTable.session_id, sessionID))
+          .orderBy(desc(PartTable.time_created), desc(PartTable.id))
+          .limit(limit)
+          .all(),
+      )
+      return rows.map(
+        (row) =>
+          ({
+            ...row.data,
+            id: row.id,
+            sessionID: row.session_id,
+            messageID: row.message_id,
+          }) as MessageV2.Part,
+      )
+    })
+
     const create = Effect.fn("Session.create")(function* (input?: {
       parentID?: SessionID
       title?: string
@@ -808,6 +830,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       latestPart,
       lastTextPart,
       latestMessage,
+      recentParts,
       updatePartDelta,
       findMessage,
     })

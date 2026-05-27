@@ -46,6 +46,46 @@ function pagerCmd(): string[] {
   return ["cmd", "/c", "more"]
 }
 
+/**
+ * A part is "informative" if it describes a real activity the user can read.
+ * Boundary markers (step-start, step-finish) and tools whose input hasn't
+ * streamed in yet are skipped so `progress` reflects what's actually happening
+ * instead of "Step done" repeated four times in a row.
+ */
+function isInformativePart(part: MessageV2.Part): boolean {
+  if (part.type === "step-start" || part.type === "step-finish") return false
+  if (part.type === "tool") {
+    const state = part.state
+    if (state.status === "pending") {
+      const input = ("input" in state ? state.input : undefined) as Record<string, unknown> | undefined
+      if (!input || Object.keys(input).length === 0) return false
+      // For known tools, require the primary identifying input field to exist.
+      const hasField = (k: string) => typeof input[k] === "string" && (input[k] as string).length > 0
+      switch (part.tool) {
+        case "bash":
+          return hasField("command")
+        case "read":
+        case "write":
+        case "edit":
+          return hasField("filePath")
+        case "glob":
+        case "grep":
+          return hasField("pattern")
+        case "webfetch":
+          return hasField("url")
+        case "codesearch":
+        case "websearch":
+          return hasField("query")
+        case "skill":
+          return hasField("name")
+        default:
+          return true
+      }
+    }
+  }
+  return true
+}
+
 export const SessionCommand = cmd({
   command: "session",
   describe: "manage sessions",
@@ -135,12 +175,17 @@ export const SessionStatusCommand = cmd({
             : status
 
       if (effectiveStatus?.type === "busy" || effectiveStatus?.type === "retry") {
-        const latest = await AppRuntime.runPromise(Session.Service.use((svc) => svc.latestPart(sessionID)))
+        // Walk back through recent parts and pick the most informative one.
+        // Skip step boundaries and tools that haven't streamed input yet so the
+        // progress field reflects the actual current activity instead of
+        // empty placeholders or repeated "Step done" markers.
+        const recent = await AppRuntime.runPromise(Session.Service.use((svc) => svc.recentParts(sessionID, 20)))
+        const informative = recent.find((p) => isInformativePart(p)) ?? recent[0]
         const out: Record<string, unknown> = {
           session_id: args.sessionID,
           status: effectiveStatus.type,
         }
-        if (latest) out.progress = progressLine(latest)
+        if (informative) out.progress = progressLine(informative)
         if (effectiveStatus.type === "retry") {
           out.retry = {
             attempt: effectiveStatus.attempt,
