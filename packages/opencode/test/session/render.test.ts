@@ -369,7 +369,7 @@ describe("describePart", () => {
         part<MessageV2.RetryPart>({
           type: "retry",
           attempt: 2,
-          error: { name: "RateLimit", data: { message: "limited" } },
+          error: { name: "APIError", data: { message: "limited", isRetryable: true } },
           time: { created: 1 },
         }),
       ).title,

@@ -313,7 +313,7 @@ describe("Session.Service.recentParts", () => {
         const session = await svc.create({})
         const messageID = await addUser(session.id)
 
-        const ids: string[] = []
+        const ids: PartID[] = []
         for (let i = 0; i < 5; i++) {
           const id = PartID.ascending()
           ids.push(id)
