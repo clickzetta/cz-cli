@@ -14,6 +14,9 @@ import { which } from "../../util/which"
 import { AppRuntime } from "@/effect/app-runtime"
 import { commandGroup } from "@clickzetta/cli/command-group"
 import { SessionStatus } from "../../session/status"
+import { progressLine } from "../../session/render"
+import { Cause } from "effect"
+import { NotFoundError } from "../../storage"
 
 function pagerCmd(): string[] {
   const lessOptions = ["-R", "-S"]
@@ -65,9 +68,13 @@ export const SessionDeleteCommand = cmd({
       const sessionID = SessionID.make(args.sessionID)
       try {
         await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID)))
-      } catch {
-        UI.error(`Session not found: ${args.sessionID}`)
-        process.exit(1)
+      } catch (err) {
+        const actual = Cause.squash((err as any).cause ?? err)
+        if (NotFoundError.isInstance(actual)) {
+          UI.error(`Session not found: ${args.sessionID}`)
+          process.exit(1)
+        }
+        throw err
       }
       await AppRuntime.runPromise(Session.Service.use((svc) => svc.remove(sessionID)))
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Session ${args.sessionID} deleted` + UI.Style.TEXT_NORMAL)
@@ -88,22 +95,40 @@ export const SessionStatusCommand = cmd({
   handler: async (args) => {
     await bootstrap(process.cwd(), async () => {
       const sessionID = SessionID.make(args.sessionID)
+
       try {
         await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID)))
-      } catch {
-        process.stdout.write(JSON.stringify({ session_id: args.sessionID, error: "Session not found" }) + EOL)
-        process.exit(1)
+      } catch (err) {
+        const actual = Cause.squash((err as any).cause ?? err)
+        if (NotFoundError.isInstance(actual)) {
+          process.stdout.write(JSON.stringify({ session_id: args.sessionID, error: "Session not found" }) + EOL)
+          process.exit(1)
+        }
+        throw err
       }
 
-      const status = await AppRuntime.runPromise(
-        SessionStatus.Service.use((svc) => svc.get(sessionID)),
-      )
+      const status = await AppRuntime.runPromise(SessionStatus.Service.use((svc) => svc.get(sessionID)))
 
+      if (status?.type === "busy" || status?.type === "retry") {
+        const latest = await AppRuntime.runPromise(Session.Service.use((svc) => svc.latestPart(sessionID)))
+        const out: Record<string, unknown> = {
+          session_id: args.sessionID,
+          status: status.type,
+        }
+        if (latest) out.progress = progressLine(latest)
+        if (status.type === "retry") {
+          out.retry = { attempt: status.attempt, message: status.message, next: status.next }
+        }
+        process.stdout.write(JSON.stringify(out) + EOL)
+        return
+      }
+
+      const lastText = await AppRuntime.runPromise(Session.Service.use((svc) => svc.lastTextPart(sessionID)))
       process.stdout.write(
         JSON.stringify({
           session_id: args.sessionID,
-          status: status?.type ?? "idle",
-          updated_at: Date.now(),
+          status: "idle",
+          result: lastText?.text ?? null,
         }) + EOL,
       )
     })

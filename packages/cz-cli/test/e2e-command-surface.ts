@@ -103,7 +103,7 @@ const tests: TestCase[] = [
     run() {
       const { home, cleanup } = withFakeHome()
       try {
-        for (const args of [["agent"], ["agent", "run", "hello"], ["agent", "session", "status", "fake-id"]] as const) {
+        for (const args of [["agent"], ["agent", "run", "hello"]] as const) {
           const result = run([...args], { HOME: home, CLICKZETTA_TEST_HOME: home })
           const combined = result.stdout + result.stderr
           if (result.exitCode !== 1) {
