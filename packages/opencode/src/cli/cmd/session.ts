@@ -125,7 +125,7 @@ export const SessionDeleteCommand = cmd({
 
 export const SessionStatusCommand = cmd({
   command: "status <sessionID>",
-  describe: "get session status (idle/busy)",
+  describe: "get session status — busy/retry returns progress, idle returns result, on failure returns error",
   builder: (yargs: Argv) => {
     return yargs.positional("sessionID", {
       describe: "session ID to check",

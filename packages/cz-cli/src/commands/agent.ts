@@ -71,7 +71,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             )
             .command(
               "status <sessionID>",
-              "Get session status (idle/busy)",
+              "Get session status — busy/retry returns progress, idle returns result, on failure returns error",
               (s) => s.positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to check" }),
               () => {},
             )

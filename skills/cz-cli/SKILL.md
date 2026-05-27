@@ -87,6 +87,10 @@ cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
 
 Do NOT use direct cz-cli subcommands when an active LLM is available. Always delegate the full request to `cz-cli agent run`.
 
+The output includes a `session_id`. Use it to inspect the run:
+- `cz-cli agent session status <session_id>` — current state (`busy`/`retry` with `progress`, `idle` with `result`, or `error`)
+- `cz-cli agent export <session_id>` — full conversation (messages, tool calls, reasoning, text). Wait until `status` is `idle` before exporting; otherwise the conversation may still be in progress.
+
 **Step 3 — ONLY if no active LLM (kind: "none" or empty list), fall back to direct commands:**
 
 Decompose the request into concrete `cz-cli` subcommands (`sql`, `schema`, `table`, `task`, `runs`, `job`, `datasource`, `profile`, etc.), execute them, and synthesize the result.
