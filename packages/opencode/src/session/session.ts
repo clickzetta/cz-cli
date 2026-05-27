@@ -420,6 +420,8 @@ export interface Interface {
     messageID: MessageID
     partID: PartID
   }) => Effect.Effect<MessageV2.Part | undefined>
+  readonly latestPart: (sessionID: SessionID) => Effect.Effect<MessageV2.Part | undefined>
+  readonly lastTextPart: (sessionID: SessionID) => Effect.Effect<MessageV2.TextPart | undefined>
   readonly updatePart: <T extends MessageV2.Part>(part: T) => Effect.Effect<T>
   readonly updatePartDelta: (input: {
     sessionID: SessionID
@@ -570,6 +572,54 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
         sessionID: row.session_id,
         messageID: row.message_id,
       } as MessageV2.Part
+    })
+
+    const latestPart: Interface["latestPart"] = Effect.fn("Session.latestPart")(function* (sessionID) {
+      const row = Database.use((db) =>
+        db
+          .select()
+          .from(PartTable)
+          .where(eq(PartTable.session_id, sessionID))
+          .orderBy(desc(PartTable.time_created), desc(PartTable.id))
+          .limit(1)
+          .get(),
+      )
+      if (!row) return undefined
+      return {
+        ...row.data,
+        id: row.id,
+        sessionID: row.session_id,
+        messageID: row.message_id,
+      } as MessageV2.Part
+    })
+
+    const lastTextPart: Interface["lastTextPart"] = Effect.fn("Session.lastTextPart")(function* (sessionID) {
+      const rows = Database.use((db) =>
+        db
+          .select()
+          .from(PartTable)
+          .where(
+            and(
+              eq(PartTable.session_id, sessionID),
+              like(PartTable.data as unknown as SQL<string>, '%"type":"text"%'),
+            ),
+          )
+          .orderBy(desc(PartTable.time_created), desc(PartTable.id))
+          .limit(50)
+          .all(),
+      )
+      for (const row of rows) {
+        const data = row.data as MessageV2.Part
+        if (data.type === "text") {
+          return {
+            ...data,
+            id: row.id,
+            sessionID: row.session_id,
+            messageID: row.message_id,
+          } as MessageV2.TextPart
+        }
+      }
+      return undefined
     })
 
     const create = Effect.fn("Session.create")(function* (input?: {
@@ -749,6 +799,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       removePart,
       updatePart,
       getPart,
+      latestPart,
+      lastTextPart,
       updatePartDelta,
       findMessage,
     })
