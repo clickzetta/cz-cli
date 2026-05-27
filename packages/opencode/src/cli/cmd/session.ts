@@ -1,6 +1,7 @@
 import type { Argv } from "yargs"
 import { cmd } from "./cmd"
 import { Session } from "../../session"
+import { MessageV2 } from "../../session/message-v2"
 import { SessionID } from "../../session/schema"
 import { bootstrap } from "../bootstrap"
 import { UI } from "../ui"
@@ -109,28 +110,81 @@ export const SessionStatusCommand = cmd({
 
       const status = await AppRuntime.runPromise(SessionStatus.Service.use((svc) => svc.get(sessionID)))
 
-      if (status?.type === "busy" || status?.type === "retry") {
+      // Cross-process busy detection: in-memory SessionStatus.Service is per-process,
+      // so when polling from a separate CLI invocation it always reads "idle" by default.
+      // Derive busy state from data: if the latest message is an assistant in-progress
+      // (no finish, no error) OR the latest message is still a user message within an
+      // LLM timeout window, treat the session as busy.
+      const lastMsg = await AppRuntime.runPromise(Session.Service.use((svc) => svc.latestMessage(sessionID)))
+      // 30s covers normal LLM first-byte latency. Beyond that, if no assistant message
+      // has appeared, the LLM call most likely failed before message creation
+      // (e.g. ProviderModelNotFoundError, auth errors). Faster failure detection wins
+      // over correctness for slow first-byte cases since the in-memory status would
+      // catch those when polled in-process.
+      const BUSY_USER_WINDOW_MS = 30 * 1000
+      const derivedBusy =
+        lastMsg !== undefined &&
+        ((lastMsg.info.role === "assistant" && !lastMsg.info.finish && !lastMsg.info.error) ||
+          (lastMsg.info.role === "user" && Date.now() - lastMsg.info.time.created < BUSY_USER_WINDOW_MS))
+
+      const effectiveStatus =
+        status?.type === "busy" || status?.type === "retry"
+          ? status
+          : derivedBusy
+            ? ({ type: "busy" } as const)
+            : status
+
+      if (effectiveStatus?.type === "busy" || effectiveStatus?.type === "retry") {
         const latest = await AppRuntime.runPromise(Session.Service.use((svc) => svc.latestPart(sessionID)))
         const out: Record<string, unknown> = {
           session_id: args.sessionID,
-          status: status.type,
+          status: effectiveStatus.type,
         }
         if (latest) out.progress = progressLine(latest)
-        if (status.type === "retry") {
-          out.retry = { attempt: status.attempt, message: status.message, next: status.next }
+        if (effectiveStatus.type === "retry") {
+          out.retry = {
+            attempt: effectiveStatus.attempt,
+            message: effectiveStatus.message,
+            next: effectiveStatus.next,
+          }
         }
         process.stdout.write(JSON.stringify(out) + EOL)
         return
       }
 
-      const lastText = await AppRuntime.runPromise(Session.Service.use((svc) => svc.lastTextPart(sessionID)))
-      process.stdout.write(
-        JSON.stringify({
-          session_id: args.sessionID,
-          status: "idle",
-          result: lastText?.text ?? null,
-        }) + EOL,
-      )
+      const out: Record<string, unknown> = {
+        session_id: args.sessionID,
+        status: "idle",
+      }
+      if (!lastMsg) {
+        out.result = null
+      } else if (lastMsg.info.role === "assistant") {
+        const err = lastMsg.info.error
+        if (err) {
+          out.error = {
+            name: err.name,
+            message: ("data" in err && err.data && typeof err.data === "object" && "message" in err.data
+              ? String((err.data as { message?: unknown }).message)
+              : null) ?? err.name,
+          }
+        } else {
+          const text = lastMsg.parts
+            .filter((p): p is MessageV2.TextPart => p.type === "text")
+            .map((p) => p.text.trim())
+            .filter((t) => t.length > 0)
+            .join("\n")
+          out.result = text || null
+        }
+      } else {
+        // Latest message is a user message older than the busy window — LLM never produced
+        // an assistant response. This typically indicates a pre-message failure (provider
+        // not found, auth error, etc.).
+        out.error = {
+          name: "NoAssistantResponse",
+          message: "Session ended without an assistant response (likely an LLM call failure)",
+        }
+      }
+      process.stdout.write(JSON.stringify(out) + EOL)
     })
   },
 })

@@ -422,6 +422,7 @@ export interface Interface {
   }) => Effect.Effect<MessageV2.Part | undefined>
   readonly latestPart: (sessionID: SessionID) => Effect.Effect<MessageV2.Part | undefined>
   readonly lastTextPart: (sessionID: SessionID) => Effect.Effect<MessageV2.TextPart | undefined>
+  readonly latestMessage: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts | undefined>
   readonly updatePart: <T extends MessageV2.Part>(part: T) => Effect.Effect<T>
   readonly updatePartDelta: (input: {
     sessionID: SessionID
@@ -622,6 +623,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       return undefined
     })
 
+    const latestMessage: Interface["latestMessage"] = Effect.fn("Session.latestMessage")(function* (sessionID) {
+      const result = MessageV2.page({ sessionID, limit: 1 })
+      return result.items.at(-1)
+    })
+
     const create = Effect.fn("Session.create")(function* (input?: {
       parentID?: SessionID
       title?: string
@@ -801,6 +807,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       getPart,
       latestPart,
       lastTextPart,
+      latestMessage,
       updatePartDelta,
       findMessage,
     })

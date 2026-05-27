@@ -36,12 +36,19 @@ function block(info: Inline, output?: string) {
 }
 
 function renderTool(part: ToolPart) {
-  const d = describePart(part as unknown as Parameters<typeof describePart>[0])
-  const info: Inline = { icon: d.icon, title: d.title, ...(d.description && { description: d.description }) }
-  if (d.output !== undefined) {
-    block(info, d.output)
-  } else {
-    inline(info)
+  try {
+    const d = describePart(part as unknown as Parameters<typeof describePart>[0])
+    const info: Inline = { icon: d.icon, title: d.title, ...(d.description && { description: d.description }) }
+    if (d.output !== undefined) {
+      block(info, d.output)
+    } else {
+      inline(info)
+    }
+  } catch {
+    // Last-resort fallback so a malformed part never breaks the streaming loop.
+    const state = part.state
+    const stateTitle = "title" in state && state.title ? state.title : ""
+    inline({ icon: "⚙", title: `${part.tool} ${stateTitle}`.trim() || "Unknown" })
   }
 }
 

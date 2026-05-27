@@ -33,6 +33,9 @@ const svc = {
   lastTextPart(sessionID: SessionID) {
     return run(SessionNs.Service.use((s) => s.lastTextPart(sessionID)))
   },
+  latestMessage(sessionID: SessionID) {
+    return run(SessionNs.Service.use((s) => s.latestMessage(sessionID)))
+  },
 }
 
 async function addUser(sessionID: SessionID) {
@@ -228,6 +231,70 @@ describe("Session.Service.lastTextPart", () => {
         // It should still find the real text part, not return undefined
         expect(result).toBeDefined()
         expect(result!.text).toBe("real reply")
+
+        await svc.remove(session.id)
+      },
+    })
+  })
+})
+
+describe("Session.Service.latestMessage", () => {
+  test("returns undefined for empty session", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await svc.create({})
+        const result = await svc.latestMessage(session.id)
+        expect(result).toBeUndefined()
+        await svc.remove(session.id)
+      },
+    })
+  })
+
+  test("returns latest message with parts", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await svc.create({})
+        const userID = await addUser(session.id)
+        await svc.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: userID,
+          type: "text",
+          text: "hello",
+        })
+
+        // Add an assistant message later
+        const asstID = MessageID.ascending()
+        await svc.updateMessage({
+          id: asstID,
+          sessionID: session.id,
+          role: "assistant",
+          time: { created: Date.now() + 1000 },
+          parentID: userID,
+          modelID: "test",
+          providerID: "test",
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/", root: "/" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        } as unknown as MessageV2.Info)
+        await svc.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: asstID,
+          type: "text",
+          text: "hi there",
+        })
+
+        const result = await svc.latestMessage(session.id)
+        expect(result).toBeDefined()
+        expect(result!.info.role).toBe("assistant")
+        expect(result!.info.id).toBe(asstID)
+        expect(result!.parts.length).toBe(1)
+        expect((result!.parts[0] as MessageV2.TextPart).text).toBe("hi there")
 
         await svc.remove(session.id)
       },
