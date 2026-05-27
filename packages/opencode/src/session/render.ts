@@ -103,7 +103,7 @@ function describeTool(part: MessageV2.ToolPart): PartDescription {
     }
     case "skill": {
       const name = typeof input.name === "string" ? input.name : ""
-      return { icon: "→", title: `Skill "${name}"` }
+      return { icon: "→", title: `Load skill "${name}"` }
     }
     case "todowrite": {
       const rawTodos = Array.isArray(input.todos) ? input.todos : []

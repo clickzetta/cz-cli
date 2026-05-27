@@ -265,7 +265,7 @@ describe("describePart", () => {
       }),
     )
     expect(d.icon).toBe("→")
-    expect(d.title).toBe(`Skill "writing-plans"`)
+    expect(d.title).toBe(`Load skill "writing-plans"`)
   })
 
   test("todowrite renders todo lines as output", () => {
