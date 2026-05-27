@@ -55,9 +55,11 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
                 s
                   .option("max-count", { alias: "n", type: "number", describe: "Limit to N most recent sessions" })
                   .option("format", { type: "string", choices: ["table", "json"], default: "table", describe: "Output format" })
+                  .option("all", { alias: "a", type: "boolean", default: false, describe: "List sessions from all directories" })
                   .example("cz-cli agent session list", "List all sessions")
                   .example("cz-cli agent session list -n 10", "List 10 most recent sessions")
-                  .example("cz-cli agent session list --format json", "Output as JSON"),
+                  .example("cz-cli agent session list --format json", "Output as JSON")
+                  .example("cz-cli agent session list --all", "List sessions from all directories"),
               () => {},
             )
             .command(

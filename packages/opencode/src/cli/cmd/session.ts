@@ -90,10 +90,18 @@ export const SessionListCommand = cmd({
         choices: ["table", "json"],
         default: "table",
       })
+      .option("all", {
+        alias: "a",
+        describe: "list sessions from all directories",
+        type: "boolean",
+        default: false,
+      })
   },
   handler: async (args) => {
     await bootstrap(process.cwd(), async () => {
-      const sessions = [...Session.list({ roots: true, limit: args.maxCount })]
+      const sessions = args.all
+        ? [...Session.listGlobal({ roots: true, limit: args.maxCount })]
+        : [...Session.list({ roots: true, limit: args.maxCount })]
 
       if (sessions.length === 0) {
         return
