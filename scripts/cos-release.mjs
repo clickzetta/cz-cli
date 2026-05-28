@@ -173,10 +173,9 @@ function key(...parts) {
 
 async function uploadAllArchives(ctx, builds) {
   const platforms = {}
-  for (const b of builds) {
-    const target = b.targetKey
-    if (ctx.dryRun) {
-      console.log(`[dry-run] upload ${b.archivePath} -> ${target}`)
+  if (ctx.dryRun) {
+    for (const b of builds) {
+      console.log(`[dry-run] upload ${b.archivePath} -> ${b.targetKey}`)
       platforms[b.platform] = {
         archive: b.archiveName,
         format: b.format,
@@ -184,27 +183,40 @@ async function uploadAllArchives(ctx, builds) {
         checksum: b.sha256,
         size: b.size,
       }
-      continue
     }
-    const result = await uploadFile({
-      client: ctx.client,
-      Bucket: ctx.Bucket,
-      Region: ctx.Region,
-      filePath: b.archivePath,
-      key: target,
-      contentType: "application/octet-stream",
-      cacheControl: Cache.immutable,
-      size: b.size,
-      sha256: b.sha256,
-    })
-    platforms[b.platform] = {
-      archive: b.archiveName,
-      format: b.format,
-      binary: platformBinary(b.platform),
-      checksum: result.sha256,
-      size: result.size,
+    return platforms
+  }
+
+  const results = await Promise.all(
+    builds.map(async (b) => {
+      const logs = []
+      const result = await uploadFile({
+        client: ctx.client,
+        Bucket: ctx.Bucket,
+        Region: ctx.Region,
+        filePath: b.archivePath,
+        key: b.targetKey,
+        contentType: "application/octet-stream",
+        cacheControl: Cache.immutable,
+        size: b.size,
+        sha256: b.sha256,
+        log: (msg) => logs.push(`[${new Date().toISOString()}] ${msg}`),
+      })
+      return { platform: b.platform, archiveName: b.archiveName, result, logs }
+    }),
+  )
+
+  const _log = console.log
+  for (const r of results) {
+    for (const line of r.logs) _log(line)
+    console.log(`  ✓ ${r.platform} (${(r.result.size / 1024 / 1024).toFixed(1)} MB)`)
+    platforms[r.platform] = {
+      archive: r.archiveName,
+      format: r.result.format ?? platformArchiveExt(r.platform),
+      binary: platformBinary(r.platform),
+      checksum: r.result.sha256,
+      size: r.result.size,
     }
-    console.log(`  ✓ ${b.platform} (${(result.size / 1024 / 1024).toFixed(1)} MB)`)
   }
   return platforms
 }
@@ -390,6 +402,9 @@ function writeJobSummary(builds, manifest, versionsDoc) {
 }
 
 async function main() {
+  const _log = console.log
+  console.log = (...args) => _log(`[${new Date().toISOString()}]`, ...args)
+
   const args = parseArgs(process.argv.slice(2))
   validateArgs(args)
 
@@ -403,13 +418,14 @@ async function main() {
   const archivesDir = path.join(args.dist, "archives")
   const builds = []
   for (const p of platforms) {
-    console.log(`Archiving ${p.platform}...`)
+    const t0 = Date.now()
     const built = await archivePlatform({
       distPath: p.distPath,
       platform: p.platform,
       version: args.version,
       archivesDir,
     })
+    console.log(`  ✓ Archived ${p.platform} (${formatBytes(built.size)}, ${((Date.now() - t0) / 1000).toFixed(1)}s)`)
     builds.push({ platform: p.platform, targetKey: key(args.version, p.platform, built.archiveName), ...built })
   }
   logPreparedArchives(builds)
