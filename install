@@ -1,28 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
-APP=opencode
+APP=cz-cli
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
-ORANGE='\033[38;5;214m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+NC='\033[0m'
 
 usage() {
     cat <<EOF
-OpenCode Installer
+cz-cli Installer
 
 Usage: install.sh [options]
 
 Options:
     -h, --help              Display this help message
-    -v, --version <version> Install a specific version (e.g., 1.0.180)
+    -v, --version <version> Install a specific version (e.g., 0.3.85)
     -b, --binary <path>     Install from a local binary instead of downloading
         --no-modify-path    Don't modify shell config files (.zshrc, .bashrc, etc.)
 
 Examples:
-    curl -fsSL https://opencode.ai/install | bash
-    curl -fsSL https://opencode.ai/install | bash -s -- --version 1.0.180
-    ./install --binary /path/to/opencode
+    curl -fsSL https://cz-cli.ai/install | bash
+    curl -fsSL https://cz-cli.ai/install | bash -s -- --version 0.3.85
+    ./install --binary /path/to/cz-cli
 EOF
 }
 
@@ -59,13 +60,13 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            echo -e "${ORANGE}Warning: Unknown option '$1'${NC}" >&2
+            echo -e "${RED}Warning: Unknown option '$1'${NC}" >&2
             shift
             ;;
     esac
 done
 
-INSTALL_DIR=$HOME/.opencode/bin
+INSTALL_DIR=$HOME/.cz-cli/bin
 mkdir -p "$INSTALL_DIR"
 
 # If --binary is provided, skip all download/detection logic
@@ -119,7 +120,6 @@ else
       if [ -f /etc/alpine-release ]; then
         is_musl=true
       fi
-
       if command -v ldd >/dev/null 2>&1; then
         if ldd --version 2>&1 | grep -qi musl; then
           is_musl=true
@@ -134,24 +134,9 @@ else
           needs_baseline=true
         fi
       fi
-
       if [ "$os" = "darwin" ]; then
         avx2=$(sysctl -n hw.optional.avx2_0 2>/dev/null || echo 0)
         if [ "$avx2" != "1" ]; then
-          needs_baseline=true
-        fi
-      fi
-
-      if [ "$os" = "windows" ]; then
-        ps="(Add-Type -MemberDefinition \"[DllImport(\"\"kernel32.dll\"\")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);\" -Name Kernel32 -Namespace Win32 -PassThru)::IsProcessorFeaturePresent(40)"
-        out=""
-        if command -v powershell.exe >/dev/null 2>&1; then
-          out=$(powershell.exe -NoProfile -NonInteractive -Command "$ps" 2>/dev/null || true)
-        elif command -v pwsh >/dev/null 2>&1; then
-          out=$(pwsh -NoProfile -NonInteractive -Command "$ps" 2>/dev/null || true)
-        fi
-        out=$(echo "$out" | tr -d '\r' | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-        if [ "$out" != "true" ] && [ "$out" != "1" ]; then
           needs_baseline=true
         fi
       fi
@@ -167,7 +152,6 @@ else
 
     filename="$APP-$target$archive_ext"
 
-
     if [ "$os" = "linux" ]; then
         if ! command -v tar >/dev/null 2>&1; then
              echo -e "${RED}Error: 'tar' is required but not installed.${NC}"
@@ -180,56 +164,42 @@ else
         fi
     fi
 
-    if [ -z "$requested_version" ]; then
-        url="https://github.com/anomalyco/opencode/releases/latest/download/$filename"
-        specific_version=$(curl -s https://api.github.com/repos/anomalyco/opencode/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+    BASE_URL="https://cz-cli.ai/download"
 
+    if [ -z "$requested_version" ]; then
+        specific_version=$(curl -fsSL "https://cz-cli.ai/api/stable" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
         if [[ $? -ne 0 || -z "$specific_version" ]]; then
             echo -e "${RED}Failed to fetch version information${NC}"
             exit 1
         fi
     else
-        # Strip leading 'v' if present
         requested_version="${requested_version#v}"
-        url="https://github.com/anomalyco/opencode/releases/download/v${requested_version}/$filename"
         specific_version=$requested_version
-
-        # Verify the release exists before downloading
-        http_status=$(curl -sI -o /dev/null -w "%{http_code}" "https://github.com/anomalyco/opencode/releases/tag/v${requested_version}")
-        if [ "$http_status" = "404" ]; then
-            echo -e "${RED}Error: Release v${requested_version} not found${NC}"
-            echo -e "${MUTED}Available releases: https://github.com/anomalyco/opencode/releases${NC}"
-            exit 1
-        fi
     fi
+
+    url="${BASE_URL}/${specific_version}/${target}"
 fi
 
 print_message() {
     local level=$1
     local message=$2
     local color=""
-
     case $level in
         info) color="${NC}" ;;
         warning) color="${NC}" ;;
         error) color="${RED}" ;;
     esac
-
     echo -e "${color}${message}${NC}"
 }
 
 check_version() {
-    if command -v opencode >/dev/null 2>&1; then
-        opencode_path=$(which opencode)
-
-        ## Check the installed version
-        installed_version=$(opencode --version 2>/dev/null || echo "")
-
-        if [[ "$installed_version" != "$specific_version" ]]; then
-            print_message info "${MUTED}Installed version: ${NC}$installed_version."
-        else
-            print_message info "${MUTED}Version ${NC}$specific_version${MUTED} already installed"
+    if command -v cz-cli >/dev/null 2>&1; then
+        installed_version=$(cz-cli --version 2>/dev/null || echo "")
+        if [[ "$installed_version" == "$specific_version" ]]; then
+            print_message info "${MUTED}Version ${NC}$specific_version${MUTED} already installed${NC}"
             exit 0
+        elif [[ -n "$installed_version" ]]; then
+            print_message info "${MUTED}Installed version: ${NC}$installed_version"
         fi
     fi
 }
@@ -250,18 +220,21 @@ print_progress() {
     local length="$2"
     [ "$length" -gt 0 ] || return 0
 
-    local width=50
+    local width=40
     local percent=$(( bytes * 100 / length ))
     [ "$percent" -gt 100 ] && percent=100
     local on=$(( percent * width / 100 ))
     local off=$(( width - on ))
 
     local filled=$(printf "%*s" "$on" "")
-    filled=${filled// /■}
+    filled=${filled// /▰}
     local empty=$(printf "%*s" "$off" "")
-    empty=${empty// /･}
+    empty=${empty// /▱}
 
-    printf "\r${ORANGE}%s%s %3d%%${NC}" "$filled" "$empty" "$percent" >&4
+    local mb_done=$(( bytes / 1048576 ))
+    local mb_total=$(( length / 1048576 ))
+
+    printf "\r  ${filled}${empty} %3d%% (%d/%d MB)" "$percent" "$mb_done" "$mb_total" >&4
 }
 
 download_with_progress() {
@@ -275,13 +248,12 @@ download_with_progress() {
     fi
 
     local tmp_dir=${TMPDIR:-/tmp}
-    local basename="${tmp_dir}/opencode_install_$$"
+    local basename="${tmp_dir}/cz_cli_install_$$"
     local tracefile="${basename}.trace"
 
     rm -f "$tracefile"
     mkfifo "$tracefile"
 
-    # Hide cursor
     printf "\033[?25l" >&4
 
     trap "trap - RETURN; rm -f \"$tracefile\"; printf '\033[?25h' >&4; exec 4>&-" RETURN
@@ -325,12 +297,11 @@ download_with_progress() {
 }
 
 download_and_install() {
-    print_message info "\n${MUTED}Installing ${NC}opencode ${MUTED}version: ${NC}$specific_version"
-    local tmp_dir="${TMPDIR:-/tmp}/opencode_install_$$"
+    print_message info "\n${MUTED}✶ Downloading ${NC}${APP}-${specific_version}-${target}${archive_ext}"
+    local tmp_dir="${TMPDIR:-/tmp}/cz_cli_install_$$"
     mkdir -p "$tmp_dir"
 
     if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
-        # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
         curl -# -L -o "$tmp_dir/$filename" "$url"
     fi
 
@@ -340,15 +311,15 @@ download_and_install() {
         unzip -q "$tmp_dir/$filename" -d "$tmp_dir"
     fi
 
-    mv "$tmp_dir/opencode" "$INSTALL_DIR"
-    chmod 755 "${INSTALL_DIR}/opencode"
+    mv "$tmp_dir/$APP" "$INSTALL_DIR/"
+    chmod 755 "${INSTALL_DIR}/${APP}"
     rm -rf "$tmp_dir"
 }
 
 install_from_binary() {
-    print_message info "\n${MUTED}Installing ${NC}opencode ${MUTED}from: ${NC}$binary_path"
-    cp "$binary_path" "${INSTALL_DIR}/opencode"
-    chmod 755 "${INSTALL_DIR}/opencode"
+    print_message info "\n${MUTED}Installing ${NC}cz-cli ${MUTED}from: ${NC}$binary_path"
+    cp "$binary_path" "${INSTALL_DIR}/${APP}"
+    chmod 755 "${INSTALL_DIR}/${APP}"
 }
 
 if [ -n "$binary_path" ]; then
@@ -358,17 +329,16 @@ else
     download_and_install
 fi
 
-
 add_to_path() {
     local config_file=$1
     local command=$2
 
     if grep -Fxq "$command" "$config_file"; then
-        print_message info "Command already exists in $config_file, skipping write."
+        print_message info "${MUTED}PATH already configured in $config_file${NC}"
     elif [[ -w $config_file ]]; then
-        echo -e "\n# opencode" >> "$config_file"
+        echo -e "\n# cz-cli" >> "$config_file"
         echo "$command" >> "$config_file"
-        print_message info "${MUTED}Successfully added ${NC}opencode ${MUTED}to \$PATH in ${NC}$config_file"
+        print_message info "${MUTED}Added ${NC}cz-cli ${MUTED}to \$PATH in ${NC}$config_file"
     else
         print_message warning "Manually add the directory to $config_file (or similar):"
         print_message info "  $command"
@@ -388,14 +358,10 @@ case $current_shell in
     bash)
         config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
     ;;
-    ash)
-        config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
-    ;;
-    sh)
+    ash|sh)
         config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
     ;;
     *)
-        # Default case if none of the above matches
         config_files="$HOME/.bashrc $HOME/.bash_profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
     ;;
 esac
@@ -417,22 +383,8 @@ if [[ "$no_modify_path" != "true" ]]; then
             fish)
                 add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
             ;;
-            zsh)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-            ;;
-            bash)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-            ;;
-            ash)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-            ;;
-            sh)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
-            ;;
             *)
-                export PATH=$INSTALL_DIR:$PATH
-                print_message warning "Manually add the directory to $config_file (or similar):"
-                print_message info "  export PATH=$INSTALL_DIR:\$PATH"
+                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
             ;;
         esac
     fi
@@ -443,18 +395,16 @@ if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
     print_message info "Added $INSTALL_DIR to \$GITHUB_PATH"
 fi
 
-echo -e ""
-echo -e "${MUTED}                    ${NC}             ▄     "
-echo -e "${MUTED}█▀▀█ █▀▀█ █▀▀█ █▀▀▄ ${NC}█▀▀▀ █▀▀█ █▀▀█ █▀▀█"
-echo -e "${MUTED}█░░█ █░░█ █▀▀▀ █░░█ ${NC}█░░░ █░░█ █░░█ █▀▀▀"
-echo -e "${MUTED}▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ${NC}▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"
-echo -e ""
-echo -e ""
-echo -e "${MUTED}OpenCode includes free models, to start:${NC}"
-echo -e ""
-echo -e "cd <project>  ${MUTED}# Open directory${NC}"
-echo -e "opencode      ${MUTED}# Run command${NC}"
-echo -e ""
-echo -e "${MUTED}For more information visit ${NC}https://opencode.ai/docs"
-echo -e ""
-echo -e ""
+echo ""
+echo -e "${CYAN}  ╭─────────────────────────────────────╮${NC}"
+echo -e "${CYAN}  │${NC}  ${GREEN}✓${NC} cz-cli ${MUTED}v${specific_version}${NC} installed          ${CYAN}│${NC}"
+echo -e "${CYAN}  ╰─────────────────────────────────────╯${NC}"
+echo ""
+echo -e "  ${MUTED}Get started:${NC}"
+echo ""
+echo -e "  cz-cli setup          ${MUTED}# Configure connection${NC}"
+echo -e "  cz-cli status         ${MUTED}# Verify connection${NC}"
+echo -e "  cz-cli agent run \"…\"  ${MUTED}# Ask AI to operate warehouse${NC}"
+echo ""
+echo -e "  ${MUTED}Docs: ${NC}https://www.yunqi.tech/documents/setup_cz_cli"
+echo ""
