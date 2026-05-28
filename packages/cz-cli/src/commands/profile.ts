@@ -102,7 +102,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 name,
                 auth_mode: pat ? "pat" : "password",
                 pat: argv["show-secret"] ? pat : maskSecret(pat),
-                username: pat ? "" : String(p.username ?? ""),
+                username: String(p.username ?? ""),
                 service: String(p.service ?? ""),
                 protocol: String(p.protocol ?? "https"),
                 instance: String(p.instance ?? ""),

@@ -48,23 +48,6 @@ The following companion skills are bundled with `cz-cli`:
 
 **If no row matches**: proceed with cz-cli commands directly.
 
-### Rule 2.1 — MUST consult lakehouse-doc skill for SQL commands
-
-When the user request involves any of the following, **MUST** consult **lakehouse-doc** skill references before answering or generating SQL:
-
-- Writing, modifying, or optimizing SQL statements (DDL / DML / DQL)
-- Asking about ClickZetta Lakehouse SQL dialect syntax, keywords, or function usage
-- Using data types, type casting, or datetime formats
-- Creating or altering tables, views, materialized views, dynamic tables, external tables
-- Data import/export (COPY INTO, PUT/GET, BulkLoad, Pipe)
-- Access control (GRANT / REVOKE), roles, permissions
-- VCluster configuration and management
-- Index creation and usage (inverted index, BloomFilter, vector index)
-- AI functions, vector search, semantic views
-- Information Schema system view queries
-
-**Rationale**: ClickZetta Lakehouse SQL dialect differs from standard SQL and other databases. Relying on general knowledge may produce incorrect syntax. Consulting lakehouse-doc significantly improves answer accuracy and confidence.
-
 ### Rule 3 — Development ends at save; execution requires separate authorization
 
 When the user says "develop", "write", "create", or "modify" a task, the work is **complete once the script is saved successfully**.

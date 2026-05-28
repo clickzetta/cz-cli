@@ -24,7 +24,7 @@ export function formatTable(columns: string[], rows: unknown[][]): string {
     return formatPretty({ columns, rows })
   }
 
-  const colWidths: number[] = columns.map((c) => c.length)
+  const colWidths: number[] = columns.map((c) => displayWidth(c))
 
   const strRows: string[][] = []
   for (const row of rows) {
@@ -32,19 +32,59 @@ export function formatTable(columns: string[], rows: unknown[][]): string {
     for (let i = 0; i < columns.length; i++) {
       const s = formatFlatCell(row[i])
       sr.push(s)
-      colWidths[i] = Math.max(colWidths[i], s.length)
+      colWidths[i] = Math.max(colWidths[i], displayWidth(s))
     }
     strRows.push(sr)
   }
 
   const lines: string[] = []
-  lines.push(columns.map((c, i) => c.padEnd(colWidths[i])).join(" | "))
+  lines.push(columns.map((c, i) => padToWidth(c, colWidths[i])).join(" | "))
   lines.push(colWidths.map((w) => "-".repeat(w)).join("-+-"))
   for (const sr of strRows) {
-    lines.push(sr.map((s, i) => s.padEnd(colWidths[i])).join(" | "))
+    lines.push(sr.map((s, i) => padToWidth(s, colWidths[i])).join(" | "))
   }
 
   return lines.join("\n")
+}
+
+/**
+ * Compute the terminal display width of a string, treating East Asian wide
+ * and full-width characters (CJK ideographs, Hangul, kana, etc.) as 2 columns
+ * and most others as 1. Control characters contribute 0.
+ */
+function displayWidth(s: string): number {
+  let w = 0
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!
+    if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) continue
+    w += isWideCodePoint(cp) ? 2 : 1
+  }
+  return w
+}
+
+function padToWidth(s: string, width: number): string {
+  const w = displayWidth(s)
+  return w >= width ? s : s + " ".repeat(width - w)
+}
+
+function isWideCodePoint(cp: number): boolean {
+  return (
+    (cp >= 0x1100 && cp <= 0x115F) || // Hangul Jamo
+    (cp >= 0x2329 && cp <= 0x232A) || // angle brackets
+    (cp >= 0x2E80 && cp <= 0x303E) || // CJK radicals, kangxi, etc.
+    (cp >= 0x3041 && cp <= 0x33FF) || // hiragana/katakana/CJK symbols
+    (cp >= 0x3400 && cp <= 0x4DBF) || // CJK Extension A
+    (cp >= 0x4E00 && cp <= 0x9FFF) || // CJK Unified Ideographs
+    (cp >= 0xA000 && cp <= 0xA4CF) || // Yi
+    (cp >= 0xAC00 && cp <= 0xD7A3) || // Hangul Syllables
+    (cp >= 0xF900 && cp <= 0xFAFF) || // CJK Compatibility Ideographs
+    (cp >= 0xFE30 && cp <= 0xFE4F) || // CJK Compatibility Forms
+    (cp >= 0xFF00 && cp <= 0xFF60) || // Fullwidth Forms
+    (cp >= 0xFFE0 && cp <= 0xFFE6) || // Fullwidth signs
+    (cp >= 0x1F300 && cp <= 0x1F9FF) || // Misc symbols & pictographs / emoji
+    (cp >= 0x20000 && cp <= 0x2FFFD) || // CJK Ext B-F
+    (cp >= 0x30000 && cp <= 0x3FFFD) // CJK Ext G
+  )
 }
 
 export function formatTableNoHeader(columns: string[], rows: unknown[][]): string {

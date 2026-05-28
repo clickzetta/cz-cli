@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, unwatchFile, watchFile, writeFileSync } from "fs"
 import os from "os"
 import path from "path"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
@@ -78,6 +78,14 @@ export function resolveCurrentProfileLabel(): string {
   } catch {
     return "default"
   }
+}
+
+export function watchCurrentProfileLabel(onChange: (label: string) => void, interval = 500): () => void {
+  if (process.env.CZ_PROFILE) return () => {}
+  const profilesPath = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta", "profiles.toml")
+  const listener = () => onChange(resolveCurrentProfileLabel())
+  watchFile(profilesPath, { interval }, listener)
+  return () => unwatchFile(profilesPath, listener)
 }
 
 export function normalizeLlmBaseUrl(provider: string, url: string | undefined): string | undefined {

@@ -36,3 +36,23 @@ describe("flat output formatters preserve null vs empty string", () => {
     expect(formatTable(["a", "b", "c", "d"], [["NULL", "true", "123", "a"]])).toContain('"NULL" | "true" | "123" | a')
   })
 })
+
+describe("formatTable column widths", () => {
+  test("aligns CJK wide characters using terminal display width", () => {
+    const out = formatTable(["中文列", "b", "c"], [["foo", "x", "y"]])
+    const lines = out.split("\n")
+    // "中文列" occupies 6 cells, so col 1 width = 6. Other cols stay at width 1.
+    expect(lines[0]).toBe("中文列 | b | c")
+    // Separator joins "-".repeat(width) with "-+-", which yields N+1 dashes around each +.
+    expect(lines[1]).toBe("-------+---+--")
+    expect(lines[2]).toBe("foo    | x | y")
+  })
+
+  test("emoji counted as 2 cells wide", () => {
+    const out = formatTable(["x"], [["😀"]])
+    const lines = out.split("\n")
+    expect(lines[0]).toBe("x ")
+    expect(lines[1]).toBe("--")
+    expect(lines[2]).toBe("😀")
+  })
+})

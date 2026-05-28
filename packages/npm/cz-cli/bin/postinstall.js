@@ -32,6 +32,23 @@ function cleanupOutdatedBinaries() {
   } catch (e) {
     // Permission denied or other error — skip silently
   }
+
+  // Detect pip-installed cz-cli and warn user to uninstall it
+  try {
+    const result = execFileSync("pip3", ["show", "cz-cli"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    if (result && result.includes("Name: cz-cli")) {
+      process.stderr.write(
+        "\n⚠️  Detected a pip-installed cz-cli that may conflict with this npm installation.\n" +
+        "   Please remove it with: pip3 uninstall cz-cli\n\n",
+      );
+    }
+  } catch (e) {
+    // pip3 not found or command failed — skip silently
+  }
 }
 
 async function main() {

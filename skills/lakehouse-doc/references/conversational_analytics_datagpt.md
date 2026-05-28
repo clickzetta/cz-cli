@@ -1,1 +1,0 @@
-Lakehouse DataGPT 是新一代对话式数据分析工具，基于云原生 Lakehouse 架构打造。它结合了大语言模型（LLM）的自然语言理解能力与 Lakehouse 企业级数据引擎的处理能力，将数据分析转化为直观的对话体验。通过DataGPT，即使是非技术背景的业务人员，也能轻松探索数据价值，驱动数据智能决策。详细使用方法请参考[对话式AI 数据分析工具 DataGPT ](datagpt_intro.md)

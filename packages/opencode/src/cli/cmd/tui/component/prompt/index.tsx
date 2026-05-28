@@ -37,7 +37,7 @@ import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { useArgs } from "@tui/context/args"
-import { resolveCurrentProfileLabel } from "@/config/profiles-llm"
+import { resolveCurrentProfileLabel, watchCurrentProfileLabel } from "@/config/profiles-llm"
 
 export type PromptProps = {
   sessionID?: string
@@ -99,7 +99,7 @@ export function Prompt(props: PromptProps) {
   const shell = createMemo(() => props.placeholders?.shell ?? [])
   const [auto, setAuto] = createSignal<AutocompleteRef>()
   const currentProviderLabel = createMemo(() => local.model.parsed().provider)
-  const currentProfileLabel = resolveCurrentProfileLabel()
+  const [currentProfileLabel, setCurrentProfileLabel] = createSignal(resolveCurrentProfileLabel())
   const hasRightContent = createMemo(() => Boolean(props.right))
 
   function promptModelWarning() {
@@ -117,6 +117,12 @@ export function Prompt(props: PromptProps) {
   const pasteStyleId = syntax().getStyleId("extmark.paste")!
   let promptPartTypeId = 0
   const event = useEvent()
+
+  const syncCurrentProfileLabel = (label = resolveCurrentProfileLabel()) =>
+    setCurrentProfileLabel((prev) => (prev === label ? prev : label))
+
+  onCleanup(watchCurrentProfileLabel(syncCurrentProfileLabel))
+  onCleanup(event.on("global.disposed", () => syncCurrentProfileLabel()))
 
   event.on(TuiEvent.PromptAppend.type, (evt) => {
     if (!input || input.isDestroyed) return
@@ -1122,7 +1128,7 @@ export function Prompt(props: PromptProps) {
                           </text>
                           <text fg={theme.textMuted}>{currentProviderLabel()}</text>
                           <text fg={theme.textMuted}>·</text>
-                          <text fg={theme.accent}>{currentProfileLabel}</text>
+                          <text fg={theme.accent}>{currentProfileLabel()}</text>
                           <Show when={showVariant()}>
                             <text fg={theme.textMuted}>·</text>
                             <text>

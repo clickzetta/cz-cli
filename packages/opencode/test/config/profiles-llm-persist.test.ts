@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { parse as parseToml } from "smol-toml"
-import { persistDefaultLlmModel, setDefaultLlmModel } from "../../src/config/profiles-llm"
+import { persistDefaultLlmModel, setDefaultLlmModel, watchCurrentProfileLabel } from "../../src/config/profiles-llm"
 
 describe("setDefaultLlmModel", () => {
   test("updates the selected default_llm entry model", () => {
@@ -101,5 +102,48 @@ model = "glm-5.1"
 
     expect(changed).toBe(true)
     expect(await fs.readFile(profilesPath, "utf-8")).toContain('model = "glm-5.2"')
+  })
+
+  test("watches default_profile changes from profiles.toml", async () => {
+    const clickzettaDir = path.join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta")
+    const profilesPath = path.join(clickzettaDir, "profiles.toml")
+    await fs.mkdir(clickzettaDir, { recursive: true })
+    await fs.writeFile(
+      profilesPath,
+      [
+        'default_profile = "default"',
+        "",
+        "[profiles.default]",
+        'workspace = "quick_start"',
+        "",
+      ].join("\n"),
+    )
+
+    const seen: string[] = []
+    const stop = watchCurrentProfileLabel((label) => {
+      seen.push(label)
+    }, 10)
+
+    try {
+      await fs.writeFile(
+        profilesPath,
+        [
+          'default_profile = "uat_new"',
+          "",
+          "[profiles.uat_new]",
+          'workspace = "quick_start"',
+          "",
+        ].join("\n"),
+      )
+
+      for (let i = 0; i < 50; i++) {
+        if (seen.includes("uat_new")) break
+        await sleep(20)
+      }
+
+      expect(seen).toContain("uat_new")
+    } finally {
+      stop()
+    }
   })
 })

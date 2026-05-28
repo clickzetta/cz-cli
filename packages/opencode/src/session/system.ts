@@ -11,25 +11,29 @@ import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
+import PROMPT_CZ_CLI_INNER from "./prompt/cz-cli-inner.txt"
 import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
 
 export function provider(model: Provider.Model) {
+  let base: string
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
-    return [PROMPT_BEAST]
-  if (model.api.id.includes("gpt")) {
+    base = PROMPT_BEAST
+  else if (model.api.id.includes("gpt")) {
     if (model.api.id.includes("codex")) {
-      return [PROMPT_CODEX]
+      base = PROMPT_CODEX
+    } else {
+      base = PROMPT_GPT
     }
-    return [PROMPT_GPT]
   }
-  if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
-  if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
-  if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
-  if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
-  return [PROMPT_DEFAULT]
+  else if (model.api.id.includes("gemini-")) base = PROMPT_GEMINI
+  else if (model.api.id.includes("claude")) base = PROMPT_ANTHROPIC
+  else if (model.api.id.toLowerCase().includes("trinity")) base = PROMPT_TRINITY
+  else if (model.api.id.toLowerCase().includes("kimi")) base = PROMPT_KIMI
+  else base = PROMPT_DEFAULT
+  return [base, PROMPT_CZ_CLI_INNER]
 }
 
 export interface Interface {
