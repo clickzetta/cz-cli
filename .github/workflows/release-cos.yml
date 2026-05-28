@@ -139,23 +139,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          install_args=(--frozen-lockfile --no-progress --network-concurrency 16)
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            install_args+=(--linker hoisted --ignore-scripts)
-          fi
-
           attempt=1
           while [ "$attempt" -le 3 ]; do
             echo "bun install attempt $attempt on $RUNNER_OS"
-            retry_args=()
             if [ "$attempt" -gt 1 ]; then
               echo "Clearing partial install state before retry..."
               rm -rf node_modules "$HOME/.bun/install/cache"
-              retry_args+=(--force --no-cache)
             fi
 
-            if bun install "${install_args[@]}" "${retry_args[@]}"; then
-              exit 0
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              if [ "$attempt" -gt 1 ]; then
+                if bun install --frozen-lockfile --no-progress --network-concurrency 16 --linker hoisted --ignore-scripts --force --no-cache; then
+                  exit 0
+                fi
+              elif bun install --frozen-lockfile --no-progress --network-concurrency 16 --linker hoisted --ignore-scripts; then
+                exit 0
+              fi
+            else
+              if [ "$attempt" -gt 1 ]; then
+                if bun install --frozen-lockfile --no-progress --network-concurrency 16 --force --no-cache; then
+                  exit 0
+                fi
+              elif bun install --frozen-lockfile --no-progress --network-concurrency 16; then
+                exit 0
+              fi
             fi
 
             if [ "$attempt" -eq 3 ]; then
