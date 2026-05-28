@@ -275,7 +275,7 @@ export const RunCommand = cmd({
     }
 
     async function execute(sdk: OpencodeClient): Promise<string | undefined> {
-      const isAsync = args.async || (!process.stdout.isTTY && (args.format === "a2a" || args.format === "json"))
+      const isAsync = args.async || !process.stdout.isTTY || args.format === "a2a"
 
       if (isAsync) {
         const agent = await (async () => {
