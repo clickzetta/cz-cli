@@ -449,6 +449,11 @@ const cases: HelpCase[] = [
     expectOptions: ["sessionID"],
   },
   {
+    args: ["agent", "session", "status", "--help"],
+    expectHeader: "cz-cli agent session status",
+    expectOptions: ["sessionID", "--wait", "timeout"],
+  },
+  {
     args: ["agent", "export", "--help"],
     expectHeader: "cz-cli agent export",
     expectOptions: ["sessionID", "--sanitize"],

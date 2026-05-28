@@ -72,7 +72,16 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .command(
               "status <sessionID>",
               "Get session status — busy/retry returns progress, idle returns result, on failure returns error",
-              (s) => s.positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to check" }),
+              (s) =>
+                s
+                  .positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to check" })
+                  .option("wait", {
+                    type: "boolean",
+                    default: false,
+                    describe: "Block until idle, streaming deduplicated NDJSON progress events; returns timeout after long periods with no new progress",
+                  })
+                  .example("cz-cli agent session status <sessionID>", "One-shot snapshot")
+                  .example("cz-cli agent session status <sessionID> --wait", "Block, stream progress as NDJSON, exit on idle or timeout"),
               () => {},
             )
             .demandCommand(1, "Missing subcommand for 'agent session'. Available: list, delete, status")
@@ -165,7 +174,8 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .example("cz-cli agent session list", "List all sessions")
       .example("cz-cli agent session list -n 10 --format json", "Recent sessions as JSON")
       .example("cz-cli agent session delete <sessionID>", "Delete a session")
-      .example("cz-cli agent session status <sessionID>", "Check if session is idle/busy (async polling)")
+      .example("cz-cli agent session status <sessionID>", "Check if session is idle/busy (one-shot snapshot)")
+      .example("cz-cli agent session status <sessionID> --wait", "Block until idle or timeout, streaming deduplicated NDJSON progress")
       .example("cz-cli agent run \"analyze\" --async --format a2a", "Async submit, returns session_id immediately")
       .example("cz-cli agent export <sessionID>", "Export session as JSON")
       .example("cz-cli agent stats --days 7", "Token usage for last 7 days")

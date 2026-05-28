@@ -303,6 +303,67 @@ describe("Session.Service.latestMessage", () => {
       },
     })
   })
+
+  test("latest assistant message may be finished with tool-calls while the session still has more work to do", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await svc.create({})
+        const userID = await addUser(session.id)
+        const asstID = MessageID.ascending()
+
+        await svc.updateMessage({
+          id: asstID,
+          sessionID: session.id,
+          role: "assistant",
+          time: { created: Date.now() + 1000, completed: Date.now() + 2000 },
+          parentID: userID,
+          modelID: "test",
+          providerID: "test",
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/", root: "/" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          finish: "tool-calls",
+        } as unknown as MessageV2.Info)
+        await svc.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: asstID,
+          type: "text",
+          text: "Now let me read the test files:",
+        })
+        await svc.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: asstID,
+          type: "tool",
+          callID: "call_read",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { filePath: "/tmp/example.ts" },
+            output: "example",
+            title: "Read example.ts",
+            metadata: {},
+            time: { start: 1, end: 2 },
+          },
+        } as unknown as MessageV2.Part)
+
+        const result = await svc.latestMessage(session.id)
+        expect(result).toBeDefined()
+        const msg = result!
+        expect(msg.info.role).toBe("assistant")
+        if (msg.info.role === "assistant") {
+          expect(msg.info.finish).toBe("tool-calls")
+        }
+        expect(msg.parts.some((part) => part.type === "text")).toBe(true)
+
+        await svc.remove(session.id)
+      },
+    })
+  })
 })
 
 describe("Session.Service.recentParts", () => {

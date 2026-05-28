@@ -153,8 +153,11 @@ export function describePart(part: MessageV2.Part): PartDescription {
   switch (part.type) {
     case "tool":
       return describeTool(part)
-    case "text":
-      return { icon: "✏", title: "Generating response..." }
+    case "text": {
+      const text = part.text.trim()
+      const preview = text.length > 96 ? text.slice(0, 93) + "..." : text
+      return { icon: "✏", title: preview || "Generating response..." }
+    }
     case "reasoning":
       return { icon: "💭", title: "Thinking..." }
     case "step-start":

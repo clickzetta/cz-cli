@@ -336,7 +336,7 @@ describe("describePart", () => {
   test("text part", () => {
     const d = describePart(part<MessageV2.TextPart>({ type: "text", text: "hello" }))
     expect(d.icon).toBe("✏")
-    expect(d.title).toBe("Generating response...")
+    expect(d.title).toBe("hello")
   })
 
   test("reasoning part", () => {
