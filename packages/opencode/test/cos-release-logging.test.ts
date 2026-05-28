@@ -81,4 +81,64 @@ describe("cos release logging", () => {
     expect(lines.some((line) => line.includes("upload complete"))).toBe(true)
     expect(lines.filter((line) => line.includes("progress")).length).toBe(2)
   })
+
+  test("uploadAllArchives streams per-platform logs before uploads finish", async () => {
+    const Release = await import("../../../scripts/cos-release.mjs")
+    const lines: string[] = []
+    let firstUploadResolved = false
+
+    const platforms = await Release.uploadAllArchives(
+      {
+        dryRun: false,
+        client: {},
+        Bucket: "bucket",
+        Region: "region",
+      },
+      [
+        {
+          platform: "darwin-arm64",
+          archiveName: "cz-cli-1.2.3-darwin-arm64.zip",
+          archivePath: "/tmp/cz-cli-1.2.3-darwin-arm64.zip",
+          targetKey: "cz-cli-releases/1.2.3/darwin-arm64/cz-cli-1.2.3-darwin-arm64.zip",
+          format: "zip",
+          size: 10,
+          sha256: "a".repeat(64),
+        },
+        {
+          platform: "darwin-x64",
+          archiveName: "cz-cli-1.2.3-darwin-x64.zip",
+          archivePath: "/tmp/cz-cli-1.2.3-darwin-x64.zip",
+          targetKey: "cz-cli-releases/1.2.3/darwin-x64/cz-cli-1.2.3-darwin-x64.zip",
+          format: "zip",
+          size: 20,
+          sha256: "b".repeat(64),
+        },
+      ],
+      {
+        uploadFn: async ({ key, log }: { key: string; log: (line: string) => void }) => {
+          log(`  → upload start: ${key}`)
+          if (key.includes("darwin-arm64")) {
+            await new Promise((resolve) => setTimeout(resolve, 20))
+            firstUploadResolved = true
+          } else {
+            expect(lines.some((line) => line.includes("darwin-arm64"))).toBe(true)
+            expect(firstUploadResolved).toBe(false)
+          }
+          return {
+            key,
+            url: `https://example.com/${key}`,
+            size: key.includes("darwin-arm64") ? 10 : 20,
+            sha256: key.includes("darwin-arm64") ? "a".repeat(64) : "b".repeat(64),
+          }
+        },
+        log: (line: string) => lines.push(line),
+        now: () => new Date("2026-05-28T11:15:15.402Z"),
+      },
+    )
+
+    expect(lines.some((line) => line.includes("uploading darwin-arm64"))).toBe(true)
+    expect(lines.some((line) => line.includes("uploading darwin-x64"))).toBe(true)
+    expect(lines.some((line) => line.includes("upload start: cz-cli-releases/1.2.3/darwin-arm64"))).toBe(true)
+    expect(Object.keys(platforms).sort()).toEqual(["darwin-arm64", "darwin-x64"])
+  })
 })

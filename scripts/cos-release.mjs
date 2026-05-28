@@ -17,6 +17,7 @@
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import {
   Cache,
   createClient,
@@ -171,11 +172,14 @@ function key(...parts) {
   return [PATH_PREFIX, ...parts].join("/")
 }
 
-async function uploadAllArchives(ctx, builds) {
+export async function uploadAllArchives(ctx, builds, options = {}) {
+  const log = options.log ?? console.log
+  const now = options.now ?? (() => new Date())
+  const uploadFn = options.uploadFn ?? uploadFile
   const platforms = {}
   if (ctx.dryRun) {
     for (const b of builds) {
-      console.log(`[dry-run] upload ${b.archivePath} -> ${b.targetKey}`)
+      log(`[dry-run] upload ${b.archivePath} -> ${b.targetKey}`)
       platforms[b.platform] = {
         archive: b.archiveName,
         format: b.format,
@@ -189,8 +193,8 @@ async function uploadAllArchives(ctx, builds) {
 
   const results = await Promise.all(
     builds.map(async (b) => {
-      const logs = []
-      const result = await uploadFile({
+      log(`[${now().toISOString()}] uploading ${b.platform}: ${b.archiveName} -> ${b.targetKey}`)
+      const result = await uploadFn({
         client: ctx.client,
         Bucket: ctx.Bucket,
         Region: ctx.Region,
@@ -200,16 +204,14 @@ async function uploadAllArchives(ctx, builds) {
         cacheControl: Cache.immutable,
         size: b.size,
         sha256: b.sha256,
-        log: (msg) => logs.push(`[${new Date().toISOString()}] ${msg}`),
+        log: (msg) => log(`[${now().toISOString()}] [${b.platform}] ${msg}`),
       })
-      return { platform: b.platform, archiveName: b.archiveName, result, logs }
+      return { platform: b.platform, archiveName: b.archiveName, result }
     }),
   )
 
-  const _log = console.log
   for (const r of results) {
-    for (const line of r.logs) _log(line)
-    console.log(`  ✓ ${r.platform} (${(r.result.size / 1024 / 1024).toFixed(1)} MB)`)
+    log(`  ✓ ${r.platform} (${(r.result.size / 1024 / 1024).toFixed(1)} MB)`)
     platforms[r.platform] = {
       archive: r.archiveName,
       format: r.result.format ?? platformArchiveExt(r.platform),
@@ -460,7 +462,9 @@ async function main() {
   console.log("Done.")
 }
 
-main().catch((err) => {
-  console.error(err.stack ?? err.message ?? err)
-  process.exit(1)
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err.stack ?? err.message ?? err)
+    process.exit(1)
+  })
+}
