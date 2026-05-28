@@ -40,7 +40,11 @@ jobs:
       - name: Configure local Node headers for node-gyp
         shell: bash
         run: |
-          echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(process.execPath)")" >> "$GITHUB_ENV"
+          else
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          fi
 
       - name: Install root devDependencies (only what cos scripts need)
         env:

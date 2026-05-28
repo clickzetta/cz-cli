@@ -77,10 +77,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: linux
-            runner: ubuntu-latest
-          - os: linux
-            runner: ubuntu-24.04-arm
+          # Temporarily disable Ubuntu release builds to avoid wasting CI resources
+          # while we stabilize the Windows/macOS release install path.
+          # - os: linux
+          #   runner: ubuntu-latest
+          # - os: linux
+          #   runner: ubuntu-24.04-arm
           - os: darwin
             runner: macos-latest
           - os: darwin
@@ -123,7 +125,11 @@ jobs:
       - name: Configure local Node headers for node-gyp
         shell: bash
         run: |
-          echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(process.execPath)")" >> "$GITHUB_ENV"
+          else
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          fi
 
       - name: Install dependencies
         timeout-minutes: 30
@@ -174,7 +180,9 @@ jobs:
 
   publish-npm:
     needs: [resolve-release, build]
-    if: needs.resolve-release.outputs.is_stable == 'true'
+    # Temporarily disabled while Ubuntu release builds are paused to avoid
+    # wasting CI resources on a job that requires Linux artifacts.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -222,6 +230,9 @@ jobs:
 
   publish-cos:
     needs: [resolve-release, build]
+    # Temporarily disabled while Ubuntu release builds are paused to avoid
+    # publishing incomplete manifests without Linux artifacts.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -238,7 +249,11 @@ jobs:
       - name: Configure local Node headers for node-gyp
         shell: bash
         run: |
-          echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(process.execPath)")" >> "$GITHUB_ENV"
+          else
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          fi
 
       - name: Install dependencies
         env:
