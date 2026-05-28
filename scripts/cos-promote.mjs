@@ -4,7 +4,7 @@
  *
  * Usage:
  *   bun run scripts/cos-promote.mjs --channel stable --version 0.3.62
- *   bun run scripts/cos-promote.mjs --channel latest --version 0.3.62
+ *   bun run scripts/cos-promote.mjs --channel nightly --version 0.3.62
  *
  * Env: COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION
  *      COS_PATH_PREFIX (optional, default "cz-cli-releases")
@@ -34,8 +34,8 @@ function parseArgs(argv) {
         throw new Error(`Unknown flag: ${flag}`)
     }
   }
-  if (!args.channel || !["stable", "latest"].includes(args.channel)) {
-    throw new Error("--channel must be 'stable' or 'latest'")
+  if (!args.channel || !["stable", "nightly"].includes(args.channel)) {
+    throw new Error("--channel must be 'stable' or 'nightly'")
   }
   if (!args.version || !VERSION_RE.test(args.version)) {
     throw new Error(`Invalid --version: ${args.version}`)

@@ -8,7 +8,7 @@
  *     --dist packages/opencode/dist \
  *     --git-sha $GITHUB_SHA \
  *     --build-date 2026-05-27T10:00:00Z \
- *     [--no-promote-latest] [--promote-stable] [--retain 10] [--dry-run]
+ *     [--no-promote-nightly] [--promote-stable] [--retain 10] [--dry-run]
  *
  * Env: COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION
  *      COS_PATH_PREFIX (optional, default "cz-cli-releases")
@@ -66,7 +66,7 @@ function parseArgs(argv) {
     dist: undefined,
     gitSha: undefined,
     buildDate: undefined,
-    promoteLatest: true,
+    promoteNightly: true,
     promoteStable: false,
     retain: 10,
     dryRun: false,
@@ -90,11 +90,11 @@ function parseArgs(argv) {
       case "--retain":
         args.retain = Number(next())
         break
-      case "--promote-latest":
-        args.promoteLatest = true
+      case "--promote-nightly":
+        args.promoteNightly = true
         break
-      case "--no-promote-latest":
-        args.promoteLatest = false
+      case "--no-promote-nightly":
+        args.promoteNightly = false
         break
       case "--promote-stable":
         args.promoteStable = true
@@ -181,7 +181,7 @@ function metaKey(channel, ...parts) {
 
 function releaseChannel(ctx) {
   if (ctx.promoteStable) return "stable"
-  return "latest"
+  return "nightly"
 }
 
 function shellQuote(value) {
@@ -194,7 +194,6 @@ function psQuote(value) {
 
 export async function uploadAllArchives(ctx, builds, options = {}) {
   const log = options.log ?? console.log
-  const now = options.now ?? (() => new Date())
   const uploadFn = options.uploadFn ?? uploadFile
   const platforms = {}
   if (ctx.dryRun) {
@@ -213,7 +212,7 @@ export async function uploadAllArchives(ctx, builds, options = {}) {
 
   const results = await Promise.all(
     builds.map(async (b) => {
-      log(`[${now().toISOString()}] uploading ${b.platform}: ${b.archiveName} -> ${b.targetKey}`)
+      log(`uploading ${b.platform}: ${b.archiveName} -> ${b.targetKey}`)
       const result = await uploadFn({
         client: ctx.client,
         Bucket: ctx.Bucket,
@@ -225,7 +224,7 @@ export async function uploadAllArchives(ctx, builds, options = {}) {
         acl: "private",
         size: b.size,
         sha256: b.sha256,
-        log: (msg) => log(`[${now().toISOString()}] [${b.platform}] ${msg}`),
+        log: (msg) => log(`[${b.platform}] ${msg}`),
       })
       return { platform: b.platform, archiveName: b.archiveName, result }
     }),
@@ -578,7 +577,7 @@ async function updateVersions(ctx) {
       })
   const prior = (existing?.versions ?? []).filter((v) => v.version !== ctx.version)
   const channelTags = []
-  if (ctx.promoteLatest) channelTags.push("latest")
+  if (ctx.promoteNightly) channelTags.push("nightly")
   if (ctx.promoteStable) channelTags.push("stable")
   const next = [
     {
@@ -593,7 +592,7 @@ async function updateVersions(ctx) {
   for (const entry of next) {
     if (entry.version === ctx.version) continue
     entry.channel_tags = entry.channel_tags?.filter((t) => {
-      if (t === "latest" && ctx.promoteLatest) return false
+      if (t === "nightly" && ctx.promoteNightly) return false
       if (t === "stable" && ctx.promoteStable) return false
       return true
     }) ?? []
@@ -602,10 +601,10 @@ async function updateVersions(ctx) {
   const doc = {
     updated_at: ctx.buildDate,
     stable: existing?.stable,
-    latest: existing?.latest,
+    nightly: existing?.nightly,
     versions: next,
   }
-  if (ctx.promoteLatest) doc.latest = ctx.version
+  if (ctx.promoteNightly) doc.nightly = ctx.version
   if (ctx.promoteStable) doc.stable = ctx.version
 
   if (ctx.dryRun) {
@@ -628,7 +627,7 @@ async function updateVersions(ctx) {
 async function retentionCleanup(ctx, versionsDoc) {
   const keep = new Set(versionsDoc.versions.map((v) => v.version))
   if (versionsDoc.stable) keep.add(versionsDoc.stable)
-  if (versionsDoc.latest) keep.add(versionsDoc.latest)
+  if (versionsDoc.nightly) keep.add(versionsDoc.nightly)
   keep.add(ctx.version)
 
   if (ctx.dryRun) {
@@ -684,7 +683,7 @@ function writeJobSummary(builds, manifest, versionsDoc) {
   lines.push(`- commit: \`${manifest.commit}\``)
   lines.push(`- buildDate: \`${manifest.buildDate}\``)
   lines.push(`- versions kept: ${versionsDoc.versions.length}`)
-  lines.push(`- channel pointers: stable=\`${versionsDoc.stable ?? "-"}\` latest=\`${versionsDoc.latest ?? "-"}\``)
+  lines.push(`- channel pointers: stable=\`${versionsDoc.stable ?? "-"}\` nightly=\`${versionsDoc.nightly ?? "-"}\``)
   lines.push("")
   lines.push("| Platform | Archive | Size | SHA256 |")
   lines.push("|---|---|---:|---|")
@@ -757,9 +756,9 @@ async function main() {
     "text/plain; charset=utf-8",
   )
 
-  if (args.promoteLatest) {
-    console.log("Updating /latest...")
-    await writeChannel(ctx, "latest")
+  if (args.promoteNightly) {
+    console.log("Updating /nightly...")
+    await writeChannel(ctx, "nightly")
   }
   if (args.promoteStable) {
     console.log("Updating /stable...")

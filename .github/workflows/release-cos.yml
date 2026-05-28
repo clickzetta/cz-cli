@@ -291,6 +291,6 @@ jobs:
             --build-date "${{ needs.resolve-release.outputs.build_date }}"
           )
           if [ "${{ needs.resolve-release.outputs.is_stable }}" = "true" ]; then
-            ARGS+=(--no-promote-latest --promote-stable)
+            ARGS+=(--no-promote-nightly --promote-stable)
           fi
           bun run scripts/cos-release.mjs "${ARGS[@]}"
