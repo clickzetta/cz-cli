@@ -24,10 +24,10 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .option("model", { alias: "m", type: "string", describe: "Model to use in the format of provider/model" })
             .option("agent", { type: "string", describe: "Agent to use" })
             .option("file", { alias: "f", type: "string", array: true, describe: "File(s) to attach to message" })
-            .option("format", { type: "string", choices: ["default", "json", "a2a"] as const, describe: "Output format (default=formatted, json=raw JSON events, a2a=agent-to-agent structured)" })
-            .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run (default: 150 in a2a mode)" })
+            .option("format", { type: "string", choices: ["default", "json"] as const, describe: "Output format (default=formatted, json=raw JSON events)" })
+            .option("timeout", { type: "number", describe: "LLM first-byte timeout in seconds for this run" })
             .option("thinking", { type: "boolean", default: false, describe: "Show thinking blocks" })
-            .option("async", { type: "boolean", describe: "Submit asynchronously and return session ID immediately (default in non-TTY with a2a/json format)" })
+            .option("async", { type: "boolean", describe: "Submit asynchronously and return session ID immediately (default in non-TTY)" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
             .option("profile", {
               type: "string",
@@ -37,7 +37,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .example("cz-cli agent run \"show tables\" --profile staging", "Run the agent against a non-default ClickZetta profile")
             .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
             .example("cz-cli agent run \"more details\" --continue", "Continue last session")
-            .example("cz-cli agent run \"analyze this schema\" --format a2a --timeout 150", "Subagent/automation with longer LLM timeout")
+            .example("cz-cli agent run \"analyze this schema\" --timeout 150", "Subagent/automation with longer LLM timeout")
         },
         () => {
           // This handler is never reached — cz-cli delegates runtime execution to the internal agent kernel.
@@ -176,7 +176,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .example("cz-cli agent session delete <sessionID>", "Delete a session")
       .example("cz-cli agent session status <sessionID>", "Check if session is idle/busy (one-shot snapshot)")
       .example("cz-cli agent session status <sessionID> --wait", "Block until idle or timeout, streaming deduplicated NDJSON progress")
-      .example("cz-cli agent run \"analyze\" --async --format a2a", "Async submit, returns session_id immediately")
+      .example("cz-cli agent run \"analyze\" --async", "Async submit, returns session_id immediately")
       .example("cz-cli agent export <sessionID>", "Export session as JSON")
       .example("cz-cli agent stats --days 7", "Token usage for last 7 days")
       .example("cz-cli agent llm --help", "See LLM onboarding, examples, and testing commands")

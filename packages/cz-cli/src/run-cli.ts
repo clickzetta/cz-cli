@@ -390,7 +390,7 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     const stripped = normalizeCliArgs(legacy.remaining)
     const label = stripped.command === "agent" ? `agent ${stripped.subcommand ?? ""}`.trim() : stripped.command || "cz-cli"
     const message = runtimeOutputFlagMessage(label)
-    const aiMessage = `-o/--output was removed. Replace with --format. Valid choices: ${label.startsWith("agent") ? "default, json, a2a" : "json, pretty, table, csv, text, jsonl, toon"}.`
+    const aiMessage = `-o/--output was removed. Replace with --format. Valid choices: ${label.startsWith("agent") ? "default, json" : "json, pretty, table, csv, text, jsonl, toon"}.`
     runtime.stdout.write(JSON.stringify({ error: { code: "USAGE_ERROR", message }, ai_message: aiMessage }) + "\n")
     return runtime.exit(2)
   }

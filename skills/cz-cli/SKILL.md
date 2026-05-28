@@ -81,10 +81,8 @@ cz-cli agent llm show
 **Step 2 — If active LLM is configured (kind != "none"), you MUST use agent run:**
 
 ```bash
-cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
+cz-cli agent run "<request>" --dangerously-skip-permissions
 ```
-
-Do NOT use direct cz-cli subcommands when an active LLM is available. Always delegate the full request to `cz-cli agent run`.
 
 The output includes a `session_id`. Use it to inspect the run:
 - `cz-cli agent session status <session_id>` — current state (`busy`/`retry` with `progress`, `idle` with `result`, or `error`)
@@ -99,27 +97,23 @@ Use direct commands for local setup and diagnostics even when agent path is avai
 With session continuity:
 
 ```bash
-cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions --session <session_id>
+cz-cli agent run "<request>" --dangerously-skip-permissions --session <session_id>
 ```
 
 Reuse `session_id` for follow-ups on the same topic. Omit `--session` to start fresh.
 
 ## Async mode (non-TTY / long-running tasks)
 
-When running in non-TTY environments (e.g. as a subagent from Claude Code) or for long-running tasks, use async mode to avoid blocking:
-
-### Submit asynchronously
+In non-TTY environments (e.g. as a subagent from Claude Code), async mode activates automatically — no `--async` flag needed. The command returns immediately with a session ID:
 
 ```bash
-cz-cli agent run "<request>" --async --format a2a --dangerously-skip-permissions
+cz-cli agent run "<request>" --dangerously-skip-permissions
 ```
 
 Returns immediately with a session ID:
 ```json
 {"session_id": "01JXF3K...", "status": "running", "message": "Session submitted asynchronously"}
 ```
-
-Note: In non-TTY with `--format a2a` or `--format json`, async mode activates automatically (no `--async` flag needed).
 
 ### Poll status
 
@@ -192,7 +186,7 @@ Part types in export:
 
 ```bash
 # 1. Submit
-SESSION=$(cz-cli agent run "complex analysis" --async --format a2a --dangerously-skip-permissions | jq -r '.session_id')
+SESSION=$(cz-cli agent run "complex analysis" --async --dangerously-skip-permissions | jq -r '.session_id')
 
 # 2. Poll until done, printing progress along the way
 while true; do
@@ -214,11 +208,11 @@ cz-cli agent export $SESSION
 
 ```bash
 # First turn
-SESSION=$(cz-cli agent run "describe sales table" --async --format a2a --dangerously-skip-permissions | jq -r '.session_id')
+SESSION=$(cz-cli agent run "describe sales table" --async --dangerously-skip-permissions | jq -r '.session_id')
 # ... wait for completion ...
 
 # Follow-up turn on same session
-cz-cli agent run "now show row counts" --async --format a2a --dangerously-skip-permissions --session $SESSION
+cz-cli agent run "now show row counts" --async --dangerously-skip-permissions --session $SESSION
 ```
 
 ### Important notes for async mode
@@ -232,7 +226,7 @@ cz-cli agent run "now show row counts" --async --format a2a --dangerously-skip-p
 When the user specifies an environment or profile (e.g. "use uat_test", "on the test instance"):
 
 ```bash
-cz-cli agent run "<request>" --profile uat_test --format a2a --dangerously-skip-permissions
+cz-cli agent run "<request>" --profile uat_test --dangerously-skip-permissions
 ```
 
 Available profiles: read `~/.clickzetta/profiles.toml` or run `cz-cli profile list`.

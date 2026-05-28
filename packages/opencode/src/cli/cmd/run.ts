@@ -96,9 +96,9 @@ export const RunCommand = cmd({
       })
       .option("format", {
         type: "string",
-        choices: ["default", "json", "a2a"],
+        choices: ["default", "json"],
         default: "default",
-        describe: "format: default (formatted), json (raw JSON events), or a2a (agent-to-agent: single JSON with session_id and result)",
+        describe: "format: default (formatted) or json (raw JSON events)",
       })
       .option("file", {
         alias: ["f"],
@@ -133,7 +133,7 @@ export const RunCommand = cmd({
       })
       .option("timeout", {
         type: "number",
-        describe: "LLM first-byte timeout in seconds for this run (defaults to 150 in --format a2a mode)",
+        describe: "LLM first-byte timeout in seconds for this run",
       })
       .option("thinking", {
         type: "boolean",
@@ -142,7 +142,7 @@ export const RunCommand = cmd({
       })
       .option("async", {
         type: "boolean",
-        describe: "submit asynchronously and return session ID immediately (default in non-TTY with a2a/json format)",
+        describe: "submit asynchronously and return session ID immediately (default in non-TTY)",
         default: false,
       })
       .option("dangerously-skip-permissions", {
@@ -170,8 +170,6 @@ export const RunCommand = cmd({
     }
     if (args.timeout !== undefined) {
       process.env.CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS = String(Math.round(args.timeout * 1000))
-    } else if (args.format === "a2a" && !process.env.CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS) {
-      process.env.CLICKZETTA_AGENT_PROVIDER_TIMEOUT_MS = "150000"
     }
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
@@ -275,7 +273,7 @@ export const RunCommand = cmd({
     }
 
     async function execute(sdk: OpencodeClient): Promise<string | undefined> {
-      const isAsync = args.async || !process.stdout.isTTY || args.format === "a2a"
+      const isAsync = args.async || !process.stdout.isTTY
 
       if (isAsync) {
         const agent = await (async () => {
@@ -335,7 +333,6 @@ export const RunCommand = cmd({
       }
 
       function emit(type: string, data: Record<string, unknown>) {
-        if (args.format === "a2a") return true
         if (args.format === "json") {
           process.stdout.write(JSON.stringify({ type, timestamp: Date.now(), sessionID, ...data }) + EOL)
           return true
@@ -343,7 +340,6 @@ export const RunCommand = cmd({
         return false
       }
 
-      const a2aTexts: string[] = []
 
       const events = await sdk.event.subscribe()
       let error: string | undefined
@@ -356,7 +352,6 @@ export const RunCommand = cmd({
             event.type === "message.updated" &&
             event.properties.info.role === "assistant" &&
             args.format !== "json" &&
-            args.format !== "a2a" &&
             toggles.get("start") !== true
           ) {
             UI.empty()
@@ -386,8 +381,7 @@ export const RunCommand = cmd({
               part.type === "tool" &&
               part.tool === "task" &&
               part.state.status === "running" &&
-              args.format !== "json" &&
-              args.format !== "a2a"
+              args.format !== "json"
             ) {
               if (toggles.get(part.id) === true) continue
               renderTool(part)
@@ -403,13 +397,7 @@ export const RunCommand = cmd({
             }
 
             if (part.type === "text" && part.time?.end) {
-              if (emit("text", { part })) {
-                if (args.format === "a2a") {
-                  const text = part.text.trim()
-                  if (text) a2aTexts.push(text)
-                }
-                continue
-              }
+              if (emit("text", { part })) continue
               const text = part.text.trim()
               if (!text) continue
               if (!process.stdout.isTTY) {
@@ -552,9 +540,7 @@ export const RunCommand = cmd({
 
       const loopDone = loop().catch((e) => {
         const msg = e instanceof Error ? e.message : String(e)
-        if (args.format === "a2a") {
-          process.stdout.write(JSON.stringify({ session_id: sessionID, result: "", error: msg }) + EOL)
-        } else if (args.format === "json") {
+        if (args.format === "json") {
           process.stdout.write(JSON.stringify({ type: "error", timestamp: Date.now(), sessionID, error: msg }) + EOL)
         } else {
           console.error(e)
@@ -583,12 +569,6 @@ export const RunCommand = cmd({
       }
 
       await loopDone
-
-      if (args.format === "a2a") {
-        const output: Record<string, unknown> = { session_id: sessionID, result: a2aTexts.join("\n") }
-        if (error) output.error = error
-        process.stdout.write(JSON.stringify(output) + EOL)
-      }
       return undefined
     }
 

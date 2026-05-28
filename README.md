@@ -70,10 +70,10 @@ cz-cli agent run "add a region column to sales" --session my-session
 
 ### AI Subagent Invocation
 
-AI agents call cz-cli with structured output via the `--format a2a` flag:
+AI agents call cz-cli in non-TTY environments, which automatically runs asynchronously:
 
 ```bash
-cz-cli agent run "<request>" --format a2a --dangerously-skip-permissions
+cz-cli agent run "<request>" --dangerously-skip-permissions
 ```
 
 Use `--session <id>` for multi-turn conversations on the same topic.
