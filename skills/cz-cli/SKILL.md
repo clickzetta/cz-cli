@@ -127,7 +127,7 @@ Note: In non-TTY with `--format a2a` or `--format json`, async mode activates au
 cz-cli agent session status <session_id> [--wait]
 ```
 
-Use `--wait` to block and stream progress until completion instead of polling manually.
+By default this returns the current status once. With `--wait`, it keeps waiting and streams progress until completion or timeout.
 
 While running:
 ```json

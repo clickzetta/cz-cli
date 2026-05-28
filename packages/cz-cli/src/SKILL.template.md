@@ -170,7 +170,7 @@ Key tools:
 
 ### Agent (AI Agent)
 - `cz-cli agent run "<prompt>" [--session ID]` — Run AI agent with a natural-language prompt
-- `cz-cli agent session status <session_id> [--wait]` — Check session progress; use `--wait` to block and stream progress until completion
+- `cz-cli agent session status <session_id> [--wait]` — Check session progress; by default it returns the current status once, and with `--wait` it keeps waiting and streams progress until completion or timeout
 - `cz-cli agent llm` — Manage LLM providers
 
 ## Command Inventory (Generated)
