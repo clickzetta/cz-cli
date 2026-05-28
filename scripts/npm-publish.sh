@@ -7,8 +7,6 @@
 # <artifacts-dir> should contain the built binaries:
 #   cz-cli-darwin-arm64/bin/cz-cli
 #   cz-cli-darwin-x64/bin/cz-cli
-#   cz-cli-linux-arm64/bin/cz-cli
-#   cz-cli-linux-x64/bin/cz-cli
 #   cz-cli-win32-x64/bin/cz-cli.exe
 #
 # Environment:
@@ -28,8 +26,6 @@ NPM_DIR="$REPO_ROOT/packages/npm"
 PLATFORMS=(
   "darwin-arm64"
   "darwin-x64"
-  "linux-arm64"
-  "linux-x64"
   "win32-x64"
 )
 
@@ -50,11 +46,21 @@ set_version() {
 # Update main package optionalDependencies versions too
 update_main_pkg() {
   local pkg="$NPM_DIR/cz-cli/package.json"
-  local tmp
-  tmp=$(mktemp)
-  sed "s/\"@clickzetta\/cz-cli-\([^\"]*\)\": \"[^\"]*\"/\"@clickzetta\/cz-cli-\1\": \"${VERSION}\"/g" "$pkg" > "$tmp"
-  sed "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$tmp" > "$pkg"
-  rm -f "$tmp"
+  PLATFORMS_CSV="$(IFS=,; echo "${PLATFORMS[*]}")" VERSION="$VERSION" PACKAGE_JSON="$pkg" node <<'EOF'
+const fs = require("fs")
+
+const pkgPath = process.env.PACKAGE_JSON
+const version = process.env.VERSION
+const platforms = (process.env.PLATFORMS_CSV || "").split(",").filter(Boolean)
+const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"))
+
+pkg.version = version
+pkg.optionalDependencies = Object.fromEntries(
+  platforms.map((platform) => [`@clickzetta/cz-cli-${platform}`, version]),
+)
+
+fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
+EOF
 }
 
 # ── Publish platform packages ─────────────────────────────────────────────

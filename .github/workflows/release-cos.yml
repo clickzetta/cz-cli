@@ -132,16 +132,40 @@ jobs:
           fi
 
       - name: Install dependencies
-        timeout-minutes: 30
+        timeout-minutes: 20
         shell: bash
         env:
           HUSKY: "0"
         run: |
+          set -euo pipefail
+
+          install_args=(--frozen-lockfile --no-progress --network-concurrency 16)
           if [ "$RUNNER_OS" = "Windows" ]; then
-            bun install --frozen-lockfile --linker hoisted --ignore-scripts
-          else
-            bun install --frozen-lockfile
+            install_args+=(--linker hoisted --ignore-scripts)
           fi
+
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            echo "bun install attempt $attempt on $RUNNER_OS"
+            retry_args=()
+            if [ "$attempt" -gt 1 ]; then
+              echo "Clearing partial install state before retry..."
+              rm -rf node_modules "$HOME/.bun/install/cache"
+              retry_args+=(--force --no-cache)
+            fi
+
+            if bun install "${install_args[@]}" "${retry_args[@]}"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "bun install failed after $attempt attempts" >&2
+              exit 1
+            fi
+
+            attempt=$((attempt + 1))
+            sleep 5
+          done
 
       - name: Build and upload ${{ matrix.os }} targets
         env:
@@ -180,9 +204,10 @@ jobs:
 
   publish-npm:
     needs: [resolve-release, build]
-    # Temporarily disabled while Ubuntu release builds are paused to avoid
-    # wasting CI resources on a job that requires Linux artifacts.
-    if: ${{ false }}
+    if: |
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -192,35 +217,12 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Download release binaries
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.resolve-release.outputs.version }}
-          TAG: ${{ needs.resolve-release.outputs.tag }}
-        run: |
-          mkdir -p artifacts
-          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
-            mkdir -p "artifacts/cz-cli-${platform}/bin"
-            asset_platform="${platform/win32/windows}"
-            if [ "$platform" = "linux-arm64" ] || [ "$platform" = "linux-x64" ]; then
-              gh release download "$TAG" \
-                --pattern "cz-cli-${asset_platform}.tar.gz" \
-                --dir artifacts --repo "${{ github.repository }}"
-              tar -xzf "artifacts/cz-cli-${asset_platform}.tar.gz" -C "artifacts/cz-cli-${platform}"
-              mv "artifacts/cz-cli-${platform}/cz-cli" "artifacts/cz-cli-${platform}/bin/cz-cli"
-            else
-              gh release download "$TAG" \
-                --pattern "cz-cli-${asset_platform}.zip" \
-                --dir artifacts --repo "${{ github.repository }}"
-              unzip -o "artifacts/cz-cli-${asset_platform}.zip" -d "artifacts/cz-cli-${platform}"
-              if [ "$platform" = "win32-x64" ]; then
-                mv "artifacts/cz-cli-${platform}/cz-cli.exe" "artifacts/cz-cli-${platform}/bin/cz-cli.exe" 2>/dev/null || \
-                mv "artifacts/cz-cli-${platform}/cz-cli" "artifacts/cz-cli-${platform}/bin/cz-cli.exe"
-              else
-                mv "artifacts/cz-cli-${platform}/cz-cli" "artifacts/cz-cli-${platform}/bin/cz-cli"
-              fi
-            fi
-          done
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-dist-*-${{ github.run_attempt }}
+          path: artifacts
+          merge-multiple: true
 
       - name: Publish to npm
         env:
@@ -230,9 +232,10 @@ jobs:
 
   publish-cos:
     needs: [resolve-release, build]
-    # Temporarily disabled while Ubuntu release builds are paused to avoid
-    # publishing incomplete manifests without Linux artifacts.
-    if: ${{ false }}
+    if: |
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
