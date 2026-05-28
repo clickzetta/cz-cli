@@ -127,9 +127,15 @@ jobs:
 
       - name: Install dependencies
         timeout-minutes: 30
+        shell: bash
         env:
           HUSKY: "0"
-        run: bun install --frozen-lockfile
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            bun install --frozen-lockfile --linker hoisted
+          else
+            bun install --frozen-lockfile
+          fi
 
       - name: Build and upload ${{ matrix.os }} targets
         env:
