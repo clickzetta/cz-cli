@@ -197,7 +197,7 @@ while true; do
     break
   fi
   echo "$STATUS" | jq -r '.progress // empty'
-  sleep 5
+  sleep 1
 done
 
 # Need full conversation (thinking + tool calls)?

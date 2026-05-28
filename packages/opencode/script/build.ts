@@ -327,7 +327,7 @@ if (Script.archive) {
     } else if (target.os === "win32") {
       const archive = `dist/${key}.zip`
       const absArchive = path.resolve(archive)
-      await $`powershell -Command "Compress-Archive -Path '${binDir}\\*' -DestinationPath '${absArchive}' -Force"`
+      await $`7z a -tzip ${absArchive} ${binDir}\\*`
       archives.push(archive)
     } else {
       const archive = `dist/${key}.zip`
