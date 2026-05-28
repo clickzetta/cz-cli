@@ -130,7 +130,7 @@ const allTargets: {
   },
 ]
 
-const platformTargets = Script.release
+const platformTargets = Script.hostOnly
   ? allTargets.filter((item) => item.os === process.platform && item.arch === process.arch)
   : allTargets
 
@@ -308,7 +308,7 @@ if (fs.existsSync(allSkillsSrc)) {
   console.log(`Bundled ${skillEntries.length} skills into all platform dists`)
 }
 
-if (Script.release) {
+if (Script.archive) {
   const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
   const archives: string[] = []
   const keys = Object.keys(binaries)
@@ -335,9 +335,11 @@ if (Script.release) {
       archives.push(archive)
     }
   }
-  console.log(`Uploading ${archives.length} archives to v${Script.version}...`)
-  await $`gh release upload v${Script.version} ${archives} --clobber --repo ${process.env.GH_REPO}`
-  console.log("Upload complete")
+  if (Script.release) {
+    console.log(`Uploading ${archives.length} archives to v${Script.version}...`)
+    await $`gh release upload v${Script.version} ${archives} --clobber --repo ${process.env.GH_REPO}`
+    console.log("Upload complete")
+  }
 }
 
 export { binaries }

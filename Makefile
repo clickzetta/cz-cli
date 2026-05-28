@@ -19,7 +19,16 @@ PLATFORM_DIR := cz-cli-$(UNAME_S)-$(ARCH)
 BINARY       := $(DIST_DIR)/cz-cli-$(UNAME_S)-$(ARCH)/bin/cz-cli
 ZIP_NAME     := $(PLATFORM_DIR).zip
 
-.PHONY: build clean
+# Auto-increment version from latest stable git tag (override with VERSION=x.y.z)
+LATEST_TAG   := $(shell git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | head -1 | sed 's/^v//')
+NEXT_PATCH   := $(shell printf '%s\n' "$(LATEST_TAG)" | awk -F. 'NF == 3 { print $$1"."$$2"."$$3 + 1 }')
+VERSION      ?= $(if $(NEXT_PATCH),$(NEXT_PATCH),0.1.0)
+
+ifndef DEV_SUFFIX
+DEV_SUFFIX   := $(shell date +%Y%m%d%H%M%S)
+endif
+
+.PHONY: build clean release release-dev
 
 build:
 	cd $(OPENCODE_DIR) && bun run script/build.ts --single --skip-install --skip-embed-web-ui
@@ -32,3 +41,13 @@ build:
 
 clean:
 	rm -rf $(OUT_DIR) $(DIST_DIR)
+
+tag-release:
+	git tag v$(VERSION)
+	git push origin v$(VERSION)
+	@echo "✓ Pushed stable tag v$(VERSION) — GitHub Actions will build release + promote stable"
+
+tag-dev:
+	git tag v$(VERSION)-dev.$(DEV_SUFFIX)
+	git push origin v$(VERSION)-dev.$(DEV_SUFFIX)
+	@echo "✓ Pushed dev tag v$(VERSION)-dev.$(DEV_SUFFIX) — GitHub Actions will build latest"

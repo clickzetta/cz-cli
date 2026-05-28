@@ -18,6 +18,8 @@ if (!semver.satisfies(process.versions.bun, expectedBunVersionRange)) {
 }
 
 const env = {
+  OPENCODE_ARCHIVE: process.env["OPENCODE_ARCHIVE"],
+  OPENCODE_HOST_ONLY: process.env["OPENCODE_HOST_ONLY"],
   OPENCODE_CHANNEL: process.env["OPENCODE_CHANNEL"],
   OPENCODE_BUMP: process.env["OPENCODE_BUMP"],
   OPENCODE_VERSION: process.env["OPENCODE_VERSION"],
@@ -69,6 +71,12 @@ export const Script = {
   },
   get release(): boolean {
     return !!env.OPENCODE_RELEASE
+  },
+  get archive(): boolean {
+    return !!env.OPENCODE_ARCHIVE || !!env.OPENCODE_RELEASE
+  },
+  get hostOnly(): boolean {
+    return !!env.OPENCODE_HOST_ONLY || !!env.OPENCODE_RELEASE
   },
   get team() {
     return team

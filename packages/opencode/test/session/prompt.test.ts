@@ -7,11 +7,27 @@ import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
+import PROMPT_ANTHROPIC from "../../src/session/prompt/anthropic.txt"
+import PROMPT_CODEX from "../../src/session/prompt/codex.txt"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
 void Log.init({ print: false })
+
+describe("session.system prompt text", () => {
+  test("codex prompt does not reference external codex-only control surfaces", () => {
+    expect(PROMPT_CODEX).not.toContain("multi_tool_use.parallel")
+    expect(PROMPT_CODEX).not.toContain("commentary")
+    expect(PROMPT_CODEX).not.toContain("final")
+    expect(PROMPT_CODEX).not.toContain("apply_patch")
+  })
+
+  test("anthropic prompt uses current pragmatic positioning", () => {
+    expect(PROMPT_ANTHROPIC).toContain("share the same workspace")
+    expect(PROMPT_ANTHROPIC).not.toContain("best data engineering coding agent on the planet")
+  })
+})
 
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
   return Effect.runPromise(
