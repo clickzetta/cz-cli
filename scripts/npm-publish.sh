@@ -29,6 +29,14 @@ PLATFORMS=(
   "win32-x64"
 )
 
+PUBLISH_ARGS=(
+  --access public
+)
+
+if [[ "$VERSION" == *-dev* ]]; then
+  PUBLISH_ARGS+=(--tag dev)
+fi
+
 echo "Publishing @clickzetta/cz-cli v${VERSION}"
 echo "Artifacts: $ARTIFACTS"
 echo ""
@@ -67,6 +75,8 @@ EOF
 
 for platform in "${PLATFORMS[@]}"; do
   pkg_dir="$NPM_DIR/cz-cli-${platform}"
+  artifact_platform="${platform/win32/windows}"
+  artifact_dir="$ARTIFACTS/cz-cli-${artifact_platform}"
   echo "── @clickzetta/cz-cli-${platform} ──"
 
   set_version "$pkg_dir/package.json"
@@ -75,24 +85,25 @@ for platform in "${PLATFORMS[@]}"; do
   rm -rf "$pkg_dir/bin"
   mkdir -p "$pkg_dir/bin"
   if [ "$platform" = "win32-x64" ]; then
-    cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli.exe" "$pkg_dir/bin/cz-cli.exe"
+    cp "$artifact_dir/bin/cz-cli.exe" "$pkg_dir/bin/cz-cli.exe" 2>/dev/null || \
+      cp "$artifact_dir/bin/cz-cli" "$pkg_dir/bin/cz-cli.exe"
   else
-    cp "$ARTIFACTS/cz-cli-${platform}/bin/cz-cli" "$pkg_dir/bin/cz-cli"
+    cp "$artifact_dir/bin/cz-cli" "$pkg_dir/bin/cz-cli"
     chmod +x "$pkg_dir/bin/cz-cli"
   fi
 
-  # Copy skills if present
-  if [ -d "$ARTIFACTS/cz-cli-${platform}/skills" ]; then
+  # Copy bundled skills if present
+  if [ -d "$artifact_dir/bin/skills" ]; then
     rm -rf "$pkg_dir/bin/skills"
-    cp -r "$ARTIFACTS/cz-cli-${platform}/skills" "$pkg_dir/bin/skills"
+    cp -r "$artifact_dir/bin/skills" "$pkg_dir/bin/skills"
   fi
 
   # Publish (tolerate "already published" from partial prior runs)
   if [ -n "$DRY_RUN" ]; then
-    echo "  [dry-run] npm publish --access public"
+    echo "  [dry-run] npm publish ${PUBLISH_ARGS[*]}"
   else
     set +e
-    publish_output=$(cd "$pkg_dir" && npm publish --access public 2>&1)
+    publish_output=$(cd "$pkg_dir" && npm publish "${PUBLISH_ARGS[@]}" 2>&1)
     publish_rc=$?
     set -e
     if [ $publish_rc -ne 0 ]; then
@@ -113,10 +124,10 @@ echo "── @clickzetta/cz-cli (main) ──"
 update_main_pkg
 
 if [ -n "$DRY_RUN" ]; then
-  echo "  [dry-run] npm publish --access public"
+  echo "  [dry-run] npm publish ${PUBLISH_ARGS[*]}"
 else
   set +e
-  publish_output=$(cd "$NPM_DIR/cz-cli" && npm publish --access public 2>&1)
+  publish_output=$(cd "$NPM_DIR/cz-cli" && npm publish "${PUBLISH_ARGS[@]}" 2>&1)
   publish_rc=$?
   set -e
   if [ $publish_rc -ne 0 ]; then
