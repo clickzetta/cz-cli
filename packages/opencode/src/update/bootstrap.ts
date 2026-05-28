@@ -60,6 +60,10 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 const SUPPORTED_AUTO_UPGRADE_METHODS = new Set<InstallMethod>(["curl", "npm", "pnpm", "yarn", "bun"])
 const SKIP_COMMANDS = new Set(["setup", "update", "uninstall"])
 const NPM_METHODS = new Set<InstallMethod>(["npm", "pnpm", "yarn", "bun"])
+const INSTALL_SCRIPT_URL = {
+  stable: "https://cz-cli.ai/install.sh",
+  latest: "https://cz-cli.ai/install/latest.sh",
+} as const
 
 function homeDirectory(home?: string, env: NodeJS.ProcessEnv = process.env) {
   return home ?? env.CLICKZETTA_TEST_HOME ?? os.homedir()
@@ -167,7 +171,11 @@ export async function latestVersionForMethod(method: InstallMethod, fetchImpl: t
 }
 
 async function upgradeViaInstallScript(target: string, fetchImpl: typeof fetch = fetch) {
-  const response = await fetchWithTimeout("https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh", {}, fetchImpl)
+  const response = await fetchWithTimeout(
+    InstallationChannel === "latest" ? INSTALL_SCRIPT_URL.latest : INSTALL_SCRIPT_URL.stable,
+    {},
+    fetchImpl,
+  )
   if (!response.ok) throw new Error(`Failed to download install script: ${response.status}`)
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-"))
   const script = path.join(temp, "install.sh")

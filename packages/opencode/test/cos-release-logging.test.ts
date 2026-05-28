@@ -141,4 +141,49 @@ describe("cos release logging", () => {
     expect(lines.some((line) => line.includes("upload start: cz-cli-releases/1.2.3/darwin-arm64"))).toBe(true)
     expect(Object.keys(platforms).sort()).toEqual(["darwin-arm64", "darwin-x64"])
   })
+
+  test("bootstrap renderers embed the current release metadata and signed archive urls", async () => {
+    const Release = await import("../../../scripts/cos-release.mjs")
+    const sh = Release.renderBootstrapSh({
+      version: "1.2.3",
+      channel: "stable",
+      platforms: {
+        "darwin-arm64": {
+          archive: "cz-cli-1.2.3-darwin-arm64.zip",
+          format: "zip",
+          binary: "cz-cli",
+          checksum: "a".repeat(64),
+          size: 123,
+          objectKey: "cz-cli-releases/1.2.3/darwin-arm64/cz-cli-1.2.3-darwin-arm64.zip",
+          url: "https://example.com/darwin-arm64.zip?sign=abc",
+          expiresAt: "2031-01-01T00:00:00.000Z",
+        },
+      },
+    })
+    const ps1 = Release.renderBootstrapPs1({
+      version: "1.2.3",
+      channel: "stable",
+      platforms: {
+        "win32-x64": {
+          archive: "cz-cli-1.2.3-win32-x64.zip",
+          format: "zip",
+          binary: "cz-cli.exe",
+          checksum: "b".repeat(64),
+          size: 456,
+          objectKey: "cz-cli-releases/1.2.3/win32-x64/cz-cli-1.2.3-win32-x64.zip",
+          url: "https://example.com/win32-x64.zip?sign=def",
+          expiresAt: "2031-01-01T00:00:00.000Z",
+        },
+      },
+    })
+
+    expect(sh).toContain('VERSION="1.2.3"')
+    expect(sh).toContain('CHANNEL="stable"')
+    expect(sh).toContain('"darwin-arm64")')
+    expect(sh).toContain("https://example.com/darwin-arm64.zip?sign=abc")
+    expect(ps1).toContain("$Version = '1.2.3'")
+    expect(ps1).toContain("$Channel = 'stable'")
+    expect(ps1).toContain("'win32-x64' {")
+    expect(ps1).toContain("https://example.com/win32-x64.zip?sign=def")
+  })
 })

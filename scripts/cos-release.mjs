@@ -21,6 +21,7 @@ import { pathToFileURL } from "node:url"
 import {
   Cache,
   createClient,
+  presignGetObjectUrl,
   formatBytes,
   deleteObjects,
   getJson,
@@ -32,6 +33,8 @@ import {
 } from "./cos-upload.mjs"
 
 const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
+const META_INF_PREFIX = "META-INF"
+const PRESIGN_EXPIRES_SECONDS = Number(process.env.COS_PRESIGN_EXPIRES_SECONDS ?? 60 * 60 * 24 * 365 * 5)
 
 const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/
 const VERSION_DIR_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?\/$/
@@ -172,6 +175,23 @@ function key(...parts) {
   return [PATH_PREFIX, ...parts].join("/")
 }
 
+function metaKey(channel, ...parts) {
+  return key(META_INF_PREFIX, channel, ...parts)
+}
+
+function releaseChannel(ctx) {
+  if (ctx.promoteStable) return "stable"
+  return "latest"
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
 export async function uploadAllArchives(ctx, builds, options = {}) {
   const log = options.log ?? console.log
   const now = options.now ?? (() => new Date())
@@ -202,6 +222,7 @@ export async function uploadAllArchives(ctx, builds, options = {}) {
         key: b.targetKey,
         contentType: "application/octet-stream",
         cacheControl: Cache.immutable,
+        acl: "private",
         size: b.size,
         sha256: b.sha256,
         log: (msg) => log(`[${now().toISOString()}] [${b.platform}] ${msg}`),
@@ -232,18 +253,270 @@ function logPreparedArchives(builds) {
   }
 }
 
-async function writeManifest(ctx, platforms) {
-  const manifest = {
+function signArchiveUrls(ctx, builds, platforms) {
+  return Object.fromEntries(
+    builds.map((build) => {
+      const presigned = ctx.dryRun
+        ? {
+            url: `https://example.invalid/${build.targetKey}?sign=dry-run`,
+            expiresAt: new Date(Date.parse(ctx.buildDate) + PRESIGN_EXPIRES_SECONDS * 1000).toISOString(),
+          }
+        : presignGetObjectUrl({
+            client: ctx.client,
+            Bucket: ctx.Bucket,
+            Region: ctx.Region,
+            key: build.targetKey,
+            expiresIn: PRESIGN_EXPIRES_SECONDS,
+          })
+      return [
+        build.platform,
+        {
+          ...platforms[build.platform],
+          objectKey: build.targetKey,
+          url: presigned.url,
+          expiresAt: presigned.expiresAt,
+        },
+      ]
+    }),
+  )
+}
+
+function buildManifest(ctx, platforms) {
+  return {
     version: ctx.version,
+    channel: releaseChannel(ctx),
     commit: ctx.gitSha,
     buildDate: ctx.buildDate,
+    generatedAt: new Date().toISOString(),
+    bootstrap: {
+      sh: metaKey(releaseChannel(ctx), "bootstrap.sh"),
+      ps1: metaKey(releaseChannel(ctx), "bootstrap.ps1"),
+      manifest: metaKey(releaseChannel(ctx), "manifest.json"),
+    },
     platforms,
   }
-  const target = key(ctx.version, "manifest.json")
+}
+
+function renderShellPlatformCase(platforms) {
+  return Object.entries(platforms)
+    .map(
+      ([platform, info]) => `    "${platform}")
+      ARCHIVE_URL=${shellQuote(info.url)}
+      ARCHIVE_NAME=${shellQuote(info.archive)}
+      ARCHIVE_FORMAT=${shellQuote(info.format)}
+      ARCHIVE_CHECKSUM=${shellQuote(info.checksum)}
+      ;;`,
+    )
+    .join("\n")
+}
+
+export function renderBootstrapSh({ version, channel, platforms }) {
+  return `#!/bin/sh
+set -e
+
+VERSION="${version}"
+CHANNEL="${channel}"
+INSTALL_DIR="\${INSTALL_DIR:-\${HOME}/.local/bin}"
+TEMP_DIR=$(mktemp -d)
+
+cleanup() {
+  [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
+
+print_error() {
+  echo "Error: $1" >&2
+}
+
+download() {
+  if command -v curl > /dev/null 2>&1; then
+    curl -fL --progress-bar "$1" -o "$2"
+    return
+  fi
+  if command -v wget > /dev/null 2>&1; then
+    wget -O "$2" "$1"
+    return
+  fi
+  print_error "curl or wget is required"
+  exit 1
+}
+
+verify_checksum() {
+  if command -v shasum > /dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 "$1" | awk '{print $1}')
+  elif command -v sha256sum > /dev/null 2>&1; then
+    ACTUAL=$(sha256sum "$1" | awk '{print $1}')
+  else
+    echo "Warning: no SHA256 verifier found, skipping checksum verification"
+    return
+  fi
+
+  if [ "$ACTUAL" != "$2" ]; then
+    print_error "checksum mismatch for $1"
+    exit 1
+  fi
+}
+
+platform() {
+  OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+
+  case "$ARCH" in
+    x86_64|amd64) ARCH="x64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+  esac
+
+  echo "$OS-$ARCH"
+}
+
+main() {
+  PLATFORM=$(platform)
+
+  case "$PLATFORM" in
+${renderShellPlatformCase(platforms)}
+    *)
+      print_error "unsupported platform: $PLATFORM"
+      exit 1
+      ;;
+  esac
+
+  case "$ARCHIVE_FORMAT" in
+    tar.gz)
+      command -v tar > /dev/null 2>&1 || {
+        print_error "tar is required"
+        exit 1
+      }
+      ;;
+    zip)
+      command -v unzip > /dev/null 2>&1 || {
+        print_error "unzip is required"
+        exit 1
+      }
+      ;;
+  esac
+
+  ARCHIVE_PATH="$TEMP_DIR/$ARCHIVE_NAME"
+  EXTRACT_DIR="$TEMP_DIR/extracted"
+  mkdir -p "$EXTRACT_DIR"
+
+  echo "Installing cz-cli v$VERSION for $PLATFORM ($CHANNEL)"
+  echo "Downloading $ARCHIVE_NAME..."
+  download "$ARCHIVE_URL" "$ARCHIVE_PATH"
+  verify_checksum "$ARCHIVE_PATH" "$ARCHIVE_CHECKSUM"
+
+  echo "Extracting..."
+  case "$ARCHIVE_FORMAT" in
+    tar.gz) tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR" ;;
+    zip) unzip -qo "$ARCHIVE_PATH" -d "$EXTRACT_DIR" ;;
+  esac
+
+  if [ ! -f "$EXTRACT_DIR/setup.sh" ]; then
+    print_error "archive does not contain setup.sh"
+    exit 1
+  fi
+
+  chmod +x "$EXTRACT_DIR/setup.sh"
+  INSTALL_DIR="$INSTALL_DIR" \
+  CZ_VERSION="$VERSION" \
+  CZ_CHANNEL="$CHANNEL" \
+  NON_INTERACTIVE="\${NON_INTERACTIVE:-}" \
+  SKIP_PATH_PROMPT="\${SKIP_PATH_PROMPT:-}" \
+  sh "$EXTRACT_DIR/setup.sh"
+}
+
+main
+`
+}
+
+function renderPowerShellPlatformCase(platforms) {
+  return Object.entries(platforms)
+    .map(
+      ([platform, info]) => `  ${psQuote(platform)} {
+    $ArchiveUrl = ${psQuote(info.url)}
+    $ArchiveName = ${psQuote(info.archive)}
+    $ArchiveChecksum = ${psQuote(info.checksum)}
+  }`,
+    )
+    .join("\n")
+}
+
+export function renderBootstrapPs1({ version, channel, platforms }) {
+  return `#!/usr/bin/env pwsh
+$ErrorActionPreference = "Stop"
+$Version = '${version}'
+$Channel = '${channel}'
+$InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $HOME ".local/bin" }
+$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cz-cli-" + [System.Guid]::NewGuid().ToString("n"))
+
+New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+
+try {
+  $Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+    "AMD64" { "x64" }
+    "ARM64" { "arm64" }
+    default { $env:PROCESSOR_ARCHITECTURE.ToLowerInvariant() }
+  }
+  $Platform = "win32-$Arch"
+
+  switch ($Platform) {
+${renderPowerShellPlatformCase(platforms)}
+    default { throw "unsupported platform: $Platform" }
+  }
+
+  Write-Host "Installing cz-cli v$Version for $Platform ($Channel)"
+  $ArchivePath = Join-Path $TempDir $ArchiveName
+  $ExtractDir = Join-Path $TempDir "extracted"
+
+  Write-Host "Downloading $ArchiveName..."
+  Invoke-WebRequest -Uri $ArchiveUrl -OutFile $ArchivePath
+
+  $ActualChecksum = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($ActualChecksum -ne $ArchiveChecksum.ToLowerInvariant()) {
+    throw "checksum mismatch for $ArchiveName"
+  }
+
+  Write-Host "Extracting..."
+  Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractDir -Force
+
+  $BinarySource = Join-Path $ExtractDir "cz-cli.exe"
+  if (-not (Test-Path $BinarySource)) {
+    throw "archive does not contain cz-cli.exe"
+  }
+
+  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+  $BinaryTarget = Join-Path $InstallDir "cz-cli.exe"
+  Copy-Item -LiteralPath $BinarySource -Destination $BinaryTarget -Force
+
+  $MetadataDir = Join-Path $HOME ".clickzetta"
+  New-Item -ItemType Directory -Force -Path $MetadataDir | Out-Null
+  $Metadata = @{
+    version = 1
+    method = "curl"
+    installed_path = $BinaryTarget
+    channel = $Channel
+    binary_version = $Version
+    updated_at = [DateTime]::UtcNow.ToString("o")
+  } | ConvertTo-Json -Depth 4
+  Set-Content -LiteralPath (Join-Path $MetadataDir "install.json") -Value $Metadata
+
+  Write-Host "Installed to $BinaryTarget"
+  if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $InstallDir })) {
+    Write-Host "Add $InstallDir to PATH if cz-cli is not found in a new shell."
+  }
+} finally {
+  if (Test-Path $TempDir) {
+    Remove-Item -LiteralPath $TempDir -Recurse -Force
+  }
+}
+`
+}
+
+async function writeManifest(ctx, manifest) {
+  const target = metaKey(manifest.channel, "manifest.json")
   if (ctx.dryRun) {
     console.log(`[dry-run] write manifest -> ${target}`)
     console.log(JSON.stringify(manifest, null, 2))
-    return manifest
+    return
   }
   await putJson({
     client: ctx.client,
@@ -251,10 +524,29 @@ async function writeManifest(ctx, platforms) {
     Region: ctx.Region,
     body: manifest,
     key: target,
-    cacheControl: Cache.immutable,
+    cacheControl: Cache.bootstrap,
+    acl: "public-read",
   })
   console.log(`  ✓ manifest -> ${target}`)
-  return manifest
+}
+
+async function writeBootstrap(ctx, name, body, contentType) {
+  const target = metaKey(releaseChannel(ctx), name)
+  if (ctx.dryRun) {
+    console.log(`[dry-run] write ${name} -> ${target}`)
+    return
+  }
+  await putText({
+    client: ctx.client,
+    Bucket: ctx.Bucket,
+    Region: ctx.Region,
+    body,
+    key: target,
+    contentType,
+    cacheControl: Cache.bootstrap,
+    acl: "public-read",
+  })
+  console.log(`  ✓ ${name} -> ${target}`)
 }
 
 async function writeChannel(ctx, channel) {
@@ -438,10 +730,32 @@ async function main() {
   const ctx = { ...args, ...cos }
 
   console.log("Uploading archives...")
-  const manifestPlatforms = await uploadAllArchives(ctx, builds)
+  const uploadedPlatforms = await uploadAllArchives(ctx, builds)
+  const manifestPlatforms = signArchiveUrls(ctx, builds, uploadedPlatforms)
+  const manifest = buildManifest(ctx, manifestPlatforms)
 
-  console.log("Writing manifest...")
-  const manifest = await writeManifest(ctx, manifestPlatforms)
+  console.log("Writing META-INF assets...")
+  await writeManifest(ctx, manifest)
+  await writeBootstrap(
+    ctx,
+    "bootstrap.sh",
+    renderBootstrapSh({
+      version: manifest.version,
+      channel: manifest.channel,
+      platforms: manifest.platforms,
+    }),
+    "text/x-shellscript; charset=utf-8",
+  )
+  await writeBootstrap(
+    ctx,
+    "bootstrap.ps1",
+    renderBootstrapPs1({
+      version: manifest.version,
+      channel: manifest.channel,
+      platforms: manifest.platforms,
+    }),
+    "text/plain; charset=utf-8",
+  )
 
   if (args.promoteLatest) {
     console.log("Updating /latest...")

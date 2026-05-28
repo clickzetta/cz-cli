@@ -125,8 +125,33 @@ export function createUploadProgressReporter({
   }
 }
 
-function publicUrl({ Bucket, Region, key }) {
+export function publicUrl({ Bucket, Region, key }) {
   return `https://${Bucket}.cos.${Region}.myqcloud.com/${key}`
+}
+
+export function presignGetObjectUrl({
+  client,
+  Bucket,
+  Region,
+  key,
+  expiresIn,
+  now = Date.now,
+}) {
+  const url = client.getObjectUrl({
+    Bucket,
+    Region,
+    Key: key,
+    Sign: true,
+    Expires: expiresIn,
+    Method: "GET",
+    Protocol: "https:",
+  })
+  return {
+    key,
+    url,
+    expiresIn,
+    expiresAt: new Date(now() + expiresIn * 1000).toISOString(),
+  }
 }
 
 export async function uploadFile({
