@@ -52,6 +52,79 @@ function sha256OfFile(filePath) {
   })
 }
 
+export async function statFileWithSha256(filePath, size = undefined, sha256 = undefined) {
+  return {
+    size: size ?? fs.statSync(filePath).size,
+    sha256: sha256 ?? (await sha256OfFile(filePath)),
+  }
+}
+
+export function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+}
+
+function formatDuration(ms) {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.round(ms / 1000)}s`
+}
+
+function formatError(error) {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+export function createUploadProgressReporter({
+  archiveName,
+  filePath,
+  key,
+  size,
+  sha256,
+  log = console.log,
+  now = Date.now,
+  percentStep = 10,
+  heartbeatMs = 15000,
+}) {
+  const startedAt = now()
+  let lastBucket = -1
+  let lastLoggedAt = startedAt
+  return {
+    start() {
+      log(
+        `  → upload start: ${archiveName} | size=${formatBytes(size)} | sha256=${sha256.slice(0, 12)} | file=${filePath} | key=${key}`,
+      )
+    },
+    taskReady(taskId) {
+      log(`    task ready: ${archiveName} | id=${taskId}`)
+    },
+    progress(info) {
+      if (!info) return
+      const total = info.total || size
+      const loaded = Math.min(info.loaded || 0, total)
+      const percent = Math.min(1, info.percent ?? (total > 0 ? loaded / total : 0))
+      const bucket = Math.floor((percent * 100) / percentStep) * percentStep
+      const current = now()
+      if (bucket <= lastBucket && current - lastLoggedAt < heartbeatMs && percent < 1) return
+      lastBucket = Math.max(lastBucket, bucket)
+      lastLoggedAt = current
+      log(
+        `    progress: ${archiveName} | ${Math.round(percent * 100)}% | ${formatBytes(loaded)} / ${formatBytes(total)} | speed=${formatBytes(Math.round(info.speed || 0))}/s`,
+      )
+    },
+    complete() {
+      log(`  ✓ upload complete: ${archiveName} | elapsed=${formatDuration(now() - startedAt)} | key=${key}`)
+    },
+    fail(error) {
+      log(
+        `  ✗ upload failed: ${archiveName} | elapsed=${formatDuration(now() - startedAt)} | key=${key} | error=${formatError(error)}`,
+      )
+    },
+  }
+}
+
 function publicUrl({ Bucket, Region, key }) {
   return `https://${Bucket}.cos.${Region}.myqcloud.com/${key}`
 }
@@ -65,29 +138,51 @@ export async function uploadFile({
   contentType,
   cacheControl,
   acl = "public-read",
+  size: inputSize = undefined,
+  sha256: inputSha256 = undefined,
+  log = console.log,
+  now = Date.now,
 }) {
   if (!fs.existsSync(filePath)) {
     throw new Error(`uploadFile: ${filePath} does not exist`)
   }
-  const size = fs.statSync(filePath).size
-  const sha256 = await sha256OfFile(filePath)
-
-  await new Promise((resolve, reject) => {
-    client.sliceUploadFile(
-      {
-        Bucket,
-        Region,
-        Key: key,
-        FilePath: filePath,
-        Headers: {
-          "x-cos-acl": acl,
-          ...(contentType ? { "Content-Type": contentType } : {}),
-          ...(cacheControl ? { "Cache-Control": cacheControl } : {}),
-        },
-      },
-      (err, data) => (err ? reject(err) : resolve(data)),
-    )
+  const { size, sha256 } = await statFileWithSha256(filePath, inputSize, inputSha256)
+  const reporter = createUploadProgressReporter({
+    archiveName: path.basename(filePath),
+    filePath,
+    key,
+    size,
+    sha256,
+    log,
+    now,
   })
+
+  reporter.start()
+  try {
+    await new Promise((resolve, reject) => {
+      client.sliceUploadFile(
+        {
+          Bucket,
+          Region,
+          Key: key,
+          FilePath: filePath,
+          Headers: {
+            "x-cos-acl": acl,
+            ...(contentType ? { "Content-Type": contentType } : {}),
+            ...(cacheControl ? { "Cache-Control": cacheControl } : {}),
+          },
+          ProgressInterval: 1000,
+          onTaskReady: (taskId) => reporter.taskReady(taskId),
+          onProgress: (info) => reporter.progress(info),
+        },
+        (err, data) => (err ? reject(err) : resolve(data)),
+      )
+    })
+    reporter.complete()
+  } catch (error) {
+    reporter.fail(error)
+    throw error
+  }
 
   return {
     key,

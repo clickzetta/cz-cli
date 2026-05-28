@@ -20,11 +20,13 @@ import path from "node:path"
 import {
   Cache,
   createClient,
+  formatBytes,
   deleteObjects,
   getJson,
   listPrefix,
   putJson,
   putText,
+  statFileWithSha256,
   uploadFile,
 } from "./cos-upload.mjs"
 
@@ -162,7 +164,7 @@ async function archivePlatform({ distPath, platform, version, archivesDir }) {
     })
   }
 
-  return { archivePath, archiveName: name, format: ext }
+  return { archivePath, archiveName: name, format: ext, ...(await statFileWithSha256(archivePath)) }
 }
 
 function key(...parts) {
@@ -172,15 +174,15 @@ function key(...parts) {
 async function uploadAllArchives(ctx, builds) {
   const platforms = {}
   for (const b of builds) {
-    const target = key(ctx.version, b.platform, b.archiveName)
+    const target = b.targetKey
     if (ctx.dryRun) {
       console.log(`[dry-run] upload ${b.archivePath} -> ${target}`)
       platforms[b.platform] = {
         archive: b.archiveName,
         format: b.format,
         binary: platformBinary(b.platform),
-        checksum: "DRY_RUN",
-        size: 0,
+        checksum: b.sha256,
+        size: b.size,
       }
       continue
     }
@@ -192,6 +194,8 @@ async function uploadAllArchives(ctx, builds) {
       key: target,
       contentType: "application/octet-stream",
       cacheControl: Cache.immutable,
+      size: b.size,
+      sha256: b.sha256,
     })
     platforms[b.platform] = {
       archive: b.archiveName,
@@ -203,6 +207,15 @@ async function uploadAllArchives(ctx, builds) {
     console.log(`  ✓ ${b.platform} (${(result.size / 1024 / 1024).toFixed(1)} MB)`)
   }
   return platforms
+}
+
+function logPreparedArchives(builds) {
+  console.log("Prepared archives:")
+  for (const build of builds) {
+    console.log(
+      `  - platform=${build.platform} archive=${build.archiveName} size=${formatBytes(build.size)} sha256=${build.sha256.slice(0, 12)} path=${build.archivePath} target=${build.targetKey}`,
+    )
+  }
 }
 
 async function writeManifest(ctx, platforms) {
@@ -397,8 +410,9 @@ async function main() {
       version: args.version,
       archivesDir,
     })
-    builds.push({ platform: p.platform, ...built })
+    builds.push({ platform: p.platform, targetKey: key(args.version, p.platform, built.archiveName), ...built })
   }
+  logPreparedArchives(builds)
 
   const cos = args.dryRun
     ? { client: null, Bucket: process.env.COS_BUCKET ?? "DRY", Region: process.env.COS_REGION ?? "DRY" }
