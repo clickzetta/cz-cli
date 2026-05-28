@@ -33,6 +33,15 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure local Node headers for node-gyp
+        shell: bash
+        run: |
+          echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+
       - name: Install root devDependencies (only what cos scripts need)
         env:
           HUSKY: "0"
