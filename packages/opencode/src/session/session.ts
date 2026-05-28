@@ -8,7 +8,7 @@ import { type ProviderMetadata, type LanguageModelUsage } from "ai"
 import { Flag } from "../flag/flag"
 import { InstallationVersion } from "../installation/version"
 
-import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt } from "../storage"
+import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt, gt, asc } from "../storage"
 import { SyncEvent } from "../sync"
 import type { SQL } from "../storage"
 import { PartTable, SessionTable } from "./session.sql"
@@ -424,6 +424,10 @@ export interface Interface {
   readonly lastTextPart: (sessionID: SessionID) => Effect.Effect<MessageV2.TextPart | undefined>
   readonly latestMessage: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts | undefined>
   readonly recentParts: (sessionID: SessionID, limit: number) => Effect.Effect<MessageV2.Part[]>
+  readonly partsSinceUpdated: (
+    sessionID: SessionID,
+    sinceUpdatedMs: number,
+  ) => Effect.Effect<{ part: MessageV2.Part; timeUpdated: number }[]>
   readonly updatePart: <T extends MessageV2.Part>(part: T) => Effect.Effect<T>
   readonly updatePartDelta: (input: {
     sessionID: SessionID
@@ -650,6 +654,29 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       )
     })
 
+    const partsSinceUpdated: Interface["partsSinceUpdated"] = Effect.fn("Session.partsSinceUpdated")(function* (
+      sessionID,
+      sinceUpdatedMs,
+    ) {
+      const rows = Database.use((db) =>
+        db
+          .select()
+          .from(PartTable)
+          .where(and(eq(PartTable.session_id, sessionID), gt(PartTable.time_updated, sinceUpdatedMs)))
+          .orderBy(asc(PartTable.time_updated), asc(PartTable.id))
+          .all(),
+      )
+      return rows.map((row) => ({
+        part: {
+          ...row.data,
+          id: row.id,
+          sessionID: row.session_id,
+          messageID: row.message_id,
+        } as MessageV2.Part,
+        timeUpdated: row.time_updated,
+      }))
+    })
+
     const create = Effect.fn("Session.create")(function* (input?: {
       parentID?: SessionID
       title?: string
@@ -831,6 +858,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       lastTextPart,
       latestMessage,
       recentParts,
+      partsSinceUpdated,
       updatePartDelta,
       findMessage,
     })

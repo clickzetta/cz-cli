@@ -119,6 +119,12 @@ export function close() {
   Client.reset()
 }
 
+export function dataVersion() {
+  const row = Client().$client.query("PRAGMA data_version").get() as { data_version?: number } | undefined
+  if (typeof row?.data_version === "number") return row.data_version
+  throw new Error("Failed to read PRAGMA data_version")
+}
+
 export type TxOrDb = Transaction | Client
 
 const ctx = LocalContext.create<{
