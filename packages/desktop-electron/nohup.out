@@ -1,0 +1,48 @@
+$ bun ./scripts/predev.ts
+Copied dev icons from ./icons/dev to resources/icons
+opencode script {
+  "channel": "main",
+  "version": "0.0.0-main-202605250756",
+  "preview": true,
+  "release": false,
+  "team": [
+    "lyman",
+    "starrysl",
+    "xychen0921",
+    "wgtmac",
+    "easyfelix",
+    "hou-zhenyu",
+    "luketalent",
+    "lw07",
+    "Wendyxjw",
+    "perid007",
+    "hellozepp",
+    "ericzhangn",
+    "yuanyin8811",
+    "cellyzhou",
+    "HuaHuaY",
+    "leanken",
+    "suibianwanwank",
+    "chenvv-cw",
+    "yunqiqiliang",
+    "cz-zhangyue",
+    "czrobert",
+    "BillCCCC",
+    "yingcai-cy",
+    "actions-user",
+    "opencode",
+    "opencode-agent[bot]"
+  ]
+}
+Generated models-snapshot.js
+Loaded 12 migrations
+Build complete
+$ electron-vite dev
+vite v7.1.4 building SSR bundle for development...
+transforming...
+✓ 18 modules transformed.
+../opencode/dist/node/node.js (97981:16): Use of eval in "../opencode/dist/node/node.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+../opencode/dist/node/node.js (183624:15): Use of eval in "../opencode/dist/node/node.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+../opencode/dist/node/node.js (255010:34): Use of eval in "../opencode/dist/node/node.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+../opencode/dist/node/node.js (255033:36): Use of eval in "../opencode/dist/node/node.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+rendering chunks...

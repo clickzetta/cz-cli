@@ -1,11 +1,12 @@
----
-name: cz-cli-inner
-description: "ClickZetta Lakehouse operations via cz-cli. Use when the user needs SQL queries, Studio task management, table/schema operations, run monitoring, or job inspection."
----
+# Clickzetta Operations via cz-cli
 
-# cz-cli — ClickZetta Lakehouse Operations
+You have `cz-cli` available in PATH for direct access to Clickzetta Studio and Lakehouse:
+- Query workspaces, databases, schemas, tables and other metadata
+- Run SQL queries
+- Create, manage, and schedule tasks
+- Check task run status and logs
 
-You have `cz-cli` available in PATH. Use it via bash to operate on ClickZetta Lakehouse.
+When the user asks operational questions about Clickzetta (e.g. listing workspaces, running SQL, checking task status), you MUST proactively use `cz-cli` via bash to take action, rather than asking the user for additional information.
 
 Run `cz-cli <command> --help` for detailed options on any command.
 
@@ -104,6 +105,4 @@ cz-cli datasource sample <name_or_id> <catalog> <object>
 
 ## Companion Skills
 
-When the task involves writing SQL or Python task code, load these skills for accuracy:
-- **lakehouse-doc** — SQL syntax, functions, data types, DDL/DML for ClickZetta dialect
-- **lakehouse-python-sdk** — Python/Shell task development, BulkLoad, IGS, connector
+When the task involves writing Python or Shell task code, load **lakehouse-python-sdk** for accuracy on connector usage, BulkLoad, IGS, and Python/Shell task development patterns.
