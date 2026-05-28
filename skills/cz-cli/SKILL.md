@@ -124,8 +124,10 @@ Note: In non-TTY with `--format a2a` or `--format json`, async mode activates au
 ### Poll status
 
 ```bash
-cz-cli agent session status <session_id>
+cz-cli agent session status <session_id> [--wait]
 ```
+
+Use `--wait` to block and stream progress until completion instead of polling manually.
 
 While running:
 ```json
