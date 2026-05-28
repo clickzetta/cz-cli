@@ -65,6 +65,7 @@ const AGENT_FLAGS_WITH_VALUES = new Set([
   "workspace",
   "schema",
   "s",
+  "session",
   "vcluster",
   "v",
   "format",
