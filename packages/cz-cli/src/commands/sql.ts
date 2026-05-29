@@ -443,6 +443,7 @@ async function emitResult(
     logOperation("sql", { sql, ok: true, affected: r.affectedRows, timeMs: Date.now() - t0 })
     const writeExtra = { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) }
     success({ affected: r.affectedRows }, { format, timeMs: Date.now() - t0, aiMessage, extra: Object.keys(writeExtra).length > 0 ? writeExtra : undefined })
+    return
   }
 
   const columns = r.columns.map((c) => c.name)
