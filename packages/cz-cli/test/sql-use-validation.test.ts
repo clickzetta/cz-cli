@@ -67,7 +67,6 @@ function execSqlResult(sql: string) {
       columns: [],
       rows: [],
       rowCount: 0,
-      affectedRows: 0,
       errorCode: "CZLH-SCHEMA",
       errorMessage: "Schema 'missing_schema' does not exist.",
     }
@@ -79,7 +78,6 @@ function execSqlResult(sql: string) {
       columns: [],
       rows: [],
       rowCount: 0,
-      affectedRows: 0,
     }
   }
   if (sql === "SHOW VCLUSTERS") {
@@ -89,7 +87,6 @@ function execSqlResult(sql: string) {
       columns: [{ name: "vcluster_name" }],
       rows: [["default"], ["analytics"]],
       rowCount: 2,
-      affectedRows: 0,
     }
   }
   if (sql === "SELECT 1" || sql === "SELECT 1 LIMIT 101") {
@@ -99,7 +96,6 @@ function execSqlResult(sql: string) {
       columns: [{ name: "v" }],
       rows: [[1]],
       rowCount: 1,
-      affectedRows: 0,
     }
   }
   throw new Error(`unexpected SQL: ${sql}`)
@@ -159,7 +155,6 @@ describe("sql USE validation", () => {
       columns: ["v"],
       rows: [[1]],
       count: 1,
-      affected: 0,
       time_ms: expect.any(Number),
       job_id: "job-select",
     })

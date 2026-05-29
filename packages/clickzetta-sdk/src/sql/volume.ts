@@ -474,7 +474,6 @@ export async function genVolumeResult(outcome: VolumeOutcome): Promise<QueryResu
     ],
     rows,
     rowCount: rows.length,
-    affectedRows: 0,
   }
 }
 

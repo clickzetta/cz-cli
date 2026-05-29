@@ -440,9 +440,9 @@ async function emitResult(
   }
 
   if (isWrite) {
-    logOperation("sql", { sql, ok: true, affected: r.affectedRows, timeMs: Date.now() - t0 })
+    logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
     const writeExtra = { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) }
-    success({ affected: r.affectedRows }, { format, timeMs: Date.now() - t0, aiMessage, extra: Object.keys(writeExtra).length > 0 ? writeExtra : undefined })
+    success({}, { format, timeMs: Date.now() - t0, aiMessage, extra: Object.keys(writeExtra).length > 0 ? writeExtra : undefined })
     return
   }
 
@@ -555,7 +555,7 @@ async function handler(argv: SqlArgs): Promise<void> {
             } else if (isQueryResult(r)) {
               const columns = r.columns.map((c) => c.name)
               const rows = maskRows(columns, r.rows)
-              const line = { index: i, sql: stmt, columns, rows, count: rows.length, affected: r.affectedRows, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              const line = { index: i, sql: stmt, columns, rows, count: rows.length, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
               process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
               logOperation("sql", { sql: stmt, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             }

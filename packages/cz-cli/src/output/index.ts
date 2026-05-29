@@ -56,13 +56,12 @@ export function success(
 export function successRows(
   columns: string[],
   rows: unknown[][],
-  opts?: OutputOptions & { affected?: number; timeMs?: number; noHeader?: boolean },
+  opts?: OutputOptions & { timeMs?: number; noHeader?: boolean },
 ): void {
   const payload: Record<string, unknown> = {
     columns,
     rows,
     count: rows.length,
-    affected: opts?.affected ?? 0,
     time_ms: opts?.timeMs ?? 0,
   }
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage

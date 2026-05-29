@@ -24,7 +24,6 @@ export interface QueryResult {
   columns: ColumnSchema[]
   rows: unknown[][]
   rowCount: number
-  affectedRows: number
   timeZone?: string
   errorCode?: string
   errorMessage?: string

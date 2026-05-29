@@ -50,7 +50,7 @@ export class RowIterator {
  */
 export class EmptyRowIterator extends RowIterator {
   constructor() {
-    super({ jobId: "", status: JobStatus.SUCCEEDED, columns: [], rows: [], rowCount: 0, affectedRows: 0 })
+    super({ jobId: "", status: JobStatus.SUCCEEDED, columns: [], rows: [], rowCount: 0 })
   }
 
   override [Symbol.iterator](): Iterator<unknown[]> {

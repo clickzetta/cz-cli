@@ -58,7 +58,6 @@ export function logOperation(
     sql?: string
     ok?: boolean
     rows?: number
-    affected?: number
     timeMs?: number
     errorCode?: string
   },
@@ -70,7 +69,6 @@ export function logOperation(
   if (opts?.sql !== undefined) entry.sql = redactSql(opts.sql)
   entry.ok = opts?.ok ?? true
   if (opts?.rows !== undefined) entry.rows = opts.rows
-  if (opts?.affected !== undefined) entry.affected = opts.affected
   if (opts?.timeMs) entry.time_ms = opts.timeMs
   if (opts?.errorCode) entry.error_code = opts.errorCode
 

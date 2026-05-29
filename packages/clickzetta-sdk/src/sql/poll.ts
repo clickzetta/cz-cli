@@ -393,7 +393,6 @@ export async function parseJobResponse(
       columns: [],
       rows: [],
       rowCount: 0,
-      affectedRows: 0,
       errorCode: raw.status?.errorCode || undefined,
       errorMessage: raw.status?.errorMessage || raw.status?.message || undefined,
     }
@@ -429,7 +428,6 @@ export async function parseJobResponse(
     columns: finalCols,
     rows: finalRows,
     rowCount: finalRows.length,
-    affectedRows: 0,
     timeZone,
     errorCode: raw.status?.errorCode || undefined,
     errorMessage: raw.status?.errorMessage || raw.status?.message || undefined,

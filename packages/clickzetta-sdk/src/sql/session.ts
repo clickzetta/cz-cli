@@ -485,7 +485,6 @@ export class SqlSession {
         columns: [],
         rows: [],
         rowCount: 0,
-        affectedRows: 0,
       }
     }
 
@@ -579,7 +578,6 @@ export class SqlSession {
       columns: [],
       rows: [],
       rowCount: 0,
-      affectedRows: 0,
     }
   }
 
