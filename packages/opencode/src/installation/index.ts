@@ -35,7 +35,7 @@ export type Info = z.infer<typeof Info>
 export const USER_AGENT = `cz-cli/${InstallationChannel}/${InstallationVersion}/${Flag.CLICKZETTA_CLIENT}`
 
 export function isPreview() {
-  return InstallationChannel !== "latest"
+  return InstallationChannel !== "nightly"
 }
 
 export function isLocal() {
@@ -49,8 +49,8 @@ export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedErr
 export interface Interface {
   readonly info: () => Effect.Effect<Info>
   readonly method: () => Effect.Effect<Method>
-  readonly latest: (method?: Method) => Effect.Effect<string>
-  readonly upgrade: (method: Method, target: string) => Effect.Effect<void, UpgradeFailedError>
+  readonly latest: (method?: Method, channel?: string) => Effect.Effect<string>
+  readonly upgrade: (method: Method, target: string, channel?: string) => Effect.Effect<void, UpgradeFailedError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Installation") {}
@@ -64,17 +64,17 @@ export const layer: Layer.Layer<Service> =
         return saved?.method ?? installMethodFromExecPath(process.execPath)
       })
 
-      const latestImpl = Effect.fn("Installation.latest")(function* (installMethod?: Method) {
+      const latestImpl = Effect.fn("Installation.latest")(function* (installMethod?: Method, channel?: string) {
         const method = installMethod ?? (yield* methodImpl())
         return yield* Effect.tryPromise({
-          try: () => latestVersionForMethod(method),
+          try: () => latestVersionForMethod(method, fetch, channel),
           catch: (error) => new UpgradeFailedError({ stderr: error instanceof Error ? error.message : String(error) }),
         }).pipe(Effect.orElseSucceed(() => InstallationVersion))
       })
 
-      const upgradeImpl = Effect.fn("Installation.upgrade")(function* (method: Method, target: string) {
+      const upgradeImpl = Effect.fn("Installation.upgrade")(function* (method: Method, target: string, channel?: string) {
         return yield* Effect.tryPromise({
-          try: () => performUpgrade(method, target),
+          try: () => performUpgrade(method, target, fetch, channel),
           catch: (error) => new UpgradeFailedError({ stderr: error instanceof Error ? error.message : String(error) }),
         })
       })

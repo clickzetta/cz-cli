@@ -62,7 +62,7 @@ const SKIP_COMMANDS = new Set(["setup", "update", "uninstall"])
 const NPM_METHODS = new Set<InstallMethod>(["npm", "pnpm", "yarn", "bun"])
 const INSTALL_SCRIPT_URL = {
   stable: "https://cz-cli.ai/install.sh",
-  latest: "https://cz-cli.ai/install/latest.sh",
+  nightly: "https://cz-cli.ai/install-nightly.sh",
 } as const
 
 function homeDirectory(home?: string, env: NodeJS.ProcessEnv = process.env) {
@@ -149,7 +149,17 @@ export function installMethodFromExecPath(execPath: string, home?: string, env: 
   return "unknown"
 }
 
-export async function latestVersionForMethod(method: InstallMethod, fetchImpl: typeof fetch = fetch) {
+export async function latestVersionForMethod(method: InstallMethod, fetchImpl: typeof fetch = fetch, channel?: string) {
+  if (channel === "nightly") {
+    const response = await fetchWithTimeout("https://cz-cli.ai/api/nightly", {
+      headers: { Accept: "application/json" },
+    }, fetchImpl)
+    if (!response.ok) throw new Error(`Failed to fetch nightly version: ${response.status}`)
+    const payload = (await response.json()) as { version?: string }
+    if (!payload.version) throw new Error("nightly version is missing")
+    return payload.version
+  }
+
   if (NPM_METHODS.has(method)) {
     const response = await fetchWithTimeout("https://registry.npmjs.org/@clickzetta/cz-cli/latest", {
       headers: { Accept: "application/json" },
@@ -160,22 +170,18 @@ export async function latestVersionForMethod(method: InstallMethod, fetchImpl: t
     return payload.version
   }
 
-  const response = await fetchWithTimeout("https://api.github.com/repos/clickzetta/cz-cli/releases/latest", {
-    headers: { Accept: "application/vnd.github+json" },
+  const response = await fetchWithTimeout("https://cz-cli.ai/api/stable", {
+    headers: { Accept: "application/json" },
   }, fetchImpl)
-  if (!response.ok) throw new Error(`Failed to fetch GitHub latest release: ${response.status}`)
-  const payload = (await response.json()) as { tag_name?: string }
-  const version = payload.tag_name?.replace(/^v/, "")
-  if (!version) throw new Error("GitHub latest release tag is missing")
-  return version
+  if (!response.ok) throw new Error(`Failed to fetch stable version: ${response.status}`)
+  const payload = (await response.json()) as { version?: string }
+  if (!payload.version) throw new Error("stable version is missing")
+  return payload.version
 }
 
-async function upgradeViaInstallScript(target: string, fetchImpl: typeof fetch = fetch) {
-  const response = await fetchWithTimeout(
-    InstallationChannel === "latest" ? INSTALL_SCRIPT_URL.latest : INSTALL_SCRIPT_URL.stable,
-    {},
-    fetchImpl,
-  )
+async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch) {
+  const ch = channel === "nightly" ? "nightly" : "stable"
+  const response = await fetchWithTimeout(INSTALL_SCRIPT_URL[ch], {}, fetchImpl)
   if (!response.ok) throw new Error(`Failed to download install script: ${response.status}`)
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-"))
   const script = path.join(temp, "install.sh")
@@ -210,9 +216,9 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
   if (result.status !== 0) throw new Error(`${cmd[0]} upgrade failed with exit code ${result.status ?? 1}`)
 }
 
-export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch) {
+export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string) {
   if (method === "curl") {
-    await upgradeViaInstallScript(target, fetchImpl)
+    await upgradeViaInstallScript(target, channel, fetchImpl)
     return
   }
   if (NPM_METHODS.has(method)) {
@@ -282,7 +288,7 @@ export function shouldSkipAutoUpdateCommand(input: {
     env.CLICKZETTA_DISABLE_AUTOUPDATE === "1" ||
     ["1", "true", "yes"].includes((env.CZ_SKIP_UPDATE ?? "").trim().toLowerCase())
   ) return true
-  if ((input.channel ?? InstallationChannel) !== "latest") return true
+  if ((input.channel ?? InstallationChannel) !== "nightly") return true
   if (!semver.valid(input.version ?? InstallationVersion)) return true
   const head = input.args[0]
   if (head && SKIP_COMMANDS.has(head)) return true
@@ -292,7 +298,7 @@ export function shouldSkipAutoUpdateCommand(input: {
 export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   const autoupdate = input.autoupdate ?? true
   if (autoupdate === false) return { kind: "skip", reason: "disabled" }
-  if (input.channel !== "latest") return { kind: "skip", reason: "channel" }
+  if (input.channel !== "nightly") return { kind: "skip", reason: "channel" }
   const latestVersion = input.latestVersion
   if (!semver.valid(input.currentVersion) || !latestVersion || !semver.valid(latestVersion)) {
     return { kind: "skip", reason: "version" }
