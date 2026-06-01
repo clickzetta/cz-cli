@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { error, successRows } from "../src/output/index.js"
+import { defaultFormat, error, successRows } from "../src/output/index.js"
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout)
 const originalStderrWrite = process.stderr.write.bind(process.stderr)
@@ -87,5 +87,41 @@ describe("error output formatting", () => {
     })
 
     expect(output.stdout).toBe('{\n  "error": {\n    "code": "CZLH-42000",\n    "message": "schema not found"\n  }\n}\n')
+  })
+})
+
+describe("defaultFormat", () => {
+  const savedFormat = process.env.CZ_FORMAT
+
+  const restore = () => {
+    if (savedFormat === undefined) {
+      delete process.env.CZ_FORMAT
+    } else {
+      process.env.CZ_FORMAT = savedFormat
+    }
+  }
+
+  test("returns json when CZ_FORMAT is not set", () => {
+    delete process.env.CZ_FORMAT
+    expect(defaultFormat()).toBe("json")
+    restore()
+  })
+
+  test("returns the value of CZ_FORMAT when set to a valid format", () => {
+    process.env.CZ_FORMAT = "table"
+    expect(defaultFormat()).toBe("table")
+    restore()
+  })
+
+  test("returns json when CZ_FORMAT is set to an invalid format", () => {
+    process.env.CZ_FORMAT = "invalid"
+    expect(defaultFormat()).toBe("json")
+    restore()
+  })
+
+  test("trims whitespace from CZ_FORMAT value", () => {
+    process.env.CZ_FORMAT = "  csv  "
+    expect(defaultFormat()).toBe("csv")
+    restore()
   })
 })

@@ -2,7 +2,7 @@
  * Programmatic execution of cz-cli commands.
  * Reuses the same top-level argument classification as the real CLI, but captures output and exit code.
  */
-import { outputState } from "./output/index.js"
+import { defaultFormat, outputState } from "./output/index.js"
 import { createCli } from "./cli.js"
 import { registerCommands } from "./register-commands.js"
 import { classifyCliArgs, emitNoProfile } from "./run-cli.js"
@@ -32,7 +32,7 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   const args = splitArgs(command)
   if (extraArgs) args.push(...extraArgs)
   if (!args.includes("--format") && !args.some((arg) => arg.startsWith("--format="))) {
-    args.push("--format", "json")
+    args.push("--format", defaultFormat())
   }
 
   const chunks: string[] = []
