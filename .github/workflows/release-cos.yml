@@ -169,7 +169,7 @@ jobs:
             fi
 
             attempt=$((attempt + 1))
-            sleep 1
+            sleep $((attempt * 10))
           done
 
       - name: Build and upload ${{ matrix.os }} targets
