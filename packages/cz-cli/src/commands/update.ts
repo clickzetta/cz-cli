@@ -206,7 +206,7 @@ export function registerUpdateCommand(cli: Argv) {
 
       // --- Step 3: Perform upgrade ---
       try {
-        process.stderr.write(`Upgrading via ${method}...\n`)
+        process.stderr.write(`Upgrading via install script...\n`)
         await performUpgrade(method, latest, fetch, channel)
         await writeInstallMetadata({ method, binary_version: latest })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)

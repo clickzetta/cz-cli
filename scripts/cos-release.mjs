@@ -31,6 +31,7 @@ import {
   putText,
   statFileWithSha256,
   uploadFile,
+  withRetry,
 } from "./cos-upload.mjs"
 
 const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
@@ -228,19 +229,24 @@ export async function uploadAllArchives(ctx, builds, options = {}) {
   const results = await Promise.all(
     builds.map(async (b) => {
       log(`uploading ${b.platform}: ${b.archiveName} -> ${b.targetKey}`)
-      const result = await uploadFn({
-        client: ctx.client,
-        Bucket: ctx.Bucket,
-        Region: ctx.Region,
-        filePath: b.archivePath,
-        key: b.targetKey,
-        contentType: "application/octet-stream",
-        cacheControl: Cache.immutable,
-        acl: "private",
-        size: b.size,
-        sha256: b.sha256,
-        log: (msg) => log(`[${b.platform}] ${msg}`),
-      })
+      const logFn = (msg) => log(`[${b.platform}] ${msg}`)
+      const result = await withRetry(
+        () =>
+          uploadFn({
+            client: ctx.client,
+            Bucket: ctx.Bucket,
+            Region: ctx.Region,
+            filePath: b.archivePath,
+            key: b.targetKey,
+            contentType: "application/octet-stream",
+            cacheControl: Cache.immutable,
+            acl: "private",
+            size: b.size,
+            sha256: b.sha256,
+            log: logFn,
+          }),
+        { retries: 3, delayMs: 10000, log: logFn },
+      )
       return { platform: b.platform, archiveName: b.archiveName, result }
     }),
   )
@@ -851,11 +857,11 @@ async function main() {
   logPreparedArchives(builds)
 
   const cos = args.dryRun
-    ? { client: null, Bucket: process.env.COS_BUCKET ?? "DRY", Region: process.env.COS_REGION ?? "DRY" }
+    ? { client: null, Bucket: process.env.COS_BUCKET ?? "DRY", Region: process.env.COS_REGION ?? "DRY", accelerate: false }
     : createClient()
   const ctx = { ...args, ...cos }
 
-  console.log("Uploading archives...")
+  console.log(`Uploading archives... (accelerate=${cos.accelerate ?? false})`)
   const uploadedPlatforms = await uploadAllArchives(ctx, builds)
   const manifestPlatforms = signArchiveUrls(ctx, builds, uploadedPlatforms)
   const manifest = buildManifest(ctx, manifestPlatforms)

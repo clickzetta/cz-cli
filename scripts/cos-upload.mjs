@@ -4,6 +4,8 @@
  *
  * Env vars (required when used as a module via `createClient()`):
  *   COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION
+ *   COS_ACCELERATE — "true" (default) uses global acceleration endpoint,
+ *                     "false" uses standard regional endpoint.
  *
  * CLI usage (one-off uploads):
  *   node scripts/cos-upload.mjs <local_path> <cos_key> [content-type]
@@ -30,8 +32,15 @@ export function createClient() {
   const SecretKey = required("COS_SECRET_KEY")
   const Bucket = required("COS_BUCKET")
   const Region = required("COS_REGION")
-  const client = new COS({ SecretId, SecretKey, FileParallelLimit: 10, ChunkParallelLimit: 8 })
-  return { client, Bucket, Region }
+  const accelerate = (process.env.COS_ACCELERATE ?? "true") !== "false"
+  const client = new COS({
+    SecretId,
+    SecretKey,
+    FileParallelLimit: 10,
+    ChunkParallelLimit: 8,
+    ...(accelerate ? { UseAccelerate: true } : {}),
+  })
+  return { client, Bucket, Region, accelerate }
 }
 
 function required(name) {
@@ -125,7 +134,20 @@ export function createUploadProgressReporter({
   }
 }
 
-export function publicUrl({ Bucket, Region, key }) {
+export async function withRetry(fn, { retries = 3, delayMs = 5000, log = console.log } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      if (attempt >= retries) throw error
+      log(`  ⚠ attempt ${attempt}/${retries} failed: ${formatError(error)} — retrying in ${delayMs / 1000}s...`)
+      await new Promise((r) => setTimeout(r, delayMs * attempt))
+    }
+  }
+}
+
+export function publicUrl({ Bucket, Region, key, accelerate = false }) {
+  if (accelerate) return `https://${Bucket}.cos.accelerate.myqcloud.com/${key}`
   return `https://${Bucket}.cos.${Region}.myqcloud.com/${key}`
 }
 

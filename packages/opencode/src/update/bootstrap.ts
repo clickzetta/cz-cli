@@ -223,15 +223,7 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
 }
 
 export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string) {
-  if (method === "curl") {
-    await upgradeViaInstallScript(target, channel, fetchImpl)
-    return
-  }
-  if (NPM_METHODS.has(method)) {
-    await upgradeViaPackageManager(method, target)
-    return
-  }
-  throw new Error(`Automatic upgrade is not supported for ${method} installs`)
+  await upgradeViaInstallScript(target, channel, fetchImpl)
 }
 
 function restartCurrentProcess(env: NodeJS.ProcessEnv = process.env) {
