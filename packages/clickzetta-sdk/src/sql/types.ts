@@ -16,6 +16,7 @@ export enum JobStatus {
 export interface ColumnSchema {
   name: string
   type: string
+  nullable?: boolean
 }
 
 export interface QueryResult {

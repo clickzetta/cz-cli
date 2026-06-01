@@ -53,6 +53,7 @@ export class Cursor {
     return this._queryResult.columns.map(col => ({
       name: col.name,
       type: col.type,
+      nullable: col.nullable ?? true,
     }))
   }
 

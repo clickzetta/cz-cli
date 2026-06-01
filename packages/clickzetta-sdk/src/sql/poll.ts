@@ -42,6 +42,7 @@ interface LhJobStatus {
 
 interface LhFieldType {
   category: string
+  nullable?: boolean
   decimalTypeInfo?: { precision?: string; scale?: string }
 }
 
@@ -332,7 +333,7 @@ function parseResultSet(
       const s = f.type.decimalTypeInfo.scale ?? "0"
       type = `DECIMAL(${p},${s})`
     }
-    return { name: f.name, type }
+    return { name: f.name, type, nullable: f.type.nullable ?? true }
   })
 
   // No data and no location — DDL result
