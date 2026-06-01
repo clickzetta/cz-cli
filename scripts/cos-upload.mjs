@@ -30,7 +30,7 @@ export function createClient() {
   const SecretKey = required("COS_SECRET_KEY")
   const Bucket = required("COS_BUCKET")
   const Region = required("COS_REGION")
-  const client = new COS({ SecretId, SecretKey })
+  const client = new COS({ SecretId, SecretKey, FileParallelLimit: 10, ChunkParallelLimit: 8 })
   return { client, Bucket, Region }
 }
 
@@ -191,6 +191,8 @@ export async function uploadFile({
           Region,
           Key: key,
           FilePath: filePath,
+          SliceSize: 1024 * 1024 * 5,
+          AsyncLimit: 8,
           Headers: {
             "x-cos-acl": acl,
             ...(contentType ? { "Content-Type": contentType } : {}),
