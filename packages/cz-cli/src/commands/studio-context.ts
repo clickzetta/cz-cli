@@ -3,6 +3,31 @@ import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv }
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import { handledError } from "../output/index.js"
 
+/**
+ * Account/tenant-level context for AI Gateway admin APIs. Unlike
+ * {@link getStudioContext} it skips workspace/project resolution — gateway
+ * virtual keys are tenant-scoped and only need tenantId/userId/instanceId.
+ */
+export async function getGatewayContext(args: Partial<CliArgs> & { format?: string }): Promise<StudioConfig> {
+  const config = resolveConnectionConfig(args)
+  const token = await getToken(config)
+  const baseUrl = toServiceUrl(config.service, config.protocol)
+  const user = await getCurrentUser(baseUrl, token.token)
+  return {
+    token: token.token,
+    instanceId: token.instanceId,
+    workspaceId: 0,
+    projectId: 0,
+    userId: token.userId,
+    tenantId: user.accountId,
+    instanceName: config.instance,
+    workspaceName: config.workspace ?? "",
+    env: detectEnv(config.service),
+    baseUrl,
+    customHeaders: config.customHeaders,
+  }
+}
+
 export async function getStudioContext(args: Partial<CliArgs> & { format?: string }): Promise<StudioConfig> {
   const format = args.format ?? "json"
   const config = resolveConnectionConfig(args)
