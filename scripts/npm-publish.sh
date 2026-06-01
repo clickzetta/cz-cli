@@ -81,6 +81,12 @@ for platform in "${PLATFORMS[@]}"; do
   artifact_dir="$ARTIFACTS/cz-cli-${artifact_platform}"
   echo "── @clickzetta/cz-cli-${platform} ──"
 
+  if [ ! -d "$artifact_dir" ]; then
+    echo "  ⚠ Artifact not found at $artifact_dir, skipping platform."
+    echo ""
+    continue
+  fi
+
   set_version "$pkg_dir/package.json"
 
   # Recreate bin/ from scratch so stale binaries from older layouts are never published.
