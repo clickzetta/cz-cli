@@ -171,17 +171,6 @@ async function applyUseStatement(
   return true
 }
 
-function extractTableNames(sql: string): string[] {
-  const tables: string[] = []
-  const re = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([\w.`"]+)/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(sql)) !== null) {
-    const name = m[1].replace(/[`"]/g, "")
-    if (!tables.includes(name)) tables.push(name)
-  }
-  return tables
-}
-
 function resolveSql(argv: SqlArgs): string {
   if (argv.file) return readFileSync(argv.file, "utf-8")
   if (argv.execute) return argv.execute
@@ -230,25 +219,6 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
   return undefined
 }
 
-async function fetchWithSchema(ctx: ExecContext, sql: string): Promise<Record<string, unknown> | undefined> {
-  const tables = extractTableNames(sql)
-  if (tables.length === 0) return undefined
-  const table = tables[0]
-  try {
-    validateIdentifier(table, "table name")
-    const r = await execSql(ctx, `DESC TABLE ${table}`)
-    if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-      const cols = r.rows.map((row) => {
-        const vals = Object.values(row)
-        return { name: vals[0] ?? "", type: vals[1] ?? "", comment: vals[2] ?? "" }
-      })
-      return { table, columns: cols }
-    }
-  } catch {
-    // skip tables we can't describe
-  }
-  return undefined
-}
 
 async function executeSingle(
   ctx: ExecContext,
@@ -350,22 +320,11 @@ async function executeSingle(
         )
         return
       }
-      const tables = extractTableNames(sql)
-      let schemaExtra: Record<string, unknown> | undefined
-      if (tables.length > 0) {
-        try {
-          validateIdentifier(tables[0], "table name")
-          const descR = await execSql(ctx, `DESC TABLE ${tables[0]}`)
-          if (isQueryResult(descR) && descR.status === JobStatus.SUCCEEDED && descR.rows.length > 0) {
-            const cols = descR.rows.map((row) => ({ name: Object.values(row)[0], type: Object.values(row)[1] ?? "" }))
-            schemaExtra = { table: tables[0], columns: cols }
-          }
-        } catch { /* best-effort */ }
-      }
+      const schemaExtra = r.columns
       logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
       error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, {
         format,
-        extra: schemaExtra ? { schema: schemaExtra } : undefined,
+        extra: { schema: schemaExtra },
         aiMessage: `Too many rows. Add LIMIT to your query, e.g.: cz-cli sql "SELECT ... LIMIT 10" --sync, or use --no-limit to fetch all.`,
       }); return
     }
@@ -435,8 +394,7 @@ async function emitResult(
   let extra: Record<string, unknown> | undefined
 
   if (argv["with-schema"]) {
-    const schema = await fetchWithSchema(ctx, sql)
-    if (schema) extra = { schema }
+    extra = { schema: r.columns }
   }
 
   if (isWrite) {
