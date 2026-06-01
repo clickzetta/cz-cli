@@ -175,8 +175,12 @@ function key(...parts) {
   return [PATH_PREFIX, ...parts].join("/")
 }
 
+function metaRootKey(...parts) {
+  return key(META_INF_PREFIX, ...parts)
+}
+
 function metaKey(channel, ...parts) {
-  return key(META_INF_PREFIX, channel, ...parts)
+  return metaRootKey(channel, ...parts)
 }
 
 function releaseChannel(ctx) {
@@ -356,6 +360,65 @@ verify_checksum() {
   fi
 }
 
+version_weight() {
+  case "$1" in
+    "") echo 2 ;;
+    dev*) echo 0 ;;
+    *) echo 1 ;;
+  esac
+}
+
+version_gt() {
+  awk -v left="$1" -v right="$2" '
+    function split_version(version, core, suffix, nums, raw) {
+      gsub(/^v/, "", version)
+      raw = version
+      suffix = ""
+      if (index(version, "-")) {
+        core = substr(version, 1, index(version, "-") - 1)
+        suffix = substr(version, index(version, "-") + 1)
+      } else {
+        core = version
+      }
+      split(core, nums, ".")
+      data["major"] = nums[1] + 0
+      data["minor"] = nums[2] + 0
+      data["patch"] = nums[3] + 0
+      data["suffix"] = suffix
+    }
+    BEGIN {
+      split_version(left, left_core, left_suffix, left_nums, left_raw)
+      l_major = data["major"]; l_minor = data["minor"]; l_patch = data["patch"]; l_suffix = data["suffix"]
+      split_version(right, right_core, right_suffix, right_nums, right_raw)
+      r_major = data["major"]; r_minor = data["minor"]; r_patch = data["patch"]; r_suffix = data["suffix"]
+
+      if (l_major != r_major) exit !(l_major > r_major)
+      if (l_minor != r_minor) exit !(l_minor > r_minor)
+      if (l_patch != r_patch) exit !(l_patch > r_patch)
+
+      l_weight = l_suffix == "" ? 2 : (index(l_suffix, "dev") == 1 ? 0 : 1)
+      r_weight = r_suffix == "" ? 2 : (index(r_suffix, "dev") == 1 ? 0 : 1)
+      exit !(l_weight > r_weight)
+    }
+  '
+}
+
+check_version() {
+  if ! command -v cz-cli > /dev/null 2>&1; then
+    return
+  fi
+
+  INSTALLED_VERSION=$(cz-cli --version 2>/dev/null || echo "")
+  if [ "$INSTALLED_VERSION" = "$VERSION" ]; then
+    echo "Version $VERSION already installed"
+    exit 0
+  fi
+  if [ -n "$INSTALLED_VERSION" ] && version_gt "$INSTALLED_VERSION" "$VERSION"; then
+    echo "A newer version is already installed: $INSTALLED_VERSION" >&2
+    exit 0
+  fi
+}
+
 platform() {
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
@@ -370,6 +433,7 @@ platform() {
 
 main() {
   PLATFORM=$(platform)
+  check_version
 
   case "$PLATFORM" in
 ${renderShellPlatformCase(platforms)}
@@ -449,7 +513,48 @@ $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cz-cli-" + [System.Guid
 
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 
+function Get-VersionParts($RawVersion) {
+  $VersionText = $RawVersion -replace '^v', ''
+  $Core = $VersionText
+  $Suffix = ""
+  if ($VersionText.Contains("-")) {
+    $Segments = $VersionText.Split("-", 2)
+    $Core = $Segments[0]
+    $Suffix = $Segments[1]
+  }
+  $Numbers = $Core.Split(".")
+  [pscustomobject]@{
+    Major = [int]($Numbers[0] ?? 0)
+    Minor = [int]($Numbers[1] ?? 0)
+    Patch = [int]($Numbers[2] ?? 0)
+    Suffix = $Suffix
+    Weight = if ([string]::IsNullOrEmpty($Suffix)) { 2 } elseif ($Suffix.StartsWith("dev")) { 0 } else { 1 }
+  }
+}
+
+function Test-VersionGreater($LeftVersion, $RightVersion) {
+  $Left = Get-VersionParts $LeftVersion
+  $Right = Get-VersionParts $RightVersion
+  if ($Left.Major -ne $Right.Major) { return $Left.Major -gt $Right.Major }
+  if ($Left.Minor -ne $Right.Minor) { return $Left.Minor -gt $Right.Minor }
+  if ($Left.Patch -ne $Right.Patch) { return $Left.Patch -gt $Right.Patch }
+  return $Left.Weight -gt $Right.Weight
+}
+
 try {
+  $InstalledCommand = Get-Command cz-cli -ErrorAction SilentlyContinue
+  if ($InstalledCommand) {
+    $InstalledVersion = (& cz-cli --version 2>$null).Trim()
+    if ($InstalledVersion -eq $Version) {
+      Write-Host "Version $Version already installed"
+      exit 0
+    }
+    if ($InstalledVersion -and (Test-VersionGreater $InstalledVersion $Version)) {
+      Write-Host "A newer version is already installed: $InstalledVersion" -ForegroundColor Yellow
+      exit 0
+    }
+  }
+
   $Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     "AMD64" { "x64" }
     "ARM64" { "arm64" }
@@ -549,9 +654,9 @@ async function writeBootstrap(ctx, name, body, contentType) {
 }
 
 async function writeChannel(ctx, channel) {
-  const target = key(channel)
+  const target = metaRootKey(channel)
   if (ctx.dryRun) {
-    console.log(`[dry-run] write channel ${channel} -> ${ctx.version}`)
+    console.log(`[dry-run] write channel ${target} -> ${ctx.version}`)
     return
   }
   await putText({
@@ -566,7 +671,7 @@ async function writeChannel(ctx, channel) {
 }
 
 async function updateVersions(ctx) {
-  const target = key("versions.json")
+  const target = metaRootKey("versions.json")
   const existing = ctx.dryRun
     ? null
     : await getJson({

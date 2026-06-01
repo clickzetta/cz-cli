@@ -13,6 +13,7 @@
 import { Cache, createClient, getJson, putJson, putText } from "./cos-upload.mjs"
 
 const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
+const META_INF_PREFIX = "META-INF"
 const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/
 
 function parseArgs(argv) {
@@ -44,6 +45,7 @@ function parseArgs(argv) {
 }
 
 const key = (...parts) => [PATH_PREFIX, ...parts].join("/")
+const metaRootKey = (...parts) => key(META_INF_PREFIX, ...parts)
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
@@ -72,7 +74,7 @@ async function main() {
     console.log(`[dry-run] would verify ${manifestKey}`)
   }
 
-  const channelKey = key(args.channel)
+  const channelKey = metaRootKey(args.channel)
   if (args.dryRun) {
     console.log(`[dry-run] write ${channelKey} <- ${args.version}`)
   } else {
@@ -87,7 +89,7 @@ async function main() {
     console.log(`  ✓ ${args.channel} -> ${args.version}`)
   }
 
-  const versionsKey = key("versions.json")
+  const versionsKey = metaRootKey("versions.json")
   if (!args.dryRun) {
     const doc = await getJson({
       client: cos.client,

@@ -46,6 +46,45 @@ describe("cos release logging", () => {
     }
   })
 
+  test("stable channel assets and versions index are written under META-INF", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-cos-release-meta-"))
+    const distDir = path.join(tmp, "dist")
+    const binDir = path.join(distDir, "cz-cli-darwin-arm64", "bin")
+    fs.mkdirSync(binDir, { recursive: true })
+    fs.writeFileSync(path.join(binDir, "cz-cli"), "test-binary")
+
+    try {
+      const output = execFileSync(
+        process.execPath,
+        [
+          "run",
+          path.join(repoRoot, "scripts", "cos-release.mjs"),
+          "--version",
+          "1.2.3",
+          "--dist",
+          distDir,
+          "--git-sha",
+          "abc123",
+          "--build-date",
+          "2026-05-28T10:00:00Z",
+          "--promote-stable",
+          "--dry-run",
+        ],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+        },
+      )
+
+      expect(output).toContain("META-INF/stable/bootstrap.sh")
+      expect(output).toContain("META-INF/stable/manifest.json")
+      expect(output).toContain("write channel cz-cli-releases/META-INF/stable -> 1.2.3")
+      expect(output).toContain("META-INF/versions.json")
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   test("upload progress reporter logs start, progress milestones, and completion", async () => {
     const Upload = await import("../../../scripts/cos-upload.mjs")
     const lines: string[] = []
@@ -181,9 +220,21 @@ describe("cos release logging", () => {
     expect(sh).toContain('CHANNEL="stable"')
     expect(sh).toContain('"darwin-arm64")')
     expect(sh).toContain("https://example.com/darwin-arm64.zip?sign=abc")
+    expect(sh).toContain('cz-cli --version')
+    expect(sh).toContain('A newer version is already installed')
     expect(ps1).toContain("$Version = '1.2.3'")
     expect(ps1).toContain("$Channel = 'stable'")
     expect(ps1).toContain("'win32-x64' {")
     expect(ps1).toContain("https://example.com/win32-x64.zip?sign=def")
+    expect(ps1).toContain("Get-Command cz-cli")
+    expect(ps1).toContain("A newer version is already installed")
+  })
+
+  test("release installer script supports direct installation options", () => {
+    const script = fs.readFileSync(path.join(repoRoot, "scripts", "install.sh"), "utf8")
+
+    expect(script).toContain("Usage: install.sh [options]")
+    expect(script).toContain("--binary <path>")
+    expect(script).toContain("https://cz-cli.ai/api/stable")
   })
 })

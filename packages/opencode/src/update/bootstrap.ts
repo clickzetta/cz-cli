@@ -179,6 +179,11 @@ export async function latestVersionForMethod(method: InstallMethod, fetchImpl: t
   return payload.version
 }
 
+export function shouldUpgradeToVersion(currentVersion: string, latestVersion: string) {
+  if (!semver.valid(currentVersion) || !semver.valid(latestVersion)) return currentVersion !== latestVersion
+  return semver.gt(latestVersion, currentVersion)
+}
+
 async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch) {
   const ch = channel === "nightly" ? "nightly" : "stable"
   const response = await fetchWithTimeout(INSTALL_SCRIPT_URL[ch], {}, fetchImpl)
@@ -190,6 +195,7 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
     stdio: "inherit",
     env: {
       ...process.env,
+      VERSION: target,
       CZ_VERSION: target,
       NON_INTERACTIVE: "1",
       SKIP_PATH_PROMPT: "1",
@@ -306,7 +312,7 @@ export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   if (input.lastCheckedAt !== undefined && input.now - input.lastCheckedAt < input.intervalMs) {
     return { kind: "skip", reason: "interval" }
   }
-  if (!semver.gt(latestVersion, input.currentVersion)) {
+  if (!shouldUpgradeToVersion(input.currentVersion, latestVersion)) {
     return { kind: "skip", reason: "up-to-date" }
   }
   if (autoupdate === true && input.method && SUPPORTED_AUTO_UPGRADE_METHODS.has(input.method)) {

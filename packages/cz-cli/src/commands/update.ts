@@ -11,9 +11,19 @@ import { execSync } from "node:child_process"
 import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync } from "node:fs"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
-import { installMethodFromExecPath, readInstallMetadata, performUpgrade, writeInstallMetadata } from "../../../opencode/src/update/bootstrap"
+import {
+  installMethodFromExecPath,
+  readInstallMetadata,
+  performUpgrade,
+  shouldUpgradeToVersion,
+  writeInstallMetadata,
+} from "../../../opencode/src/update/bootstrap"
 
 const NPM_PACKAGE = "@clickzetta/cz-cli"
+
+export function shouldApplyUpdate(currentVersion: string, latestVersion: string, force: boolean) {
+  return force || shouldUpgradeToVersion(currentVersion, latestVersion)
+}
 
 function confirm(prompt: string): boolean {
   process.stderr.write(`${prompt} [y/N] `)
@@ -151,8 +161,14 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      if (latest === VERSION && !argv.force) {
-        process.stderr.write(`Already up to date (${VERSION}).\n`)
+      if (!shouldApplyUpdate(VERSION, latest, argv.force)) {
+        if (latest === VERSION) {
+          process.stderr.write(`Already up to date (${VERSION}).\n`)
+          return
+        }
+        process.stderr.write(`Refusing to downgrade: ${VERSION} → ${latest}\n`)
+        process.stderr.write("The release channel appears to be pointing to an older version.\n")
+        process.exitCode = 1
         return
       }
 
