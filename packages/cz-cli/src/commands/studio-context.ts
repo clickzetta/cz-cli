@@ -8,7 +8,11 @@ import { handledError } from "../output/index.js"
  * {@link getStudioContext} it skips workspace/project resolution — gateway
  * virtual keys are tenant-scoped and only need tenantId/userId/instanceId.
  */
-export async function getGatewayContext(args: Partial<CliArgs> & { format?: string }): Promise<StudioConfig> {
+export interface GatewayContext extends StudioConfig {
+  userName: string
+}
+
+export async function getGatewayContext(args: Partial<CliArgs> & { format?: string }): Promise<GatewayContext> {
   const config = resolveConnectionConfig(args)
   const token = await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
@@ -25,6 +29,7 @@ export async function getGatewayContext(args: Partial<CliArgs> & { format?: stri
     env: detectEnv(config.service),
     baseUrl,
     customHeaders: config.customHeaders,
+    userName: user.name,
   }
 }
 

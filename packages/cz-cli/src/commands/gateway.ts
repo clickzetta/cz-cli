@@ -4,15 +4,21 @@ import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
-import { studioRequest, type StudioConfig } from "@clickzetta/sdk"
+import { studioRequest, request, type StudioConfig, type ApiResponse } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getGatewayContext } from "./studio-context.js"
+import { getGatewayContext, type GatewayContext } from "./studio-context.js"
 
-// ── AI Gateway admin API paths (proxied by hornhub) ────────────────────────
+// ── AI Gateway admin API paths ──────────────────────────────────────────────
+// Portal-proxied endpoints (standard portal token auth):
+const PORTAL_API = {
+  LIST: "/clickzetta-portal/user/listApiKeys",   // GET, params: userName
+  GET: "/clickzetta-portal/user/getApiKey",      // GET, params: userName, id
+}
+// Direct gateway-admin endpoints (require internal JWT — used for write ops once portal wrappers exist):
 const API = {
-  LIST: "/llm-gateway-admin/v2/virtual-key/list",
+  LIST: "/llm-gateway-admin/v2/virtual-key/listWithAuth",
   SAVE: "/llm-gateway-admin/v2/virtual-key/save",
   GET: "/llm-gateway-admin/v2/virtual-key/getApiKey",
   DELETE: "/llm-gateway-admin/v2/virtual-key/delete",
@@ -33,36 +39,80 @@ function isRecord(v: unknown): v is Dict {
   return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
+let _debug = false
+export function setGatewayDebug(enabled: boolean) { _debug = enabled }
+
+/** Wrapper around studioRequest that logs roundtrip details when --debug is active. */
+async function gwRequest<T>(sc: StudioConfig, path: string, body: unknown): Promise<{ data: T; code: number | string; message?: string; count?: number }> {
+  if (_debug) process.stderr.write(`[debug] → POST ${path} ${JSON.stringify(body)}\n`)
+  const t0 = Date.now()
+  const resp = await studioRequest<T>(sc, path, body)
+  if (_debug) process.stderr.write(`[debug] ← ${Date.now() - t0}ms code=${resp.code} data=${JSON.stringify(resp.data).slice(0, 200)}\n`)
+  return resp
+}
+
 function reportError(err: unknown, format: string | undefined): void {
   if (isHandledCliError(err)) return
   error("GATEWAY_ERROR", err instanceof Error ? err.message : String(err), { format })
 }
 
-/** Reverse-lookup a virtual key's numeric id via the list API (id is required by id-based endpoints). */
-async function resolveKeyId(sc: StudioConfig, vApiKey: string): Promise<number> {
-  const resp = await studioRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKey })
+/** GET request to portal endpoints with standard portal token auth. */
+async function portalGet<T>(sc: StudioConfig, path: string): Promise<ApiResponse<T>> {
+  return request<T>(
+    {
+      baseUrl: sc.baseUrl,
+      token: sc.token,
+      customHeaders: {
+        instanceName: sc.instanceName,
+        userId: String(sc.userId),
+        accountId: String(sc.tenantId),
+        tenantId: String(sc.tenantId),
+        instanceId: String(sc.instanceId),
+        ...sc.customHeaders,
+      },
+    },
+    path,
+    undefined,
+    "GET",
+  )
+}
+
+/** Reverse-lookup a virtual key's numeric id via the gateway admin list API. */
+async function resolveKeyId(sc: GatewayContext, vApiKey: string): Promise<number> {
+  const resp = await gwRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKey })
   const list = Array.isArray(resp.data) ? resp.data : []
-  const match = list[0]
-  if (!match || match.id == null) throw new Error(`Virtual key '${vApiKey}' not found`)
+  const prefix = vApiKey.slice(0, 4)
+  const suffix = vApiKey.slice(-4)
+  const match = list.find((k) => {
+    const masked = String(k.vApiKeyMasked ?? k.vApiKey ?? "")
+    return masked.startsWith(prefix) && masked.endsWith(suffix)
+  })
+  if (!match || match.id == null) throw new Error(`Virtual key '${vApiKey}' not found. Ensure the key exists and is visible to your account.`)
   return Number(match.id)
 }
 
 function normalizeKey(k: Dict): Dict {
-  const rlc = Array.isArray(k.rateLimitConfigs) ? (k.rateLimitConfigs as Dict[]) : []
   const quotas: Dict = {}
-  for (const r of rlc) {
-    const label = FIELD_TO_PERIOD[String(r.rateLimitType)] ?? String(r.rateLimitType)
-    quotas[label] = { limit: r.rateLimitValue, usage: r.currentUsage }
+  if (Array.isArray(k.rateLimitConfigs)) {
+    for (const r of k.rateLimitConfigs as Dict[]) {
+      const label = FIELD_TO_PERIOD[String(r.rateLimitType)] ?? String(r.rateLimitType)
+      quotas[label] = { limit: r.rateLimitValue, usage: r.currentUsage }
+    }
+  } else if (k.rateLimitType) {
+    const label = FIELD_TO_PERIOD[String(k.rateLimitType)] ?? String(k.rateLimitType)
+    quotas[label] = { limit: k.rateLimitValue, usage: k.usage }
   }
-  const routing = isRecord(k.routingRule) ? k.routingRule : {}
+  const routing = isRecord(k.routingRule) ? k.routingRule : undefined
+  const alias = k.vapiKeyAlias ?? k.vApiKeyAlias
+  const masked = k.vapiKeyMasked ?? k.vApiKeyMasked
   return {
     id: k.id,
-    alias: k.vApiKeyAlias,
+    ...(alias ? { alias } : {}),
+    ...(masked ? { vApiKey: masked } : {}),
     status: k.status,
-    vApiKey: k.vApiKeyMasked ?? k.vApiKey,
-    routeType: routing.routeType,
-    providerIds: routing.providerIds,
-    quotas,
+    ...(k.type ? { type: k.type } : {}),
+    ...(routing ? { routeType: routing.routeType, providerIds: routing.providerIds } : {}),
+    ...(Object.keys(quotas).length > 0 ? { quotas } : {}),
   }
 }
 
@@ -150,8 +200,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               const format = argv.format
               const t0 = Date.now()
               try {
+                setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
-                const resp = await studioRequest<Dict[]>(sc, API.LIST, {
+                const resp = await gwRequest<Dict>(sc, API.LIST, {
                   pageIndex: argv.page,
                   pageSize: argv["page-size"],
                   ...(argv.alias && { vApiKeyAlias: argv.alias }),
@@ -159,9 +210,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                   ...(argv.status != null && { status: argv.status }),
                   ...(argv.mine && { creator: Number(sc.userId) }),
                 })
-                const rows = (Array.isArray(resp.data) ? resp.data : []).map(normalizeKey)
-                logOperation("gateway key list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
+                const list = Array.isArray(resp.data) ? resp.data as Dict[] : []
+                const rows = list.map(normalizeKey)
                 const total = resp.count ?? rows.length
+                logOperation("gateway key list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
                 success(rows, {
                   format,
                   timeMs: Date.now() - t0,
@@ -196,18 +248,25 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               const t0 = Date.now()
               try {
                 const routingRule = buildRoutingRule(argv as Dict)
+                setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
+                // Guard: reject if alias already exists
+                const checkResp = await gwRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKeyAlias: argv.alias })
+                const existing = Array.isArray(checkResp.data) ? checkResp.data : []
+                if (existing.some((k) => k.vApiKeyAlias === argv.alias)) {
+                  throw new Error(`Virtual key alias '${argv.alias}' already exists (id=${existing.find((k) => k.vApiKeyAlias === argv.alias)?.id}). Use a different alias.`)
+                }
                 const rateLimitConfigs =
                   argv.period && argv.quota != null
                     ? { [PERIOD_TO_FIELD[argv.period as string]]: argv.quota }
                     : { quota_total: DEFAULT_QUOTA_TOTAL }
-                const saveResp = await studioRequest<unknown>(sc, API.SAVE, {
+                const saveResp = await gwRequest<unknown>(sc, API.SAVE, {
                   vApiKeyAlias: argv.alias,
                   ...(routingRule && { routingRule }),
                   rateLimitConfigs,
                 })
                 const id = Number(saveResp.data)
-                const keyResp = await studioRequest<string>(sc, `${API.GET}?id=${id}`, {})
+                const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
                 const vApiKey = String(keyResp.data)
 
                 const addName = argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
@@ -220,6 +279,52 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 success({ id, alias: argv.alias, vApiKey, ...(registered && { llm: registered }) }, { format, timeMs: Date.now() - t0, aiMessage })
               } catch (err) {
                 logOperation("gateway key create", { ok: false, timeMs: Date.now() - t0 })
+                reportError(err, format)
+              }
+            },
+          )
+          // ── upsert ─────────────────────────────────────────────────────
+          .command(
+            "upsert <alias>",
+            "Create or update a virtual key (idempotent)",
+            (y) =>
+              y
+                .positional("alias", { type: "string", demandOption: true, describe: "Virtual key alias" })
+                .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, describe: "Quota period" })
+                .option("quota", { type: "number", describe: "Quota value for the chosen period" })
+                .option("route-type", { type: "string", choices: ["default", "provider", "byok"] as const, describe: "Routing rule type" })
+                .option("providers", { type: "string", array: true, describe: "Ordered provider IDs (route-type=provider)" })
+                .option("provider-sort", { type: "string", choices: ["price", "throughput", "latency"] as const, describe: "Provider sort (route-type=default)" })
+                .option("private-keys", { type: "string", array: true, describe: "BYOK private key aliases (route-type=byok)" })
+                .option("add-to-llm", { type: "string", describe: "Register the key as a [llm.<name>] entry (defaults to alias)" })
+                .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" }),
+            async (argv) => {
+              const format = argv.format
+              const t0 = Date.now()
+              try {
+                const routingRule = buildRoutingRule(argv as Dict)
+                setGatewayDebug(!!argv.debug)
+                const sc = await getGatewayContext(argv)
+                const rateLimitConfigs =
+                  argv.period && argv.quota != null
+                    ? { [PERIOD_TO_FIELD[argv.period as string]]: argv.quota }
+                    : { quota_total: DEFAULT_QUOTA_TOTAL }
+                const saveResp = await gwRequest<unknown>(sc, API.SAVE, {
+                  vApiKeyAlias: argv.alias,
+                  ...(routingRule && { routingRule }),
+                  rateLimitConfigs,
+                })
+                const id = Number(saveResp.data)
+                const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
+                const vApiKey = String(keyResp.data)
+
+                const addName = argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+
+                logOperation("gateway key upsert", { ok: true, timeMs: Date.now() - t0 })
+                success({ id, alias: argv.alias, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
+              } catch (err) {
+                logOperation("gateway key upsert", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
               }
             },
@@ -237,13 +342,14 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               const format = argv.format
               const t0 = Date.now()
               try {
+                setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.vApiKey as string)
-                const keyResp = await studioRequest<string>(sc, `${API.GET}?id=${id}`, {})
+                const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
                 const vApiKey = String(keyResp.data)
                 const registered = argv["add-to-llm"] ? addToLlm(argv["add-to-llm"] as string, vApiKey, sc.baseUrl, !!argv.use) : undefined
                 logOperation("gateway key get", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, vApiKey, ...(registered && { llm: registered }) }, { format, timeMs: Date.now() - t0 })
+                success({ id, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
               } catch (err) {
                 logOperation("gateway key get", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
@@ -263,9 +369,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               const format = argv.format
               const t0 = Date.now()
               try {
+                setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.key as string)
-                await studioRequest<unknown>(sc, API.SAVE, {
+                await gwRequest<unknown>(sc, API.SAVE, {
                   id,
                   rateLimitConfigs: { [PERIOD_TO_FIELD[argv.period as string]]: argv.quota },
                 })
@@ -299,9 +406,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               const format = argv.format
               const t0 = Date.now()
               try {
+                setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.vApiKey as string)
-                await studioRequest<unknown>(sc, `${API.DELETE}?id=${id}`, {})
+                await gwRequest<unknown>(sc, `${API.DELETE}?id=${id}`, {})
                 logOperation("gateway key delete", { ok: true, timeMs: Date.now() - t0 })
                 success({ id, deleted: true }, { format, timeMs: Date.now() - t0 })
               } catch (err) {
@@ -326,8 +434,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             const format = argv.format
             const t0 = Date.now()
             try {
-              const sc = await getGatewayContext(argv)
-              const resp = await studioRequest<unknown>(sc, API.MODEL_LIST, {
+              setGatewayDebug(!!argv.debug)
+                const sc = await getGatewayContext(argv)
+              const resp = await gwRequest<unknown>(sc, API.MODEL_LIST, {
                 virtualKey: argv.key,
                 pageIndex: argv.page,
                 pageSize: argv["page-size"],
@@ -351,9 +460,10 @@ async function updateStatus(argv: GlobalArgs & { vApiKey?: string }, status: num
   const t0 = Date.now()
   const op = status === 1 ? "gateway key enable" : "gateway key disable"
   try {
-    const sc = await getGatewayContext(argv)
+    setGatewayDebug(!!argv.debug)
+                const sc = await getGatewayContext(argv)
     const id = await resolveKeyId(sc, argv.vApiKey as string)
-    await studioRequest<unknown>(sc, `${API.UPDATE_STATUS}?id=${id}&status=${status}`, {})
+    await gwRequest<unknown>(sc, `${API.UPDATE_STATUS}?id=${id}&status=${status}`, {})
     logOperation(op, { ok: true, timeMs: Date.now() - t0 })
     success({ id, status }, { format, timeMs: Date.now() - t0 })
   } catch (err) {
