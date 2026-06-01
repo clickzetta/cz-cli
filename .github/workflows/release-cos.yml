@@ -318,3 +318,20 @@ jobs:
             ARGS+=(--no-promote-nightly --promote-stable)
           fi
           bun run scripts/cos-release.mjs "${ARGS[@]}"
+
+  finalize-release:
+    needs: [resolve-release, build, publish-npm, publish-cos]
+    if: |
+      always() &&
+      needs.resolve-release.outputs.is_stable == 'true' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark release as latest (non-draft)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ needs.resolve-release.outputs.tag }}" \
+            --draft=false \
+            --latest \
+            --repo "${{ github.repository }}"
