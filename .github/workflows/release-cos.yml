@@ -56,6 +56,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ needs.resolve-release.outputs.tag }}"
+          # Find previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+          fi
+          echo "Previous tag: $PREV_TAG"
+
+          # Collect commit messages
+          COMMITS=$(git log --pretty=format:"- %s" "${PREV_TAG}..HEAD" --no-merges)
+
+          # Build release body
+          BODY="## What's Changed
+
+          ${COMMITS}
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+
+          # Write to file (multi-line safe)
+          printf '%s' "$BODY" > /tmp/release-notes.md
 
       - name: Create GitHub release
         env:
@@ -63,7 +89,7 @@ jobs:
         run: |
           gh release create "${{ needs.resolve-release.outputs.tag }}" \
             --title "${{ needs.resolve-release.outputs.tag }}" \
-            --generate-notes \
+            --notes-file /tmp/release-notes.md \
             --repo "${{ github.repository }}" || true
 
   build:
