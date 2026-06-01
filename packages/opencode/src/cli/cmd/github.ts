@@ -519,6 +519,7 @@ export const GithubRunCommand = cmd({
       const commitChanges = async (summary: string, actor?: string) => {
         const args = ["commit", "-m", summary]
         if (actor) args.push("-m", `Co-authored-by: ${actor} <${actor}@users.noreply.github.com>`)
+        args.push("-m", "Co-Authored-By: cz-cli <noreply@clickzetta.com>")
         await gitRun(args)
       }
 
