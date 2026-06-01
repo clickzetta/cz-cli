@@ -1,5 +1,13 @@
 import { formatJson, formatPretty, formatTable, formatTableNoHeader, formatCsv, formatCsvNoHeader, formatJsonl, formatToon, formatText } from "./formatter.js"
 
+const VALID_FORMATS = new Set(["json", "pretty", "table", "csv", "text", "jsonl", "toon"])
+
+export function defaultFormat(): string {
+  const env = process.env.CZ_FORMAT?.trim()
+  if (env && VALID_FORMATS.has(env)) return env
+  return "json"
+}
+
 export const EXIT_OK = 0
 export const EXIT_BIZ_ERROR = 1
 export const EXIT_USAGE_ERROR = 2
@@ -67,7 +75,7 @@ export function successRows(
   if (opts?.aiMessage) payload.ai_message = opts.aiMessage
   if (opts?.extra) Object.assign(payload, opts.extra)
 
-  const format = opts?.format ?? "json"
+  const format = opts?.format ?? defaultFormat()
   const field = opts?.field ?? outputState.field
   const noHeader = opts?.noHeader ?? false
   let output: string

@@ -1,6 +1,6 @@
 import yargs from "yargs"
 import { VERSION } from "./version.js"
-import { outputState, parseOutputArgs, renderOutput } from "./output/index.js"
+import { defaultFormat, outputState, parseOutputArgs, renderOutput } from "./output/index.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -76,7 +76,7 @@ export function createCli(args: string[]) {
     .option("format", {
       type: "string",
       choices: ["json", "pretty", "table", "csv", "text", "jsonl", "toon"] as const,
-      default: "json",
+      default: defaultFormat(),
       describe: "Output format",
     })
     .option("field", {
