@@ -25,6 +25,7 @@ import {
   formatBytes,
   deleteObjects,
   getJson,
+  getText,
   listPrefix,
   putJson,
   putText,
@@ -38,6 +39,16 @@ const PRESIGN_EXPIRES_SECONDS = Number(process.env.COS_PRESIGN_EXPIRES_SECONDS ?
 
 const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/
 const VERSION_DIR_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?\/$/
+
+/** Compare two semver strings. Returns <0 if a<b, 0 if equal, >0 if a>b. */
+function semverCompare(a, b) {
+  const pa = a.replace(/[-+].*$/, "").split(".").map(Number)
+  const pb = b.replace(/[-+].*$/, "").split(".").map(Number)
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0)
+  }
+  return 0
+}
 
 const DIST_PREFIX = "cz-cli-"
 
@@ -657,6 +668,17 @@ async function writeChannel(ctx, channel) {
   const target = metaRootKey(channel)
   if (ctx.dryRun) {
     console.log(`[dry-run] write channel ${target} -> ${ctx.version}`)
+    return
+  }
+  // Guard: never downgrade a channel pointer
+  const current = await getText({
+    client: ctx.client,
+    Bucket: ctx.Bucket,
+    Region: ctx.Region,
+    key: target,
+  })
+  if (current && semverCompare(ctx.version, current.trim()) < 0) {
+    console.log(`  ⚠ skipping ${channel}: current ${current.trim()} > ${ctx.version}`)
     return
   }
   await putText({

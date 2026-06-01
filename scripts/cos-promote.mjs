@@ -10,11 +10,21 @@
  *      COS_PATH_PREFIX (optional, default "cz-cli-releases")
  */
 
-import { Cache, createClient, getJson, putJson, putText } from "./cos-upload.mjs"
+import { Cache, createClient, getJson, putJson, putText, getText } from "./cos-upload.mjs"
 
 const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
 const META_INF_PREFIX = "META-INF"
 const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/
+
+/** Compare two semver strings. Returns <0 if a<b, 0 if equal, >0 if a>b. */
+function semverCompare(a, b) {
+  const pa = a.replace(/[-+].*$/, "").split(".").map(Number)
+  const pb = b.replace(/[-+].*$/, "").split(".").map(Number)
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0)
+  }
+  return 0
+}
 
 function parseArgs(argv) {
   const args = { channel: undefined, version: undefined, dryRun: false }
@@ -75,9 +85,17 @@ async function main() {
   }
 
   const channelKey = metaRootKey(args.channel)
-  if (args.dryRun) {
-    console.log(`[dry-run] write ${channelKey} <- ${args.version}`)
-  } else {
+  if (!args.dryRun) {
+    // Guard: never downgrade a channel pointer
+    const current = await getText({
+      client: cos.client,
+      Bucket: cos.Bucket,
+      Region: cos.Region,
+      key: channelKey,
+    })
+    if (current && semverCompare(args.version, current.trim()) < 0) {
+      throw new Error(`Refusing to downgrade ${args.channel} from ${current.trim()} to ${args.version}. Use a higher version.`)
+    }
     await putText({
       client: cos.client,
       Bucket: cos.Bucket,
@@ -87,6 +105,8 @@ async function main() {
       cacheControl: Cache.short,
     })
     console.log(`  ✓ ${args.channel} -> ${args.version}`)
+  } else {
+    console.log(`[dry-run] write ${channelKey} <- ${args.version}`)
   }
 
   const versionsKey = metaRootKey("versions.json")
