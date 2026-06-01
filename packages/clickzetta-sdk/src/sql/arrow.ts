@@ -119,7 +119,7 @@ function schemaFromArrow(arrowSchema: Schema, fallback: ColumnSchema[]): ColumnS
     }
     seen.set(name, i)
     const type = fallback[i]?.type ?? String(field.type)
-    columns.push({ name, type })
+    columns.push({ name, type, nullable: fallback[i]?.nullable })
   }
   return columns
 }
@@ -137,7 +137,7 @@ export function deduplicateColumns(columns: ColumnSchema[]): ColumnSchema[] {
       name = `${name}_${i}`
     }
     seen.set(name, i)
-    result.push({ name, type: columns[i]!.type })
+    result.push({ name, type: columns[i]!.type, nullable: columns[i]!.nullable })
   }
   return result
 }
