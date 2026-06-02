@@ -8,7 +8,7 @@ import { flushOtel } from "./plugin/otel"
 
 let globalHandlersRegistered = false
 
-export async function main(args: string[]): Promise<number> {
+export async function main(args: string[], agentRuntime = false): Promise<number> {
   if (!globalHandlersRegistered) {
     globalHandlersRegistered = true
     process.on("unhandledRejection", (e) => {
@@ -26,7 +26,7 @@ export async function main(args: string[]): Promise<number> {
 
   const clickzettaHome = process.env.CLICKZETTA_TEST_HOME || os.homedir()
 
-  if (process.env.CLICKZETTA_AGENT_RUNTIME !== "1") {
+  if (!agentRuntime) {
     const { createTraceparent } = await import("@clickzetta/sdk")
     if (!process.env.CLICKZETTA_TRACEPARENT) {
       process.env.CLICKZETTA_TRACEPARENT = createTraceparent()

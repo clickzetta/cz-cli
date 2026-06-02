@@ -3,28 +3,24 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-const spawnCalls: Array<{ cmd: string; args: string[]; env?: NodeJS.ProcessEnv }> = []
+const mainCalls: Array<{ args: string[]; agentRuntime: boolean; traceparent?: string }> = []
 
-const actualChildProcess = await import("node:child_process")
-
-mock.module("node:child_process", () => ({
-  ...actualChildProcess,
-  spawn(cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) {
-    spawnCalls.push({ cmd, args, env: opts.env })
-    return {
-      once(event: string, cb: (...args: any[]) => void) {
-        if (event === "exit") queueMicrotask(() => cb(0, null))
-        return this
-      },
-    }
+mock.module("../../opencode/src/main.ts", () => ({
+  main: async (args: string[], agentRuntime = false) => {
+    mainCalls.push({
+      args,
+      agentRuntime,
+      traceparent: process.env.CLICKZETTA_TRACEPARENT,
+    })
+    return 0
   },
 }))
 
 const { runCli } = await import("../src/run-cli.ts")
 
 describe("agent runtime traceparent handoff", () => {
-  test("delegating to agent runtime passes CLICKZETTA_TRACEPARENT to child env", async () => {
-    spawnCalls.length = 0
+  test("delegating to agent runtime passes a child CLICKZETTA_TRACEPARENT in-process", async () => {
+    mainCalls.length = 0
     process.env.CLICKZETTA_TRACEPARENT = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
     const home = mkdtempSync(join(tmpdir(), "cz-cli-traceparent-"))
     const clickzettaDir = join(home, ".clickzetta")
@@ -45,20 +41,21 @@ describe("agent runtime traceparent handoff", () => {
 
     try {
       await expect(runCli(["agent", "run", "hello"])).rejects.toThrow()
-    } catch {}
+    } finally {
+      ;(process.exit as any) = previousExit
+    }
 
-    ;(process.exit as any) = previousExit
-
-    const call = spawnCalls.at(-1)
+    const call = mainCalls.at(-1)
     expect(call).toBeDefined()
-    expect(call?.env?.CLICKZETTA_AGENT_RUNTIME).toBe("1")
-    expect(call?.env?.CLICKZETTA_TRACEPARENT).toMatch(/^00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-[0-9a-f]{16}-01$/)
-    expect(call?.env?.CLICKZETTA_TRACEPARENT).not.toContain("-bbbbbbbbbbbbbbbb-")
+    expect(call?.agentRuntime).toBe(true)
+    expect(call?.args).toEqual(["agent", "run", "hello"])
+    expect(call?.traceparent).toMatch(/^00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-[0-9a-f]{16}-01$/)
+    expect(call?.traceparent).not.toContain("-bbbbbbbbbbbbbbbb-")
     expect(exits).toContain(0)
   })
 
-  test("bare agent delegates to the runtime TUI entrypoint", async () => {
-    spawnCalls.length = 0
+  test("bare agent delegates to the runtime TUI entrypoint in-process", async () => {
+    mainCalls.length = 0
     const home = mkdtempSync(join(tmpdir(), "cz-cli-agent-tui-"))
     const clickzettaDir = join(home, ".clickzetta")
     mkdirSync(clickzettaDir, { recursive: true })
@@ -76,13 +73,13 @@ describe("agent runtime traceparent handoff", () => {
 
     try {
       await expect(runCli(["agent"])).rejects.toThrow()
-    } catch {}
+    } finally {
+      ;(process.exit as any) = previousExit
+    }
 
-    ;(process.exit as any) = previousExit
-
-    const call = spawnCalls.at(-1)
+    const call = mainCalls.at(-1)
     expect(call).toBeDefined()
-    expect(call?.args.at(-1)).toBe("run")
-    expect(call?.args).not.toContain("agent")
+    expect(call?.agentRuntime).toBe(true)
+    expect(call?.args).toEqual(["agent"])
   })
 })

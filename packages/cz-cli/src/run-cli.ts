@@ -283,10 +283,12 @@ async function migrateProfilesOnlyAndExit(): Promise<never> {
 }
 
 async function delegateToAgentRuntime(rawArgs: string[]): Promise<never> {
-  process.env.CLICKZETTA_AGENT_RUNTIME = "1"
+  // The agent-runtime phase is in-process state. Pass it as an argument rather
+  // than via process.env, which would be inherited by child processes (e.g. the
+  // bash tool's subprocesses) and make a nested cz-cli re-enter the agent runtime.
   process.env.CLICKZETTA_TRACEPARENT = createTraceparent(process.env.CLICKZETTA_TRACEPARENT)
   const { main } = await import("../../opencode/src/main.ts")
-  const code = await main(rawArgs)
+  const code = await main(rawArgs, true)
   process.exit(code)
 }
 
