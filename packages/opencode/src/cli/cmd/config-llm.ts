@@ -4,6 +4,7 @@ import path from "path"
 import type { Argv } from "yargs"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
 import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl, buildLlmProbeRequest } from "../../config/profiles-llm"
+import { commandGroup } from "@clickzetta/cli/command-group"
 import { cmd } from "./cmd"
 
 const CLICKZETTA_DIR = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta")
@@ -737,33 +738,18 @@ export const AgentLlmCommand = cmd({
   describe:
     "manage LLMs used by the agent ([llm.*] in ~/.clickzetta/profiles.toml).",
   builder: (yargs: Argv) =>
-    yargs
-      .command(LlmListCommand)
-      .command(LlmShowCommand)
-      .command(LlmAddCommand)
-      .command(LlmTestCommand)
-      .command(LlmUseCommand)
-      .command(LlmRemoveCommand)
-      .command(LlmResetCommand)
-      .command(LlmPurgeLegacyCommand)
-      .demandCommand(1, "run `cz-cli agent llm --help` to see available subcommands")
-      .example("$0 llm show", "see which LLM is active and what is defined")
-      .example(
-        "$0 llm add my-claude --provider anthropic --api-key sk-ant-... --use",
-        "add Claude and select it (model auto-selected from provider defaults)",
-      )
-      .example("$0 llm test", "test the active LLM entry")
-      .example("$0 llm test my-openai", "test a specific OpenAI-style entry")
-      .example("$0 llm use my-openai", "switch to a different entry")
-      .example("$0 llm reset", "clear default_llm")
-      .epilogue(
-        "LLM onboarding:\n" +
-        "  ClickZetta built-in LLM: `cz-cli setup --credential <base64_string>`\n" +
-        "  OpenAI:                  `cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use`\n" +
-        "  OpenAI-compatible:       `cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use`\n" +
-        "  Verify:                  `cz-cli agent llm test [name]`\n" +
-        "  Lakehouse connection is separate: `cz-cli setup` or `cz-cli setup --username ... --password ... --account-name ...`",
-      ),
+    commandGroup(
+      yargs
+        .command(LlmListCommand)
+        .command(LlmShowCommand)
+        .command(LlmAddCommand)
+        .command(LlmTestCommand)
+        .command(LlmUseCommand)
+        .command(LlmRemoveCommand)
+        .command(LlmResetCommand)
+        .command(LlmPurgeLegacyCommand),
+      "agent llm",
+    ),
   async handler() {},
 })
 

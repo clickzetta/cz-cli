@@ -129,7 +129,7 @@ jobs:
           mv "$(dirname "$SKILLS_SRC")/clickzetta-skills-main" "$SKILLS_SRC"
           mkdir -p "$WORK_DIR/skills/external"
           count=0
-          for name in $(ls "$SKILLS_SRC" | grep '^clickzetta-'); do
+          for name in $(ls "$SKILLS_SRC" | grep -E '^(clickzetta-|lakehouse-doc)'); do
             if [ -f "$SKILLS_SRC/$name/SKILL.md" ]; then
               cp -r "$SKILLS_SRC/$name" "$WORK_DIR/skills/external/$name"
               count=$((count + 1))
