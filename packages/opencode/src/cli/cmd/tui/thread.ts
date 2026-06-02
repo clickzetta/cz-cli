@@ -106,6 +106,15 @@ export const TuiThreadCommand = cmd({
         describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
       }),
   handler: async (args) => {
+    // The interactive full-screen TUI can only render to a real terminal. When
+    // stdout is captured (a pipe / an agent's bash tool), launching it floods the
+    // stream with escape sequences and hangs forever waiting for input. Refuse
+    // and point at the non-interactive entry instead.
+    if (!process.stdout.isTTY) {
+      UI.error('The interactive TUI requires a terminal. For non-interactive use, run: cz-cli agent run "<prompt>"')
+      process.exitCode = 1
+      return
+    }
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
     // (Important when running under `bun run` wrappers on Windows.)
     const unguard = win32InstallCtrlCGuard()

@@ -83,7 +83,8 @@ describe("tui thread", () => {
     const cwd = process.cwd()
     const pwd = process.env.PWD
     const worker = globalThis.Worker
-    const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+    const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+    const stdoutTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY")
     const link = path.join(path.dirname(tmp.path), path.basename(tmp.path) + "-link")
     const type = process.platform === "win32" ? "junction" : "dir"
     seen.tui.length = 0
@@ -95,6 +96,10 @@ describe("tui thread", () => {
     )
 
     Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    })
+    Object.defineProperty(process.stdout, "isTTY", {
       configurable: true,
       value: true,
     })
@@ -116,8 +121,10 @@ describe("tui thread", () => {
       process.chdir(cwd)
       if (pwd === undefined) delete process.env.PWD
       else process.env.PWD = pwd
-      if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
+      if (stdinTty) Object.defineProperty(process.stdin, "isTTY", stdinTty)
       else delete (process.stdin as { isTTY?: boolean }).isTTY
+      if (stdoutTty) Object.defineProperty(process.stdout, "isTTY", stdoutTty)
+      else delete (process.stdout as { isTTY?: boolean }).isTTY
       globalThis.Worker = worker
       await fs.rm(link, { recursive: true, force: true }).catch(() => undefined)
     }
@@ -138,5 +145,36 @@ describe("tui thread", () => {
     expect(process.env.CZ_PASSWORD).toBe("secret")
     expect(process.env.CZ_SERVICE).toBe("example.clickzetta.com")
     expect(process.env.CZ_WORKSPACE).toBe("quick_start")
+  })
+
+  test("refuses to launch the TUI when stdout is not a TTY", async () => {
+    setup()
+    const error = spyOn(UI, "error").mockImplementation(() => {})
+    const stdoutTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY")
+    const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+    const exitCode = process.exitCode
+    seen.tui.length = 0
+
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: false,
+    })
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    })
+
+    try {
+      await expect(call()).resolves.toBeUndefined()
+      expect(process.exitCode).toBe(1)
+      expect(seen.tui).toHaveLength(0)
+      expect(error).toHaveBeenCalledWith('The interactive TUI requires a terminal. For non-interactive use, run: cz-cli agent run "<prompt>"')
+    } finally {
+      process.exitCode = exitCode
+      if (stdoutTty) Object.defineProperty(process.stdout, "isTTY", stdoutTty)
+      else delete (process.stdout as { isTTY?: boolean }).isTTY
+      if (stdinTty) Object.defineProperty(process.stdin, "isTTY", stdinTty)
+      else delete (process.stdin as { isTTY?: boolean }).isTTY
+    }
   })
 })
