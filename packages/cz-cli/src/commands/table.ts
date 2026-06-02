@@ -275,6 +275,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           try {
             if (!argv.ddl && !argv["from-file"]) {
               error("MISSING_DDL", "Provide DDL as positional argument or use --from-file.", { format, exitCode: 2 })
+              return
             }
             const ctx = await getExecContext(argv)
             const sql = argv["from-file"] ? readFileSync(argv["from-file"], "utf-8").trim() : (argv.ddl as string)

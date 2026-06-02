@@ -108,10 +108,12 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             if (r.status === JobStatus.FAILED) {
               logOperation("job result", { ok: false, errorCode: r.errorCode })
               error(r.errorCode ?? "JOB_RESULT_ERROR", r.errorMessage ?? "Job failed", { format })
+              return
             }
             if (r.columns.length === 0) {
               logOperation("job result", { ok: true, timeMs: Date.now() - t0 })
               success({ job_id: argv["job-id"], message: "Job completed with no result set." }, { format, timeMs: Date.now() - t0 })
+              return
             }
             const rowLimit = !argv.limit ? Infinity : DEFAULT_ROW_LIMIT
             let rows = r.rows

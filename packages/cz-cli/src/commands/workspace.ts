@@ -84,6 +84,7 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
               const profileName = argv.profile ?? getDefaultProfileName() ?? Object.keys(profiles)[0]
               if (!profileName || !profiles[profileName]) {
                 error("PROFILE_NOT_FOUND", `Profile '${profileName}' not found. Create a profile first.`, { format })
+                return
               }
               profiles[profileName].workspace = name
               if (schemaVal) profiles[profileName].schema = schemaVal

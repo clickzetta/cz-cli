@@ -246,17 +246,17 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               if (isTerminal) {
                 const polling = { run_id: runId, attempts_used: attempt, attempts_max: maxAttempts, interval_seconds: argv.interval, terminal_status: STATUS_NAME[statusCode as number] ?? statusCode }
                 if (statusCode === 3 || failMsg) {
-                  error("RUN_FAILED", String(failMsg ?? `Run ${runId} ended with terminal failure status`), { format, extra: { run_detail: convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), polling } })
+                  return error("RUN_FAILED", String(failMsg ?? `Run ${runId} ended with terminal failure status`), { format, extra: { run_detail: convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), polling } })
                 }
                 logOperation("runs wait", { ok: true })
-                success(convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), { format, extra: { polling } })
+                return success(convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), { format, extra: { polling } })
               }
               if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, intervalMs))
             }
             const timeoutPayload = { run_id: runId, attempts_used: maxAttempts, attempts_max: maxAttempts, interval_seconds: argv.interval, last_detail: lastPayload }
             if (argv["allow-timeout"]) {
               logOperation("runs wait", { ok: true })
-              success(timeoutPayload, { format, aiMessage: "Polling reached max attempts before terminal state." })
+              return success(timeoutPayload, { format, aiMessage: "Polling reached max attempts before terminal state." })
             }
             error("RUN_WAIT_TIMEOUT", `Run ${runId} did not reach terminal state within ${maxAttempts} attempts.`, { format })
           } catch (err) {
@@ -285,7 +285,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const attemptsData = attemptsResp.data as Record<string, unknown> | undefined
             const items = attemptsData?.list ?? attemptsData
             const list = Array.isArray(items) ? items as Record<string, unknown>[] : []
-            if (list.length === 0) error("NO_ATTEMPTS", `Run ${runId} has no attempt records yet`, { format })
+            if (list.length === 0) return error("NO_ATTEMPTS", `Run ${runId} has no attempt records yet`, { format })
             const item = list[0]
             const attemptId = Number(item.executeLogId ?? item.id ?? item.attemptId ?? item.attempt_id)
             const logResp = await getAttemptLog(sc, {
@@ -388,6 +388,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             }
             if ((argv.from && !argv.to) || (!argv.from && argv.to)) {
               error("INVALID_ARGUMENTS", "--from and --to must be provided together, or omit both.", { format, exitCode: 2 })
+              return
             }
             const params: Record<string, unknown> = {
               scheduleTaskId: taskId,
