@@ -384,6 +384,16 @@ else
     download_and_install
 fi
 
+# Install a `cz-agent` convenience wrapper for `cz-cli agent`.
+# It lives in the same dir (already on PATH), so it works in any shell and in
+# scripts (unlike a shell alias). `cz-cli update` re-runs this script, so the
+# wrapper is recreated on every upgrade.
+cat > "${INSTALL_DIR}/cz-agent" <<EOF
+#!/bin/sh
+exec "${INSTALL_DIR}/${APP}" agent "\$@"
+EOF
+chmod 755 "${INSTALL_DIR}/cz-agent"
+
 add_to_path() {
     local config_file=$1
     local command=$2
@@ -460,6 +470,7 @@ echo ""
 echo -e "  cz-cli setup          ${MUTED}# Configure connection${NC}"
 echo -e "  cz-cli status         ${MUTED}# Verify connection${NC}"
 echo -e "  cz-cli agent run \"…\"  ${MUTED}# Ask AI to operate warehouse${NC}"
+echo -e "  cz-agent run \"…\"      ${MUTED}# Shortcut for: cz-cli agent${NC}"
 echo ""
 echo -e "  ${MUTED}Docs: ${NC}https://www.yunqi.tech/documents/setup_cz_cli"
 echo ""
