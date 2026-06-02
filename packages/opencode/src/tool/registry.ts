@@ -12,6 +12,7 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { JobPerformanceTool } from "./job-performance"
 import * as Tool from "./tool"
 import { Config } from "../config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -116,6 +117,7 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const jobperf = yield* JobPerformanceTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -206,6 +208,7 @@ export const layer: Layer.Layer<
           search: Tool.init(websearch),
           code: Tool.init(codesearch),
           skill: Tool.init(skilltool),
+          jobperf: Tool.init(jobperf),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -229,6 +232,7 @@ export const layer: Layer.Layer<
             tool.search,
             tool.code,
             tool.skill,
+            tool.jobperf,
             tool.patch,
             ...(Flag.CLICKZETTA_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             ...(Flag.CLICKZETTA_EXPERIMENTAL_PLAN_MODE && Flag.CLICKZETTA_CLIENT === "cli" ? [tool.plan] : []),
