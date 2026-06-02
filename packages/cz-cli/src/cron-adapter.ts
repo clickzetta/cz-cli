@@ -150,7 +150,7 @@ function encodeFromUi(param: UiParam): string {
       if (!ALLOWED_MINUTE_GAPS.has(gap)) {
         throw new Error(`Unsupported minute gap: ${gap}. Allowed: ${[...ALLOWED_MINUTE_GAPS].sort((a, b) => a - b).join(",")}`)
       }
-      crontab[1] = startM === 0 && gap === 1 ? "*" : `*/${gap}`
+      crontab[1] = startM === 0 ? (gap === 1 ? "*" : `*/${gap}`) : `${startM}/${gap}`
       crontab[2] = startH === 0 && endH === 23 ? "*" : `${pad2(startH)}-${pad2(endH)}`
     } else {
       const hourGap = parseInt(gapText, 10)
