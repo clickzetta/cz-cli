@@ -119,3 +119,4 @@ cz-cli gateway model list [key]              List models available to a virtual 
 ## Companion Skills
 
 When the task involves writing Python or Shell task code, load **lakehouse-python-sdk** for accuracy on connector usage, BulkLoad, IGS, and Python/Shell task development patterns.
+lakehouse-doc-en: When the user asks for lakehouse SQL dialect, documentation on connectors, BulkLoad, IGS, or studio product information, use **lakehouse-doc-en** to provide accurate and detailed information.
