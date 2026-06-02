@@ -89,13 +89,13 @@ npm install -g @clickzetta/cz-cli
 ### Shell Script
 
 ```bash
-curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://cz-cli.ai/install.sh | sh
 ```
 
 Pin a specific version:
 
 ```bash
-CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+CZ_VERSION=0.1.0 curl -fsSL https://cz-cli.ai/install.sh | sh
 ```
 
 ### Manual Install
