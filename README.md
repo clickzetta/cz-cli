@@ -93,12 +93,6 @@ Use `--session <id>` for multi-turn conversations on the same topic.
 curl -fsSL https://cz-cli.ai/install.sh | sh
 ```
 
-Pin a specific version:
-
-```bash
-CZ_VERSION=0.1.0 curl -fsSL https://cz-cli.ai/install.sh | sh
-```
-
 ### npm
 
 ```bash
