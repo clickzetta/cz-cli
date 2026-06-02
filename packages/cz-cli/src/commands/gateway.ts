@@ -51,6 +51,17 @@ async function gwRequest<T>(sc: StudioConfig, path: string, body: unknown): Prom
   return resp
 }
 
+/** Try to resolve a virtual key from the default_llm entry in profiles.toml (only if provider=clickzetta). */
+function resolveDefaultKey(): string | undefined {
+  const data = loadFullToml()
+  const name = typeof data.default_llm === "string" ? data.default_llm : undefined
+  if (!name) return undefined
+  const llm = isRecord(data.llm) ? data.llm : {}
+  const entry = isRecord(llm[name]) ? llm[name] : undefined
+  if (!entry || entry.provider !== "clickzetta") return undefined
+  return typeof entry.api_key === "string" ? entry.api_key : undefined
+}
+
 function reportError(err: unknown, format: string | undefined): void {
   if (isHandledCliError(err)) return
   error("GATEWAY_ERROR", err instanceof Error ? err.message : String(err), { format })
@@ -159,6 +170,26 @@ function addToLlm(name: string, apiKey: string, serviceBaseUrl: string, use: boo
   if (makeDefault) data.default_llm = name
   saveFullToml(data)
   return { name, base_url: baseUrl, default_llm: makeDefault }
+}
+
+function removeFromLlm(apiKey: string): string | undefined {
+  const data = loadFullToml()
+  const llm = isRecord(data.llm) ? data.llm : {}
+  const match = Object.entries(llm).find(([, v]) => isRecord(v) && v.api_key === apiKey)
+  if (!match) return undefined
+  const [name] = match
+  delete llm[name]
+  data.llm = llm
+  if (data.default_llm === name) delete data.default_llm
+  saveFullToml(data)
+  return name
+}
+
+function findLlmByKey(apiKey: string): string | undefined {
+  const data = loadFullToml()
+  const llm = isRecord(data.llm) ? data.llm : {}
+  const match = Object.entries(llm).find(([, v]) => isRecord(v) && v.api_key === apiKey)
+  return match?.[0]
 }
 
 function buildRoutingRule(argv: Dict): Dict | undefined {
@@ -401,7 +432,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           .command(
             "delete <vApiKey>",
             "Delete a virtual key",
-            (y) => y.positional("vApiKey", { type: "string", demandOption: true, describe: "Virtual key value" }),
+            (y) => y
+              .positional("vApiKey", { type: "string", demandOption: true, describe: "Virtual key value" })
+              .option("remove-from-llm", { type: "boolean", describe: "Also remove the matching [llm.*] entry from profiles.toml" }),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
@@ -410,8 +443,15 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.vApiKey as string)
                 await gwRequest<unknown>(sc, `${API.DELETE}?id=${id}`, {})
+                const removedLlm = argv["remove-from-llm"] ? removeFromLlm(argv.vApiKey as string) : undefined
+                const linkedLlm = !removedLlm ? findLlmByKey(argv.vApiKey as string) : undefined
+                const aiMessage = removedLlm
+                  ? `Virtual key deleted and [llm.${removedLlm}] removed from profiles.toml.`
+                  : linkedLlm
+                    ? `Virtual key deleted. Note: [llm.${linkedLlm}] in profiles.toml still references this key. Remove it with: cz-cli agent llm remove ${linkedLlm}`
+                    : undefined
                 logOperation("gateway key delete", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, deleted: true }, { format, timeMs: Date.now() - t0 })
+                success({ id, deleted: true, ...(removedLlm && { removed_llm: removedLlm }) }, { format, timeMs: Date.now() - t0, aiMessage })
               } catch (err) {
                 logOperation("gateway key delete", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
@@ -423,11 +463,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
       // ── model list ───────────────────────────────────────────────────────
       .command("model", "Browse AI Gateway models", (m) => {
         m.command(
-          "list",
+          "list [key]",
           "List models available to a virtual key",
           (y) =>
             y
-              .option("key", { type: "string", demandOption: true, describe: "Virtual key value" })
+              .positional("key", { type: "string", describe: "Virtual key value (defaults to api_key from default_llm profile)" })
               .option("page", { type: "number", default: 1, describe: "Page number" })
               .option("page-size", { type: "number", default: 200, describe: "Items per page" }),
           async (argv) => {
@@ -435,9 +475,14 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             const t0 = Date.now()
             try {
               setGatewayDebug(!!argv.debug)
-                const sc = await getGatewayContext(argv)
+              const sc = await getGatewayContext(argv)
+              const key = argv.key ?? resolveDefaultKey()
+              if (!key) {
+                error("USAGE_ERROR", "No virtual key provided and no clickzetta LLM configured in profiles.toml. Usage: cz-cli gateway model list <key>", { format, exitCode: 2 })
+                return
+              }
               const resp = await gwRequest<unknown>(sc, API.MODEL_LIST, {
-                virtualKey: argv.key,
+                virtualKey: key,
                 pageIndex: argv.page,
                 pageSize: argv["page-size"],
               })
