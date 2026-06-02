@@ -87,17 +87,17 @@ export function applyCredentialToProfiles(
   }
   if (!cred.apiKey && !cred.aimeshEndpointBaseUrl) return next
 
-  const llms = isRecord(existing.llm) ? { ...existing.llm } : {}
-  const clickzetta = isRecord(llms.clickzetta) ? { ...llms.clickzetta } : {}
-  llms.clickzetta = {
-    ...clickzetta,
+  const llms: Record<string, unknown> = isRecord(existing.llm) ? { ...existing.llm } : {}
+  const entry = isRecord(llms[profileName]) ? { ...llms[profileName] } : {}
+  llms[profileName] = {
+    ...entry,
     provider: "clickzetta",
     ...(cred.apiKey && { api_key: cred.apiKey }),
     ...(cred.aimeshEndpointBaseUrl && { base_url: cred.aimeshEndpointBaseUrl }),
   }
   return {
     ...next,
-    ...(!existing.default_llm && { default_llm: "clickzetta" }),
+    ...(!existing.default_llm && { default_llm: profileName }),
     llm: llms,
   }
 }

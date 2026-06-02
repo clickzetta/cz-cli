@@ -21,7 +21,7 @@ describe("applyCredentialToProfiles", () => {
 
     expect(result).toEqual({
       default_profile: "default",
-      default_llm: "clickzetta",
+      default_llm: "default",
       profiles: {
         default: {
           instance: "instance-a",
@@ -35,7 +35,7 @@ describe("applyCredentialToProfiles", () => {
         },
       },
       llm: {
-        clickzetta: {
+        default: {
           provider: "clickzetta",
           api_key: "ck-test",
           base_url: "https://gateway.clickzetta.com",
@@ -85,6 +85,9 @@ describe("applyCredentialToProfiles", () => {
         clickzetta: {
           provider: "clickzetta",
           model: "deepseek/deepseek-v4-pro",
+        },
+        default: {
+          provider: "clickzetta",
           api_key: "new-key",
           base_url: "https://new.clickzetta.com",
         },

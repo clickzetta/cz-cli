@@ -243,14 +243,14 @@ function applyCredentialToProfiles(
     typeof cred.aimeshEndpointBaseUrl === "string" ? cred.aimeshEndpointBaseUrl : undefined
   if (!apiKey && !aimeshEndpointBaseUrl) return next
   const llm = (existing.llm ?? {}) as Record<string, unknown>
-  const clickzetta = ((llm.clickzetta ?? {}) as Record<string, unknown>)
+  const entry = (llm[profileName] ?? {}) as Record<string, unknown>
   return {
     ...next,
-    default_llm: typeof existing.default_llm === "string" ? existing.default_llm : "clickzetta",
+    ...(!existing.default_llm && { default_llm: profileName }),
     llm: {
       ...llm,
-      clickzetta: {
-        ...clickzetta,
+      [profileName]: {
+        ...entry,
         provider: "clickzetta",
         ...(apiKey && { api_key: apiKey }),
         ...(aimeshEndpointBaseUrl && { base_url: aimeshEndpointBaseUrl }),
@@ -809,15 +809,16 @@ async function tryFetchAndSaveClickzettaApiKey(
     if ((payload.code !== 0 && payload.code !== "0") || typeof payload.data !== "string" || !payload.data) return
     const apiKey = payload.data
     const data = loadFullFile()
+    const profileName = typeof data.default_profile === "string" ? data.default_profile : "clickzetta"
     const llm = (data.llm ?? {}) as Record<string, unknown>
-    const existing = (llm.clickzetta ?? {}) as Record<string, unknown>
+    const entry = (llm[profileName] ?? {}) as Record<string, unknown>
     saveFullFile({
       ...data,
-      default_llm: typeof data.default_llm === "string" ? data.default_llm : "clickzetta",
+      ...(!data.default_llm && { default_llm: profileName }),
       llm: {
         ...llm,
-        clickzetta: {
-          ...existing,
+        [profileName]: {
+          ...entry,
           provider: "clickzetta",
           api_key: apiKey,
         },

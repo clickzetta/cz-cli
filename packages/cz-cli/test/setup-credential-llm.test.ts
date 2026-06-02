@@ -70,9 +70,9 @@ describe("setup --credential", () => {
 
     expect(result.status).toBe(0)
     expect(profiles.default_profile).toBe("uat")
-    expect(profiles.default_llm).toBe("clickzetta")
+    expect(profiles.default_llm).toBe("uat")
     expect(profiles.llm).toEqual({
-      clickzetta: {
+      uat: {
         provider: "clickzetta",
         api_key: "ck_test_api_key",
         base_url: "https://uat-aimesh.clickzetta.com/",
