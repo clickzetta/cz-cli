@@ -75,29 +75,29 @@ You have no direct Lakehouse access. Always delegate via cz-cli.
 **Step 1 — MUST check LLM first:**
 
 ```bash
-cz-cli agent llm show
+cz-agent llm show
 ```
 
 **Step 2 — If active LLM is configured (kind != "none"), you MUST use agent run:**
 
 ```bash
-cz-cli agent run "<request>" --dangerously-skip-permissions
+cz-agent run "<request>" --dangerously-skip-permissions
 ```
 
 The output includes a `session_id`. Use it to inspect the run:
-- `cz-cli agent session status <session_id>` — current state (`busy`/`retry` with `progress`, `idle` with `result`, or `error`)
-- `cz-cli agent export <session_id>` — full conversation (messages, tool calls, reasoning, text). Wait until `status` is `idle` before exporting; otherwise the conversation may still be in progress.
+- `cz-agent session status <session_id>` — current state (`busy`/`retry` with `progress`, `idle` with `result`, or `error`)
+- `cz-agent export <session_id>` — full conversation (messages, tool calls, reasoning, text). Wait until `status` is `idle` before exporting; otherwise the conversation may still be in progress.
 
 **Step 3 — ONLY if no active LLM (kind: "none" or empty list), fall back to direct commands:**
 
 Decompose the request into concrete `cz-cli` subcommands (`sql`, `schema`, `table`, `task`, `runs`, `job`, `datasource`, `profile`, etc.), execute them, and synthesize the result.
 
-Use direct commands for local setup and diagnostics even when agent path is available: `cz-cli profile ...`, `cz-cli -p <profile> status`, `cz-cli agent llm ...`, `cz-cli --help`.
+Use direct commands for local setup and diagnostics even when agent path is available: `cz-cli profile ...`, `cz-cli -p <profile> status`, `cz-agent llm ...`, `cz-cli --help`.
 
 With session continuity:
 
 ```bash
-cz-cli agent run "<request>" --dangerously-skip-permissions --session <session_id>
+cz-agent run "<request>" --dangerously-skip-permissions --session <session_id>
 ```
 
 Reuse `session_id` for follow-ups on the same topic. Omit `--session` to start fresh.
@@ -107,7 +107,7 @@ Reuse `session_id` for follow-ups on the same topic. Omit `--session` to start f
 In non-TTY environments (e.g. as a subagent from Claude Code), async mode activates automatically — no `--async` flag needed. The command returns immediately with a session ID:
 
 ```bash
-cz-cli agent run "<request>" --dangerously-skip-permissions
+cz-agent run "<request>" --dangerously-skip-permissions
 ```
 
 Returns immediately with a session ID:
@@ -118,7 +118,7 @@ Returns immediately with a session ID:
 ### Poll status
 
 ```bash
-cz-cli agent session status <session_id> [--wait]
+cz-agent session status <session_id> [--wait]
 ```
 
 By default this returns the current status once. With `--wait`, it keeps waiting and streams progress until completion or timeout.
@@ -139,7 +139,7 @@ When complete:
 {"session_id": "01JXF3K...", "status": "idle", "result": "Here are the results:\n..."}
 ```
 
-The `result` field is the final text reply. For full conversation details (thinking, tool calls, intermediate text), use `cz-cli agent export <session_id>`.
+The `result` field is the final text reply. For full conversation details (thinking, tool calls, intermediate text), use `cz-agent export <session_id>`.
 
 If the session does not exist:
 ```json
@@ -150,7 +150,7 @@ If the session does not exist:
 ### Retrieve full conversation (thinking + tool calls + text)
 
 ```bash
-cz-cli agent export <session_id>
+cz-agent export <session_id>
 ```
 
 Returns complete session with all message parts:
@@ -186,11 +186,11 @@ Part types in export:
 
 ```bash
 # 1. Submit
-SESSION=$(cz-cli agent run "complex analysis" --async --dangerously-skip-permissions | jq -r '.session_id')
+SESSION=$(cz-agent run "complex analysis" --async --dangerously-skip-permissions | jq -r '.session_id')
 
 # 2. Poll until done, printing progress along the way
 while true; do
-  STATUS=$(cz-cli agent session status $SESSION)
+  STATUS=$(cz-agent session status $SESSION)
   STATE=$(echo "$STATUS" | jq -r '.status')
   if [ "$STATE" = "idle" ]; then
     echo "$STATUS" | jq -r '.result'
@@ -201,18 +201,18 @@ while true; do
 done
 
 # Need full conversation (thinking + tool calls)?
-cz-cli agent export $SESSION
+cz-agent export $SESSION
 ```
 
 ### With session continuity (async)
 
 ```bash
 # First turn
-SESSION=$(cz-cli agent run "describe sales table" --async --dangerously-skip-permissions | jq -r '.session_id')
+SESSION=$(cz-agent run "describe sales table" --async --dangerously-skip-permissions | jq -r '.session_id')
 # ... wait for completion ...
 
 # Follow-up turn on same session
-cz-cli agent run "now show row counts" --async --dangerously-skip-permissions --session $SESSION
+cz-agent run "now show row counts" --async --dangerously-skip-permissions --session $SESSION
 ```
 
 ### Important notes for async mode
@@ -226,7 +226,7 @@ cz-cli agent run "now show row counts" --async --dangerously-skip-permissions --
 When the user specifies an environment or profile (e.g. "use uat_test", "on the test instance"):
 
 ```bash
-cz-cli agent run "<request>" --profile uat_test --dangerously-skip-permissions
+cz-agent run "<request>" --profile uat_test --dangerously-skip-permissions
 ```
 
 Available profiles: read `~/.clickzetta/profiles.toml` or run `cz-cli profile list`.

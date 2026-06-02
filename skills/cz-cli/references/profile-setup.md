@@ -39,22 +39,22 @@ After setup, the ClickZetta built-in LLM is used by default. To use a different 
 
 ```bash
 # Add and select Claude
-cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use
+cz-agent llm add my-claude --provider anthropic --api-key sk-ant-... --use
 
 # Add OpenAI
-cz-cli agent llm add my-openai --provider openai --api-key sk-...
+cz-agent llm add my-openai --provider openai --api-key sk-...
 
 # Check what's active
-cz-cli agent llm show
+cz-agent llm show
 
 # Switch between configured LLMs
-cz-cli agent llm use my-claude
+cz-agent llm use my-claude
 
 # Fall back to ClickZetta built-in
-cz-cli agent llm reset
+cz-agent llm reset
 
 # Full help
-cz-cli agent llm --help
+cz-agent llm --help
 ```
 
 Supported providers: `anthropic`, `openai`, `openai-compatible`, `bedrock`, `google`, `azure`
@@ -71,11 +71,11 @@ For `openai-compatible` (third-party relays), add `--base-url <url>`.
 
 // Profile exists but no api_key, has llm entries
 {"ok": false, "error": "NO_PROFILE", "profile_exists": true, "has_llm_entry": true,
- "next_steps": ["cz-cli agent llm show", "cz-cli agent llm add <name> --provider <p> --api-key <k> --use"]}
+ "next_steps": ["cz-agent llm show", "cz-agent llm add <name> --provider <p> --api-key <k> --use"]}
 
 // Profile exists but no api_key, no llm entries
 {"ok": false, "error": "NO_PROFILE", "profile_exists": true, "has_llm_entry": false,
- "next_steps": ["cz-cli setup --credential <base64>", "cz-cli agent llm add my-claude --provider anthropic --api-key <key> --use"],
+ "next_steps": ["cz-cli setup --credential <base64>", "cz-agent llm add my-claude --provider anthropic --api-key <key> --use"],
  "supported_providers": ["anthropic", "openai", "openai-compatible", "bedrock", "google", "azure"]}
 ```
 
