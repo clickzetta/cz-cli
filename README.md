@@ -48,12 +48,19 @@ cz-cli <command> [options]
 | Command | Description |
 | --- | --- |
 | `agent run "<prompt>"` | Run AI agent with a natural-language prompt |
+| `agent llm show` | Show active LLM and all defined entries |
+| `agent llm add <name>` | Add or update an LLM entry |
+| `agent llm test [name]` | Test LLM connectivity |
 | `sql "<query>"` | Execute a SQL query |
 | `table list` | List tables |
 | `schema list` | List schemas |
 | `task list` | List Studio tasks |
 | `runs list` | View task run history |
 | `job <job_id>` | Inspect job execution details |
+| `datasource list` | List external data sources |
+| `gateway key list` | List AI Gateway virtual keys |
+| `gateway key create <alias>` | Create a virtual key |
+| `gateway model list [key]` | List available models |
 | `profile list` | Manage connection profiles |
 | `setup` | Interactive configuration wizard |
 
