@@ -211,7 +211,7 @@ function buildRoutingRule(argv: Dict): Dict | undefined {
 }
 
 export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("gateway", "Manage ClickZetta AI Gateway virtual keys and list available models", (yargs) => {
+  cli.command("ai-gateway", "Manage ClickZetta AI Gateway virtual keys and list available models", (yargs) => {
     yargs
       .command("key", "Manage AI Gateway virtual keys", (k) => {
         k
@@ -458,7 +458,7 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               }
             },
           )
-        return commandGroup(k, "gateway key")
+        return commandGroup(k, "ai-gateway key")
       })
       // ── model list ───────────────────────────────────────────────────────
       .command("model", "Browse AI Gateway models", (m) => {
@@ -494,9 +494,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             }
           },
         )
-        return commandGroup(m, "gateway model")
+        return commandGroup(m, "ai-gateway model")
       })
-    return commandGroup(yargs, "gateway")
+    return commandGroup(yargs, "ai-gateway")
   })
 }
 

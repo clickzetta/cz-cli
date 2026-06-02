@@ -58,9 +58,9 @@ cz-cli <command> [options]
 | `runs list` | View task run history |
 | `job <job_id>` | Inspect job execution details |
 | `datasource list` | List external data sources |
-| `gateway key list` | List AI Gateway virtual keys |
-| `gateway key create <alias>` | Create a virtual key |
-| `gateway model list [key]` | List available models |
+| `ai-gateway key list` | List AI Gateway virtual keys |
+| `ai-gateway key create <alias>` | Create a virtual key |
+| `ai-gateway model list [key]` | List available models |
 | `profile list` | Manage connection profiles |
 | `setup` | Interactive configuration wizard |
 
