@@ -358,6 +358,11 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             }
             delete profiles[name]
             data.profiles = profiles
+            if (data.default_profile === name) {
+              const remaining = Object.keys(profiles)
+              if (remaining.length > 0) data.default_profile = remaining[0]
+              else delete data.default_profile
+            }
             saveFullFile(data)
             logOperation("profile delete", { ok: true })
             success({ message: `Profile '${name}' deleted successfully` }, { format })
