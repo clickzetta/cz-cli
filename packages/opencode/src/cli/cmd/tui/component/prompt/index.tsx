@@ -2,7 +2,10 @@ import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, decodePasteB
 import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
+import os from "os"
+import { unlink } from "fs/promises"
 import { fileURLToPath } from "url"
+import { parseSqlInput, canInlineSql, buildSqlInlineCommand, buildSqlFileCommand } from "./sql-command"
 import { Filesystem } from "@/util"
 import { useLocal } from "@tui/context/local"
 import { useTheme } from "@tui/context/theme"
@@ -401,6 +404,21 @@ export function Prompt(props: PromptProps) {
           ))
         },
       },
+      {
+        title: "Run SQL",
+        value: "prompt.sql",
+        category: "ClickZetta",
+        description: "execute SQL, equivalent to cz-cli sql",
+        slash: {
+          name: "sql",
+        },
+        onSelect: (dialog) => {
+          dialog.clear()
+          input.setText("/sql ")
+          setStore("prompt", { input: "/sql ", parts: [] })
+          input.gotoBufferEnd()
+        },
+      },
     ]
   })
 
@@ -674,6 +692,29 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
+    } else if (inputText === "/sql" || inputText.startsWith("/sql ") || inputText.startsWith("/sql\n")) {
+      // Run SQL directly, equivalent to `cz-cli sql`. Route through session.shell
+      // so the command and its output render as a tool part (no LLM involved).
+      // The query is passed via a temp file (--file) to avoid shell-quoting it.
+      const query = parseSqlInput(inputText)
+      if (!query) {
+        toast.show({ variant: "warning", message: "Usage: /sql <query>", duration: 3000 })
+        return
+      }
+      const command = canInlineSql(query)
+        ? buildSqlInlineCommand(query)
+        : await (async () => {
+            const file = path.join(os.tmpdir(), `cz-cli-sql-${Date.now()}.sql`)
+            await Bun.write(file, query)
+            setTimeout(() => void unlink(file).catch(() => {}), 60_000)
+            return buildSqlFileCommand(file)
+          })()
+      void sdk.client.session.shell({
+        sessionID,
+        agent: agent.name,
+        model: { providerID: selectedModel.providerID, modelID: selectedModel.modelID },
+        command,
+      })
     } else if (
       inputText.startsWith("/") &&
       iife(() => {
