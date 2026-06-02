@@ -102,6 +102,7 @@ cz-cli datasource sample <name_or_id> <catalog> <object>
 7. **Multi-environment**: use `--profile <name>` to target a specific environment.
 8. **On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
 9. **补数/回填/重跑历史数据 → `runs refill`**: when user says "补数", "回填", "重跑历史", "backfill", "re-run historical data", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.
+10. **Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql "..."` (the shell corrupts inline SQL).
 
 ## Companion Skills
 
