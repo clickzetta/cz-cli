@@ -14,7 +14,7 @@ import {
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error, isHandledCliError } from "../output/index.js"
+import { success, error, handledError, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
@@ -131,6 +131,34 @@ async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
 function reportTaskError(err: unknown, format: string | undefined): void {
   if (isHandledCliError(err)) return
   error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+}
+
+function parseDependencyTasks(raw: string, format: string | undefined, projectId: number): Record<string, unknown>[] {
+  const cleaned = raw.replace(/^'|'$/g, "")
+  let parsed: Record<string, unknown>[]
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch {
+    try {
+      const fixed = cleaned.replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":').replace(/:\s*([^",\}\]]+)/g, (_, v) => `:"${v.trim()}"`)
+      parsed = JSON.parse(fixed)
+    } catch {
+      handledError("INVALID_ARGUMENTS", `--dep-tasks is not valid JSON: ${raw}`, { format })
+    }
+  }
+  return parsed.map((item, index) => {
+    const fileId = item.taskId ?? item.dependency_task_id ?? item.dependencyFileId
+    const fileName = item.taskName ?? item.dependency_task_name ?? item.dependencyFileName
+    if (!fileId) handledError("INVALID_ARGUMENTS", `--dep-tasks[${index}]: taskId is required`, { format })
+    if (!fileName) handledError("INVALID_ARGUMENTS", `--dep-tasks[${index}]: taskName is required`, { format })
+    return {
+      parseType: "1",
+      dependencyProjectId: projectId,
+      depStrategy: item.dep_strategy ?? item.depStrategy ?? 0,
+      dependencyFileId: fileId,
+      dependencyFileName: fileName,
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -461,6 +489,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             if ((argv.content && argv.file) || (!argv.content && !argv.file)) {
               error("INVALID_ARGUMENTS", "Exactly one of --content or --file is required.", { format, exitCode: 2 })
+              return
             }
             const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
             const sc = await ctx(argv)
@@ -596,28 +625,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             else if (depsAction === "replace") {
               const raw = argv["dep-tasks"] as string | undefined
               if (!raw) { deps = [] } else {
-                // Strip surrounding single quotes if shell passed them literally
-                const cleaned = raw.replace(/^'|'$/g, "")
-                let parsed: Record<string, unknown>[]
-                try { parsed = JSON.parse(cleaned) } catch {
-                  // Try relaxed format: [{key:value,key2:value2}]
-                  try {
-                    const fixed = cleaned.replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":').replace(/:\s*([^",\}\]]+)/g, (_, v) => `:"${v.trim()}"`)
-                    parsed = JSON.parse(fixed)
-                  } catch {
-                    error("INVALID_ARGUMENTS", `--dep-tasks is not valid JSON: ${raw}`, { format }); return
-                  }
-                }
-                deps = parsed.map((d, i) => {
-                  const fileId = d.taskId ?? d.dependency_task_id ?? d.dependencyFileId
-                  const fileName = d.taskName ?? d.dependency_task_name ?? d.dependencyFileName
-                  if (!fileId) { error("INVALID_ARGUMENTS", `--dep-tasks[${i}]: taskId is required`, { format }); return null }
-                  if (!fileName) { error("INVALID_ARGUMENTS", `--dep-tasks[${i}]: taskName is required`, { format }); return null }
-                  return {
-                    parseType: "1", dependencyProjectId: sc.projectId, depStrategy: d.dep_strategy ?? d.depStrategy ?? 0,
-                    dependencyFileId: fileId, dependencyFileName: fileName,
-                  }
-                }).filter(Boolean)
+                deps = parseDependencyTasks(raw, format, sc.projectId)
               }
             } else {
               deps = (oldData.dataFileDependencyDTOS as unknown[]) ?? []
@@ -888,6 +896,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 "Task content is empty. Provide --content or ensure the task has saved content.",
                 { format },
               )
+              return
             }
             if (!vcCode || !vcCode.trim()) {
               error(
@@ -895,6 +904,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 "Virtual cluster (VC) is required. Provide --vc or configure vcluster in your profile.",
                 { format },
               )
+              return
             }
             const resp = await executeAdhoc(sc, {
               updateBy: String(sc.userId),
@@ -1038,7 +1048,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 let nodeId = argv["node-id"] as number | undefined
                 if (nodeId === undefined) {
-                  if (!argv.name) error("INVALID_ARGUMENTS", "Provide --name or --node-id.", { format, exitCode: 2 })
+                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --name or --node-id.", { format, exitCode: 2 }); return }
                   nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
                 }
                 const resp = await removeFlowNode(sc, {
@@ -1120,7 +1130,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 let nodeId = argv["node-id"] as number | undefined
                 if (nodeId === undefined) {
-                  if (!argv.name) error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 })
+                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                   nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
                 }
                 const resp = await getFlowNodeDetail(sc, fileId, nodeId)
@@ -1146,13 +1156,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               try {
                 if (!argv.content && !argv.file) {
                   error("INVALID_ARGUMENTS", "Provide --content or --file.", { format, exitCode: 2 })
+                  return
                 }
                 const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 let nodeId = argv["node-id"] as number | undefined
                 if (nodeId === undefined) {
-                  if (!argv.name) error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 })
+                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                   nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
                 }
                 const resp = await saveFlowNodeContent(sc, {
@@ -1188,7 +1199,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 let nodeId = argv["node-id"] as number | undefined
                 if (nodeId === undefined) {
-                  if (!argv.name) error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 })
+                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                   nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
                 }
                 const resp = await saveFlowNodeConfig(sc, {
@@ -1330,6 +1341,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             if (!argv.content && !argv.file) {
               error("INVALID_ARGUMENTS", "Provide --content or --file.", { format, exitCode: 2 })
+              return
             }
             const text = (argv.content ?? readFileSync(argv.file as string, "utf-8")) as string
             const sc = await ctx(argv)
