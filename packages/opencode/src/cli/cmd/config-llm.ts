@@ -731,10 +731,9 @@ const LlmPurgeLegacyCommand = cmd({
   },
 })
 
-// ─── parent: `agent llm` (alias: `agent config`) ──────────────────────────────
+// ─── parent: `agent llm` ──────────────────────────────────────────────────────
 export const AgentLlmCommand = cmd({
   command: "llm",
-  aliases: ["config"],
   describe:
     "manage LLMs used by the agent ([llm.*] in ~/.clickzetta/profiles.toml).",
   builder: (yargs: Argv) =>
@@ -766,6 +765,3 @@ export async function runLlm(args: readonly string[]): Promise<never> {
     .parseAsync()
   process.exit(0)
 }
-
-// Back-compat export — callers that still import AgentConfigCommand get the new command.
-export const AgentConfigCommand = AgentLlmCommand

@@ -91,8 +91,8 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "field",
 ])
 
-const RUNTIME_COMMANDS = new Set(["run", "llm", "config"])
-const AGENT_RUNTIME_SUBCOMMANDS = new Set(["run", "llm", "config", "session", "stats", "export"])
+const RUNTIME_COMMANDS = new Set(["run", "llm"])
+const AGENT_RUNTIME_SUBCOMMANDS = new Set(["run", "llm", "session", "stats", "export"])
 
 function usageErrorPayload(message: string) {
   return {

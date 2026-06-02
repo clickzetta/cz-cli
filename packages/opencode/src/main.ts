@@ -85,15 +85,12 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     await forward(args)
   }
 
-  if (
-    args[0] === "agent" &&
-    ["llm", "config"].includes(args[1] ?? "")
-  ) {
+  if (args[0] === "agent" && args[1] === "llm") {
     const { runLlm } = await import("./cli/cmd/config-llm")
     await runLlm(args.slice(1))
   }
 
-  if (["llm", "config"].includes(args[0] ?? "")) {
+  if (args[0] === "llm") {
     const { runLlm } = await import("./cli/cmd/config-llm")
     await runLlm(["llm", ...args.slice(1)])
   }

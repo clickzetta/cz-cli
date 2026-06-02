@@ -255,8 +255,8 @@ const tests: TestCase[] = [
           const r = run([...args], { HOME: home, CLICKZETTA_TEST_HOME: home })
           const j = parseJson(r.stdout)
           if (args.at(0) === "config") {
-            if (r.exitCode !== 0) return { pass: false, detail: `${args.join(" ")} exit=${r.exitCode}` }
-            if (!r.stdout.includes("\"data\"")) return { pass: false, detail: `${args.join(" ")} stdout=${r.stdout.slice(0, 160)}` }
+            // `config` was removed (it used to alias `agent llm`); now an unknown command
+            if (r.exitCode === 0) return { pass: false, detail: `${args.join(" ")} unexpectedly succeeded` }
             continue
           }
           if (r.exitCode !== 1) return { pass: false, detail: `${args.join(" ")} exit=${r.exitCode}` }
