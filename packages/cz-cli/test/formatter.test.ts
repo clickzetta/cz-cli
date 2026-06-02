@@ -17,9 +17,45 @@ describe("JSON formatters preserve non-finite numbers", () => {
   })
 })
 
+describe("formatTable with empty rows", () => {
+  test("renders header and separator when rows is empty", () => {
+    const out = formatTable(["id", "name"], [])
+    expect(out).toBe("id | name\n---+-----")
+  })
+
+  test("falls back to pretty JSON when columns is also empty", () => {
+    const out = formatTable([], [])
+    expect(out).toBe('{\n  "columns": [],\n  "rows": []\n}')
+  })
+})
+
+describe("formatCsv cell encoding roundtrip", () => {
+  test("string that looks like a number is not JSON-wrapped", () => {
+    // value "1" (string) must round-trip as "1", not as '"1"' (length 3)
+    expect(formatCsv(["a"], [["1"]])).toBe("a\n1")
+  })
+
+  test("string that looks like a boolean is not JSON-wrapped", () => {
+    expect(formatCsv(["a"], [["true"]])).toBe("a\ntrue")
+  })
+
+  test("string that looks like null is not JSON-wrapped", () => {
+    expect(formatCsv(["a"], [["null"]])).toBe("a\nnull")
+  })
+
+  test("string containing a quote is CSV-escaped correctly", () => {
+    // value: "a" (3 chars with quotes) → CSV: """a"""
+    expect(formatCsv(["a"], [['"a"']])).toBe('a\n"""a"""')
+  })
+})
+
 describe("flat output formatters preserve null vs empty string", () => {
   test("formatCsv distinguishes null from empty string", () => {
     expect(formatCsv(["a", "b"], [[null, ""]])).toBe('a,b\nNULL,""')
+  })
+
+  test("formatCsv distinguishes null from literal NULL string", () => {
+    expect(formatCsv(["a", "b"], [[null, "NULL"]])).toBe('a,b\nNULL,"NULL"')
   })
 
   test("formatText distinguishes null from empty string", () => {
@@ -31,7 +67,7 @@ describe("flat output formatters preserve null vs empty string", () => {
   })
 
   test("flat formats quote ambiguous strings", () => {
-    expect(formatCsv(["a", "b", "c", "d"], [["NULL", "true", "123", "a"]])).toBe('a,b,c,d\n"""NULL""","""true""","""123""",a')
+    expect(formatCsv(["a", "b", "c", "d"], [["NULL", "true", "123", "a"]])).toBe('a,b,c,d\n"NULL",true,123,a')
     expect(formatText(["a", "b", "c", "d"], [["NULL", "true", "123", "a"]])).toBe('"NULL"\t"true"\t"123"\ta')
     expect(formatTable(["a", "b", "c", "d"], [["NULL", "true", "123", "a"]])).toContain('"NULL" | "true" | "123" | a')
   })

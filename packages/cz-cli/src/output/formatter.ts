@@ -20,7 +20,7 @@ function stringifyJson(data: unknown, space?: number): string {
 }
 
 export function formatTable(columns: string[], rows: unknown[][]): string {
-  if (columns.length === 0 || rows.length === 0) {
+  if (columns.length === 0) {
     return formatPretty({ columns, rows })
   }
 
@@ -364,8 +364,11 @@ function formatFlatCell(value: unknown): string {
 
 function formatCsvCell(value: unknown): string {
   if (value === null || value === undefined) return "NULL"
-  if (value === "") return '""'
-  if (typeof value === "string") return csvEscape(shouldQuoteFlatString(value) ? stringifyJson(value) : value)
+  if (typeof value === "string") {
+    if (value === "") return '""'
+    if (value === "NULL") return '"NULL"'
+    return csvEscape(value)
+  }
   if (typeof value === "object") return csvEscape(stringifyJson(value))
   return csvEscape(String(value))
 }
