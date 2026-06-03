@@ -64,7 +64,7 @@ function truncateLargeFields(rows: unknown[][], maxLen: number): unknown[][] {
 
 function applyVariables(sql: string, vars: Record<string, string>): string {
   const missing: string[] = []
-  const result = sql.replace(/%\((\w+)\)s/g, (match, key) => {
+  const result = sql.replace(/\$\{([^}]+)\}/g, (match, key) => {
     if (key in vars) return vars[key]
     missing.push(key)
     return match
@@ -604,7 +604,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("sync", { type: "boolean", default: true, describe: "Wait for query result before returning (default). Use --no-sync or --async for large queries that may take a long time." })
               .option("async", { type: "boolean", default: false, describe: "Return job_id immediately without waiting for results. Use for large/long-running queries." })
               .option("timeout", { type: "number", default: 300, describe: "Job timeout in seconds (default: 300)" })
-              .option("variable", { type: "array", string: true, describe: "Variable substitution: --variable KEY=VALUE. Use %(KEY)s in SQL." })
+              .option("variable", { type: "array", string: true, describe: "Variable substitution: --variable KEY=VALUE. Use ${KEY} in SQL." })
               .option("set", { type: "array", string: true, describe: "Query hint: --set KEY=VALUE (e.g. --set cz.sql.timezone=UTC)" })
               .option("job-profile", { type: "string", describe: "Fetch execution profile for a completed job ID (separate from running SQL)" })
               .option("header", { type: "boolean", default: true, describe: "Include column names in output. Use --no-header or -N to suppress." })
@@ -616,7 +616,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
                 "Examples:",
                 "  cz-cli sql \"SELECT * FROM orders LIMIT 10\"",
                 "  cz-cli sql \"INSERT INTO t VALUES(1)\" --write",
-                "  cz-cli sql \"SELECT %(col)s FROM t\" --variable col=id",
+                "  cz-cli sql \"SELECT ${col} FROM t\" --variable col=id",
                 "  cz-cli sql -f query.sql --no-limit",
                 "  cz-cli sql \"SELECT * FROM huge_table\" --async",
                 "",

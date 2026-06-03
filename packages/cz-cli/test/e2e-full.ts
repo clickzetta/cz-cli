@@ -47,7 +47,8 @@ const tests: Test[] = [
   { name: "SYNC", cmd: 'sql "SELECT 1 as v" --sync', check: all(single, ok, hasRows) },
   { name: "ASYNC/HYBRID", cmd: 'sql "SELECT 1 as v"', check: all(single, ok) },
   { name: "MULTI-STMT", cmd: 'sql "SET cz.sql.timezone=UTC; SELECT 1 as v" --sync', check: all(single, ok) },
-  { name: "VARIABLE", cmd: 'sql "SELECT %(x)s as v" --variable x=99 --sync', check: all(single, ok, rowVal("v", 99)) },
+  { name: "VARIABLE", cmd: 'sql "SELECT ${x} as v" --variable x=99 --sync', check: all(single, ok, rowVal("v", 99)) },
+  { name: "VARIABLE DOT", cmd: 'sql "SELECT ${env.var} as v" --variable env.var=99 --sync', check: all(single, ok, rowVal("v", 99)) },
 
   // === SQL Flags ===
   { name: "--no-truncate", cmd: 'sql "SELECT 1 as v" --sync --no-truncate', check: all(single, ok) },
