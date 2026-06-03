@@ -26,3 +26,7 @@ export function getSessionOtelContext() {
   if (!currentSessionSpanContext) return context.active()
   return trace.setSpanContext(context.active(), currentSessionSpanContext)
 }
+
+export function withSessionOtelContext<T>(fn: () => T): T {
+  return context.with(getSessionOtelContext(), fn)
+}

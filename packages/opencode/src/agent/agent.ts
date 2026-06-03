@@ -23,6 +23,7 @@ import { Effect, Context, Layer } from "effect"
 import { InstanceState } from "@/effect"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
+import { withSessionOtelContext } from "@/plugin/otel/context"
 
 export const Info = z
   .object({
@@ -379,14 +380,16 @@ export const layer = Layer.effect(
 
         if (isOpenaiOauth) {
           return yield* Effect.promise(async () => {
-            const result = streamObject({
-              ...params,
-              providerOptions: ProviderTransform.providerOptions(resolved, {
-                instructions: system.join("\n"),
-                store: false,
+            const result = withSessionOtelContext(() =>
+              streamObject({
+                ...params,
+                providerOptions: ProviderTransform.providerOptions(resolved, {
+                  instructions: system.join("\n"),
+                  store: false,
+                }),
+                onError: () => {},
               }),
-              onError: () => {},
-            })
+            )
             for await (const part of result.fullStream) {
               if (part.type === "error") throw part.error
             }
@@ -394,7 +397,7 @@ export const layer = Layer.effect(
           })
         }
 
-        return yield* Effect.promise(() => generateObject(params).then((r) => r.object))
+        return yield* Effect.promise(() => withSessionOtelContext(() => generateObject(params)).then((r) => r.object))
       }),
     })
   }),

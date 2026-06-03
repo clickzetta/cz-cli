@@ -24,6 +24,7 @@ import { InstallationVersion } from "@/installation/version"
 import { EffectBridge } from "@/effect"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
+import { withSessionOtelContext } from "@/plugin/otel/context"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -318,85 +319,87 @@ const live: Layer.Layer<
         ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
         : undefined
 
-      return streamText({
-        onError(error) {
-          l.error("stream error", {
-            error,
-          })
-        },
-        async experimental_repairToolCall(failed) {
-          const lower = failed.toolCall.toolName.toLowerCase()
-          if (lower !== failed.toolCall.toolName && tools[lower]) {
-            l.info("repairing tool call", {
-              tool: failed.toolCall.toolName,
-              repaired: lower,
+      return withSessionOtelContext(() =>
+        streamText({
+          onError(error) {
+            l.error("stream error", {
+              error,
             })
+          },
+          async experimental_repairToolCall(failed) {
+            const lower = failed.toolCall.toolName.toLowerCase()
+            if (lower !== failed.toolCall.toolName && tools[lower]) {
+              l.info("repairing tool call", {
+                tool: failed.toolCall.toolName,
+                repaired: lower,
+              })
+              return {
+                ...failed.toolCall,
+                toolName: lower,
+              }
+            }
             return {
               ...failed.toolCall,
-              toolName: lower,
-            }
-          }
-          return {
-            ...failed.toolCall,
-            input: JSON.stringify({
-              tool: failed.toolCall.toolName,
-              error: failed.error.message,
-            }),
-            toolName: "invalid",
-          }
-        },
-        temperature: params.temperature,
-        topP: params.topP,
-        topK: params.topK,
-        providerOptions: ProviderTransform.providerOptions(input.model, params.options),
-        activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
-        tools,
-        toolChoice: input.toolChoice,
-        maxOutputTokens: params.maxOutputTokens,
-        abortSignal: input.abort,
-        headers: {
-          ...(input.model.providerID.startsWith("opencode")
-            ? {
-                "x-opencode-project": Instance.project.id,
-                "x-opencode-session": input.sessionID,
-                "x-opencode-request": input.user.id,
-                "x-opencode-client": Flag.CLICKZETTA_CLIENT,
-              }
-            : {
-                "x-session-affinity": input.sessionID,
-                ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
-                "User-Agent": `opencode/${InstallationVersion}`,
+              input: JSON.stringify({
+                tool: failed.toolCall.toolName,
+                error: failed.error.message,
               }),
-          ...input.model.headers,
-          ...headers,
-        },
-        maxRetries: input.retries ?? 0,
-        messages,
-        model: wrapLanguageModel({
-          model: language,
-          middleware: [
-            {
-              specificationVersion: "v3" as const,
-              async transformParams(args) {
-                if (args.type === "stream") {
-                  // @ts-expect-error
-                  args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
-                }
-                return args.params
-              },
-            },
-          ],
-        }),
-        experimental_telemetry: {
-          isEnabled: cfg.experimental?.openTelemetry,
-          functionId: "session.llm",
-          tracer,
-          metadata: {
-            userId: cfg.username ?? "unknown",
-            sessionId: input.sessionID,
+              toolName: "invalid",
+            }
           },
-        },
-      })
+          temperature: params.temperature,
+          topP: params.topP,
+          topK: params.topK,
+          providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+          activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
+          tools,
+          toolChoice: input.toolChoice,
+          maxOutputTokens: params.maxOutputTokens,
+          abortSignal: input.abort,
+          headers: {
+            ...(input.model.providerID.startsWith("opencode")
+              ? {
+                  "x-opencode-project": Instance.project.id,
+                  "x-opencode-session": input.sessionID,
+                  "x-opencode-request": input.user.id,
+                  "x-opencode-client": Flag.CLICKZETTA_CLIENT,
+                }
+              : {
+                  "x-session-affinity": input.sessionID,
+                  ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+                  "User-Agent": `opencode/${InstallationVersion}`,
+                }),
+            ...input.model.headers,
+            ...headers,
+          },
+          maxRetries: input.retries ?? 0,
+          messages,
+          model: wrapLanguageModel({
+            model: language,
+            middleware: [
+              {
+                specificationVersion: "v3" as const,
+                async transformParams(args) {
+                  if (args.type === "stream") {
+                    // @ts-expect-error
+                    args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                  }
+                  return args.params
+                },
+              },
+            ],
+          }),
+          experimental_telemetry: {
+            isEnabled: cfg.experimental?.openTelemetry,
+            functionId: "session.llm",
+            tracer,
+            metadata: {
+              userId: cfg.username ?? "unknown",
+              sessionId: input.sessionID,
+            },
+          },
+        }),
+      )
     })
 
     const stream: Interface["stream"] = (input) =>
