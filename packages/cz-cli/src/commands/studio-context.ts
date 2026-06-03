@@ -33,14 +33,17 @@ export async function getGatewayContext(args: Partial<CliArgs> & { format?: stri
   }
 }
 
-export async function getStudioContext(args: Partial<CliArgs> & { format?: string }): Promise<StudioConfig> {
+export async function getStudioContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<StudioConfig> {
   const format = args.format ?? "json"
+  const debug = !!args.debug
   const config = resolveConnectionConfig(args)
   const token = await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
 
   const user = await getCurrentUser(baseUrl, token.token)  
   const tenantId = user.accountId
+
+  if (debug) process.stderr.write(`[debug] studio-context: baseUrl=${baseUrl} userId=${token.userId} tenantId=${tenantId} instanceId=${token.instanceId} instance=${config.instance} workspace=${config.workspace}\n`)
 
   if (!config.workspace) {
     handledError("NO_WORKSPACE", "Workspace is required for studio commands. Use --workspace or set it in your profile.", { format })
@@ -54,6 +57,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
     token.instanceId,
     config.instance,
     config.workspace,
+    debug,
   )
 
   if (!ws) {
