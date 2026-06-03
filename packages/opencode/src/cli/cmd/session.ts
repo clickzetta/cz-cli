@@ -490,7 +490,7 @@ export const SessionListCommand = cmd({
   builder: (yargs: Argv) => {
     return yargs
       .option("max-count", {
-        alias: "n",
+        alias: ["n", "limit"],
         describe: "limit to N most recent sessions",
         type: "number",
       })

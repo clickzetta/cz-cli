@@ -394,6 +394,7 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               scheduleTaskId: taskId,
               sqlVcCode: argv.vc,
               projectId: sc.projectId,
+              operate_user: String(sc.userId),
             }
             if (argv.from && argv.to) {
               params.bizStartTime = parseWindowBoundary(argv.from as string, false)
@@ -419,12 +420,21 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "rerun <id>",
         "Rerun a failed instance",
-        (y) => y.positional("id", { type: "string", demandOption: true }),
+        (y) => y
+          .positional("id", { type: "string", demandOption: true })
+          .option("yes", { alias: "y", type: "boolean", describe: "Skip confirmation" }),
         async (argv) => {
           const format = argv.format
           try {
             const sc = await ctx(argv)
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
+            if (!argv.yes) {
+              const ok = await confirm(`Rerun instance ${runId}?`)
+              if (!ok) {
+                success({ message: "Cancelled.", action: "runs.rerun", executed: false }, { format })
+                return
+              }
+            }
             const resp = await rerunInstance(sc, runId)
             logOperation("runs rerun", { ok: true })
             success(resp.data, { format })
