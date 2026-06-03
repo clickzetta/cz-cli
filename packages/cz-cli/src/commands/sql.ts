@@ -198,8 +198,9 @@ async function fetchSchemaHint(ctx: ExecContext, sql: string, errMsg: string): P
     if (TABLE_NOT_FOUND_RE.test(errMsg)) {
       const r = await execSql(ctx, "SHOW TABLES")
       if (isQueryResult(r) && r.status === JobStatus.SUCCEEDED && r.rows.length > 0) {
-        const tables = r.rows.map((row) => row[0])
-        return { tables }
+        const nameIdx = r.columns.findIndex((c) => c.name?.toLowerCase() === "table_name")
+        const tables = r.rows.map((row) => String(row[nameIdx !== -1 ? nameIdx : 1] ?? row[0] ?? ""))
+        return { tables: tables.slice(0, 100) }
       }
     }
     if (COLUMN_NOT_FOUND_RE.test(errMsg)) {
