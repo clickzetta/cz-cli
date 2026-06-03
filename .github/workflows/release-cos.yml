@@ -355,7 +355,7 @@ jobs:
           ${NOTES}
           详情: ${URL}"
           TIMESTAMP=$(date +%s)
-          SIGN=$(printf '%s' "${TIMESTAMP}\n${FEISHU_WEBHOOK_SECRET}" | openssl dgst -sha256 -hmac "${FEISHU_WEBHOOK_SECRET}" -binary | base64)
+          SIGN=$(printf '%s\n%s' "${TIMESTAMP}" "${FEISHU_WEBHOOK_SECRET}" | openssl dgst -sha256 -hmac "${FEISHU_WEBHOOK_SECRET}" -binary | base64)
           curl -sSf -X POST "$FEISHU_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d "$(jq -nc --arg text "$TEXT" --arg ts "$TIMESTAMP" --arg sign "$SIGN" \

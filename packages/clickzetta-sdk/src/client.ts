@@ -96,7 +96,7 @@ async function doRequest<T>(
       if (!resp.ok) {
         const apiErr = new ClickZettaApiError(
           `HTTP_${resp.status}`,
-          `HTTP ${resp.status}: ${text.slice(0, 500)}`,
+          `HTTP ${resp.status}: ${text.slice(0, 1000)}`,
           resp.status,
         )
         if (NON_RETRYABLE_STATUS.has(resp.status)) throw apiErr
