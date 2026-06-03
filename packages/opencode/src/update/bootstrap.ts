@@ -223,7 +223,11 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
 }
 
 export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string) {
-  await upgradeViaInstallScript(target, channel, fetchImpl)
+  if (NPM_METHODS.has(method)) {
+    await upgradeViaPackageManager(method, target)
+  } else {
+    await upgradeViaInstallScript(target, channel, fetchImpl)
+  }
 }
 
 function restartCurrentProcess(env: NodeJS.ProcessEnv = process.env) {
