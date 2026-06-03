@@ -80,7 +80,8 @@ const tests: TestCase[] = [
   { name: "multi-statement", cmd: 'sql "SET cz.sql.timezone=UTC; SELECT 1 as x" --sync', assert: assertSingleLine },
   { name: "double-quoted SQL text", cmd: `sql 'select "abc";' --sync`, assert: all(assertSingleLine, assertOk) },
   { name: "trailing comment after statement", cmd: `sql "select 'abc', 1 + 1; --comment" --sync`, assert: all(assertSingleLine, assertOk) },
-  { name: "variable substitution", cmd: 'sql "SELECT %(val)s as v" --variable val=42 --sync', assert: assertSingleLine },
+  { name: "variable substitution", cmd: 'sql "SELECT ${val} as v" --variable val=42 --sync', assert: assertSingleLine },
+  { name: "variable substitution with dot", cmd: 'sql "SELECT ${env.var} as v" --variable env.var=42 --sync', assert: assertSingleLine },
   { name: "write protection", cmd: 'sql "INSERT INTO nonexist VALUES(1)"', assert: all(assertSingleLine, assertError("WRITE_NOT_ALLOWED")) },
   { name: "missing SQL error", cmd: "sql", assert: all(assertSingleLine, assertError("USAGE_ERROR")) },
 
