@@ -47,7 +47,7 @@ async function gwRequest<T>(sc: StudioConfig, path: string, body: unknown): Prom
   if (_debug) process.stderr.write(`[debug] → POST ${path} ${JSON.stringify(body)}\n`)
   const t0 = Date.now()
   const resp = await studioRequest<T>(sc, path, body)
-  if (_debug) process.stderr.write(`[debug] ← ${Date.now() - t0}ms code=${resp.code} data=${JSON.stringify(resp.data).slice(0, 200)}\n`)
+  if (_debug) process.stderr.write(`[debug] ← ${Date.now() - t0}ms code=${resp.code} data=${JSON.stringify(resp.data)}\n`)
   return resp
 }
 
@@ -103,15 +103,13 @@ async function resolveKeyId(sc: GatewayContext, vApiKey: string): Promise<number
 }
 
 function normalizeKey(k: Dict): Dict {
-  const quotas: Dict = {}
+  const quotas: Dict[] = []
   if (Array.isArray(k.rateLimitConfigs)) {
     for (const r of k.rateLimitConfigs as Dict[]) {
-      const label = FIELD_TO_PERIOD[String(r.rateLimitType)] ?? String(r.rateLimitType)
-      quotas[label] = { limit: r.rateLimitValue, usage: r.currentUsage }
+      quotas.push({ type: r.rateLimitType, limit: r.rateLimitValue, usage: r.currentUsage })
     }
   } else if (k.rateLimitType) {
-    const label = FIELD_TO_PERIOD[String(k.rateLimitType)] ?? String(k.rateLimitType)
-    quotas[label] = { limit: k.rateLimitValue, usage: k.usage }
+    quotas.push({ type: k.rateLimitType, limit: k.rateLimitValue, usage: k.usage })
   }
   const routing = isRecord(k.routingRule) ? k.routingRule : undefined
   const alias = k.vapiKeyAlias ?? k.vApiKeyAlias
@@ -123,7 +121,7 @@ function normalizeKey(k: Dict): Dict {
     status: k.status,
     ...(k.type ? { type: k.type } : {}),
     ...(routing ? { routeType: routing.routeType, providerIds: routing.providerIds } : {}),
-    ...(Object.keys(quotas).length > 0 ? { quotas } : {}),
+    ...(quotas.length > 0 ? { quotas } : {}),
   }
 }
 
@@ -225,6 +223,7 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 .option("key", { type: "string", describe: "Filter by exact vApiKey" })
                 .option("status", { type: "number", choices: [0, 1] as const, describe: "Filter by status (1=enabled, 0=disabled)" })
                 .option("mine", { type: "boolean", describe: "Only keys created by the current user" })
+                .option("reveal", { type: "boolean", describe: "Show plaintext key values (calls getApiKey for each)" })
                 .option("page", { type: "number", default: 1, describe: "Page number" })
                 .option("page-size", { type: "number", default: 200, describe: "Items per page" }),
             async (argv) => {
@@ -243,6 +242,14 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 })
                 const list = Array.isArray(resp.data) ? resp.data as Dict[] : []
                 const rows = list.map(normalizeKey)
+                if (argv.reveal) {
+                  await Promise.all(rows.map(async (row) => {
+                    try {
+                      const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${row.id}`, {})
+                      row.vApiKey = String(keyResp.data)
+                    } catch {}
+                  }))
+                }
                 const total = resp.count ?? rows.length
                 logOperation("gateway key list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
                 success(rows, {
@@ -356,33 +363,6 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 success({ id, alias: argv.alias, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
               } catch (err) {
                 logOperation("gateway key upsert", { ok: false, timeMs: Date.now() - t0 })
-                reportError(err, format)
-              }
-            },
-          )
-          // ── get ────────────────────────────────────────────────────────
-          .command(
-            "get <vApiKey>",
-            "Show a virtual key's full value, optionally registering it as an LLM",
-            (y) =>
-              y
-                .positional("vApiKey", { type: "string", demandOption: true, describe: "Virtual key value" })
-                .option("add-to-llm", { type: "string", describe: "Register as a [llm.<name>] entry" })
-                .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" }),
-            async (argv) => {
-              const format = argv.format
-              const t0 = Date.now()
-              try {
-                setGatewayDebug(!!argv.debug)
-                const sc = await getGatewayContext(argv)
-                const id = await resolveKeyId(sc, argv.vApiKey as string)
-                const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
-                const vApiKey = String(keyResp.data)
-                const registered = argv["add-to-llm"] ? addToLlm(argv["add-to-llm"] as string, vApiKey, sc.baseUrl, !!argv.use) : undefined
-                logOperation("gateway key get", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
-              } catch (err) {
-                logOperation("gateway key get", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
               }
             },
