@@ -13,10 +13,11 @@ export async function studioRequest<T>(
     token: config.token,
     customHeaders: {
       instanceName: config.instanceName,
+      instanceid: String(config.instanceId),
       userId: String(config.userId),
       accountId: String(config.tenantId),
       tenantId: String(config.tenantId),
-      instanceId: String(config.instanceId),
+      env: "prod",
       ...config.customHeaders,
       ...extraHeaders,
     },
