@@ -260,6 +260,7 @@ export interface Interface {
   readonly update: (config: Info) => Effect.Effect<void>
   readonly updateGlobal: (config: Info) => Effect.Effect<Info>
   readonly invalidate: (wait?: boolean) => Effect.Effect<void>
+  readonly invalidateCache: () => Effect.Effect<void>
   readonly directories: () => Effect.Effect<string[]>
   readonly waitForDependencies: () => Effect.Effect<void>
 }
@@ -717,6 +718,11 @@ export const layer = Layer.effect(
       yield* Effect.promise(() => Instance.dispose())
     })
 
+    const invalidateCache = Effect.fn("Config.invalidateCache")(function* () {
+      yield* invalidateGlobal
+      yield* InstanceState.invalidate(state)
+    })
+
     const invalidate = Effect.fn("Config.invalidate")(function* (wait?: boolean) {
       yield* invalidateGlobal
       const task = Instance.disposeAll()
@@ -774,6 +780,7 @@ export const layer = Layer.effect(
       update,
       updateGlobal,
       invalidate,
+      invalidateCache,
       directories,
       waitForDependencies,
     })

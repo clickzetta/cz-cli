@@ -158,7 +158,12 @@ export const layer: Layer.Layer<
       sessionID: SessionID
       providerID: string
       error: MessageV2.APIError
+      rotated: { done: boolean }
     }) {
+      if (input.rotated.done) {
+        log.warn("rotation already attempted, skipping", { sessionID: input.sessionID })
+        return undefined
+      }
       const exhausted = isClickzettaQuotaExhausted({
         provider: input.providerID,
         status: input.error.data.statusCode,
@@ -175,8 +180,13 @@ export const layer: Layer.Layer<
           interactive: false,
         }),
       )
-      if (!rotated) return undefined
-      yield* config.invalidate()
+      if (!rotated) {
+        log.error("rotateClickzettaLlm returned undefined — check default_llm and source_profile in profiles.toml")
+        return undefined
+      }
+      log.info("rotation succeeded", { entry: rotated.entryName, alias: rotated.alias })
+      input.rotated.done = true
+      yield* config.invalidateCache()
       yield* provider.invalidate()
       return "Rotated exhausted ClickZetta key, retrying."
     })
@@ -690,6 +700,7 @@ export const layer: Layer.Layer<
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
         let activeStreamInput = streamInput
         ctx.inputText = extractUserText(activeStreamInput)
+        const rotated = { done: false }
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
@@ -732,6 +743,7 @@ export const layer: Layer.Layer<
                       sessionID: ctx.sessionID,
                       providerID: activeStreamInput.model.providerID,
                       error,
+                      rotated,
                     })
                     if (!recovered) return undefined
                     activeStreamInput = yield* refreshStreamInputModel(activeStreamInput)
