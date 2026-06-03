@@ -215,10 +215,16 @@ function extractField(obj: Record<string, unknown>, field: string): unknown {
   if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null) {
     if (field in data[0]) return data[0][field]
   }
-  // 4. rows[0]
+  // 4. rows[0] (object)
   const rows = obj.rows
-  if (Array.isArray(rows) && rows.length > 0 && typeof rows[0] === "object" && rows[0] !== null) {
+  if (Array.isArray(rows) && rows.length > 0 && typeof rows[0] === "object" && rows[0] !== null && !Array.isArray(rows[0])) {
     if (field in rows[0]) return rows[0][field]
+  }
+  // 5. SQL-style: columns + rows (positional arrays)
+  const columns = obj.columns
+  if (Array.isArray(columns) && Array.isArray(rows)) {
+    const idx = columns.indexOf(field)
+    if (idx !== -1) return rows.map((r) => Array.isArray(r) ? r[idx] : r).join("\n")
   }
   return undefined
 }

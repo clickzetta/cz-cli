@@ -36,7 +36,7 @@ interface SqlArgs extends GlobalArgs {
   "job-profile"?: string
   "header": boolean
   N?: boolean
-  "limit": boolean
+  "limit": number
   batch: boolean
   "dry-run": boolean
 }
@@ -251,7 +251,7 @@ async function executeSingle(
   const isShow = SHOW_RE.test(sql)
   const hasLimit = LIMIT_RE.test(sql)
   const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
-  const rowLimit = !argv.limit ? Infinity : DEFAULT_ROW_LIMIT
+  const rowLimit = argv.limit === 0 ? Infinity : argv.limit
   const t0 = Date.now()
 
   if (isWrite && !argv.write) {
@@ -610,7 +610,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("job-profile", { type: "string", describe: "Fetch execution profile for a completed job ID (separate from running SQL)" })
               .option("header", { type: "boolean", default: true, describe: "Include column names in output. Use --no-header or -N to suppress." })
               .option("N", { type: "boolean", hidden: true })
-              .option("limit", { type: "boolean", default: true, describe: "Auto-truncate results to 100 rows. Use --no-limit to fetch all rows." })
+              .option("limit", { type: "number", default: 100, describe: "Max rows to return (0 for unlimited)" })
               .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute multiple semicolon-separated statements sequentially" })
               .option("dry-run", { type: "boolean", default: false, describe: "Split SQL and EXPLAIN each statement without executing. Reports ok/error per statement." })
               .epilogue([
