@@ -26,6 +26,7 @@ interface HelpCase {
   expectHeader: string       // first line should contain this
   expectOptions?: string[]   // key option strings that must appear
   expectCommands?: string[]  // subcommand names that must appear
+  forbid?: string[]          // strings that must not appear
   issues?: string            // known issues to note
 }
 
@@ -464,6 +465,35 @@ const cases: HelpCase[] = [
     expectOptions: ["--days", "--tools"],
   },
 
+  // AIGW
+  {
+    args: ["ai-gateway", "--help"],
+    expectHeader: "cz-cli ai-gateway",
+    expectCommands: ["key", "model"],
+  },
+  {
+    args: ["ai-gateway", "key", "--help"],
+    expectHeader: "cz-cli ai-gateway key",
+    expectCommands: ["list", "create", "upsert", "get", "set-quota", "enable", "disable", "delete"],
+  },
+  {
+    args: ["ai-gateway", "key", "create", "--help"],
+    expectHeader: "cz-cli ai-gateway key create",
+    expectOptions: ["--period", "--quota", "--route-type", "--add-to-llm"],
+    expectCommands: ["Examples:", "cz-cli ai-gateway key create my-key"],
+    forbid: ["cz-cli gateway key create"],
+  },
+  {
+    args: ["ai-gateway", "model", "--help"],
+    expectHeader: "cz-cli ai-gateway model",
+    expectCommands: ["list"],
+  },
+  {
+    args: ["ai-gateway", "model", "list", "--help"],
+    expectHeader: "cz-cli ai-gateway model list",
+    expectOptions: ["key", "--page", "--page-size"],
+  },
+
   // setup
   {
     args: ["setup", "--help"],
@@ -499,6 +529,12 @@ function check(c: HelpCase): { pass: boolean; detail?: string } {
   for (const opt of c.expectOptions ?? []) {
     if (!combined.includes(opt)) {
       return { pass: false, detail: `missing option/arg "${opt}" in help output` }
+    }
+  }
+
+  for (const forbidden of c.forbid ?? []) {
+    if (combined.includes(forbidden)) {
+      return { pass: false, detail: `forbidden text "${forbidden}" in help output` }
     }
   }
 

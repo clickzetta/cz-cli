@@ -4,7 +4,7 @@ import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import { handledError } from "../output/index.js"
 
 /**
- * Account/tenant-level context for AI Gateway admin APIs. Unlike
+ * Account/tenant-level context for AIGW admin APIs. Unlike
  * {@link getStudioContext} it skips workspace/project resolution — gateway
  * virtual keys are tenant-scoped and only need tenantId/userId/instanceId.
  */

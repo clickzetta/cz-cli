@@ -8,7 +8,7 @@ import { UI } from "@/cli/ui"
 import { Log } from "@/util"
 import { errorMessage } from "@/util/error"
 import { withTimeout } from "@/util/timeout"
-import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network"
+import { withNetworkOptions, resolveNetworkOptionsNoConfig, type NetworkOptions } from "@/cli/network"
 import { Filesystem } from "@/util"
 import type { GlobalEvent } from "@opencode-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
@@ -23,6 +23,16 @@ declare global {
 }
 
 type RpcClient = ReturnType<typeof Rpc.client<typeof rpc>>
+type TuiThreadArgs = NetworkOptions & {
+  profile?: string
+  model?: string
+  continue?: boolean
+  session?: string
+  fork?: boolean
+  dir?: string
+  prompt?: string
+  agent?: string
+}
 
 function createWorkerFetch(client: RpcClient): typeof fetch {
   const fn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -66,7 +76,7 @@ async function input(value?: string) {
   return piped + "\n" + value
 }
 
-export const TuiThreadCommand = cmd({
+export const TuiThreadCommand = cmd<{}, TuiThreadArgs>({
   command: "$0",
   describe: "start cz-cli agent tui",
   builder: (yargs) =>

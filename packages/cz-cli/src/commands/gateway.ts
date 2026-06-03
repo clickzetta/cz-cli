@@ -10,7 +10,7 @@ import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getGatewayContext, type GatewayContext } from "./studio-context.js"
 
-// ── AI Gateway admin API paths ──────────────────────────────────────────────
+// ── AIGW admin API paths ────────────────────────────────────────────────────
 // Portal-proxied endpoints (standard portal token auth):
 const PORTAL_API = {
   LIST: "/clickzetta-portal/user/listApiKeys",   // GET, params: userName
@@ -222,17 +222,17 @@ function buildRoutingRule(argv: Dict): Dict | undefined {
 }
 
 export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
-  cli.command("ai-gateway", "Manage ClickZetta AI Gateway virtual keys and list available models", (yargs) => {
+  cli.command("ai-gateway", "Manage ClickZetta AIGW virtual keys and list available models", (yargs) => {
     yargs
-      .command("key", "Manage AI Gateway virtual keys", (k) => {
+      .command("key", "Manage AIGW virtual keys", (k) => {
         k
           // ── list ───────────────────────────────────────────────────────
           .command(
             "list",
-            "List virtual keys",
+            "List AIGW virtual keys",
             (y) =>
               y
-                .option("alias", { type: "string", describe: "Filter by alias (fuzzy)" })
+                .option("alias", { type: "string", describe: "Filter by AIGW virtual key alias (fuzzy)" })
                 .option("key", { type: "string", describe: "Filter by exact vApiKey" })
                 .option("status", { type: "number", choices: [0, 1] as const, describe: "Filter by status (1=enabled, 0=disabled)" })
                 .option("mine", { type: "boolean", describe: "Only keys created by the current user" })
@@ -279,10 +279,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── create ─────────────────────────────────────────────────────
           .command(
             "create <alias>",
-            "Create a virtual key",
+            "Create an AIGW virtual key",
             (y) =>
               y
-                .positional("alias", { type: "string", demandOption: true, describe: "Virtual key alias" })
+                .positional("alias", { type: "string", demandOption: true, describe: "AIGW virtual key alias" })
                 .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, describe: "Quota period" })
                 .option("quota", { type: "number", describe: "Quota value for the chosen period" })
                 .option("route-type", { type: "string", choices: ["default", "provider", "byok"] as const, describe: "Routing rule type" })
@@ -291,9 +291,12 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 .option("private-keys", { type: "string", array: true, describe: "BYOK private key aliases (route-type=byok)" })
                 .option("add-to-llm", { type: "string", describe: "Register the new key as a [llm.<name>] entry (defaults to alias)" })
                 .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" })
-                .example("cz-cli gateway key create my-key", "Create with the default total quota (10,000,000)")
-                .example("cz-cli gateway key create my-key --period total --quota 1000000", "Create with a long-lived total quota")
-                .example("cz-cli gateway key create my-key --add-to-llm --use", "Create and use it as the agent's default LLM"),
+                .epilogue([
+                  "Examples:",
+                  "  cz-cli ai-gateway key create my-key",
+                  "  cz-cli ai-gateway key create my-key --period total --quota 1000000",
+                  "  cz-cli ai-gateway key create my-key --add-to-llm my-key --use",
+                ].join("\n")),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
@@ -337,10 +340,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── upsert ─────────────────────────────────────────────────────
           .command(
             "upsert <alias>",
-            "Create or update a virtual key (idempotent)",
+            "Create or update an AIGW virtual key (idempotent)",
             (y) =>
               y
-                .positional("alias", { type: "string", demandOption: true, describe: "Virtual key alias" })
+                .positional("alias", { type: "string", demandOption: true, describe: "AIGW virtual key alias" })
                 .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, describe: "Quota period" })
                 .option("quota", { type: "number", describe: "Quota value for the chosen period" })
                 .option("route-type", { type: "string", choices: ["default", "provider", "byok"] as const, describe: "Routing rule type" })
@@ -383,10 +386,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── get ────────────────────────────────────────────────────────
           .command(
             "get <ref>",
-            "Get a virtual key's plaintext value (by alias or key)",
+            "Get an AIGW virtual key's plaintext value (by alias or key)",
             (y) =>
               y
-                .positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
+                .positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
                 .option("add-to-llm", { type: "string", describe: "Register as a [llm.<name>] entry" })
                 .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" }),
             async (argv) => {
@@ -411,10 +414,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── set-quota ──────────────────────────────────────────────────
           .command(
             "set-quota",
-            "Update a single quota on a virtual key",
+            "Update a single quota on an AIGW virtual key",
             (y) =>
               y
-                .option("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
+                .option("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
                 .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, demandOption: true, describe: "Quota period" })
                 .option("quota", { type: "number", demandOption: true, describe: "New quota value" }),
             async (argv) => {
@@ -439,22 +442,22 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── enable / disable ───────────────────────────────────────────
           .command(
             "enable <ref>",
-            "Enable a virtual key (by alias or key value)",
-            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" }),
+            "Enable an AIGW virtual key (by alias or key value)",
+            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" }),
             (argv) => updateStatus(argv, 1),
           )
           .command(
             "disable <ref>",
-            "Disable a virtual key (by alias or key value)",
-            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" }),
+            "Disable an AIGW virtual key (by alias or key value)",
+            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" }),
             (argv) => updateStatus(argv, 0),
           )
           // ── delete ─────────────────────────────────────────────────────
           .command(
             "delete <ref>",
-            "Delete a virtual key (by alias or key value). Requires -y to confirm.",
+            "Delete an AIGW virtual key (by alias or key value). Requires -y to confirm.",
             (y) => y
-              .positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
+              .positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
               .option("yes", { alias: "y", type: "boolean", describe: "Skip confirmation" })
               .option("remove-from-llm", { type: "boolean", describe: "Also remove the matching [llm.*] entry from profiles.toml" }),
             async (argv) => {
@@ -487,10 +490,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
         return commandGroup(k, "ai-gateway key")
       })
       // ── model list ───────────────────────────────────────────────────────
-      .command("model", "Browse AI Gateway models", (m) => {
+      .command("model", "Browse AIGW models", (m) => {
         m.command(
           "list [key]",
-          "List models available to a virtual key",
+          "List AIGW models available to a virtual key",
           (y) =>
             y
               .positional("key", { type: "string", describe: "Virtual key value (defaults to api_key from default_llm profile)" })
@@ -516,8 +519,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 pageIndex: argv.page,
                 pageSize: argv["page-size"],
               })
+              const aiMessage = Array.isArray(resp.data) && resp.data.length === 0
+                ? "No AIGW models returned. This usually means the current virtual key/account lacks AIGW administrator permission; ask an AIGW admin to grant access or verify model authorization."
+                : undefined
               logOperation("gateway model list", { ok: true, timeMs: Date.now() - t0 })
-              success(resp.data, { format, timeMs: Date.now() - t0 })
+              success(resp.data, { format, timeMs: Date.now() - t0, aiMessage })
             } catch (err) {
               logOperation("gateway model list", { ok: false, timeMs: Date.now() - t0 })
               reportError(err, format)
