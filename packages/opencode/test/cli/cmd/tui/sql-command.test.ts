@@ -46,19 +46,19 @@ describe("canInlineSql", () => {
 })
 
 describe("buildSqlInlineCommand", () => {
-  test("single-quotes the SQL", () => {
-    expect(buildSqlInlineCommand("select 1")).toBe("cz-cli sql 'select 1'")
+  test("single-quotes the SQL and forces table output", () => {
+    expect(buildSqlInlineCommand("select 1")).toBe("cz-cli sql --format table 'select 1'")
   })
 })
 
 describe("buildSqlFileCommand", () => {
   test("double-quotes a posix path", () => {
-    expect(buildSqlFileCommand("/tmp/cz-cli-sql-1.sql")).toBe('cz-cli sql --file "/tmp/cz-cli-sql-1.sql"')
+    expect(buildSqlFileCommand("/tmp/cz-cli-sql-1.sql")).toBe('cz-cli sql --format table --file "/tmp/cz-cli-sql-1.sql"')
   })
 
   test("normalizes windows backslashes to forward slashes", () => {
     expect(buildSqlFileCommand("C:\\Users\\John Doe\\Temp\\q.sql")).toBe(
-      'cz-cli sql --file "C:/Users/John Doe/Temp/q.sql"',
+      'cz-cli sql --format table --file "C:/Users/John Doe/Temp/q.sql"',
     )
   })
 })

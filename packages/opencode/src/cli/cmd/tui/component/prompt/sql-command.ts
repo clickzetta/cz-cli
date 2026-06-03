@@ -19,11 +19,11 @@ export function canInlineSql(sql: string): boolean {
 // Inline form: `cz-cli sql 'SELECT 1'` (posix single-quoted; callers must
 // ensure canInlineSql first).
 export function buildSqlInlineCommand(sql: string): string {
-  return `cz-cli sql '${sql}'`
+  return `cz-cli sql --format table '${sql}'`
 }
 
 // File form: path normalized to forward slashes (accepted by Node on Windows
 // too) and double-quoted so it works across bash/zsh/fish/cmd/powershell.
 export function buildSqlFileCommand(file: string): string {
-  return `cz-cli sql --file "${file.replace(/\\/g, "/")}"`
+  return `cz-cli sql --format table --file "${file.replace(/\\/g, "/")}"`
 }
