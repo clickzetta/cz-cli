@@ -87,10 +87,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          gh release delete "${{ needs.resolve-release.outputs.tag }}" \
+            --yes --cleanup-tag=false \
+            --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "${{ needs.resolve-release.outputs.tag }}" \
             --title "${{ needs.resolve-release.outputs.tag }}" \
             --notes-file /tmp/release-notes.md \
-            --repo "${{ github.repository }}" || true
+            --repo "${{ github.repository }}"
 
   build:
     needs: [resolve-release, create-release]
