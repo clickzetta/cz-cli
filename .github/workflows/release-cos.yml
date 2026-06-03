@@ -343,7 +343,6 @@ jobs:
         if: success()
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_WEBHOOK_SECRET }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.resolve-release.outputs.tag }}"
@@ -354,9 +353,6 @@ jobs:
           安装/更新: curl -fsSL https://cz-cli.ai/install.sh | sh
           ${NOTES}
           详情: ${URL}"
-          TIMESTAMP=$(date +%s)
-          SIGN=$(printf '%s\n%s' "${TIMESTAMP}" "${FEISHU_WEBHOOK_SECRET}" | openssl dgst -sha256 -hmac "${FEISHU_WEBHOOK_SECRET}" -binary | base64)
           curl -sSf -X POST "$FEISHU_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "$(jq -nc --arg text "$TEXT" --arg ts "$TIMESTAMP" --arg sign "$SIGN" \
-              '{msg_type:"text",timestamp:$ts,sign:$sign,content:{text:$text}}')"
+            -d "$(jq -nc --arg text "$TEXT" '{msg_type:"text",content:{text:$text}}')"
