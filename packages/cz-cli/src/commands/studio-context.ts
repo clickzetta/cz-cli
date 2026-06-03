@@ -3,6 +3,21 @@ import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv }
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import { handledError } from "../output/index.js"
 
+async function resolveInstanceId(baseUrl: string, token: string, tenantId: number, instanceName: string, fallbackId: number, debug?: boolean): Promise<number> {
+  try {
+    const resp = await fetch(`${baseUrl}/clickzetta-portal/service/serviceInstanceList?accountId=${tenantId}`, {
+      headers: { "x-clickzetta-token": token, Accept: "application/json" },
+    })
+    if (!resp.ok) return fallbackId
+    const data = (await resp.json()) as { data?: Array<{ id: number; name: string; serviceId: number }> }
+    const match = (data.data ?? []).find((i) => i.name === instanceName && i.serviceId === 1)
+    if (debug) process.stderr.write(`[debug] resolveInstanceId: name=${instanceName} matched=${match?.id ?? "none"} fallback=${fallbackId}\n`)
+    return match?.id ?? fallbackId
+  } catch {
+    return fallbackId
+  }
+}
+
 /**
  * Account/tenant-level context for AIGW admin APIs. Unlike
  * {@link getStudioContext} it skips workspace/project resolution — gateway
@@ -12,14 +27,15 @@ export interface GatewayContext extends StudioConfig {
   userName: string
 }
 
-export async function getGatewayContext(args: Partial<CliArgs> & { format?: string }): Promise<GatewayContext> {
+export async function getGatewayContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<GatewayContext> {
   const config = resolveConnectionConfig(args)
   const token = await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
   const user = await getCurrentUser(baseUrl, token.token)
+  const instanceId = await resolveInstanceId(baseUrl, token.token, user.accountId, config.instance, token.instanceId, args.debug)
   return {
     token: token.token,
-    instanceId: token.instanceId,
+    instanceId,
     workspaceId: 0,
     projectId: 0,
     userId: token.userId,
@@ -45,6 +61,8 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
 
   if (debug) process.stderr.write(`[debug] studio-context: baseUrl=${baseUrl} userId=${token.userId} tenantId=${tenantId} instanceId=${token.instanceId} instance=${config.instance} workspace=${config.workspace}\n`)
 
+  const instanceId = await resolveInstanceId(baseUrl, token.token, tenantId, config.instance, token.instanceId, debug)
+
   if (!config.workspace) {
     handledError("NO_WORKSPACE", "Workspace is required for studio commands. Use --workspace or set it in your profile.", { format })
   }
@@ -54,7 +72,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
     token.token,
     token.userId,
     tenantId,
-    token.instanceId,
+    instanceId,
     config.instance,
     config.workspace,
     debug,
@@ -70,7 +88,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
 
   return {
     token: token.token,
-    instanceId: token.instanceId,
+    instanceId,
     workspaceId: ws.workspaceId,
     projectId: ws.projectId,
     userId: token.userId,

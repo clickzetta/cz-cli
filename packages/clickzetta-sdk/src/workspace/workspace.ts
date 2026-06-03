@@ -1,6 +1,5 @@
 import { request, type ClientOptions } from "../client.js"
 import { ClickZettaApiError } from "../types/api.js"
-import { detectEnv } from "../config/region.js"
 
 export interface WorkspaceInfo {
   workspaceId: number
@@ -26,7 +25,7 @@ export async function listUserWorkspaces(
       accountId: String(tenantId),
       instanceName,
       tenantId: String(tenantId),
-      env: detectEnv(baseUrl),
+      env: "prod",
     },
   }
   const body = {
