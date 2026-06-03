@@ -452,9 +452,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── delete ─────────────────────────────────────────────────────
           .command(
             "delete <ref>",
-            "Delete a virtual key (by alias or key value)",
+            "Delete a virtual key (by alias or key value). Requires -y to confirm.",
             (y) => y
               .positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
+              .option("yes", { alias: "y", type: "boolean", describe: "Skip confirmation" })
               .option("remove-from-llm", { type: "boolean", describe: "Also remove the matching [llm.*] entry from profiles.toml" }),
             async (argv) => {
               const format = argv.format
@@ -463,6 +464,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.ref as string)
+                if (!argv.yes) {
+                  error("USAGE_ERROR", `Refusing to delete key '${argv.ref}' (id=${id}) without confirmation. Pass -y to confirm deletion.`, { format, exitCode: 2 })
+                  return
+                }
                 await gwRequest<unknown>(sc, `${API.DELETE}?id=${id}`, {})
                 const removedLlm = argv["remove-from-llm"] ? removeFromLlm(argv.ref as string) : undefined
                 const linkedLlm = !removedLlm ? findLlmByKey(argv.ref as string) : undefined
@@ -499,7 +504,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               const sc = await getGatewayContext(argv)
               const key = argv.key ?? resolveDefaultKey()
               if (!key) {
-                error("USAGE_ERROR", "No virtual key provided and no clickzetta LLM configured in profiles.toml. Usage: cz-cli gateway model list <key>", { format, exitCode: 2 })
+                error("USAGE_ERROR", "No virtual key provided and no clickzetta LLM configured in profiles.toml. Usage: cz-cli ai-gateway model list <key>", { format, exitCode: 2 })
+                return
+              }
+              if (key.includes("*")) {
+                error("USAGE_ERROR", "Masked key value detected (contains ****). Use the full plaintext key, or run `cz-cli ai-gateway key get <alias>` to reveal it.", { format, exitCode: 2 })
                 return
               }
               const resp = await gwRequest<unknown>(sc, API.MODEL_LIST, {
