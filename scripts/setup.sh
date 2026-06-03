@@ -24,6 +24,14 @@ mkdir -p "$INSTALL_DIR" "$METADATA_DIR"
 cp "$SOURCE_BINARY" "$TARGET_BINARY"
 chmod +x "$TARGET_BINARY"
 
+# cz-agent: convenience wrapper for `cz-cli agent` (same dir, already on PATH;
+# works in any shell and in scripts, unlike a shell alias).
+cat > "${INSTALL_DIR}/cz-agent" <<EOF
+#!/bin/sh
+exec "${TARGET_BINARY}" agent "\$@"
+EOF
+chmod +x "${INSTALL_DIR}/cz-agent"
+
 cat > "$METADATA_FILE" <<EOF
 {
   "version": 1,
