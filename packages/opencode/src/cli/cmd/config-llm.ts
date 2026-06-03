@@ -5,6 +5,7 @@ import type { Argv } from "yargs"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
 import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl, buildLlmProbeRequest } from "../../config/profiles-llm"
 import { commandGroup } from "@clickzetta/cli/command-group"
+import { maybeRotateExhaustedClickzettaLlm } from "@clickzetta/cli/llm/clickzetta-rotation"
 import { cmd } from "./cmd"
 
 const CLICKZETTA_DIR = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta")
@@ -57,7 +58,7 @@ function getLlms(data: TomlRecord): TomlRecord {
 }
 
 function getDefaultProfileName(data: TomlRecord): string {
-  return typeof data.default_profile === "string" ? data.default_profile : "default"
+  return process.env.CZ_PROFILE || (typeof data.default_profile === "string" ? data.default_profile : "default")
 }
 
 function getProfileSection(data: TomlRecord, name: string): TomlRecord | undefined {
@@ -186,6 +187,7 @@ function resolveLlmTarget(data: TomlRecord, name?: string) {
       apiKey: typeof entry.api_key === "string" ? entry.api_key : undefined,
       baseUrl: typeof entry.base_url === "string" ? entry.base_url : undefined,
       model: typeof entry.model === "string" ? entry.model : undefined,
+      sourceProfile: typeof entry.source_profile === "string" ? entry.source_profile : undefined,
       source: "llm" as const,
     }
   }
@@ -311,6 +313,7 @@ const LlmShowCommand = cmd({
       model: string | null
       api_key: string | null
       base_url: string | null
+      source_profile: string | null
     }> = []
     for (const [n, raw] of Object.entries(llms)) {
       if (!isRecord(raw)) continue
@@ -320,6 +323,7 @@ const LlmShowCommand = cmd({
         model: typeof raw.model === "string" ? raw.model : null,
         api_key: typeof raw.api_key === "string" ? mask(raw.api_key) : null,
         base_url: typeof raw.base_url === "string" ? raw.base_url : null,
+        source_profile: typeof raw.source_profile === "string" ? raw.source_profile : null,
       })
     }
 
@@ -352,6 +356,7 @@ const LlmShowCommand = cmd({
           const provModel = e.model ? `${e.provider ?? "?"}/${e.model}` : `${e.provider ?? "?"} (default model)`
           process.stderr.write(`    ${mark} [llm.${e.name}]   ${provModel}\n`)
           if (e.base_url) process.stderr.write(`        base_url: ${e.base_url}\n`)
+          if (e.source_profile) process.stderr.write(`        source_profile: ${e.source_profile}\n`)
           process.stderr.write(`        api_key:  ${e.api_key ?? "(missing)"}\n`)
         }
         process.stderr.write("\n")
@@ -554,9 +559,21 @@ const LlmTestCommand = cmd({
         "MISSING_API_KEY",
         `[llm.${target.name}] is missing api_key. Update it with \`cz-cli agent llm add ${target.name} --api-key <API_KEY>\`.`,
       )
+      return
     }
 
-    const probe = buildLlmProbeRequest(target.provider, target.baseUrl, target.apiKey, target.model)
+    const apiKey = target.apiKey
+    const provider = target.provider
+    if (!provider) {
+      fail(
+        isTTY,
+        "UNSUPPORTED_PROVIDER_TEST",
+        `[llm.${target.name}] is missing provider.`,
+      )
+      return
+    }
+    const buildProbe = (value: string) => buildLlmProbeRequest(provider, target.baseUrl, value, target.model)
+    let probe = buildProbe(apiKey)
     if (!probe) {
       fail(
         isTTY,
@@ -564,38 +581,58 @@ const LlmTestCommand = cmd({
         `[llm.${target.name}] needs a base_url before it can be tested.\n` +
           `  Update it with: cz-cli agent llm add ${target.name} --base-url https://your-gateway.example.com/v1`,
       )
+      return
     }
 
-    const { url, method, headers, body: requestBody } = probe
     let response: Response
-    const displayUrl = url.replace(/[?&]key=[^&]+/, "?key=***")
+    let text = ""
+    let resultUrl = ""
+    let displayUrl = ""
+    for (const attempt of [0, 1]) {
+      const { url, method, headers, body: requestBody } = probe
+      resultUrl = url
+      displayUrl = url.replace(/[?&]key=[^&]+/, "?key=***")
+      try {
+        response = await fetch(url, {
+          method,
+          headers,
+          body: requestBody,
+        })
+      } catch (error) {
+        fail(
+          isTTY,
+          "LLM_TEST_REQUEST_FAILED",
+          `Could not reach ${displayUrl}: ${error instanceof Error ? error.message : String(error)}`,
+          { provider: target.provider, url: displayUrl },
+        )
+      }
 
-    try {
-      response = await fetch(url, {
-        method,
-        headers,
-        body: requestBody,
-      })
-    } catch (error) {
-      fail(
-        isTTY,
-        "LLM_TEST_REQUEST_FAILED",
-        `Could not reach ${displayUrl}: ${error instanceof Error ? error.message : String(error)}`,
-        { provider: target.provider, url: displayUrl },
-      )
-    }
-
-    const text = await response.text()
-    if (!response.ok) {
+      text = await response.text()
+      if (response.ok) break
+      const detail = responseDetail(text)
+      if (attempt === 0) {
+        const rotated = await maybeRotateExhaustedClickzettaLlm({
+          entryName: target.name,
+          provider: target.provider,
+          status: response.status,
+          detail,
+          baseUrl: target.baseUrl,
+          approval: isTTY ? "prompt" : "auto",
+        })
+        if (rotated) {
+          probe = buildProbe(rotated.apiKey)
+          if (probe) continue
+        }
+      }
       fail(
         isTTY,
         "LLM_TEST_HTTP_ERROR",
-        `LLM test failed with HTTP ${response.status} for ${displayUrl}${responseDetail(text) ? `: ${responseDetail(text)}` : ""}`,
+        `LLM test failed with HTTP ${response.status} for ${displayUrl}${detail ? `: ${detail}` : ""}`,
         {
           provider: target.provider,
           url: displayUrl,
           status: response.status,
-          detail: responseDetail(text),
+          detail,
         },
       )
     }
@@ -615,7 +652,7 @@ const LlmTestCommand = cmd({
       message: `[llm.${target.name}] test passed.`,
       name: target.name,
       provider: target.provider,
-      url,
+      url: resultUrl,
       model: target.model ?? null,
       probe: "chat.completions",
       sample_response: completion,

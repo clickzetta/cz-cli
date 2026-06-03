@@ -121,6 +121,38 @@ describe("session.retry.delay", () => {
       },
     })
   })
+
+  test("policy can recover quota-exhausted errors without retry delay", async () => {
+    const updates: Array<{ attempt: number; message: string; next: number }> = []
+    const error = new MessageV2.APIError({
+      message: "Quota exceeded. Check your plan and billing details.",
+      isRetryable: false,
+      statusCode: 429,
+      responseBody:
+        "{\"code\":429,\"message\":\"Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-code_auto_old', current usage: 10075371 tokens\"}",
+    }).toObject() as MessageV2.APIError
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const step = yield* Schedule.toStepWithMetadata(
+          SessionRetry.policy({
+            parse: (err) => err as MessageV2.APIError,
+            set: (info) =>
+              Effect.sync(() => {
+                updates.push(info)
+              }),
+            recover: () => Effect.succeed("Rotated exhausted ClickZetta key, retrying."),
+          }),
+        )
+        yield* step(error)
+      }),
+    )
+
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.message).toBe("Rotated exhausted ClickZetta key, retrying.")
+    expect(updates[0]?.attempt).toBe(1)
+    expect(updates[0]?.next).toBeLessThanOrEqual(Date.now() + 1000)
+  })
 })
 
 describe("session.retry.retryable", () => {

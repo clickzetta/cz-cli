@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync } from "fs"
+import { mkdtempSync, mkdirSync, writeFileSync } from "fs"
 import { spawnSync } from "child_process"
 import { tmpdir } from "os"
 import { join } from "path"
 
 function run(args: string[]) {
   const home = mkdtempSync(join(tmpdir(), "opencode-profile-gating-"))
+  return runWithHome(args, home)
+}
+
+function runWithHome(args: string[], home: string) {
   const result = spawnSync("bun", ["./src/index.ts", ...args], {
     cwd: import.meta.dir + "/../../",
     encoding: "utf-8",
@@ -49,4 +53,32 @@ test("bare agent accepts -p as a clickzetta profile override", () => {
   expect(result.stdout).not.toContain("Unknown argument: p")
   expect(result.stdout).not.toContain("\"code\":\"USAGE_ERROR\"")
   expect(result.stdout).toContain("\"code\":\"NO_ACTIVE_LLM\"")
+})
+
+test("agent runtime does not block when clickzetta default_llm is missing source_profile", () => {
+  const home = mkdtempSync(join(tmpdir(), "opencode-profile-warning-"))
+  mkdirSync(join(home, ".clickzetta"), { recursive: true })
+  writeFileSync(
+    join(home, ".clickzetta", "profiles.toml"),
+    [
+      'default_profile = "default"',
+      'default_llm = "clickzetta"',
+      "",
+      "[profiles.default]",
+      'pat = "pat-token"',
+      'instance = "inst"',
+      'workspace = "ws"',
+      'service = "mock-service.example"',
+      'protocol = "https"',
+      "",
+      "[llm.clickzetta]",
+      'provider = "clickzetta"',
+      'api_key = "ck-old"',
+      'base_url = "https://mock-clickzetta.example"',
+      "",
+    ].join("\n"),
+  )
+
+  const result = runWithHome(["agent"], home)
+  expect(result.stdout).not.toContain("\"code\":\"NO_ACTIVE_LLM\"")
 })

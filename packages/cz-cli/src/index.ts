@@ -13,6 +13,21 @@ export { formatJson, formatPretty, formatTable, formatCsv, formatJsonl, formatTo
 export { logOperation, redactSql } from "./logger.js"
 export { createCli } from "./cli.js"
 export type { GlobalArgs } from "./cli.js"
-export { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
+export {
+  CLICKZETTA_PROFILE_DESCRIPTION,
+  CLICKZETTA_PROFILE_OPTION,
+  CLICKZETTA_PROFILE_OPTION_NAMES,
+  withClickZettaProfileOption,
+} from "./clickzetta-profile-option.js"
 export { execute, type ExecuteResult } from "./execute.js"
 export { registerSetupCommand } from "./commands/setup.js"
+export {
+  CLICKZETTA_ROTATION_CANCEL_LABEL,
+  CLICKZETTA_ROTATION_CONFIRM_LABEL,
+  CLICKZETTA_ROTATION_HEADER,
+  CLICKZETTA_ROTATION_PROMPT,
+  isClickzettaQuotaExhausted,
+  maybeRotateExhaustedClickzettaLlm,
+  rotateClickzettaLlm,
+  type ClickZettaRotationResult,
+} from "./llm/clickzetta-rotation.js"

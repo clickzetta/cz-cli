@@ -16,6 +16,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionProcessor } from "../../src/session/processor"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
+import { Question } from "../../src/question"
 import { SessionSummary } from "../../src/session/summary"
 import { Snapshot } from "../../src/snapshot"
 import { Log } from "../../src/util"
@@ -161,6 +162,7 @@ const deps = Layer.mergeAll(
   AgentSvc.defaultLayer,
   Permission.defaultLayer,
   Plugin.defaultLayer,
+  Question.defaultLayer,
   Config.defaultLayer,
   LLM.defaultLayer,
   Provider.defaultLayer,

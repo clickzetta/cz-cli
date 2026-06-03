@@ -252,6 +252,7 @@ function applyCredentialToProfiles(
       [profileName]: {
         ...entry,
         provider: "clickzetta",
+        source_profile: profileName,
         ...(apiKey && { api_key: apiKey }),
         ...(aimeshEndpointBaseUrl && { base_url: aimeshEndpointBaseUrl }),
       },
@@ -820,6 +821,7 @@ async function tryFetchAndSaveClickzettaApiKey(
         [profileName]: {
           ...entry,
           provider: "clickzetta",
+          source_profile: profileName,
           api_key: apiKey,
         },
       },

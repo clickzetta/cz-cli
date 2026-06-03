@@ -208,6 +208,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const promptRef = usePromptRef()
   const routes: RouteMap = new Map()
   const [routeRev, setRouteRev] = createSignal(0)
+  const [shownLlmWarnings, setShownLlmWarnings] = createSignal("")
   const routeView = (name: string) => {
     routeRev()
     return routes.get(name)?.at(-1)?.render
@@ -240,6 +241,19 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     .finally(() => {
       setReady(true)
     })
+
+  createEffect(() => {
+    const warnings = sync.data.config.llm_warnings ?? []
+    const key = warnings.join("\n")
+    if (!key || key === shownLlmWarnings()) return
+    setShownLlmWarnings(key)
+    toast.show({
+      variant: "warning",
+      title: "LLM Config Warning",
+      message: warnings[0]!,
+      duration: 6000,
+    })
+  })
 
   useKeyboard((evt) => {
     if (!Flag.CLICKZETTA_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return

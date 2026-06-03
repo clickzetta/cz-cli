@@ -31,6 +31,10 @@ import { batch, onMount } from "solid-js"
 import { Log } from "@/util"
 import { emptyConsoleState, type ConsoleState } from "@/config/console-state"
 
+type TuiConfig = Config & {
+  llm_warnings?: string[]
+}
+
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
   init: () => {
@@ -51,7 +55,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       question: {
         [sessionID: string]: QuestionRequest[]
       }
-      config: Config
+      config: TuiConfig
       session: Session[]
       session_status: {
         [sessionID: string]: SessionStatus

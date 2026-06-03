@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./llm/clickzetta-rotation": "./src/llm/clickzetta-rotation.ts",
     "./otel-defaults": "./src/otel-defaults.ts",
     "./command-group": "./src/command-group.ts"
   },

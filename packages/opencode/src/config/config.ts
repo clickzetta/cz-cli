@@ -243,6 +243,7 @@ export type Info = z.output<typeof Info> & {
   // llm_entries and default_llm_entry are derived from profiles.toml, not persisted config fields.
   llm_entries?: LlmEntry[]
   default_llm_entry?: string
+  llm_warnings?: string[]
 }
 
 type State = {
@@ -375,6 +376,9 @@ export const layer = Layer.effect(
           }
           if (entries.length > 0) {
             result = mergeDeep(result, { llm_entries: entries, default_llm_entry: defaultLlmEntry } as Info)
+          }
+          if (warnings.length > 0) {
+            result = mergeDeep(result, { llm_warnings: warnings } as Info)
           }
           if (defaultModel) {
             result.model = defaultModel as any

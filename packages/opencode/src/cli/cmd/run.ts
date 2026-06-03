@@ -15,6 +15,13 @@ import { Permission } from "../../permission"
 import { AppRuntime } from "@/effect/app-runtime"
 import { applyClickZettaProfile } from "./clickzetta-profile"
 import { describePart } from "../../session/render"
+import * as prompts from "@clack/prompts"
+import {
+  CLICKZETTA_ROTATION_CANCEL_LABEL,
+  CLICKZETTA_ROTATION_CONFIRM_LABEL,
+  CLICKZETTA_ROTATION_HEADER,
+} from "@clickzetta/cli/llm/clickzetta-rotation"
+import { withClickZettaProfileOption } from "@clickzetta/cli"
 
 type Inline = {
   icon: string
@@ -56,7 +63,8 @@ export const RunCommand = cmd({
   command: "run [message..]",
   describe: "run cz-cli agent with a message",
   builder: (yargs: Argv) => {
-    return yargs
+    return withClickZettaProfileOption(
+      yargs
       .positional("message", {
         describe: "message to send",
         type: "string",
@@ -115,7 +123,6 @@ export const RunCommand = cmd({
         describe: "attach to a running cz-cli agent server (e.g., http://localhost:4096)",
       })
       .option("password", {
-        alias: ["p"],
         type: "string",
         describe: "basic auth password (defaults to CLICKZETTA_SERVER_PASSWORD)",
       })
@@ -149,11 +156,8 @@ export const RunCommand = cmd({
         type: "boolean",
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
         default: false,
-      })
-      .option("profile", {
-        type: "string",
-        describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
-      })
+      }),
+    )
   },
   handler: async (args) => {
     // Prevent recursive fork: if a parent cz-cli agent already set this, refuse to start.
@@ -464,6 +468,39 @@ export const RunCommand = cmd({
                 reply: "reject",
               })
             }
+          }
+
+          if (event.type === "question.asked") {
+            const request = event.properties
+            if (request.sessionID !== sessionID) continue
+            const prompt = request.questions[0]
+            if (!prompt) continue
+            const isRotationQuestion =
+              prompt.header === CLICKZETTA_ROTATION_HEADER &&
+              prompt.options.some((item) => item.label === CLICKZETTA_ROTATION_CONFIRM_LABEL)
+            if (!isRotationQuestion) continue
+            if (!process.stdout.isTTY) {
+              await sdk.question.reply({
+                requestID: request.id,
+                answers: [[CLICKZETTA_ROTATION_CONFIRM_LABEL]],
+              })
+              continue
+            }
+            const confirmed = await prompts.confirm({
+              message: prompt.question,
+              initialValue: true,
+            })
+            if (prompts.isCancel(confirmed) || confirmed !== true) {
+              await sdk.question.reply({
+                requestID: request.id,
+                answers: [[CLICKZETTA_ROTATION_CANCEL_LABEL]],
+              })
+              continue
+            }
+            await sdk.question.reply({
+              requestID: request.id,
+              answers: [[CLICKZETTA_ROTATION_CONFIRM_LABEL]],
+            })
           }
         }
       }

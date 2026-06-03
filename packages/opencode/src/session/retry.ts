@@ -115,13 +115,20 @@ export function retryable(error: Err) {
 export function policy(opts: {
   parse: (error: unknown) => Err
   set: (input: { attempt: number; message: string; next: number }) => Effect.Effect<void>
+  recover?: (input: { error: Err; attempt: number }) => Effect.Effect<string | undefined>
 }) {
   return Schedule.fromStepWithMetadata(
     Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
-      const error = opts.parse(meta.input)
-      const message = retryable(error)
-      if (!message) return Cause.done(meta.attempt)
       return Effect.gen(function* () {
+        const error = opts.parse(meta.input)
+        const recovered = opts.recover ? yield* opts.recover({ error, attempt: meta.attempt }) : undefined
+        if (recovered) {
+          const now = yield* Clock.currentTimeMillis
+          yield* opts.set({ attempt: meta.attempt, message: recovered, next: now })
+          return [meta.attempt, Duration.millis(0)] as [number, Duration.Duration]
+        }
+        const message = retryable(error)
+        if (!message) return yield* Cause.done(meta.attempt)
         const wait = delay(meta.attempt, MessageV2.APIError.isInstance(error) ? error : undefined)
         const now = yield* Clock.currentTimeMillis
         yield* opts.set({ attempt: meta.attempt, message, next: now + wait })

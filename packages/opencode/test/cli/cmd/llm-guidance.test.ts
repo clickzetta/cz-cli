@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "child_process"
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { buildLlmProbeRequest } from "../../../src/config/profiles-llm"
@@ -191,5 +191,79 @@ describe("llm guidance", () => {
     expect(json.data.url).toBe(probe.url)
     expect(json.data.probe).toBe(probe.kind)
     expect(json.data.sample_response).toBe("pong")
+  })
+
+  test("agent llm test auto-rotates clickzetta key in non-interactive mode after a quota-exhausted 429", () => {
+    const origin = "https://mock-clickzetta.example"
+    const probe = buildLlmProbeRequest("clickzetta", origin, "ck-old")!
+    const preload = join(mkdtempSync(join(tmpdir(), "opencode-llm-rotate-")), "mock-clickzetta-rotate-fetch.ts")
+    writeFileSync(
+      preload,
+      `globalThis.fetch = async (input, init) => {
+  const req = new Request(input, init)
+  if (req.url === "${probe.url}") {
+    const auth = req.headers.get("authorization")
+    if (auth === "Bearer ck-old") {
+      return Response.json(
+        { code: 429, message: "Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-code_auto_old', current usage: 10075371 tokens" },
+        { status: 429 },
+      )
+    }
+    if (auth === "Bearer ck-new") {
+      return Response.json({ choices: [{ message: { content: "rotated" } }] })
+    }
+    return Response.json({ error: { message: "bad key" } }, { status: 401 })
+  }
+  if (req.url === "https://mock-service.example/clickzetta-portal/user/loginSingle") {
+    return Response.json({ code: 0, data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 600000 } })
+  }
+  if (req.url === "https://mock-service.example/clickzetta-portal/user/getCurrentUser") {
+    return Response.json({ code: 0, data: { id: 2, accountId: 3, name: "alice", instanceId: 1 } })
+  }
+  if (req.url === "https://mock-service.example/llm-gateway-admin/v2/virtual-key/save") {
+    const body = await req.json()
+    if (!String(body.vApiKeyAlias ?? "").startsWith("cz-code_auto_")) {
+      return Response.json({ code: 400, message: "bad alias" })
+    }
+    return Response.json({ code: 0, data: 99 })
+  }
+  if (req.url === "https://mock-service.example/llm-gateway-admin/v2/virtual-key/getApiKey?id=99") {
+    return Response.json({ code: 0, data: "ck-new" })
+  }
+  return new Response("not found", { status: 404 })
+}
+`,
+    )
+
+    const home = mkdtempSync(join(tmpdir(), "opencode-llm-clickzetta-rotate-"))
+    mkdirSync(join(home, ".clickzetta"), { recursive: true })
+    writeFileSync(
+      join(home, ".clickzetta", "profiles.toml"),
+      [
+        'default_profile = "default"',
+        'default_llm = "clickzetta"',
+        "",
+        "[profiles.default]",
+        'pat = "pat-token"',
+        'instance = "inst"',
+        'workspace = "ws"',
+        'service = "mock-service.example"',
+        'protocol = "https"',
+        "",
+        "[llm.clickzetta]",
+        'provider = "clickzetta"',
+        'api_key = "ck-old"',
+        'base_url = "https://mock-clickzetta.example"',
+        'source_profile = "default"',
+        "",
+      ].join("\n"),
+    )
+
+    const result = run(["agent", "llm", "test"], { home, preload })
+    expect(result.exitCode).toBe(0)
+    const json = firstJson(result.stdout)
+    expect(json.data.provider).toBe("clickzetta")
+    expect(json.data.sample_response).toBe("rotated")
+    expect(readFileSync(join(home, ".clickzetta", "profiles.toml"), "utf-8")).toContain('api_key = "ck-new"')
   })
 })

@@ -15,11 +15,20 @@ import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
+import { Provider as ProviderRuntime } from "@/provider"
 import type { Provider } from "@/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
 import { Log } from "@/util"
 import { isRecord } from "@/util/record"
+import {
+  CLICKZETTA_ROTATION_CANCEL_LABEL,
+  CLICKZETTA_ROTATION_CONFIRM_LABEL,
+  CLICKZETTA_ROTATION_HEADER,
+  CLICKZETTA_ROTATION_PROMPT,
+  isClickzettaQuotaExhausted,
+  rotateClickzettaLlm,
+} from "@clickzetta/cli/llm/clickzetta-rotation"
 
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
@@ -95,6 +104,8 @@ export const layer: Layer.Layer<
   | LLM.Service
   | Permission.Service
   | Plugin.Service
+  | Question.Service
+  | ProviderRuntime.Service
   | SessionSummary.Service
   | SessionStatus.Service
 > = Layer.effect(
@@ -108,9 +119,67 @@ export const layer: Layer.Layer<
     const llm = yield* LLM.Service
     const permission = yield* Permission.Service
     const plugin = yield* Plugin.Service
+    const question = yield* Question.Service
     const summary = yield* SessionSummary.Service
     const scope = yield* Scope.Scope
     const status = yield* SessionStatus.Service
+    const provider = yield* ProviderRuntime.Service
+
+    const approveRotation = Effect.fn("SessionProcessor.approveRotation")(function* (input: {
+      sessionID: SessionID
+      mode: "tui" | "auto" | "never"
+    }) {
+      if (input.mode === "auto") return true
+      if (input.mode === "never") return false
+      const answers = yield* question.ask({
+        sessionID: input.sessionID,
+        questions: [
+          {
+            header: CLICKZETTA_ROTATION_HEADER,
+            question: CLICKZETTA_ROTATION_PROMPT,
+            custom: false,
+            options: [
+              {
+                label: CLICKZETTA_ROTATION_CONFIRM_LABEL,
+                description: "创建新的虚拟 key 并继续当前对话",
+              },
+              {
+                label: CLICKZETTA_ROTATION_CANCEL_LABEL,
+                description: "保留当前 key，并停止这次请求",
+              },
+            ],
+          },
+        ],
+      })
+      return answers[0]?.[0] === CLICKZETTA_ROTATION_CONFIRM_LABEL
+    })
+
+    const recoverRotation = Effect.fn("SessionProcessor.recoverRotation")(function* (input: {
+      sessionID: SessionID
+      providerID: string
+      error: MessageV2.APIError
+    }) {
+      const exhausted = isClickzettaQuotaExhausted({
+        provider: input.providerID,
+        status: input.error.data.statusCode,
+        detail: input.error.data.responseBody ?? input.error.data.message,
+      })
+      if (!exhausted) return undefined
+      const mode: "tui" | "auto" = process.stdout.isTTY ? "tui" : "auto"
+      const approved = yield* approveRotation({ sessionID: input.sessionID, mode }).pipe(
+        Effect.catchTag("QuestionRejectedError", () => Effect.succeed(false)),
+      )
+      if (!approved) return undefined
+      const rotated = yield* Effect.promise(() =>
+        rotateClickzettaLlm({
+          interactive: false,
+        }),
+      )
+      if (!rotated) return undefined
+      yield* config.invalidate()
+      yield* provider.invalidate()
+      return "Rotated exhausted ClickZetta key, retrying."
+    })
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
@@ -136,6 +205,17 @@ export const layer: Layer.Layer<
       }
       let aborted = false
       const slog = log.clone().tag("sessionID", input.sessionID).tag("messageID", input.assistantMessage.id)
+
+      const refreshStreamInputModel = Effect.fn("SessionProcessor.refreshStreamInputModel")(function* (
+        streamInput: LLM.StreamInput,
+      ) {
+        const nextModel = yield* provider.getModel(streamInput.model.providerID, streamInput.model.id)
+        ctx.model = nextModel
+        return {
+          ...streamInput,
+          model: nextModel,
+        } satisfies LLM.StreamInput
+      })
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
@@ -604,17 +684,18 @@ export const layer: Layer.Layer<
         yield* status.set(ctx.sessionID, { type: "idle" })
       })
 
-      const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
+      const processStream = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         slog.info("process")
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
-        ctx.inputText = extractUserText(streamInput)
+        let activeStreamInput = streamInput
+        ctx.inputText = extractUserText(activeStreamInput)
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
-            const stream = llm.stream(streamInput)
+            const stream = llm.stream(activeStreamInput)
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
@@ -644,6 +725,18 @@ export const layer: Layer.Layer<
                     message: info.message,
                     next: info.next,
                   }),
+                recover: ({ error }) =>
+                  Effect.gen(function* () {
+                    if (!MessageV2.APIError.isInstance(error)) return undefined
+                    const recovered = yield* recoverRotation({
+                      sessionID: ctx.sessionID,
+                      providerID: activeStreamInput.model.providerID,
+                      error,
+                    })
+                    if (!recovered) return undefined
+                    activeStreamInput = yield* refreshStreamInputModel(activeStreamInput)
+                    return recovered
+                  }),
               }),
             ),
             Effect.catch(halt),
@@ -662,7 +755,7 @@ export const layer: Layer.Layer<
         },
         updateToolCall,
         completeToolCall,
-        process,
+        process: processStream,
       } satisfies Handle
     })
 
@@ -675,9 +768,11 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Session.defaultLayer),
     Layer.provide(Snapshot.defaultLayer),
     Layer.provide(Agent.defaultLayer),
+    Layer.provide(ProviderRuntime.defaultLayer),
     Layer.provide(LLM.defaultLayer),
     Layer.provide(Permission.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
+    Layer.provide(Question.defaultLayer),
     Layer.provide(SessionSummary.defaultLayer),
     Layer.provide(SessionStatus.defaultLayer),
     Layer.provide(Bus.layer),

@@ -7,6 +7,7 @@ export interface LlmEntry {
   name: string
   provider: string
   model?: string
+  sourceProfile?: string
 }
 
 export interface ProfilesLlmResult {
@@ -49,6 +50,7 @@ interface ParsedLlmEntry {
   apiKey: string
   baseURL?: string
   model?: string
+  sourceProfile?: string
 }
 
 const LEGACY_FIELDS = ["llm_provider", "llm_model", "llm_api_key", "llm_base_url"] as const
@@ -230,6 +232,15 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
+function resolveClickzettaSourceProfile(
+  raw: Record<string, unknown>,
+  fallback: string | undefined,
+) {
+  const sourceProfile = asString(raw.source_profile)
+  if (sourceProfile) return sourceProfile
+  return fallback
+}
+
 function customProviderFromEntry(entry: ParsedLlmEntry) {
   if (!entry.model) return undefined
   if (entry.provider === "clickzetta") return undefined
@@ -319,6 +330,10 @@ export function migrateLegacyClickzettaConfig(data: Record<string, unknown>): bo
     clickzetta.base_url = legacy.baseUrl
     changed = true
   }
+  if (clickzetta.source_profile !== defaultProfile) {
+    clickzetta.source_profile = defaultProfile
+    changed = true
+  }
   if (!asString(data.default_llm)) {
     data.default_llm = "clickzetta"
     changed = true
@@ -402,12 +417,21 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
       warnings.push(`[llm.${name}] has unknown provider "${provider}" — skipped`)
       continue
     }
+    if (provider === "clickzetta" && !asString(raw.source_profile)) {
+      warnings.push(
+        `[llm.${name}] is missing source_profile. ClickZetta key management will fall back to the current default profile.`,
+      )
+    }
     parsedEntries.push({
       name,
       provider: provider as (typeof VALID_PROVIDERS)[number],
       apiKey,
       baseURL: normalizeLlmBaseUrl(provider, baseUrl),
       model: asString(raw.model),
+      sourceProfile:
+        provider === "clickzetta"
+          ? resolveClickzettaSourceProfile(raw, defaultProfile)
+          : undefined,
     })
   }
 
@@ -417,7 +441,12 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
   }, {})
 
   for (const entry of parsedEntries) {
-    resultEntries.push({ name: entry.name, provider: entry.provider, model: entry.model })
+    resultEntries.push({
+      name: entry.name,
+      provider: entry.provider,
+      model: entry.model,
+      sourceProfile: entry.sourceProfile,
+    })
   }
 
   if (defaultLlm) {
@@ -518,6 +547,18 @@ export function hasUsableLlm(toml: string): ProfilesLlmGuardResult {
   const legacyClickzetta = getClickzettaLegacyFields(profileSection)
   if (legacyClickzetta.apiKey || legacyClickzetta.baseUrl) {
     return { hasValidConfig: true, warnings }
+  }
+
+  const defaultLlm = asString(parsed.default_llm)
+  if (defaultLlm) {
+    const defaultEntry = llms[defaultLlm]
+    if (isRecord(defaultEntry) && asString(defaultEntry.provider) === "clickzetta") {
+      if (!resolveClickzettaSourceProfile(defaultEntry, undefined)) {
+        warnings.push(
+          `[llm.${defaultLlm}] is missing source_profile. ClickZetta key management will fall back to the current default profile.`,
+        )
+      }
+    }
   }
 
   for (const raw of Object.values(llms)) {

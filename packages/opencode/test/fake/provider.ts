@@ -73,6 +73,7 @@ export namespace ProviderTest {
           defaultModel: Effect.fn("TestProvider.defaultModel")(() =>
             Effect.succeed({ providerID: row.id, modelID: mdl.id }),
           ),
+          invalidate: Effect.fn("TestProvider.invalidate")(() => Effect.void),
           ...override,
         }),
       ),

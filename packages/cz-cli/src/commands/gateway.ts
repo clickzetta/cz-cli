@@ -163,24 +163,45 @@ function clickzettaBaseUrl(base: string): string {
   if (!/\/v\d+(\/|$)/.test(b)) b += "/v1"
   return b
 }
-function addToLlm(name: string, apiKey: string, serviceBaseUrl: string, use: boolean): Dict {
+
+function addToLlm(
+  name: string,
+  apiKey: string,
+  serviceBaseUrl: string,
+  use: boolean,
+): Dict {
   const data = loadFullToml()
   const llm = isRecord(data.llm) ? data.llm : {}
   const entries = Object.entries(llm).filter(([, v]) => isRecord(v)) as [string, Dict][]
   const defaultLlm = typeof data.default_llm === "string" ? data.default_llm : undefined
+  const existing = isRecord(llm[name]) ? llm[name] : {}
+  const boundProfile = typeof existing.source_profile === "string" ? existing.source_profile : undefined
   // Reuse an existing in-use LLM's base_url; otherwise derive from the service domain.
   const reused =
-    (defaultLlm && isRecord(llm[defaultLlm]) && typeof (llm[defaultLlm] as Dict).base_url === "string"
+    (defaultLlm &&
+    isRecord(llm[defaultLlm]) &&
+    (llm[defaultLlm] as Dict).provider === "clickzetta" &&
+    (llm[defaultLlm] as Dict).source_profile === boundProfile &&
+    typeof (llm[defaultLlm] as Dict).base_url === "string"
       ? (llm[defaultLlm] as Dict).base_url
-      : entries.map(([, v]) => v.base_url).find((b) => typeof b === "string")) as string | undefined
+      : entries
+        .filter(([, v]) => v.provider === "clickzetta" && v.source_profile === boundProfile)
+        .map(([, v]) => v.base_url)
+        .find((b) => typeof b === "string")) as string | undefined
   const baseUrl = reused ?? clickzettaBaseUrl(serviceBaseUrl)
   const hadLlm = entries.length > 0
-  llm[name] = { provider: "clickzetta", api_key: apiKey, base_url: baseUrl }
+  llm[name] = {
+    ...existing,
+    provider: "clickzetta",
+    api_key: apiKey,
+    base_url: baseUrl,
+    ...(boundProfile && { source_profile: boundProfile }),
+  }
   data.llm = llm
   const makeDefault = !hadLlm || use
   if (makeDefault) data.default_llm = name
   saveFullToml(data)
-  return { name, base_url: baseUrl, default_llm: makeDefault }
+  return { name, base_url: baseUrl, default_llm: makeDefault, source_profile: boundProfile }
 }
 
 function removeFromLlm(apiKey: string): string | undefined {
@@ -324,7 +345,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const vApiKey = String(keyResp.data)
 
                 const addName = argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                const registered = addName
+                  ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use)
+                  : undefined
 
                 const aiMessage = registered
                   ? `Virtual key created and registered as [llm.${registered.name}]${registered.default_llm ? " (now default_llm)" : ""}.`
@@ -373,7 +396,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const vApiKey = String(keyResp.data)
 
                 const addName = argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                const registered = addName
+                  ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use)
+                  : undefined
 
                 logOperation("gateway key upsert", { ok: true, timeMs: Date.now() - t0 })
                 success({ id, alias: argv.alias, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
@@ -402,7 +427,9 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
                 const vApiKey = String(keyResp.data)
                 const addName = argv["add-to-llm"] === "" ? (argv.ref as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                const registered = addName
+                  ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use)
+                  : undefined
                 logOperation("gateway key get", { ok: true, timeMs: Date.now() - t0 })
                 success({ id, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
               } catch (err) {

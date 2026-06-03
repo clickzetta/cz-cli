@@ -1024,6 +1024,7 @@ export interface Interface {
   ) => Effect.Effect<{ providerID: ProviderID; modelID: string } | undefined>
   readonly getSmallModel: (providerID: ProviderID) => Effect.Effect<Model | undefined>
   readonly defaultModel: () => Effect.Effect<{ providerID: ProviderID; modelID: ModelID }>
+  readonly invalidate: () => Effect.Effect<void>
 }
 
 interface State {
@@ -1796,7 +1797,11 @@ const layer: Layer.Layer<
       }
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel })
+    const invalidate = Effect.fn("Provider.invalidate")(function* () {
+      yield* InstanceState.invalidate(state)
+    })
+
+    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel, invalidate })
   }),
 )
 

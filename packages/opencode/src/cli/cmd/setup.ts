@@ -92,6 +92,7 @@ export function applyCredentialToProfiles(
   llms[profileName] = {
     ...entry,
     provider: "clickzetta",
+    source_profile: profileName,
     ...(cred.apiKey && { api_key: cred.apiKey }),
     ...(cred.aimeshEndpointBaseUrl && { base_url: cred.aimeshEndpointBaseUrl }),
   }

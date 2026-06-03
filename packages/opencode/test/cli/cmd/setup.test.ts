@@ -39,6 +39,7 @@ describe("applyCredentialToProfiles", () => {
           provider: "clickzetta",
           api_key: "ck-test",
           base_url: "https://gateway.clickzetta.com",
+          source_profile: "default",
         },
       },
     })
@@ -90,6 +91,7 @@ describe("applyCredentialToProfiles", () => {
           provider: "clickzetta",
           api_key: "new-key",
           base_url: "https://new.clickzetta.com",
+          source_profile: "default",
         },
       },
     })
