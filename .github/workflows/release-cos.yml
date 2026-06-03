@@ -338,3 +338,15 @@ jobs:
             --draft=false \
             --latest \
             --repo "${{ github.repository }}"
+
+      - name: Notify Feishu group
+        if: success()
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: |
+          VERSION="${{ needs.resolve-release.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          URL="https://github.com/${REPO}/releases/tag/${VERSION}"
+          curl -sSf -X POST "$FEISHU_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"cz-cli ${VERSION} 已发布 🚀\\n安装/更新: curl -fsSL https://cz-cli.ai/install.sh | sh\\n详情: ${URL}\"}}"
