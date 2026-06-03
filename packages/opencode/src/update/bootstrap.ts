@@ -224,7 +224,11 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
 
 export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string) {
   if (NPM_METHODS.has(method)) {
-    await upgradeViaPackageManager(method, target)
+    try {
+      await upgradeViaPackageManager(method, target)
+    } catch {
+      await upgradeViaInstallScript(target, channel, fetchImpl)
+    }
   } else {
     await upgradeViaInstallScript(target, channel, fetchImpl)
   }
