@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { createTraceparent } from "@clickzetta/sdk"
 import { createCli } from "./cli.js"
+import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { trackCommand, parseTrackingArgs } from "./telemetry.js"
@@ -53,8 +54,7 @@ const LLM_ONBOARDING = {
 
 const AGENT_FLAGS = new Set(["debug", "d", "help", "h", "version"])
 const AGENT_FLAGS_WITH_VALUES = new Set([
-  "profile",
-  "p",
+  ...CLICKZETTA_PROFILE_OPTION_NAMES,
   "jdbc",
   "pat",
   "username",
@@ -73,8 +73,7 @@ const AGENT_FLAGS_WITH_VALUES = new Set([
 ])
 const GLOBAL_FLAGS = new Set(["debug", "d", "help", "h", "version"])
 const GLOBAL_FLAGS_WITH_VALUES = new Set([
-  "profile",
-  "p",
+  ...CLICKZETTA_PROFILE_OPTION_NAMES,
   "jdbc",
   "pat",
   "username",

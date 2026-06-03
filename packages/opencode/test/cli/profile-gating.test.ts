@@ -42,3 +42,11 @@ test("llm alias routes to the agent llm command family", () => {
   expect(result.stderr).not.toContain("No ClickZetta profile configured")
   expect(result.stdout).toContain("\"code\":\"NO_ACTIVE_LLM\"")
 })
+
+test("bare agent accepts -p as a clickzetta profile override", () => {
+  const result = run(["agent", "-p", "xhs"])
+  expect(result.exitCode).toBe(1)
+  expect(result.stdout).not.toContain("Unknown argument: p")
+  expect(result.stdout).not.toContain("\"code\":\"USAGE_ERROR\"")
+  expect(result.stdout).toContain("\"code\":\"NO_ACTIVE_LLM\"")
+})

@@ -1,6 +1,7 @@
 import yargs from "yargs"
 import { VERSION } from "./version.js"
 import { defaultFormat, outputState, parseOutputArgs, renderOutput } from "./output/index.js"
+import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -21,15 +22,10 @@ export interface GlobalArgs {
 }
 
 export function createCli(args: string[]) {
-  return yargs(args)
+  return withClickZettaProfileOption(yargs(args))
     .scriptName("cz-cli")
     .version(VERSION)
     .exitProcess(false)
-    .option("profile", {
-      alias: "p",
-      type: "string",
-      describe: "Profile name from ~/.clickzetta/profiles.toml",
-    })
     .option("jdbc", {
       type: "string",
       describe: "JDBC connection URL",

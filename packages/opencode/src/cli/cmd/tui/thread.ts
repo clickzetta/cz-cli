@@ -16,6 +16,7 @@ import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
 import { applyClickZettaProfile } from "../clickzetta-profile"
+import { withClickZettaProfileOption } from "@clickzetta/cli"
 
 declare global {
   const CLICKZETTA_WORKER_PATH: string
@@ -69,7 +70,7 @@ export const TuiThreadCommand = cmd({
   command: "$0",
   describe: "start cz-cli agent tui",
   builder: (yargs) =>
-    withNetworkOptions(yargs)
+    withClickZettaProfileOption(withNetworkOptions(yargs)
       .option("model", {
         type: "string",
         alias: ["m"],
@@ -100,11 +101,7 @@ export const TuiThreadCommand = cmd({
       .option("agent", {
         type: "string",
         describe: "agent to use",
-      })
-      .option("profile", {
-        type: "string",
-        describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
-      }),
+      })),
   handler: async (args) => {
     // The interactive full-screen TUI can only render to a real terminal. When
     // stdout is captured (a pipe / an agent's bash tool), launching it floods the

@@ -4,10 +4,6 @@ import type { GlobalArgs } from "../cli.js"
 export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
   cli.command("agent", "AI agent — run sessions, configure LLMs, manage tasks, and optionally override default_profile for the current session", (yargs) =>
     yargs
-      .option("profile", {
-        type: "string",
-        describe: "ClickZetta connection profile to use when launching the default agent/TUI (overrides default_profile in profiles.toml)",
-      })
       .command(
         "run <prompt>",
         "Run AI agent with a natural-language prompt",
@@ -29,10 +25,6 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .option("thinking", { type: "boolean", default: false, describe: "Show thinking blocks" })
             .option("async", { type: "boolean", describe: "Submit asynchronously and return session ID immediately (default in non-TTY)" })
             .option("dangerously-skip-permissions", { type: "boolean", describe: "Skip permission prompts (for CI/automation)" })
-            .option("profile", {
-              type: "string",
-              describe: "ClickZetta connection profile to use for this run (overrides default_profile in profiles.toml)",
-            })
             .example("cz-cli agent run \"show tables\"", "One-shot query")
             .example("cz-cli agent run \"show tables\" --profile staging", "Run the agent against a non-default ClickZetta profile")
             .example("cz-cli agent run \"describe sales\" --session my-session", "Multi-turn with session")
