@@ -198,10 +198,9 @@ export function onlineTask(config: StudioConfig, taskId: number, projectId: numb
 }
 
 export function offlineTask(config: StudioConfig, taskId: number, projectId: number) {
-  return studioRequest(config, "/ide-admin/v1/scheduleTask/deleteTask", {
-    scheduleTaskId: taskId,
-    projectId,
-    updateBy: String(config.userId),
+  return studioRequest(config, "/ide-admin/v1/scheduleTask/batchDeleteCycleTask", {
+    scheduleTasks: [{ entityId: taskId, workspace: config.workspaceName }],
+    updatedBy: String(config.userId),
   })
 }
 
