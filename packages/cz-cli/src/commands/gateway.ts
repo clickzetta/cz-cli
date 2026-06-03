@@ -88,18 +88,24 @@ async function portalGet<T>(sc: StudioConfig, path: string): Promise<ApiResponse
   )
 }
 
-/** Reverse-lookup a virtual key's numeric id via the gateway admin list API. */
-async function resolveKeyId(sc: GatewayContext, vApiKey: string): Promise<number> {
-  const resp = await gwRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKey })
-  const list = Array.isArray(resp.data) ? resp.data : []
-  const prefix = vApiKey.slice(0, 4)
-  const suffix = vApiKey.slice(-4)
-  const match = list.find((k) => {
+/** Resolve a ref (alias or vApiKey) to its numeric id. Tries alias first, then key match. */
+async function resolveKeyId(sc: GatewayContext, ref: string): Promise<number> {
+  // Try by alias first
+  const byAlias = await gwRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKeyAlias: ref })
+  const aliasList = Array.isArray(byAlias.data) ? byAlias.data : []
+  const aliasMatch = aliasList.find((k) => (k.vApiKeyAlias ?? k.vapiKeyAlias) === ref)
+  if (aliasMatch?.id != null) return Number(aliasMatch.id)
+  // Fall back to key match
+  const byKey = await gwRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKey: ref })
+  const keyList = Array.isArray(byKey.data) ? byKey.data : []
+  const prefix = ref.slice(0, 4)
+  const suffix = ref.slice(-4)
+  const keyMatch = keyList.find((k) => {
     const masked = String(k.vApiKeyMasked ?? k.vApiKey ?? "")
     return masked.startsWith(prefix) && masked.endsWith(suffix)
   })
-  if (!match || match.id == null) throw new Error(`Virtual key '${vApiKey}' not found. Ensure the key exists and is visible to your account.`)
-  return Number(match.id)
+  if (keyMatch?.id != null) return Number(keyMatch.id)
+  throw new Error(`Virtual key '${ref}' not found by alias or key value.`)
 }
 
 function normalizeKey(k: Dict): Dict {
@@ -114,13 +120,20 @@ function normalizeKey(k: Dict): Dict {
   const routing = isRecord(k.routingRule) ? k.routingRule : undefined
   const alias = k.vapiKeyAlias ?? k.vApiKeyAlias
   const masked = k.vapiKeyMasked ?? k.vApiKeyMasked
+  const routingOut: Dict | undefined = routing ? {
+    routeType: routing.routeType ?? "default",
+    ...(Array.isArray(routing.providerIds) && routing.providerIds.length > 0 ? { providerIds: routing.providerIds } : {}),
+    ...(routing.privateKeyOnly ? { privateKeyOnly: true } : {}),
+    ...(Array.isArray(routing.privateKeyAliases) && routing.privateKeyAliases.length > 0 ? { privateKeyAliases: routing.privateKeyAliases } : {}),
+    ...(routing.providerSort ? { providerSort: routing.providerSort } : {}),
+  } : undefined
   return {
     id: k.id,
     ...(alias ? { alias } : {}),
     ...(masked ? { vApiKey: masked } : {}),
-    status: k.status,
+    status: k.status === 1 ? "enabled" : k.status === 0 ? "disabled" : k.status,
     ...(k.type ? { type: k.type } : {}),
-    ...(routing ? { routeType: routing.routeType, providerIds: routing.providerIds } : {}),
+    ...(routingOut ? { routing: routingOut } : {}),
     ...(quotas.length > 0 ? { quotas } : {}),
   }
 }
@@ -367,13 +380,41 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               }
             },
           )
+          // ── get ────────────────────────────────────────────────────────
+          .command(
+            "get <ref>",
+            "Get a virtual key's plaintext value (by alias or key)",
+            (y) =>
+              y
+                .positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
+                .option("add-to-llm", { type: "string", describe: "Register as a [llm.<name>] entry" })
+                .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" }),
+            async (argv) => {
+              const format = argv.format
+              const t0 = Date.now()
+              try {
+                setGatewayDebug(!!argv.debug)
+                const sc = await getGatewayContext(argv)
+                const id = await resolveKeyId(sc, argv.ref as string)
+                const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
+                const vApiKey = String(keyResp.data)
+                const addName = argv["add-to-llm"] === "" ? (argv.ref as string) : (argv["add-to-llm"] as string | undefined)
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                logOperation("gateway key get", { ok: true, timeMs: Date.now() - t0 })
+                success({ id, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
+              } catch (err) {
+                logOperation("gateway key get", { ok: false, timeMs: Date.now() - t0 })
+                reportError(err, format)
+              }
+            },
+          )
           // ── set-quota ──────────────────────────────────────────────────
           .command(
             "set-quota",
             "Update a single quota on a virtual key",
             (y) =>
               y
-                .option("key", { type: "string", demandOption: true, describe: "Virtual key value" })
+                .option("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
                 .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, demandOption: true, describe: "Quota period" })
                 .option("quota", { type: "number", demandOption: true, describe: "New quota value" }),
             async (argv) => {
@@ -382,7 +423,7 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               try {
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
-                const id = await resolveKeyId(sc, argv.key as string)
+                const id = await resolveKeyId(sc, argv.ref as string)
                 await gwRequest<unknown>(sc, API.SAVE, {
                   id,
                   rateLimitConfigs: { [PERIOD_TO_FIELD[argv.period as string]]: argv.quota },
@@ -397,23 +438,23 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           )
           // ── enable / disable ───────────────────────────────────────────
           .command(
-            "enable <vApiKey>",
-            "Enable a virtual key",
-            (y) => y.positional("vApiKey", { type: "string", demandOption: true, describe: "Virtual key value" }),
+            "enable <ref>",
+            "Enable a virtual key (by alias or key value)",
+            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" }),
             (argv) => updateStatus(argv, 1),
           )
           .command(
-            "disable <vApiKey>",
-            "Disable a virtual key",
-            (y) => y.positional("vApiKey", { type: "string", demandOption: true, describe: "Virtual key value" }),
+            "disable <ref>",
+            "Disable a virtual key (by alias or key value)",
+            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" }),
             (argv) => updateStatus(argv, 0),
           )
           // ── delete ─────────────────────────────────────────────────────
           .command(
-            "delete <vApiKey>",
-            "Delete a virtual key",
+            "delete <ref>",
+            "Delete a virtual key (by alias or key value)",
             (y) => y
-              .positional("vApiKey", { type: "string", demandOption: true, describe: "Virtual key value" })
+              .positional("ref", { type: "string", demandOption: true, describe: "Alias or virtual key value" })
               .option("remove-from-llm", { type: "boolean", describe: "Also remove the matching [llm.*] entry from profiles.toml" }),
             async (argv) => {
               const format = argv.format
@@ -421,10 +462,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               try {
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
-                const id = await resolveKeyId(sc, argv.vApiKey as string)
+                const id = await resolveKeyId(sc, argv.ref as string)
                 await gwRequest<unknown>(sc, `${API.DELETE}?id=${id}`, {})
-                const removedLlm = argv["remove-from-llm"] ? removeFromLlm(argv.vApiKey as string) : undefined
-                const linkedLlm = !removedLlm ? findLlmByKey(argv.vApiKey as string) : undefined
+                const removedLlm = argv["remove-from-llm"] ? removeFromLlm(argv.ref as string) : undefined
+                const linkedLlm = !removedLlm ? findLlmByKey(argv.ref as string) : undefined
                 const aiMessage = removedLlm
                   ? `Virtual key deleted and [llm.${removedLlm}] removed from profiles.toml.`
                   : linkedLlm
@@ -480,17 +521,17 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
   })
 }
 
-async function updateStatus(argv: GlobalArgs & { vApiKey?: string }, status: number): Promise<void> {
+async function updateStatus(argv: GlobalArgs & { ref?: string }, status: number): Promise<void> {
   const format = argv.format
   const t0 = Date.now()
   const op = status === 1 ? "gateway key enable" : "gateway key disable"
   try {
     setGatewayDebug(!!argv.debug)
-                const sc = await getGatewayContext(argv)
-    const id = await resolveKeyId(sc, argv.vApiKey as string)
+    const sc = await getGatewayContext(argv)
+    const id = await resolveKeyId(sc, argv.ref as string)
     await gwRequest<unknown>(sc, `${API.UPDATE_STATUS}?id=${id}&status=${status}`, {})
     logOperation(op, { ok: true, timeMs: Date.now() - t0 })
-    success({ id, status }, { format, timeMs: Date.now() - t0 })
+    success({ id, status: status === 1 ? "enabled" : "disabled" }, { format, timeMs: Date.now() - t0 })
   } catch (err) {
     logOperation(op, { ok: false, timeMs: Date.now() - t0 })
     reportError(err, format)

@@ -87,11 +87,12 @@ cz-cli ai-gateway key list                       List AI Gateway virtual keys (-
 cz-cli ai-gateway key create <alias>             Create a virtual key (--period daily|weekly|monthly|total --quota N)
                                               Use --add-to-llm [name] to register as [llm.<name>]; --use to set as default_llm
 cz-cli ai-gateway key upsert <alias>             Create or update a virtual key (idempotent)
-cz-cli ai-gateway key set-quota --key K --period P --quota N
-                                              Update quota on a key
-cz-cli ai-gateway key enable <vApiKey>           Enable a virtual key
-cz-cli ai-gateway key disable <vApiKey>          Disable a virtual key
-cz-cli ai-gateway key delete <vApiKey>           Delete a virtual key; --remove-from-llm to also remove [llm.*] entry
+cz-cli ai-gateway key get <ref>                  Get plaintext key value (by alias or key); --add-to-llm to register
+cz-cli ai-gateway key set-quota --ref R --period P --quota N
+                                              Update quota on a key (ref = alias or key)
+cz-cli ai-gateway key enable <ref>              Enable a virtual key (by alias or key)
+cz-cli ai-gateway key disable <ref>             Disable a virtual key (by alias or key)
+cz-cli ai-gateway key delete <ref>              Delete a virtual key (by alias or key); --remove-from-llm
 cz-cli ai-gateway model list [key]              List models available to a virtual key
 ```
 
