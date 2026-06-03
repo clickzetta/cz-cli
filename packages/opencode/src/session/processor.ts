@@ -141,11 +141,11 @@ export const layer: Layer.Layer<
             options: [
               {
                 label: CLICKZETTA_ROTATION_CONFIRM_LABEL,
-                description: "创建新的虚拟 key 并继续当前对话",
+                description: "Create a new virtual key and continue the conversation",
               },
               {
                 label: CLICKZETTA_ROTATION_CANCEL_LABEL,
-                description: "保留当前 key，并停止这次请求",
+                description: "Keep the current key and stop this request",
               },
             ],
           },

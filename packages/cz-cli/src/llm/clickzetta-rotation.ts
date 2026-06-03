@@ -14,10 +14,10 @@ const API = {
 const QUOTA_EXHAUSTED_PATTERN = /virtual key total quota exceeded/i
 const ALIAS_PREFIX = "cz-code_auto_"
 const ALIAS_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
-export const CLICKZETTA_ROTATION_PROMPT = "免费额度已用尽。是否用当前 profile 自动创建新的虚拟 key 并切换？"
-export const CLICKZETTA_ROTATION_HEADER = "免费额度"
-export const CLICKZETTA_ROTATION_CONFIRM_LABEL = "创建并切换"
-export const CLICKZETTA_ROTATION_CANCEL_LABEL = "保持原样"
+export const CLICKZETTA_ROTATION_PROMPT = "Free quota exhausted. Create a new virtual key with the current profile and switch?"
+export const CLICKZETTA_ROTATION_HEADER = "Quota"
+export const CLICKZETTA_ROTATION_CONFIRM_LABEL = "Create & switch"
+export const CLICKZETTA_ROTATION_CANCEL_LABEL = "Keep current"
 
 type Dict = Record<string, unknown>
 
@@ -160,7 +160,7 @@ async function rotateEntry(input: {
     serviceBaseUrl: sc.baseUrl,
     sourceProfile: input.sourceProfile,
   })
-  if (input.interactive) prompts.log.success(`已切换到新的虚拟 key: ${alias} ([llm.${rotatedEntryName}])`)
+  if (input.interactive) prompts.log.success(`Switched to new virtual key: ${alias} ([llm.${rotatedEntryName}])`)
   return {
     rotated: true,
     entryName: rotatedEntryName,
