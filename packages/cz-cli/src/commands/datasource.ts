@@ -194,7 +194,8 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
-            .option("filter", { type: "string", describe: "Filter by name (fuzzy)" }),
+            .option("filter", { type: "string", describe: "Filter by name (fuzzy)" })
+            .option("limit", { type: "number", default: 50, describe: "Max results to return" }),
         async (argv) => {
           const format = argv.format
           const t0 = Date.now()
@@ -208,8 +209,14 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               const f = argv.filter.toLowerCase()
               list = list.filter((ns) => String(ns).toLowerCase().includes(f))
             }
-            logOperation("datasource catalogs", { ok: true, rows: list.length, timeMs: Date.now() - t0 })
-            success(list, { format, timeMs: Date.now() - t0 })
+            const total = list.length
+            const limit = argv.limit as number
+            const limited = list.slice(0, limit)
+            logOperation("datasource catalogs", { ok: true, rows: limited.length, timeMs: Date.now() - t0 })
+            success(limited, {
+              format, timeMs: Date.now() - t0,
+              aiMessage: total > limited.length ? `Showing ${limited.length} of ${total} catalogs. Use --filter to narrow or --limit to raise the cap.` : undefined,
+            })
           } catch (err) {
             logOperation("datasource catalogs", { ok: false, timeMs: Date.now() - t0 })
             reportDatasourceError(err, format)
@@ -224,7 +231,8 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
             .positional("catalog", { type: "string", demandOption: true, describe: "Catalog (namespace/database)" })
-            .option("filter", { type: "string", describe: "Filter by name (fuzzy)" }),
+            .option("filter", { type: "string", describe: "Filter by name (fuzzy)" })
+            .option("limit", { type: "number", default: 50, describe: "Max results to return" }),
         async (argv) => {
           const format = argv.format
           const t0 = Date.now()
@@ -244,8 +252,13 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             const names = list.map((obj) =>
               typeof obj === "string" ? obj : String((obj as Record<string, unknown>).name ?? (obj as Record<string, unknown>).tableName ?? obj)
             )
-            logOperation("datasource objects", { ok: true, rows: names.length, timeMs: Date.now() - t0 })
-            success(names, { format, timeMs: Date.now() - t0 })
+            const total = names.length
+            const limited = names.slice(0, argv.limit as number)
+            logOperation("datasource objects", { ok: true, rows: limited.length, timeMs: Date.now() - t0 })
+            success(limited, {
+              format, timeMs: Date.now() - t0,
+              aiMessage: total > limited.length ? `Showing ${limited.length} of ${total} objects. Use --filter to narrow or --limit to raise the cap.` : undefined,
+            })
           } catch (err) {
             logOperation("datasource objects", { ok: false, timeMs: Date.now() - t0 })
             reportDatasourceError(err, format)
@@ -312,7 +325,8 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
             .positional("catalog", { type: "string", demandOption: true, describe: "Catalog (namespace/database)" })
-            .positional("object", { type: "string", demandOption: true, describe: "Object name (table/topic)" }),
+            .positional("object", { type: "string", demandOption: true, describe: "Object name (table/topic)" })
+            .option("limit", { type: "number", default: 50, describe: "Max rows to return" }),
         async (argv) => {
           const format = argv.format
           const t0 = Date.now()
@@ -329,7 +343,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             if (!data?.fieldNames || !data?.rows) {
               success(data ?? {}, { format, timeMs: Date.now() - t0 }); return
             }
-            const rows = data.rows.map((row) =>
+            const rows = data.rows.slice(0, argv.limit as number).map((row) =>
               Object.fromEntries(data.fieldNames!.map((col, i) => [col, row[i]]))
             )
             logOperation("datasource sample", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })

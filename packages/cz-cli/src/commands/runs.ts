@@ -62,7 +62,13 @@ function convertFields(data: Record<string, unknown>, mapping: Record<string, st
 }
 
 function convertRunList(items: Record<string, unknown>[]): Record<string, unknown>[] {
-  return items.map((item) => convertFields(item, TASK_RUN_FIELDS))
+  // Keep only snake_case fields; drop unmapped camelCase API noise (extraParams,
+  // applicationEnv, groupNumber, complementTaskId, etc.) to reduce agent context.
+  return items.map((item) =>
+    Object.fromEntries(
+      Object.entries(convertFields(item, TASK_RUN_FIELDS)).filter(([k]) => !/[A-Z]/.test(k)),
+    ),
+  )
 }
 
 function convertRunStats(items: unknown[]): Record<string, unknown>[] {
