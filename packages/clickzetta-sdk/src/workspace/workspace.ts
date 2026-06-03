@@ -30,8 +30,8 @@ export async function listUserWorkspaces(
     },
   }
   const body = {
-    forWrite: "true",
-    listType: 4,
+    forWrite: true,
+    listType: 3,
     pageIndex: 1,
     pageSize: 99999,
     tenantId,
