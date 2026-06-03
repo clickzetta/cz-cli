@@ -42,7 +42,7 @@ export async function listUserWorkspaces(
     "/ide-authority/v1/workspace/listUserWorkspaces",
     body,
   )
-  if (debug) process.stderr.write(`[debug] listUserWorkspaces: code=${resp.code} count=${(resp.data ?? []).length} data=${JSON.stringify(resp.data ?? []).slice(0, 500)}\n`)
+  if (debug) process.stderr.write(`[debug] listUserWorkspaces: code=${resp.code} count=${(resp.data ?? []).length} data=${JSON.stringify(resp.data ?? [])}\n`)
 
   if (resp.code !== 0 && resp.code !== "0" && resp.code !== 200 && resp.code !== "200") {
     throw new ClickZettaApiError(String(resp.code), resp.message ?? "Failed to list workspaces")
