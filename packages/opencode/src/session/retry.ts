@@ -115,13 +115,13 @@ export function retryable(error: Err) {
 export function policy(opts: {
   parse: (error: unknown) => Err
   set: (input: { attempt: number; message: string; next: number }) => Effect.Effect<void>
-  recover?: (input: { error: Err; attempt: number }) => Effect.Effect<string | undefined>
+  recover?: (input: { error: Err; attempt: number; raw: unknown }) => Effect.Effect<string | undefined>
 }) {
   return Schedule.fromStepWithMetadata(
     Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
       return Effect.gen(function* () {
         const error = opts.parse(meta.input)
-        const recovered = opts.recover ? yield* opts.recover({ error, attempt: meta.attempt }) : undefined
+        const recovered = opts.recover ? yield* opts.recover({ error, attempt: meta.attempt, raw: meta.input }) : undefined
         if (recovered) {
           const now = yield* Clock.currentTimeMillis
           yield* opts.set({ attempt: meta.attempt, message: recovered, next: now })

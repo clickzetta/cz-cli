@@ -1007,7 +1007,7 @@ export function fromError(
 
       return new APIError(
         {
-          message: parsed.message,
+          message: `LLM request failed: ${parsed.message}`,
           statusCode: parsed.statusCode,
           isRetryable: parsed.isRetryable,
           responseHeaders: parsed.responseHeaders,

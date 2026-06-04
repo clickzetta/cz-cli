@@ -249,12 +249,12 @@ describe("llm guidance", () => {
         'workspace = "ws"',
         'service = "mock-service.example"',
         'protocol = "https"',
+        'ai_gateway_url = "https://mock-clickzetta.example"',
         "",
         "[llm.clickzetta]",
         'provider = "clickzetta"',
         'api_key = "ck-old"',
         'base_url = "https://mock-clickzetta.example"',
-        'source_profile = "default"',
         "",
       ].join("\n"),
     )

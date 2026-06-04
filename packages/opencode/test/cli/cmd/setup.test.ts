@@ -32,6 +32,7 @@ describe("applyCredentialToProfiles", () => {
           service: "https://service.clickzetta.com",
           protocol: "https",
           username: "alice",
+          ai_gateway_url: "https://gateway.clickzetta.com",
         },
       },
       llm: {
@@ -39,7 +40,6 @@ describe("applyCredentialToProfiles", () => {
           provider: "clickzetta",
           api_key: "ck-test",
           base_url: "https://gateway.clickzetta.com",
-          source_profile: "default",
         },
       },
     })
@@ -80,6 +80,7 @@ describe("applyCredentialToProfiles", () => {
           workspace: "workspace-b",
           service: "http://service.clickzetta.com",
           protocol: "http",
+          ai_gateway_url: "https://new.clickzetta.com",
         },
       },
       llm: {
@@ -91,7 +92,6 @@ describe("applyCredentialToProfiles", () => {
           provider: "clickzetta",
           api_key: "new-key",
           base_url: "https://new.clickzetta.com",
-          source_profile: "default",
         },
       },
     })

@@ -184,19 +184,22 @@ function addToLlm(
   const entries = Object.entries(llm).filter(([, v]) => isRecord(v)) as [string, Dict][]
   const defaultLlm = typeof data.default_llm === "string" ? data.default_llm : undefined
   const existing = isRecord(llm[name]) ? llm[name] : {}
-  const boundProfile = typeof existing.source_profile === "string" ? existing.source_profile : undefined
-  // Reuse an existing in-use LLM's base_url; otherwise derive from the service domain.
-  const reused =
-    (defaultLlm &&
-    isRecord(llm[defaultLlm]) &&
-    (llm[defaultLlm] as Dict).provider === "clickzetta" &&
-    (llm[defaultLlm] as Dict).source_profile === boundProfile &&
-    typeof (llm[defaultLlm] as Dict).base_url === "string"
-      ? (llm[defaultLlm] as Dict).base_url
-      : entries
-        .filter(([, v]) => v.provider === "clickzetta" && v.source_profile === boundProfile)
-        .map(([, v]) => v.base_url)
-        .find((b) => typeof b === "string")) as string | undefined
+
+  const profiles = isRecord(data.profiles) ? data.profiles : {}
+  const currentProfile = process.env.CZ_PROFILE || (typeof data.default_profile === "string" ? data.default_profile : "default")
+  const profileEntry = isRecord(profiles[currentProfile]) ? profiles[currentProfile] : undefined
+  const profileAiGatewayUrl = profileEntry && typeof profileEntry.ai_gateway_url === "string" ? profileEntry.ai_gateway_url : undefined
+
+  const reused = profileAiGatewayUrl
+    ?? (defaultLlm &&
+      isRecord(llm[defaultLlm]) &&
+      (llm[defaultLlm] as Dict).provider === "clickzetta" &&
+      typeof (llm[defaultLlm] as Dict).base_url === "string"
+        ? (llm[defaultLlm] as Dict).base_url
+        : entries
+          .filter(([, v]) => v.provider === "clickzetta")
+          .map(([, v]) => v.base_url)
+          .find((b) => typeof b === "string")) as string | undefined
   const baseUrl = reused ?? aimeshEndpoint(serviceBaseUrl)
   const hadLlm = entries.length > 0
   llm[name] = {
@@ -204,13 +207,12 @@ function addToLlm(
     provider: "clickzetta",
     api_key: apiKey,
     base_url: baseUrl,
-    ...(boundProfile && { source_profile: boundProfile }),
   }
   data.llm = llm
   const makeDefault = !hadLlm || use
   if (makeDefault) data.default_llm = name
   saveFullToml(data)
-  return { name, base_url: baseUrl, default_llm: makeDefault, source_profile: boundProfile }
+  return { name, base_url: baseUrl, default_llm: makeDefault }
 }
 
 function removeFromLlm(apiKey: string): string | undefined {

@@ -158,10 +158,13 @@ export const layer: Layer.Layer<
       sessionID: SessionID
       providerID: string
       error: MessageV2.APIError
+      raw: unknown
       rotated: { done: boolean }
     }) {
       if (input.rotated.done) {
-        log.warn("rotation already attempted, skipping", { sessionID: input.sessionID })
+        if (input.raw instanceof Error) {
+          input.raw.message = `Key rotated successfully, but LLM request failed: ${input.raw.message}. Please check base_url connectivity.`
+        }
         return undefined
       }
       const exhausted = isClickzettaQuotaExhausted({
@@ -175,15 +178,18 @@ export const layer: Layer.Layer<
         Effect.catchTag("QuestionRejectedError", () => Effect.succeed(false)),
       )
       if (!approved) return undefined
-      const rotated = yield* Effect.promise(() =>
-        rotateClickzettaLlm({
-          interactive: false,
-        }),
-      )
-      if (!rotated) {
-        log.error("rotateClickzettaLlm returned undefined — check default_llm and source_profile in profiles.toml")
+      const result = yield* Effect.tryPromise(() =>
+        rotateClickzettaLlm({ interactive: false }),
+      ).pipe(Effect.orElseSucceed(() => undefined))
+      if (!result || "failed" in result) {
+        input.rotated.done = true
+        const reason = result && "failed" in result ? result.reason : "unknown"
+        if (input.raw instanceof Error) {
+          input.raw.message = `Key rotation failed: ${reason}`
+        }
         return undefined
       }
+      const rotated = result
       log.info("rotation succeeded", { entry: rotated.entryName, alias: rotated.alias })
       input.rotated.done = true
       yield* config.invalidateCache()
@@ -736,13 +742,14 @@ export const layer: Layer.Layer<
                     message: info.message,
                     next: info.next,
                   }),
-                recover: ({ error }) =>
+                recover: ({ error, raw }) =>
                   Effect.gen(function* () {
                     if (!MessageV2.APIError.isInstance(error)) return undefined
                     const recovered = yield* recoverRotation({
                       sessionID: ctx.sessionID,
                       providerID: activeStreamInput.model.providerID,
                       error,
+                      raw,
                       rotated,
                     })
                     if (!recovered) return undefined

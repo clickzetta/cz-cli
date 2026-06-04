@@ -63,7 +63,7 @@ beforeEach(() => {
   writeFileSync(
     profileFile,
     [
-      'default_profile = "default"',
+      'default_profile = "uat"',
       'default_llm = "clickzetta"',
       "",
       "[profiles.default]",
@@ -79,12 +79,12 @@ beforeEach(() => {
       'workspace = "ws-uat"',
       'service = "uat-service.example"',
       'protocol = "https"',
+      'ai_gateway_url = "https://mock-aimesh.example/gateway/v1"',
       "",
       "[llm.clickzetta]",
       'provider = "clickzetta"',
       'api_key = "ck-old"',
       'base_url = "https://mock-aimesh.example/gateway/v1"',
-      'source_profile = "uat"',
       "",
     ].join("\n"),
   )
@@ -119,7 +119,6 @@ describe("clickzetta key rotation", () => {
 
   test("quota-exhausted 429 pattern rotates automatically in non-interactive mode", async () => {
     const result = await maybeRotateExhaustedClickzettaLlm({
-      entryName: "clickzetta",
       provider: "clickzetta",
       status: 429,
       detail:
@@ -128,15 +127,14 @@ describe("clickzetta key rotation", () => {
     })
 
     expect(result?.rotated).toBe(true)
-    expect(result?.entryName).toBe("clickzetta")
-    expect(result?.sourceProfile).toBe("uat")
+    expect(result?.entryName).toBe("uat")
+    expect(result?.profile).toBe("uat")
     const profiles = readFileSync(profileFile, "utf-8")
     expect(profiles).toContain('api_key = "ck-new"')
-    expect(profiles).toContain('source_profile = "uat"')
-    expect(profiles).not.toContain("clickzetta-rotated-")
+    expect(profiles).toContain('default_llm = "uat"')
   })
 
-  test("quota-exhausted 429 pattern updates the bound entry after explicit confirmation", async () => {
+  test("quota-exhausted 429 pattern creates new entry after explicit confirmation", async () => {
     const result = await maybeRotateExhaustedClickzettaLlm({
       provider: "clickzetta",
       status: 429,
@@ -146,20 +144,18 @@ describe("clickzetta key rotation", () => {
     })
 
     expect(result?.rotated).toBe(true)
-    expect(result?.entryName).toBe("clickzetta")
+    expect(result?.entryName).toBe("uat")
     const profiles = readFileSync(profileFile, "utf-8")
     expect(profiles).toContain('api_key = "ck-new"')
-    expect(profiles).toContain('default_llm = "clickzetta"')
-    expect(profiles).toContain('source_profile = "uat"')
+    expect(profiles).toContain('default_llm = "uat"')
   })
 
-  test("falls back to CZ_PROFILE for an unbound entry without persisting a guessed source_profile", async () => {
+  test("uses CZ_PROFILE env var to determine which profile to use for key creation", async () => {
     process.env.CZ_PROFILE = "default"
     writeFileSync(
       profileFile,
       [
         'default_profile = "uat"',
-        'default_llm = "clickzetta"',
         "",
         "[profiles.default]",
         'pat = "pat-token"',
@@ -167,6 +163,7 @@ describe("clickzetta key rotation", () => {
         'workspace = "ws"',
         'service = "mock-service.example"',
         'protocol = "https"',
+        'ai_gateway_url = "https://mock-aimesh.example/gateway/v1"',
         "",
         "[profiles.uat]",
         'pat = "pat-uat"',
@@ -175,15 +172,10 @@ describe("clickzetta key rotation", () => {
         'service = "uat-service.example"',
         'protocol = "https"',
         "",
-        "[llm.clickzetta]",
-        'provider = "clickzetta"',
-        'api_key = "ck-old"',
-        "",
       ].join("\n"),
     )
 
     const result = await maybeRotateExhaustedClickzettaLlm({
-      entryName: "clickzetta",
       provider: "clickzetta",
       status: 429,
       detail:
@@ -192,7 +184,8 @@ describe("clickzetta key rotation", () => {
     })
 
     expect(result?.rotated).toBe(true)
-    expect(result?.sourceProfile).toBe("default")
+    expect(result?.profile).toBe("default")
+    expect(result?.entryName).toBe("default")
     expect(studioCalls[0]?.baseUrl).toBe("https://mock-service.example")
     expect(studioCalls[0]?.instanceName).toBe("inst")
     expect(studioCalls[0]?.body).toEqual({
@@ -201,6 +194,5 @@ describe("clickzetta key rotation", () => {
     })
     const profiles = readFileSync(profileFile, "utf-8")
     expect(profiles).toContain('api_key = "ck-new"')
-    expect(profiles).not.toContain("source_profile =")
   })
 })

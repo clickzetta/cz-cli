@@ -22,11 +22,9 @@ export const CLICKZETTA_ROTATION_CANCEL_LABEL = "Keep current"
 type Dict = Record<string, unknown>
 
 type RotateOptions = {
-  entryName?: string
   provider?: string
   status?: number
   detail?: string | null
-  baseUrl?: string
   approval: "prompt" | "auto" | "never"
 }
 
@@ -35,8 +33,10 @@ export type ClickZettaRotationResult = {
   entryName: string
   alias: string
   apiKey: string
-  sourceProfile: string
+  profile: string
 }
+
+export type RotationFailure = { failed: true; reason: string }
 
 function profilesFile() {
   return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
@@ -66,18 +66,19 @@ function saveToml(data: Dict) {
   } catch {}
 }
 
-function aimeshEndpoint(base: string) {
-  const trimmed = base.replace(/\/+$/, "")
-  if (/\/gateway(\/|$)/.test(trimmed)) return trimmed
-  const host = trimmed.replace(/^https?:\/\//, "").split("/")[0] ?? ""
+export function inferAiGatewayUrl(profile: { service?: string; instance?: string }): string | undefined {
+  if (!profile.service) return undefined
+  const base = profile.service.replace(/\/+$/, "")
+  if (/\/gateway(\/|$)/.test(base)) return base
+  const host = base.replace(/^https?:\/\//, "").split("/")[0] ?? ""
   if (host.startsWith("uat-")) return "https://uat-aimesh.clickzetta.com"
   if (host.startsWith("dev-") || host.startsWith("localhost") || host.startsWith("0.0.0.0"))
     return "https://dev-aimesh.clickzetta.com"
   if (host.endsWith("singdata.com")) return "https://ap-southeast-1-aws-aimesh.api.singdata.com"
-  if (host.endsWith("clickzetta-inc.com") || host.endsWith("kuaishou.com")) return trimmed
-  if (host.endsWith("clickzetta.com") && !host.includes(".api.clickzetta.com")) return trimmed
+  if (host.endsWith("clickzetta-inc.com") || host.endsWith("kuaishou.com")) return base
+  if (host.endsWith("clickzetta.com") && !host.includes(".api.clickzetta.com")) return base
   if (host.endsWith("clickzetta.com")) return "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com"
-  return trimmed
+  return undefined
 }
 
 function randomAlias() {
@@ -95,64 +96,71 @@ function promptAllowed(approval: RotateOptions["approval"]) {
   return prompts.confirm({ message: CLICKZETTA_ROTATION_PROMPT, initialValue: true }).then((result) => !prompts.isCancel(result) && result === true)
 }
 
-function currentClickzettaEntry() {
-  const data = loadToml()
-  if (typeof data.default_llm !== "string") return
-  return readClickzettaEntry(data.default_llm, data)
+function resolveCurrentProfile(data: Dict): string {
+  return process.env.CZ_PROFILE || (typeof data.default_profile === "string" ? data.default_profile : "default")
 }
 
-function readClickzettaEntry(entryName: string, data = loadToml()) {
-  const llm = isRecord(data.llm) ? data.llm : {}
-  const rawEntry = llm[entryName]
-  const entry = isRecord(rawEntry) ? rawEntry : undefined
-  if (!entry || entry.provider !== "clickzetta" || typeof entry.api_key !== "string") return
-  const boundSourceProfile = typeof entry.source_profile === "string" ? entry.source_profile : undefined
-  const sourceProfile =
-    boundSourceProfile
-      ? boundSourceProfile
-      : process.env.CZ_PROFILE || (typeof data.default_profile === "string" ? data.default_profile : "default")
-  return {
-    entryName,
-    apiKey: entry.api_key,
-    baseUrl: typeof entry.base_url === "string" ? entry.base_url : undefined,
-    boundSourceProfile,
-    sourceProfile,
-  }
+function getProfileEntry(data: Dict, profileName: string): Dict | undefined {
+  const profiles = isRecord(data.profiles) ? data.profiles : {}
+  const entry = profiles[profileName]
+  return isRecord(entry) ? entry : undefined
+}
+
+function normalizeGatewayUrl(url: string): string {
+  const trimmed = url.replace(/\/+$/, "")
+  if (/\/gateway\/v\d+(\/|$)/.test(trimmed)) return trimmed
+  if (/\/gateway(\/|$)/.test(trimmed)) return trimmed + "/v1"
+  return trimmed + "/gateway/v1"
+}
+
+function resolveAiGatewayUrl(profileEntry: Dict | undefined): string | undefined {
+  if (profileEntry && typeof profileEntry.ai_gateway_url === "string") return normalizeGatewayUrl(profileEntry.ai_gateway_url)
+  if (!profileEntry) return undefined
+  const inferred = inferAiGatewayUrl({
+    service: typeof profileEntry.service === "string" ? profileEntry.service : undefined,
+    instance: typeof profileEntry.instance === "string" ? profileEntry.instance : undefined,
+  })
+  return inferred ? normalizeGatewayUrl(inferred) : undefined
+}
+
+function currentClickzettaEntry() {
+  const data = loadToml()
+  const profile = resolveCurrentProfile(data)
+  const profileEntry = getProfileEntry(data, profile)
+  const aiGatewayUrl = resolveAiGatewayUrl(profileEntry)
+  return { profile, baseUrl: aiGatewayUrl }
 }
 
 function writeRotatedKey(input: {
-  entryName: string
   apiKey: string
-  baseUrl?: string
-  serviceBaseUrl: string
-  sourceProfile: string
+  baseUrl: string
+  profile: string
 }) {
   const data = loadToml()
   const llm = isRecord(data.llm) ? data.llm : {}
-  const rawExisting = llm[input.entryName]
-  const existing: Dict = isRecord(rawExisting) ? rawExisting : {}
-  llm[input.entryName] = {
-    ...existing,
+  let entryName = input.profile
+  let seq = 1
+  while (entryName in llm) {
+    entryName = `${input.profile}_${seq}`
+    seq++
+  }
+  llm[entryName] = {
     provider: "clickzetta",
     api_key: input.apiKey,
-    base_url:
-      typeof existing.base_url === "string"
-        ? existing.base_url
-        : input.baseUrl ?? aimeshEndpoint(input.serviceBaseUrl),
-    ...(typeof existing.source_profile === "string" ? { source_profile: existing.source_profile } : {}),
+    base_url: input.baseUrl,
   }
   data.llm = llm
+  data.default_llm = entryName
   saveToml(data)
-  return input.entryName
+  return entryName
 }
 
 async function rotateEntry(input: {
-  entryName: string
-  baseUrl?: string
+  baseUrl: string
   interactive: boolean
-  sourceProfile: string
+  profile: string
 }) {
-  const sc = await getGatewayContext({ profile: input.sourceProfile })
+  const sc = await getGatewayContext({ profile: input.profile })
   const alias = randomAlias()
   const saveResp = await studioRequest<number>(sc, API.SAVE, {
     vApiKeyAlias: alias,
@@ -161,20 +169,18 @@ async function rotateEntry(input: {
   const id = Number(saveResp.data)
   const keyResp = await studioRequest<string>(sc, `${API.GET}?id=${id}`, {})
   const apiKey = String(keyResp.data)
-  const rotatedEntryName = writeRotatedKey({
-    entryName: input.entryName,
+  const entryName = writeRotatedKey({
     apiKey,
     baseUrl: input.baseUrl,
-    serviceBaseUrl: sc.baseUrl,
-    sourceProfile: input.sourceProfile,
+    profile: input.profile,
   })
-  if (input.interactive) prompts.log.success(`Switched to new virtual key: ${alias} ([llm.${rotatedEntryName}])`)
+  if (input.interactive) prompts.log.success(`Switched to new virtual key: ${alias} ([llm.${entryName}])`)
   return {
     rotated: true,
-    entryName: rotatedEntryName,
+    entryName,
     alias,
     apiKey,
-    sourceProfile: input.sourceProfile,
+    profile: input.profile,
   } satisfies ClickZettaRotationResult
 }
 
@@ -187,30 +193,31 @@ export function isClickzettaQuotaExhausted(input: {
 }
 
 export async function rotateClickzettaLlm(input: {
-  entryName?: string
   baseUrl?: string
   interactive?: boolean
-  sourceProfile?: string
-}) {
-  const current = input.entryName ? readClickzettaEntry(input.entryName) : currentClickzettaEntry()
-  const entryName = input.entryName ?? current?.entryName
-  if (!entryName) return
-  const sourceProfile = input.sourceProfile ?? current?.sourceProfile
-  if (!sourceProfile) return
-  return rotateEntry({
-    entryName,
-    baseUrl: input.baseUrl ?? current?.baseUrl,
-    interactive: input.interactive === true,
-    sourceProfile,
-  })
+  profile?: string
+}): Promise<ClickZettaRotationResult | RotationFailure | undefined> {
+  const current = currentClickzettaEntry()
+  const profile = input.profile ?? current.profile
+  const baseUrl = input.baseUrl ?? current.baseUrl
+  if (!baseUrl) return { failed: true, reason: "no ai_gateway_url configured in profile and could not infer from service URL" }
+  try {
+    return await rotateEntry({
+      baseUrl,
+      interactive: input.interactive === true,
+      profile,
+    })
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    if (input.interactive) prompts.log.warn(`Key rotation failed: ${reason}`)
+    return { failed: true, reason }
+  }
 }
 
 export async function maybeRotateExhaustedClickzettaLlm(input: RotateOptions) {
   if (!isClickzettaQuotaExhausted(input)) return
   if (!(await promptAllowed(input.approval))) return
   return rotateClickzettaLlm({
-    entryName: input.entryName,
-    baseUrl: input.baseUrl,
     interactive: input.approval === "prompt",
   })
 }

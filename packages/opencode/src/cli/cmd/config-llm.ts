@@ -187,7 +187,6 @@ function resolveLlmTarget(data: TomlRecord, name?: string) {
       apiKey: typeof entry.api_key === "string" ? entry.api_key : undefined,
       baseUrl: typeof entry.base_url === "string" ? entry.base_url : undefined,
       model: typeof entry.model === "string" ? entry.model : undefined,
-      sourceProfile: typeof entry.source_profile === "string" ? entry.source_profile : undefined,
       source: "llm" as const,
     }
   }
@@ -313,7 +312,6 @@ const LlmShowCommand = cmd({
       model: string | null
       api_key: string | null
       base_url: string | null
-      source_profile: string | null
     }> = []
     for (const [n, raw] of Object.entries(llms)) {
       if (!isRecord(raw)) continue
@@ -323,7 +321,6 @@ const LlmShowCommand = cmd({
         model: typeof raw.model === "string" ? raw.model : null,
         api_key: typeof raw.api_key === "string" ? mask(raw.api_key) : null,
         base_url: typeof raw.base_url === "string" ? raw.base_url : null,
-        source_profile: typeof raw.source_profile === "string" ? raw.source_profile : null,
       })
     }
 
@@ -356,7 +353,6 @@ const LlmShowCommand = cmd({
           const provModel = e.model ? `${e.provider ?? "?"}/${e.model}` : `${e.provider ?? "?"} (default model)`
           process.stderr.write(`    ${mark} [llm.${e.name}]   ${provModel}\n`)
           if (e.base_url) process.stderr.write(`        base_url: ${e.base_url}\n`)
-          if (e.source_profile) process.stderr.write(`        source_profile: ${e.source_profile}\n`)
           process.stderr.write(`        api_key:  ${e.api_key ?? "(missing)"}\n`)
         }
         process.stderr.write("\n")
@@ -612,14 +608,12 @@ const LlmTestCommand = cmd({
       const detail = responseDetail(text)
       if (attempt === 0) {
         const rotated = await maybeRotateExhaustedClickzettaLlm({
-          entryName: target.name,
           provider: target.provider,
           status: response.status,
           detail,
-          baseUrl: target.baseUrl,
           approval: isTTY ? "prompt" : "auto",
         })
-        if (rotated) {
+        if (rotated && "rotated" in rotated) {
           probe = buildProbe(rotated.apiKey)
           if (probe) continue
         }

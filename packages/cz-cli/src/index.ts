@@ -26,6 +26,7 @@ export {
   CLICKZETTA_ROTATION_CONFIRM_LABEL,
   CLICKZETTA_ROTATION_HEADER,
   CLICKZETTA_ROTATION_PROMPT,
+  inferAiGatewayUrl,
   isClickzettaQuotaExhausted,
   maybeRotateExhaustedClickzettaLlm,
   rotateClickzettaLlm,

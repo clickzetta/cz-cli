@@ -235,6 +235,7 @@ function applyCredentialToProfiles(
         pat: String(cred.accessToken),
         service: String(cred.service ?? "dev-api.clickzetta.com"),
         protocol: String(cred.protocol ?? "https"),
+        ...(typeof cred.aimeshEndpointBaseUrl === "string" && { ai_gateway_url: String(cred.aimeshEndpointBaseUrl) }),
       },
     },
   }
@@ -252,7 +253,6 @@ function applyCredentialToProfiles(
       [profileName]: {
         ...entry,
         provider: "clickzetta",
-        source_profile: profileName,
         ...(apiKey && { api_key: apiKey }),
         ...(aimeshEndpointBaseUrl && { base_url: aimeshEndpointBaseUrl }),
       },
@@ -821,7 +821,6 @@ async function tryFetchAndSaveClickzettaApiKey(
         [profileName]: {
           ...entry,
           provider: "clickzetta",
-          source_profile: profileName,
           api_key: apiKey,
         },
       },

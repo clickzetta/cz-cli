@@ -78,6 +78,7 @@ export function applyCredentialToProfiles(
     ...(cred.service && { service: cred.service }),
     protocol: cred.service?.startsWith("http://") ? "http" : "https",
     ...(cred.username && { username: cred.username }),
+    ...(cred.aimeshEndpointBaseUrl && { ai_gateway_url: cred.aimeshEndpointBaseUrl }),
   }
 
   const next = {
@@ -92,7 +93,6 @@ export function applyCredentialToProfiles(
   llms[profileName] = {
     ...entry,
     provider: "clickzetta",
-    source_profile: profileName,
     ...(cred.apiKey && { api_key: cred.apiKey }),
     ...(cred.aimeshEndpointBaseUrl && { base_url: cred.aimeshEndpointBaseUrl }),
   }

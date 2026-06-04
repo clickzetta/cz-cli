@@ -76,7 +76,6 @@ describe("setup --credential", () => {
         provider: "clickzetta",
         api_key: "ck_test_api_key",
         base_url: "https://uat-aimesh.clickzetta.com/",
-        source_profile: "uat",
       },
     })
     expect(profiles.profiles).toEqual({
@@ -89,6 +88,7 @@ describe("setup --credential", () => {
         pat: "czt_test_pat",
         service: "https://uat-api.clickzetta.com",
         protocol: "https",
+        ai_gateway_url: "https://uat-aimesh.clickzetta.com/",
       },
     })
   })

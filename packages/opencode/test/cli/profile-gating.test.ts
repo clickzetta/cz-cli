@@ -55,7 +55,7 @@ test("bare agent accepts -p as a clickzetta profile override", () => {
   expect(result.stdout).toContain("\"code\":\"NO_ACTIVE_LLM\"")
 })
 
-test("agent runtime does not block when clickzetta default_llm is missing source_profile", () => {
+test("agent runtime does not block when clickzetta llm entry has no extra fields beyond provider/api_key/base_url", () => {
   const home = mkdtempSync(join(tmpdir(), "opencode-profile-warning-"))
   mkdirSync(join(home, ".clickzetta"), { recursive: true })
   writeFileSync(

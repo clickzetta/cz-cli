@@ -34,7 +34,6 @@ model = "deepseek/deepseek-v4-pro"
         name: "clickzetta",
         provider: "clickzetta",
         model: "deepseek/deepseek-v4-pro",
-        sourceProfile: "uat",
       },
     ])
     expect(result.warnings).toEqual([])
@@ -164,20 +163,6 @@ api_key = "sk-ant"
     expect(result.warnings).toEqual([])
   })
 
-  test("warns when a clickzetta llm entry is missing source_profile", () => {
-    const result = parseProfilesToml(`
-default_llm = "clickzetta"
-
-[llm.clickzetta]
-provider = "clickzetta"
-api_key = "ck-test"
-base_url = "https://gateway.clickzetta.com"
-`)
-
-    expect(result.warnings).toContain(
-      "[llm.clickzetta] is missing source_profile. ClickZetta key management will fall back to the current default profile.",
-    )
-  })
 })
 
 describe("migrateLegacyClickzettaConfig", () => {
@@ -205,7 +190,6 @@ aimesh_endpoint = "https://legacy.clickzetta.com"
           provider: "clickzetta",
           api_key: "legacy-key",
           base_url: "https://legacy.clickzetta.com",
-          source_profile: "default",
         },
       },
     })
@@ -238,7 +222,6 @@ model = "deepseek/deepseek-v4-pro"
           model: "deepseek/deepseek-v4-pro",
           api_key: "legacy-key",
           base_url: "https://legacy.clickzetta.com",
-          source_profile: "default",
         },
       },
     })
