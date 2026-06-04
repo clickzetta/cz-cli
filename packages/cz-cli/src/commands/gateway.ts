@@ -157,11 +157,20 @@ function saveFullToml(data: Dict): void {
   renameSync(tmp, file)
   try { chmodSync(file, 0o600) } catch {}
 }
-function clickzettaBaseUrl(base: string): string {
-  let b = base.replace(/\/+$/, "")
-  if (!/\/gateway(\/|$)/.test(b)) b += "/gateway"
-  if (!/\/v\d+(\/|$)/.test(b)) b += "/v1"
-  return b
+
+function aimeshEndpoint(base: string): string {
+  const trimmed = base.replace(/\/+$/, "")
+  // If already explicitly set to a gateway URL, preserve it
+  if (/\/gateway(\/|$)/.test(trimmed)) return trimmed
+  const host = trimmed.replace(/^https?:\/\//, "").split("/")[0] ?? ""
+  if (host.startsWith("uat-")) return "https://uat-aimesh.clickzetta.com"
+  if (host.startsWith("dev-") || host.startsWith("localhost") || host.startsWith("0.0.0.0"))
+    return "https://dev-aimesh.clickzetta.com"
+  if (host.endsWith("singdata.com")) return "https://ap-southeast-1-aws-aimesh.api.singdata.com"
+  if (host.endsWith("clickzetta-inc.com") || host.endsWith("kuaishou.com")) return trimmed
+  if (host.endsWith("clickzetta.com") && !host.includes(".api.clickzetta.com")) return trimmed
+  if (host.endsWith("clickzetta.com")) return "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com"
+  return trimmed
 }
 
 function addToLlm(
@@ -188,7 +197,7 @@ function addToLlm(
         .filter(([, v]) => v.provider === "clickzetta" && v.source_profile === boundProfile)
         .map(([, v]) => v.base_url)
         .find((b) => typeof b === "string")) as string | undefined
-  const baseUrl = reused ?? clickzettaBaseUrl(serviceBaseUrl)
+  const baseUrl = reused ?? aimeshEndpoint(serviceBaseUrl)
   const hadLlm = entries.length > 0
   llm[name] = {
     ...existing,
@@ -351,7 +360,7 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
 
                 const aiMessage = registered
                   ? `Virtual key created and registered as [llm.${registered.name}]${registered.default_llm ? " (now default_llm)" : ""}.`
-                  : `Virtual key created. To use it with the agent run: cz-cli agent llm add ${argv.alias} --provider clickzetta --api-key <vApiKey> --base-url ${clickzettaBaseUrl(sc.baseUrl)} --use`
+                  : `Virtual key created. To use it with the agent run: cz-cli agent llm add ${argv.alias} --provider clickzetta --api-key <vApiKey> --base-url ${aimeshEndpoint(sc.baseUrl)} --use`
                 logOperation("gateway key create", { ok: true, timeMs: Date.now() - t0 })
                 success({ id, alias: argv.alias, vApiKey, ...(registered && { llm: registered }) }, { format, timeMs: Date.now() - t0, aiMessage })
               } catch (err) {

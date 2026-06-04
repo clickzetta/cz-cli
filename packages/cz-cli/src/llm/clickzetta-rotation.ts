@@ -66,10 +66,18 @@ function saveToml(data: Dict) {
   } catch {}
 }
 
-function clickzettaBaseUrl(base: string) {
+function aimeshEndpoint(base: string) {
   const trimmed = base.replace(/\/+$/, "")
-  const withGateway = /\/gateway(\/|$)/.test(trimmed) ? trimmed : trimmed + "/gateway"
-  return /\/v\d+(\/|$)/.test(withGateway) ? withGateway : withGateway + "/v1"
+  if (/\/gateway(\/|$)/.test(trimmed)) return trimmed
+  const host = trimmed.replace(/^https?:\/\//, "").split("/")[0] ?? ""
+  if (host.startsWith("uat-")) return "https://uat-aimesh.clickzetta.com"
+  if (host.startsWith("dev-") || host.startsWith("localhost") || host.startsWith("0.0.0.0"))
+    return "https://dev-aimesh.clickzetta.com"
+  if (host.endsWith("singdata.com")) return "https://ap-southeast-1-aws-aimesh.api.singdata.com"
+  if (host.endsWith("clickzetta-inc.com") || host.endsWith("kuaishou.com")) return trimmed
+  if (host.endsWith("clickzetta.com") && !host.includes(".api.clickzetta.com")) return trimmed
+  if (host.endsWith("clickzetta.com")) return "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com"
+  return trimmed
 }
 
 function randomAlias() {
@@ -130,7 +138,7 @@ function writeRotatedKey(input: {
     base_url:
       typeof existing.base_url === "string"
         ? existing.base_url
-        : input.baseUrl ?? clickzettaBaseUrl(input.serviceBaseUrl),
+        : input.baseUrl ?? aimeshEndpoint(input.serviceBaseUrl),
     ...(typeof existing.source_profile === "string" ? { source_profile: existing.source_profile } : {}),
   }
   data.llm = llm

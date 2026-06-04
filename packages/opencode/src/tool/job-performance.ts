@@ -48,6 +48,15 @@ function centralApiUrl(host: string): string {
   if (host.startsWith("dev-") || host.startsWith("localhost") || host.startsWith("0.0.0.0"))
     return "https://dev-api.clickzetta.com"
   if (host.endsWith("singdata.com")) return "https://ap-southeast-1-alicloud.api.singdata.com"
+  // OP single-domain deployments: keep as-is (no central region redirect)
+  if (host.endsWith("clickzetta-inc.com") || host.endsWith("kuaishou.com")) return `https://${host}`
+  // Exclude OP subdomains that don't follow the {region}.api.clickzetta.com pattern
+  if (host.endsWith("clickzetta.com") && !host.includes(".api.clickzetta.com")) {
+    // e.g. fumi-cn-south-1-huaweicloud.clickzetta.com — OP deployment, keep as-is
+    if (!host.startsWith("cn-") && !host.startsWith("ap-") && !host.startsWith("us-") && !host.startsWith("eu-"))
+      return `https://${host}`
+    return "https://cn-shanghai-alicloud.api.clickzetta.com"
+  }
   if (host.endsWith("clickzetta.com")) return "https://cn-shanghai-alicloud.api.clickzetta.com"
   return `https://${host}`
 }
@@ -69,6 +78,8 @@ function normalizeHost(serviceUrl: string): string {
  */
 export function serviceUrlToMcpUrl(serviceUrl: string): string {
   const apiHost = normalizeHost(centralApiUrl(normalizeHost(serviceUrl)))
+  // OP domains without "api" in hostname: use directly with /mcp path
+  if (!apiHost.includes("api")) return `https://${apiHost}/mcp`
   return `https://${apiHost.replace(/([.-])api(?=\.)/, "-mcp$1api")}/mcp`
 }
 
