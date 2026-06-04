@@ -130,11 +130,17 @@ export function registerUpdateCommand(cli: Argv) {
     "update",
     "Update cz-cli to the latest version",
     (yargs) =>
-      yargs.option("force", {
-        type: "boolean",
-        describe: "Force reinstall even if already up to date",
-        default: false,
-      }),
+      yargs
+        .option("force", {
+          type: "boolean",
+          describe: "Force reinstall even if already up to date",
+          default: false,
+        })
+        .option("target", {
+          type: "string",
+          alias: "t",
+          describe: "Install a specific version (allows downgrade), e.g. 0.5.1",
+        }),
     async (argv) => {
       process.stderr.write(`Current version: ${VERSION}\n`)
 
@@ -150,17 +156,22 @@ export function registerUpdateCommand(cli: Argv) {
       // --- Step 1: Fetch latest version (cz-cli.ai → npm fallback) ---
       process.stderr.write("Checking for updates...\n")
       let latest: string | undefined
-      try {
-        latest = await fetchLatestFromCzCliAi(channel)
-        process.stderr.write(`  [cz-cli.ai] Latest version: ${latest}\n`)
-      } catch (err) {
-        process.stderr.write(`  [cz-cli.ai] Failed: ${err instanceof Error ? err.message : String(err)}\n`)
-        process.stderr.write("  Falling back to npm registry...\n")
+      if (argv.target) {
+        latest = argv.target.replace(/^v/, "")
+        process.stderr.write(`  Requested version: ${latest}\n`)
+      } else {
         try {
-          latest = await fetchLatestFromNpm()
-          process.stderr.write(`  [npm] Latest version: ${latest}\n`)
-        } catch (npmErr) {
-          process.stderr.write(`  [npm] Failed: ${npmErr instanceof Error ? npmErr.message : String(npmErr)}\n`)
+          latest = await fetchLatestFromCzCliAi(channel)
+          process.stderr.write(`  [cz-cli.ai] Latest version: ${latest}\n`)
+        } catch (err) {
+          process.stderr.write(`  [cz-cli.ai] Failed: ${err instanceof Error ? err.message : String(err)}\n`)
+          process.stderr.write("  Falling back to npm registry...\n")
+          try {
+            latest = await fetchLatestFromNpm()
+            process.stderr.write(`  [npm] Latest version: ${latest}\n`)
+          } catch (npmErr) {
+            process.stderr.write(`  [npm] Failed: ${npmErr instanceof Error ? npmErr.message : String(npmErr)}\n`)
+          }
         }
       }
 
@@ -171,13 +182,14 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      if (!shouldApplyUpdate(VERSION, latest, argv.force)) {
+      if (!shouldApplyUpdate(VERSION, latest, argv.force || !!argv.target)) {
         if (latest === VERSION) {
           process.stderr.write(`Already up to date (${VERSION}).\n`)
           return
         }
         process.stderr.write(`Refusing to downgrade: ${VERSION} → ${latest}\n`)
         process.stderr.write("The release channel appears to be pointing to an older version.\n")
+        process.stderr.write("Use --target <ver> to explicitly downgrade.\n")
         process.exitCode = 1
         return
       }
