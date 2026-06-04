@@ -225,6 +225,13 @@ for (let i = 0; i < targets.length; i++) {
     },
   })
 
+  // Ad-hoc codesign for macOS binaries to prevent Gatekeeper killing the process
+  if (item.os === "darwin" && process.platform === "darwin") {
+    const binaryPath = `dist/${name}/bin/cz-cli`
+    console.log(`Codesigning: ${binaryPath}`)
+    await $`codesign --force --sign - ${binaryPath}`
+  }
+
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
     const binaryPath = `dist/${name}/bin/cz-cli`
