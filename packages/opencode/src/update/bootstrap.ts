@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import { realpathSync } from "node:fs"
 import os from "os"
 import path from "path"
 import semver from "semver"
@@ -16,7 +17,7 @@ type BootstrapConfig = {
 
 type InstallMetadata = {
   version: 1
-  method: InstallMethod
+  method?: InstallMethod
   installed_path?: string
   package_manager?: string
   channel?: string
@@ -143,9 +144,14 @@ function resolveIntervalMs(value: string | undefined) {
 }
 
 export function installMethodFromExecPath(execPath: string, home?: string, env: NodeJS.ProcessEnv = process.env): InstallMethod {
+  let scriptPath = execPath
+  try { scriptPath = realpathSync(execPath) } catch {}
+  const pkg = `node_modules${path.sep}@clickzetta${path.sep}cz-cli`
+  if (scriptPath.includes(pkg)) {
+    return scriptPath.includes(`${path.sep}.bun${path.sep}`) ? "bun" : "npm"
+  }
   const root = homeDirectory(home, env)
-  if (execPath === path.join(root, ".local", "bin", "cz-cli")) return "curl"
-  if (execPath.includes(`${path.sep}node_modules${path.sep}`) && execPath.includes("@clickzetta")) return "npm"
+  if (scriptPath.startsWith(path.join(root, ".cz-cli")) || scriptPath.startsWith(path.join(root, ".local", "bin"))) return "curl"
   return "unknown"
 }
 
@@ -324,23 +330,25 @@ export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
 export async function readInstallMetadata(input: { home?: string; env?: NodeJS.ProcessEnv } = {}) {
   const file = updatePaths(input.home, input.env ?? process.env).install
   const payload = (await readObject(file)) as Partial<InstallMetadata>
-  if (!payload.method) return undefined
+  if (Object.keys(payload).length === 0) return undefined
   return payload as InstallMetadata
 }
 
 export async function writeInstallMetadata(
-  value: Partial<InstallMetadata> & Pick<InstallMetadata, "method">,
+  value: Partial<InstallMetadata> = {},
   input: { home?: string; env?: NodeJS.ProcessEnv } = {},
 ) {
   const file = updatePaths(input.home, input.env ?? process.env).install
+  const metadata = { ...value }
+  delete metadata.method
   await writeJson(file, {
     version: 1,
     channel: InstallationChannel,
     binary_version: InstallationVersion,
     installed_path: process.execPath,
     updated_at: new Date().toISOString(),
-    ...value,
-  } satisfies InstallMetadata)
+    ...metadata,
+  } satisfies Omit<InstallMetadata, "method">)
 }
 
 export async function maybeAutoUpdate(input: {
@@ -362,7 +370,7 @@ export async function maybeAutoUpdate(input: {
   const paths = updatePaths(undefined, env)
   const state = ((await readObject(paths.state)) as UpdateState) ?? {}
   if (state.last_checked_at !== undefined && now - state.last_checked_at < intervalMs) return
-  const method = (await readInstallMetadata({ env }))?.method ?? installMethodFromExecPath(process.execPath, undefined, env)
+  const method = installMethodFromExecPath(process.execPath, undefined, env)
 
   const latestVersion = await latestVersionForMethod(method, input.fetchImpl ?? fetch).catch(async (error) => {
     await writeJson(paths.state, {
@@ -407,7 +415,7 @@ export async function maybeAutoUpdate(input: {
 
   try {
     await performUpgrade(method, latestVersion, input.fetchImpl ?? fetch)
-    await writeInstallMetadata({ method, binary_version: latestVersion }, { env })
+    await writeInstallMetadata({ binary_version: latestVersion }, { env })
     await writeJson(paths.state, {
       last_checked_at: now,
       last_result: "upgrade-succeeded",

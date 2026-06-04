@@ -27,9 +27,9 @@ describe("installation", () => {
     }
   })
 
-  test("reads release version from GitHub releases for curl installs", async () => {
+  test("reads stable version for curl installs", async () => {
     globalThis.fetch = mock(async () =>
-      new Response(JSON.stringify({ tag_name: "v1.2.3" }), {
+      new Response(JSON.stringify({ version: "1.2.3" }), {
         headers: { "content-type": "application/json" },
       }),
     ) as unknown as typeof fetch
@@ -53,7 +53,7 @@ describe("installation", () => {
     expect(result).toBe("1.5.0")
   })
 
-  test("reads install method from ~/.clickzetta/install.json", async () => {
+  test("ignores install method from ~/.clickzetta/install.json", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-install-home-"))
     tempHome = home
     process.env.CLICKZETTA_TEST_HOME = home
@@ -70,6 +70,6 @@ describe("installation", () => {
     const result = await Effect.runPromise(
       Installation.Service.use((svc) => svc.method()).pipe(Effect.provide(Installation.layer)),
     )
-    expect(result).toBe("pnpm")
+    expect(result).toBe("unknown")
   })
 })

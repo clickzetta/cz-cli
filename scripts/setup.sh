@@ -35,7 +35,6 @@ chmod +x "${INSTALL_DIR}/cz-agent"
 cat > "$METADATA_FILE" <<EOF
 {
   "version": 1,
-  "method": "curl",
   "installed_path": "$TARGET_BINARY",
   "channel": "$CHANNEL",
   "binary_version": "$VERSION",

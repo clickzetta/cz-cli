@@ -27,7 +27,7 @@ Examples:
 EOF
 }
 
-requested_version=${VERSION:-}
+requested_version=${CZ_VERSION:-${VERSION:-}}
 no_modify_path=false
 binary_path=""
 
@@ -251,8 +251,12 @@ check_version() {
             print_message info "${MUTED}Version ${NC}$specific_version${MUTED} already installed${NC}"
             exit 0
         elif [[ -n "$installed_version" ]] && version_gt "$installed_version" "$specific_version"; then
-            print_message warning "${MUTED}A newer version is already installed: ${NC}$installed_version${MUTED} > ${NC}$specific_version"
-            exit 0
+            if [[ -n "$requested_version" ]]; then
+                print_message info "${MUTED}Downgrading from ${NC}$installed_version${MUTED} to ${NC}$specific_version"
+            else
+                print_message warning "${MUTED}A newer version is already installed: ${NC}$installed_version${MUTED} > ${NC}$specific_version"
+                exit 0
+            fi
         elif [[ -n "$installed_version" ]]; then
             print_message info "${MUTED}Installed version: ${NC}$installed_version"
         fi

@@ -68,6 +68,17 @@ function isCzCliInstallBinary(p: string): boolean {
 }
 
 function removeStaleBinary(p: string): boolean {
+  if (isPackageManagerBinary(p)) {
+    const cmd = p.includes(".bun") ? "bun remove -g @clickzetta/cz-cli" : "npm uninstall -g @clickzetta/cz-cli"
+    try {
+      execSync(cmd, { stdio: "pipe" })
+      process.stderr.write(`  ✓ Uninstalled via: ${cmd}\n`)
+      return true
+    } catch {
+      process.stderr.write(`  ✗ Failed (try manually: ${cmd})\n`)
+      return false
+    }
+  }
   try {
     unlinkSync(p)
     process.stderr.write(`  ✓ Removed: ${p}\n`)
@@ -133,9 +144,8 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      const metadata = await readInstallMetadata()
-      const method = metadata?.method ?? installMethodFromExecPath(process.execPath)
-      const channel = metadata?.channel ?? "stable"
+      const method = installMethodFromExecPath(process.execPath)
+      const channel = (await readInstallMetadata())?.channel ?? "stable"
 
       // --- Step 1: Fetch latest version (cz-cli.ai → npm fallback) ---
       process.stderr.write("Checking for updates...\n")
@@ -209,7 +219,7 @@ export function registerUpdateCommand(cli: Argv) {
         const label = ["npm", "pnpm", "yarn", "bun"].includes(method) ? method : "install script"
         process.stderr.write(`Upgrading via ${label}...\n`)
         await performUpgrade(method, latest, fetch, channel)
-        await writeInstallMetadata({ method, binary_version: latest })
+        await writeInstallMetadata({ binary_version: latest })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {
         process.stderr.write(`Update failed: ${err instanceof Error ? err.message : String(err)}\n`)

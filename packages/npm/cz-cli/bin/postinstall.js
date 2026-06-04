@@ -11,15 +11,6 @@ const home = os.homedir();
 const installFile = path.join(home, ".clickzetta", "install.json");
 const version = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8")).version;
 
-function detectPackageManager() {
-  const userAgent = process.env.npm_config_user_agent || "";
-  if (userAgent.startsWith("pnpm/")) return "pnpm";
-  if (userAgent.startsWith("yarn/")) return "yarn";
-  if (userAgent.startsWith("bun/")) return "bun";
-  if (userAgent.startsWith("npm/")) return "npm";
-  return "npm";
-}
-
 function cleanupOutdatedBinaries() {
   // Only remove standalone binaries in ~/.local/bin that are not symlinks
   // (npm/bun create symlinks in their bin dirs, standalone installs are real files)
@@ -156,7 +147,6 @@ async function main() {
       JSON.stringify(
         {
           version: 1,
-          method: detectPackageManager(),
           installed_path: installed.binPath,
           channel: "latest",
           binary_version: binaryVersion,

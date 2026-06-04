@@ -3,11 +3,14 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import {
+  installMethodFromExecPath,
   loadBootstrapConfig,
   maybeAutoUpdate,
+  readInstallMetadata,
   resolveUpdateAction,
   restartArgs,
   shouldSkipAutoUpdateCommand,
+  writeInstallMetadata,
 } from "../../src/update/bootstrap"
 
 describe("update bootstrap", () => {
@@ -56,6 +59,28 @@ describe("update bootstrap", () => {
     expect(config.autoupdate).toBe(false)
   })
 
+  test("reads install metadata without requiring a legacy method field", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+    await fs.mkdir(path.join(home, ".clickzetta"), { recursive: true })
+    await fs.writeFile(path.join(home, ".clickzetta", "install.json"), JSON.stringify({ channel: "nightly" }))
+
+    expect(await readInstallMetadata({ home })).toMatchObject({ channel: "nightly" })
+  })
+
+  test("detects install method from the supplied exec path", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+
+    expect(installMethodFromExecPath(path.join(home, ".cz-cli", "bin", "cz-cli"), home)).toBe("curl")
+  })
+
+  test("does not write legacy install method metadata", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+
+    await writeInstallMetadata({ method: "npm", channel: "nightly" }, { home })
+
+    expect(JSON.parse(await fs.readFile(path.join(home, ".clickzetta", "install.json"), "utf-8")).method).toBeUndefined()
+  })
+
   test("skips autoupdate for setup, update, help, version, and one-shot restart env", () => {
     expect(shouldSkipAutoUpdateCommand({ args: ["setup"] })).toBe(true)
     expect(shouldSkipAutoUpdateCommand({ args: ["update"] })).toBe(true)
@@ -78,7 +103,7 @@ describe("update bootstrap", () => {
   test("returns notify when an update is available but the install method is unsupported", () => {
     const result = resolveUpdateAction({
       autoupdate: true,
-      channel: "latest",
+      channel: "nightly",
       currentVersion: "0.3.31",
       latestVersion: "0.3.32",
       lastCheckedAt: 0,
@@ -93,7 +118,7 @@ describe("update bootstrap", () => {
   test("returns upgrade when autoupdate is unset and the install method is managed", () => {
     const result = resolveUpdateAction({
       autoupdate: undefined,
-      channel: "latest",
+      channel: "nightly",
       currentVersion: "0.3.31",
       latestVersion: "0.3.32",
       lastCheckedAt: 0,
@@ -198,11 +223,11 @@ describe("update bootstrap", () => {
       expect(restartArgs(execPath, argv)).toEqual([])
     })
 
-    test("dev mode: keeps script path in args", () => {
+    test("dev mode: returns user args", () => {
       // In dev mode: execPath === argv[0] (both point to bun runtime)
       const execPath = "/opt/homebrew/bin/bun"
       const argv = ["/opt/homebrew/bin/bun", "/workspace/src/index.ts", "agent"]
-      expect(restartArgs(execPath, argv)).toEqual(["/workspace/src/index.ts", "agent"])
+      expect(restartArgs(execPath, argv)).toEqual(["agent"])
     })
 
     test("binary mode on Windows: works the same way", () => {

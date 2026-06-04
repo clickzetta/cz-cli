@@ -7,7 +7,6 @@ import {
   installMethodFromExecPath,
   latestVersionForMethod,
   performUpgrade,
-  readInstallMetadata,
   type InstallMethod,
 } from "@/update/bootstrap"
 
@@ -60,8 +59,7 @@ export const layer: Layer.Layer<Service> =
     Service,
     Effect.gen(function* () {
       const methodImpl = Effect.fn("Installation.method")(function* () {
-        const saved = yield* Effect.promise(() => readInstallMetadata())
-        return saved?.method ?? installMethodFromExecPath(process.execPath)
+        return installMethodFromExecPath(process.execPath)
       })
 
       const latestImpl = Effect.fn("Installation.latest")(function* (installMethod?: Method, channel?: string) {
