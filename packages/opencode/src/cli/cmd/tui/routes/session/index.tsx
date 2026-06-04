@@ -1560,13 +1560,51 @@ function GenericTool(props: ToolProps<any>) {
     return [...lines().slice(0, maxLines), "…"].join("\n")
   })
 
+  const hasDetails = createMemo(() => {
+    const s = props.part.state
+    if (s.status === "completed") return !!s.output?.trim()
+    if (s.status === "error") return !!s.error?.trim()
+    return false
+  })
+
+  const detailText = createMemo(() => {
+    const s = props.part.state
+    if (s.status === "completed") return s.output?.trim() ?? ""
+    if (s.status === "error") return s.error?.trim() ?? ""
+    return ""
+  })
+
   return (
     <Show
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
-        <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
-          {props.tool} {input(props.input)}
-        </InlineTool>
+        <Show
+          when={expanded() && hasDetails()}
+          fallback={
+            <InlineTool
+              icon="⚙"
+              pending="Writing command..."
+              complete={true}
+              part={props.part}
+              onClick={hasDetails() ? () => setExpanded(true) : undefined}
+            >
+              {props.tool} {input(props.input)}
+            </InlineTool>
+          }
+        >
+          <BlockTool
+            title={`# ${props.tool} ${input(props.input)}`}
+            part={props.part}
+            onClick={() => setExpanded(false)}
+          >
+            <scrollbox maxHeight={15}>
+              <text fg={props.part.state.status === "error" ? theme.error : theme.text}>
+                {detailText()}
+              </text>
+            </scrollbox>
+            <text fg={theme.textMuted}>Click to collapse</text>
+          </BlockTool>
+        </Show>
       }
     >
       <BlockTool
