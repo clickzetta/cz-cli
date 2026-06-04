@@ -106,7 +106,7 @@ cz-cli ai-gateway model list [key]              List models available to a virtu
 ## Key Rules
 
 1. **SQL is async by default**. Use `--sync` for SELECT when you need data immediately.
-2. **Write operations require `--write` flag** (INSERT/UPDATE/DELETE/CREATE/DROP).
+2. **Write operations ALWAYS require `--write` flag** — this includes ALL DDL (CREATE, ALTER, DROP, CREATE DYNAMIC TABLE, CREATE MATERIALIZED VIEW) and ALL DML (INSERT, UPDATE, DELETE, MERGE INTO, COPY INTO). Without `--write`, the command will be rejected. Always add it proactively.
 3. **Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW).
 4. **Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.
 5. **Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.
