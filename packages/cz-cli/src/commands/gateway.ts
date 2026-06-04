@@ -297,7 +297,8 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 }
                 const total = resp.count ?? rows.length
                 logOperation("gateway key list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
-                success(rows, {
+                const output = rows.map(({ id: _, ...rest }) => rest)
+                success(output, {
                   format,
                   timeMs: Date.now() - t0,
                   aiMessage: `Page ${argv.page}, showing ${rows.length} of ${total} virtual keys.`,
@@ -452,12 +453,12 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           // ── set-quota ──────────────────────────────────────────────────
           .command(
             "set-quota",
-            "Update a single quota on an AIGW virtual key",
+            "Set the token usage quota for an AIGW virtual key. Quota limits how many tokens the key can consume within the specified period. Once exceeded, requests are rejected until the period resets.",
             (y) =>
               y
-                .option("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
-                .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, demandOption: true, describe: "Quota period" })
-                .option("quota", { type: "number", demandOption: true, describe: "New quota value" }),
+                .option("ref", { type: "string", demandOption: true, describe: "Virtual key alias or key value" })
+                .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, demandOption: true, describe: "Quota reset period (daily/weekly/monthly resets automatically; total is lifetime)" })
+                .option("quota", { type: "number", demandOption: true, describe: "Max tokens allowed in this period (e.g. 10000000 = 10M tokens)" }),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
@@ -530,11 +531,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
       // ── model list ───────────────────────────────────────────────────────
       .command("model", "Browse AIGW models", (m) => {
         m.command(
-          "list [key]",
+          "list [ref]",
           "List AIGW models available to a virtual key",
           (y) =>
             y
-              .positional("key", { type: "string", describe: "Virtual key value (defaults to api_key from default_llm profile)" })
+              .positional("ref", { type: "string", describe: "Virtual key value or alias (alias auto-resolves to key value)" })
               .option("page", { type: "number", default: 1, describe: "Page number" })
               .option("page-size", { type: "number", default: 200, describe: "Items per page" }),
           async (argv) => {
@@ -543,10 +544,18 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             try {
               setGatewayDebug(!!argv.debug)
               const sc = await getGatewayContext(argv)
-              const key = argv.key ?? resolveDefaultKey()
+              let key = argv.ref ?? resolveDefaultKey()
               if (!key) {
-                error("USAGE_ERROR", "No virtual key provided and no clickzetta LLM configured in profiles.toml. Usage: cz-cli ai-gateway model list <key>", { format, exitCode: 2 })
+                error("USAGE_ERROR", "No virtual key provided and no clickzetta LLM configured in profiles.toml. Usage: cz-cli ai-gateway model list <key-or-alias>", { format, exitCode: 2 })
                 return
+              }
+              // If key looks like an alias (short, no dashes pattern of real keys), resolve to plaintext value
+              if (!key.startsWith("ck-") && !key.includes("*") && key.length < 40) {
+                try {
+                  const id = await resolveKeyId(sc, key)
+                  const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
+                  key = String(keyResp.data)
+                } catch {}
               }
               if (key.includes("*")) {
                 error("USAGE_ERROR", "Masked key value detected (contains ****). Use the full plaintext key, or run `cz-cli ai-gateway key get <alias>` to reveal it.", { format, exitCode: 2 })
@@ -557,11 +566,17 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 pageIndex: argv.page,
                 pageSize: argv["page-size"],
               })
-              const aiMessage = Array.isArray(resp.data) && resp.data.length === 0
-                ? "No AIGW models returned. This usually means the current virtual key/account lacks AIGW administrator permission; ask an AIGW admin to grant access or verify model authorization."
+              const raw = Array.isArray(resp.data) ? resp.data as Dict[] : []
+              const models = raw.map((m) => ({
+                modelIdentifier: m.modelIdentifier,
+                modelName: m.modelName,
+                modelDesc: m.modelDesc,
+              }))
+              const aiMessage = models.length === 0
+                ? "No AIGW models returned. This usually means the virtual key VALUE is wrong (did you pass the alias by mistake?). Get the actual key value via: cz-cli ai-gateway key get <alias>"
                 : undefined
               logOperation("gateway model list", { ok: true, timeMs: Date.now() - t0 })
-              success(resp.data, { format, timeMs: Date.now() - t0, aiMessage })
+              success(models, { format, timeMs: Date.now() - t0, aiMessage })
             } catch (err) {
               logOperation("gateway model list", { ok: false, timeMs: Date.now() - t0 })
               reportError(err, format)

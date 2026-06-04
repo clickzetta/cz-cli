@@ -47,6 +47,6 @@ describe("ai-gateway model list", () => {
 
     expect(result.exitCode).toBe(0)
     expect(json.data).toEqual([])
-    expect(json.ai_message).toBe("No AIGW models returned. This usually means the current virtual key/account lacks AIGW administrator permission; ask an AIGW admin to grant access or verify model authorization.")
+    expect(json.ai_message).toBe("No AIGW models returned. This usually means the virtual key VALUE is wrong (did you pass the alias by mistake?). Get the actual key value via: cz-cli ai-gateway key get <alias>")
   })
 })

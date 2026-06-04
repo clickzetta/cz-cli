@@ -83,17 +83,42 @@ cz-cli datasource test <name_or_id>          Test data source connectivity
 cz-cli datasource sample <name_or_id> <catalog> <object>
                                               Get sample data from an object
 
-cz-cli ai-gateway key list                       List AI Gateway virtual keys (--reveal to show plaintext keys)
-cz-cli ai-gateway key create <alias>             Create a virtual key (--period daily|weekly|monthly|total --quota N)
-                                              Use --add-to-llm [name] to register as [llm.<name>]; --use to set as default_llm
-cz-cli ai-gateway key upsert <alias>             Create or update a virtual key (idempotent)
-cz-cli ai-gateway key get <ref>                  Get plaintext key value (by alias or key); --add-to-llm to register
+cz-cli ai-gateway key list                       List AI Gateway virtual keys
+                                              --alias <name>: filter by alias (fuzzy match)
+                                              --key <value>: filter by exact key value
+                                              --status 1|0: filter enabled/disabled
+                                              --mine: only keys created by current user
+                                              --reveal: show plaintext key values
+                                              Output: alias, vApiKey (masked), status, routing, quotas
+cz-cli ai-gateway key create <alias>             Create a virtual key
+                                              --period daily|weekly|monthly|total: quota reset period
+                                              --quota N: quota limit for the period (default: 10000000)
+                                              --route-type default|provider|byok: routing rule type
+                                              --providers <id ...>: ordered provider IDs (route-type=provider)
+                                              --provider-sort price|throughput|latency: sort (route-type=default)
+                                              --private-keys <alias ...>: BYOK key aliases (route-type=byok)
+                                              --add-to-llm [name]: register as [llm.<name>] in profiles.toml
+                                              --use: set the registered entry as default_llm
+cz-cli ai-gateway key upsert <alias>             Create or update a virtual key (idempotent, same options as create)
+cz-cli ai-gateway key get <ref>                  Get the PLAINTEXT key value by alias or masked key
+                                              <ref> can be: alias name OR the masked key string (with ****)
+                                              --add-to-llm [name]: register as [llm.<name>] in profiles.toml
+                                              --use: set as default_llm
 cz-cli ai-gateway key set-quota --ref R --period P --quota N
-                                              Update quota on a key (ref = alias or key)
-cz-cli ai-gateway key enable <ref>              Enable a virtual key (by alias or key)
-cz-cli ai-gateway key disable <ref>             Disable a virtual key (by alias or key)
-cz-cli ai-gateway key delete <ref>              Delete a virtual key (by alias or key); --remove-from-llm
-cz-cli ai-gateway model list [key]              List models available to a virtual key
+                                              Update quota on a key
+                                              --ref: alias name or key value
+                                              --period: daily|weekly|monthly|total
+                                              --quota: new limit value
+cz-cli ai-gateway key enable <ref>              Enable a disabled virtual key
+                                              <ref>: alias name or key value
+cz-cli ai-gateway key disable <ref>             Disable an active virtual key
+                                              <ref>: alias name or key value
+cz-cli ai-gateway key delete <ref>              Delete a virtual key permanently
+                                              <ref>: alias name or key value
+                                              --remove-from-llm: also remove matching [llm.*] entry
+cz-cli ai-gateway model list [ref]              List models available to a virtual key
+                                              [ref]: key VALUE or alias (alias auto-resolves)
+                                              Output: modelIdentifier, modelName, modelDesc
 ```
 
 ## Output Formats
@@ -115,6 +140,8 @@ cz-cli ai-gateway model list [key]              List models available to a virtu
 8. **On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
 9. **补数/回填/重跑历史数据 → `runs refill`**: when user says "补数", "回填", "重跑历史", "backfill", "re-run historical data", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.
 10. **Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql "..."` (the shell corrupts inline SQL).
+11. **Lakehouse SQL dialect ONLY**: cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). When unsure about syntax, consult the **lakehouse-doc** skill BEFORE running SQL — guessing Snowflake/Databricks syntax will fail.
+12. **Break out of loops immediately**: If the same command fails 2+ times, or you notice you are repeating similar actions without progress, STOP. Do NOT retry with minor variations. Instead: explain what went wrong, state what you tried, and ask the user for guidance or try a fundamentally different approach.
 
 ## Companion Skills
 
