@@ -530,7 +530,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
-            .option("cron", { type: "string", demandOption: true, describe: "Cron expression (5/6/7 fields)" })
+            .option("cron", { type: "string", demandOption: true, describe: "Cron expression — ClickZetta uses 7-field format: second minute hour day month weekday year (e.g. '0 30 9 * * ? *' = daily 09:30)" })
             .option("vc", { type: "string", describe: "Virtual cluster code" })
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
             .option("schema", { type: "string", describe: "Schema name" }),
