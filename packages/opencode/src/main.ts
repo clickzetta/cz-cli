@@ -5,6 +5,7 @@ import path from "path"
 import { Log } from "./util"
 import { errorMessage } from "./util/error"
 import { flushOtel } from "./plugin/otel"
+import { flush as flushLangfuse } from "./plugin/langfuse"
 
 let globalHandlersRegistered = false
 
@@ -424,6 +425,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     }
   } finally {
     await flushOtel()
+    await flushLangfuse()
     process.exit()
   }
 }

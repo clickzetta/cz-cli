@@ -17,6 +17,16 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
+  it.live("registers fetch_job_performance_data as a builtin tool", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const registry = yield* ToolRegistry.Service
+        const ids = yield* registry.ids()
+        expect(ids).toContain("fetch_job_performance_data")
+      }),
+    ),
+  )
+
   it.live("loads tools from .clickzetta/tool (singular)", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {

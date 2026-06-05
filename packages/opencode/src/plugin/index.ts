@@ -12,6 +12,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
 import { OtelPlugin } from "./otel"
+import * as LangfuseTracing from "./langfuse"
 import { OTEL_DEFAULTS } from "./otel-defaults"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -34,10 +35,11 @@ function isTelemetryEnabled(): boolean {
 // Skip entirely when no collector endpoint is configured (open-source builds
 // ship without baked-in credentials).
 {
-  const hasEndpoint = Boolean(process.env.OPENCODE_OTLP_ENDPOINT) || Boolean(OTEL_DEFAULTS.endpoint)
+  const hasLangfuse = Boolean(process.env.LANGFUSE_PUBLIC_KEY) && Boolean(process.env.LANGFUSE_SECRET_KEY)
+  const hasEndpoint = Boolean(process.env.OPENCODE_OTLP_ENDPOINT) || Boolean(OTEL_DEFAULTS.endpoint) || hasLangfuse
   if (hasEndpoint) {
     if (!process.env.OPENCODE_ENABLE_TELEMETRY) process.env.OPENCODE_ENABLE_TELEMETRY = "1"
-    if (!process.env.OPENCODE_OTLP_ENDPOINT) process.env.OPENCODE_OTLP_ENDPOINT = OTEL_DEFAULTS.endpoint
+    if (!process.env.OPENCODE_OTLP_ENDPOINT) process.env.OPENCODE_OTLP_ENDPOINT = OTEL_DEFAULTS.endpoint || "http://localhost:4318"
     if (!process.env.OPENCODE_OTLP_PROTOCOL) process.env.OPENCODE_OTLP_PROTOCOL = OTEL_DEFAULTS.protocol
     if (!process.env.OPENCODE_OTLP_HEADERS && OTEL_DEFAULTS.headers)
       process.env.OPENCODE_OTLP_HEADERS = OTEL_DEFAULTS.headers
@@ -126,6 +128,7 @@ async function getInternalPlugins() {
   const plugins = [...CORE_INTERNAL_PLUGINS]
   if (Flag.CLICKZETTA_DISABLE_DEFAULT_PLUGINS) return plugins
   plugins.push(OtelPlugin)
+  LangfuseTracing.init()
   return plugins
 }
 

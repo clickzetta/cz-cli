@@ -21,6 +21,9 @@ import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
 import { Log } from "@/util"
 import { isRecord } from "@/util/record"
+import { Database } from "@/storage"
+import { PartTable } from "./session.sql"
+import { eq, desc } from "drizzle-orm"
 import {
   CLICKZETTA_ROTATION_CANCEL_LABEL,
   CLICKZETTA_ROTATION_CONFIRM_LABEL,
@@ -79,6 +82,7 @@ interface ProcessorContext extends Input {
   shouldBreak: boolean
   snapshot: string | undefined
   blocked: boolean
+  doomLoopDetected: boolean
   needsCompaction: boolean
   currentText: MessageV2.TextPart | undefined
   lastStepText: string | undefined
@@ -210,6 +214,7 @@ export const layer: Layer.Layer<
         shouldBreak: false,
         snapshot: initialSnapshot,
         blocked: false,
+        doomLoopDetected: false,
         needsCompaction: false,
         currentText: undefined,
         lastStepText: undefined,
@@ -438,31 +443,49 @@ export const layer: Layer.Layer<
             }).pipe(Effect.ignore)
             ctx.stepToolCalls.push({ id: value.toolCallId, name: value.toolName, arguments: value.input })
 
-            const parts = MessageV2.parts(ctx.assistantMessage.id)
-            const recentToolParts = parts
-              .filter((part): part is MessageV2.ToolPart => part.type === "tool" && part.state.status !== "pending")
-              .slice(-DOOM_LOOP_THRESHOLD)
+            // Doom loop detection: query recent tool parts across ALL messages in this session
+            const recentRows = Database.use((db) =>
+              db
+                .select()
+                .from(PartTable)
+                .where(eq(PartTable.session_id, ctx.sessionID))
+                .orderBy(desc(PartTable.id))
+                .limit(DOOM_LOOP_THRESHOLD * 4)
+                .all(),
+            )
+            const recentToolParts = recentRows
+              .map((row) => row.data as { type?: string; tool?: string; state?: { input?: unknown; status?: string } })
+              .filter((p) => p.type === "tool" && p.state?.status !== "pending")
+              .slice(0, DOOM_LOOP_THRESHOLD)
 
-            if (
-              recentToolParts.length !== DOOM_LOOP_THRESHOLD ||
-              !recentToolParts.every(
+            // Check 1: identical tool calls (original check, now cross-message)
+            const identicalLoop =
+              recentToolParts.length === DOOM_LOOP_THRESHOLD &&
+              recentToolParts.every(
                 (part) =>
                   part.tool === value.toolName &&
-                  JSON.stringify(part.state.input) === JSON.stringify(value.input),
+                  JSON.stringify(part.state?.input) === JSON.stringify(value.input),
               )
-            ) {
+
+            // Check 2: alternating/repeating pattern — same small set of tools called repeatedly
+            // e.g. git status → git log → git status → git log (current = git status again)
+            const ALTERNATING_WINDOW = DOOM_LOOP_THRESHOLD * 2
+            const altParts = recentRows
+              .map((row) => row.data as { type?: string; tool?: string; state?: { input?: unknown; status?: string } })
+              .filter((p) => p.type === "tool" && p.state?.status !== "pending")
+              .slice(0, ALTERNATING_WINDOW)
+            const alternatingLoop =
+              altParts.length >= ALTERNATING_WINDOW &&
+              new Set(altParts.map((p) => `${p.tool}::${JSON.stringify(p.state?.input)}`)).size <= 2
+
+            if (!identicalLoop && !alternatingLoop) {
               return
             }
 
-            const agent = yield* agents.get(ctx.assistantMessage.agent)
-            yield* permission.ask({
-              permission: "doom_loop",
-              patterns: [value.toolName],
-              sessionID: ctx.assistantMessage.sessionID,
-              metadata: { tool: value.toolName, input: value.input },
-              always: [value.toolName],
-              ruleset: agent.permission,
-            })
+            log.info("doom loop detected", { tool: value.toolName, sessionID: ctx.sessionID, identical: identicalLoop, alternating: alternatingLoop })
+
+            ctx.doomLoopDetected = true
+            ctx.blocked = true
             return
           }
 
@@ -716,7 +739,7 @@ export const layer: Layer.Layer<
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsCompaction),
+              Stream.takeUntil(() => ctx.needsCompaction || ctx.doomLoopDetected),
               Stream.runDrain,
             )
           }).pipe(

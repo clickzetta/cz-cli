@@ -390,7 +390,7 @@ const live: Layer.Layer<
             ],
           }),
           experimental_telemetry: {
-            isEnabled: cfg.experimental?.openTelemetry,
+            isEnabled: cfg.experimental?.openTelemetry || Boolean(process.env.LANGFUSE_PUBLIC_KEY),
             functionId: "session.llm",
             tracer,
             metadata: {

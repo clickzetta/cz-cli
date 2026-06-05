@@ -51,6 +51,7 @@ import { InstanceState } from "@/effect"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { EffectBridge } from "@/effect"
+import * as LangfuseTracing from "@/plugin/langfuse"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1505,6 +1506,31 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
+
+            if (LangfuseTracing.isEnabled()) {
+              const msg = handle.message
+              const msgParts = MessageV2.parts(msg.id)
+              const textOutput = msgParts.filter((p): p is MessageV2.TextPart => p.type === "text").map((p) => p.text).join("\n")
+              const toolCalls = msgParts.filter((p): p is MessageV2.ToolPart => p.type === "tool").map((p) => ({
+                tool: p.tool,
+                input: p.state.status !== "pending" ? (p.state as { input?: unknown }).input : undefined,
+                output: p.state.status === "completed" ? (p.state as { output?: string }).output : undefined,
+              }))
+              LangfuseTracing.traceGeneration({
+                sessionID,
+                model: model.id,
+                provider: model.providerID,
+                system,
+                messages: modelMsgs,
+                tools,
+                output: {
+                  text: textOutput || undefined,
+                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                  finishReason: msg.finish ?? undefined,
+                },
+                tokens: msg.tokens,
+              })
+            }
 
             if (structured !== undefined) {
               handle.message.structured = structured

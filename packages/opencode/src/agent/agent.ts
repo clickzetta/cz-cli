@@ -349,7 +349,7 @@ export const layer = Layer.effect(
 
         const params = {
           experimental_telemetry: {
-            isEnabled: cfg.experimental?.openTelemetry,
+            isEnabled: cfg.experimental?.openTelemetry || Boolean(process.env.LANGFUSE_PUBLIC_KEY),
             tracer,
             metadata: {
               userId: cfg.username ?? "unknown",

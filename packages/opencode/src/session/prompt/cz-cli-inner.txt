@@ -1,12 +1,10 @@
-# Clickzetta Operations via cz-cli
+When the user asks operational questions about Clickzetta (e.g. listing workspaces, running SQL, checking task status), you MUST proactively use `cz-cli` via bash to take action, rather than asking the user for additional information.
 
 You have `cz-cli` available in PATH for direct access to Clickzetta Studio and Lakehouse:
 - Query workspaces, databases, schemas, tables and other metadata
 - Run SQL queries
 - Create, manage, and schedule tasks
 - Check task run status and logs
-
-When the user asks operational questions about Clickzetta (e.g. listing workspaces, running SQL, checking task status), you MUST proactively use `cz-cli` via bash to take action, rather than asking the user for additional information.
 
 Run `cz-cli <command> --help` for detailed options on any command.
 
@@ -130,18 +128,17 @@ cz-cli ai-gateway model list [ref]              List models available to a virtu
 
 ## Key Rules
 
-1. **SQL is async by default**. Use `--sync` for SELECT when you need data immediately.
-2. **Write operations ALWAYS require `--write` flag** — this includes ALL DDL (CREATE, ALTER, DROP, CREATE DYNAMIC TABLE, CREATE MATERIALIZED VIEW) and ALL DML (INSERT, UPDATE, DELETE, MERGE INTO, COPY INTO). Without `--write`, the command will be rejected. Always add it proactively.
-3. **Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW).
-4. **Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.
-5. **Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.
-6. **State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.
-7. **Multi-environment**: use `--profile <name>` to target a specific environment.
-8. **On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
-9. **补数/回填/重跑历史数据 → `runs refill`**: when user says "补数", "回填", "重跑历史", "backfill", "re-run historical data", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.
-10. **Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql "..."` (the shell corrupts inline SQL).
-11. **Lakehouse SQL dialect ONLY**: cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). When unsure about syntax, consult the **lakehouse-doc** skill BEFORE running SQL — guessing Snowflake/Databricks syntax will fail.
-12. **Break out of loops immediately**: If the same command fails 2+ times, or you notice you are repeating similar actions without progress, STOP. Do NOT retry with minor variations. Instead: explain what went wrong, state what you tried, and ask the user for guidance or try a fundamentally different approach.
+**SQL is async by default**. Use `--sync` for SELECT when you need data immediately.
+**Write operations ALWAYS require `--write` flag** — this includes ALL DDL (CREATE, ALTER, DROP, CREATE DYNAMIC TABLE, CREATE MATERIALIZED VIEW) and ALL DML (INSERT, UPDATE, DELETE, MERGE INTO, COPY INTO). Without `--write`, the command will be rejected. Always add it proactively.
+**Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW).
+**Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.
+**Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.
+**State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.
+**Multi-environment**: use `--profile <name>` to target a specific environment.
+**On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
+**补数/回填/重跑历史数据 → `runs refill`**: when user says "补数", "回填", "重跑历史", "backfill", "re-run historical data", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.
+**Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql "..."` (the shell corrupts inline SQL).
+**Lakehouse SQL dialect ONLY**: cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). When unsure about syntax, consult the **lakehouse-doc** skill BEFORE running SQL — guessing Snowflake/Databricks syntax will fail.
 
 ## Companion Skills
 

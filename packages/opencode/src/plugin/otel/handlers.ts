@@ -63,7 +63,7 @@ function sessionAttributes(
   attrs?: Record<string, string | number | boolean>,
 ) {
   return {
-    ...(sessionID ? { "opencode.session.id": sessionID } : {}),
+    ...(sessionID ? { "opencode.session.id": sessionID, "langfuse.session.id": sessionID } : {}),
     ...attrs,
   }
 }
@@ -173,6 +173,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
             "gen_ai.provider.name": p.providerID ?? "",
             "gen_ai.request.model": p.model ?? "",
             "opencode.session.id": p.sessionID ?? "",
+            "langfuse.session.id": p.sessionID ?? "",
             ...(p.inputText && _recordContent ? { "gen_ai.input.messages": truncateAttr(JSON.stringify([{ role: "user", parts: [{ type: "text", content: p.inputText }] }])) } : {}),
           },
         }, getSessionOtelContext())
