@@ -230,7 +230,7 @@ export function registerUpdateCommand(cli: Argv) {
       try {
         const label = ["npm", "pnpm", "yarn", "bun"].includes(method) ? method : "install script"
         process.stderr.write(`Upgrading via ${label}...\n`)
-        await performUpgrade(method, latest, fetch, channel)
+        await performUpgrade(method, latest, fetch, channel, argv.force)
         await writeInstallMetadata({ binary_version: latest })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {
