@@ -245,7 +245,7 @@ version_gt() {
 }
 
 check_version() {
-    if command -v cz-cli >/dev/null 2>&1; then
+    if command -v cz-cli >/dev/null 2>&1 && [[ -z "$CZ_FORCE" ]]; then
         installed_version=$(cz-cli --version 2>/dev/null || echo "")
         if [[ "$installed_version" == "$specific_version" ]]; then
             print_message info "${MUTED}Version ${NC}$specific_version${MUTED} already installed${NC}"

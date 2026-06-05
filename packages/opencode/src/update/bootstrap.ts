@@ -190,7 +190,7 @@ export function shouldUpgradeToVersion(currentVersion: string, latestVersion: st
   return semver.gt(latestVersion, currentVersion)
 }
 
-async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch) {
+async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch, force?: boolean) {
   const ch = channel === "nightly" ? "nightly" : "stable"
   const response = await fetchWithTimeout(INSTALL_SCRIPT_URL[ch], {}, fetchImpl)
   if (!response.ok) throw new Error(`Failed to download install script: ${response.status}`)
@@ -205,6 +205,7 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
       CZ_VERSION: target,
       NON_INTERACTIVE: "1",
       SKIP_PATH_PROMPT: "1",
+      ...(force && { CZ_FORCE: "1" }),
     },
   })
   await fs.rm(temp, { recursive: true, force: true })
@@ -228,15 +229,15 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
   if (result.status !== 0) throw new Error(`${cmd[0]} upgrade failed with exit code ${result.status ?? 1}`)
 }
 
-export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string) {
+export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string, force?: boolean) {
   if (NPM_METHODS.has(method)) {
     try {
       await upgradeViaPackageManager(method, target)
     } catch {
-      await upgradeViaInstallScript(target, channel, fetchImpl)
+      await upgradeViaInstallScript(target, channel, fetchImpl, force)
     }
   } else {
-    await upgradeViaInstallScript(target, channel, fetchImpl)
+    await upgradeViaInstallScript(target, channel, fetchImpl, force)
   }
 }
 
