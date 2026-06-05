@@ -11,6 +11,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import type { LoggerProvider as LoggerProviderType } from "@opentelemetry/sdk-logs"
 import type { MeterProvider as MeterProviderType } from "@opentelemetry/sdk-metrics"
 import type { BasicTracerProvider as BasicTracerProviderType } from "@opentelemetry/sdk-trace-base"
+import type { SpanProcessor } from "@opentelemetry/sdk-trace-base"
 
 export interface OtelSdk {
   logger: Logger
@@ -18,6 +19,22 @@ export interface OtelSdk {
   loggerProvider: LoggerProviderType
   meterProvider: MeterProviderType
   shutdown(): Promise<void>
+}
+
+function createLangfuseProcessor(): SpanProcessor | undefined {
+  const publicKey = process.env.LANGFUSE_PUBLIC_KEY
+  const secretKey = process.env.LANGFUSE_SECRET_KEY
+  if (!publicKey || !secretKey) return undefined
+  try {
+    const { LangfuseSpanProcessor } = require("@langfuse/otel")
+    return new LangfuseSpanProcessor({
+      publicKey,
+      secretKey,
+      baseUrl: process.env.LANGFUSE_BASEURL || process.env.LANGFUSE_BASE_URL || "https://cloud.langfuse.com",
+    })
+  } catch {
+    return undefined
+  }
 }
 
 export async function initOtelSdk(
@@ -33,7 +50,11 @@ export async function initOtelSdk(
   const logger = loggerProvider.getLogger("opencode")
 
   const traceExporter = new OTLPTraceExporter({ url: `${endpoint}/v1/traces`, headers })
-  const tracerProvider = new BasicTracerProvider({ resource, spanProcessors: [new BatchSpanProcessor(traceExporter)] })
+  const spanProcessors: SpanProcessor[] = [new BatchSpanProcessor(traceExporter)]
+  const langfuseProcessor = createLangfuseProcessor()
+  if (langfuseProcessor) spanProcessors.push(langfuseProcessor)
+
+  const tracerProvider = new BasicTracerProvider({ resource, spanProcessors })
   trace.setGlobalTracerProvider(tracerProvider)
 
   const metricExporter = new OTLPMetricExporter({ url: `${endpoint}/v1/metrics`, headers })

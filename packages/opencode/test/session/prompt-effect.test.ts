@@ -559,6 +559,44 @@ it.live("loop continues when finish is tool-calls", () =>
   ),
 )
 
+it.live("job performance tool result is sent to the next model turn", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const previous = process.env.CLICKZETTA_TEST_HOME
+        process.env.CLICKZETTA_TEST_HOME = dir
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.CLICKZETTA_TEST_HOME
+            else process.env.CLICKZETTA_TEST_HOME = previous
+          }),
+        )
+
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "Job Perf",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "analyze job" }],
+        })
+        yield* llm.tool("fetch_job_performance_data", { job_id: "2026012808001805432z9g3fx1sok" })
+        yield* llm.text("second")
+
+        const result = yield* prompt.loop({ sessionID: session.id })
+        expect(yield* llm.calls).toBe(2)
+        const inputs = yield* llm.inputs
+        expect(JSON.stringify(inputs[1]?.messages)).toContain("未找到可用的 ClickZetta 连接")
+        expect(result.info.role).toBe("assistant")
+      }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("glob tool keeps instance context during prompt runs", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
@@ -849,6 +887,33 @@ it.live(
       { git: true, config: providerCfg },
     ),
   3_000,
+)
+
+it.live(
+  "includes fetch_job_performance_data in prompt tool payload",
+  () =>
+    provideTmpdirServer(
+      ({ llm }) =>
+        Effect.gen(function* () {
+          yield* llm.text("ok")
+
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({ title: "Job Perf Tool" })
+
+          yield* prompt.prompt({
+            sessionID: chat.id,
+            agent: "build",
+            parts: [{ type: "text", text: "hello" }],
+          })
+
+          const inputs = yield* llm.inputs
+          const tools = inputs[0]?.tools as Array<{ function?: { name?: string } }> | undefined
+          expect(tools?.some((item) => item.function?.name === "fetch_job_performance_data")).toBe(true)
+        }),
+      { git: true, config: providerCfg },
+    ),
+  30_000,
 )
 
 it.live(

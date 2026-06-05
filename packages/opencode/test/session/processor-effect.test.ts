@@ -1,7 +1,9 @@
 import { NodeFileSystem } from "@effect/platform-node"
+import { tool } from "ai"
 import { expect, test } from "bun:test"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import path from "path"
+import z from "zod"
 import type { Agent } from "../../src/agent/agent"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
@@ -272,6 +274,81 @@ it.live("session.processor effect tests capture llm input cleanly", () =>
         expect(value).toBe("continue")
         expect(calls).toBe(1)
         expect(parts.some((part) => part.type === "text" && part.text === "hello")).toBe(true)
+      }),
+    { git: true, config: (url) => providerCfg(url) },
+  ),
+)
+
+it.live("session.processor stops alternating verification doom loops", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "commit current code change")
+        const root = path.resolve(dir)
+        const history = [
+          { command: "git status", output: "nothing to commit, working tree clean" },
+          { command: "git log --oneline -3", output: "abc chore: remove scripts" },
+          { command: "git status", output: "nothing to commit, working tree clean" },
+          { command: "git log --oneline -3", output: "abc chore: remove scripts" },
+          { command: "git status", output: "nothing to commit, working tree clean" },
+        ]
+        for (const item of history) {
+          const previous = yield* assistant(chat.id, parent.id, root)
+          yield* session.updatePart({
+            id: PartID.ascending(),
+            messageID: previous.id,
+            sessionID: chat.id,
+            type: "tool",
+            tool: "bash",
+            callID: PartID.ascending(),
+            state: {
+              status: "completed",
+              input: { command: item.command },
+              output: item.output,
+              title: item.command,
+              metadata: {},
+              time: { start: Date.now(), end: Date.now() },
+            },
+          })
+        }
+
+        yield* llm.tool("bash", { command: "git log --oneline -3" })
+
+        const msg = yield* assistant(chat.id, parent.id, root)
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies MessageV2.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "commit current code change" }],
+          tools: {
+            bash: tool({
+              description: "Run shell command",
+              inputSchema: z.object({ command: z.string() }),
+              execute: async () => ({ output: "abc chore: remove scripts", title: "bash", metadata: {} }),
+            }),
+          },
+        })
+
+        expect(value).toBe("stop")
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),

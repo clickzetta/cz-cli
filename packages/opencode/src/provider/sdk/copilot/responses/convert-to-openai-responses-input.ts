@@ -173,9 +173,17 @@ export async function convertToOpenAIResponsesInput({
                 // use item references to refer to tool results from built-in tools
                 input.push({ type: "item_reference", id: part.toolCallId })
               } else {
-                warnings.push({
-                  type: "other",
-                  message: `Results for OpenAI tool ${part.toolName} are not sent to the API when store is false`,
+                const output = part.output
+                const contentValue =
+                  output.type === "text" || output.type === "error-text"
+                    ? output.value
+                    : output.type === "execution-denied"
+                      ? (output.reason ?? "Tool execution denied.")
+                      : JSON.stringify(output.value)
+                input.push({
+                  type: "function_call_output",
+                  call_id: part.toolCallId,
+                  output: contentValue,
                 })
               }
 
