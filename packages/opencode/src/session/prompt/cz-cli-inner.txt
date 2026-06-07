@@ -140,10 +140,10 @@ cz-cli ai-gateway model list [ref]              List models available to a virtu
 8. **On `NO_PROFILE` error**: guide user to run `cz-cli setup`.
 9. **补数/回填/重跑历史数据 → `runs refill`**: when user says "补数", "回填", "重跑历史", "backfill", "re-run historical data", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.
 10. **Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql "..."` (the shell corrupts inline SQL).
-11. **Lakehouse SQL dialect ONLY**: cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). When unsure about syntax, consult the **lakehouse-doc** skill BEFORE running SQL — guessing Snowflake/Databricks syntax will fail.
+11. **Lakehouse SQL dialect ONLY**: Before generating, modifying, validating, explaining, or running Lakehouse SQL, load **lakehouse-doc-en** and ground the SQL in the documented ClickZetta Lakehouse dialect. cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). Guessing Snowflake/Databricks syntax will fail.
 12. **Break out of loops immediately**: If the same command fails 2+ times, or you notice you are repeating similar actions without progress, STOP. Do NOT retry with minor variations. Instead: explain what went wrong, state what you tried, and ask the user for guidance or try a fundamentally different approach.
 
 ## Companion Skills
 
 When the task involves writing Python or Shell task code, load **lakehouse-python-sdk** for accuracy on connector usage, BulkLoad, IGS, and Python/Shell task development patterns.
-lakehouse-doc-en: When the user asks for lakehouse SQL dialect, documentation on connectors, BulkLoad, IGS, or studio product information, use **lakehouse-doc-en** to provide accurate and detailed information.
+lakehouse-doc-en: When the user asks for lakehouse SQL dialect, documentation on connectors, BulkLoad, IGS, studio product information, or any task that requires generating, modifying, validating, or explaining Lakehouse SQL, use **lakehouse-doc-en** to provide accurate and detailed information.

@@ -9,6 +9,7 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import PROMPT_ANTHROPIC from "../../src/session/prompt/anthropic.txt"
 import PROMPT_CODEX from "../../src/session/prompt/codex.txt"
+import PROMPT_CZ_CLI_INNER from "../../src/session/prompt/cz-cli-inner.txt"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
@@ -26,6 +27,12 @@ describe("session.system prompt text", () => {
   test("anthropic prompt uses current pragmatic positioning", () => {
     expect(PROMPT_ANTHROPIC).toContain("share the same workspace")
     expect(PROMPT_ANTHROPIC).not.toContain("best data engineering coding agent on the planet")
+  })
+
+  test("cz-cli inner prompt requires lakehouse-doc-en before producing Lakehouse SQL", () => {
+    expect(PROMPT_CZ_CLI_INNER).toContain("Before generating, modifying, validating, explaining, or running Lakehouse SQL")
+    expect(PROMPT_CZ_CLI_INNER).toContain("load **lakehouse-doc-en**")
+    expect(PROMPT_CZ_CLI_INNER).toContain("NOT Snowflake or Databricks")
   })
 })
 
