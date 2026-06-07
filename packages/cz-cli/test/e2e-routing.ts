@@ -268,6 +268,23 @@ const tests: TestCase[] = [
       } finally { cleanup() }
     },
   },
+  {
+    name: "AGENT_SESSION_STATUS_FORMAT: session status accepts --format json on runtime path",
+    run() {
+      const { home, cleanup } = withFakeHome('[llm.test]\nprovider = "openai-compatible"\nbase_url = "https://example.com/v1"\napi_key = "test"\ndefault_llm = "test"\n')
+      try {
+        const r = run(["agent", "session", "status", "ses_missing", "--format", "json"], {
+          HOME: home,
+          CLICKZETTA_TEST_HOME: home,
+        })
+        const combined = `${r.stdout}\n${r.stderr}`
+        if (combined.includes("Unknown argument: format") || combined.includes("\"code\":\"USAGE_ERROR\"")) {
+          return { pass: false, detail: `unexpected usage error: ${combined.slice(0, 200)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
 
   {
     name: "CONNECTION_ERROR: classifyExecError produces ai_message for socket errors",

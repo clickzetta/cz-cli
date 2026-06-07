@@ -24,4 +24,12 @@ describe("agent session status help", () => {
     expect(help).toContain("Block, stream progress as NDJSON")
     expect(help).toContain("exit on idle or timeout")
   })
+
+  test("--format json is explicitly advertised", () => {
+    const result = run(["agent", "session", "status", "--help"])
+    const help = result.stdout.replace(/\s+/g, " ")
+    expect(result.exitCode).toBe(0)
+    expect(help).toContain("--format")
+    expect(help).toContain("json")
+  })
 })

@@ -67,6 +67,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
               (s) =>
                 s
                   .positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to check" })
+                  .option("format", { type: "string", choices: ["json"] as const, default: "json", describe: "Output format" })
                   .option("wait", {
                     type: "boolean",
                     default: false,

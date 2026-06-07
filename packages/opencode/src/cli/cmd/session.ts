@@ -457,6 +457,12 @@ export const SessionStatusCommand = cmd({
         type: "string",
         demandOption: true,
       })
+      .option("format", {
+        describe: "output format",
+        type: "string",
+        choices: ["json"],
+        default: "json",
+      })
       .option("wait", {
         type: "boolean",
         default: false,
