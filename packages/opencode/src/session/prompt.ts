@@ -67,6 +67,11 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
+const PLAN_LIKE_AGENTS = new Set(["plan", "data_engineer"])
+
+function isPlanLikeAgent(name: string) {
+  return PLAN_LIKE_AGENTS.has(name)
+}
 
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
@@ -238,7 +243,7 @@ export const layer = Layer.effect(
       })
 
       if (!Flag.CLICKZETTA_EXPERIMENTAL_PLAN_MODE) {
-        if (input.agent.name === "plan") {
+        if (isPlanLikeAgent(input.agent.name)) {
           userMessage.parts.push({
             id: PartID.ascending(),
             messageID: userMessage.info.id,
@@ -248,7 +253,9 @@ export const layer = Layer.effect(
             synthetic: true,
           })
         }
-        const wasPlan = input.messages.some((msg) => msg.info.role === "assistant" && msg.info.agent === "plan")
+        const wasPlan = input.messages.some(
+          (msg) => msg.info.role === "assistant" && isPlanLikeAgent(msg.info.agent),
+        )
         if (wasPlan && input.agent.name === "build") {
           userMessage.parts.push({
             id: PartID.ascending(),
@@ -263,7 +270,7 @@ export const layer = Layer.effect(
       }
 
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
-      if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
+      if (!isPlanLikeAgent(input.agent.name) && assistantMessage?.info.agent && isPlanLikeAgent(assistantMessage.info.agent)) {
         const plan = Session.plan(input.session)
         if (!(yield* fsys.existsSafe(plan))) return input.messages
         const part = yield* sessions.updatePart({
@@ -278,7 +285,8 @@ export const layer = Layer.effect(
         return input.messages
       }
 
-      if (input.agent.name !== "plan" || assistantMessage?.info.agent === "plan") return input.messages
+      if (!isPlanLikeAgent(input.agent.name) || (assistantMessage?.info.agent && isPlanLikeAgent(assistantMessage.info.agent)))
+        return input.messages
 
       const plan = Session.plan(input.session)
       const exists = yield* fsys.existsSafe(plan)
@@ -1293,6 +1301,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         yield* revert.cleanup(session)
         const message = yield* createUserMessage(input)
         yield* sessions.touch(input.sessionID)
+        yield* bus.publish(Session.Event.TurnStarted, {
+          sessionID: input.sessionID,
+          messageID: message.info.id,
+          agent: message.info.agent,
+          model: `${message.info.model.providerID}/${message.info.model.modelID}`,
+          parts: message.parts.length,
+        })
 
         const permissions: Permission.Ruleset = []
         for (const [t, enabled] of Object.entries(input.tools ?? {})) {
@@ -1303,7 +1318,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* sessions.setPermission({ sessionID: session.id, permission: permissions })
         }
 
-        if (input.noReply === true) return message
+        if (input.noReply === true) {
+          yield* bus.publish(Session.Event.TurnFinished, {
+            sessionID: input.sessionID,
+            messageID: message.info.id,
+            outcome: "no_reply",
+          }).pipe(Effect.ignore)
+          return message
+        }
         return yield* loop({ sessionID: input.sessionID })
       },
     )
@@ -1323,6 +1345,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let structured: unknown | undefined
         let step = 0
         const session = yield* sessions.get(sessionID)
+        let turnMessageID: MessageID | undefined
+
+        const finishTurn = Effect.fn("SessionPrompt.finishTurn")(function* (outcome: string) {
+          if (!turnMessageID) return
+          yield* bus.publish(Session.Event.TurnFinished, {
+            sessionID,
+            messageID: turnMessageID,
+            outcome,
+          }).pipe(Effect.ignore)
+        })
 
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
@@ -1345,6 +1377,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
 
           if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+          turnMessageID = lastUser.id
+          yield* bus.publish(Session.Event.PreflightStarted, {
+            sessionID,
+            messageID: lastUser.id,
+          })
 
           const lastAssistantMsg = msgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -1362,6 +1399,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             !hasToolCalls &&
             lastUser.id < lastAssistant.id
           ) {
+            yield* bus.publish(Session.Event.PreflightFinished, {
+              sessionID,
+              messageID: lastUser.id,
+              outcome: "no_op_exit",
+            })
+            yield* finishTurn("no_op_exit")
             yield* slog.info("exiting loop")
             break
           }
@@ -1379,11 +1422,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const task = tasks.pop()
 
           if (task?.type === "subtask") {
+            yield* bus.publish(Session.Event.PreflightFinished, {
+              sessionID,
+              messageID: lastUser.id,
+              outcome: "subtask",
+            })
             yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
             continue
           }
 
           if (task?.type === "compaction") {
+            yield* bus.publish(Session.Event.PreflightFinished, {
+              sessionID,
+              messageID: lastUser.id,
+              outcome: "compaction",
+            })
             const result = yield* compaction.process({
               messages: msgs,
               parentID: lastUser.id,
@@ -1391,7 +1444,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               auto: task.auto,
               overflow: task.overflow,
             })
-            if (result === "stop") break
+            if (result === "stop") {
+              yield* finishTurn("compaction_stop")
+              break
+            }
             continue
           }
 
@@ -1406,10 +1462,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
           const agent = yield* agents.get(lastUser.agent)
           if (!agent) {
+            yield* bus.publish(Session.Event.PreflightFinished, {
+              sessionID,
+              messageID: lastUser.id,
+              outcome: "error",
+            })
             const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
             const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
             const error = new NamedError.Unknown({ message: `Agent not found: "${lastUser.agent}".${hint}` })
             yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+            yield* finishTurn("error")
             throw error
           }
           const maxSteps = agent.steps ?? Infinity
@@ -1493,6 +1555,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const system = [...env, ...(skills ? [skills] : []), ...instructions]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+            yield* bus.publish(Session.Event.PreflightFinished, {
+              sessionID,
+              messageID: lastUser.id,
+              outcome: "llm",
+            })
             const result = yield* handle.process({
               user: lastUser,
               agent,
@@ -1510,6 +1577,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               handle.message.structured = structured
               handle.message.finish = handle.message.finish ?? "stop"
               yield* sessions.updateMessage(handle.message)
+              yield* finishTurn("completed")
               return "break" as const
             }
 
@@ -1521,11 +1589,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   retries: 0,
                 }).toObject()
                 yield* sessions.updateMessage(handle.message)
+                yield* finishTurn("structured_output_missing")
                 return "break" as const
               }
             }
 
-            if (result === "stop") return "break" as const
+            if (result === "stop") {
+              yield* finishTurn(handle.message.error ? "error" : "completed")
+              return "break" as const
+            }
             if (result === "compact") {
               yield* compaction.create({
                 sessionID,

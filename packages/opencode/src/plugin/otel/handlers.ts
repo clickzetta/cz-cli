@@ -48,6 +48,7 @@ function tracingEnabled(category: string): boolean {
 
 let _logger: Logger | undefined
 let promptSpan: Span | undefined
+let preflightSpan: Span | undefined
 let _recordContent = true
 const stepSpans = new Map<string, Span>()
 const toolSpans = new Map<string, Span>()
@@ -93,6 +94,12 @@ function endPromptSpan() {
   promptSpan = undefined
 }
 
+function endPreflightSpan() {
+  if (!preflightSpan) return
+  preflightSpan.end()
+  preflightSpan = undefined
+}
+
 export function handleEvent(event: { type: string; properties: Record<string, any> }) {
   try {
     const p = event.properties
@@ -130,12 +137,6 @@ export function handleEvent(event: { type: string; properties: Record<string, an
       case "session.status": {
         const statusType = p.status?.type
         if (statusType === "busy") {
-          endPromptSpan()
-          if (tracingEnabled("prompt")) {
-            const span = tracer.startSpan("prompt", { attributes: { "opencode.session.id": p.sessionID ?? "" } })
-            promptSpan = span
-            setCurrentSessionSpanContext(span.spanContext())
-          }
           emitLog({
             severityNumber: SeverityNumber.INFO,
             severityText: "INFO",
@@ -152,8 +153,118 @@ export function handleEvent(event: { type: string; properties: Record<string, an
         break
       }
 
+      case "session.turn.started": {
+        endPromptSpan()
+        endPreflightSpan()
+        if (tracingEnabled("prompt")) {
+          const span = tracer.startSpan("prompt", {
+            attributes: {
+              "opencode.session.id": p.sessionID ?? "",
+              "opencode.message.id": p.messageID ?? "",
+              "opencode.agent.name": p.agent ?? "",
+              ...(p.model ? { "gen_ai.request.model": p.model } : {}),
+              "opencode.turn.parts": p.parts ?? 0,
+            },
+          })
+          promptSpan = span
+          setCurrentSessionSpanContext(span.spanContext())
+        }
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "session.turn.started",
+          eventName: "opencode.session.turn.started",
+          attributes: sessionAttributes(p.sessionID, {
+            "opencode.message.id": p.messageID ?? "",
+            "opencode.agent.name": p.agent ?? "",
+            ...(p.model ? { "gen_ai.request.model": p.model } : {}),
+            "opencode.turn.parts": p.parts ?? 0,
+          }),
+        })
+        break
+      }
+
+      case "session.turn.finished":
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "session.turn.finished",
+          eventName: "opencode.session.turn.finished",
+          attributes: sessionAttributes(p.sessionID, {
+            "opencode.message.id": p.messageID ?? "",
+            "opencode.turn.outcome": p.outcome ?? "unknown",
+          }),
+        })
+        if (promptSpan) promptSpan.setAttribute("opencode.turn.outcome", p.outcome ?? "unknown")
+        endPreflightSpan()
+        endPromptSpan()
+        setCurrentSessionSpanContext(undefined)
+        break
+
+      case "session.preflight.started":
+        endPreflightSpan()
+        if (tracingEnabled("prompt")) {
+          preflightSpan = tracer.startSpan(
+            "preflight",
+            {
+              attributes: {
+                "opencode.session.id": p.sessionID ?? "",
+                "opencode.message.id": p.messageID ?? "",
+              },
+            },
+            getSessionOtelContext(),
+          )
+        }
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "session.preflight.started",
+          eventName: "opencode.session.preflight.started",
+          attributes: sessionAttributes(p.sessionID, {
+            "opencode.message.id": p.messageID ?? "",
+          }),
+        })
+        break
+
+      case "session.preflight.finished":
+        emitLog({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "session.preflight.finished",
+          eventName: "opencode.session.preflight.finished",
+          attributes: sessionAttributes(p.sessionID, {
+            "opencode.message.id": p.messageID ?? "",
+            "opencode.preflight.outcome": p.outcome ?? "unknown",
+          }),
+        })
+        if (preflightSpan) preflightSpan.setAttribute("opencode.preflight.outcome", p.outcome ?? "unknown")
+        endPreflightSpan()
+        break
+
+      case "session.error": {
+        const name = p.error?.name ?? "UnknownError"
+        const message =
+          (p.error?.data && typeof p.error.data === "object" && "message" in p.error.data
+            ? String((p.error.data as Record<string, unknown>).message ?? "")
+            : "") || name
+        promptSpan?.setStatus({ code: SpanStatusCode.ERROR, message })
+        preflightSpan?.setStatus({ code: SpanStatusCode.ERROR, message })
+        emitLog({
+          severityNumber: SeverityNumber.ERROR,
+          severityText: "ERROR",
+          body: "session.error",
+          eventName: "opencode.session.error",
+          attributes: sessionAttributes(p.sessionID, {
+            "error.name": name,
+            "error.message": message,
+          }),
+        })
+        break
+      }
+
       case "session.idle":
         endPromptSpan()
+        endPreflightSpan()
         emitLog({
           severityNumber: SeverityNumber.INFO,
           severityText: "INFO",
@@ -173,7 +284,10 @@ export function handleEvent(event: { type: string; properties: Record<string, an
             "gen_ai.provider.name": p.providerID ?? "",
             "gen_ai.request.model": p.model ?? "",
             "opencode.session.id": p.sessionID ?? "",
-            ...(p.inputText && _recordContent ? { "gen_ai.input.messages": truncateAttr(JSON.stringify([{ role: "user", parts: [{ type: "text", content: p.inputText }] }])) } : {}),
+            ...(p.inputMessages && _recordContent ? { "gen_ai.input.messages": truncateAttr(p.inputMessages) } : {}),
+            ...(p.systemInstructions && _recordContent
+              ? { "gen_ai.system_instructions": truncateAttr(p.systemInstructions) }
+              : {}),
           },
         }, getSessionOtelContext())
         stepSpans.set(p.stepId, span)
@@ -275,6 +389,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
 
 export function shutdown() {
   endPromptSpan()
+  endPreflightSpan()
   for (const span of stepSpans.values()) span.end()
   for (const span of toolSpans.values()) span.end()
   stepSpans.clear()

@@ -1,8 +1,16 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, beforeAll, expect, test } from "bun:test"
+import { context, trace } from "@opentelemetry/api"
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks"
 import { SeverityNumber } from "@opentelemetry/api-logs"
+import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { handleEvent, initHandlers, shutdown } from "../../src/plugin/otel/handlers"
 
 const records: Array<Record<string, unknown>> = []
+const exporter = new InMemorySpanExporter()
+const provider = new BasicTracerProvider({
+  spanProcessors: [new SimpleSpanProcessor(exporter)],
+})
+const manager = new AsyncLocalStorageContextManager()
 
 function makeLogger() {
   return {
@@ -12,9 +20,16 @@ function makeLogger() {
   } as never
 }
 
+beforeAll(() => {
+  trace.setGlobalTracerProvider(provider)
+  manager.enable()
+  context.setGlobalContextManager(manager)
+})
+
 afterEach(() => {
   shutdown()
   records.length = 0
+  exporter.reset()
 })
 
 // ─── session lifecycle ────────────────────────────────────────────────────────
@@ -58,6 +73,188 @@ test("session.status busy emits prompt.started log", () => {
       "opencode.session.id": "ses-3",
       "gen_ai.conversation.id": "ses-3",
       "gen_ai.operation.name": "chat",
+    },
+  })
+})
+
+test("session.turn.started emits turn.started log with input summary", () => {
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "session.turn.started",
+    properties: {
+      sessionID: "ses-turn-1",
+      messageID: "msg-turn-1",
+      agent: "build",
+      model: "openai/gpt-5",
+      parts: 1,
+    },
+  })
+  expect(records).toHaveLength(1)
+  expect(records[0]).toMatchObject({
+    severityNumber: SeverityNumber.INFO,
+    body: "session.turn.started",
+    attributes: {
+      "event.name": "opencode.session.turn.started",
+      "opencode.session.id": "ses-turn-1",
+      "opencode.message.id": "msg-turn-1",
+      "opencode.agent.name": "build",
+      "gen_ai.request.model": "openai/gpt-5",
+      "opencode.turn.parts": 1,
+    },
+  })
+})
+
+test("v2.step.started span uses full gen_ai input messages and system instructions", () => {
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "v2.step.started",
+    properties: {
+      sessionID: "ses-step-1",
+      messageID: "msg-step-1",
+      stepId: "step-1",
+      model: "openai/gpt-5",
+      providerID: "openai",
+      inputMessages: JSON.stringify([
+        { role: "system", content: "workspace rules" },
+        { role: "user", content: [{ type: "text", text: "show tables" }] },
+      ]),
+      systemInstructions: "workspace rules",
+    },
+  })
+  handleEvent({
+    type: "v2.step.ended",
+    properties: {
+      sessionID: "ses-step-1",
+      messageID: "msg-step-1",
+      stepId: "step-1",
+      model: "openai/gpt-5",
+      providerID: "openai",
+      finishReason: "stop",
+      tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0.001,
+      durationMs: 10,
+    },
+  })
+  const span = exporter.getFinishedSpans().find((item) => item.name === "chat openai/gpt-5")
+  expect(span).toBeDefined()
+  expect(span?.attributes).toMatchObject({
+    "gen_ai.operation.name": "chat",
+    "gen_ai.provider.name": "openai",
+    "gen_ai.request.model": "openai/gpt-5",
+    "opencode.session.id": "ses-step-1",
+    "gen_ai.input.messages": JSON.stringify([
+      { role: "system", content: "workspace rules" },
+      { role: "user", content: [{ type: "text", text: "show tables" }] },
+    ]),
+    "gen_ai.system_instructions": "workspace rules",
+  })
+})
+
+test("session.preflight.finished emits no-op outcome log", () => {
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "session.turn.started",
+    properties: {
+      sessionID: "ses-preflight-1",
+      messageID: "msg-preflight-1",
+      agent: "build",
+      parts: 1,
+    },
+  })
+  handleEvent({
+    type: "session.preflight.started",
+    properties: {
+      sessionID: "ses-preflight-1",
+      messageID: "msg-preflight-1",
+    },
+  })
+  handleEvent({
+    type: "session.preflight.finished",
+    properties: {
+      sessionID: "ses-preflight-1",
+      messageID: "msg-preflight-1",
+      outcome: "no_op_exit",
+    },
+  })
+  const preflightLog = records.find((r) => (r.attributes as any)?.["event.name"] === "opencode.session.preflight.finished")
+  expect(preflightLog).toBeDefined()
+  expect(preflightLog).toMatchObject({
+    body: "session.preflight.finished",
+    attributes: {
+      "event.name": "opencode.session.preflight.finished",
+      "opencode.session.id": "ses-preflight-1",
+      "opencode.message.id": "msg-preflight-1",
+      "opencode.preflight.outcome": "no_op_exit",
+    },
+  })
+})
+
+test("session.error emits error log", () => {
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "session.turn.started",
+    properties: {
+      sessionID: "ses-err-1",
+      messageID: "msg-err-1",
+      agent: "build",
+      parts: 1,
+    },
+  })
+  handleEvent({
+    type: "session.error",
+    properties: {
+      sessionID: "ses-err-1",
+      error: {
+        name: "MessageAbortedError",
+        data: {
+          message: "Aborted",
+        },
+      },
+    },
+  })
+  const errorLog = records.find((r) => (r.attributes as any)?.["event.name"] === "opencode.session.error")
+  expect(errorLog).toBeDefined()
+  expect(errorLog).toMatchObject({
+    severityNumber: SeverityNumber.ERROR,
+    severityText: "ERROR",
+    body: "session.error",
+    attributes: {
+      "event.name": "opencode.session.error",
+      "opencode.session.id": "ses-err-1",
+      "error.name": "MessageAbortedError",
+      "error.message": "Aborted",
+    },
+  })
+})
+
+test("session.turn.finished emits final outcome log", () => {
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "session.turn.started",
+    properties: {
+      sessionID: "ses-turn-2",
+      messageID: "msg-turn-2",
+      agent: "build",
+      parts: 1,
+    },
+  })
+  handleEvent({
+    type: "session.turn.finished",
+    properties: {
+      sessionID: "ses-turn-2",
+      messageID: "msg-turn-2",
+      outcome: "completed",
+    },
+  })
+  const endLog = records.find((r) => (r.attributes as any)?.["event.name"] === "opencode.session.turn.finished")
+  expect(endLog).toBeDefined()
+  expect(endLog).toMatchObject({
+    body: "session.turn.finished",
+    attributes: {
+      "event.name": "opencode.session.turn.finished",
+      "opencode.session.id": "ses-turn-2",
+      "opencode.message.id": "msg-turn-2",
+      "opencode.turn.outcome": "completed",
     },
   })
 })

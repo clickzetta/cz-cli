@@ -212,6 +212,15 @@ function llm() {
     layer: Layer.succeed(
       LLM.Service,
       LLM.Service.of({
+        prepare: (input) => Effect.succeed({
+          ...input,
+          telemetry: input.telemetry ?? {},
+          request: {
+            system: input.system,
+            messages: input.messages,
+            isOpenaiOauth: false,
+          },
+        }),
         stream: (input) => {
           const item = queue.shift() ?? Stream.empty
           const stream = typeof item === "function" ? item(input) : item

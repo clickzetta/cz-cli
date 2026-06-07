@@ -335,6 +335,37 @@ const boot = Effect.fn("test.boot")(function* (input?: { title?: string }) {
 
 // Loop semantics
 
+it.live("prompt noReply closes turn lifecycle", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const bus = yield* Bus.Service
+      const chat = yield* sessions.create({ title: "No reply lifecycle" })
+      const done = defer<void>()
+      const finishes: string[] = []
+      const off = yield* bus.subscribeCallback(Session.Event.TurnFinished, (evt) => {
+        if (evt.properties.sessionID !== chat.id) return
+        finishes.push(evt.properties.outcome)
+        done.resolve()
+      })
+
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "hello" }],
+      })
+      yield* Effect.promise(() => done.promise)
+
+      off()
+
+      expect(finishes).toStrictEqual(["no_reply"])
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("loop exits immediately when last assistant has stop finish", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
@@ -374,6 +405,53 @@ it.live("loop calls LLM and returns assistant message", () =>
       const parts = result.parts.filter((p) => p.type === "text")
       expect(parts.some((p) => p.type === "text" && p.text === "world")).toBe(true)
       expect(yield* llm.hits).toHaveLength(1)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("loop closes turn lifecycle after structured output", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const bus = yield* Bus.Service
+      const chat = yield* sessions.create({
+        title: "Structured lifecycle",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      const done = defer<void>()
+      const finishes: string[] = []
+      const off = yield* bus.subscribeCallback(Session.Event.TurnFinished, (evt) => {
+        if (evt.properties.sessionID !== chat.id) return
+        finishes.push(evt.properties.outcome)
+        if (evt.properties.outcome === "completed") done.resolve()
+      })
+
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { answer: { type: "string" } },
+            required: ["answer"],
+          },
+          retryCount: 0,
+        },
+        parts: [{ type: "text", text: "respond as json" }],
+      })
+      yield* llm.push(reply().tool("StructuredOutput", { answer: "ok" }).stop())
+
+      const result = yield* prompt.loop({ sessionID: chat.id })
+      yield* Effect.promise(() => done.promise)
+      off()
+
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") expect(result.info.structured).toStrictEqual({ answer: "ok" })
+      expect(finishes).toContain("completed")
     }),
     { git: true, config: providerCfg },
   ),

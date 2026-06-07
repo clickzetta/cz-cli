@@ -16,6 +16,7 @@ import type { Agent } from "../../src/agent/agent"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
+import { Auth } from "../../src/auth"
 
 async function getModel(providerID: ProviderID, modelID: ModelID) {
   return AppRuntime.runPromise(
@@ -30,6 +31,10 @@ const llm = makeRuntime(LLM.Service, LLM.defaultLayer)
 
 async function drain(input: LLM.StreamInput) {
   return llm.runPromise((svc) => svc.stream(input).pipe(Stream.runDrain))
+}
+
+async function prepare(input: LLM.StreamInput) {
+  return llm.runPromise((svc) => svc.prepare(input))
 }
 
 describe("session.llm.hasToolCalls", () => {
@@ -116,6 +121,195 @@ describe("session.llm.hasToolCalls", () => {
       },
     ] as ModelMessage[]
     expect(LLM.hasToolCalls(messages)).toBe(true)
+  })
+})
+
+describe("session.llm.prepare", () => {
+  test("serializes telemetry input messages using OTel GenAI schema", async () => {
+    const fixture = await loadFixture("openai", "gpt-5.2")
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: ["openai"],
+            provider: {
+              openai: {
+                name: "OpenAI",
+                env: [],
+                npm: "@ai-sdk/openai",
+                api: "https://api.openai.com/v1",
+                models: {
+                  [fixture.model.id]: fixture.model,
+                },
+                options: {
+                  apiKey: "test-openai-key",
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.openai, ModelID.make("gpt-5.2"))
+        const sessionID = SessionID.make("session-prepare-1")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-prepare-1"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        const prepared = await prepare({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["workspace rules"],
+          messages: [
+            { role: "user", content: [{ type: "text", text: "show tables" }] },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "bash",
+                  input: { command: "ls" },
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-1",
+                  toolName: "bash",
+                  output: "file.txt",
+                },
+              ],
+            },
+          ] as ModelMessage[],
+          tools: {},
+        })
+
+        const messages = JSON.parse(prepared.telemetry.inputMessages ?? "null")
+        expect(Array.isArray(messages)).toBe(true)
+        expect(messages[0]?.role).toBe("system")
+        expect(JSON.stringify(messages[0]?.parts ?? [])).toContain("workspace rules")
+        expect(messages.slice(1)).toStrictEqual([
+          {
+            role: "user",
+            parts: [{ type: "text", content: "show tables" }],
+          },
+          {
+            role: "assistant",
+            parts: [{ type: "tool_call", id: "call-1", name: "bash", arguments: { command: "ls" } }],
+          },
+          {
+            role: "tool",
+            parts: [{ type: "tool_call_response", id: "call-1", result: "file.txt" }],
+          },
+        ])
+        expect(prepared.telemetry.systemInstructions).toBeUndefined()
+      },
+    })
+  })
+
+  test("serializes separate system instructions for openai oauth flow", async () => {
+    const fixture = await loadFixture("openai", "gpt-5.2")
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: ["openai"],
+            provider: {
+              openai: {
+                name: "OpenAI",
+                env: [],
+                npm: "@ai-sdk/openai",
+                api: "https://api.openai.com/v1",
+                models: {
+                  [fixture.model.id]: fixture.model,
+                },
+                options: {
+                  apiKey: "test-openai-key",
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.openai, ModelID.make("gpt-5.2"))
+        const sessionID = SessionID.make("session-prepare-2")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-prepare-2"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        const prepared = await AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const auth = yield* Auth.Service
+            const svc = yield* LLM.Service
+            yield* auth.set("openai", { type: "oauth", access: "token", refresh: "refresh", expires: Date.now() + 60_000 })
+            const result = yield* svc.prepare({
+              user,
+              sessionID,
+              model: resolved,
+              agent,
+              system: ["workspace rules", "translate to french"],
+              messages: [{ role: "user", content: "hello" }],
+              tools: {},
+            })
+            yield* auth.remove("openai")
+            return result
+          }),
+        )
+
+        expect(JSON.parse(prepared.telemetry.inputMessages ?? "null")).toStrictEqual([
+          {
+            role: "user",
+            parts: [{ type: "text", content: "hello" }],
+          },
+        ])
+        expect(JSON.parse(prepared.telemetry.systemInstructions ?? "null")).toStrictEqual([
+          expect.objectContaining({ type: "text" }),
+        ])
+        expect(String(prepared.telemetry.systemInstructions)).toContain("workspace rules")
+        expect(String(prepared.telemetry.systemInstructions)).toContain("translate to french")
+      },
+    })
   })
 })
 

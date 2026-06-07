@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { expect } from "bun:test"
+import { expect, test } from "bun:test"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import path from "path"
 import type { Agent } from "../../src/agent/agent"
@@ -13,7 +13,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
-import { SessionProcessor } from "../../src/session/processor"
+import { SessionProcessor, unprepareStreamInput } from "../../src/session/processor"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Question } from "../../src/question"
@@ -179,12 +179,56 @@ const boot = Effect.fn("test.boot")(function* () {
   const processors = yield* SessionProcessor.Service
   const session = yield* Session.Service
   const provider = yield* Provider.Service
-  return { processors, session, provider }
+  const bus = yield* Bus.Service
+  return { processors, session, provider, bus }
 })
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test("session.processor removes prepared request state before repreparing", () => {
+  const input = {
+    user: {
+      id: MessageID.make("user-prepared"),
+      sessionID: SessionID.make("session-prepared"),
+      role: "user",
+      time: { created: Date.now() },
+      agent: "build",
+      model: ref,
+    } satisfies MessageV2.User,
+    sessionID: SessionID.make("session-prepared"),
+    model: {
+      id: ref.modelID,
+      providerID: ref.providerID,
+      name: "Test Model",
+      attachment: false,
+      reasoning: false,
+      temperature: false,
+      tool_call: true,
+      release_date: "2025-01-01",
+      limit: { context: 100000, output: 10000 },
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+      options: {},
+    },
+    agent: agent(),
+    system: ["new system"],
+    messages: [{ role: "user" as const, content: "hello" }],
+    tools: {},
+    telemetry: { inputMessages: "stale" },
+    request: {
+      system: ["stale"],
+      messages: [{ role: "user" as const, content: "stale" }],
+      isOpenaiOauth: false,
+    },
+  } as unknown as LLM.PreparedInput
+
+  const result = unprepareStreamInput(input)
+
+  expect("request" in result).toBe(false)
+  expect(result.telemetry).toBeUndefined()
+  expect(result.messages).toStrictEqual([{ role: "user", content: "hello" }])
+})
 
 it.live("session.processor effect tests capture llm input cleanly", () =>
   provideTmpdirServer(
@@ -607,7 +651,7 @@ it.live("session.processor effect tests compact on structured context overflow",
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
-        const { processors, session, provider } = yield* boot()
+        const { processors, session, provider, bus } = yield* boot()
 
         yield* llm.error(400, { type: "error", error: { code: "context_length_exceeded" } })
 
@@ -615,6 +659,11 @@ it.live("session.processor effect tests compact on structured context overflow",
         const parent = yield* user(chat.id, "compact json")
         const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
         const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const finishes: string[] = []
+        const off = yield* bus.subscribeCallback(Session.Event.TurnFinished, (evt) => {
+          if (evt.properties.sessionID !== chat.id) return
+          finishes.push(evt.properties.outcome)
+        })
         const handle = yield* processors.create({
           assistantMessage: msg,
           sessionID: chat.id,
@@ -638,9 +687,12 @@ it.live("session.processor effect tests compact on structured context overflow",
           tools: {},
         })
 
+        off()
+
         expect(value).toBe("compact")
         expect(yield* llm.calls).toBe(1)
         expect(handle.message.error).toBeUndefined()
+        expect(finishes).toContain("context_overflow")
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),

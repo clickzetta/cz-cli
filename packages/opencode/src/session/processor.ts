@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Layer, Context, Scope } from "effect"
+import { Cause, Deferred, Effect, Layer, Context, Scope, Exit } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
@@ -86,7 +86,8 @@ interface ProcessorContext extends Input {
   reasoningMap: Record<string, MessageV2.ReasoningPart>
   stepStartMs: number
   currentStepId: string | undefined
-  inputText: string | undefined
+  telemetryInputMessages: string | undefined
+  telemetrySystemInstructions: string | undefined
 }
 
 type StreamEvent = Event
@@ -217,21 +218,11 @@ export const layer: Layer.Layer<
         reasoningMap: {},
         stepStartMs: Date.now(),
         currentStepId: undefined,
-        inputText: undefined,
+        telemetryInputMessages: undefined,
+        telemetrySystemInstructions: undefined,
       }
       let aborted = false
       const slog = log.clone().tag("sessionID", input.sessionID).tag("messageID", input.assistantMessage.id)
-
-      const refreshStreamInputModel = Effect.fn("SessionProcessor.refreshStreamInputModel")(function* (
-        streamInput: LLM.StreamInput,
-      ) {
-        const nextModel = yield* provider.getModel(streamInput.model.providerID, streamInput.model.id)
-        ctx.model = nextModel
-        return {
-          ...streamInput,
-          model: nextModel,
-        } satisfies LLM.StreamInput
-      })
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
@@ -498,7 +489,8 @@ export const layer: Layer.Layer<
               stepId: ctx.currentStepId,
               model: ctx.model.id,
               providerID: ctx.model.providerID,
-              inputText: ctx.inputText,
+              inputMessages: ctx.telemetryInputMessages,
+              systemInstructions: ctx.telemetrySystemInstructions,
             }).pipe(Effect.ignore)
             return
 
@@ -690,6 +682,11 @@ export const layer: Layer.Layer<
         if (MessageV2.ContextOverflowError.isInstance(error)) {
           ctx.needsCompaction = true
           yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+          yield* bus.publish(Session.Event.TurnFinished, {
+            sessionID: ctx.sessionID,
+            messageID: ctx.assistantMessage.parentID,
+            outcome: "context_overflow",
+          }).pipe(Effect.ignore)
           return
         }
         ctx.assistantMessage.error = error
@@ -697,6 +694,11 @@ export const layer: Layer.Layer<
           sessionID: ctx.assistantMessage.sessionID,
           error: ctx.assistantMessage.error,
         })
+        yield* bus.publish(Session.Event.TurnFinished, {
+          sessionID: ctx.sessionID,
+          messageID: ctx.assistantMessage.parentID,
+          outcome: error.name === "MessageAbortedError" ? "cancelled" : "error",
+        }).pipe(Effect.ignore)
         yield* status.set(ctx.sessionID, { type: "idle" })
       })
 
@@ -704,8 +706,14 @@ export const layer: Layer.Layer<
         slog.info("process")
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
-        let activeStreamInput = streamInput
-        ctx.inputText = extractUserText(activeStreamInput)
+        const prepared = yield* Effect.exit(llm.prepare(streamInput))
+        if (Exit.isFailure(prepared)) {
+          yield* halt(Cause.squash(prepared.cause))
+          return "stop"
+        }
+        let activeStreamInput = prepared.value
+        ctx.telemetryInputMessages = activeStreamInput.telemetry?.inputMessages
+        ctx.telemetrySystemInstructions = activeStreamInput.telemetry?.systemInstructions
         const rotated = { done: false }
 
         return yield* Effect.gen(function* () {
@@ -753,7 +761,18 @@ export const layer: Layer.Layer<
                       rotated,
                     })
                     if (!recovered) return undefined
-                    activeStreamInput = yield* refreshStreamInputModel(activeStreamInput)
+                    const nextModel = yield* provider.getModel(activeStreamInput.model.providerID, activeStreamInput.model.id)
+                    ctx.model = nextModel
+                    const refreshed = yield* Effect.exit(
+                      llm.prepare({
+                        ...unprepareStreamInput(activeStreamInput),
+                        model: nextModel,
+                      }),
+                    )
+                    if (Exit.isFailure(refreshed)) return undefined
+                    activeStreamInput = refreshed.value
+                    ctx.telemetryInputMessages = activeStreamInput.telemetry?.inputMessages
+                    ctx.telemetrySystemInstructions = activeStreamInput.telemetry?.systemInstructions
                     return recovered
                   }),
               }),
@@ -799,16 +818,10 @@ export const defaultLayer = Layer.suspend(() =>
   ),
 )
 
-function extractUserText(streamInput: LLM.StreamInput): string | undefined {
-  const lastUserMsg = [...streamInput.messages].reverse().find((m) => m.role === "user")
-  if (!lastUserMsg) return undefined
-  if (typeof lastUserMsg.content === "string") return lastUserMsg.content
-  if (!Array.isArray(lastUserMsg.content)) return undefined
-  const texts: string[] = []
-  for (const part of lastUserMsg.content) {
-    if (part.type === "text") texts.push(part.text)
-  }
-  return texts.length > 0 ? texts.join("\n") : undefined
+export function unprepareStreamInput(input: LLM.StreamInput): LLM.StreamInput {
+  if (!("request" in input)) return input
+  const { request: _request, telemetry: _telemetry, ...rest } = input
+  return rest
 }
 
 export * as SessionProcessor from "./processor"

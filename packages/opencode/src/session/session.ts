@@ -249,6 +249,39 @@ export const Event = {
       error: MessageV2.Assistant.shape.error,
     }),
   ),
+  TurnStarted: BusEvent.define(
+    "session.turn.started",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      agent: z.string(),
+      model: z.string().optional(),
+      parts: z.number().int().nonnegative(),
+    }),
+  ),
+  TurnFinished: BusEvent.define(
+    "session.turn.finished",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      outcome: z.string(),
+    }),
+  ),
+  PreflightStarted: BusEvent.define(
+    "session.preflight.started",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+    }),
+  ),
+  PreflightFinished: BusEvent.define(
+    "session.preflight.finished",
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+      outcome: z.string(),
+    }),
+  ),
   LlmStepStarted: BusEvent.define(
     "v2.step.started",
     z.object({
@@ -257,7 +290,8 @@ export const Event = {
       stepId: z.string(),
       model: z.string(),
       providerID: z.string(),
-      inputText: z.string().optional(),
+      inputMessages: z.string().optional(),
+      systemInstructions: z.string().optional(),
     }),
   ),
   LlmStepEnded: BusEvent.define(

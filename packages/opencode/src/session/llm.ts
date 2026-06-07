@@ -25,10 +25,15 @@ import { EffectBridge } from "@/effect"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { withSessionOtelContext } from "@/plugin/otel/context"
+import type { AuthError } from "@/auth"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 type Result = Awaited<ReturnType<typeof streamText>>
+type RequestTelemetry = {
+  inputMessages?: string
+  systemInstructions?: string
+}
 
 export type StreamInput = {
   user: MessageV2.User
@@ -43,6 +48,17 @@ export type StreamInput = {
   tools: Record<string, Tool>
   retries?: number
   toolChoice?: "auto" | "required" | "none"
+  telemetry?: RequestTelemetry
+}
+
+export type PreparedInput = StreamInput & {
+  abort?: AbortSignal
+  telemetry: RequestTelemetry
+  request: {
+    system: string[]
+    messages: ModelMessage[]
+    isOpenaiOauth: boolean
+  }
 }
 
 export type StreamRequest = StreamInput & {
@@ -52,6 +68,7 @@ export type StreamRequest = StreamInput & {
 export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
 
 export interface Interface {
+  readonly prepare: (input: StreamInput) => Effect.Effect<PreparedInput, AuthError>
   readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
 }
 
@@ -70,41 +87,20 @@ const live: Layer.Layer<
     const plugin = yield* Plugin.Service
     const perm = yield* Permission.Service
 
-    const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
-      const l = log
-        .clone()
-        .tag("providerID", input.model.providerID)
-        .tag("modelID", input.model.id)
-        .tag("sessionID", input.sessionID)
-        .tag("small", (input.small ?? false).toString())
-        .tag("agent", input.agent.name)
-        .tag("mode", input.agent.mode)
-      l.info("stream", {
-        modelID: input.model.id,
-        providerID: input.model.providerID,
-      })
+    const prepare = Effect.fn("LLM.prepare")(function* (input: StreamInput) {
+      if (isPreparedInput(input)) return input
 
-      const [language, cfg, item, info] = yield* Effect.all(
-        [
-          provider.getLanguage(input.model),
-          config.get(),
-          provider.getProvider(input.model.providerID),
-          auth.get(input.model.providerID),
-        ],
+      const [language, item, info] = yield* Effect.all(
+        [provider.getLanguage(input.model), provider.getProvider(input.model.providerID), auth.get(input.model.providerID)],
         { concurrency: "unbounded" },
       )
 
-      // TODO: move this to a proper hook
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
-
       const system: string[] = []
       system.push(
         [
-          // use agent prompt otherwise provider prompt
           ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-          // any custom prompt passed into this call
           ...input.system,
-          // any custom prompt from last user message
           ...(input.user.system ? [input.user.system] : []),
         ]
           .filter((x) => x)
@@ -117,65 +113,102 @@ const live: Layer.Layer<
         { sessionID: input.sessionID, model: input.model },
         { system },
       )
-      // rejoin to maintain 2-part structure for caching if header unchanged
       if (system.length > 2 && system[0] === header) {
         const rest = system.slice(1)
         system.length = 0
         system.push(header, rest.join("\n"))
       }
 
-      const variant =
-        !input.small && input.model.variants && input.user.model.variant
-          ? input.model.variants[input.user.model.variant]
-          : {}
-      const base = input.small
-        ? ProviderTransform.smallOptions(input.model)
-        : ProviderTransform.options({
-            model: input.model,
-            sessionID: input.sessionID,
-            providerOptions: item.options,
-          })
-      const options: Record<string, any> = pipe(
-        base,
-        mergeDeep(input.model.options),
-        mergeDeep(input.agent.options),
-        mergeDeep(variant),
-      )
-      if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
-      }
-
-      const isWorkflow = language instanceof GitLabWorkflowLanguageModel
-      const messages = isOpenaiOauth
-        ? input.messages
-        : isWorkflow
+      const messages =
+        isOpenaiOauth || language instanceof GitLabWorkflowLanguageModel
           ? input.messages
           : [
               ...system.map(
-                (x): ModelMessage => ({
+                (content): ModelMessage => ({
                   role: "system",
-                  content: x,
+                  content,
                 }),
               ),
               ...input.messages,
             ]
 
+      return {
+        ...input,
+        telemetry: {
+          inputMessages: serializeInputMessages(messages),
+          systemInstructions: isOpenaiOauth ? serializeSystemInstructions(system) : undefined,
+        },
+        request: {
+          system,
+          messages,
+          isOpenaiOauth,
+        },
+      } satisfies PreparedInput
+    })
+
+    const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+      const prepared = yield* prepare(input)
+      const l = log
+        .clone()
+        .tag("providerID", prepared.model.providerID)
+        .tag("modelID", prepared.model.id)
+        .tag("sessionID", prepared.sessionID)
+        .tag("small", (prepared.small ?? false).toString())
+        .tag("agent", prepared.agent.name)
+        .tag("mode", prepared.agent.mode)
+      l.info("stream", {
+        modelID: prepared.model.id,
+        providerID: prepared.model.providerID,
+      })
+
+      const [language, cfg, item] = yield* Effect.all(
+        [
+          provider.getLanguage(prepared.model),
+          config.get(),
+          provider.getProvider(prepared.model.providerID),
+        ],
+        { concurrency: "unbounded" },
+      )
+      const system = prepared.request.system
+
+      const variant =
+        !prepared.small && prepared.model.variants && prepared.user.model.variant
+          ? prepared.model.variants[prepared.user.model.variant]
+          : {}
+      const base = prepared.small
+        ? ProviderTransform.smallOptions(prepared.model)
+        : ProviderTransform.options({
+            model: prepared.model,
+            sessionID: prepared.sessionID,
+            providerOptions: item.options,
+          })
+      const options: Record<string, any> = pipe(
+        base,
+        mergeDeep(prepared.model.options),
+        mergeDeep(prepared.agent.options),
+        mergeDeep(variant),
+      )
+      if (prepared.request.isOpenaiOauth) {
+        options.instructions = system.join("\n")
+      }
+      const messages = prepared.request.messages
+
       const params = yield* plugin.trigger(
         "chat.params",
         {
-          sessionID: input.sessionID,
-          agent: input.agent.name,
-          model: input.model,
+          sessionID: prepared.sessionID,
+          agent: prepared.agent.name,
+          model: prepared.model,
           provider: item,
-          message: input.user,
+          message: prepared.user,
         },
         {
-          temperature: input.model.capabilities.temperature
-            ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
+          temperature: prepared.model.capabilities.temperature
+            ? (prepared.agent.temperature ?? ProviderTransform.temperature(prepared.model))
             : undefined,
-          topP: input.agent.topP ?? ProviderTransform.topP(input.model),
-          topK: ProviderTransform.topK(input.model),
-          maxOutputTokens: ProviderTransform.maxOutputTokens(input.model),
+          topP: prepared.agent.topP ?? ProviderTransform.topP(prepared.model),
+          topK: ProviderTransform.topK(prepared.model),
+          maxOutputTokens: ProviderTransform.maxOutputTokens(prepared.model),
           options,
         },
       )
@@ -183,18 +216,18 @@ const live: Layer.Layer<
       const { headers } = yield* plugin.trigger(
         "chat.headers",
         {
-          sessionID: input.sessionID,
-          agent: input.agent.name,
-          model: input.model,
+          sessionID: prepared.sessionID,
+          agent: prepared.agent.name,
+          model: prepared.model,
           provider: item,
-          message: input.user,
+          message: prepared.user,
         },
         {
           headers: {},
         },
       )
 
-      const tools = resolveTools(input)
+      const tools = resolveTools(prepared)
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
       // when message history contains tool calls, even if no tools are being used.
@@ -204,17 +237,17 @@ const live: Layer.Layer<
       // 2. Providers with explicit "litellmProxy: true" option (opt-in for custom gateways)
       const isLiteLLMProxy =
         item.options?.["litellmProxy"] === true ||
-        input.model.providerID.toLowerCase().includes("litellm") ||
-        input.model.api.id.toLowerCase().includes("litellm")
+        prepared.model.providerID.toLowerCase().includes("litellm") ||
+        prepared.model.api.id.toLowerCase().includes("litellm")
 
       // LiteLLM/Bedrock rejects requests where the message history contains tool
       // calls but no tools param is present. When there are no active tools (e.g.
       // during compaction), inject a stub tool to satisfy the validation requirement.
       // The stub description explicitly tells the model not to call it.
       if (
-        (isLiteLLMProxy || input.model.providerID.includes("github-copilot")) &&
+        (isLiteLLMProxy || prepared.model.providerID.includes("github-copilot")) &&
         Object.keys(tools).length === 0 &&
-        hasToolCalls(input.messages)
+        hasToolCalls(prepared.messages)
       ) {
         tools["_noop"] = tool({
           description: "Do not call this tool. It exists only for API compatibility and must never be invoked.",
@@ -237,7 +270,7 @@ const live: Layer.Layer<
           sessionPreapprovedTools?: string[]
           approvalHandler?: (approvalTools: { name: string; args: string }[]) => Promise<{ approved: boolean }>
         }
-        workflowModel.sessionID = input.sessionID
+        workflowModel.sessionID = prepared.sessionID
         workflowModel.systemPrompt = system.join("\n")
         workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
           const t = tools[toolName]
@@ -247,8 +280,8 @@ const live: Layer.Layer<
           try {
             const result = await t.execute!(JSON.parse(argsJson), {
               toolCallId: _requestID,
-              messages: input.messages,
-              abortSignal: input.abort,
+              messages: prepared.messages,
+              abortSignal: prepared.abort,
             })
             const output = typeof result === "string" ? result : (result?.output ?? JSON.stringify(result))
             return {
@@ -261,7 +294,7 @@ const live: Layer.Layer<
           }
         }
 
-        const ruleset = Permission.merge(input.agent.permission ?? [], input.permission ?? [])
+        const ruleset = Permission.merge(prepared.agent.permission ?? [], prepared.permission ?? [])
         workflowModel.sessionPreapprovedTools = Object.keys(tools).filter((name) => {
           const match = ruleset.findLast((rule) => Wildcard.match(name, rule.permission))
           return !match || match.action !== "ask"
@@ -296,7 +329,7 @@ const live: Layer.Layer<
             await bridge.promise(
               perm.ask({
                 id,
-                sessionID: SessionID.make(input.sessionID),
+                sessionID: SessionID.make(prepared.sessionID),
                 permission: "workflow_tool_approval",
                 patterns: uniquePatterns,
                 metadata: { tools: approvalTools },
@@ -350,29 +383,29 @@ const live: Layer.Layer<
           temperature: params.temperature,
           topP: params.topP,
           topK: params.topK,
-          providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+          providerOptions: ProviderTransform.providerOptions(prepared.model, params.options),
           activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
           tools,
-          toolChoice: input.toolChoice,
+          toolChoice: prepared.toolChoice,
           maxOutputTokens: params.maxOutputTokens,
-          abortSignal: input.abort,
+          abortSignal: prepared.abort,
           headers: {
-            ...(input.model.providerID.startsWith("opencode")
+            ...(prepared.model.providerID.startsWith("opencode")
               ? {
                   "x-opencode-project": Instance.project.id,
-                  "x-opencode-session": input.sessionID,
-                  "x-opencode-request": input.user.id,
+                  "x-opencode-session": prepared.sessionID,
+                  "x-opencode-request": prepared.user.id,
                   "x-opencode-client": Flag.CLICKZETTA_CLIENT,
                 }
               : {
-                  "x-session-affinity": input.sessionID,
-                  ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+                  "x-session-affinity": prepared.sessionID,
+                  ...(prepared.parentSessionID ? { "x-parent-session-id": prepared.parentSessionID } : {}),
                   "User-Agent": `opencode/${InstallationVersion}`,
                 }),
-            ...input.model.headers,
+            ...prepared.model.headers,
             ...headers,
           },
-          maxRetries: input.retries ?? 0,
+          maxRetries: prepared.retries ?? 0,
           messages,
           model: wrapLanguageModel({
             model: language,
@@ -382,7 +415,7 @@ const live: Layer.Layer<
                 async transformParams(args) {
                   if (args.type === "stream") {
                     // @ts-expect-error
-                    args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                    args.params.prompt = ProviderTransform.message(args.params.prompt, prepared.model, options)
                   }
                   return args.params
                 },
@@ -395,7 +428,7 @@ const live: Layer.Layer<
             tracer,
             metadata: {
               userId: cfg.username ?? "unknown",
-              sessionId: input.sessionID,
+              sessionId: prepared.sessionID,
             },
           },
         }),
@@ -418,7 +451,7 @@ const live: Layer.Layer<
         ),
       )
 
-    return Service.of({ stream })
+    return Service.of({ prepare, stream })
   }),
 )
 
@@ -451,6 +484,117 @@ export function hasToolCalls(messages: ModelMessage[]): boolean {
     }
   }
   return false
+}
+
+function isPreparedInput(input: StreamInput): input is PreparedInput {
+  const request = (input as StreamInput & { request?: PreparedInput["request"] }).request
+  return !!request && Array.isArray(request.messages) && Array.isArray(request.system)
+}
+
+function serializeInputMessages(messages: ModelMessage[]) {
+  return JSON.stringify(messages.map((message) => ({ role: message.role, parts: serializeMessageParts(message) })))
+}
+
+function serializeSystemInstructions(system: string[]) {
+  const parts = system.filter(Boolean).map((content) => ({ type: "text", content }))
+  return parts.length ? JSON.stringify(parts) : undefined
+}
+
+function serializeMessageParts(message: ModelMessage) {
+  if (typeof message.content === "string") return [{ type: "text", content: message.content }]
+  if (!Array.isArray(message.content)) return []
+  return message.content.map(serializePart).filter((part) => part !== undefined)
+}
+
+function serializePart(part: unknown) {
+  if (!part || typeof part !== "object") return { type: "unknown", content: String(part) }
+  if (!("type" in part) || typeof part.type !== "string") return { type: "unknown", content: JSON.stringify(part) }
+
+  if (part.type === "text" && "text" in part && typeof part.text === "string") {
+    return { type: "text", content: part.text }
+  }
+
+  if (part.type === "tool-call") {
+    return {
+      type: "tool_call",
+      ...("toolCallId" in part && typeof part.toolCallId === "string" ? { id: part.toolCallId } : {}),
+      ...("toolName" in part && typeof part.toolName === "string" ? { name: part.toolName } : {}),
+      ...("input" in part ? { arguments: part.input } : {}),
+    }
+  }
+
+  if (part.type === "tool-result") {
+    return {
+      type: "tool_call_response",
+      ...("toolCallId" in part && typeof part.toolCallId === "string" ? { id: part.toolCallId } : {}),
+      result:
+        "output" in part
+          ? part.output
+          : "result" in part
+            ? part.result
+            : "content" in part
+              ? part.content
+              : undefined,
+    }
+  }
+
+  if (part.type === "reasoning") {
+    return {
+      type: "reasoning",
+      content:
+        "text" in part && typeof part.text === "string"
+          ? part.text
+          : "content" in part && typeof part.content === "string"
+            ? part.content
+            : "",
+    }
+  }
+
+  if (part.type === "file") return serializeFilePart(part as { type: "file"; mediaType?: unknown; data?: unknown; url?: unknown })
+  return { ...part }
+}
+
+function serializeFilePart(part: { type: "file"; mediaType?: unknown; data?: unknown; url?: unknown }) {
+  const mimeType = typeof part.mediaType === "string" ? part.mediaType : null
+  const modality = detectModality(mimeType)
+
+  if (typeof part.data === "string") {
+    const parsed = parseDataUrl(part.data)
+    return {
+      type: "blob",
+      mime_type: parsed?.mimeType ?? mimeType,
+      modality,
+      content: parsed?.content ?? part.data,
+    }
+  }
+
+  if (typeof part.url === "string") {
+    return {
+      type: "uri",
+      mime_type: mimeType,
+      modality,
+      uri: part.url,
+    }
+  }
+
+  return { type: "file" }
+}
+
+function parseDataUrl(input: string) {
+  const match = input.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/)
+  if (!match) return
+  return {
+    mimeType: match[1] ?? null,
+    content: match[2],
+  }
+}
+
+function detectModality(mimeType: string | null) {
+  if (!mimeType) return "image"
+  if (mimeType.startsWith("image/")) return "image"
+  if (mimeType.startsWith("audio/")) return "audio"
+  if (mimeType.startsWith("video/")) return "video"
+  return "image"
 }
 
 export * as LLM from "./llm"
