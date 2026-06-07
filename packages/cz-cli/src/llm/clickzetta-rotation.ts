@@ -8,11 +8,13 @@ import { getGatewayContext } from "../commands/studio-context.js"
 
 const DEFAULT_QUOTA_TOTAL = 10000000
 const API = {
+  LIST: "/llm-gateway-admin/v2/virtual-key/listWithAuth",
   SAVE: "/llm-gateway-admin/v2/virtual-key/save",
   GET: "/llm-gateway-admin/v2/virtual-key/getApiKey",
 }
 const QUOTA_EXHAUSTED_PATTERN = /virtual key total quota exceeded/i
 const ALIAS_PREFIX = "cz-code_auto_"
+const PROFILE_ALIAS_PREFIX = "cz-cli_auto_"
 const ALIAS_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 export const CLICKZETTA_ROTATION_PROMPT = "Free quota exhausted. Create a new virtual key with the current profile and switch?"
 export const CLICKZETTA_ROTATION_HEADER = "Quota"
@@ -106,6 +108,16 @@ function getProfileEntry(data: Dict, profileName: string): Dict | undefined {
   return isRecord(entry) ? entry : undefined
 }
 
+function readProfileUsername(profileName: string, data = loadToml()) {
+  const profile = getProfileEntry(data, profileName)
+  return profile && typeof profile.username === "string" && profile.username.trim() ? profile.username.trim() : undefined
+}
+
+function resolveRotationAlias(profile: string, data = loadToml()) {
+  const username = readProfileUsername(profile, data)
+  return username ? PROFILE_ALIAS_PREFIX + username : randomAlias()
+}
+
 function normalizeGatewayUrl(url: string): string {
   const trimmed = url.replace(/\/+$/, "")
   if (/\/gateway\/v\d+(\/|$)/.test(trimmed)) return trimmed
@@ -161,12 +173,26 @@ async function rotateEntry(input: {
   profile: string
 }) {
   const sc = await getGatewayContext({ profile: input.profile })
-  const alias = randomAlias()
-  const saveResp = await studioRequest<number>(sc, API.SAVE, {
+  const alias = resolveRotationAlias(input.profile)
+  const listResp = await studioRequest<Array<Record<string, unknown>>>(sc, API.LIST, {
+    pageIndex: 1,
+    pageSize: 200,
     vApiKeyAlias: alias,
-    rateLimitConfigs: { quota_total: DEFAULT_QUOTA_TOTAL },
   })
-  const id = Number(saveResp.data)
+  const existing = Array.isArray(listResp.data)
+    ? listResp.data.find((item) => (item.vApiKeyAlias ?? item.vapiKeyAlias) === alias)
+    : undefined
+  const id =
+    existing?.id != null
+      ? Number(existing.id)
+      : Number(
+          (
+            await studioRequest<number>(sc, API.SAVE, {
+              vApiKeyAlias: alias,
+              rateLimitConfigs: { quota_total: DEFAULT_QUOTA_TOTAL },
+            })
+          ).data,
+        )
   const keyResp = await studioRequest<string>(sc, `${API.GET}?id=${id}`, {})
   const apiKey = String(keyResp.data)
   const entryName = writeRotatedKey({

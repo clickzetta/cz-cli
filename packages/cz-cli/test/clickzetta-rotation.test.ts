@@ -8,6 +8,12 @@ const profileDir = join(home, ".clickzetta")
 const profileFile = join(profileDir, "profiles.toml")
 
 const studioCalls: Array<{ path: string; body: unknown; baseUrl?: string; instanceName?: string }> = []
+const gatewayState = {
+  listData: [] as Array<Record<string, unknown>>,
+  getById: {
+    99: "ck-new",
+  } as Record<number, string>,
+}
 const actualSdk = await import("@clickzetta/sdk")
 
 mock.module("@clickzetta/sdk", () => ({
@@ -32,11 +38,16 @@ mock.module("@clickzetta/sdk", () => ({
       baseUrl: typeof config === "object" && config && "baseUrl" in config ? String(config.baseUrl) : undefined,
       instanceName: typeof config === "object" && config && "instanceName" in config ? String(config.instanceName) : undefined,
     })
+    if (path === "/llm-gateway-admin/v2/virtual-key/listWithAuth") {
+      return { code: 0, data: gatewayState.listData }
+    }
     if (path === "/llm-gateway-admin/v2/virtual-key/save") {
       return { code: 0, data: 99 }
     }
-    if (path === "/llm-gateway-admin/v2/virtual-key/getApiKey?id=99") {
-      return { code: 0, data: "ck-new" }
+    if (path.startsWith("/llm-gateway-admin/v2/virtual-key/getApiKey?id=")) {
+      const id = Number(path.split("=").at(-1))
+      const key = gatewayState.getById[id]
+      if (key) return { code: 0, data: key }
     }
     throw new Error(`Unexpected studioRequest path: ${path}`)
   },
@@ -58,6 +69,8 @@ const {
 
 beforeEach(() => {
   studioCalls.length = 0
+  gatewayState.listData = []
+  gatewayState.getById = { 99: "ck-new" }
   delete process.env.CZ_PROFILE
   mkdirSync(profileDir, { recursive: true })
   writeFileSync(
@@ -77,6 +90,7 @@ beforeEach(() => {
       'pat = "pat-uat"',
       'instance = "inst-uat"',
       'workspace = "ws-uat"',
+      'username = "UAT_TEST"',
       'service = "uat-service.example"',
       'protocol = "https"',
       'ai_gateway_url = "https://mock-aimesh.example/gateway/v1"',
@@ -129,6 +143,17 @@ describe("clickzetta key rotation", () => {
     expect(result?.rotated).toBe(true)
     expect(result?.entryName).toBe("uat")
     expect(result?.profile).toBe("uat")
+    expect(studioCalls[0]?.path).toBe("/llm-gateway-admin/v2/virtual-key/listWithAuth")
+    expect(studioCalls[0]?.body).toEqual({
+      pageIndex: 1,
+      pageSize: 200,
+      vApiKeyAlias: "cz-cli_auto_UAT_TEST",
+    })
+    expect(studioCalls[1]?.path).toBe("/llm-gateway-admin/v2/virtual-key/save")
+    expect(studioCalls[1]?.body).toEqual({
+      vApiKeyAlias: "cz-cli_auto_UAT_TEST",
+      rateLimitConfigs: { quota_total: 10000000 },
+    })
     const profiles = readFileSync(profileFile, "utf-8")
     expect(profiles).toContain('api_key = "ck-new"')
     expect(profiles).toContain('default_llm = "uat"')
@@ -188,11 +213,34 @@ describe("clickzetta key rotation", () => {
     expect(result?.entryName).toBe("default")
     expect(studioCalls[0]?.baseUrl).toBe("https://mock-service.example")
     expect(studioCalls[0]?.instanceName).toBe("inst")
-    expect(studioCalls[0]?.body).toEqual({
+    expect(studioCalls[0]?.path).toBe("/llm-gateway-admin/v2/virtual-key/listWithAuth")
+    expect(studioCalls[1]?.path).toBe("/llm-gateway-admin/v2/virtual-key/save")
+    expect(studioCalls[1]?.body).toEqual({
       vApiKeyAlias: expect.stringMatching(/^cz-code_auto_/),
       rateLimitConfigs: { quota_total: 10000000 },
     })
     const profiles = readFileSync(profileFile, "utf-8")
     expect(profiles).toContain('api_key = "ck-new"')
+  })
+
+  test("reuses an existing key with the derived alias before creating a new one", async () => {
+    gatewayState.listData = [{ id: 77, vApiKeyAlias: "cz-cli_auto_UAT_TEST" }]
+    gatewayState.getById[77] = "ck-existing"
+
+    const result = await maybeRotateExhaustedClickzettaLlm({
+      provider: "clickzetta",
+      status: 429,
+      detail:
+        "{\"code\":429,\"message\":\"Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-cli_auto_UAT_TEST', current usage: 10075371 tokens\"}",
+      approval: "auto",
+    })
+
+    expect(result?.rotated).toBe(true)
+    expect(result?.alias).toBe("cz-cli_auto_UAT_TEST")
+    expect(studioCalls.map((call) => call.path)).toEqual([
+      "/llm-gateway-admin/v2/virtual-key/listWithAuth",
+      "/llm-gateway-admin/v2/virtual-key/getApiKey?id=77",
+    ])
+    expect(readFileSync(profileFile, "utf-8")).toContain('api_key = "ck-existing"')
   })
 })

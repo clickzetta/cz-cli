@@ -220,9 +220,16 @@ describe("llm guidance", () => {
   if (req.url === "https://mock-service.example/clickzetta-portal/user/getCurrentUser") {
     return Response.json({ code: 0, data: { id: 2, accountId: 3, name: "alice", instanceId: 1 } })
   }
+  if (req.url === "https://mock-service.example/llm-gateway-admin/v2/virtual-key/listWithAuth") {
+    const body = await req.json()
+    if (String(body.vApiKeyAlias ?? "") !== "cz-cli_auto_alice") {
+      return Response.json({ code: 400, message: "bad alias lookup" })
+    }
+    return Response.json({ code: 0, data: [] })
+  }
   if (req.url === "https://mock-service.example/llm-gateway-admin/v2/virtual-key/save") {
     const body = await req.json()
-    if (!String(body.vApiKeyAlias ?? "").startsWith("cz-code_auto_")) {
+    if (String(body.vApiKeyAlias ?? "") !== "cz-cli_auto_alice") {
       return Response.json({ code: 400, message: "bad alias" })
     }
     return Response.json({ code: 0, data: 99 })
@@ -245,6 +252,7 @@ describe("llm guidance", () => {
         "",
         "[profiles.default]",
         'pat = "pat-token"',
+        'username = "alice"',
         'instance = "inst"',
         'workspace = "ws"',
         'service = "mock-service.example"',
