@@ -109,6 +109,12 @@ describe("transcript", () => {
       const result = formatAssistantHeader(msg, true)
       expect(result).toContain("Plan")
     })
+
+    test("formats snake_case agent names for display", () => {
+      const msg = { ...baseMsg, agent: "data_engineer" }
+      const result = formatAssistantHeader(msg, true)
+      expect(result).toContain("Data Engineer")
+    })
   })
 
   describe("formatPart", () => {

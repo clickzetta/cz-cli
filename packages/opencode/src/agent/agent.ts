@@ -52,6 +52,25 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
+function planLikePermission(defaults: Permission.Ruleset, user: Permission.Ruleset) {
+  return Permission.merge(
+    defaults,
+    Permission.fromConfig({
+      question: "allow",
+      plan_exit: "allow",
+      external_directory: {
+        [path.join(Global.Path.data, "plans", "*")]: "allow",
+      },
+      edit: {
+        "*": "deny",
+        [path.join(".clickzetta", "plans", "*.md")]: "allow",
+        [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+      },
+    }),
+    user,
+  )
+}
+
 export interface Interface {
   readonly get: (agent: string) => Effect.Effect<Info>
   readonly list: () => Effect.Effect<Info[]>
@@ -126,22 +145,15 @@ export const layer = Layer.effect(
             name: "plan",
             description: "Plan mode. Disallows all edit tools.",
             options: {},
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                question: "allow",
-                plan_exit: "allow",
-                external_directory: {
-                  [path.join(Global.Path.data, "plans", "*")]: "allow",
-                },
-                edit: {
-                  "*": "deny",
-                  [path.join(".clickzetta", "plans", "*.md")]: "allow",
-                  [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
-                },
-              }),
-              user,
-            ),
+            permission: planLikePermission(defaults, user),
+            mode: "primary",
+            native: true,
+          },
+          data_engineer: {
+            name: "data_engineer",
+            description: "Data Engineer mode. Currently mirrors plan mode and disallows all edit tools.",
+            options: {},
+            permission: planLikePermission(defaults, user),
             mode: "primary",
             native: true,
           },

@@ -149,6 +149,7 @@ export const Info = z
       .object({
         build: ConfigAgent.Info.optional(),
         plan: ConfigAgent.Info.optional(),
+        data_engineer: ConfigAgent.Info.optional(),
       })
       .catchall(ConfigAgent.Info)
       .optional()
@@ -158,6 +159,7 @@ export const Info = z
         // primary
         plan: ConfigAgent.Info.optional(),
         build: ConfigAgent.Info.optional(),
+        data_engineer: ConfigAgent.Info.optional(),
         // subagent
         general: ConfigAgent.Info.optional(),
         explore: ConfigAgent.Info.optional(),

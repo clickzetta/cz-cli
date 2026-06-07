@@ -1,5 +1,7 @@
 export function titlecase(str: string) {
-  return str.replace(/\b\w/g, (c) => c.toUpperCase())
+  return str
+    .replaceAll(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 export function time(input: number): string {

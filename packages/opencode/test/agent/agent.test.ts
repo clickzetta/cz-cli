@@ -29,6 +29,7 @@ test("returns default native agents when no config", async () => {
       const names = agents.map((a) => a.name)
       expect(names).toContain("build")
       expect(names).toContain("plan")
+      expect(names).toContain("data_engineer")
       expect(names).toContain("general")
       expect(names).toContain("explore")
       expect(names).toContain("compaction")
@@ -64,6 +65,22 @@ test("plan agent denies edits except .opencode/plans/*", async () => {
       expect(evalPerm(plan, "edit")).toBe("deny")
       // But specific path is allowed
       expect(Permission.evaluate("edit", ".opencode/plans/foo.md", plan!.permission).action).toBe("allow")
+    },
+  })
+})
+
+test("data_engineer agent currently mirrors plan permissions", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const agent = await load(tmp.path, (svc) => svc.get("data_engineer"))
+      expect(plan).toBeDefined()
+      expect(agent).toBeDefined()
+      expect(agent?.mode).toBe("primary")
+      expect(agent?.description).toContain("Data Engineer")
+      expect(agent?.permission).toEqual(plan?.permission)
     },
   })
 })
@@ -711,6 +728,7 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
       agent: {
         build: { disable: true },
         plan: { disable: true },
+        data_engineer: { disable: true },
       },
     },
   })
