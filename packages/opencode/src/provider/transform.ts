@@ -264,6 +264,30 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   return msgs
 }
 
+const CLICKZETTA_CACHE_CONTROL_MODELS = new Set(["qwen/qwen3.6-plus"])
+
+function applyClickZettaCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+  if (model.providerID !== "clickzetta") return msgs
+  if (!CLICKZETTA_CACHE_CONTROL_MODELS.has(model.api.id) && !CLICKZETTA_CACHE_CONTROL_MODELS.has(model.id)) return msgs
+
+  const msg = msgs.find((msg) => msg.role === "system")
+  if (!msg || typeof msg.content !== "string" || msg.content === "") return msgs
+
+  return msgs.map((item) => {
+    if (item !== msg) return item
+    return {
+      ...item,
+      content: [
+        {
+          type: "text",
+          text: msg.content,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+    } as unknown as ModelMessage
+  })
+}
+
 function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   return msgs.map((msg) => {
     if (msg.role !== "user" || !Array.isArray(msg.content)) return msg
@@ -305,6 +329,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
 export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
   msgs = unsupportedParts(msgs, model)
   msgs = normalizeMessages(msgs, model, options)
+  msgs = applyClickZettaCaching(msgs, model)
   if (
     (model.providerID === "anthropic" ||
       model.providerID === "google-vertex-anthropic" ||

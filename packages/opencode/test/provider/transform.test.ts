@@ -2028,6 +2028,68 @@ describe("ProviderTransform.message - cache control on gateway", () => {
   })
 })
 
+describe("ProviderTransform.message - ClickZetta cache control", () => {
+  const createModel = (overrides: Partial<any> = {}) =>
+    ({
+      id: "qwen/qwen3.6-plus",
+      providerID: "clickzetta",
+      api: {
+        id: "qwen/qwen3.6-plus",
+        url: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/v1",
+        npm: "@ai-sdk/openai-compatible",
+      },
+      name: "Qwen3.6 Plus",
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0.8, output: 3.2, cache: { read: 0.08, write: 0.8 } },
+      limit: { context: 128_000, output: 16_384 },
+      status: "active",
+      options: {},
+      headers: {},
+      ...overrides,
+    }) as any
+
+  test("qwen3.6-plus marks the first string system message with explicit cache_control", () => {
+    const result = ProviderTransform.message(
+      [
+        { role: "system", content: "You are a helpful ClickZetta agent" },
+        { role: "user", content: "Hello" },
+      ] as any[],
+      createModel(),
+      {},
+    ) as any[]
+
+    expect(result[0].content).toEqual([
+      {
+        type: "text",
+        text: "You are a helpful ClickZetta agent",
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+    expect(result[1].content).toBe("Hello")
+  })
+
+  test("does not mark other ClickZetta models", () => {
+    const result = ProviderTransform.message(
+      [
+        { role: "system", content: "You are a helpful ClickZetta agent" },
+        { role: "user", content: "Hello" },
+      ] as any[],
+      createModel({ id: "qwen/qwen3.6-flash", api: { id: "qwen/qwen3.6-flash", npm: "@ai-sdk/openai-compatible" } }),
+      {},
+    ) as any[]
+
+    expect(result[0].content).toBe("You are a helpful ClickZetta agent")
+  })
+})
+
 describe("ProviderTransform.variants", () => {
   const createMockModel = (overrides: Partial<any> = {}): any => ({
     id: "test/test-model",
