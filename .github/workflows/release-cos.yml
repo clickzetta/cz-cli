@@ -52,7 +52,6 @@ jobs:
 
   create-release:
     needs: resolve-release
-    if: needs.resolve-release.outputs.is_stable == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,9 +89,14 @@ jobs:
           gh release delete "${{ needs.resolve-release.outputs.tag }}" \
             --yes --cleanup-tag=false \
             --repo "${{ github.repository }}" 2>/dev/null || true
+          PRERELEASE_ARGS=()
+          if [ "${{ needs.resolve-release.outputs.is_dev }}" = "true" ]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
           gh release create "${{ needs.resolve-release.outputs.tag }}" \
             --title "${{ needs.resolve-release.outputs.tag }}" \
             --notes-file /tmp/release-notes.md \
+            "${PRERELEASE_ARGS[@]}" \
             --repo "${{ github.repository }}"
 
   build:
@@ -206,20 +210,11 @@ jobs:
           OPENCODE_VERSION: ${{ needs.resolve-release.outputs.version }}
           OPENCODE_ARCHIVE: "1"
           OPENCODE_HOST_ONLY: "1"
-          OPENCODE_RELEASE: ${{ needs.resolve-release.outputs.is_stable == 'true' && '1' || '' }}
+          OPENCODE_RELEASE: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLICKZETTA_OTEL_ENDPOINT: ${{ secrets.CLICKZETTA_OTEL_ENDPOINT }}
           CLICKZETTA_OTEL_HEADERS: ${{ secrets.CLICKZETTA_OTEL_HEADERS }}
         run: cd packages/opencode && bun run script/build.ts
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dist-${{ matrix.os }}-${{ matrix.runner }}-${{ github.run_attempt }}
-          retention-days: 7
-          if-no-files-found: error
-          path: |
-            packages/opencode/dist/cz-cli-*
 
   upload-installer:
     needs: [resolve-release, build]
@@ -251,12 +246,16 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-dist-*-${{ github.run_attempt }}
-          path: artifacts
-          merge-multiple: true
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets artifacts
+          gh release download "${{ needs.resolve-release.outputs.tag }}" \
+            --pattern "cz-cli-*" \
+            --dir release-assets \
+            --repo "${{ github.repository }}"
+          node scripts/prepare-release-assets.mjs release-assets artifacts
 
       - name: Publish to npm
         env:
@@ -297,12 +296,16 @@ jobs:
           HUSKY: "0"
         run: bun install --frozen-lockfile
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-dist-*-${{ github.run_attempt }}
-          path: packages/opencode/dist
-          merge-multiple: true
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${{ needs.resolve-release.outputs.tag }}" \
+            --pattern "cz-cli-*" \
+            --dir release-assets \
+            --repo "${{ github.repository }}"
+          node scripts/prepare-release-assets.mjs release-assets packages/opencode/dist
 
       - name: Publish to COS
         env:
