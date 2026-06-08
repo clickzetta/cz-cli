@@ -133,22 +133,18 @@ jobs:
           WORK_DIR="$(pwd)"
           TMP_DIR="$(mktemp -d)"
           SKILLS_SRC="$TMP_DIR/clickzetta-skills"
-          ARCHIVE="$TMP_DIR/clickzetta-skills.tar.gz"
           for attempt in 1 2 3; do
-            echo "Downloading clickzetta-skills attempt $attempt"
-            if curl -fL --retry 3 --retry-delay 5 --max-time 60 \
-              https://github.com/clickzetta/clickzetta-skills/archive/refs/heads/main.tar.gz \
-              -o "$ARCHIVE" && gzip -t "$ARCHIVE"; then
+            echo "Cloning clickzetta-skills attempt $attempt"
+            rm -rf "$SKILLS_SRC"
+            if git clone --depth 1 https://github.com/clickzetta/clickzetta-skills.git "$SKILLS_SRC"; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then
-              echo "Failed to download a valid clickzetta-skills archive" >&2
+              echo "Failed to clone clickzetta-skills" >&2
               exit 1
             fi
             sleep 5
           done
-          tar -xzf "$ARCHIVE" -C "$TMP_DIR"
-          mv "$TMP_DIR/clickzetta-skills-main" "$SKILLS_SRC"
           mkdir -p "$WORK_DIR/skills/external"
           count=0
           for name in $(ls "$SKILLS_SRC" | grep -E '^(clickzetta-|lakehouse-doc)'); do
