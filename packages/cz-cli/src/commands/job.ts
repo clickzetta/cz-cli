@@ -1,8 +1,11 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
+import { mkdir, rm, stat, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import {
   requestRaw, pollJobResult,
-  type ClientOptions, type JobID, type QueryResult,
+  type ClientOptions, type JobID, type QueryResult, type StudioConfig,
   JobStatus,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
@@ -10,6 +13,9 @@ import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, isQueryResult } from "./exec.js"
+import { getStudioContext } from "./studio-context.js"
+import { buildJobProfilePayload, type JobProfileFile } from "./job-profile.js"
+import { analyzeJobPerformance } from "./job-performance.js"
 
 const DEFAULT_FIELD_MAX = 3000
 const DEFAULT_ROW_LIMIT = 100
@@ -53,6 +59,212 @@ async function getJobStatus(opts: ClientOptions, jobId: JobID): Promise<RawJobRe
     user_agent: "",
   }
   return requestRaw<RawJobResponse>(opts, "/lh/getJob", body)
+}
+
+function defaultJobProfileDir(jobId: string): string {
+  return join(tmpdir(), "cz-cli", "job-profile", jobId)
+}
+
+async function writeJsonFile(dir: string, filename: string, data: unknown): Promise<{ path: string; bytes: number }> {
+  await mkdir(dir, { recursive: true })
+  const filePath = join(dir, filename)
+  await writeFile(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8")
+  return { path: filePath, bytes: (await stat(filePath)).size }
+}
+
+function debugJobProfile(enabled: boolean | undefined, message: string, data?: Record<string, unknown>) {
+  if (!enabled) return
+  process.stderr.write(`[debug] job profile: ${message}${data ? ` ${JSON.stringify(data)}` : ""}\n`)
+}
+
+function apiError(payload: unknown): { code: string; message: string; requestId?: string } | null {
+  const root = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {}
+  const status = root.respStatus && typeof root.respStatus === "object" && !Array.isArray(root.respStatus)
+    ? root.respStatus as Record<string, unknown>
+    : {}
+  const code = status.errorCode ?? root.errorCode
+  if (code === undefined || code === null || String(code).trim() === "") {
+    return root.data !== payload ? apiError(root.data) : null
+  }
+  return {
+    code: String(code),
+    message: String(status.errorMsg ?? root.errorMsg ?? root.message ?? "Unknown API error"),
+    requestId: status.requestId !== undefined ? String(status.requestId) : root.requestId !== undefined ? String(root.requestId) : undefined,
+  }
+}
+
+function payloadKeys(payload: unknown): string[] {
+  return Object.keys(payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {}).slice(0, 20)
+}
+
+async function requestStudioJobJson(
+  sc: StudioConfig,
+  path: string,
+  params: Record<string, string | number | boolean>,
+  debug?: boolean,
+): Promise<unknown> {
+  const url = new URL(path, sc.baseUrl)
+  Object.entries(params).forEach((entry) => url.searchParams.set(entry[0], String(entry[1])))
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "X-Clickzetta-Token": sc.token,
+    "userId": String(sc.userId),
+    "instanceId": String(sc.instanceId),
+    "accountId": String(sc.tenantId),
+    "tenantId": String(sc.tenantId),
+    "instanceName": sc.instanceName,
+    "workspaceName": sc.workspaceName,
+    "workspaceId": String(sc.workspaceId),
+    "projectId": String(sc.projectId),
+    ...sc.customHeaders,
+  }
+  debugJobProfile(debug, "GET", {
+    url: url.toString(),
+    headers: {
+      instanceId: headers.instanceId,
+      instanceName: headers.instanceName,
+      workspaceName: headers.workspaceName,
+      workspaceId: headers.workspaceId,
+      projectId: headers.projectId,
+      userId: headers.userId,
+      tenantId: headers.tenantId,
+    },
+  })
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
+  const text = await response.text()
+  debugJobProfile(debug, "response", {
+    path,
+    status: response.status,
+    ok: response.ok,
+    bytes: Buffer.byteLength(text, "utf-8"),
+  })
+  if (!response.ok) {
+    debugJobProfile(debug, "http_error", {
+      path,
+      status: response.status,
+      statusText: response.statusText,
+      bodyPreview: text.slice(0, 500),
+    })
+    throw new Error(`HTTP ${response.status} ${response.statusText}: ${text.slice(0, 500)}`)
+  }
+  const payload = JSON.parse(text) as unknown
+  debugJobProfile(debug, "payload", {
+    path,
+    topLevelKeys: payloadKeys(payload),
+    counts: responseCounts(payload),
+  })
+  const err = apiError(payload)
+  if (err) {
+    debugJobProfile(debug, "api_error", {
+      path,
+      code: err.code,
+      message: err.message,
+      requestId: err.requestId,
+    })
+    throw new Error(`[${err.code}] ${err.message}${err.requestId ? ` (requestId=${err.requestId})` : ""}`)
+  }
+  return payload
+}
+
+function responseCounts(payload: unknown) {
+  const root = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {}
+  const data = root.data && typeof root.data === "object" && !Array.isArray(root.data) ? root.data as Record<string, unknown> : root
+  const plan = data.jobPlan && typeof data.jobPlan === "object" && !Array.isArray(data.jobPlan) ? data.jobPlan as Record<string, unknown> : data
+  return {
+    dataKeys: Object.keys(data).slice(0, 20),
+    stages: Array.isArray(plan.stages) ? plan.stages.length : Array.isArray(data.stages) ? data.stages.length : 0,
+    operators: Array.isArray(data.operatorSummaries) ? data.operatorSummaries.length : Array.isArray(data.operators) ? data.operators.length : 0,
+  }
+}
+
+async function fetchJobProfileData(
+  sc: StudioConfig,
+  jobId: string,
+  debug?: boolean,
+): Promise<{ jobPlan: unknown; jobProgress: unknown; jobProfile: unknown }> {
+  const params = {
+    jobId,
+    workspaceName: sc.workspaceName,
+    instanceId: sc.instanceId,
+  }
+  const jobPlan = await requestStudioJobJson(
+    sc,
+    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan",
+    params,
+    debug,
+  )
+  const jobProgress = await requestStudioJobJson(
+    sc,
+    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProgress",
+    params,
+    debug,
+  )
+  const jobProfile = await requestStudioJobJson(
+    sc,
+    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
+    { ...params, brief: true },
+    debug,
+  )
+  return { jobPlan, jobProgress, jobProfile }
+}
+
+function jobProfileParams(sc: StudioConfig, jobId: string) {
+  return {
+    jobId,
+    workspaceName: sc.workspaceName,
+    instanceId: sc.instanceId,
+  }
+}
+
+async function fetchJobProfileOnly(
+  sc: StudioConfig,
+  jobId: string,
+  debug?: boolean,
+): Promise<unknown> {
+  return requestStudioJobJson(
+    sc,
+    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
+    { ...jobProfileParams(sc, jobId), brief: true },
+    debug,
+  )
+}
+
+async function downloadJobProfileFiles(
+  sc: StudioConfig,
+  jobId: string,
+  outputDir: string,
+  debug?: boolean,
+): Promise<{ jobPlan: unknown; jobProfile: unknown; files: JobProfileFile[]; path: string }> {
+  const jobPlan = await requestStudioJobJson(
+    sc,
+    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan",
+    jobProfileParams(sc, jobId),
+    debug,
+  )
+  const jobProfile = await fetchJobProfileOnly(sc, jobId, debug)
+  await rm(join(outputDir, "job_progress.json"), { force: true })
+  const planFile = await writeJsonFile(outputDir, "job_plan.json", jobPlan)
+  const profileFile = await writeJsonFile(outputDir, "job_profile.json", jobProfile)
+  debugJobProfile(debug, "files", {
+    outputDir,
+    removedStaleFiles: ["job_progress.json"],
+    planFile: planFile.path,
+    planBytes: planFile.bytes,
+    planCounts: responseCounts(jobPlan),
+    profileFile: profileFile.path,
+    profileBytes: profileFile.bytes,
+    profileCounts: responseCounts(jobProfile),
+  })
+  return {
+    jobPlan,
+    jobProfile,
+    path: outputDir,
+    files: [
+      { type: "job_plan", path: planFile.path, exists: true, bytes: planFile.bytes, source: "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan" },
+      { type: "job_profile", path: profileFile.path, exists: true, bytes: profileFile.bytes, source: "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile" },
+    ],
+  }
 }
 
 export function registerJobCommand(cli: Argv<GlobalArgs>): void {
@@ -130,6 +342,136 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
           } catch (err) {
             logOperation("job result", { ok: false, errorCode: "JOB_RESULT_ERROR" })
             error("JOB_RESULT_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      .command(
+        "profile",
+        "Job profile tools",
+        (profileYargs) => {
+          profileYargs
+            .command(
+              "download <job-id>",
+              "Download a job's profile JSON files",
+              (y) =>
+                y
+                  .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
+                  .option("path", { type: "string", describe: "Directory to write job_profile.json. Defaults to a temp directory." }),
+              async (argv) => {
+                const format = argv.format
+                try {
+                  const sc = await getStudioContext(argv)
+                  const jobId = argv["job-id"] as string
+                  debugJobProfile(argv.debug, "context", {
+                    jobId,
+                    baseUrl: sc.baseUrl,
+                    instanceId: sc.instanceId,
+                    instanceName: sc.instanceName,
+                    workspaceName: sc.workspaceName,
+                    workspaceId: sc.workspaceId,
+                    projectId: sc.projectId,
+                    userId: sc.userId,
+                    tenantId: sc.tenantId,
+                  })
+                  const downloaded = await downloadJobProfileFiles(
+                    sc,
+                    jobId,
+                    argv.path as string | undefined ?? defaultJobProfileDir(jobId),
+                    argv.debug,
+                  )
+                  logOperation("job profile download", { ok: true })
+                  success({
+                    job_id: jobId,
+                    workspace_name: sc.workspaceName,
+                    instance_id: sc.instanceId,
+                    path: downloaded.path,
+                    files: downloaded.files,
+                  }, { format })
+                } catch (err) {
+                  logOperation("job profile download", { ok: false, errorCode: "JOB_PROFILE_DOWNLOAD_ERROR" })
+                  error("JOB_PROFILE_DOWNLOAD_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
+                }
+              },
+            )
+            .command(
+              "detail <job-id>",
+              "Show a job's profile detail without downloading files",
+              (y) => y.positional("job-id", { type: "string", demandOption: true, describe: "Job ID" }),
+              async (argv) => {
+                const format = argv.format
+                try {
+                  const sc = await getStudioContext(argv)
+                  const jobId = argv["job-id"] as string
+                  debugJobProfile(argv.debug, "context", {
+                    jobId,
+                    baseUrl: sc.baseUrl,
+                    instanceId: sc.instanceId,
+                    instanceName: sc.instanceName,
+                    workspaceName: sc.workspaceName,
+                    workspaceId: sc.workspaceId,
+                    projectId: sc.projectId,
+                    userId: sc.userId,
+                    tenantId: sc.tenantId,
+                  })
+                  const profile = await fetchJobProfileData(sc, jobId, argv.debug)
+                  logOperation("job profile detail", { ok: true })
+                  success(
+                    buildJobProfilePayload({
+                      jobId,
+                      workspaceName: sc.workspaceName,
+                      instanceId: sc.instanceId,
+                      jobPlan: profile.jobPlan,
+                      jobProgress: profile.jobProgress,
+                      jobProfile: profile.jobProfile,
+                      files: [],
+                    }),
+                    { format },
+                  )
+                } catch (err) {
+                  logOperation("job profile detail", { ok: false, errorCode: "JOB_PROFILE_DETAIL_ERROR" })
+                  error("JOB_PROFILE_DETAIL_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
+                }
+              },
+            )
+          return commandGroup(profileYargs, "job profile")
+        },
+      )
+      .command(
+        "analyze [job-id]",
+        "Analyze job performance using downloaded profile data or a job ID",
+        (y) =>
+          y
+            .positional("job-id", { type: "string", describe: "Job ID. Not required when --path is provided." })
+            .option("path", { type: "string", describe: "Directory containing job_plan.json and job_profile.json." })
+            .option("analysis-mode", {
+              type: "string",
+              choices: ["quick", "detailed", "expert"] as const,
+              default: "quick",
+              describe: "Analysis mode. Use detailed for careful review, expert only for deep analysis.",
+            })
+            .option("enable-incremental-algorithm", { type: "boolean", default: false, describe: "Enable incremental algorithm analysis." })
+            .option("enable-state-table", { type: "boolean", default: true, describe: "Enable state table optimization analysis." })
+            .check((argv) => {
+              if (!argv.path && !argv["job-id"]) throw new Error("job-id is required when --path is not provided.")
+              return true
+            }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const output = await analyzeJobPerformance({
+              profile: argv.profile as string | undefined,
+              workspaceName: argv.workspace as string | undefined,
+              jobId: argv["job-id"] as string | undefined,
+              path: argv.path as string | undefined,
+              analysisMode: argv["analysis-mode"] as "quick" | "detailed" | "expert",
+              enableIncrementalAlgorithm: argv["enable-incremental-algorithm"] as boolean,
+              enableStateTable: argv["enable-state-table"] as boolean,
+            }, argv.debug as boolean)
+            logOperation("job analyze", { ok: true })
+            success({ output }, { format })
+          } catch (err) {
+            logOperation("job analyze", { ok: false, errorCode: "JOB_ANALYZE_ERROR" })
+            error("JOB_ANALYZE_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
           }
         },
       )

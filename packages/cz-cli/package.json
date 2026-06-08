@@ -26,6 +26,7 @@
   "dependencies": {
     "@clickzetta/sdk": "workspace:*",
     "@clack/prompts": "1.0.0-alpha.1",
+    "@modelcontextprotocol/sdk": "1.27.1",
     "smol-toml": "1.6.1",
     "yargs": "18.0.0"
   },

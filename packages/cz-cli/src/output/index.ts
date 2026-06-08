@@ -353,6 +353,11 @@ export function parseOutputArgs(args: string[]): { format?: string; field?: stri
       index++
       continue
     }
+    if (value === "--format") {
+      format = args[index + 1]
+      index++
+      continue
+    }
     if (value === "--field") {
       field = args[index + 1]
       index++
@@ -360,6 +365,7 @@ export function parseOutputArgs(args: string[]): { format?: string; field?: stri
     }
     if (value?.startsWith("--output=")) format = value.slice("--output=".length)
     if (value?.startsWith("-o=")) format = value.slice(3)
+    if (value?.startsWith("--format=")) format = value.slice("--format=".length)
     if (value?.startsWith("--field=")) field = value.slice("--field=".length)
   }
   return { format, field }

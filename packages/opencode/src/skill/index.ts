@@ -18,7 +18,7 @@ import { Log } from "../util"
 import { Discovery } from "./discovery"
 
 const log = Log.create({ service: "skill" })
-const EXTERNAL_DIRS = [".claude", ".agents"]
+const EXTERNAL_DIRS = [".agents"]
 const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
 const CLICKZETTA_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
 const SKILL_PATTERN = "**/SKILL.md"

@@ -71,6 +71,9 @@ const noProfileCases = [
   ["attempts", "log", "1"],
   ["job", "status", "1"],
   ["job", "result", "1"],
+  ["job", "profile", "download", "1"],
+  ["job", "profile", "detail", "1"],
+  ["job", "analyze", "1"],
   ["datasource", "list"],
   ["datasource", "catalogs", "ds"],
 ] as const
@@ -142,11 +145,11 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "PRETTY_NO_PROFILE: profile-gated commands honor --output pretty",
+    name: "PRETTY_NO_PROFILE: profile-gated commands honor --format pretty",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
-        const result = run(["sql", "SELECT 1", "--output", "pretty"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const result = run(["sql", "SELECT 1", "--format", "pretty"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         if (result.exitCode !== 1) return { pass: false, detail: `exit=${result.exitCode}` }
         const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>
         if ((parsed.error as { code?: string } | undefined)?.code !== "NO_PROFILE") {
@@ -160,9 +163,9 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "PRETTY_USAGE_ERROR: parser failures honor --output pretty",
+    name: "PRETTY_USAGE_ERROR: parser failures honor --format pretty",
     run() {
-      const result = run(["nope", "--output", "pretty"])
+      const result = run(["nope", "--format", "pretty"])
       if (result.exitCode !== 2) return { pass: false, detail: `exit=${result.exitCode}` }
       const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>
       if ((parsed.error as { code?: string } | undefined)?.code !== "USAGE_ERROR") {

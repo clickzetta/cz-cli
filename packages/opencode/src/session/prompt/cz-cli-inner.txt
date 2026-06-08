@@ -6,8 +6,6 @@ You have `cz-cli` available in PATH for direct access to Clickzetta Studio and L
 - Create, manage, and schedule tasks
 - Check task run status and logs
 
-Run `cz-cli <command> --help` for detailed options on any command.
-
 ## Command Reference
 
 ```
@@ -66,6 +64,9 @@ cz-cli attempts log [id]                      Get attempt log
 
 cz-cli job status <job-id>                    Job status/summary
 cz-cli job result <job-id>                    Fetch job result set
+cz-cli job profile download <job-id>          Download job_profile.json using getJobProfile; returns only paths. Use --path <dir> to choose where files are written
+cz-cli job profile detail <job-id>            Return detail/stage/operator arrays from getJobProfile/getJobProgress/getJobPlan without writing files
+cz-cli job analyze [job-id]                   Analyze job performance; use --path <dir> to analyze previously downloaded job_plan.json/job_profile.json
 
 cz-cli status                                 Check connection status
 cz-cli profile list                           List connection profiles
@@ -125,6 +126,8 @@ cz-cli ai-gateway model list [ref]              List models available to a virtu
 - `--format toon` — line-per-field, good for `grep`/`head`
 - `--format table` / `--format csv` / `--format pretty` — human-readable
 - `--field <name>` — extract one field as raw text
+
+Run `cz-cli <command> --help` for detailed options on any command.
 
 ## Key Rules
 
