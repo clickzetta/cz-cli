@@ -45,4 +45,50 @@ describe("prepare release assets", () => {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
   })
+
+  test("treats unzip warning exit code as non-fatal", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-release-assets-unzip-warning-"))
+    const assetsDir = path.join(tmp, "assets")
+    const distDir = path.join(tmp, "dist")
+    const binDir = path.join(tmp, "fake-bin")
+    fs.mkdirSync(assetsDir)
+    fs.mkdirSync(binDir)
+    fs.writeFileSync(path.join(assetsDir, "cz-cli-windows-x64.zip"), "fake")
+    fs.writeFileSync(
+      path.join(binDir, "unzip"),
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "dest=\"\"",
+        "while [ \"$#\" -gt 0 ]; do",
+        "  if [ \"$1\" = \"-d\" ]; then",
+        "    dest=\"$2\"",
+        "    shift 2",
+        "    continue",
+        "  fi",
+        "  shift",
+        "done",
+        "mkdir -p \"$dest\"",
+        "printf windows > \"$dest/cz-cli.exe\"",
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    )
+
+    try {
+      execFileSync(
+        process.execPath,
+        ["run", path.join(repoRoot, "scripts", "prepare-release-assets.mjs"), assetsDir, distDir],
+        {
+          cwd: repoRoot,
+          env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+        },
+      )
+
+      expect(fs.readFileSync(path.join(distDir, "cz-cli-windows-x64", "bin", "cz-cli.exe"), "utf8")).toBe("windows")
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 })

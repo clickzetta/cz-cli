@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 
@@ -32,7 +32,13 @@ for (const archive of archives) {
   fs.mkdirSync(binDir, { recursive: true })
 
   if (archive.endsWith(".zip")) {
-    execFileSync("unzip", ["-q", "-o", path.join(assetsDir, archive), "-d", binDir], { stdio: "inherit" })
+    const result = spawnSync("unzip", ["-q", "-o", path.join(assetsDir, archive), "-d", binDir], { stdio: "inherit" })
+    if (result.status && result.status !== 1) {
+      throw new Error(`failed to extract ${archive}`)
+    }
+    if (fs.readdirSync(binDir).length === 0) {
+      throw new Error(`no files extracted from ${archive}`)
+    }
     continue
   }
 
