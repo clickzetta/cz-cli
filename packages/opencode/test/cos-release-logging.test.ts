@@ -228,6 +228,9 @@ describe("cos release logging", () => {
     expect(ps1).toContain("https://example.com/win32-x64.zip?sign=def")
     expect(ps1).toContain("Get-Command cz-cli")
     expect(ps1).toContain("A newer version is already installed")
+    expect(ps1).toContain('Join-Path $InstallDir "cz-agent.cmd"')
+    expect(ps1).toContain("@echo off")
+    expect(ps1).toContain(`'"%~dp0cz-cli.exe" agent %*'`)
   })
 
   test("release installer script supports direct installation options", () => {

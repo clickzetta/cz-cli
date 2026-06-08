@@ -607,6 +607,11 @@ ${renderPowerShellPlatformCase(platforms)}
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
   $BinaryTarget = Join-Path $InstallDir "cz-cli.exe"
   Copy-Item -LiteralPath $BinarySource -Destination $BinaryTarget -Force
+  $AgentTarget = Join-Path $InstallDir "cz-agent.cmd"
+  Set-Content -LiteralPath $AgentTarget -Value @(
+    "@echo off"
+    '"%~dp0cz-cli.exe" agent %*'
+  )
 
   $MetadataDir = Join-Path $HOME ".clickzetta"
   New-Item -ItemType Directory -Force -Path $MetadataDir | Out-Null
