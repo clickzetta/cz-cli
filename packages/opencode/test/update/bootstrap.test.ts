@@ -73,6 +73,12 @@ describe("update bootstrap", () => {
     expect(installMethodFromExecPath(path.join(home, ".cz-cli", "bin", "cz-cli"), home)).toBe("curl")
   })
 
+  test("detects npm install method from platform package binary path", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+
+    expect(installMethodFromExecPath(path.join(home, ".npm-global", "lib", "node_modules", "@clickzetta", "cz-cli-darwin-arm64", "bin", "cz-cli"), home)).toBe("npm")
+  })
+
   test("does not write legacy install method metadata", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
 

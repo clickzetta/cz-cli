@@ -22,10 +22,15 @@ import {
   writeInstallMetadata,
 } from "../../../opencode/src/update/bootstrap"
 
-const NPM_PACKAGE = "@clickzetta/cz-cli"
-
 export function shouldApplyUpdate(currentVersion: string, latestVersion: string, force: boolean) {
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
+}
+
+type BinaryDetectionInput = {
+  npmPrefix?: string
+  bunBin?: string
+  readlink?: (p: string) => string
+  isSymlink?: (p: string) => boolean
 }
 
 function confirm(prompt: string): boolean {
@@ -50,24 +55,48 @@ function findStaleBinaries(): string[] {
   }
 }
 
-function isPackageManagerBinary(p: string): boolean {
+export function isPackageManagerBinary(p: string, input: BinaryDetectionInput = {}): boolean {
   if (p.includes("node_modules") || p.includes(".bun")) return true
-  try {
-    const npmPrefix = execSync("npm prefix -g", { encoding: "utf-8", stdio: "pipe" }).trim()
-    if (p.startsWith(npmPrefix)) return true
-  } catch {}
-  try {
-    const bunBin = execSync("bun pm bin -g", { encoding: "utf-8", stdio: "pipe" }).trim()
-    if (p.startsWith(bunBin)) return true
-  } catch {}
-  try {
-    if (lstatSync(p).isSymbolicLink() && readlinkSync(p).includes("node_modules")) return true
-  } catch {}
+  const linkTarget = (() => {
+    try {
+      if (!(input.isSymlink ?? ((candidate) => lstatSync(candidate).isSymbolicLink()))(p)) return undefined
+      return path.resolve(path.dirname(p), (input.readlink ?? readlinkSync)(p))
+    } catch {
+      return undefined
+    }
+  })()
+  if (linkTarget && (linkTarget.includes("node_modules") || linkTarget.includes(".bun"))) return true
+  const npmPrefix = input.npmPrefix ?? (() => {
+    try {
+      return execSync("npm prefix -g", { encoding: "utf-8", stdio: "pipe" }).trim()
+    } catch {
+      return undefined
+    }
+  })()
+  if (npmPrefix && p.startsWith(npmPrefix)) return true
+  const bunBin = input.bunBin ?? (() => {
+    try {
+      return execSync("bun pm bin -g", { encoding: "utf-8", stdio: "pipe" }).trim()
+    } catch {
+      return undefined
+    }
+  })()
+  if (bunBin && p.startsWith(bunBin)) return true
+  if (p.includes(`${path.sep}.npm-global${path.sep}bin${path.sep}`)) return true
   return false
 }
 
-function isCzCliInstallBinary(p: string): boolean {
-  return p.includes(".cz-cli/bin")
+export function isCzCliInstallBinary(p: string): boolean {
+  return p.includes(`${path.sep}.cz-cli${path.sep}bin${path.sep}`) || p.includes(`${path.sep}.local${path.sep}bin${path.sep}`)
+}
+
+export function resolveUpdateInstallMethod(execPath: string, binaries: string[], input: BinaryDetectionInput = {}): InstallMethod {
+  const method = installMethodFromExecPath(execPath)
+  if (method !== "unknown") return method
+  const first = binaries[0]
+  if (first && isPackageManagerBinary(first, input)) return first.includes(".bun") ? "bun" : "npm"
+  if (first && isCzCliInstallBinary(first)) return "curl"
+  return method
 }
 
 function removeStaleBinary(p: string): boolean {
@@ -170,7 +199,6 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      const method = installMethodFromExecPath(process.execPath)
       const channel = (await readInstallMetadata())?.channel ?? "stable"
 
       // --- Step 1: Fetch latest version (cz-cli.ai → npm fallback) ---
@@ -218,6 +246,7 @@ export function registerUpdateCommand(cli: Argv) {
 
       // --- Step 2: Detect & clean up stale/conflicting binaries ---
       const allBinaries = findStaleBinaries()
+      const method = resolveUpdateInstallMethod(process.execPath, allBinaries)
       const currentExec = process.execPath
       // Filter out: current binary, anything inside node_modules (local dev deps), duplicates
       const staleBinaries = [...new Set(allBinaries)].filter((p) => {

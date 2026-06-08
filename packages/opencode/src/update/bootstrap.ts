@@ -146,7 +146,7 @@ function resolveIntervalMs(value: string | undefined) {
 export function installMethodFromExecPath(execPath: string, home?: string, env: NodeJS.ProcessEnv = process.env): InstallMethod {
   let scriptPath = execPath
   try { scriptPath = realpathSync(execPath) } catch {}
-  const pkg = `node_modules${path.sep}@clickzetta${path.sep}cz-cli`
+  const pkg = `node_modules${path.sep}@clickzetta`
   if (scriptPath.includes(pkg)) {
     return scriptPath.includes(`${path.sep}.bun${path.sep}`) ? "bun" : "npm"
   }
