@@ -372,6 +372,11 @@ download_and_install() {
 
     mv "$tmp_dir/$APP" "$INSTALL_DIR/"
     chmod 755 "${INSTALL_DIR}/${APP}"
+    # Preserve bundled skills
+    if [ -d "$tmp_dir/skills" ]; then
+        rm -rf "$INSTALL_DIR/skills"
+        mv "$tmp_dir/skills" "$INSTALL_DIR/skills"
+    fi
     rm -rf "$tmp_dir"
 }
 
@@ -397,6 +402,32 @@ cat > "${INSTALL_DIR}/cz-agent" <<EOF
 exec "${INSTALL_DIR}/${APP}" agent "\$@"
 EOF
 chmod 755 "${INSTALL_DIR}/cz-agent"
+
+# Install bundled skills to ~/.clickzetta/skills/.builtin/
+SKILLS_SRC="${INSTALL_DIR}/skills"
+BUILTIN_DEST="$HOME/.clickzetta/skills/.builtin"
+if [ -d "$SKILLS_SRC" ]; then
+    rm -rf "$BUILTIN_DEST"
+    mkdir -p "$BUILTIN_DEST"
+    for skill_dir in "$SKILLS_SRC"/*/; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        cp -r "$skill_dir" "$BUILTIN_DEST/$skill_name"
+    done
+fi
+
+# Clean up legacy skill installations in agent directories
+for agent_dir in \
+    "$HOME/.claude/skills" \
+    "$HOME/.kiro/skills" \
+    "$HOME/.cursor/skills" \
+    "$HOME/.codex/skills" \
+    "$HOME/.openclaw/workspace/skills" \
+    "$HOME/.singclaw/workspace/skills"; do
+    for legacy in czagent czcli cz-cli-v2 cz-cli; do
+        rm -rf "${agent_dir}/${legacy}" 2>/dev/null || true
+    done
+done
 
 add_to_path() {
     local config_file=$1

@@ -8,10 +8,13 @@
  */
 
 import { execSync } from "node:child_process"
-import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync } from "node:fs"
+import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync, existsSync, mkdirSync, rmSync, cpSync, readdirSync, statSync } from "node:fs"
+import path from "node:path"
+import os from "node:os"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
 import {
+  type InstallMethod,
   installMethodFromExecPath,
   readInstallMetadata,
   performUpgrade,
@@ -125,6 +128,23 @@ async function fetchLatestFromNpm(): Promise<string> {
   }
 }
 
+function installSkills(_method: InstallMethod) {
+  const home = os.homedir()
+  const skillsSrc = path.join(home, ".cz-cli", "bin", "skills")
+  const builtinDest = path.join(home, ".clickzetta", "skills", ".builtin")
+
+  if (!existsSync(skillsSrc)) return
+
+  rmSync(builtinDest, { recursive: true, force: true })
+  mkdirSync(builtinDest, { recursive: true })
+  for (const name of readdirSync(skillsSrc)) {
+    const src = path.join(skillsSrc, name)
+    if (statSync(src).isDirectory()) {
+      cpSync(src, path.join(builtinDest, name), { recursive: true })
+    }
+  }
+}
+
 export function registerUpdateCommand(cli: Argv) {
   cli.command(
     "update",
@@ -232,6 +252,7 @@ export function registerUpdateCommand(cli: Argv) {
         process.stderr.write(`Upgrading via ${label}...\n`)
         await performUpgrade(method, latest, fetch, channel, argv.force)
         await writeInstallMetadata({ binary_version: latest })
+        installSkills(method)
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {
         process.stderr.write(`Update failed: ${err instanceof Error ? err.message : String(err)}\n`)

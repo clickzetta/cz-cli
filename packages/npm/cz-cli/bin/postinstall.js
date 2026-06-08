@@ -58,11 +58,11 @@ async function main() {
     fallbackRoot: DEFAULT_FALLBACK_ROOT,
     force: true,
   });
+  // Install bundled skills into ~/.clickzetta/skills/.builtin/
   const skillsSrc = path.join(installed.rootDir, "skills");
-  const skills = fs.existsSync(skillsSrc)
-    ? fs.readdirSync(skillsSrc).filter((name) => fs.statSync(path.join(skillsSrc, name)).isDirectory())
-    : [];
+  const builtinDest = path.join(home, ".clickzetta", "skills", ".builtin");
 
+  // Clean up legacy skill installations in agent directories
   const agentDirs = [
     path.join(home, ".claude", "skills"),
     path.join(home, ".kiro", "skills"),
@@ -71,62 +71,27 @@ async function main() {
     path.join(home, ".openclaw", "workspace", "skills"),
     path.join(home, ".singclaw", "workspace", "skills"),
   ];
-
   for (const dir of agentDirs) {
-    for (const legacy of ["czagent", "czcli", "cz-cli-v2"]) {
-      try {
-        fs.rmSync(path.join(dir, legacy), { recursive: true, force: true });
-      } catch (e) {}
+    for (const legacy of ["czagent", "czcli", "cz-cli-v2", "cz-cli"]) {
+      try { fs.rmSync(path.join(dir, legacy), { recursive: true, force: true }); } catch (e) {}
     }
   }
 
-  for (const dir of agentDirs) {
-    const skillFile = path.join(dir, "cz-cli", "SKILL.md");
-    try {
-      if (fs.existsSync(skillFile)) {
-        const content = fs.readFileSync(skillFile, "utf-8");
-        if (content.includes("name: cz-cli-v2")) {
-          fs.writeFileSync(skillFile, content.replace("name: cz-cli-v2", "name: cz-cli"), "utf-8");
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (skills.includes("cz-cli")) {
-    const src = path.join(skillsSrc, "cz-cli");
-    for (const dir of agentDirs) {
-      const dest = path.join(dir, "cz-cli");
-      try {
-        fs.mkdirSync(dir, { recursive: true });
-        fs.rmSync(dest, { recursive: true, force: true });
-        fs.cpSync(src, dest, { recursive: true });
-      } catch (e) {}
+  // Clear .builtin/ entirely then re-populate with all bundled skills
+  if (fs.existsSync(skillsSrc)) {
+    fs.rmSync(builtinDest, { recursive: true, force: true });
+    fs.mkdirSync(builtinDest, { recursive: true });
+    const skills = fs.readdirSync(skillsSrc).filter((name) => fs.statSync(path.join(skillsSrc, name)).isDirectory());
+    for (const name of skills) {
+      fs.cpSync(path.join(skillsSrc, name), path.join(builtinDest, name), { recursive: true });
     }
   }
 
-  const internalDest = path.join(home, ".clickzetta", "skills", ".builtin");
-  fs.mkdirSync(internalDest, { recursive: true });
-
-  const legacyDir = path.join(home, ".clickzetta", "skills");
-  for (const name of skills) {
-    if (name === "cz-cli") continue;
-    const legacy = path.join(legacyDir, name);
-    if (fs.existsSync(legacy) && fs.statSync(legacy).isDirectory()) {
-      try {
-        fs.rmSync(legacy, { recursive: true, force: true });
-      } catch (e) {}
-    }
-  }
-
-  for (const name of skills) {
-    if (name === "cz-cli") continue;
-    const src = path.join(skillsSrc, name);
-    const dest = path.join(internalDest, name);
-    try {
-      fs.rmSync(dest, { recursive: true, force: true });
-      fs.cpSync(src, dest, { recursive: true });
-    } catch (e) {}
-  }
+  // Install cz-agent convenience wrapper alongside the binary
+  const czCliDir = path.join(home, ".cz-cli", "bin");
+  fs.mkdirSync(czCliDir, { recursive: true });
+  const agentWrapper = path.join(czCliDir, "cz-agent");
+  fs.writeFileSync(agentWrapper, `#!/bin/sh\nexec "${installed.binPath}" agent "$@"\n`, { mode: 0o755 });
 
   try {
     execFileSync(installed.binPath, [], {
