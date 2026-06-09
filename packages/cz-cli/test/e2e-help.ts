@@ -215,7 +215,7 @@ const cases: HelpCase[] = [
   {
     args: ["job", "--help"],
     expectHeader: "cz-cli job",
-    expectCommands: ["status", "result", "profile", "analyze"],
+    expectCommands: ["status", "result", "profile"],
   },
   {
     args: ["job", "status", "--help"],
@@ -230,22 +230,7 @@ const cases: HelpCase[] = [
   {
     args: ["job", "profile", "--help"],
     expectHeader: "cz-cli job profile",
-    expectCommands: ["download", "detail"],
-  },
-  {
-    args: ["job", "profile", "download", "--help"],
-    expectHeader: "cz-cli job profile download",
-    expectOptions: ["job-id", "--path"],
-  },
-  {
-    args: ["job", "profile", "detail", "--help"],
-    expectHeader: "cz-cli job profile detail",
-    expectOptions: ["job-id"],
-  },
-  {
-    args: ["job", "analyze", "--help"],
-    expectHeader: "cz-cli job analyze",
-    expectOptions: ["job-id", "--path", "--analysis-mode", "--enable-incremental-algorithm", "--enable-state-table"],
+    expectOptions: ["job-id", "--raw"],
   },
 
   // runs

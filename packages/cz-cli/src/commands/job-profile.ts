@@ -1,79 +1,45 @@
-export type JobProfileFile = {
-  type: "job_plan" | "job_progress" | "job_profile"
-  path: string
-  exists: boolean
-  bytes: number
-  source?: string | null
-}
-
-type Column = {
+export type JobProfileRow = {
   key: string
-  label: string
+  value: string
 }
 
-type Field = Column & {
-  value: unknown
-  raw_value: unknown
-  help: string | null
-  breakdown?: Array<Column & { value: string; raw_value: string }>
-}
-
-type BuildJobProfilePayloadInput = {
+type BuildJobProfileRowsInput = {
   jobId: string
   workspaceName: string
   instanceId: string | number
-  jobPlan?: unknown
-  jobProgress?: unknown
+  currentUserName?: string
   jobProfile: unknown
-  files: JobProfileFile[]
 }
 
-const detailFields = [
-  ["duration", "Duration", ["duration", "durationMs", "costTime", "elapsedTime"]],
-  ["start_time", "Start Time", ["startTime", "start_time", "beginTime"]],
-  ["end_time", "End Time", ["endTime", "end_time", "finishTime"]],
-  ["cluster", "Cluster", ["vcName", "vcluster", "cluster", "clusterName"]],
-  ["owner", "Owner", ["owner", "ownerName", "userName", "submitUser"]],
-  ["input_records", "Input Records", ["inputRecord", "inputRecords", "input_record"]],
-  ["output_records", "Output Records", ["outputRecord", "outputRecords", "output_record"]],
-  ["cache_read", "Cache Read", ["cacheBytes", "cacheRead", "cache_read"]],
-  ["incremental_processing", "Incremental Processing", ["incremental", "incrementalProcessing", "isIncremental"]],
-  ["small_file_merge", "Small File Merge", ["smallFileMerge", "small_file_merge"]],
-  ["cru_cost", "CRU Cost", ["cruCost", "cru", "resourceCost"]],
-  ["task_instance", "Task Instance", ["taskInstance", "taskInstanceId", "instanceId"]],
-  ["materialized_view_acceleration", "Materialized View Acceleration", ["materializedViewAcceleration", "mvAcceleration"]],
-  ["query_tag", "queryTag", ["queryTag", "query_tag"]],
+const fieldKeys = [
+  "status",
+  "duration",
+  "duration_timeline",
+  "start_time",
+  "end_time",
+  "cluster",
+  "owner",
+  "input_records",
+  "output_records",
+  "cache_read",
+  "incremental_processing",
+  "small_file_merge",
+  "cru_cost",
+  "task_instance",
+  "materialized_view_acceleration",
+  "query_tag",
+  "sql_hints",
+  "job_content",
 ] as const
 
-const stageColumns = [
-  { key: "locate_dag", label: "Locate DAG" },
-  { key: "stage_name", label: "Stage Name" },
-  { key: "start_time", label: "Start Time" },
-  { key: "timeline", label: "Timeline" },
-  { key: "duration", label: "Duration" },
-  { key: "task_count", label: "Task" },
-  { key: "operator_count", label: "Operator" },
-  { key: "status", label: "Status" },
-  { key: "end_time", label: "End Time" },
-  { key: "input_records", label: "Input Records" },
-  { key: "output_records", label: "Output Records" },
-] satisfies Column[]
-
-const concurrencyColumns = [
-  { key: "stage_name", label: "Stage Name" },
-  { key: "start_time", label: "Start Time" },
-  { key: "end_time", label: "End Time" },
-  { key: "duration", label: "Duration" },
-  { key: "points", label: "Concurrency" },
-] satisfies Column[]
-
-const operatorColumns = [
-  { key: "locate_dag", label: "Locate DAG" },
-  { key: "operator_name", label: "Operator Name" },
-  { key: "stage_name", label: "Stage" },
-  { key: "duration", label: "Duration" },
-  { key: "more_fields", label: "More Fields" },
-] satisfies Column[]
+const durationStageLabels = {
+  setup: "Initialization",
+  resuming_cluster: "Cluster Starting",
+  queued: "Waiting Execution",
+  running: "Running",
+  compaction: "Output File Merge",
+  finish: "Completed",
+} as const
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -85,14 +51,6 @@ function dataRoot(value: unknown): Record<string, unknown> {
   return Object.keys(data).length > 0 ? data : root
 }
 
-function mergeDefined(...sources: Record<string, unknown>[]): Record<string, unknown> {
-  return Object.assign({}, ...sources.filter((source) => Object.keys(source).length > 0))
-}
-
-function compact(source: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(source).filter((entry) => entry[1] !== null && entry[1] !== undefined))
-}
-
 function pick(source: Record<string, unknown>, keys: readonly string[]): unknown {
   for (const key of keys) {
     if (source[key] !== undefined) return source[key]
@@ -100,75 +58,16 @@ function pick(source: Record<string, unknown>, keys: readonly string[]): unknown
   return null
 }
 
-function text(value: unknown): string | null {
-  if (value === null || value === undefined) return null
-  if (typeof value === "boolean") return value ? "是" : "否"
-  if (typeof value === "object") return null
-  return String(value)
-}
-
 function list(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown>[] {
   const value = pick(source, keys)
   return Array.isArray(value) ? value.map(record).filter((item) => Object.keys(item).length > 0) : []
 }
 
-function firstNonEmptyList(...items: Record<string, unknown>[][]): Record<string, unknown>[] {
-  return items.find((item) => item.length > 0) ?? []
-}
-
-function entriesRecord(source: Record<string, unknown>, keys: readonly string[]): Array<{ key: string; value: Record<string, unknown> }> {
-  const value = pick(source, keys)
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? Object.entries(value as Record<string, unknown>)
-      .map((entry) => ({ key: entry[0], value: record(entry[1]) }))
-      .filter((entry) => Object.keys(entry.value).length > 0)
-    : []
-}
-
-function stageProgress(profile: Record<string, unknown>) {
-  return entriesRecord(record(profile.progress), ["stageProgress"])
-}
-
-function progressSummary(progress: Record<string, unknown>) {
-  return new Map(stageProgress(progress).map((entry) => [entry.key, entry.value]))
-}
-
-function normalizeDuration(value: unknown): unknown {
-  const sum = record(value).sum
-  return sum ?? value
-}
-
-function durationMs(value: unknown): string | null {
-  const raw = text(value)
-  if (!raw) return null
-  return raw.endsWith("ms") ? raw : `${raw}ms`
-}
-
-function profilingTime(profile: Record<string, unknown>, event: number): number | null {
-  const item = list(record(record(profile.jobStatus).jobProfiling), ["profiling"])
-    .find((entry) => Number(text(entry.e)) === event)
-  const value = Number(text(item?.t))
-  return Number.isFinite(value) ? value : null
-}
-
-function profilingDuration(profile: Record<string, unknown>, startEvent: number, endEvent: number): string | null {
-  const start = profilingTime(profile, startEvent)
-  const end = profilingTime(profile, endEvent)
-  if (start === null || end === null || end < start) return null
-  return `${end - start}ms`
-}
-
-function durationBreakdown(profile: Record<string, unknown>): Field["breakdown"] | undefined {
-  const items = [
-    ["initialization", "Initialization", profilingDuration(profile, 100, 110)],
-    ["cluster_starting", "Cluster Starting", profilingDuration(profile, 110, 111)],
-    ["waiting_execution", "Waiting Execution", profilingDuration(profile, 111, 120)],
-    ["executing", "Executing", profilingDuration(profile, 120, 130)],
-    ["finished", "Finished", profilingDuration(profile, 130, 160)],
-  ] as const
-  const breakdown = items
-    .flatMap((item) => item[2] === null ? [] : [{ key: item[0], label: item[1], value: item[2], raw_value: item[2] }])
-  return breakdown.length > 0 ? breakdown : undefined
+function text(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === "boolean") return value ? "Yes" : "No"
+  if (typeof value === "object") return null
+  return String(value)
 }
 
 function pageTime(value: unknown): string | null {
@@ -192,339 +91,321 @@ function pageTime(value: unknown): string | null {
   return `${part("year")}/${part("month")}/${part("day")} ${part("hour")}:${part("minute")}:${part("second")}.${part("fractionalSecond")}`
 }
 
-function elapsedMs(start: unknown, end: unknown): string | null {
-  const startNum = Number(text(start))
-  const endNum = Number(text(end))
-  if (!Number.isFinite(startNum) || !Number.isFinite(endNum) || endNum < startNum) return null
-  return `${endNum - startNum}ms`
+function durationMs(value: unknown): string {
+  const raw = text(value)
+  if (!raw) return ""
+  return raw.endsWith("ms") ? raw : `${raw}ms`
 }
 
-function bytes(value: unknown): string | null {
+function numberValue(value: unknown): number | null {
   const raw = text(value)
   if (!raw) return null
-  return `${raw} Byte`
+  const numeric = Number(raw)
+  return Number.isFinite(numeric) ? numeric : null
 }
 
-function rowByte(row: unknown, byte: unknown): string | null {
-  const rowText = text(row)
-  const byteText = text(byte)
-  if (!rowText && !byteText) return null
-  return `${rowText ?? "0"}行 / ${byteText ?? "0"} Byte`
-}
-
-function spacedRowByte(row: unknown, byte: unknown): string | null {
-  const rowText = text(row)
-  const byteText = text(byte)
-  if (!rowText && !byteText) return null
-  return `${rowText ?? "0"} 行 / ${byteText ?? "0"} Byte`
-}
-
-function durationNsToMs(value: unknown): string | null {
-  const raw = text(normalizeDuration(value))
-  if (!raw) return null
-  if (raw.endsWith("ms")) return raw
-  const ns = Number(raw)
-  if (!Number.isFinite(ns)) return raw
-  return `${Math.floor(ns / 1_000_000)}ms`
-}
-
-function operatorMoreFields(summary: Record<string, unknown>): unknown {
-  const hasExpandableStats = summary.inputOutputStats !== undefined || summary.tableSinkSummary !== undefined
-  const cleaned = compact({
-    inputOutputStats: summary.inputOutputStats,
-    rowCount: hasExpandableStats ? summary.rowCount : undefined,
-    tableSinkSummary: summary.tableSinkSummary,
-  })
-  return Object.keys(cleaned).length > 0 ? cleaned : ""
-}
-
-function cruCost(profile: Record<string, unknown>): string | null {
-  const measurement = list(record(record(profile.jobSummary).meter), ["measurements"])
-    .find((item) => text(item.key) === "cpu_wall_time" && text(item.unit) === "cru")
-  const value = text(measurement?.value)
-  if (!value) return null
-  return Number(value) < 0.01 ? "小于 0.01 CRU*时" : `${value} CRU*时`
-}
-
-function smallFileMerge(meta: Record<string, unknown>): string | null {
-  const raw = text(pick(record(meta.incrementalProperty), ["smallFileMerge", "small_file_merge", "smallFileMergeType"]))
-  if (raw) return raw
-  return text(record(meta.incrementalProperty).isDtOrMv) === "DT" ? "无合并" : null
-}
-
-function incrementalProcessing(meta: Record<string, unknown>): string | null {
-  const value = pick(record(meta.incrementalProperty), ["incrementalProcessing", "incremental", "isIncrementalPlan"])
-  if (typeof value === "boolean") return value ? "是" : "否"
+function bytes(value: unknown): string {
   const raw = text(value)
-  if (!raw || raw === "0" || raw === "false") return raw ? "否" : null
-  return "是"
+  return raw ? `${raw} Byte` : ""
 }
 
-function stageId(stage: Record<string, unknown>): string | null {
-  return text(pick(stage, ["stageId", "stage_id", "id", "name", "stageName", "stage_name"]))
+function rowByte(row: unknown, byte: unknown): string {
+  const rowText = text(row)
+  const byteText = text(byte)
+  if (!rowText && !byteText) return ""
+  return `${rowText ?? "0"} rows / ${byteText ?? "0"} Byte`
 }
 
-function stageName(stage: Record<string, unknown>) {
-  return pick(stage, ["stageName", "stage_name", "name", "stageId", "stage_id", "id"])
+function normalizeRecordCount(value: unknown): string {
+  const raw = text(value)
+  if (!raw) return ""
+  const normalized = raw
+    .replace(/行/g, " rows")
+    .replace(/\s*rows\s*\/\s*/g, " rows / ")
+  return normalized
 }
 
-function stageSummary(profile: Record<string, unknown>) {
-  return entriesRecord(record(profile.jobSummary), ["stageSummary", "stage_summary"])
-}
-
-function operatorEntries(stage: Record<string, unknown>) {
-  return entriesRecord(stage, ["operatorSummary", "operator_summary"])
-}
-
-function operatorCount(stage: Record<string, unknown>, summary: Record<string, unknown>) {
-  const picked = pick(stage, ["operator", "operatorCount", "operator_count"])
-  if (picked !== null) return picked
-  const fromPlan = list(stage, ["operators", "operatorList"]).length
-  if (fromPlan > 0) return fromPlan
-  const fromSummary = operatorEntries(summary).length
-  return fromSummary > 0 ? fromSummary : null
-}
-
-function basicInfo(profile: Record<string, unknown>): Field[] {
-  return detailFields.map(([key, label, keys]) => {
-    const value = pick(profile, keys)
-    const display = text(value)
-    return {
-      key,
-      label,
-      value: display?.trim() ?? "",
-      raw_value: value,
-      help: null,
-      ...(key === "duration" ? { breakdown: durationBreakdown(profile) } : {}),
-    }
-  })
-}
-
-function lines(sql: unknown): { line: number; text: string }[] {
-  return (text(sql) ?? "")
-    .split("\n")
-    .map((line, index) => ({ line: index + 1, text: line }))
-    .filter((line) => line.text.trim() !== "")
-}
-
-function queryText(profile: Record<string, unknown>): unknown {
+function queryText(profile: Record<string, unknown>): string {
   const sqlJob = record(record(profile.jobDesc).sqlJob)
   const query = sqlJob.query
   if (Array.isArray(query)) return query.map(text).filter((line): line is string => !!line).join("\n")
-  return pick(profile, ["sql", "query", "queryText", "statement"])
+  return text(pick(profile, ["sql", "query", "queryText", "statement"])) ?? ""
 }
 
 function normalizeIoRows(profile: Record<string, unknown>) {
   return list(profile, ["ioRecords", "io_records", "tables", "tableRecords"]).map((item) => ({
-    table_name: pick(item, ["tableName", "table_name", "name"]),
-    type: pick(item, ["type", "recordType", "ioType"]),
-    record_count: pick(item, ["recordCount", "records", "inputOutputRecord"]),
-    cache_read: pick(item, ["cacheRead", "cacheBytes", "cache_read"]),
+    table_name: text(pick(item, ["tableName", "table_name", "name"])) ?? "",
+    type: text(pick(item, ["type", "recordType", "ioType"])) ?? "",
+    record_count: normalizeRecordCount(pick(item, ["recordCount", "records", "inputOutputRecord"])),
+    cache_read: text(pick(item, ["cacheRead", "cacheBytes", "cache_read"])) ?? "",
   }))
 }
 
-function normalizeStageRows(profile: Record<string, unknown>) {
-  const stages = list(profile, ["stages", "stageList", "stageInfos", "stageExecution"])
-  const summaries = new Map(stageSummary(profile).map((entry) => [entry.key, entry.value]))
-  const progresses = progressSummary(profile)
-  return stages.map((item) => {
-    const summary = summaries.get(stageId(item) ?? "") ?? {}
-    const progress = progresses.get(stageId(item) ?? "") ?? {}
-    const stats = record(summary.inputOutputStats)
-    return {
-      locate_dag: true,
-      stage_name: stageName(item),
-      start_time: pick(mergeDefined(item, summary), ["startTime", "start_time"]),
-      timeline: pick(item, ["timeline", "timeLine"]),
-      duration: pick(mergeDefined(item, summary), ["duration", "durationMs", "costTime", "wallTimeMs"])
-        ?? elapsedMs(pick(summary, ["startTime", "start_time"]), pick(summary, ["endTime", "end_time"]))
-        ?? elapsedMs(pick(progress, ["startTime", "start_time"]), pick(progress, ["finishTime", "endTime", "end_time"])),
-      task_count: pick(mergeDefined(item, summary), ["task", "taskCount", "task_count", "total"]),
-      operator_count: operatorCount(item, summary),
-      status: pick(mergeDefined(item, summary, progress), ["status", "state"]),
-      end_time: pick(mergeDefined(item, summary), ["endTime", "end_time"]),
-      input_records: pick(mergeDefined(item, summary), ["inputRecord", "inputRecords", "input_record"]) ?? spacedRowByte(stats.inputRowCount, stats.inputBytes),
-      output_records: pick(mergeDefined(item, summary), ["outputRecord", "outputRecords", "output_record"]) ?? spacedRowByte(stats.outputRowCount, stats.outputBytes),
-    }
+function ioRecordRows(profile: Record<string, unknown>): JobProfileRow[] {
+  return normalizeIoRows(profile).flatMap((item, index) => {
+    const prefix = `io_record_${index + 1}`
+    return [
+      { key: `${prefix}_table_name`, value: item.table_name },
+      { key: `${prefix}_type`, value: item.type },
+      { key: `${prefix}_record_count`, value: item.record_count },
+      { key: `${prefix}_cache_read`, value: item.cache_read },
+    ]
   })
 }
 
-function normalizeConcurrencyRows(profile: Record<string, unknown>) {
-  return list(profile, ["stageConcurrency", "durationConcurrency", "concurrency"]).map((item) => ({
-    stage_name: pick(item, ["stageName", "stage_name", "name"]),
-    start_time: pick(item, ["startTime", "start_time"]),
-    end_time: pick(item, ["endTime", "end_time"]),
-    duration: pick(item, ["duration", "durationMs"]),
-    points: pick(item, ["points", "data", "concurrency"]),
-  }))
+function isEndedState(state: string) {
+  return ["SUCCEED", "SUCCEEDED", "FAILED", "CANCELLED", "succeed", "failed", "cancelled"].includes(state)
 }
 
-function normalizeStageDag(profile: Record<string, unknown>) {
-  const dagNodes = list(profile, ["stageDag", "stageDAG", "stageNodes"])
-  if (dagNodes.length > 0) {
-    return dagNodes.map((item) => ({
-      name: pick(item, ["name", "stageName", "stage_name", "id"]),
-      status: pick(item, ["status", "state"]),
-      duration: pick(item, ["duration", "durationMs"]),
-      task_count: pick(item, ["task", "taskCount", "task_count"]),
-      operator_count: pick(item, ["operator", "operatorCount", "operator_count"]),
-    }))
-  }
-  const summaries = new Map(stageSummary(profile).map((entry) => [entry.key, entry.value]))
-  return list(profile, ["stages", "stageList", "stageInfos", "stageExecution"]).map((item) => {
-    const summary = summaries.get(stageId(item) ?? "") ?? {}
-    return {
-      name: stageName(item),
-      status: pick(summary, ["status", "state"]),
-      duration: pick(summary, ["duration", "durationMs", "costTime", "wallTimeMs"]),
-      task_count: pick(item, ["task", "taskCount", "task_count"]),
-      operator_count: operatorCount(item, summary),
-    }
-  })
+function isSucceededState(state: string) {
+  return ["SUCCEED", "SUCCEEDED", "succeed", "success"].includes(state)
 }
 
-function normalizeOperatorRows(profile: Record<string, unknown>) {
-  const explicit = list(profile, ["operators", "operatorList", "operatorInfos", "operatorExecution", "operatorSummaries"])
-  if (explicit.length > 0) return explicit.map((item) => ({
-    locate_dag: true,
-    operator_name: pick(item, ["operatorName", "operator_name", "name"]),
-    stage_name: pick(item, ["stageName", "stage_name", "stage"]),
-    duration: pick(item, ["duration", "durationMs", "costTime"]),
-    more_fields: pick(item, ["moreFields", "more_fields", "extraFields", "extra"]),
-  }))
-  const summaries = new Map(stageSummary(profile).map((entry) => [entry.key, entry.value]))
-  return list(profile, ["stages", "stageList", "stageInfos", "stageExecution"]).flatMap((stage) => {
-    const summary = summaries.get(stageId(stage) ?? "") ?? {}
-    const stageOperators = list(stage, ["operators", "operatorList"])
-    const names = stageOperators.length > 0
-      ? stageOperators.map((operator) => text(pick(operator, ["operatorName", "operator_name", "operatorId", "operator_id", "name", "id"]))).filter((name): name is string => !!name)
-      : operatorEntries(summary).map((entry) => entry.key)
-    const operatorSummary = new Map(operatorEntries(summary).map((entry) => [entry.key, entry.value]))
-    return names.map((name) => {
-      const summaryItem = operatorSummary.get(name) ?? {}
-      return {
-        locate_dag: true,
-        operator_name: name,
-        stage_name: stageName(stage),
-        duration: durationNsToMs(record(summaryItem.wallTimeNs).sum !== undefined ? summaryItem.wallTimeNs : pick(summaryItem, ["duration", "durationMs", "costTime", "wallTimeNs"])),
-        more_fields: operatorMoreFields(summaryItem),
-      }
+function durationStageKey(value: unknown): keyof typeof durationStageLabels | null {
+  const raw = text(value)?.toLowerCase()
+  if (!raw) return null
+  if (raw in durationStageLabels) return raw as keyof typeof durationStageLabels
+  return null
+}
+
+function durationTimelineFromStageDuration(stageDuration: Record<string, unknown>[]) {
+  const stages = stageDuration
+    .flatMap((item) => {
+      const key = durationStageKey(item.n)
+      const ms = numberValue(item.ms)
+      if (!key || ms === null) return []
+      return [{ key, label: durationStageLabels[key], duration: durationMs(ms) }]
     })
+  if (stages.length === 0) return ""
+  const total = stages.reduce((sum, item) => sum + (numberValue(item.duration.replace("ms", "")) ?? 0), 0)
+  return JSON.stringify({ total: durationMs(total), stages })
+}
+
+function durationTimelineFromProfiling(profile: Record<string, unknown>): string {
+  const status = record(profile.jobStatus)
+  const profiling = list(record(status.jobProfiling), ["profiling"])
+  if (profiling.length === 0) return ""
+  const profilingMap = Object.fromEntries(
+    profiling
+      .map((item) => {
+        const event = numberValue(item.e)
+        const timestamp = numberValue(item.t)
+        return event === null || timestamp === null ? null : [event, timestamp]
+      })
+      .filter((item): item is [number, number] => item !== null),
+  )
+  const submitTime = numberValue(status.submitTime)
+  if (submitTime !== null) profilingMap[100] = submitTime
+  const state = text(status.state) ?? ""
+  const endTime = numberValue(status.endTime)
+  const currentMs = numberValue(profile.currentMs)
+  const endTimeT = endTime && endTime !== 0 ? endTime : currentMs
+  if (endTimeT !== null) profilingMap[150] = endTimeT
+  const curTime = endTimeT ?? currentMs
+  if (curTime === null) return ""
+  const has111TimePoint = !!profilingMap[111]
+  const has132TimePoint = !!profilingMap[132]
+  const getStepRunningStartCode = () => {
+    if (!isEndedState(state)) return 120
+    if (profilingMap[120]) return 120
+    if (profilingMap[112]) return 112
+    return 110
+  }
+  const list2 = [
+    {
+      startCode: 100,
+      endCode: 108,
+      codes: [100, 101, 102, 105, 106, 108],
+      key: "setup",
+      label: durationStageLabels.setup,
+    },
+    {
+      startCode: 110,
+      endCode: has111TimePoint ? 111 : 112,
+      codes: [110, has111TimePoint ? 111 : 112],
+      key: "resuming_cluster",
+      label: durationStageLabels.resuming_cluster,
+    },
+    {
+      startCode: has111TimePoint ? 111 : 112,
+      endCode: 120,
+      codes: [has111TimePoint ? 111 : 112, 120],
+      key: "queued",
+      label: durationStageLabels.queued,
+    },
+    ...(has132TimePoint
+      ? [
+          {
+            startCode: getStepRunningStartCode(),
+            endCode: 132,
+            codes: [getStepRunningStartCode(), 132],
+            key: "running",
+            label: durationStageLabels.running,
+          },
+          {
+            startCode: 132,
+            endCode: 140,
+            codes: [132, 135, 140],
+            key: "compaction",
+            label: durationStageLabels.compaction,
+          },
+        ]
+      : [
+          {
+            startCode: getStepRunningStartCode(),
+            endCode: 140,
+            codes: [getStepRunningStartCode(), 130, 135, 140],
+            key: "running",
+            label: durationStageLabels.running,
+          },
+        ]),
+    {
+      startCode: 140,
+      endCode: 150,
+      codes: [140, 150],
+      key: "finish",
+      label: durationStageLabels.finish,
+    },
+  ]
+    .map((item) => ({ ...item, codes: item.codes.filter((code) => !!profilingMap[code]) }))
+    .filter((item) => {
+      if (isSucceededState(state)) return !!item.codes.length && !!profilingMap[item.startCode] && !!profilingMap[item.endCode]
+      return !!item.codes.length && !!profilingMap[item.startCode]
+    })
+
+  const stages = list2.flatMap((item, index) => {
+    const curStartTime = profilingMap[item.startCode]
+    if (!curStartTime) return []
+    const nextItem = list2[index + 1]
+    const curEndTime = profilingMap[150]
+      ? nextItem ? profilingMap[nextItem.codes[0]!] : profilingMap[150]
+      : nextItem ? profilingMap[nextItem.codes[0]!] : curTime
+    if (curEndTime === undefined) return []
+    return [{ key: item.key, label: item.label, duration: durationMs(curEndTime - curStartTime) }]
+  })
+  if (stages.length === 0) return ""
+  return JSON.stringify({
+    total: durationMs(numberValue(status.runningTime) ?? stages.reduce((sum, item) => sum + (numberValue(item.duration.replace("ms", "")) ?? 0), 0)),
+    stages,
   })
 }
 
-function normalizeOperatorDag(profile: Record<string, unknown>) {
-  const dagNodes = list(profile, ["operatorDag", "operatorDAG", "operatorNodes"])
-  if (dagNodes.length > 0) return dagNodes.map((item) => ({
-    stage_name: pick(item, ["stageName", "stage_name", "stage"]),
-    operator_name: pick(item, ["operatorName", "operator_name", "name"]),
-    duration: pick(item, ["duration", "durationMs"]),
-  }))
-  return normalizeOperatorRows(profile).map((item) => ({
-    stage_name: item.stage_name,
-    operator_name: item.operator_name,
-    duration: item.duration,
-  }))
+function durationTimeline(profile: Record<string, unknown>): string {
+  const stageDuration = list(record(record(profile.jobStatus).jobProfiling), ["stageDuration"])
+  return durationTimelineFromStageDuration(stageDuration) || durationTimelineFromProfiling(profile)
 }
 
-function jobStatus(profile: Record<string, unknown>) {
-  const status = pick(profile, ["status", "state"])
-  if (status !== null) return text(status)
-  const raw = record(profile.jobStatus)
-  return text(pick(raw, ["status", "state", "jobStatus"]))
+function cruCost(profile: Record<string, unknown>): string {
+  const measurements = record(record(profile.jobSummary).meter).measurements
+  const measurement = Array.isArray(measurements)
+    ? measurements
+      .map(record)
+      .find((item) => text(item.key) === "cpu_wall_time" && text(item.unit) === "cru")
+    : undefined
+  const value = text(measurement?.value)
+  if (!value) return ""
+  return Number(value) < 0.01 ? "< 0.01 CRU*h" : `${value} CRU*h`
 }
 
-function profileRoot(input: BuildJobProfilePayloadInput) {
-  const profile = dataRoot(input.jobProfile)
-  const planRoot = dataRoot(input.jobPlan)
-  const progressRoot = dataRoot(input.jobProgress)
-  const plan = record(planRoot.jobPlan)
-  const embeddedPlan = record(profile.jobPlan)
-  const jobDesc = record(profile.jobDesc)
-  const summary = record(profile.jobSummary)
-  const status = record(profile.jobStatus)
-  const stats = record(record(summary.stats).inputOutputStats)
-  const meta = record(profile.jobMetaLite)
-  const incremental = record(meta.incrementalProperty)
-  const stages = firstNonEmptyList(
-    list(plan, ["stages", "stageList", "stageInfos", "stageExecution"]),
-    list(embeddedPlan, ["stages", "stageList", "stageInfos", "stageExecution"]),
-    list(profile, ["stages", "stageList", "stageInfos", "stageExecution"]),
-  )
-  return mergeDefined(
-    profile,
-    embeddedPlan,
-    plan,
-    progressRoot,
-    jobDesc,
-    summary,
-    status,
-    stages.length > 0 ? { stages } : {},
-    compact({
-      duration: durationMs(status.runningTime),
-      startTime: pageTime(status.startTime),
-      endTime: pageTime(status.endTime),
-      vcName: jobDesc.virtualCluster,
-      owner: pick(record(jobDesc.account), ["userName", "name", "ownerName", "userId"]),
-      inputRecord: rowByte(stats.inputRowCount, stats.inputBytes),
-      outputRecord: rowByte(stats.outputRowCount, stats.outputBytes),
-      cacheBytes: bytes(stats.inputCacheBytes),
-      incremental: incrementalProcessing(meta),
-      smallFileMerge: smallFileMerge(meta),
-      cruCost: cruCost(profile),
-      queryTag: jobDesc.queryTag,
-    }),
-    {
-      jobSummary: Object.keys(summary).length > 0 ? summary : profile.jobSummary,
-      jobStatus: Object.keys(status).length > 0 ? status : profile.jobStatus,
-    },
-    profile.jobContent !== undefined ? { sql: profile.jobContent } : {},
-  )
+function incrementalProcessing(profile: Record<string, unknown>): string {
+  const incremental = record(record(profile.jobMetaLite).incrementalProperty)
+  const value = pick(incremental, ["incrementalProcessing", "incremental", "isIncrementalPlan"])
+  if (typeof value === "boolean") return value ? "Yes" : "No"
+  const raw = text(value)
+  if (!raw) return isEndedState(text(record(profile.jobStatus).state) ?? "") ? "No" : ""
+  if (raw === "0" || raw === "false") return "No"
+  return "Yes"
 }
 
-export function buildJobProfilePayload(input: BuildJobProfilePayloadInput) {
-  const profile = profileRoot(input)
-  const sql = queryText(profile)
-  return {
-    job_id: input.jobId,
-    workspace_name: input.workspaceName,
-    instance_id: input.instanceId,
-    status: jobStatus(profile) ?? "--",
-    ...(input.files.length > 0 ? { files: input.files } : {}),
-    tabs: {
-      detail: {
-        basic_info: basicInfo(profile),
-        job_content: {
-          sql: text(sql) ?? "",
-          lines: lines(sql),
-          copyable: true,
-        },
-        io_records: {
-          rows: normalizeIoRows(profile),
-        },
-      },
-      stage_diagnosis: {
-        stage_execution: {
-          columns: stageColumns,
-          rows: normalizeStageRows(profile),
-        },
-        duration_concurrency: {
-          columns: concurrencyColumns,
-          rows: normalizeConcurrencyRows(profile),
-        },
-        dag: {
-          nodes: normalizeStageDag(profile),
-        },
-      },
-      operator_diagnosis: {
-        operator_execution: {
-          columns: operatorColumns,
-          rows: normalizeOperatorRows(profile),
-        },
-        dag: {
-          nodes: normalizeOperatorDag(profile),
-        },
-      },
-    },
+function smallFileMerge(profile: Record<string, unknown>): string {
+  const incremental = record(record(profile.jobMetaLite).incrementalProperty)
+  const value = text(pick(incremental, ["smallFileMerge", "small_file_merge", "smallFileMergeType"]))
+  if (value) return value
+  const stageDuration = list(record(record(profile.jobStatus).jobProfiling), ["stageDuration"])
+  if (stageDuration.length > 0) {
+    const hasCompaction = stageDuration.some((item) => durationStageKey(item.n) === "compaction")
+    const hasFinish = stageDuration.some((item) => durationStageKey(item.n) === "finish")
+    if (hasCompaction && !hasFinish) return "Running"
+    if (hasCompaction && hasFinish) return "Completed"
+    return "No Merge"
   }
+  const profiling = list(record(record(profile.jobStatus).jobProfiling), ["profiling"])
+  const events = profiling.map((item) => numberValue(item.e)).filter((item): item is number => item !== null)
+  if (events.includes(132) && !events.includes(140)) return "Running"
+  if (events.includes(132) && events.includes(140)) return "Completed"
+  return "No Merge"
+}
+
+function sqlHints(profile: Record<string, unknown>): string {
+  const hints = record(record(record(profile.jobDesc).sqlJob).sqlConfig).hint
+  if (!hints || typeof hints !== "object" || Array.isArray(hints)) return ""
+  const entries = Object.entries(hints as Record<string, unknown>).filter((entry) => entry[1] !== undefined)
+  return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : ""
+}
+
+function parsedJson(value: unknown): Record<string, unknown> {
+  const raw = text(value)
+  if (!raw) return {}
+  try {
+    return record(JSON.parse(raw))
+  } catch {
+    return {}
+  }
+}
+
+function owner(profile: Record<string, unknown>, currentUserName?: string): string {
+  const account = record(record(profile.jobDesc).account)
+  return text(pick(account, ["userName", "name", "ownerName"])) ?? currentUserName ?? text(account.userId) ?? ""
+}
+
+function taskInstance(profile: Record<string, unknown>): string {
+  const scheduled = parsedJson(profile.externalScheduledInfo)
+  return text(pick(scheduled, ["scheduleInstanceId"])) ?? text(pick(profile, ["taskInstance", "taskInstanceId"])) ?? ""
+}
+
+function materializedViewAcceleration(profile: Record<string, unknown>): string {
+  const meta = record(profile.jobMetaLite)
+  const inline = text(pick(profile, ["materializedViewAcceleration", "mvAcceleration"]))
+  if (inline) return inline
+  if (!meta.isMvUsed) return ""
+  if (!meta.isAutomvUsed) return "USERMV"
+  return "AUTOMV"
+}
+
+function valueMap(input: BuildJobProfileRowsInput) {
+  const profile = dataRoot(input.jobProfile)
+  const stats = record(record(record(profile.jobSummary).stats).inputOutputStats)
+  return {
+    status: text(pick(record(profile.jobStatus), ["state", "status", "jobStatus"])) ?? "",
+    duration: durationMs(pick(record(profile.jobStatus), ["runningTime", "duration", "costTime", "elapsedTime"])),
+    duration_timeline: durationTimeline(profile),
+    start_time: pageTime(pick(record(profile.jobStatus), ["submitTime", "submit_time", "startTime", "start_time", "beginTime"])) ?? "",
+    end_time: pageTime(pick(record(profile.jobStatus), ["endTime", "end_time", "finishTime"])) ?? "",
+    cluster: text(pick(record(profile.jobDesc), ["virtualCluster", "vcName", "cluster", "clusterName"])) ?? "",
+    owner: owner(profile, input.currentUserName),
+    input_records: rowByte(stats.inputRowCount, stats.inputBytes),
+    output_records: rowByte(stats.outputRowCount, stats.outputBytes),
+    cache_read: bytes(stats.inputCacheBytes),
+    incremental_processing: incrementalProcessing(profile),
+    small_file_merge: smallFileMerge(profile),
+    cru_cost: cruCost(profile),
+    task_instance: taskInstance(profile),
+    materialized_view_acceleration: materializedViewAcceleration(profile),
+    query_tag: text(pick(record(profile.jobDesc), ["queryTag", "query_tag"])) ?? "",
+    sql_hints: sqlHints(profile),
+    job_content: queryText(profile),
+  } satisfies Record<(typeof fieldKeys)[number], string>
+}
+
+export function buildJobProfileRows(input: BuildJobProfileRowsInput): JobProfileRow[] {
+  const values = valueMap(input)
+  return [
+    { key: "job_id", value: input.jobId },
+    { key: "workspace_name", value: input.workspaceName },
+    { key: "instance_id", value: String(input.instanceId) },
+    ...fieldKeys.flatMap((key) => {
+      if (key === "cache_read") return [...ioRecordRows(dataRoot(input.jobProfile)), { key, value: values[key] }]
+      return [{ key, value: values[key] }]
+    }),
+  ]
 }

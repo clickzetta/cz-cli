@@ -1,24 +1,24 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
-import { mkdir, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import {
   requestRaw, pollJobResult,
-  type ClientOptions, type JobID, type QueryResult, type StudioConfig,
+  type ClientOptions, type JobID, type StudioConfig,
   JobStatus,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, isQueryResult } from "./exec.js"
+import { getExecContext } from "./exec.js"
 import { getStudioContext } from "./studio-context.js"
-import { buildJobProfilePayload, type JobProfileFile } from "./job-profile.js"
-import { analyzeJobPerformance } from "./job-performance.js"
+import { buildJobProfileRows } from "./job-profile.js"
 
 const DEFAULT_FIELD_MAX = 3000
 const DEFAULT_ROW_LIMIT = 100
+const DEFAULT_RAW_CHAR_LIMIT = 4000
 
 function truncateLargeFields(rows: unknown[][], maxLen: number): unknown[][] {
   for (const row of rows) {
@@ -70,6 +70,14 @@ async function writeJsonFile(dir: string, filename: string, data: unknown): Prom
   const filePath = join(dir, filename)
   await writeFile(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8")
   return { path: filePath, bytes: (await stat(filePath)).size }
+}
+
+function truncateText(value: string, maxLen: number) {
+  if (value.length <= maxLen) return { text: value, truncated: false }
+  return {
+    text: value.slice(0, maxLen) + `...(truncated, ${value.length} chars)`,
+    truncated: true,
+  }
 }
 
 function debugJobProfile(enabled: boolean | undefined, message: string, data?: Record<string, unknown>) {
@@ -178,37 +186,6 @@ function responseCounts(payload: unknown) {
   }
 }
 
-async function fetchJobProfileData(
-  sc: StudioConfig,
-  jobId: string,
-  debug?: boolean,
-): Promise<{ jobPlan: unknown; jobProgress: unknown; jobProfile: unknown }> {
-  const params = {
-    jobId,
-    workspaceName: sc.workspaceName,
-    instanceId: sc.instanceId,
-  }
-  const jobPlan = await requestStudioJobJson(
-    sc,
-    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan",
-    params,
-    debug,
-  )
-  const jobProgress = await requestStudioJobJson(
-    sc,
-    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProgress",
-    params,
-    debug,
-  )
-  const jobProfile = await requestStudioJobJson(
-    sc,
-    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
-    { ...params, brief: true },
-    debug,
-  )
-  return { jobPlan, jobProgress, jobProfile }
-}
-
 function jobProfileParams(sc: StudioConfig, jobId: string) {
   return {
     jobId,
@@ -230,41 +207,17 @@ async function fetchJobProfileOnly(
   )
 }
 
-async function downloadJobProfileFiles(
+async function fetchJobPlanOnly(
   sc: StudioConfig,
   jobId: string,
-  outputDir: string,
   debug?: boolean,
-): Promise<{ jobPlan: unknown; jobProfile: unknown; files: JobProfileFile[]; path: string }> {
-  const jobPlan = await requestStudioJobJson(
+): Promise<unknown> {
+  return requestStudioJobJson(
     sc,
     "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan",
     jobProfileParams(sc, jobId),
     debug,
   )
-  const jobProfile = await fetchJobProfileOnly(sc, jobId, debug)
-  await rm(join(outputDir, "job_progress.json"), { force: true })
-  const planFile = await writeJsonFile(outputDir, "job_plan.json", jobPlan)
-  const profileFile = await writeJsonFile(outputDir, "job_profile.json", jobProfile)
-  debugJobProfile(debug, "files", {
-    outputDir,
-    removedStaleFiles: ["job_progress.json"],
-    planFile: planFile.path,
-    planBytes: planFile.bytes,
-    planCounts: responseCounts(jobPlan),
-    profileFile: profileFile.path,
-    profileBytes: profileFile.bytes,
-    profileCounts: responseCounts(jobProfile),
-  })
-  return {
-    jobPlan,
-    jobProfile,
-    path: outputDir,
-    files: [
-      { type: "job_plan", path: planFile.path, exists: true, bytes: planFile.bytes, source: "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan" },
-      { type: "job_profile", path: profileFile.path, exists: true, bytes: profileFile.bytes, source: "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile" },
-    ],
-  }
 }
 
 export function registerJobCommand(cli: Argv<GlobalArgs>): void {
@@ -346,132 +299,61 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "profile",
-        "Job profile tools",
-        (profileYargs) => {
-          profileYargs
-            .command(
-              "download <job-id>",
-              "Download a job's profile JSON files",
-              (y) =>
-                y
-                  .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
-                  .option("path", { type: "string", describe: "Directory to write job_profile.json. Defaults to a temp directory." }),
-              async (argv) => {
-                const format = argv.format
-                try {
-                  const sc = await getStudioContext(argv)
-                  const jobId = argv["job-id"] as string
-                  debugJobProfile(argv.debug, "context", {
-                    jobId,
-                    baseUrl: sc.baseUrl,
-                    instanceId: sc.instanceId,
-                    instanceName: sc.instanceName,
-                    workspaceName: sc.workspaceName,
-                    workspaceId: sc.workspaceId,
-                    projectId: sc.projectId,
-                    userId: sc.userId,
-                    tenantId: sc.tenantId,
-                  })
-                  const downloaded = await downloadJobProfileFiles(
-                    sc,
-                    jobId,
-                    argv.path as string | undefined ?? defaultJobProfileDir(jobId),
-                    argv.debug,
-                  )
-                  logOperation("job profile download", { ok: true })
-                  success({
-                    job_id: jobId,
-                    workspace_name: sc.workspaceName,
-                    instance_id: sc.instanceId,
-                    path: downloaded.path,
-                    files: downloaded.files,
-                  }, { format })
-                } catch (err) {
-                  logOperation("job profile download", { ok: false, errorCode: "JOB_PROFILE_DOWNLOAD_ERROR" })
-                  error("JOB_PROFILE_DOWNLOAD_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
-                }
-              },
-            )
-            .command(
-              "detail <job-id>",
-              "Show a job's profile detail without downloading files",
-              (y) => y.positional("job-id", { type: "string", demandOption: true, describe: "Job ID" }),
-              async (argv) => {
-                const format = argv.format
-                try {
-                  const sc = await getStudioContext(argv)
-                  const jobId = argv["job-id"] as string
-                  debugJobProfile(argv.debug, "context", {
-                    jobId,
-                    baseUrl: sc.baseUrl,
-                    instanceId: sc.instanceId,
-                    instanceName: sc.instanceName,
-                    workspaceName: sc.workspaceName,
-                    workspaceId: sc.workspaceId,
-                    projectId: sc.projectId,
-                    userId: sc.userId,
-                    tenantId: sc.tenantId,
-                  })
-                  const profile = await fetchJobProfileData(sc, jobId, argv.debug)
-                  logOperation("job profile detail", { ok: true })
-                  success(
-                    buildJobProfilePayload({
-                      jobId,
-                      workspaceName: sc.workspaceName,
-                      instanceId: sc.instanceId,
-                      jobPlan: profile.jobPlan,
-                      jobProgress: profile.jobProgress,
-                      jobProfile: profile.jobProfile,
-                      files: [],
-                    }),
-                    { format },
-                  )
-                } catch (err) {
-                  logOperation("job profile detail", { ok: false, errorCode: "JOB_PROFILE_DETAIL_ERROR" })
-                  error("JOB_PROFILE_DETAIL_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
-                }
-              },
-            )
-          return commandGroup(profileYargs, "job profile")
-        },
-      )
-      .command(
-        "analyze [job-id]",
-        "Analyze job performance using downloaded profile data or a job ID",
+        "profile <job-id>",
+        "Show flattened job profile basics",
         (y) =>
           y
-            .positional("job-id", { type: "string", describe: "Job ID. Not required when --path is provided." })
-            .option("path", { type: "string", describe: "Directory containing job_plan.json and job_profile.json." })
-            .option("analysis-mode", {
-              type: "string",
-              choices: ["quick", "detailed", "expert"] as const,
-              default: "quick",
-              describe: "Analysis mode. Use detailed for careful review, expert only for deep analysis.",
-            })
-            .option("enable-incremental-algorithm", { type: "boolean", default: false, describe: "Enable incremental algorithm analysis." })
-            .option("enable-state-table", { type: "boolean", default: true, describe: "Enable state table optimization analysis." })
-            .check((argv) => {
-              if (!argv.path && !argv["job-id"]) throw new Error("job-id is required when --path is not provided.")
-              return true
-            }),
+            .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
+            .option("raw", { type: "boolean", default: false, describe: "Show truncated raw profile content." }),
         async (argv) => {
           const format = argv.format
           try {
-            const output = await analyzeJobPerformance({
-              profile: argv.profile as string | undefined,
-              workspaceName: argv.workspace as string | undefined,
-              jobId: argv["job-id"] as string | undefined,
-              path: argv.path as string | undefined,
-              analysisMode: argv["analysis-mode"] as "quick" | "detailed" | "expert",
-              enableIncrementalAlgorithm: argv["enable-incremental-algorithm"] as boolean,
-              enableStateTable: argv["enable-state-table"] as boolean,
-            }, argv.debug as boolean)
-            logOperation("job analyze", { ok: true })
-            success({ output }, { format })
+            const sc = await getStudioContext(argv)
+            const jobId = argv["job-id"] as string
+            debugJobProfile(argv.debug, "context", {
+              jobId,
+              baseUrl: sc.baseUrl,
+              instanceId: sc.instanceId,
+              instanceName: sc.instanceName,
+              workspaceName: sc.workspaceName,
+              workspaceId: sc.workspaceId,
+              projectId: sc.projectId,
+              userId: sc.userId,
+              tenantId: sc.tenantId,
+            })
+            const jobProfile = await fetchJobProfileOnly(sc, jobId, argv.debug)
+            if (argv.raw) {
+              const file = await writeJsonFile(defaultJobProfileDir(jobId), "job_profile.raw.json", jobProfile)
+              const raw = JSON.stringify(jobProfile, null, 2)
+              const truncated = truncateText(raw, DEFAULT_RAW_CHAR_LIMIT)
+              logOperation("job profile", { ok: true })
+              success({
+                job_id: jobId,
+                workspace_name: sc.workspaceName,
+                instance_id: sc.instanceId,
+                path: file.path,
+                raw: truncated.text,
+                truncated: truncated.truncated,
+                shown_chars: truncated.text.length,
+                total_chars: raw.length,
+              }, {
+                format,
+                aiMessage: truncated.truncated ? "Raw profile truncated. See data.path for the full content." : undefined,
+              })
+              return
+            }
+            logOperation("job profile", { ok: true })
+            success(buildJobProfileRows({
+              jobId,
+              workspaceName: sc.workspaceName,
+              instanceId: sc.instanceId,
+              currentUserName: sc.userName,
+              jobPlan: await fetchJobPlanOnly(sc, jobId, argv.debug),
+              jobProfile,
+            }), { format })
           } catch (err) {
-            logOperation("job analyze", { ok: false, errorCode: "JOB_ANALYZE_ERROR" })
-            error("JOB_ANALYZE_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
+            logOperation("job profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
+            error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
           }
         },
       )

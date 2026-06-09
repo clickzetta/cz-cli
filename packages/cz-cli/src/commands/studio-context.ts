@@ -27,6 +27,10 @@ export interface GatewayContext extends StudioConfig {
   userName: string
 }
 
+export interface StudioContext extends StudioConfig {
+  userName: string
+}
+
 export async function getGatewayContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<GatewayContext> {
   const config = resolveConnectionConfig(args)
   const token = await getToken(config)
@@ -49,7 +53,7 @@ export async function getGatewayContext(args: Partial<CliArgs> & { format?: stri
   }
 }
 
-export async function getStudioContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<StudioConfig> {
+export async function getStudioContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<StudioContext> {
   const format = args.format ?? "json"
   const debug = !!args.debug
   const config = resolveConnectionConfig(args)
@@ -98,5 +102,6 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
     env: detectEnv(config.service),
     baseUrl,
     customHeaders: config.customHeaders,
+    userName: user.name,
   }
 }

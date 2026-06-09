@@ -360,19 +360,6 @@ function profileOverrideFromArgs(args: string[]) {
   }
 }
 
-function argValue(args: string[], flag: string) {
-  for (let index = 0; index < args.length; index++) {
-    const value = args[index]
-    if (value === flag) return args[index + 1]
-    if (value?.startsWith(`${flag}=`)) return value.slice(flag.length + 1)
-  }
-}
-
-function isProfileOptionalCommand(args: string[]) {
-  const positional = args.filter((value) => !value.startsWith("-"))
-  return positional[0] === "job" && positional[1] === "analyze" && !!argValue(args, "--path")
-}
-
 export function classifyCliArgs(rawArgs: string[]) {
   const normalized = normalizeCliArgs(rawArgs)
   return {
@@ -380,7 +367,6 @@ export function classifyCliArgs(rawArgs: string[]) {
     requiresProfile:
       PROFILE_REQUIRED_COMMANDS.has(normalized.command) &&
       !normalized.isHelpRequest &&
-      !isProfileOptionalCommand(normalized.args) &&
       !hasConfiguredProfile(),
   }
 }
@@ -425,7 +411,6 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   if (
     PROFILE_REQUIRED_COMMANDS.has(normalized.command) &&
     !normalized.isHelpRequest &&
-    !isProfileOptionalCommand(normalized.args) &&
     !hasConfiguredProfile()
   ) {
     return emitNoProfile(runtime, rawArgs)

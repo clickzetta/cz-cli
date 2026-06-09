@@ -39,15 +39,6 @@ cz-cli task undeploy <task>                   Undeploy a task, irreversible (ali
 cz-cli task execute <task>                    Execute ad-hoc; auto-uses saved manual params as defaults (--param KEY=VAL overrides); warns if unresolved ${placeholders} remain (SQL will fail, Python/Shell silently keeps literal string)
 cz-cli task delete <task>                     Delete draft/offline task
 cz-cli task flow dag <task>                   Get flow DAG
-cz-cli task flow create-node <task>           Add node to flow
-cz-cli task flow remove-node <task>           Remove node
-cz-cli task flow bind <task>                  Create dependency
-cz-cli task flow unbind <task>                Remove dependency
-cz-cli task flow node-detail <task>           Get node detail
-cz-cli task flow node-save <task>             Save node script
-cz-cli task flow node-save-config <task>      Save node config
-cz-cli task flow submit <task>                Publish flow
-cz-cli task flow instances <task>             List flow node instances
 
 cz-cli runs list [--task <name>]              List run instances
 cz-cli runs detail <id>                       Get run detail
@@ -64,9 +55,7 @@ cz-cli attempts log [id]                      Get attempt log
 
 cz-cli job status <job-id>                    Job status/summary
 cz-cli job result <job-id>                    Fetch job result set
-cz-cli job profile download <job-id>          Download job_profile.json using getJobProfile; returns only paths. Use --path <dir> to choose where files are written
-cz-cli job profile detail <job-id>            Return detail/stage/operator arrays from getJobProfile/getJobProgress/getJobPlan without writing files
-cz-cli job analyze [job-id]                   Analyze job performance; use --path <dir> to analyze previously downloaded job_plan.json/job_profile.json
+cz-cli job profile <job-id>                   Show flattened job profile basics from getJobProfile; use --raw to inspect truncated raw profile content
 
 cz-cli status                                 Check connection status
 cz-cli profile list                           List connection profiles
