@@ -105,7 +105,9 @@ async function requestStudioJobJson(
   params: Record<string, string | number | boolean>,
   debug?: boolean,
 ): Promise<unknown> {
-  const url = new URL(path, sc.baseUrl)
+  // new URL(path, base) discards base's path when path starts with "/", so concatenate manually
+  const base = sc.baseUrl.endsWith("/") ? sc.baseUrl.slice(0, -1) : sc.baseUrl
+  const url = new URL(base + path)
   Object.entries(params).forEach((entry) => url.searchParams.set(entry[0], String(entry[1])))
   const headers = {
     "Content-Type": "application/json",
@@ -284,7 +286,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
         "Show flattened job profile basics",
         (y) =>
           y
-            .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
+            .positional("job-id", { type: "string", demandOption: true, describe: "ClickZetta Job ID (e.g. CZ-xxx)" })
             .option("raw", { type: "boolean", default: false, describe: "Show raw profile content." })
             .option("limit", { type: "boolean", default: true, describe: "Limit raw profile output. Use --no-limit to show the full payload." })
             .option("path", { type: "string", describe: "Write the full raw profile payload to a file." }),
