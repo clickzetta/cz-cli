@@ -28,8 +28,18 @@ EOF
 }
 
 requested_version=${CZ_VERSION:-${VERSION:-}}
+CHANNEL="${CZ_CHANNEL:-stable}"
 no_modify_path=false
 binary_path=""
+
+case "$CHANNEL" in
+    stable|nightly)
+        ;;
+    *)
+        echo -e "${RED}Error: invalid CZ_CHANNEL '${CHANNEL}' (expected stable or nightly)${NC}" >&2
+        exit 1
+        ;;
+esac
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -167,7 +177,7 @@ else
     BASE_URL="https://cz-cli.ai/download"
 
     if [ -z "$requested_version" ]; then
-        specific_version=$(curl -fsSL "https://cz-cli.ai/api/stable" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        specific_version=$(curl -fsSL "https://cz-cli.ai/api/${CHANNEL}" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
         if [[ $? -ne 0 || -z "$specific_version" ]]; then
             echo -e "${RED}Failed to fetch version information${NC}"
             exit 1
@@ -402,6 +412,20 @@ cat > "${INSTALL_DIR}/cz-agent" <<EOF
 exec "${INSTALL_DIR}/${APP}" agent "\$@"
 EOF
 chmod 755 "${INSTALL_DIR}/cz-agent"
+
+# Write install metadata so `cz-cli update` / auto-update know the release
+# channel (stable by default; overridable via CZ_CHANNEL for nightly).
+METADATA_DIR="$HOME/.clickzetta"
+mkdir -p "$METADATA_DIR"
+cat > "${METADATA_DIR}/install.json" <<EOF
+{
+  "version": 1,
+  "installed_path": "${INSTALL_DIR}/${APP}",
+  "channel": "${CHANNEL}",
+  "binary_version": "${specific_version}",
+  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
 
 # Install bundled skills to ~/.clickzetta/skills/.builtin/
 SKILLS_SRC="${INSTALL_DIR}/skills"

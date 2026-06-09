@@ -40,17 +40,21 @@ describe("installation", () => {
     expect(result).toBe("1.2.3")
   })
 
-  test("reads npm registry versions for npm-family installs", async () => {
-    globalThis.fetch = mock(async () =>
-      new Response(JSON.stringify({ version: "1.5.0" }), {
+  test("resolves npm-family installs from the cz-cli.ai stable channel, not the npm registry", async () => {
+    const urls: string[] = []
+    globalThis.fetch = mock(async (url: string) => {
+      urls.push(url)
+      return new Response(JSON.stringify({ version: "1.5.0" }), {
         headers: { "content-type": "application/json" },
-      }),
-    ) as unknown as typeof fetch
+      })
+    }) as unknown as typeof fetch
 
     const result = await Effect.runPromise(
       Installation.Service.use((svc) => svc.latest("npm")).pipe(Effect.provide(Installation.layer)),
     )
     expect(result).toBe("1.5.0")
+    expect(urls).toEqual(["https://cz-cli.ai/api/stable"])
+    expect(urls.some((u) => u.includes("registry.npmjs.org"))).toBe(false)
   })
 
   test("ignores install method from ~/.clickzetta/install.json", async () => {

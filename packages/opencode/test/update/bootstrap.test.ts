@@ -4,9 +4,12 @@ import os from "os"
 import path from "path"
 import {
   installMethodFromExecPath,
+  latestVersionForMethod,
   loadBootstrapConfig,
   maybeAutoUpdate,
+  performUpgrade,
   readInstallMetadata,
+  resolveReleaseChannel,
   resolveUpdateAction,
   restartArgs,
   shouldSkipAutoUpdateCommand,
@@ -214,6 +217,132 @@ describe("update bootstrap", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(0)
   })
+  describe("release channel", () => {
+    test("defaults to stable when nothing is configured", async () => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+      expect(await resolveReleaseChannel({ home, env: {} })).toBe("stable")
+    })
+
+    test("reads channel from install.json", async () => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+      await fs.mkdir(path.join(home, ".clickzetta"), { recursive: true })
+      await fs.writeFile(path.join(home, ".clickzetta", "install.json"), JSON.stringify({ channel: "nightly" }))
+
+      expect(await resolveReleaseChannel({ home, env: {} })).toBe("nightly")
+    })
+
+    test("CZ_CHANNEL overrides install.json", async () => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+      await fs.mkdir(path.join(home, ".clickzetta"), { recursive: true })
+      await fs.writeFile(path.join(home, ".clickzetta", "install.json"), JSON.stringify({ channel: "nightly" }))
+
+      expect(await resolveReleaseChannel({ home, env: { CZ_CHANNEL: "stable" } })).toBe("stable")
+    })
+
+    test("coerces legacy/unknown channel values to stable", async () => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+      await fs.mkdir(path.join(home, ".clickzetta"), { recursive: true })
+      await fs.writeFile(path.join(home, ".clickzetta", "install.json"), JSON.stringify({ channel: "latest" }))
+
+      expect(await resolveReleaseChannel({ home, env: {} })).toBe("stable")
+    })
+  })
+
+  describe("version source is the cz-cli.ai channel, not the install method", () => {
+    test("npm method on stable still resolves via cz-cli.ai/api/stable", async () => {
+      const urls: string[] = []
+      const fetchImpl = mock(async (url: string) => {
+        urls.push(url)
+        return new Response(JSON.stringify({ version: "0.5.16" }), {
+          headers: { "content-type": "application/json" },
+        })
+      }) as unknown as typeof fetch
+
+      const version = await latestVersionForMethod("npm", fetchImpl, "stable")
+
+      expect(version).toBe("0.5.16")
+      expect(urls).toEqual(["https://cz-cli.ai/api/stable"])
+    })
+
+    test("npm method on nightly resolves via cz-cli.ai/api/nightly", async () => {
+      const urls: string[] = []
+      const fetchImpl = mock(async (url: string) => {
+        urls.push(url)
+        return new Response(JSON.stringify({ version: "0.5.17-dev.20260609" }), {
+          headers: { "content-type": "application/json" },
+        })
+      }) as unknown as typeof fetch
+
+      const version = await latestVersionForMethod("npm", fetchImpl, "nightly")
+
+      expect(version).toBe("0.5.17-dev.20260609")
+      expect(urls).toEqual(["https://cz-cli.ai/api/nightly"])
+    })
+
+    test("never queries the npm registry for version resolution", async () => {
+      const urls: string[] = []
+      const fetchImpl = mock(async (url: string) => {
+        urls.push(url)
+        return new Response(JSON.stringify({ version: "0.5.16" }), {
+          headers: { "content-type": "application/json" },
+        })
+      }) as unknown as typeof fetch
+
+      await latestVersionForMethod("bun", fetchImpl, "stable")
+
+      expect(urls.some((u) => u.includes("registry.npmjs.org"))).toBe(false)
+    })
+  })
+
+  describe("upgrade channel persistence", () => {
+    test("package-manager upgrades receive the resolved release channel", async () => {
+      const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-npm-"))
+      const bin = path.join(tmp, "bin")
+      await fs.mkdir(bin, { recursive: true })
+      await fs.writeFile(path.join(bin, "npm"), [
+        "#!/bin/sh",
+        `printf '%s' "$CZ_CHANNEL" > ${JSON.stringify(path.join(tmp, "channel.txt"))}`,
+        "exit 0",
+        "",
+      ].join("\n"), { mode: 0o755 })
+
+      process.env.PATH = `${bin}${path.delimiter}${envSnapshot.PATH ?? ""}`
+
+      try {
+        await performUpgrade("npm", "0.5.17-dev.20260609", fetch, "nightly")
+
+        expect(await fs.readFile(path.join(tmp, "channel.txt"), "utf-8")).toBe("nightly")
+      } finally {
+        await fs.rm(tmp, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe("channel does not gate auto-update", () => {
+    test("resolveUpdateAction upgrades on the stable channel", () => {
+      const result = resolveUpdateAction({
+        autoupdate: true,
+        channel: "stable",
+        currentVersion: "0.5.15",
+        latestVersion: "0.5.16",
+        lastCheckedAt: 0,
+        now: 12 * 60 * 60 * 1000 + 1,
+        intervalMs: 12 * 60 * 60 * 1000,
+        method: "curl",
+      })
+
+      expect(result.kind).toBe("upgrade")
+    })
+
+    test("shouldSkipAutoUpdateCommand does not skip a real install on any channel", () => {
+      expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "0.5.16" })).toBe(false)
+    })
+
+    test("shouldSkipAutoUpdateCommand skips dev/local builds (invalid semver)", () => {
+      expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "local" })).toBe(true)
+    })
+  })
+
 
   describe("restartArgs", () => {
     test("binary mode: strips virtual /$bunfs/ entry from argv", () => {

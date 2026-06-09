@@ -7,7 +7,15 @@ import { parse as parseToml } from "smol-toml"
 import { parse as parseJsonc } from "jsonc-parser"
 import { spawnSync } from "child_process"
 import { ConfigManaged } from "@/config/managed"
-import { InstallationChannel, InstallationVersion } from "@/installation/version"
+import { InstallationVersion } from "@/installation/version"
+
+// Our own release channel, intentionally isolated from opencode's
+// `InstallationChannel` (the build-time CLICKZETTA_CHANNEL constant, which also
+// drives per-channel DB isolation, telemetry env, and dev-mode detection).
+// This channel only selects the install/update version stream and is persisted
+// in ~/.clickzetta/install.json by every install/update entry point.
+export type ReleaseChannel = "stable" | "nightly"
+const DEFAULT_RELEASE_CHANNEL: ReleaseChannel = "stable"
 
 export type InstallMethod = "curl" | "npm" | "yarn" | "pnpm" | "bun" | "brew" | "scoop" | "choco" | "unknown"
 
@@ -109,6 +117,22 @@ function coerceAutoupdate(value: unknown) {
   return undefined
 }
 
+function coerceChannel(value: unknown): ReleaseChannel | undefined {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : undefined
+  return normalized === "stable" || normalized === "nightly" ? normalized : undefined
+}
+
+// Resolve our release channel: CZ_CHANNEL env override → install.json.channel
+// → "stable". Never reads opencode's InstallationChannel. Legacy/unknown values
+// (e.g. "latest") coerce to the stable default.
+export async function resolveReleaseChannel(input: { home?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ReleaseChannel> {
+  const env = input.env ?? process.env
+  const override = coerceChannel(env.CZ_CHANNEL)
+  if (override) return override
+  const metadata = (await readObject(updatePaths(input.home, env).install)) as Partial<InstallMetadata>
+  return coerceChannel(metadata.channel) ?? DEFAULT_RELEASE_CHANNEL
+}
+
 async function readObject(file: string) {
   const text = await fs.readFile(file, "utf-8").catch(() => undefined)
   if (!text) return {}
@@ -162,33 +186,20 @@ export function installMethodFromExecPath(execPath: string, home?: string, env: 
   return "unknown"
 }
 
-export async function latestVersionForMethod(method: InstallMethod, fetchImpl: typeof fetch = fetch, channel?: string) {
-  if (channel === "nightly") {
-    const response = await fetchWithTimeout("https://cz-cli.ai/api/nightly", {
-      headers: { Accept: "application/json" },
-    }, fetchImpl)
-    if (!response.ok) throw new Error(`Failed to fetch nightly version: ${response.status}`)
-    const payload = (await response.json()) as { version?: string }
-    if (!payload.version) throw new Error("nightly version is missing")
-    return payload.version
-  }
-
-  if (NPM_METHODS.has(method)) {
-    const response = await fetchWithTimeout("https://registry.npmjs.org/@clickzetta/cz-cli/latest", {
-      headers: { Accept: "application/json" },
-    }, fetchImpl)
-    if (!response.ok) throw new Error(`Failed to fetch npm latest version: ${response.status}`)
-    const payload = (await response.json()) as { version?: string }
-    if (!payload.version) throw new Error("npm registry latest version is missing")
-    return payload.version
-  }
-
-  const response = await fetchWithTimeout("https://cz-cli.ai/api/stable", {
+export async function latestVersionForMethod(_method: InstallMethod, fetchImpl: typeof fetch = fetch, channel?: string) {
+  // Version resolution is ALWAYS channel-based via cz-cli.ai — the source of
+  // truth for both streams (stable → /api/stable, nightly → /api/nightly). The
+  // install *method* never decides the version: it only selects the upgrade
+  // command (see performUpgrade). Querying npm's `latest` dist-tag here could
+  // disagree with the channel and pick the wrong version. If npm lacks the
+  // resolved version, performUpgrade falls back to the install script.
+  const stream = channel === "nightly" ? "nightly" : "stable"
+  const response = await fetchWithTimeout(`https://cz-cli.ai/api/${stream}`, {
     headers: { Accept: "application/json" },
   }, fetchImpl)
-  if (!response.ok) throw new Error(`Failed to fetch stable version: ${response.status}`)
+  if (!response.ok) throw new Error(`Failed to fetch ${stream} version: ${response.status}`)
   const payload = (await response.json()) as { version?: string }
-  if (!payload.version) throw new Error("stable version is missing")
+  if (!payload.version) throw new Error(`${stream} version is missing`)
   return payload.version
 }
 
@@ -210,6 +221,7 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
       ...process.env,
       VERSION: target,
       CZ_VERSION: target,
+      CZ_CHANNEL: ch,
       NON_INTERACTIVE: "1",
       SKIP_PATH_PROMPT: "1",
       ...(force && { CZ_FORCE: "1" }),
@@ -219,7 +231,8 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
   if (result.status !== 0) throw new Error(`Install script failed with exit code ${result.status ?? 1}`)
 }
 
-async function upgradeViaPackageManager(method: InstallMethod, target: string) {
+async function upgradeViaPackageManager(method: InstallMethod, target: string, channel?: string) {
+  const ch = channel === "nightly" ? "nightly" : "stable"
   const spec = `@clickzetta/cz-cli@${target}`
   const cmd =
     method === "npm"
@@ -231,7 +244,7 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
           : ["yarn", "global", "add", spec]
   const result = spawnSync(cmd[0], cmd.slice(1), {
     stdio: "inherit",
-    env: process.env,
+    env: { ...process.env, CZ_CHANNEL: ch },
   })
   if (result.status !== 0) throw new Error(`${cmd[0]} upgrade failed with exit code ${result.status ?? 1}`)
 }
@@ -239,7 +252,7 @@ async function upgradeViaPackageManager(method: InstallMethod, target: string) {
 export async function performUpgrade(method: InstallMethod, target: string, fetchImpl: typeof fetch = fetch, channel?: string, force?: boolean) {
   if (NPM_METHODS.has(method)) {
     try {
-      await upgradeViaPackageManager(method, target)
+      await upgradeViaPackageManager(method, target, channel)
     } catch {
       await upgradeViaInstallScript(target, channel, fetchImpl, force)
     }
@@ -299,7 +312,6 @@ export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.P
 export function shouldSkipAutoUpdateCommand(input: {
   args: string[]
   env?: NodeJS.ProcessEnv
-  channel?: string
   version?: string
 }) {
   const env = input.env ?? process.env
@@ -308,7 +320,9 @@ export function shouldSkipAutoUpdateCommand(input: {
     env.CLICKZETTA_DISABLE_AUTOUPDATE === "1" ||
     ["1", "true", "yes"].includes((env.CZ_SKIP_UPDATE ?? "").trim().toLowerCase())
   ) return true
-  if ((input.channel ?? InstallationChannel) !== "nightly") return true
+  // Channel does NOT gate whether auto-update runs; it only selects the update
+  // stream. Dev/local builds are guarded by the semver check below
+  // (InstallationVersion === "local" is not valid semver).
   if (!semver.valid(input.version ?? InstallationVersion)) return true
   const head = input.args[0]
   if (head && SKIP_COMMANDS.has(head)) return true
@@ -318,7 +332,6 @@ export function shouldSkipAutoUpdateCommand(input: {
 export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   const autoupdate = input.autoupdate ?? true
   if (autoupdate === false) return { kind: "skip", reason: "disabled" }
-  if (input.channel !== "nightly") return { kind: "skip", reason: "channel" }
   const latestVersion = input.latestVersion
   if (!semver.valid(input.currentVersion) || !latestVersion || !semver.valid(latestVersion)) {
     return { kind: "skip", reason: "version" }
@@ -347,11 +360,12 @@ export async function writeInstallMetadata(
   input: { home?: string; env?: NodeJS.ProcessEnv } = {},
 ) {
   const file = updatePaths(input.home, input.env ?? process.env).install
+  const existing = (await readObject(file)) as Partial<InstallMetadata>
   const metadata = { ...value }
   delete metadata.method
   await writeJson(file, {
     version: 1,
-    channel: InstallationChannel,
+    channel: coerceChannel(existing.channel) ?? DEFAULT_RELEASE_CHANNEL,
     binary_version: InstallationVersion,
     installed_path: process.execPath,
     updated_at: new Date().toISOString(),
@@ -379,8 +393,9 @@ export async function maybeAutoUpdate(input: {
   const state = ((await readObject(paths.state)) as UpdateState) ?? {}
   if (state.last_checked_at !== undefined && now - state.last_checked_at < intervalMs) return
   const method = installMethodFromExecPath(process.execPath, undefined, env)
+  const channel = await resolveReleaseChannel({ env })
 
-  const latestVersion = await latestVersionForMethod(method, input.fetchImpl ?? fetch).catch(async (error) => {
+  const latestVersion = await latestVersionForMethod(method, input.fetchImpl ?? fetch, channel).catch(async (error) => {
     await writeJson(paths.state, {
       ...state,
       last_checked_at: now,
@@ -391,7 +406,7 @@ export async function maybeAutoUpdate(input: {
   })
   const action = resolveUpdateAction({
     autoupdate,
-    channel: InstallationChannel,
+    channel,
     currentVersion: InstallationVersion,
     latestVersion,
     lastCheckedAt: state.last_checked_at,
@@ -422,8 +437,8 @@ export async function maybeAutoUpdate(input: {
   if (action.kind === "notify" || !latestVersion) return
 
   try {
-    await performUpgrade(method, latestVersion, input.fetchImpl ?? fetch)
-    await writeInstallMetadata({ binary_version: latestVersion }, { env })
+    await performUpgrade(method, latestVersion, input.fetchImpl ?? fetch, channel)
+    await writeInstallMetadata({ binary_version: latestVersion, channel }, { env })
     await writeJson(paths.state, {
       last_checked_at: now,
       last_result: "upgrade-succeeded",

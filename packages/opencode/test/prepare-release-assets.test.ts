@@ -124,6 +124,36 @@ describe("prepare release assets", () => {
     }
   })
 
+  test("npm postinstall writes install.json with CZ_CHANNEL when provided", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-postinstall-channel-"))
+    const home = path.join(tmp, "home")
+    const packageDir = path.join(tmp, "package")
+    const installedRoot = path.join(tmp, "installed")
+    fs.mkdirSync(path.join(packageDir, "bin"), { recursive: true })
+    fs.mkdirSync(installedRoot, { recursive: true })
+    fs.copyFileSync(path.join(repoRoot, "packages", "npm", "cz-cli", "bin", "postinstall.js"), path.join(packageDir, "bin", "postinstall.js"))
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ version: "0.0.0-test" }))
+    fs.writeFileSync(path.join(installedRoot, "cz-cli"), "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo 0.0.0-test\n", { mode: 0o755 })
+    fs.writeFileSync(path.join(packageDir, "bin", "platform.js"), [
+      "\"use strict\";",
+      "exports.DEFAULT_FALLBACK_ROOT = \"unused\";",
+      "exports.getPlatformSpec = () => ({ npmPackage: \"fake\" });",
+      `exports.ensureInstalledBinary = async () => ({ rootDir: ${JSON.stringify(installedRoot)}, binPath: ${JSON.stringify(path.join(installedRoot, "cz-cli"))} });`,
+      "",
+    ].join("\n"))
+
+    try {
+      execFileSync(process.execPath, [path.join(packageDir, "bin", "postinstall.js")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home, CZ_CHANNEL: "nightly" },
+      })
+
+      expect(JSON.parse(fs.readFileSync(path.join(home, ".clickzetta", "install.json"), "utf-8")).channel).toBe("nightly")
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   test("setup.sh clears builtin skills before installing bundled skills", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-setup-skills-"))
     const installDir = path.join(tmp, "bin")
@@ -143,6 +173,78 @@ describe("prepare release assets", () => {
 
       expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "fresh-skill"))).toBe(true)
       expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("setup.sh writes install.json with the release channel (stable default, CZ_CHANNEL override)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-setup-meta-"))
+    const packageDir = path.join(tmp, "package")
+    fs.mkdirSync(packageDir, { recursive: true })
+    fs.writeFileSync(path.join(packageDir, "cz-cli"), "#!/bin/sh\n")
+    fs.copyFileSync(path.join(repoRoot, "scripts", "setup.sh"), path.join(packageDir, "setup.sh"))
+
+    const run = (home: string, env: Record<string, string>) => {
+      execFileSync("sh", [path.join(packageDir, "setup.sh")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home, INSTALL_DIR: path.join(home, "bin"), ...env },
+      })
+      return JSON.parse(fs.readFileSync(path.join(home, ".clickzetta", "install.json"), "utf-8"))
+    }
+
+    try {
+      const stable = run(path.join(tmp, "stable"), { CZ_VERSION: "0.5.16" })
+      expect(stable.channel).toBe("stable")
+      expect(stable.binary_version).toBe("0.5.16")
+      expect(stable.installed_path).toBe(path.join(tmp, "stable", "bin", "cz-cli"))
+
+      const nightly = run(path.join(tmp, "nightly"), { CZ_VERSION: "0.5.16", CZ_CHANNEL: "nightly" })
+      expect(nightly.channel).toBe("nightly")
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("install.sh fetches version metadata from the requested release channel", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-channel-"))
+    const home = path.join(tmp, "home")
+    const fakeBin = path.join(tmp, "bin")
+    const archiveRoot = path.join(tmp, "archive")
+    const archive = path.join(tmp, "cz-cli.zip")
+    fs.mkdirSync(fakeBin, { recursive: true })
+    fs.mkdirSync(archiveRoot, { recursive: true })
+    fs.writeFileSync(path.join(archiveRoot, "cz-cli"), "#!/bin/sh\n")
+    execFileSync("zip", ["-rq", archive, "."], { cwd: archiveRoot })
+    fs.writeFileSync(path.join(fakeBin, "curl"), [
+      "#!/bin/sh",
+      `printf '%s\n' "$@" >> ${JSON.stringify(path.join(tmp, "curl.log"))}`,
+      `case "$*" in`,
+      `  *api/nightly*) printf '{"version":"0.5.17-dev.20260609"}'; exit 0 ;;`,
+      `  *api/stable*) printf '{"version":"0.5.16"}'; exit 0 ;;`,
+      "esac",
+      "out=''",
+      "prev=''",
+      "for arg in \"$@\"; do",
+      "  if [ \"$prev\" = '-o' ]; then out=\"$arg\"; fi",
+      "  prev=\"$arg\"",
+      "done",
+      `cp ${JSON.stringify(archive)} "$out"`,
+      "exit 0",
+      "",
+    ].join("\n"), { mode: 0o755 })
+
+    try {
+      execFileSync("bash", [
+        path.join(repoRoot, "scripts", "install.sh"),
+        "--no-modify-path",
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home, SHELL: "/bin/sh", CZ_CHANNEL: "nightly", CZ_FORCE: "", PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` },
+      })
+
+      expect(fs.readFileSync(path.join(tmp, "curl.log"), "utf-8")).toContain("https://cz-cli.ai/api/nightly")
+      expect(JSON.parse(fs.readFileSync(path.join(home, ".clickzetta", "install.json"), "utf-8")).binary_version).toBe("0.5.17-dev.20260609")
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }

@@ -3,7 +3,7 @@ set -e
 
 BINARY_NAME="${BINARY_NAME:-cz-cli}"
 VERSION="${CZ_VERSION:-unknown}"
-CHANNEL="${CZ_CHANNEL:-latest}"
+CHANNEL="${CZ_CHANNEL:-stable}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 METADATA_DIR="${HOME}/.clickzetta"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)

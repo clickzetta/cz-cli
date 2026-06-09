@@ -15,8 +15,8 @@ import { VERSION } from "../version.js"
 import {
   type InstallMethod,
   installMethodFromExecPath,
-  readInstallMetadata,
   performUpgrade,
+  resolveReleaseChannel,
   shouldUpgradeToVersion,
   writeInstallMetadata,
 } from "../../../opencode/src/update/bootstrap"
@@ -200,7 +200,7 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      const channel = (await readInstallMetadata())?.channel ?? "stable"
+      const channel = await resolveReleaseChannel()
 
       // --- Step 1: Fetch latest version (cz-cli.ai → npm fallback) ---
       process.stderr.write("Checking for updates...\n")
@@ -281,7 +281,7 @@ export function registerUpdateCommand(cli: Argv) {
         const label = ["npm", "pnpm", "yarn", "bun"].includes(method) ? method : "install script"
         process.stderr.write(`Upgrading via ${label}...\n`)
         await performUpgrade(method, latest, fetch, channel, argv.force)
-        await writeInstallMetadata({ binary_version: latest })
+        await writeInstallMetadata({ binary_version: latest, channel })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {
         process.stderr.write(`Update failed: ${err instanceof Error ? err.message : String(err)}\n`)

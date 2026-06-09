@@ -106,6 +106,7 @@ async function main() {
       encoding: "utf-8",
       env: process.env,
     }).trim();
+    const channel = process.env.CZ_CHANNEL === "nightly" ? "nightly" : "stable";
     fs.mkdirSync(path.dirname(installFile), { recursive: true });
     fs.writeFileSync(
       installFile,
@@ -113,7 +114,7 @@ async function main() {
         {
           version: 1,
           installed_path: installed.binPath,
-          channel: "latest",
+          channel,
           binary_version: binaryVersion,
           updated_at: new Date().toISOString(),
         },
