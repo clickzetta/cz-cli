@@ -1,76 +1,82 @@
-# auto-update Specification
+# auto-update 规格说明
 
-## Purpose
-Defines when cz-cli updates itself automatically, how the release channel selects the update stream (version source and install mechanism), the two-file update state model, and notify-versus-upgrade behavior.
-## Requirements
-### Requirement: Auto-update is not gated by channel
+## 目的
+定义 cz-cli 何时自动更新自身、发布渠道如何选择更新流（版本来源和安装机制）、双文件更新状态模型，以及通知与升级行为。
 
-Auto-update SHALL run for any real install regardless of release channel. Enablement SHALL be determined by: the update not being disabled (via config `autoupdate: false` or env `CLICKZETTA_DISABLE_AUTOUPDATE` / `CZ_SKIP_UPDATE` / one-shot `CLICKZETTA_SKIP_UPDATE_ONCE`), the command not being in the skip list (`setup`, `update`, `uninstall`, `--help`/`-h`, `--version`/`-v`), the installed version being valid semver, a supported install method, and the check interval having elapsed. The channel value SHALL NOT decide whether auto-update runs.
+## 需求
+### 需求：自动更新不受渠道限制
 
-#### Scenario: Stable install upgrades
+自动更新应在任何真实安装上运行，不受发布渠道影响。启用条件由以下因素决定：更新未被禁用（通过配置 `autoupdate: false` 或环境变量 `CLICKZETTA_DISABLE_AUTOUPDATE` / `CZ_SKIP_UPDATE` / 一次性 `CLICKZETTA_SKIP_UPDATE_ONCE`），命令不在跳过列表中（`setup`、`update`、`uninstall`、`--help`/`-h`、`--version`/`-v`），已安装版本为有效 semver，安装方式受支持，且检查间隔已到期。渠道值不应决定自动更新是否运行。
 
-- **WHEN** a `stable` install has a supported method, a valid current version, an available newer version, and the interval has elapsed
-- **THEN** the resolved action is `upgrade`
+#### 场景：Stable 安装执行升级
 
-#### Scenario: Dev/local builds are skipped
+- **当** `stable` 安装具有受支持的方式、有效的当前版本、可用的更新版本且间隔已到期时
+- **则** 解析的操作为 `upgrade`
 
-- **WHEN** the installed version is not valid semver (for example a `local` dev build)
-- **THEN** auto-update is skipped
+#### 场景：Dev/本地构建被跳过
 
-#### Scenario: Real install is not skipped on any channel
+- **当** 已安装版本不是有效 semver（例如 `local` 开发构建）时
+- **则** 自动更新被跳过
 
-- **WHEN** the command is a normal command, no skip env is set, and the version is valid semver
-- **THEN** auto-update is not skipped, independent of the channel
+#### 场景：真实安装在任何渠道下都不被跳过
 
-### Requirement: Channel selects the update stream; method never selects the version
+- **当** 命令为正常命令、未设置跳过环境变量且版本为有效 semver 时
+- **则** 自动更新不被跳过，与渠道无关
 
-The release channel SHALL be the sole source of the target version, always resolved from cz-cli.ai: `stable` from `https://cz-cli.ai/api/stable`, `nightly` from `https://cz-cli.ai/api/nightly`. The install method SHALL NOT influence version resolution — it only selects the upgrade mechanism (`stable` → `install.sh`; `nightly` → `install-nightly.sh`; managed package managers use their own install command). In particular, version resolution SHALL NOT query the npm registry's `latest` dist-tag, even when the install method is npm/pnpm/yarn/bun. Both `stable` and `nightly` are eligible for automatic upgrade.
+### 需求：渠道选择更新流；安装方式不选择版本
 
-#### Scenario: Stable stream endpoints
+发布渠道应是目标版本的唯一来源，始终从 cz-cli.ai 解析：`stable` 来自 `https://cz-cli.ai/api/stable`，`nightly` 来自 `https://cz-cli.ai/api/nightly`。安装方式不应影响版本解析——它仅选择升级机制（`stable` → `install.sh`；`nightly` → `install-nightly.sh`；托管包管理器使用其自身的安装命令）。特别地，版本解析不应查询 npm 仓库的 `latest` dist-tag，即使安装方式为 npm/pnpm/yarn/bun。`stable` 和 `nightly` 均可自动升级。
 
-- **WHEN** the release channel is `stable`
-- **THEN** the latest version is fetched from `https://cz-cli.ai/api/stable` and upgrades use the stable install script
+#### 场景：Stable 流端点
 
-#### Scenario: Nightly stream endpoints
+- **当** 发布渠道为 `stable` 时
+- **则** 最新版本从 `https://cz-cli.ai/api/stable` 获取，升级使用 stable 安装脚本
 
-- **WHEN** the release channel is `nightly`
-- **THEN** the latest version is fetched from `https://cz-cli.ai/api/nightly` and upgrades use the nightly install script
+#### 场景：Nightly 流端点
 
-#### Scenario: npm install method does not change the version source
+- **当** 发布渠道为 `nightly` 时
+- **则** 最新版本从 `https://cz-cli.ai/api/nightly` 获取，升级使用 nightly 安装脚本
 
-- **WHEN** the install method is npm/pnpm/yarn/bun on the `stable` channel
-- **THEN** the target version is still fetched from `https://cz-cli.ai/api/stable` and the npm registry is not queried for version resolution
+#### 场景：npm 安装方式不改变版本来源
 
-#### Scenario: npm lacks the resolved version
+- **当** 安装方式为 npm/pnpm/yarn/bun 且渠道为 `stable` 时
+- **则** 目标版本仍从 `https://cz-cli.ai/api/stable` 获取，不查询 npm 仓库进行版本解析
 
-- **WHEN** the channel-resolved version is not yet published to the npm registry
-- **THEN** the package-manager upgrade may fail and the system falls back to the install script for that channel
+#### 场景：包管理器升级接收已解析的渠道
 
-### Requirement: Two-file update state model
+- **当** 安装方式为 npm/pnpm/yarn/bun 且已解析的发布渠道为 `nightly` 时
+- **则** 包管理器升级命令以 `CZ_CHANNEL=nightly` 执行
+- **且** npm `postinstall.js` 持久化 `channel` = `nightly`
 
-The system SHALL maintain two distinct files. `~/.clickzetta/install.json` is channel/identity memory written by every install and update entry point. `~/.local/state/clickzetta/update-check.json` (XDG state) SHALL be written ONLY by the automatic update path and SHALL record `last_checked_at`, `last_result`, and `latest_version`. Determining whether an automatic update occurred SHALL rely on `update-check.json`, not on `install.json.updated_at`.
+#### 场景：npm 缺少已解析的版本
 
-#### Scenario: Manual update does not write the auto-update state file
+- **当** 渠道解析的版本尚未发布到 npm 仓库时
+- **则** 包管理器升级可能失败，系统回退到该渠道的安装脚本
 
-- **WHEN** the user runs `cz-cli update`
-- **THEN** `install.json` is updated but `update-check.json` is not written
+### 需求：双文件更新状态模型
 
-#### Scenario: Auto-update records its activity
+系统应维护两个独立文件。`~/.clickzetta/install.json` 是渠道/身份记忆，由每次安装和更新入口写入。`~/.local/state/clickzetta/update-check.json`（XDG state）仅由自动更新路径写入，记录 `last_checked_at`、`last_result` 和 `latest_version`。判断自动更新是否发生应依赖 `update-check.json`，而非 `install.json.updated_at`。
 
-- **WHEN** the automatic update path performs a check
-- **THEN** `update-check.json` is written with `last_checked_at` and a `last_result`
+#### 场景：手动更新不写入自动更新状态文件
 
-### Requirement: Notify versus upgrade
+- **当** 用户运行 `cz-cli update` 时
+- **则** `install.json` 被更新但 `update-check.json` 不被写入
 
-When a newer version is available, the system SHALL perform an automatic in-place upgrade if the install method is one of the supported managed methods (`curl`, `npm`, `pnpm`, `yarn`, `bun`) and autoupdate is enabled; otherwise it SHALL notify the user that an update is available.
+#### 场景：自动更新记录其活动
 
-#### Scenario: Unsupported method notifies
+- **当** 自动更新路径执行检查时
+- **则** `update-check.json` 被写入，包含 `last_checked_at` 和 `last_result`
 
-- **WHEN** a newer version is available but the install method is unsupported
-- **THEN** the resolved action is `notify`
+### 需求：通知与升级
 
-#### Scenario: Notify-only configuration
+当有更新版本可用时，如果安装方式为受支持的托管方式之一（`curl`、`npm`、`pnpm`、`yarn`、`bun`）且自动更新已启用，系统应执行自动就地升级；否则应通知用户有更新可用。
 
-- **WHEN** `autoupdate` is configured to `notify`
-- **THEN** the user is informed of the available update and no automatic upgrade is performed
+#### 场景：不受支持的方式执行通知
 
+- **当** 有更新版本可用但安装方式不受支持时
+- **则** 解析的操作为 `notify`
+
+#### 场景：仅通知配置
+
+- **当** `autoupdate` 配置为 `notify` 时
+- **则** 通知用户有可用更新，不执行自动升级

@@ -1,66 +1,82 @@
-# release-channel Specification
+# release-channel 规格说明
 
-## Purpose
-Defines cz-cli's release channel (`stable`/`nightly`): its allowed values and default, resolution precedence, isolation from opencode's `InstallationChannel`, and the `install.json` schema that every install/update entry point must persist.
-## Requirements
-### Requirement: Release channel is isolated from opencode InstallationChannel
+## 目的
+定义 cz-cli 的发布渠道（`stable`/`nightly`）：其允许的值和默认值、解析优先级、与 opencode 的 `InstallationChannel` 的隔离，以及每个安装/更新入口必须持久化的 `install.json` schema。
 
-cz-cli SHALL maintain a release channel concept that is separate from opencode's build-time `InstallationChannel` constant. The release channel MUST NOT be derived from `InstallationChannel`, and the update subsystem MUST NOT read `InstallationChannel` to determine the release stream. opencode's `InstallationChannel` and its consumers (per-channel DB path, telemetry `deployment.environment.name`, `isLocal()`/`isPreview()`, plugin version pinning) MUST remain unaffected.
+## 需求
+### 需求：发布渠道与 opencode InstallationChannel 隔离
 
-#### Scenario: Update subsystem does not reference InstallationChannel
+cz-cli 应维护一个独立于 opencode 构建时 `InstallationChannel` 常量的发布渠道概念。发布渠道不得从 `InstallationChannel` 派生，更新子系统不得读取 `InstallationChannel` 来确定发布流。opencode 的 `InstallationChannel` 及其消费者（按渠道区分的数据库路径、遥测 `deployment.environment.name`、`isLocal()`/`isPreview()`、插件版本固定）必须不受影响。
 
-- **WHEN** the update/auto-update code resolves the release channel
-- **THEN** the value is computed from `CZ_CHANNEL`, `install.json`, or the default, and not from `InstallationChannel`
+#### 场景：更新子系统不引用 InstallationChannel
 
-#### Scenario: opencode channel consumers unchanged
+- **当** 更新/自动更新代码解析发布渠道时
+- **则** 值从 `CZ_CHANNEL`、`install.json` 或默认值计算得出，而非从 `InstallationChannel`
 
-- **WHEN** the release channel changes between `stable` and `nightly`
-- **THEN** the SQLite DB path, telemetry environment, and dev-mode detection derived from `InstallationChannel` are unchanged
+#### 场景：opencode 渠道消费者不变
 
-### Requirement: Allowed channel values and default
+- **当** 发布渠道在 `stable` 和 `nightly` 之间切换时
+- **则** 由 `InstallationChannel` 派生的 SQLite 数据库路径、遥测环境和开发模式检测保持不变
 
-The release channel SHALL be one of `stable` or `nightly`. `stable` SHALL be the default for all user-facing installs. Unknown or legacy values (for example `latest`) SHALL coerce to `stable` when read.
+### 需求：允许的渠道值和默认值
 
-#### Scenario: Unknown value coerces to stable
+发布渠道应为 `stable` 或 `nightly` 之一。`stable` 应为所有面向用户安装的默认值。未知或遗留值（例如 `latest`）在读取时应强制转换为 `stable`。
 
-- **WHEN** `install.json` contains `"channel": "latest"`
-- **THEN** the resolved release channel is `stable`
+#### 场景：未知值强制转换为 stable
 
-#### Scenario: Default when unset
+- **当** `install.json` 包含 `"channel": "latest"` 时
+- **则** 解析的发布渠道为 `stable`
 
-- **WHEN** no `CZ_CHANNEL` env is set and `install.json` has no usable channel
-- **THEN** the resolved release channel is `stable`
+#### 场景：未设置时的默认值
 
-### Requirement: Channel resolution precedence
+- **当** 未设置 `CZ_CHANNEL` 环境变量且 `install.json` 无可用渠道时
+- **则** 解析的发布渠道为 `stable`
 
-The release channel SHALL be resolved with the precedence: `CZ_CHANNEL` environment variable, then `~/.clickzetta/install.json` `channel`, then `stable`.
+### 需求：渠道解析优先级
 
-#### Scenario: Env overrides install.json
+发布渠道的解析优先级为：`CZ_CHANNEL` 环境变量，然后 `~/.clickzetta/install.json` 中的 `channel`，然后 `stable`。
 
-- **WHEN** `install.json` has `"channel": "nightly"` and `CZ_CHANNEL=stable` is set
-- **THEN** the resolved release channel is `stable`
+#### 场景：环境变量覆盖 install.json
 
-#### Scenario: install.json used when env unset
+- **当** `install.json` 有 `"channel": "nightly"` 且设置了 `CZ_CHANNEL=stable` 时
+- **则** 解析的发布渠道为 `stable`
 
-- **WHEN** `CZ_CHANNEL` is unset and `install.json` has `"channel": "nightly"`
-- **THEN** the resolved release channel is `nightly`
+#### 场景：环境变量未设置时使用 install.json
 
-### Requirement: install.json schema and persistence contract
+- **当** `CZ_CHANNEL` 未设置且 `install.json` 有 `"channel": "nightly"` 时
+- **则** 解析的发布渠道为 `nightly`
 
-Every install or update entry point — the bundled `setup.sh`, `scripts/install.sh`, the npm `postinstall.js`, the `cz-cli update` command, and the automatic update path — SHALL create or update `~/.clickzetta/install.json`. The file SHALL contain `version` (metadata schema version, currently `1`), `installed_path`, `channel`, `binary_version`, and `updated_at`. The `version` field is the metadata schema version and is distinct from `binary_version` (the cz-cli program version); changing the file structure SHALL bump `version`.
+### 需求：install.json schema 和持久化契约
 
-#### Scenario: setup.sh persists the channel
+每个安装或更新入口——打包的 `setup.sh`、`scripts/install.sh`、npm `postinstall.js`、`cz-cli update` 命令和自动更新路径——应创建或更新 `~/.clickzetta/install.json`。文件应包含 `version`（元数据 schema 版本，当前为 `1`）、`installed_path`、`channel`、`binary_version` 和 `updated_at`。`version` 字段为元数据 schema 版本，与 `binary_version`（cz-cli 程序版本）不同；更改文件结构应递增 `version`。
 
-- **WHEN** `setup.sh` runs with `CZ_VERSION` set and no `CZ_CHANNEL`
-- **THEN** `install.json` is written with `channel` = `stable` and `binary_version` = the installed version
+#### 场景：setup.sh 持久化渠道
 
-#### Scenario: CZ_CHANNEL override persisted
+- **当** `setup.sh` 在设置了 `CZ_VERSION` 且未设置 `CZ_CHANNEL` 的情况下运行时
+- **则** `install.json` 写入 `channel` = `stable` 和 `binary_version` = 已安装版本
 
-- **WHEN** `setup.sh` runs with `CZ_CHANNEL=nightly`
-- **THEN** `install.json` is written with `channel` = `nightly`
+#### 场景：CZ_CHANNEL 覆盖被持久化
 
-#### Scenario: An updated channel is preserved across writes
+- **当** `setup.sh` 以 `CZ_CHANNEL=nightly` 运行时
+- **则** `install.json` 写入 `channel` = `nightly`
 
-- **WHEN** `writeInstallMetadata` is called and `install.json` already has a `channel`
-- **THEN** the existing channel is retained unless an explicit channel is provided, and never replaced by `InstallationChannel`
+#### 场景：npm postinstall 持久化显式渠道
 
+- **当** npm `postinstall.js` 以 `CZ_CHANNEL=nightly` 运行时
+- **则** `install.json` 写入 `channel` = `nightly`
+
+#### 场景：scripts install 使用渠道进行版本解析
+
+- **当** `scripts/install.sh` 在未指定显式版本且 `CZ_CHANNEL=nightly` 的情况下运行时
+- **则** 已安装的 `binary_version` 从 `https://cz-cli.ai/api/nightly` 解析
+- **且** `install.json` 写入 `channel` = `nightly`
+
+#### 场景：更新的渠道在写入时被保留
+
+- **当** 调用 `writeInstallMetadata` 且 `install.json` 已有 `channel` 时
+- **则** 现有渠道被保留，除非提供了显式渠道，且永远不被 `InstallationChannel` 替换
+
+#### 场景：更新写入已解析的渠道
+
+- **当** `cz-cli update` 或自动更新路径在解析 `channel` = `nightly` 后完成升级时
+- **则** `install.json` 写入 `channel` = `nightly`
