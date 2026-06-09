@@ -402,12 +402,37 @@ install_from_binary() {
 }
 
 # Pre-install: detect and remove any cz-cli binary that would shadow our install
+is_package_manager_binary() {
+    local p="$1"
+    local target=""
+    if [ -L "$p" ]; then
+        target=$(readlink "$p" 2>/dev/null || true)
+    fi
+    echo "$p$target" | grep -q "node_modules" && return 0
+    echo "$p" | grep -q "\.bun" && return 0
+    return 1
+}
+
+remove_shadowing_binary() {
+    local p="$1"
+    if is_package_manager_binary "$p"; then
+        if echo "$p$(readlink "$p" 2>/dev/null)" | grep -q "\.bun"; then
+            echo -e "${MUTED}Uninstalling old cz-cli via bun${NC}"
+            bun remove -g @clickzetta/cz-cli 2>/dev/null || rm -f "$p" 2>/dev/null || true
+        else
+            echo -e "${MUTED}Uninstalling old cz-cli via npm${NC}"
+            npm uninstall -g @clickzetta/cz-cli 2>/dev/null || rm -f "$p" 2>/dev/null || true
+        fi
+    else
+        echo -e "${MUTED}Removing old cz-cli at ${NC}${p}"
+        rm -f "$p" 2>/dev/null || sudo rm -f "$p" 2>/dev/null || true
+    fi
+}
+
 if command -v cz-cli >/dev/null 2>&1; then
     existing_which=$(command -v cz-cli)
-    # If it's not our install dir, it will shadow the new install
     if [ "$existing_which" != "${INSTALL_DIR}/${APP}" ]; then
-        echo -e "${MUTED}Removing old cz-cli at ${NC}${existing_which}${MUTED} (shadows ${INSTALL_DIR}/${APP})${NC}"
-        rm -f "$existing_which" 2>/dev/null || sudo rm -f "$existing_which" 2>/dev/null || true
+        remove_shadowing_binary "$existing_which"
     fi
 fi
 

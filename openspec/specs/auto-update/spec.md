@@ -102,17 +102,27 @@
 
 ### 需求：升级前事前清除遮蔽 binary
 
-在执行 `performUpgrade` 之前，系统应检测 `which cz-cli` 解析的路径是否会遮蔽新安装的 binary。如果该路径不在我们管理的安装目录中，应在升级前通过适当方式移除它（npm 全局用 `npm uninstall -g`，普通文件用 `rm`），确保升级完成后 `which cz-cli` 立即指向新版本。
+在执行升级之前，系统应检测 `which cz-cli` 解析的路径是否会遮蔽新安装的 binary。如果该路径不在我们管理的安装目录中，应在升级前通过适当方式移除它，确保升级完成后 `which cz-cli` 立即指向新版本。
+
+`install.sh` 和 `update.ts` 共享相同的二步抽象：
+
+1. **`is_package_manager_binary` / `isPackageManagerBinary`** — 判断路径是否为包管理器安装（路径或 symlink 目标含 `node_modules`、`.bun`、或在 npm prefix 下）
+2. **`remove_shadowing_binary` / `removeStaleBinary`** — 根据类型选择清理方式：npm 全局用 `npm uninstall -g`，bun 全局用 `bun remove -g`，普通文件用 `rm -f` / `unlinkSync`
 
 #### 场景：npm binary 遮蔽 install.sh 安装
 
 - **WHEN** `which cz-cli` 指向 npm 全局 binary 且升级 fallback 到 install.sh 时
 - **THEN** 升级前执行 `npm uninstall -g @clickzetta/cz-cli` 移除遮蔽 binary
 
+#### 场景：bun binary 遮蔽
+
+- **WHEN** `which cz-cli` 指向 bun 全局 binary 时
+- **THEN** 升级前执行 `bun remove -g @clickzetta/cz-cli` 移除遮蔽 binary
+
 #### 场景：install.sh 同样事前清除
 
 - **WHEN** `scripts/install.sh` 运行且 `command -v cz-cli` 指向非 `$INSTALL_DIR` 的路径时
-- **THEN** 安装前 `rm -f` 该 binary，确保安装后 `which` 指向新 binary
+- **THEN** 若为 npm/bun 安装则执行对应 `uninstall -g`，否则 `rm -f`，确保安装后 `which` 指向新 binary
 
 #### 场景：check_version 仅对自管路径生效
 
