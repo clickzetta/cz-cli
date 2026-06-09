@@ -78,9 +78,9 @@ async function main() {
   }
 
   // Clear .builtin/ entirely then re-populate with all bundled skills
+  fs.rmSync(builtinDest, { recursive: true, force: true });
+  fs.mkdirSync(builtinDest, { recursive: true });
   if (fs.existsSync(skillsSrc)) {
-    fs.rmSync(builtinDest, { recursive: true, force: true });
-    fs.mkdirSync(builtinDest, { recursive: true });
     const skills = fs.readdirSync(skillsSrc).filter((name) => fs.statSync(path.join(skillsSrc, name)).isDirectory());
     for (const name of skills) {
       fs.cpSync(path.join(skillsSrc, name), path.join(builtinDest, name), { recursive: true });

@@ -32,6 +32,18 @@ exec "${TARGET_BINARY}" agent "\$@"
 EOF
 chmod +x "${INSTALL_DIR}/cz-agent"
 
+SKILLS_SRC="${SCRIPT_DIR}/skills"
+BUILTIN_DEST="${HOME}/.clickzetta/skills/.builtin"
+rm -rf "$BUILTIN_DEST"
+mkdir -p "$BUILTIN_DEST"
+if [ -d "$SKILLS_SRC" ]; then
+  for skill_dir in "$SKILLS_SRC"/*/; do
+    [ -d "$skill_dir" ] || continue
+    skill_name=$(basename "$skill_dir")
+    cp -r "$skill_dir" "$BUILTIN_DEST/$skill_name"
+  done
+fi
+
 cat > "$METADATA_FILE" <<EOF
 {
   "version": 1,

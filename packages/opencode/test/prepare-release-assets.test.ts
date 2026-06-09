@@ -7,6 +7,147 @@ import path from "node:path"
 const repoRoot = path.resolve(import.meta.dirname, "../../..")
 
 describe("prepare release assets", () => {
+  test("install.sh clears builtin skills before installing bundled skills", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-skills-"))
+    const home = path.join(tmp, "home")
+    const binary = path.join(tmp, "cz-cli")
+    fs.mkdirSync(path.join(home, ".cz-cli", "bin", "skills", "fresh-skill"), { recursive: true })
+    fs.mkdirSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"), { recursive: true })
+    fs.writeFileSync(binary, "#!/bin/sh\n")
+    fs.writeFileSync(path.join(home, ".cz-cli", "bin", "skills", "fresh-skill", "SKILL.md"), "fresh")
+
+    try {
+      execFileSync("bash", [
+        path.join(repoRoot, "scripts", "install.sh"),
+        "--binary",
+        binary,
+        "--no-modify-path",
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home, SHELL: "/bin/sh" },
+      })
+
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "fresh-skill"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("install.sh clears builtin skills when no bundled skills are present", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-empty-skills-"))
+    const home = path.join(tmp, "home")
+    const binary = path.join(tmp, "cz-cli")
+    fs.mkdirSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"), { recursive: true })
+    fs.writeFileSync(binary, "#!/bin/sh\n")
+
+    try {
+      execFileSync("bash", [
+        path.join(repoRoot, "scripts", "install.sh"),
+        "--binary",
+        binary,
+        "--no-modify-path",
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home, SHELL: "/bin/sh" },
+      })
+
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("npm postinstall clears builtin skills before installing bundled skills", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-postinstall-skills-"))
+    const home = path.join(tmp, "home")
+    const packageDir = path.join(tmp, "package")
+    const installedRoot = path.join(tmp, "installed")
+    fs.mkdirSync(path.join(packageDir, "bin"), { recursive: true })
+    fs.mkdirSync(path.join(installedRoot, "skills", "fresh-skill"), { recursive: true })
+    fs.mkdirSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"), { recursive: true })
+    fs.copyFileSync(path.join(repoRoot, "packages", "npm", "cz-cli", "bin", "postinstall.js"), path.join(packageDir, "bin", "postinstall.js"))
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ version: "0.0.0-test" }))
+    fs.writeFileSync(path.join(installedRoot, "cz-cli"), "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo 0.0.0-test\n", { mode: 0o755 })
+    fs.writeFileSync(path.join(installedRoot, "skills", "fresh-skill", "SKILL.md"), "fresh")
+    fs.writeFileSync(path.join(packageDir, "bin", "platform.js"), [
+      "\"use strict\";",
+      "exports.DEFAULT_FALLBACK_ROOT = \"unused\";",
+      "exports.getPlatformSpec = () => ({ npmPackage: \"fake\" });",
+      `exports.ensureInstalledBinary = async () => ({ rootDir: ${JSON.stringify(installedRoot)}, binPath: ${JSON.stringify(path.join(installedRoot, "cz-cli"))} });`,
+      "",
+    ].join("\n"))
+
+    try {
+      execFileSync(process.execPath, [path.join(packageDir, "bin", "postinstall.js")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home },
+      })
+
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "fresh-skill"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("npm postinstall clears builtin skills when no bundled skills are present", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-postinstall-empty-skills-"))
+    const home = path.join(tmp, "home")
+    const packageDir = path.join(tmp, "package")
+    const installedRoot = path.join(tmp, "installed")
+    fs.mkdirSync(path.join(packageDir, "bin"), { recursive: true })
+    fs.mkdirSync(installedRoot, { recursive: true })
+    fs.mkdirSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"), { recursive: true })
+    fs.copyFileSync(path.join(repoRoot, "packages", "npm", "cz-cli", "bin", "postinstall.js"), path.join(packageDir, "bin", "postinstall.js"))
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ version: "0.0.0-test" }))
+    fs.writeFileSync(path.join(installedRoot, "cz-cli"), "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo 0.0.0-test\n", { mode: 0o755 })
+    fs.writeFileSync(path.join(packageDir, "bin", "platform.js"), [
+      "\"use strict\";",
+      "exports.DEFAULT_FALLBACK_ROOT = \"unused\";",
+      "exports.getPlatformSpec = () => ({ npmPackage: \"fake\" });",
+      `exports.ensureInstalledBinary = async () => ({ rootDir: ${JSON.stringify(installedRoot)}, binPath: ${JSON.stringify(path.join(installedRoot, "cz-cli"))} });`,
+      "",
+    ].join("\n"))
+
+    try {
+      execFileSync(process.execPath, [path.join(packageDir, "bin", "postinstall.js")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home },
+      })
+
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("setup.sh clears builtin skills before installing bundled skills", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-setup-skills-"))
+    const installDir = path.join(tmp, "bin")
+    const home = path.join(tmp, "home")
+    const packageDir = path.join(tmp, "package")
+    fs.mkdirSync(path.join(packageDir, "skills", "fresh-skill"), { recursive: true })
+    fs.mkdirSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"), { recursive: true })
+    fs.writeFileSync(path.join(packageDir, "cz-cli"), "#!/bin/sh\n")
+    fs.writeFileSync(path.join(packageDir, "skills", "fresh-skill", "SKILL.md"), "fresh")
+    fs.copyFileSync(path.join(repoRoot, "scripts", "setup.sh"), path.join(packageDir, "setup.sh"))
+
+    try {
+      execFileSync("sh", [path.join(packageDir, "setup.sh")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home, INSTALL_DIR: installDir },
+      })
+
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "fresh-skill"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   test("extracts GitHub release archives into dist directories", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-release-assets-"))
     const assetsDir = path.join(tmp, "assets")

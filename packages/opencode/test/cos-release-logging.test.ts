@@ -222,6 +222,7 @@ describe("cos release logging", () => {
     expect(sh).toContain("https://example.com/darwin-arm64.zip?sign=abc")
     expect(sh).toContain('cz-cli --version')
     expect(sh).toContain('A newer version is already installed')
+    expect(sh).toContain('sh "$EXTRACT_DIR/setup.sh"')
     expect(ps1).toContain("$Version = '1.2.3'")
     expect(ps1).toContain("$Channel = 'stable'")
     expect(ps1).toContain("'win32-x64' {")
