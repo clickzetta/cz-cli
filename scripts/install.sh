@@ -76,7 +76,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-INSTALL_DIR=$HOME/.cz-cli/bin
+INSTALL_DIR=${CZ_INSTALL_DIR:-$HOME/.local/bin}
 mkdir -p "$INSTALL_DIR"
 
 # If --binary is provided, skip all download/detection logic

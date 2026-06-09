@@ -8,7 +8,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync } from "node:fs"
+import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync, copyFileSync, chmodSync, statSync } from "node:fs"
 import path from "node:path"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
@@ -102,7 +102,7 @@ export function isPackageManagerBinary(p: string, input: BinaryDetectionInput = 
 }
 
 export function isCzCliInstallBinary(p: string): boolean {
-  return p.includes(`${path.sep}.cz-cli${path.sep}bin${path.sep}`) || p.includes(`${path.sep}.local${path.sep}bin${path.sep}`)
+  return p.includes(`${path.sep}.local${path.sep}bin${path.sep}`)
 }
 
 export function resolveUpdateInstallMethod(execPath: string, binaries: string[], input: BinaryDetectionInput = {}): InstallMethod {
@@ -293,6 +293,36 @@ export function registerUpdateCommand(cli: Argv) {
         const label = ["npm", "pnpm", "yarn", "bun"].includes(method) ? method : "install script"
         process.stderr.write(`Upgrading via ${label}...\n`)
         await performUpgrade(method, latest, fetch, channel, argv.force)
+
+        // Post-upgrade fixup: if install.sh placed the binary in a different dir
+        // than where `which cz-cli` resolves (e.g. old install.sh uses ~/.local/bin
+        // but PATH has ~/.cz-cli/bin first), copy it to the right place.
+        const postWhich = (() => {
+          try { return execSync("which cz-cli", { encoding: "utf-8", stdio: "pipe" }).trim() } catch { return undefined }
+        })()
+        if (postWhich) {
+          const postVersion = (() => {
+            try { return execSync(`${postWhich} --version`, { encoding: "utf-8", stdio: "pipe" }).trim() } catch { return undefined }
+          })()
+          if (postVersion !== latest) {
+            // Find the freshly installed binary
+            const candidates = [
+              path.join(process.env.HOME || "", ".local", "bin", "cz-cli"),
+            ]
+            for (const candidate of candidates) {
+              try {
+                if (!statSync(candidate).isFile()) continue
+                const ver = execSync(`${candidate} --version`, { encoding: "utf-8", stdio: "pipe" }).trim()
+                if (ver === latest) {
+                  copyFileSync(candidate, postWhich)
+                  chmodSync(postWhich, 0o755)
+                  process.stderr.write(`  ✓ Synced binary at ${postWhich}\n`)
+                  break
+                }
+              } catch {}
+            }
+          }
+        }
 
         await writeInstallMetadata({ binary_version: latest, channel })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)

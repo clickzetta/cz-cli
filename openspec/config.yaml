@@ -1,20 +1,33 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Tech stack: TypeScript, Bun, Node.js, Shell (bash)
+  Monorepo layout:
+    packages/opencode/        — 主 CLI 二进制（bun compile 产物）
+    packages/npm/cz-cli/      — npm 分发包（postinstall.js 负责下载平台二进制）
+    scripts/install.sh        — curl | sh 安装脚本
+    script/build.ts           — CI 构建脚本，产出平台二进制并上传到 GitHub Release
+    .github/workflows/        — GitHub Actions，release-cos.yml 驱动构建发布
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Spec coverage — before touching these areas, read the corresponding spec:
+    install/update 流程、自动更新、渠道选择  → openspec/specs/auto-update/spec.md
+    发布渠道（stable/nightly）、install.json  → openspec/specs/release-channel/spec.md
+    macOS Gatekeeper、quarantine、codesign    → openspec/specs/macos-gatekeeper/spec.md
+
+  Areas NOT yet covered by specs (create a new spec when changing):
+    GitHub Actions workflow (release-cos.yml, build targets, upload steps)
+    Windows 签名 (script/sign-windows.ps1)
+    COS 发布 (scripts/cos-release.mjs, scripts/cos-upload.mjs)
+    npm 包结构 (packages/npm/cz-cli/bin/platform.js, prepare-release-assets.mjs)
+
+  Commit convention: Conventional Commits (fix/feat/docs/chore/refactor/test)
+  Language: 代码注释和 commit message 用英文；spec/design 文档用中文
+
+rules:
+  spec:
+    - 用中文写作
+    - 需求用 WHEN/THEN 格式描述场景
+    - 每个需求至少包含一个正向场景和一个边界/异常场景
+  tasks:
+    - 每个 task 对应一个可独立验证的改动（单文件或单函数粒度优先）
+    - task 描述包含受影响的文件路径

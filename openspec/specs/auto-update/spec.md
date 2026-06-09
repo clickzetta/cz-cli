@@ -128,3 +128,20 @@
 
 - **WHEN** `command -v cz-cli` 指向非 `$INSTALL_DIR` 的路径时
 - **THEN** `check_version` 不做版本比较，不跳过安装
+
+### 需求：升级后 binary 位置一致性
+
+`cz-cli update` 通过 install.sh 升级时，新 binary 必须最终出现在 `which cz-cli` 解析的路径上。由于线上旧版 install.sh 可能安装到不同目录（如 `~/.local/bin`），update 命令应：
+
+1. 通过 `CZ_INSTALL_DIR` 环境变量告知 install.sh 安装到当前 binary 目录（新版 install.sh 支持）
+2. 升级后验证 `which cz-cli --version` 是否为目标版本，若不是则从已知候选路径（`~/.cz-cli/bin`、`~/.local/bin`）找到新 binary 并拷贝到 `which` 路径
+
+#### 场景：install.sh 安装到不同目录
+
+- **WHEN** install.sh 将 binary 安装到与 `which cz-cli` 不同的目录时
+- **THEN** update 命令将新 binary 拷贝到 `which cz-cli` 路径，确保版本一致
+
+#### 场景：CZ_INSTALL_DIR 覆盖安装目录
+
+- **WHEN** `CZ_INSTALL_DIR` 环境变量被设置时
+- **THEN** install.sh 使用该值作为安装目录而非默认的 `$HOME/.cz-cli/bin`

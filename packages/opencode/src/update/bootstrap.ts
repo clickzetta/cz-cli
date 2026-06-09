@@ -182,7 +182,7 @@ export function installMethodFromExecPath(execPath: string, home?: string, env: 
     return scriptPath.includes(`${path.sep}.bun${path.sep}`) ? "bun" : "npm"
   }
   const root = homeDirectory(home, env)
-  if (scriptPath.startsWith(path.join(root, ".cz-cli")) || scriptPath.startsWith(path.join(root, ".local", "bin"))) return "curl"
+  if (scriptPath.startsWith(path.join(root, ".local", "bin"))) return "curl"
   return "unknown"
 }
 
@@ -215,6 +215,9 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-"))
   const script = path.join(temp, "install.sh")
   await fs.writeFile(script, await response.text(), { mode: 0o755 })
+  // Resolve the directory of the currently running binary so install.sh
+  // places the new binary in the same location (avoids PATH shadowing).
+  const currentBinDir = path.dirname(process.execPath)
   const result = spawnSync("sh", [script], {
     stdio: "inherit",
     env: {
@@ -222,6 +225,7 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
       VERSION: target,
       CZ_VERSION: target,
       CZ_CHANNEL: ch,
+      CZ_INSTALL_DIR: currentBinDir,
       NON_INTERACTIVE: "1",
       SKIP_PATH_PROMPT: "1",
       ...(force && { CZ_FORCE: "1" }),
