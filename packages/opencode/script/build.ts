@@ -318,31 +318,34 @@ if (fs.existsSync(allSkillsSrc)) {
 
 if (Script.archive) {
   const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
-  const archives: string[] = []
   const keys = Object.keys(binaries)
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i]
-    const target = findTarget(key)!
+  for (const key of keys) {
     if (fs.existsSync(setupSh)) {
       fs.copyFileSync(setupSh, path.join("dist", key, "bin", "setup.sh"))
     }
-    const binDir = path.resolve("dist", key, "bin")
-    console.log(`[${i + 1}/${keys.length}] archiving ${key}`)
-    if (target.os === "linux") {
-      const archive = `dist/${key}.tar.gz`
-      await $`tar -czf ../../${key}.tar.gz *`.cwd(binDir)
-      archives.push(archive)
-    } else if (target.os === "win32") {
-      const archive = `dist/${key}.zip`
-      const absArchive = path.resolve(archive)
-      await $`7z a -tzip ${absArchive} ${binDir}\\*`
-      archives.push(archive)
-    } else {
+  }
+  console.log(`Archiving ${keys.length} targets in parallel...`)
+  const archives = await Promise.all(
+    keys.map(async (key) => {
+      const target = findTarget(key)!
+      const binDir = path.resolve("dist", key, "bin")
+      if (target.os === "linux") {
+        const archive = `dist/${key}.tar.gz`
+        await $`tar -czf ../../${key}.tar.gz *`.cwd(binDir)
+        return archive
+      }
+      if (target.os === "win32") {
+        const archive = `dist/${key}.zip`
+        const absArchive = path.resolve(archive)
+        await $`7z a -tzip ${absArchive} ${binDir}\\*`
+        return archive
+      }
       const archive = `dist/${key}.zip`
       await $`zip -r ../../${key}.zip *`.cwd(binDir)
-      archives.push(archive)
-    }
-  }
+      return archive
+    }),
+  )
+  console.log(`Archived ${archives.length} targets`)
   if (Script.release) {
     console.log(`Uploading ${archives.length} archives to v${Script.version}...`)
     await $`gh release upload v${Script.version} ${archives} --clobber --repo ${process.env.GH_REPO}`

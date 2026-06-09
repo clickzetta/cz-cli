@@ -31,11 +31,11 @@ describe("shouldApplyUpdate", () => {
     })).toBe("npm")
   })
 
-  test("keeps recognized exec path when selecting update path", () => {
+  test("prioritizes which path over exec path when selecting update method", () => {
     expect(resolveUpdateInstallMethod(path.join(os.homedir(), ".local", "bin", "cz-cli"), ["/opt/homebrew/bin/cz-cli"], {
       isSymlink: (p) => p === "/opt/homebrew/bin/cz-cli",
       readlink: () => "../lib/node_modules/@clickzetta/cz-cli/bin/run.js",
-    })).toBe("curl")
+    })).toBe("npm")
   })
 
   test("detects install script binaries from .local/bin", () => {

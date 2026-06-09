@@ -106,12 +106,15 @@ export function isCzCliInstallBinary(p: string): boolean {
 }
 
 export function resolveUpdateInstallMethod(execPath: string, binaries: string[], input: BinaryDetectionInput = {}): InstallMethod {
+  // Prioritize `which cz-cli` (binaries[0]) as it reflects what the user actually runs
+  const first = binaries[0]
+  if (first) {
+    if (isPackageManagerBinary(first, input)) return first.includes(".bun") ? "bun" : "npm"
+    if (isCzCliInstallBinary(first)) return "curl"
+  }
   const method = installMethodFromExecPath(execPath)
   if (method !== "unknown") return method
-  const first = binaries[0]
-  if (first && isPackageManagerBinary(first, input)) return first.includes(".bun") ? "bun" : "npm"
-  if (first && isCzCliInstallBinary(first)) return "curl"
-  return method
+  return "unknown"
 }
 
 function removeStaleBinary(p: string): boolean {
@@ -278,9 +281,19 @@ export function registerUpdateCommand(cli: Argv) {
 
       // --- Step 3: Perform upgrade ---
       try {
+        // Pre-upgrade: if `which cz-cli` resolves to a path outside our managed
+        // install dir, remove it properly so the newly installed binary takes priority.
+        const whichPath = (() => {
+          try { return execSync("which cz-cli", { encoding: "utf-8", stdio: "pipe" }).trim() } catch { return undefined }
+        })()
+        if (whichPath && !isCzCliInstallBinary(whichPath) && whichPath !== currentExec) {
+          removeStaleBinary(whichPath)
+        }
+
         const label = ["npm", "pnpm", "yarn", "bun"].includes(method) ? method : "install script"
         process.stderr.write(`Upgrading via ${label}...\n`)
         await performUpgrade(method, latest, fetch, channel, argv.force)
+
         await writeInstallMetadata({ binary_version: latest, channel })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {

@@ -256,19 +256,24 @@ version_gt() {
 
 check_version() {
     if command -v cz-cli >/dev/null 2>&1 && [[ -z "$CZ_FORCE" ]]; then
-        installed_version=$(cz-cli --version 2>/dev/null || echo "")
-        if [[ "$installed_version" == "$specific_version" ]]; then
-            print_message info "${MUTED}Version ${NC}$specific_version${MUTED} already installed${NC}"
-            exit 0
-        elif [[ -n "$installed_version" ]] && version_gt "$installed_version" "$specific_version"; then
-            if [[ -n "$requested_version" ]]; then
-                print_message info "${MUTED}Downgrading from ${NC}$installed_version${MUTED} to ${NC}$specific_version"
-            else
-                print_message warning "${MUTED}A newer version is already installed: ${NC}$installed_version${MUTED} > ${NC}$specific_version"
+        local existing_path
+        existing_path=$(command -v cz-cli)
+        # Only skip/compare if the found binary is the one we manage
+        if [[ "$existing_path" == "${INSTALL_DIR}/${APP}" ]] || [[ "$existing_path" == "${INSTALL_DIR}/cz-cli" ]]; then
+            installed_version=$(cz-cli --version 2>/dev/null || echo "")
+            if [[ "$installed_version" == "$specific_version" ]]; then
+                print_message info "${MUTED}Version ${NC}$specific_version${MUTED} already installed${NC}"
                 exit 0
+            elif [[ -n "$installed_version" ]] && version_gt "$installed_version" "$specific_version"; then
+                if [[ -n "$requested_version" ]]; then
+                    print_message info "${MUTED}Downgrading from ${NC}$installed_version${MUTED} to ${NC}$specific_version"
+                else
+                    print_message warning "${MUTED}A newer version is already installed: ${NC}$installed_version${MUTED} > ${NC}$specific_version"
+                    exit 0
+                fi
+            elif [[ -n "$installed_version" ]]; then
+                print_message info "${MUTED}Installed version: ${NC}$installed_version"
             fi
-        elif [[ -n "$installed_version" ]]; then
-            print_message info "${MUTED}Installed version: ${NC}$installed_version"
         fi
     fi
 }
@@ -395,6 +400,16 @@ install_from_binary() {
     cp "$binary_path" "${INSTALL_DIR}/${APP}"
     chmod 755 "${INSTALL_DIR}/${APP}"
 }
+
+# Pre-install: detect and remove any cz-cli binary that would shadow our install
+if command -v cz-cli >/dev/null 2>&1; then
+    existing_which=$(command -v cz-cli)
+    # If it's not our install dir, it will shadow the new install
+    if [ "$existing_which" != "${INSTALL_DIR}/${APP}" ]; then
+        echo -e "${MUTED}Removing old cz-cli at ${NC}${existing_which}${MUTED} (shadows ${INSTALL_DIR}/${APP})${NC}"
+        rm -f "$existing_which" 2>/dev/null || sudo rm -f "$existing_which" 2>/dev/null || true
+    fi
+fi
 
 if [ -n "$binary_path" ]; then
     install_from_binary

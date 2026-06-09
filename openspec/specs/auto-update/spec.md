@@ -10,18 +10,18 @@
 
 #### 场景：Stable 安装执行升级
 
-- **当** `stable` 安装具有受支持的方式、有效的当前版本、可用的更新版本且间隔已到期时
-- **则** 解析的操作为 `upgrade`
+- **WHEN** `stable` 安装具有受支持的方式、有效的当前版本、可用的更新版本且间隔已到期时
+- **THEN** 解析的操作为 `upgrade`
 
 #### 场景：Dev/本地构建被跳过
 
-- **当** 已安装版本不是有效 semver（例如 `local` 开发构建）时
-- **则** 自动更新被跳过
+- **WHEN** 已安装版本不是有效 semver（例如 `local` 开发构建）时
+- **THEN** 自动更新被跳过
 
 #### 场景：真实安装在任何渠道下都不被跳过
 
-- **当** 命令为正常命令、未设置跳过环境变量且版本为有效 semver 时
-- **则** 自动更新不被跳过，与渠道无关
+- **WHEN** 命令为正常命令、未设置跳过环境变量且版本为有效 semver 时
+- **THEN** 自动更新不被跳过，与渠道无关
 
 ### 需求：渠道选择更新流；安装方式不选择版本
 
@@ -29,29 +29,29 @@
 
 #### 场景：Stable 流端点
 
-- **当** 发布渠道为 `stable` 时
-- **则** 最新版本从 `https://cz-cli.ai/api/stable` 获取，升级使用 stable 安装脚本
+- **WHEN** 发布渠道为 `stable` 时
+- **THEN** 最新版本从 `https://cz-cli.ai/api/stable` 获取，升级使用 stable 安装脚本
 
 #### 场景：Nightly 流端点
 
-- **当** 发布渠道为 `nightly` 时
-- **则** 最新版本从 `https://cz-cli.ai/api/nightly` 获取，升级使用 nightly 安装脚本
+- **WHEN** 发布渠道为 `nightly` 时
+- **THEN** 最新版本从 `https://cz-cli.ai/api/nightly` 获取，升级使用 nightly 安装脚本
 
 #### 场景：npm 安装方式不改变版本来源
 
-- **当** 安装方式为 npm/pnpm/yarn/bun 且渠道为 `stable` 时
-- **则** 目标版本仍从 `https://cz-cli.ai/api/stable` 获取，不查询 npm 仓库进行版本解析
+- **WHEN** 安装方式为 npm/pnpm/yarn/bun 且渠道为 `stable` 时
+- **THEN** 目标版本仍从 `https://cz-cli.ai/api/stable` 获取，不查询 npm 仓库进行版本解析
 
 #### 场景：包管理器升级接收已解析的渠道
 
-- **当** 安装方式为 npm/pnpm/yarn/bun 且已解析的发布渠道为 `nightly` 时
-- **则** 包管理器升级命令以 `CZ_CHANNEL=nightly` 执行
+- **WHEN** 安装方式为 npm/pnpm/yarn/bun 且已解析的发布渠道为 `nightly` 时
+- **THEN** 包管理器升级命令以 `CZ_CHANNEL=nightly` 执行
 - **且** npm `postinstall.js` 持久化 `channel` = `nightly`
 
 #### 场景：npm 缺少已解析的版本
 
-- **当** 渠道解析的版本尚未发布到 npm 仓库时
-- **则** 包管理器升级可能失败，系统回退到该渠道的安装脚本
+- **WHEN** 渠道解析的版本尚未发布到 npm 仓库时
+- **THEN** 包管理器升级可能失败，系统回退到该渠道的安装脚本
 
 ### 需求：双文件更新状态模型
 
@@ -59,13 +59,13 @@
 
 #### 场景：手动更新不写入自动更新状态文件
 
-- **当** 用户运行 `cz-cli update` 时
-- **则** `install.json` 被更新但 `update-check.json` 不被写入
+- **WHEN** 用户运行 `cz-cli update` 时
+- **THEN** `install.json` 被更新但 `update-check.json` 不被写入
 
 #### 场景：自动更新记录其活动
 
-- **当** 自动更新路径执行检查时
-- **则** `update-check.json` 被写入，包含 `last_checked_at` 和 `last_result`
+- **WHEN** 自动更新路径执行检查时
+- **THEN** `update-check.json` 被写入，包含 `last_checked_at` 和 `last_result`
 
 ### 需求：通知与升级
 
@@ -73,10 +73,48 @@
 
 #### 场景：不受支持的方式执行通知
 
-- **当** 有更新版本可用但安装方式不受支持时
-- **则** 解析的操作为 `notify`
+- **WHEN** 有更新版本可用但安装方式不受支持时
+- **THEN** 解析的操作为 `notify`
 
 #### 场景：仅通知配置
 
-- **当** `autoupdate` 配置为 `notify` 时
-- **则** 通知用户有可用更新，不执行自动升级
+- **WHEN** `autoupdate` 配置为 `notify` 时
+- **THEN** 通知用户有可用更新，不执行自动升级
+
+### 需求：安装方式检测优先使用 which 路径
+
+安装方式检测（`resolveUpdateInstallMethod`）应以 `which cz-cli` 解析的路径为首要判断依据，而非 `process.execPath`。这确保升级命令作用于用户实际执行的 binary 位置。仅当 `which` 结果无法识别时，才 fallback 到 `process.execPath`。
+
+#### 场景：which 路径为 npm 全局安装
+
+- **WHEN** `which cz-cli` 解析到 npm prefix 下的路径或其 symlink 目标含 `node_modules` 时
+- **THEN** 安装方式为 `npm`，使用 `npm install -g` 升级
+
+#### 场景：which 路径为 install.sh 安装
+
+- **WHEN** `which cz-cli` 解析到 `~/.cz-cli/bin/` 或 `~/.local/bin/` 时
+- **THEN** 安装方式为 `curl`，使用 install.sh 升级
+
+#### 场景：which 无法识别时 fallback 到 execPath
+
+- **WHEN** `which cz-cli` 路径既非包管理器安装也非 install.sh 安装时
+- **THEN** 使用 `process.execPath` 作为判断依据
+
+### 需求：升级前事前清除遮蔽 binary
+
+在执行 `performUpgrade` 之前，系统应检测 `which cz-cli` 解析的路径是否会遮蔽新安装的 binary。如果该路径不在我们管理的安装目录中，应在升级前通过适当方式移除它（npm 全局用 `npm uninstall -g`，普通文件用 `rm`），确保升级完成后 `which cz-cli` 立即指向新版本。
+
+#### 场景：npm binary 遮蔽 install.sh 安装
+
+- **WHEN** `which cz-cli` 指向 npm 全局 binary 且升级 fallback 到 install.sh 时
+- **THEN** 升级前执行 `npm uninstall -g @clickzetta/cz-cli` 移除遮蔽 binary
+
+#### 场景：install.sh 同样事前清除
+
+- **WHEN** `scripts/install.sh` 运行且 `command -v cz-cli` 指向非 `$INSTALL_DIR` 的路径时
+- **THEN** 安装前 `rm -f` 该 binary，确保安装后 `which` 指向新 binary
+
+#### 场景：check_version 仅对自管路径生效
+
+- **WHEN** `command -v cz-cli` 指向非 `$INSTALL_DIR` 的路径时
+- **THEN** `check_version` 不做版本比较，不跳过安装
