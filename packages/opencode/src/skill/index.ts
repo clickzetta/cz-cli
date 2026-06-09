@@ -7,8 +7,6 @@ import { NamedError } from "@opencode-ai/shared/util/error"
 import type { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
 import { InstanceState } from "@/effect"
-import { Flag } from "@/flag/flag"
-import { Global } from "@/global"
 import { Permission } from "@/permission"
 import { AppFileSystem } from "@opencode-ai/shared/filesystem"
 import { Config } from "../config"
@@ -18,8 +16,6 @@ import { Log } from "../util"
 import { Discovery } from "./discovery"
 
 const log = Log.create({ service: "skill" })
-const EXTERNAL_DIRS = [".agents"]
-const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
 const CLICKZETTA_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
 const SKILL_PATTERN = "**/SKILL.md"
 
@@ -153,22 +149,6 @@ const discoverSkills = Effect.fnUntraced(function* (
   worktree: string,
 ) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
-
-  if (!Flag.CLICKZETTA_DISABLE_EXTERNAL_SKILLS) {
-    for (const dir of EXTERNAL_DIRS) {
-      const root = path.join(Global.Path.home, dir)
-      if (!(yield* fsys.isDir(root))) continue
-      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "global" })
-    }
-
-    const upDirs = yield* fsys
-      .up({ targets: EXTERNAL_DIRS, start: directory, stop: worktree })
-      .pipe(Effect.catch(() => Effect.succeed([] as string[])))
-
-    for (const root of upDirs) {
-      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "project" })
-    }
-  }
 
   const configDirs = yield* config.directories()
   for (const dir of configDirs) {
