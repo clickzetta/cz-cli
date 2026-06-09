@@ -151,9 +151,16 @@ export const layer = Layer.effect(
           },
           data_engineer: {
             name: "data_engineer",
-            description: "Data Engineer mode. Currently mirrors plan mode and disallows all edit tools.",
+            description: "Data Engineer mode. Full tool access for ClickZetta Lakehouse data engineering tasks.",
             options: {},
-            permission: planLikePermission(defaults, user),
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                question: "allow",
+                plan_enter: "allow",
+              }),
+              user,
+            ),
             mode: "primary",
             native: true,
           },
@@ -301,7 +308,7 @@ export const layer = Layer.effect(
             agents,
             values(),
             sortBy(
-              [(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"],
+              [(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "data_engineer"), "desc"],
               [(x) => x.name, "asc"],
             ),
           )

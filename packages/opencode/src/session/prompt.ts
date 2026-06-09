@@ -68,7 +68,7 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
-const PLAN_LIKE_AGENTS = new Set(["plan", "data_engineer"])
+const PLAN_LIKE_AGENTS = new Set(["plan"])
 
 function isPlanLikeAgent(name: string) {
   return PLAN_LIKE_AGENTS.has(name)

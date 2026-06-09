@@ -137,4 +137,14 @@ Run `cz-cli <command> --help` for detailed options on any command.
 ## Companion Skills
 
 When the task involves writing Python or Shell task code, load **lakehouse-python-sdk** for accuracy on connector usage, BulkLoad, IGS, and Python/Shell task development patterns.
-lakehouse-doc-en: When the user asks for lakehouse SQL dialect, documentation on connectors, BulkLoad, IGS, studio product information, or any task that requires generating, modifying, validating, or explaining Lakehouse SQL, use **lakehouse-doc-en** to provide accurate and detailed information.
+
+## Lakehouse SQL: Always Read the Docs First
+
+Before generating, modifying, validating, explaining, or running any Lakehouse SQL — including:
+- Writing new SQL queries or DDL/DML statements
+- Querying system tables or metadata (e.g. `information_schema.*`, `SHOW ...`, `DESCRIBE ...`)
+- Any task that touches ClickZetta Lakehouse SQL syntax
+
+You MUST first load **lakehouse-doc-en** to verify the correct ClickZetta Lakehouse dialect. This is NOT Snowflake or Databricks syntax. Guessing syntax without consulting the docs will produce incorrect SQL.
+
+This rule applies even for seemingly simple queries like `SELECT * FROM information_schema.tables` — the schema names, column names, and supported predicates differ from standard SQL and other platforms.

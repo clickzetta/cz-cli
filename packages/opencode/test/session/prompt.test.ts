@@ -30,9 +30,10 @@ describe("session.system prompt text", () => {
   })
 
   test("cz-cli inner prompt requires lakehouse-doc-en before producing Lakehouse SQL", () => {
-    expect(PROMPT_CZ_CLI_INNER).toContain("Before generating, modifying, validating, explaining, or running Lakehouse SQL")
+    expect(PROMPT_CZ_CLI_INNER).toContain("Before generating, modifying, validating, explaining, or running any Lakehouse SQL")
     expect(PROMPT_CZ_CLI_INNER).toContain("load **lakehouse-doc-en**")
     expect(PROMPT_CZ_CLI_INNER).toContain("NOT Snowflake or Databricks")
+    expect(PROMPT_CZ_CLI_INNER).toContain("information_schema")
   })
 })
 
