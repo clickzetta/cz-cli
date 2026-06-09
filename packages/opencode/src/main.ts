@@ -166,7 +166,6 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     "attempts",
     "job",
     "update",
-    "ai-guide",
     "datasource",
   ])
   const PROFILE_REQUIRED_COMMANDS = new Set([

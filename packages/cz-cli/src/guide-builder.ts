@@ -349,20 +349,9 @@ export function registerStaticCommands(): void {
       arguments: [{ name: "job-id", required: true }] },
     { name: "job result", kind: "command", description: "Fetch result set of a SQL job",
       arguments: [{ name: "job-id", required: true }] },
-    { name: "job profile download", kind: "command", description: "Download job_profile.json using getJobProfile, returning only paths",
+    { name: "job profile", kind: "command", description: "Show flattened job profile basics from getJobProfile",
       arguments: [{ name: "job-id", required: true }],
-      options: [{ flags: "--path", required: false, takes_value: true, help: "Directory to write downloaded JSON files" }] },
-    { name: "job profile detail", kind: "command", description: "Return page-aligned detail/stage/operator payload from getJobProfile/getJobProgress/getJobPlan without writing files",
-      arguments: [{ name: "job-id", required: true }] },
-    { name: "job analyze", kind: "command", description: "Analyze job performance using a job ID or downloaded profile path",
-      arguments: [{ name: "job-id", required: false }],
-      options: [
-        { flags: "--path", required: false, takes_value: true, help: "Directory containing job_plan.json and job_profile.json" },
-        { flags: "--analysis-mode", required: false, takes_value: true, help: "quick, detailed, or expert", default: "quick" },
-        { flags: "--enable-incremental-algorithm", required: false, takes_value: false, help: "Enable incremental algorithm analysis" },
-        { flags: "--enable-state-table", required: false, takes_value: false, help: "Enable state table analysis", default: true },
-      ] },
-    { name: "ai-guide", kind: "command", description: "Generate AI-friendly command reference" },
+      options: [{ flags: "--raw", required: false, takes_value: false, help: "Show truncated raw profile content and write the full payload to a temp file" }] },
   ])
 }
 

@@ -562,7 +562,7 @@ const REGISTER_URLS = [
 const INTERACTIVE_TIMEOUT_MS = 180_000 // 3 minutes
 
 const QUICKSTART_EXEMPT_COMMANDS = new Set([
-  "profile", "ai-guide", "--help", "--version",
+  "profile", "--help", "--version",
 ])
 
 function shouldSkipQuickstart(args: string[]): boolean {

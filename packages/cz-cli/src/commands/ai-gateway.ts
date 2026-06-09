@@ -266,7 +266,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               y
                 .option("alias", { type: "string", describe: "Filter by AIGW virtual key alias (fuzzy)" })
                 .option("key", { type: "string", describe: "Filter by exact vApiKey" })
-                .option("status", { type: "number", choices: [0, 1] as const, describe: "Filter by status (1=enabled, 0=disabled)" })
+                .option("status", {
+                  type: "number",
+                  choices: [0, 1] as const,
+                  describe: "Filter by status (1=enabled, 0=disabled)",
+                })
                 .option("mine", { type: "boolean", describe: "Only keys created by the current user" })
                 .option("reveal", { type: "boolean", describe: "Show plaintext key values (calls getApiKey for each)" })
                 .option("page", { type: "number", default: 1, describe: "Page number" })
@@ -285,15 +289,17 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                   ...(argv.status != null && { status: argv.status }),
                   ...(argv.mine && { creator: Number(sc.userId) }),
                 })
-                const list = Array.isArray(resp.data) ? resp.data as Dict[] : []
+                const list = Array.isArray(resp.data) ? (resp.data as Dict[]) : []
                 const rows = list.map(normalizeKey)
                 if (argv.reveal) {
-                  await Promise.all(rows.map(async (row) => {
-                    try {
-                      const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${row.id}`, {})
-                      row.vApiKey = String(keyResp.data)
-                    } catch {}
-                  }))
+                  await Promise.all(
+                    rows.map(async (row) => {
+                      try {
+                        const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${row.id}`, {})
+                        row.vApiKey = String(keyResp.data)
+                      } catch {}
+                    }),
+                  )
                 }
                 const total = resp.count ?? rows.length
                 logOperation("gateway key list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
@@ -316,20 +322,45 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("alias", { type: "string", demandOption: true, describe: "AIGW virtual key alias" })
-                .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, describe: "Quota period" })
+                .option("period", {
+                  type: "string",
+                  choices: ["daily", "weekly", "monthly", "total"] as const,
+                  describe: "Quota period",
+                })
                 .option("quota", { type: "number", describe: "Quota value for the chosen period" })
-                .option("route-type", { type: "string", choices: ["default", "provider", "byok"] as const, describe: "Routing rule type" })
-                .option("providers", { type: "string", array: true, describe: "Ordered provider IDs (route-type=provider)" })
-                .option("provider-sort", { type: "string", choices: ["price", "throughput", "latency"] as const, describe: "Provider sort (route-type=default)" })
-                .option("private-keys", { type: "string", array: true, describe: "BYOK private key aliases (route-type=byok)" })
-                .option("add-to-llm", { type: "string", describe: "Register the new key as a [llm.<name>] entry (defaults to alias)" })
+                .option("route-type", {
+                  type: "string",
+                  choices: ["default", "provider", "byok"] as const,
+                  describe: "Routing rule type",
+                })
+                .option("providers", {
+                  type: "string",
+                  array: true,
+                  describe: "Ordered provider IDs (route-type=provider)",
+                })
+                .option("provider-sort", {
+                  type: "string",
+                  choices: ["price", "throughput", "latency"] as const,
+                  describe: "Provider sort (route-type=default)",
+                })
+                .option("private-keys", {
+                  type: "string",
+                  array: true,
+                  describe: "BYOK private key aliases (route-type=byok)",
+                })
+                .option("add-to-llm", {
+                  type: "string",
+                  describe: "Register the new key as a [llm.<name>] entry (defaults to alias)",
+                })
                 .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" })
-                .epilogue([
-                  "Examples:",
-                  "  cz-cli ai-gateway key create my-key",
-                  "  cz-cli ai-gateway key create my-key --period total --quota 1000000",
-                  "  cz-cli ai-gateway key create my-key --add-to-llm my-key --use",
-                ].join("\n")),
+                .epilogue(
+                  [
+                    "Examples:",
+                    "  cz-cli ai-gateway key create my-key",
+                    "  cz-cli ai-gateway key create my-key --period total --quota 1000000",
+                    "  cz-cli ai-gateway key create my-key --add-to-llm my-key --use",
+                  ].join("\n"),
+                ),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
@@ -338,10 +369,16 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
                 // Guard: reject if alias already exists
-                const checkResp = await gwRequest<Dict[]>(sc, API.LIST, { pageIndex: 1, pageSize: 200, vApiKeyAlias: argv.alias })
+                const checkResp = await gwRequest<Dict[]>(sc, API.LIST, {
+                  pageIndex: 1,
+                  pageSize: 200,
+                  vApiKeyAlias: argv.alias,
+                })
                 const existing = Array.isArray(checkResp.data) ? checkResp.data : []
                 if (existing.some((k) => k.vApiKeyAlias === argv.alias)) {
-                  throw new Error(`Virtual key alias '${argv.alias}' already exists (id=${existing.find((k) => k.vApiKeyAlias === argv.alias)?.id}). Use a different alias.`)
+                  throw new Error(
+                    `Virtual key alias '${argv.alias}' already exists (id=${existing.find((k) => k.vApiKeyAlias === argv.alias)?.id}). Use a different alias.`,
+                  )
                 }
                 const rateLimitConfigs =
                   argv.period && argv.quota != null
@@ -356,16 +393,18 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
                 const vApiKey = String(keyResp.data)
 
-                const addName = argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName
-                  ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use)
-                  : undefined
+                const addName =
+                  argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
 
                 const aiMessage = registered
                   ? `Virtual key created and registered as [llm.${registered.name}]${registered.default_llm ? " (now default_llm)" : ""}.`
                   : `Virtual key created. To use it with the agent run: cz-cli agent llm add ${argv.alias} --provider clickzetta --api-key <vApiKey> --base-url ${aimeshEndpoint(sc.baseUrl)} --use`
                 logOperation("gateway key create", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, alias: argv.alias, vApiKey, ...(registered && { llm: registered }) }, { format, timeMs: Date.now() - t0, aiMessage })
+                success(
+                  { id, alias: argv.alias, vApiKey, ...(registered && { llm: registered }) },
+                  { format, timeMs: Date.now() - t0, aiMessage },
+                )
               } catch (err) {
                 logOperation("gateway key create", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
@@ -379,13 +418,36 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("alias", { type: "string", demandOption: true, describe: "AIGW virtual key alias" })
-                .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, describe: "Quota period" })
+                .option("period", {
+                  type: "string",
+                  choices: ["daily", "weekly", "monthly", "total"] as const,
+                  describe: "Quota period",
+                })
                 .option("quota", { type: "number", describe: "Quota value for the chosen period" })
-                .option("route-type", { type: "string", choices: ["default", "provider", "byok"] as const, describe: "Routing rule type" })
-                .option("providers", { type: "string", array: true, describe: "Ordered provider IDs (route-type=provider)" })
-                .option("provider-sort", { type: "string", choices: ["price", "throughput", "latency"] as const, describe: "Provider sort (route-type=default)" })
-                .option("private-keys", { type: "string", array: true, describe: "BYOK private key aliases (route-type=byok)" })
-                .option("add-to-llm", { type: "string", describe: "Register the key as a [llm.<name>] entry (defaults to alias)" })
+                .option("route-type", {
+                  type: "string",
+                  choices: ["default", "provider", "byok"] as const,
+                  describe: "Routing rule type",
+                })
+                .option("providers", {
+                  type: "string",
+                  array: true,
+                  describe: "Ordered provider IDs (route-type=provider)",
+                })
+                .option("provider-sort", {
+                  type: "string",
+                  choices: ["price", "throughput", "latency"] as const,
+                  describe: "Provider sort (route-type=default)",
+                })
+                .option("private-keys", {
+                  type: "string",
+                  array: true,
+                  describe: "BYOK private key aliases (route-type=byok)",
+                })
+                .option("add-to-llm", {
+                  type: "string",
+                  describe: "Register the key as a [llm.<name>] entry (defaults to alias)",
+                })
                 .option("use", { type: "boolean", describe: "Set the registered entry as default_llm" }),
             async (argv) => {
               const format = argv.format
@@ -407,13 +469,15 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
                 const vApiKey = String(keyResp.data)
 
-                const addName = argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName
-                  ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use)
-                  : undefined
+                const addName =
+                  argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
 
                 logOperation("gateway key upsert", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, alias: argv.alias, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
+                success(
+                  { id, alias: argv.alias, vApiKey, ...(registered ? { llm: registered } : {}) },
+                  { format, timeMs: Date.now() - t0 },
+                )
               } catch (err) {
                 logOperation("gateway key upsert", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
@@ -438,12 +502,14 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const id = await resolveKeyId(sc, argv.ref as string)
                 const keyResp = await gwRequest<string>(sc, `${API.GET}?id=${id}`, {})
                 const vApiKey = String(keyResp.data)
-                const addName = argv["add-to-llm"] === "" ? (argv.ref as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName
-                  ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use)
-                  : undefined
+                const addName =
+                  argv["add-to-llm"] === "" ? (argv.ref as string) : (argv["add-to-llm"] as string | undefined)
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
                 logOperation("gateway key get", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, vApiKey, ...(registered ? { llm: registered } : {}) }, { format, timeMs: Date.now() - t0 })
+                success(
+                  { id, vApiKey, ...(registered ? { llm: registered } : {}) },
+                  { format, timeMs: Date.now() - t0 },
+                )
               } catch (err) {
                 logOperation("gateway key get", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)
@@ -452,13 +518,22 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           )
           // ── set-quota ──────────────────────────────────────────────────
           .command(
-            "set-quota",
-            "Set the token usage quota for an AIGW virtual key. Quota limits how many tokens the key can consume within the specified period. Once exceeded, requests are rejected until the period resets.",
+            "set-quota <ref>",
+            "Set the token usage quota for an AIGW virtual key. Quota limits how many tokens the key can consume within the specified period. Once exceeded, requests are rejected until the period resets. (by alias or key value)",
             (y) =>
               y
-                .option("ref", { type: "string", demandOption: true, describe: "Virtual key alias or key value" })
-                .option("period", { type: "string", choices: ["daily", "weekly", "monthly", "total"] as const, demandOption: true, describe: "Quota reset period (daily/weekly/monthly resets automatically; total is lifetime)" })
-                .option("quota", { type: "number", demandOption: true, describe: "Max tokens allowed in this period (e.g. 10000000 = 10M tokens)" }),
+                .positional("ref", { type: "string", demandOption: true, describe: "Virtual key alias or key value" })
+                .option("period", {
+                  type: "string",
+                  choices: ["daily", "weekly", "monthly", "total"] as const,
+                  demandOption: true,
+                  describe: "Quota reset period (daily/weekly/monthly resets automatically; total is lifetime)",
+                })
+                .option("quota", {
+                  type: "number",
+                  demandOption: true,
+                  describe: "Max tokens allowed in this period (e.g. 10000000 = 10M tokens)",
+                }),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
@@ -482,23 +557,29 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
           .command(
             "enable <ref>",
             "Enable an AIGW virtual key (by alias or key value)",
-            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" }),
+            (y) =>
+              y.positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" }),
             (argv) => updateStatus(argv, 1),
           )
           .command(
             "disable <ref>",
             "Disable an AIGW virtual key (by alias or key value)",
-            (y) => y.positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" }),
+            (y) =>
+              y.positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" }),
             (argv) => updateStatus(argv, 0),
           )
           // ── delete ─────────────────────────────────────────────────────
           .command(
             "delete <ref>",
             "Delete an AIGW virtual key (by alias or key value). Requires -y to confirm.",
-            (y) => y
-              .positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
-              .option("yes", { alias: "y", type: "boolean", describe: "Skip confirmation" })
-              .option("remove-from-llm", { type: "boolean", describe: "Also remove the matching [llm.*] entry from profiles.toml" }),
+            (y) =>
+              y
+                .positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
+                .option("yes", { alias: "y", type: "boolean", describe: "Skip confirmation" })
+                .option("remove-from-llm", {
+                  type: "boolean",
+                  describe: "Also remove the matching [llm.*] entry from profiles.toml",
+                }),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
@@ -507,7 +588,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.ref as string)
                 if (!argv.yes) {
-                  error("USAGE_ERROR", `Refusing to delete key '${argv.ref}' (id=${id}) without confirmation. Pass -y to confirm deletion.`, { format, exitCode: 2 })
+                  error(
+                    "USAGE_ERROR",
+                    `Refusing to delete key '${argv.ref}' (id=${id}) without confirmation. Pass -y to confirm deletion.`,
+                    { format, exitCode: 2 },
+                  )
                   return
                 }
                 await gwRequest<unknown>(sc, `${API.DELETE}?id=${id}`, {})
@@ -519,7 +604,10 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                     ? `Virtual key deleted. Note: [llm.${linkedLlm}] in profiles.toml still references this key. Remove it with: cz-cli agent llm remove ${linkedLlm}`
                     : undefined
                 logOperation("gateway key delete", { ok: true, timeMs: Date.now() - t0 })
-                success({ id, deleted: true, ...(removedLlm && { removed_llm: removedLlm }) }, { format, timeMs: Date.now() - t0, aiMessage })
+                success(
+                  { id, deleted: true, ...(removedLlm && { removed_llm: removedLlm }) },
+                  { format, timeMs: Date.now() - t0, aiMessage },
+                )
               } catch (err) {
                 logOperation("gateway key delete", { ok: false, timeMs: Date.now() - t0 })
                 reportError(err, format)

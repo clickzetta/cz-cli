@@ -71,9 +71,7 @@ const noProfileCases = [
   ["attempts", "log", "1"],
   ["job", "status", "1"],
   ["job", "result", "1"],
-  ["job", "profile", "download", "1"],
-  ["job", "profile", "detail", "1"],
-  ["job", "analyze", "1"],
+  ["job", "profile", "1"],
   ["datasource", "list"],
   ["datasource", "catalogs", "ds"],
 ] as const
@@ -184,7 +182,6 @@ const tests: TestCase[] = [
       try {
         const profileList = run(["profile", "list"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const profileStatus = run(["profile", "status"], { HOME: home, CLICKZETTA_TEST_HOME: home })
-        const aiGuide = run(["ai-guide"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const setup = run(["setup"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const update = run(["update"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         if (profileList.exitCode !== 0 || !profileList.stdout.includes("\"data\":[]")) {
@@ -193,29 +190,12 @@ const tests: TestCase[] = [
         if (profileStatus.exitCode !== 0 || !profileStatus.stdout.includes("\"connected\":false")) {
           return { pass: false, detail: `profile status unexpected=${profileStatus.stdout.slice(0, 120)}` }
         }
-        if (aiGuide.exitCode !== 0 || !aiGuide.stdout.includes("name: cz-cli")) {
-          return { pass: false, detail: `ai-guide unexpected=${aiGuide.stdout.slice(0, 120)}` }
-        }
         if (setup.exitCode !== 1 || !expectCode(setup.stdout, "SETUP_INPUT_REQUIRED")) {
           return { pass: false, detail: `setup unexpected=${setup.stdout.slice(0, 160)}` }
         }
         if (update.exitCode !== 1 || !update.stderr.includes("Cannot update development build")) {
           return { pass: false, detail: `update unexpected stderr=${update.stderr.slice(0, 120)}` }
         }
-        return { pass: true }
-      } finally { cleanup() }
-    },
-  },
-  {
-    name: "AIGUIDE: generated guide uses --format and excludes legacy output flags",
-    run() {
-      const { home, cleanup } = withFakeHome()
-      try {
-        const aiGuide = run(["ai-guide"], { HOME: home, CLICKZETTA_TEST_HOME: home })
-        const combined = aiGuide.stdout + aiGuide.stderr
-        if (aiGuide.exitCode !== 0) return { pass: false, detail: `exit=${aiGuide.exitCode}` }
-        if (!combined.includes("--format")) return { pass: false, detail: "missing --format" }
-        if (combined.includes("--output") || combined.includes("-o ")) return { pass: false, detail: `contains legacy output flag: ${combined.slice(0, 160)}` }
         return { pass: true }
       } finally { cleanup() }
     },

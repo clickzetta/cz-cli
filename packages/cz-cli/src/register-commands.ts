@@ -11,11 +11,10 @@ import { registerRunsCommand } from "./commands/runs.js"
 import { registerAttemptsCommand } from "./commands/attempts.js"
 import { registerAgentCommand } from "./commands/agent.js"
 import { registerJobCommand } from "./commands/job.js"
-import { registerAiGuideCommand } from "./commands/ai-guide.js"
 import { registerSetupCommand } from "./commands/setup.js"
 import { registerUpdateCommand } from "./commands/update.js"
 import { registerDatasourceCommand } from "./commands/datasource.js"
-import { registerGatewayCommand } from "./commands/gateway.js"
+import { registerGatewayCommand } from "./commands/ai-gateway.js"
 
 export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerSqlCommand(cli)
@@ -29,7 +28,6 @@ export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerAttemptsCommand(cli)
   registerAgentCommand(cli)
   registerJobCommand(cli)
-  registerAiGuideCommand(cli)
   registerSetupCommand(cli)
   registerUpdateCommand(cli)
   registerDatasourceCommand(cli)
