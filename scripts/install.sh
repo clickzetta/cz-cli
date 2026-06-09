@@ -406,9 +406,9 @@ chmod 755 "${INSTALL_DIR}/cz-agent"
 # Install bundled skills to ~/.clickzetta/skills/.builtin/
 SKILLS_SRC="${INSTALL_DIR}/skills"
 BUILTIN_DEST="$HOME/.clickzetta/skills/.builtin"
+rm -rf "$BUILTIN_DEST"
+mkdir -p "$BUILTIN_DEST"
 if [ -d "$SKILLS_SRC" ]; then
-    rm -rf "$BUILTIN_DEST"
-    mkdir -p "$BUILTIN_DEST"
     for skill_dir in "$SKILLS_SRC"/*/; do
         [ -d "$skill_dir" ] || continue
         skill_name=$(basename "$skill_dir")

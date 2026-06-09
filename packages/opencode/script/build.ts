@@ -230,6 +230,7 @@ for (let i = 0; i < targets.length; i++) {
     const binaryPath = `dist/${name}/bin/cz-cli`
     console.log(`Codesigning: ${binaryPath}`)
     await $`codesign --force --sign - ${binaryPath}`
+    await $`xattr -dr com.apple.quarantine ${binaryPath}`.nothrow()
   }
 
   // Smoke test: only run if binary is for current platform

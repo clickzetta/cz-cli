@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { isCzCliInstallBinary, isPackageManagerBinary, resolveUpdateInstallMethod, shouldApplyUpdate } from "../src/commands/update"
+import { describeUpdateError, isCzCliInstallBinary, isPackageManagerBinary, resolveUpdateInstallMethod, shouldApplyUpdate } from "../src/commands/update"
 
 describe("shouldApplyUpdate", () => {
   test("refuses to downgrade when the fetched version is older", () => {
@@ -40,5 +40,12 @@ describe("shouldApplyUpdate", () => {
 
   test("detects install script binaries from .local/bin", () => {
     expect(isCzCliInstallBinary("/Users/liangmo/.local/bin/cz-cli")).toBe(true)
+  })
+
+  test("formats aborted network errors with url and timeout context", () => {
+    expect(describeUpdateError(new DOMException("The operation was aborted.", "AbortError"), {
+      timeoutMs: 5000,
+      url: "https://cz-cli.ai/api/stable",
+    })).toBe("request timed out after 5000ms; url=https://cz-cli.ai/api/stable; error=AbortError: The operation was aborted.")
   })
 })

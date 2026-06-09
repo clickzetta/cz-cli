@@ -8,9 +8,8 @@
  */
 
 import { execSync } from "node:child_process"
-import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync, existsSync, mkdirSync, rmSync, cpSync, readdirSync, statSync } from "node:fs"
+import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync } from "node:fs"
 import path from "node:path"
-import os from "node:os"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
 import {
@@ -26,11 +25,27 @@ export function shouldApplyUpdate(currentVersion: string, latestVersion: string,
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
 }
 
+type UpdateErrorContext = {
+  timeoutMs?: number
+  url?: string
+}
+
 type BinaryDetectionInput = {
   npmPrefix?: string
   bunBin?: string
   readlink?: (p: string) => string
   isSymlink?: (p: string) => boolean
+}
+
+export function describeUpdateError(error: unknown, context: UpdateErrorContext = {}) {
+  const name = error instanceof Error ? error.name : undefined
+  const message = error instanceof Error ? error.message : String(error)
+  const parts = name === "AbortError" && context.timeoutMs
+    ? [`request timed out after ${context.timeoutMs}ms`]
+    : [name ? `${name}: ${message}` : message]
+  if (context.url) parts.push(`url=${context.url}`)
+  if (name === "AbortError") parts.push(`error=${name}: ${message}`)
+  return parts.join("; ")
 }
 
 function confirm(prompt: string): boolean {
@@ -123,8 +138,9 @@ function removeStaleBinary(p: string): boolean {
 
 async function fetchLatestFromCzCliAi(channel: string): Promise<string> {
   const url = channel === "nightly" ? "https://cz-cli.ai/api/nightly" : "https://cz-cli.ai/api/stable"
+  const timeoutMs = 5000
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const resp = await fetch(url, { headers: { Accept: "application/json" }, signal: controller.signal })
     clearTimeout(timeout)
@@ -134,15 +150,17 @@ async function fetchLatestFromCzCliAi(channel: string): Promise<string> {
     return data.version
   } catch (err) {
     clearTimeout(timeout)
-    throw err
+    throw new Error(describeUpdateError(err, { timeoutMs, url }))
   }
 }
 
 async function fetchLatestFromNpm(): Promise<string> {
+  const url = "https://registry.npmjs.org/@clickzetta/cz-cli/latest"
+  const timeoutMs = 5000
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const resp = await fetch("https://registry.npmjs.org/@clickzetta/cz-cli/latest", {
+    const resp = await fetch(url, {
       headers: { Accept: "application/json" },
       signal: controller.signal,
     })
@@ -153,24 +171,7 @@ async function fetchLatestFromNpm(): Promise<string> {
     return data.version
   } catch (err) {
     clearTimeout(timeout)
-    throw err
-  }
-}
-
-function installSkills(_method: InstallMethod) {
-  const home = os.homedir()
-  const skillsSrc = path.join(home, ".cz-cli", "bin", "skills")
-  const builtinDest = path.join(home, ".clickzetta", "skills", ".builtin")
-
-  if (!existsSync(skillsSrc)) return
-
-  rmSync(builtinDest, { recursive: true, force: true })
-  mkdirSync(builtinDest, { recursive: true })
-  for (const name of readdirSync(skillsSrc)) {
-    const src = path.join(skillsSrc, name)
-    if (statSync(src).isDirectory()) {
-      cpSync(src, path.join(builtinDest, name), { recursive: true })
-    }
+    throw new Error(describeUpdateError(err, { timeoutMs, url }))
   }
 }
 
@@ -281,7 +282,6 @@ export function registerUpdateCommand(cli: Argv) {
         process.stderr.write(`Upgrading via ${label}...\n`)
         await performUpgrade(method, latest, fetch, channel, argv.force)
         await writeInstallMetadata({ binary_version: latest })
-        installSkills(method)
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {
         process.stderr.write(`Update failed: ${err instanceof Error ? err.message : String(err)}\n`)

@@ -133,6 +133,13 @@ async function fetchWithTimeout(
       ...init,
       signal: controller.signal,
     })
+  } catch (error) {
+    const name = error instanceof Error ? error.name : undefined
+    const message = error instanceof Error ? error.message : String(error)
+    if (name === "AbortError") {
+      throw new Error(`request timed out after ${timeoutMs}ms; url=${input}; error=${name}: ${message}`)
+    }
+    throw new Error(`${name ? `${name}: ` : ""}${message}; url=${input}`)
   } finally {
     clearTimeout(timeout)
   }
