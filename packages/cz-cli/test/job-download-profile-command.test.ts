@@ -307,4 +307,15 @@ describe("job profile", () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  test("preserves base path in service URL (e.g. host/api)", async () => {
+    // Regression: new URL(path, base) drops base's path when path starts with "/"
+    const result = await execute(
+      "job profile 202606081115127730367220 --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service czstudio.example.com/api",
+    )
+    expect(result.exitCode).toBe(0)
+    const profileUrl = requests.find((r) => r.url.includes("getJobProfile"))?.url
+    expect(profileUrl).toBeDefined()
+    expect(new URL(profileUrl!).pathname).toBe("/api/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile")
+  })
 })
