@@ -214,4 +214,132 @@ describe("buildJobProfileRows", () => {
       value: "No Merge",
     })
   })
+
+  test("uses submitTime and endTime for duration instead of runningTime", () => {
+    const rows = buildJobProfileRows({
+      jobId: "4",
+      workspaceName: "ws",
+      instanceId: 86,
+      currentUserName: "UAT_TEST",
+      jobProfile: {
+        data: {
+          jobDesc: {
+            sqlJob: {},
+          },
+          currentMs: "1780888513041",
+          jobStatus: {
+            state: "SUCCEED",
+            submitTime: "1780888512773",
+            startTime: "1780888512775",
+            endTime: "1780888513041",
+            runningTime: "999",
+            jobProfiling: {
+              profiling: [
+                { e: 100, t: "1780888512773" },
+                { e: 108, t: "1780888512804" },
+                { e: 110, t: "1780888512804" },
+                { e: 111, t: "1780888512805" },
+                { e: 120, t: "1780888513033" },
+                { e: 130, t: "1780888513041" },
+                { e: 140, t: "1780888513041" },
+                { e: 150, t: "1780888513041" },
+              ],
+            },
+          },
+          jobSummary: {},
+          jobMetaLite: {},
+        },
+      },
+    })
+
+    expect(rows.find((row) => row.key === "duration")).toEqual({
+      key: "duration",
+      value: "268ms",
+    })
+    expect(rows.find((row) => row.key === "duration_timeline")).toEqual({
+      key: "duration_timeline",
+      value: "{\"total\":\"268ms\",\"stages\":[{\"key\":\"setup\",\"label\":\"Initialization\",\"duration\":\"31ms\"},{\"key\":\"resuming_cluster\",\"label\":\"Cluster Starting\",\"duration\":\"1ms\"},{\"key\":\"queued\",\"label\":\"Waiting Execution\",\"duration\":\"228ms\"},{\"key\":\"running\",\"label\":\"Running\",\"duration\":\"8ms\"},{\"key\":\"finish\",\"label\":\"Completed\",\"duration\":\"0ms\"}]}",
+    })
+  })
+
+  test("falls back to runningTime when submitTime or startTime is invalid", () => {
+    const rows = buildJobProfileRows({
+      jobId: "5",
+      workspaceName: "ws",
+      instanceId: 86,
+      currentUserName: "UAT_TEST",
+      jobProfile: {
+        data: {
+          jobDesc: {
+            sqlJob: {},
+          },
+          currentMs: "1780888513041",
+          jobStatus: {
+            state: "SUCCEED",
+            submitTime: "0",
+            startTime: "0",
+            endTime: "1780888513041",
+            runningTime: "268",
+            jobProfiling: {
+              profiling: [
+                { e: 100, t: "1780888512773" },
+                { e: 150, t: "1780888513041" },
+              ],
+            },
+          },
+          jobSummary: {},
+          jobMetaLite: {},
+        },
+      },
+    })
+
+    expect(rows.find((row) => row.key === "duration")).toEqual({
+      key: "duration",
+      value: "268ms",
+    })
+    expect(rows.find((row) => row.key === "duration_timeline")).toEqual({
+      key: "duration_timeline",
+      value: "",
+    })
+  })
+
+  test("uses stageDuration values with enum-like stage ids", () => {
+    const rows = buildJobProfileRows({
+      jobId: "6",
+      workspaceName: "ws",
+      instanceId: 86,
+      currentUserName: "UAT_TEST",
+      jobProfile: {
+        data: {
+          jobDesc: {
+            sqlJob: {},
+          },
+          currentMs: "1780888513041",
+          jobStatus: {
+            state: "SUCCEED",
+            submitTime: "1780888512773",
+            startTime: "1780888512775",
+            endTime: "1780888513041",
+            runningTime: "268",
+            jobProfiling: {
+              stageDuration: [
+                { n: 0, ms: "31" },
+                { n: 1, ms: "1" },
+                { n: 2, ms: "228" },
+                { n: 3, ms: "8" },
+                { n: 5, ms: "0" },
+              ],
+            },
+          },
+          jobSummary: {},
+          jobMetaLite: {},
+        },
+      },
+    })
+
+    expect(rows.find((row) => row.key === "duration_timeline")).toEqual({
+      key: "duration_timeline",
+      value: "{\"total\":\"268ms\",\"stages\":[{\"key\":\"setup\",\"label\":\"Initialization\",\"duration\":\"31ms\"},{\"key\":\"resuming_cluster\",\"label\":\"Cluster Starting\",\"duration\":\"1ms\"},{\"key\":\"queued\",\"label\":\"Waiting Execution\",\"duration\":\"228ms\"},{\"key\":\"running\",\"label\":\"Running\",\"duration\":\"8ms\"},{\"key\":\"finish\",\"label\":\"Completed\",\"duration\":\"0ms\"}]}",
+    })
+  })
 })

@@ -207,19 +207,6 @@ async function fetchJobProfileOnly(
   )
 }
 
-async function fetchJobPlanOnly(
-  sc: StudioConfig,
-  jobId: string,
-  debug?: boolean,
-): Promise<unknown> {
-  return requestStudioJobJson(
-    sc,
-    "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobPlan",
-    jobProfileParams(sc, jobId),
-    debug,
-  )
-}
-
 export function registerJobCommand(cli: Argv<GlobalArgs>): void {
   cli.command("job", "Job performance tools", (yargs) => {
     yargs
@@ -348,7 +335,6 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
               workspaceName: sc.workspaceName,
               instanceId: sc.instanceId,
               currentUserName: sc.userName,
-              jobPlan: await fetchJobPlanOnly(sc, jobId, argv.debug),
               jobProfile,
             }), { format })
           } catch (err) {

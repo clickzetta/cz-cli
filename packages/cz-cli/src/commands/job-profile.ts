@@ -41,6 +41,15 @@ const durationStageLabels = {
   finish: "Completed",
 } as const
 
+const durationStageOrder = [
+  "setup",
+  "resuming_cluster",
+  "queued",
+  "running",
+  "compaction",
+  "finish",
+] as const
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -73,6 +82,7 @@ function text(value: unknown): string | null {
 function pageTime(value: unknown): string | null {
   const raw = text(value)
   if (!raw) return null
+  if (raw === "0") return null
   if (!/^\d{13}$/.test(raw)) return raw
   const date = new Date(Number(raw))
   if (Number.isNaN(date.getTime())) return raw
@@ -91,10 +101,17 @@ function pageTime(value: unknown): string | null {
   return `${part("year")}/${part("month")}/${part("day")} ${part("hour")}:${part("minute")}:${part("second")}.${part("fractionalSecond")}`
 }
 
-function durationMs(value: unknown): string {
-  const raw = text(value)
-  if (!raw) return ""
-  return raw.endsWith("ms") ? raw : `${raw}ms`
+function trimDecimal(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, "")
+}
+
+function durationText(value: unknown): string {
+  const numeric = typeof value === "number" ? value : numberValue(value)
+  if (numeric === null) return ""
+  if (numeric >= 1000 * 60 * 60) return `${trimDecimal(numeric / (1000 * 60 * 60))}h`
+  if (numeric >= 1000 * 60) return `${trimDecimal(numeric / (1000 * 60))}min`
+  if (numeric >= 1000) return `${trimDecimal(numeric / 1000)}s`
+  return `${numeric}ms`
 }
 
 function numberValue(value: unknown): number | null {
@@ -102,6 +119,11 @@ function numberValue(value: unknown): number | null {
   if (!raw) return null
   const numeric = Number(raw)
   return Number.isFinite(numeric) ? numeric : null
+}
+
+function isValidTimestamp(value: unknown): boolean {
+  const raw = text(value)
+  return ![null, "", "0"].includes(raw)
 }
 
 function bytes(value: unknown): string {
@@ -161,27 +183,55 @@ function isSucceededState(state: string) {
   return ["SUCCEED", "SUCCEEDED", "succeed", "success"].includes(state)
 }
 
+function isFailedOrCancelledState(state: string) {
+  return ["FAILED", "CANCELLED", "failed", "cancelled"].includes(state)
+}
+
 function durationStageKey(value: unknown): keyof typeof durationStageLabels | null {
+  if (typeof value === "number" && durationStageOrder[value]) return durationStageOrder[value]
   const raw = text(value)?.toLowerCase()
   if (!raw) return null
-  if (raw in durationStageLabels) return raw as keyof typeof durationStageLabels
+  if (/^\d+$/.test(raw)) {
+    const index = Number(raw)
+    return durationStageOrder[index] ?? null
+  }
+  const normalized = raw.replace(/[\s-]+/g, "_")
+  if (normalized in durationStageLabels) return normalized as keyof typeof durationStageLabels
   return null
 }
 
-function durationTimelineFromStageDuration(stageDuration: Record<string, unknown>[]) {
+function pageDurationTotalMs(profile: Record<string, unknown>): number | null {
+  const status = record(profile.jobStatus)
+  const submitTime = text(status.submitTime)
+  const startTime = text(status.startTime)
+  const runningTime = numberValue(status.runningTime)
+  if (!submitTime || !startTime || [submitTime, startTime].includes("0")) return runningTime
+  const state = text(status.state) ?? ""
+  const endTime = text(status.endTime)
+  if (isFailedOrCancelledState(state) && (!endTime || endTime === "0")) return runningTime
+  const submitMs = numberValue(status.submitTime)
+  const endMs = numberValue(status.endTime)
+  const currentMs = numberValue(profile.currentMs)
+  const endTimeT = endMs && endMs !== 0 ? endMs : currentMs
+  if (submitMs === null || endTimeT === null) return runningTime
+  return endTimeT - submitMs
+}
+
+function durationTimelineFromStageDuration(stageDuration: Record<string, unknown>[], totalMs: number) {
   const stages = stageDuration
     .flatMap((item) => {
       const key = durationStageKey(item.n)
       const ms = numberValue(item.ms)
       if (!key || ms === null) return []
-      return [{ key, label: durationStageLabels[key], duration: durationMs(ms) }]
+      return [{ key, label: durationStageLabels[key], duration: durationText(ms) }]
     })
   if (stages.length === 0) return ""
-  const total = stages.reduce((sum, item) => sum + (numberValue(item.duration.replace("ms", "")) ?? 0), 0)
-  return JSON.stringify({ total: durationMs(total), stages })
+  return JSON.stringify({ total: durationText(totalMs), stages })
 }
 
 function durationTimelineFromProfiling(profile: Record<string, unknown>): string {
+  const totalMs = pageDurationTotalMs(profile)
+  if (totalMs === null) return ""
   const status = record(profile.jobStatus)
   const profiling = list(record(status.jobProfiling), ["profiling"])
   if (profiling.length === 0) return ""
@@ -189,19 +239,21 @@ function durationTimelineFromProfiling(profile: Record<string, unknown>): string
     profiling
       .map((item) => {
         const event = numberValue(item.e)
-        const timestamp = numberValue(item.t)
+        const timestamp = numberValue(
+          event === 100
+            ? isValidTimestamp(status.submitTime) ? status.submitTime : item.t
+            : event === 150
+              ? isValidTimestamp(status.endTime) ? status.endTime : isValidTimestamp(profile.currentMs) ? profile.currentMs : item.t
+              : item.t,
+        )
         return event === null || timestamp === null ? null : [event, timestamp]
       })
       .filter((item): item is [number, number] => item !== null),
   )
-  const submitTime = numberValue(status.submitTime)
-  if (submitTime !== null) profilingMap[100] = submitTime
   const state = text(status.state) ?? ""
-  const endTime = numberValue(status.endTime)
+  const endMs = numberValue(status.endTime)
   const currentMs = numberValue(profile.currentMs)
-  const endTimeT = endTime && endTime !== 0 ? endTime : currentMs
-  if (endTimeT !== null) profilingMap[150] = endTimeT
-  const curTime = endTimeT ?? currentMs
+  const curTime = endMs && endMs !== 0 ? endMs : currentMs
   if (curTime === null) return ""
   const has111TimePoint = !!profilingMap[111]
   const has132TimePoint = !!profilingMap[132]
@@ -281,18 +333,20 @@ function durationTimelineFromProfiling(profile: Record<string, unknown>): string
       ? nextItem ? profilingMap[nextItem.codes[0]!] : profilingMap[150]
       : nextItem ? profilingMap[nextItem.codes[0]!] : curTime
     if (curEndTime === undefined) return []
-    return [{ key: item.key, label: item.label, duration: durationMs(curEndTime - curStartTime) }]
+    return [{ key: item.key, label: item.label, duration: durationText(curEndTime - curStartTime) }]
   })
   if (stages.length === 0) return ""
   return JSON.stringify({
-    total: durationMs(numberValue(status.runningTime) ?? stages.reduce((sum, item) => sum + (numberValue(item.duration.replace("ms", "")) ?? 0), 0)),
+    total: durationText(totalMs),
     stages,
   })
 }
 
 function durationTimeline(profile: Record<string, unknown>): string {
   const stageDuration = list(record(record(profile.jobStatus).jobProfiling), ["stageDuration"])
-  return durationTimelineFromStageDuration(stageDuration) || durationTimelineFromProfiling(profile)
+  const totalMs = pageDurationTotalMs(profile)
+  if (totalMs === null) return ""
+  return durationTimelineFromStageDuration(stageDuration, totalMs) || durationTimelineFromProfiling(profile)
 }
 
 function cruCost(profile: Record<string, unknown>): string {
@@ -377,7 +431,7 @@ function valueMap(input: BuildJobProfileRowsInput) {
   const stats = record(record(record(profile.jobSummary).stats).inputOutputStats)
   return {
     status: text(pick(record(profile.jobStatus), ["state", "status", "jobStatus"])) ?? "",
-    duration: durationMs(pick(record(profile.jobStatus), ["runningTime", "duration", "costTime", "elapsedTime"])),
+    duration: durationText(pageDurationTotalMs(profile)),
     duration_timeline: durationTimeline(profile),
     start_time: pageTime(pick(record(profile.jobStatus), ["submitTime", "submit_time", "startTime", "start_time", "beginTime"])) ?? "",
     end_time: pageTime(pick(record(profile.jobStatus), ["endTime", "end_time", "finishTime"])) ?? "",
