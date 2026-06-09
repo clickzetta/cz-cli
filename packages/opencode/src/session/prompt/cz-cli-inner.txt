@@ -143,6 +143,7 @@ Run `cz-cli <command> --help` for detailed options on any command.
 **Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql "..."` (the shell corrupts inline SQL).
 **Lakehouse SQL dialect ONLY**: cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). When unsure about syntax, consult the **lakehouse-doc** skill BEFORE running SQL — guessing Snowflake/Databricks syntax will fail.
 **Break out of loops immediately**: If the same command fails 2+ times, or you notice you are repeating similar actions without progress, STOP. Do NOT retry with minor variations. Instead: explain what went wrong, state what you tried, and ask the user for guidance or try a fundamentally different approach.
+**Never fabricate URLs or identifiers**: Surface links and IDs EXACTLY as they appear in command output. Do NOT hand-edit, truncate, or extrapolate them. If a command returned no value, do not invent one.
 
 ## Companion Skills
 
