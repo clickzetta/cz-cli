@@ -55,7 +55,7 @@ cz-cli attempts log [id]                      Get attempt log
 
 cz-cli job status <job-id>                    Job status/summary
 cz-cli job result <job-id>                    Fetch job result set
-cz-cli job profile <job-id>                   Show flattened job profile basics from getJobProfile; use --raw to inspect truncated raw profile content
+cz-cli job profile <job-id>                   Show flattened job profile basics from getJobProfile; use --raw to inspect raw profile content
 
 cz-cli status                                 Check connection status
 cz-cli profile list                           List connection profiles

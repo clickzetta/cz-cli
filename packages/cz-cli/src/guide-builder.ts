@@ -351,7 +351,11 @@ export function registerStaticCommands(): void {
       arguments: [{ name: "job-id", required: true }] },
     { name: "job profile", kind: "command", description: "Show flattened job profile basics from getJobProfile",
       arguments: [{ name: "job-id", required: true }],
-      options: [{ flags: "--raw", required: false, takes_value: false, help: "Show truncated raw profile content and write the full payload to a temp file" }] },
+      options: [
+        { flags: "--raw", required: false, takes_value: false, help: "Show raw profile content" },
+        { flags: "--limit", required: false, takes_value: false, help: "Limit raw profile output; use --no-limit to show the full payload" },
+        { flags: "--path <file>", required: false, takes_value: true, help: "Write the full raw profile payload to a file" },
+      ] },
   ])
 }
 

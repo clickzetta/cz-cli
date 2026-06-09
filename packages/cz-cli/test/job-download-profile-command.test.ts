@@ -119,6 +119,7 @@ describe("job profile", () => {
   afterEach(() => {
     requests.length = 0
     rmSync(join(tmpdir(), "cz-cli", "job-profile", "202606081115127730367220"), { recursive: true, force: true })
+    rmSync(join(tmpdir(), "job-profile.raw.json"), { force: true })
   })
 
   test("returns only flattened profile rows", async () => {
@@ -166,7 +167,7 @@ describe("job profile", () => {
     ])
   })
 
-  test("returns truncated raw profile content and writes the full content to a temp file", async () => {
+  test("returns truncated raw profile content without writing a file by default", async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url)
@@ -201,17 +202,66 @@ describe("job profile", () => {
       )
       const json = prettyJson(result.output)
       const data = json.data as Record<string, string | boolean | number>
-      const path = String(data.path)
 
       expect(result.exitCode).toBe(0)
       expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
         "/clickzetta-portal/service/serviceInstanceList",
         "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
       ])
-      expect(json.ai_message).toBe("Raw profile truncated. See data.path for the full content.")
+      expect(json.ai_message).toBe(
+        "Raw profile truncated to 4000 chars from 5268 chars. Use --no-limit to print the full payload, e.g. cz-cli job profile 202606081115127730367220 --raw --no-limit > job_profile.raw.json",
+      )
       expect(data.truncated).toBe(true)
       expect(typeof data.raw).toBe("string")
       expect(String(data.raw)).toContain("...(truncated")
+      expect(data.limit_chars).toBe(4000)
+      expect(data.shown_chars).toBe(4026)
+      expect(data.total_chars).toBe(5268)
+      expect(data.path).toBeUndefined()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("writes the full raw profile content only when --path is provided", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url)
+      requests.push({
+        url: requestUrl,
+        method: init?.method,
+        headers: init?.headers as Record<string, string> | undefined,
+        body: init?.body as string | undefined,
+      })
+      if (requestUrl.includes("/clickzetta-portal/service/serviceInstanceList")) {
+        return Response.json({ data: [{ id: 86, name: "jnsxwfyr", serviceId: 1 }] })
+      }
+      if (requestUrl.includes("/api/v1/vcluster/job/getJobProfile")) {
+        return Response.json({
+          data: {
+            huge: "x".repeat(5000),
+            jobDesc: {
+              account: { userName: "UAT_TEST" },
+              sqlJob: { sqlConfig: { hint: {} } },
+            },
+            jobStatus: { state: "SUCCEED" },
+          },
+          respStatus: {},
+        })
+      }
+      return Response.json({ respStatus: { errorCode: "UNKNOWN", errorMsg: `Unhandled ${requestUrl}` } })
+    }) as typeof fetch
+
+    try {
+      const path = join(tmpdir(), "job-profile.raw.json")
+      const result = await execute(
+        `job profile 202606081115127730367220 --raw --path ${path} --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty`,
+      )
+      const json = prettyJson(result.output)
+      const data = json.data as Record<string, string | boolean | number>
+
+      expect(result.exitCode).toBe(0)
+      expect(data.path).toBe(path)
       expect(existsSync(path)).toBe(true)
       expect(readFileSync(path, "utf-8")).toContain("\"huge\"")
     } finally {

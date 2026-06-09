@@ -230,7 +230,7 @@ const cases: HelpCase[] = [
   {
     args: ["job", "profile", "--help"],
     expectHeader: "cz-cli job profile",
-    expectOptions: ["job-id", "--raw"],
+    expectOptions: ["job-id", "--raw", "--limit", "--path"],
   },
 
   // runs

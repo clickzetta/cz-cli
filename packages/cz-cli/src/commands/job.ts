@@ -1,8 +1,7 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { mkdir, stat, writeFile } from "node:fs/promises"
-import { join } from "node:path"
-import { tmpdir } from "node:os"
+import { dirname } from "node:path"
 import {
   requestRaw, pollJobResult,
   type ClientOptions, type JobID, type StudioConfig,
@@ -61,14 +60,9 @@ async function getJobStatus(opts: ClientOptions, jobId: JobID): Promise<RawJobRe
   return requestRaw<RawJobResponse>(opts, "/lh/getJob", body)
 }
 
-function defaultJobProfileDir(jobId: string): string {
-  return join(tmpdir(), "cz-cli", "job-profile", jobId)
-}
-
-async function writeJsonFile(dir: string, filename: string, data: unknown): Promise<{ path: string; bytes: number }> {
-  await mkdir(dir, { recursive: true })
-  const filePath = join(dir, filename)
-  await writeFile(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8")
+async function writeTextFile(filePath: string, data: string): Promise<{ path: string; bytes: number }> {
+  await mkdir(dirname(filePath), { recursive: true })
+  await writeFile(filePath, data, "utf-8")
   return { path: filePath, bytes: (await stat(filePath)).size }
 }
 
@@ -291,7 +285,9 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
-            .option("raw", { type: "boolean", default: false, describe: "Show truncated raw profile content." }),
+            .option("raw", { type: "boolean", default: false, describe: "Show raw profile content." })
+            .option("limit", { type: "boolean", default: true, describe: "Limit raw profile output. Use --no-limit to show the full payload." })
+            .option("path", { type: "string", describe: "Write the full raw profile payload to a file." }),
         async (argv) => {
           const format = argv.format
           try {
@@ -310,22 +306,27 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             })
             const jobProfile = await fetchJobProfileOnly(sc, jobId, argv.debug)
             if (argv.raw) {
-              const file = await writeJsonFile(defaultJobProfileDir(jobId), "job_profile.raw.json", jobProfile)
               const raw = JSON.stringify(jobProfile, null, 2)
-              const truncated = truncateText(raw, DEFAULT_RAW_CHAR_LIMIT)
+              const truncated = argv.limit === false ? { text: raw, truncated: false } : truncateText(raw, DEFAULT_RAW_CHAR_LIMIT)
+              const file = typeof argv.path === "string" && argv.path.trim() !== ""
+                ? await writeTextFile(argv.path, raw + "\n")
+                : null
               logOperation("job profile", { ok: true })
               success({
                 job_id: jobId,
                 workspace_name: sc.workspaceName,
                 instance_id: sc.instanceId,
-                path: file.path,
                 raw: truncated.text,
                 truncated: truncated.truncated,
                 shown_chars: truncated.text.length,
                 total_chars: raw.length,
+                limit_chars: argv.limit === false ? null : DEFAULT_RAW_CHAR_LIMIT,
+                ...(file ? { path: file.path } : {}),
               }, {
                 format,
-                aiMessage: truncated.truncated ? "Raw profile truncated. See data.path for the full content." : undefined,
+                aiMessage: truncated.truncated
+                  ? `Raw profile truncated to ${DEFAULT_RAW_CHAR_LIMIT} chars from ${raw.length} chars. Use --no-limit to print the full payload, e.g. cz-cli job profile ${jobId} --raw --no-limit > job_profile.raw.json`
+                  : undefined,
               })
               return
             }
