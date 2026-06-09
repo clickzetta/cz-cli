@@ -58,6 +58,18 @@ async function main() {
     fallbackRoot: DEFAULT_FALLBACK_ROOT,
     force: true,
   });
+
+  // On macOS, remove quarantine bit and re-apply ad-hoc signature.
+  // npm/bun extraction can re-attach com.apple.quarantine to the binary,
+  // which causes Gatekeeper to SIGKILL the process on first run.
+  if (process.platform === "darwin") {
+    try {
+      execFileSync("xattr", ["-dr", "com.apple.quarantine", installed.binPath], { stdio: "ignore" });
+    } catch (e) {}
+    try {
+      execFileSync("codesign", ["--force", "--sign", "-", installed.binPath], { stdio: "ignore" });
+    } catch (e) {}
+  }
   // Install bundled skills into ~/.clickzetta/skills/.builtin/
   const skillsSrc = path.join(installed.rootDir, "skills");
   const builtinDest = path.join(home, ".clickzetta", "skills", ".builtin");

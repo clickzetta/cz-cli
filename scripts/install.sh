@@ -387,6 +387,17 @@ download_and_install() {
 
     mv "$tmp_dir/$APP" "$INSTALL_DIR/"
     chmod 755 "${INSTALL_DIR}/${APP}"
+
+    # Remove quarantine bit and re-sign on macOS. The binary was ad-hoc signed
+    # during CI build, but unzip re-applies com.apple.quarantine to extracted
+    # files, which causes Gatekeeper to SIGKILL the process on first run.
+    if [ "$os" = "darwin" ]; then
+        xattr -dr com.apple.quarantine "${INSTALL_DIR}/${APP}" 2>/dev/null || true
+        if command -v codesign >/dev/null 2>&1; then
+            codesign --force --sign - "${INSTALL_DIR}/${APP}" 2>/dev/null || true
+        fi
+    fi
+
     # Preserve bundled skills
     if [ -d "$tmp_dir/skills" ]; then
         rm -rf "$INSTALL_DIR/skills"
@@ -399,6 +410,13 @@ install_from_binary() {
     print_message info "\n${MUTED}Installing ${NC}cz-cli ${MUTED}from: ${NC}$binary_path"
     cp "$binary_path" "${INSTALL_DIR}/${APP}"
     chmod 755 "${INSTALL_DIR}/${APP}"
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+        xattr -dr com.apple.quarantine "${INSTALL_DIR}/${APP}" 2>/dev/null || true
+        if command -v codesign >/dev/null 2>&1; then
+            codesign --force --sign - "${INSTALL_DIR}/${APP}" 2>/dev/null || true
+        fi
+    fi
 }
 
 # Pre-install: detect and remove any cz-cli binary that would shadow our install
