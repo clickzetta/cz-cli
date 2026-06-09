@@ -91,6 +91,10 @@ export function normalizeFilePath(path: string): string {
   return normalized
 }
 
+function toPosixPath(path: string): string {
+  return path.replace(/\\/g, "/")
+}
+
 // -------------------------------------------------------------------------
 // resolveLocalPath — _volume.py:22-27
 // -------------------------------------------------------------------------
@@ -110,16 +114,17 @@ export async function resolveLocalPath(path: string): Promise<string[]> {
 
   const { readdir, stat } = await import("node:fs/promises")
   const nodePath = await import("node:path")
+  const normalizedPath = toPosixPath(path)
 
-  if (path.includes("*")) {
-    return resolveGlob(path)
+  if (normalizedPath.includes("*")) {
+    return resolveGlob(normalizedPath)
   }
 
-  if (path.endsWith("/")) {
-    return resolveDir(path, readdir, nodePath)
+  if (path.endsWith("/") || path.endsWith("\\")) {
+    return resolveDir(normalizedPath, readdir, nodePath)
   }
 
-  return [path]
+  return [normalizedPath]
 }
 
 /** Glob expansion — mirrors _volume.py:6-11 */
@@ -331,7 +336,7 @@ export async function genNewPutSql(outcome: VolumeOutcome): Promise<string> {
   }
 
   let sql = "PUT "
-  sql += resolvedPaths.map((p) => `'${p}'`).join(", ")
+  sql += resolvedPaths.map((p) => `'${toPosixPath(p)}'`).join(", ")
   sql += ` TO ${outcome.request.volumeIdentifier ?? ""}`
 
   if (outcome.request.subdirectory !== undefined) {

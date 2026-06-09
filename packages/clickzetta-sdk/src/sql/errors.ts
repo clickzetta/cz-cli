@@ -12,7 +12,7 @@ export const lh_code = {
   JOB_ALREADY_EXISTS: "CZLH-60007",
   /** Submit returned before the job was fully registered; keep polling. */
   JOB_NOT_SUBMITTED: "CZLH-60023",
-  /** Target job id does not exist on the server; fatal. */
+  /** Submit may not have registered the job yet; retry submit/poll flow. */
   JOB_NOT_EXISTS: "CZLH-60005",
   /** Transient "job status unknown" from the control plane; keep polling. */
   JOB_STATUS_UNKNOWN: "CZLH-60022",
@@ -28,6 +28,7 @@ const RETRYABLE = new Set<string>([
   lh_code.JOB_ALREADY_EXISTS,
   lh_code.JOB_STATUS_UNKNOWN,
   lh_code.JOB_NOT_SUBMITTED,
+  lh_code.JOB_NOT_EXISTS,
   lh_code.JOB_NEEDS_RERUN,
   lh_code.VC_QUEUE_LIMIT,
 ])
@@ -38,7 +39,6 @@ const RESUBMIT = new Set<string>([
 ])
 
 const FATAL = new Set<string>([
-  lh_code.JOB_NOT_EXISTS,
   lh_code.JOB_KILLED_BY_TIMEOUT,
 ])
 

@@ -22,6 +22,7 @@ import type { ConnectionConfig } from "../types/index.js"
 import { splitSql } from "./split.js"
 import { submitJob } from "./submit.js"
 import { parseJobResponse, pollJobResult } from "./poll.js"
+import { isRetryableErrorCode } from "./errors.js"
 import {
   type JobID,
   JobStatus,
@@ -494,6 +495,32 @@ export class SqlSession {
       raw?.status?.state &&
       ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)
     ) {
+      if (
+        raw.status.state === "FAILED" &&
+        isRetryableErrorCode(
+          (raw as { status?: { errorCode?: string } }).status?.errorCode,
+        )
+      ) {
+        const result = await pollJobResult(clientOpts, jobId, {
+          jobTimeoutMs: prepared.jobTimeoutMs > 0 ? prepared.jobTimeoutMs : undefined,
+          timezone: this.timezoneHint,
+          maxRetries: prepared.maxRetry > 0 ? prepared.maxRetry : undefined,
+          resubmitFn: () => this.execute(sql, options),
+        })
+        if (isVolumeSql(sql)) {
+          return processVolumeSql(
+            {
+              clientOpts,
+              workspace: prepared.workspace,
+              instanceId: jobId.instanceId,
+            },
+            jobId,
+            result,
+            sql,
+          )
+        }
+        return result
+      }
       return parseJobResponse(
         submitResp as Parameters<typeof parseJobResponse>[0],
         jobId,

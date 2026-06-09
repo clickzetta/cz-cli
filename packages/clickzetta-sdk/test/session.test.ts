@@ -1,4 +1,20 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import type { AuthToken, ConnectionConfig } from "../src/types/index.js"
+
+mock.module("../src/auth/token.js", () => ({
+  getToken: async (): Promise<AuthToken> => ({
+    token: "tok-test",
+    instanceId: 100,
+    userId: 1,
+    expireTimeMs: 3_600_000,
+    obtainedAt: Date.now(),
+  }),
+}))
+
+mock.module("../src/config/region.js", () => ({
+  toServiceUrl: (_service: string, _protocol: string) => "https://test.invalid",
+}))
+
 import {
   DEFAULT_MAXIMUM_TIMEOUT,
   SqlSession,
@@ -7,7 +23,8 @@ import {
   stripLeadingComment,
 } from "../src/sql/session.js"
 import { InterfaceError } from "../src/types/errors.js"
-import type { ConnectionConfig } from "../src/types/index.js"
+
+const originalFetch = globalThis.fetch
 
 function makeConfig(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
   return {
@@ -322,6 +339,48 @@ describe("SqlSession.execute sql-shape guards (cursor.py:172-180)", () => {
     const s = new SqlSession(makeConfig())
     await expect(s.execute(null as unknown as string)).rejects.toThrow(/sql is empty/)
     await expect(s.execute(undefined as unknown as string)).rejects.toThrow(/sql is empty/)
+  })
+})
+
+describe("SqlSession.execute submit retry codes", () => {
+  beforeEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  test("submit JOB_NOT_EXISTS is treated as retryable instead of terminal failure", async () => {
+    const calls: string[] = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.endsWith("/lh/submitJob")) {
+        return new Response(
+          JSON.stringify({
+            status: {
+              state: "FAILED",
+              errorCode: "CZLH-60005",
+              errorMessage: "job not exists",
+            },
+          }),
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          status: { state: "SUCCEED" },
+          resultSet: {},
+        }),
+      )
+    }) as typeof fetch
+
+    const result = await new SqlSession(makeConfig()).execute("SELECT 1", {
+      params: { hints: { "sdk.query.max.retries": "1" } },
+    })
+
+    expect(result.status).toBe("SUCCEEDED")
+    expect(calls.filter((url) => url.endsWith("/lh/getJob")).length).toBe(1)
   })
 })
 

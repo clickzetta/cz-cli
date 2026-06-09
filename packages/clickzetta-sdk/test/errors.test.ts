@@ -12,12 +12,12 @@ describe("lh_code predicates", () => {
     expect(isRetryableErrorCode(lh_code.JOB_ALREADY_EXISTS)).toBe(true)
     expect(isRetryableErrorCode(lh_code.JOB_STATUS_UNKNOWN)).toBe(true)
     expect(isRetryableErrorCode(lh_code.JOB_NOT_SUBMITTED)).toBe(true)
+    expect(isRetryableErrorCode(lh_code.JOB_NOT_EXISTS)).toBe(true)
     expect(isRetryableErrorCode(lh_code.JOB_NEEDS_RERUN)).toBe(true)
     expect(isRetryableErrorCode(lh_code.VC_QUEUE_LIMIT)).toBe(true)
   })
 
   test("isRetryableErrorCode rejects fatal / unknown codes", () => {
-    expect(isRetryableErrorCode(lh_code.JOB_NOT_EXISTS)).toBe(false)
     expect(isRetryableErrorCode(lh_code.JOB_KILLED_BY_TIMEOUT)).toBe(false)
     expect(isRetryableErrorCode("CZLH-99999")).toBe(false)
     expect(isRetryableErrorCode(undefined)).toBe(false)
@@ -33,8 +33,8 @@ describe("lh_code predicates", () => {
     expect(shouldResubmitWithNewJobId(undefined)).toBe(false)
   })
 
-  test("isFatalErrorCode matches 60005 / 60010", () => {
-    expect(isFatalErrorCode(lh_code.JOB_NOT_EXISTS)).toBe(true)
+  test("isFatalErrorCode matches 60010", () => {
+    expect(isFatalErrorCode(lh_code.JOB_NOT_EXISTS)).toBe(false)
     expect(isFatalErrorCode(lh_code.JOB_KILLED_BY_TIMEOUT)).toBe(true)
     expect(isFatalErrorCode(lh_code.JOB_ALREADY_EXISTS)).toBe(false)
     expect(isFatalErrorCode(lh_code.JOB_NEEDS_RERUN)).toBe(false)

@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.srconly.json"
+  },
   "dependencies": {
     "apache-arrow": "21.1.0"
   },

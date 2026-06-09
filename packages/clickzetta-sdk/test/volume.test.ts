@@ -11,6 +11,7 @@ import {
   isVolumeSql,
   isRetryableVolumeError,
   executeVolumeTransferWithRetry,
+  genNewPutSql,
   normalizeFilePath,
   resolveLocalPath,
   getVolumeFiles,
@@ -124,6 +125,37 @@ describe("resolveLocalPath (_volume.py:22-27)", () => {
     expect(result.length).toBe(2)
     expect(result.some((p) => p.endsWith("root.csv"))).toBe(true)
     expect(result.some((p) => p.endsWith("nested.csv"))).toBe(true)
+  })
+})
+
+describe("genNewPutSql (client.py:1420-1442)", () => {
+  test("emits POSIX-style paths for Windows PUT continuation SQL", async () => {
+    const sql = await genNewPutSql({
+      status: "CONTINUE",
+      request: {
+        command: "PUT",
+        localPaths: ["C:\\Users\\alice\\data\\part-1.csv"],
+        volumeIdentifier: "@vol",
+        options: [],
+      },
+      ticket: { presignedUrls: [] },
+    })
+
+    expect(sql).toBe("PUT 'C:/Users/alice/data/part-1.csv' TO @vol;")
+  })
+
+  test("treats trailing Windows separator as a directory path", async () => {
+    const subDir = join(tmpdir(), `cz-vol-win-dir-${Date.now()}`)
+    await mkdir(subDir, { recursive: true })
+    await writeFile(join(subDir, "a.csv"), "")
+
+    try {
+      const result = await resolveLocalPath(subDir + "\\")
+      expect(result.length).toBe(1)
+      expect(result[0].endsWith("a.csv")).toBe(true)
+    } finally {
+      await rm(subDir, { recursive: true, force: true })
+    }
   })
 })
 
