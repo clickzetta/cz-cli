@@ -134,3 +134,7 @@ const cb = Instance.bind((err, evts) => {
 })
 nativeAddon.subscribe(dir, cb)
 ```
+
+## git commit
+
+you github commit message should be used Chinese to write
