@@ -74,17 +74,14 @@ export function resolveDefaultModel(input: ResolveInput): ResolutionResult | und
   if (cliRef && (trust || isValid(cliRef, input.providers))) {
     return { ...cliRef, source: "cli" }
   }
-  const configRef = parseRef(input.configModel)
-  if (configRef && (trust || isValid(configRef, input.providers))) {
-    return { ...configRef, source: "config" }
-  }
 
   const defaultEntry = input.defaultLlmEntry
     ? input.llmEntries?.find((e) => e.name === input.defaultLlmEntry)
     : undefined
 
   if (defaultEntry) {
-    const provider = input.providers[defaultEntry.provider]
+    // Providers are keyed by entry name — look up by name, not provider type.
+    const provider = input.providers[defaultEntry.name]
     if (provider) {
       const modelID = defaultEntry.model && provider.models[defaultEntry.model]
         ? defaultEntry.model
@@ -96,6 +93,11 @@ export function resolveDefaultModel(input: ResolveInput): ResolutionResult | und
     // Default LLM points at an unknown provider — fall through to last-resort
     // fallback rather than honoring recent history (which would cross provider).
     return fallback(input, "fallback")
+  }
+
+  const configRef = parseRef(input.configModel)
+  if (configRef && (trust || isValid(configRef, input.providers))) {
+    return { ...configRef, source: "config" }
   }
 
   for (const ref of input.recent) {

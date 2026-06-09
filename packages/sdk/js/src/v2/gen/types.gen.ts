@@ -262,6 +262,14 @@ export type QuestionInfo = {
    * Allow typing a custom answer (default: true)
    */
   custom?: boolean
+  /**
+   * If true, submission is blocked when no answer is provided
+   */
+  required?: boolean
+  /**
+   * Value used automatically when the user leaves this question blank
+   */
+  defaultValue?: string
 }
 
 export type QuestionTool = {
@@ -1163,6 +1171,8 @@ export type GlobalEvent = {
     | SyncEventSessionCreated
     | SyncEventSessionUpdated
     | SyncEventSessionDeleted
+    | EventConfigProvidersChanged
+    | EventTuiModelSet
 }
 
 /**
@@ -2069,6 +2079,21 @@ export type Event =
   | EventSessionCreated
   | EventSessionUpdated
   | EventSessionDeleted
+  | EventConfigProvidersChanged
+  | EventTuiModelSet
+
+export type EventConfigProvidersChanged = {
+  type: "config.providers.changed"
+  properties: Record<string, unknown>
+}
+
+export type EventTuiModelSet = {
+  type: "tui.model.set"
+  properties: {
+    providerID: string
+    modelID: string
+  }
+}
 
 export type McpStatusConnected = {
   status: "connected"

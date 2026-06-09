@@ -50,7 +50,7 @@ export function DialogModel(props: { providerID?: string }) {
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
             onSelect: () => {
-              onSelect(undefined, provider.id, model.id)
+              onSelect(provider.id, model.id)
             },
           },
         ]
@@ -68,21 +68,21 @@ export function DialogModel(props: { providerID?: string }) {
     const llmEntries = sync.data.llm_entries
 
     const providerOptions = llmEntries.flatMap((entry) => {
-      const provider = sync.data.provider.find((x) => x.id === entry.provider)
+      const provider = sync.data.provider.find((x) => x.id === entry.name)
 
       if (!entry.model && entry.provider === "clickzetta" && provider) {
         return Object.entries(provider.models)
           .filter(([_, info]) => info.status !== "deprecated")
           .map(([modelID, info]) => ({
-            key: llmOptionKey(entry.name, entry.provider, modelID),
-            value: { providerID: entry.provider, modelID },
+            key: llmOptionKey(entry.name, entry.name, modelID),
+            value: { providerID: entry.name, modelID },
             title: info.name ?? modelID,
             description: undefined as string | undefined,
             category: entry.name,
             disabled: false,
             footer: undefined as string | undefined,
             onSelect() {
-              onSelect(entry.name, entry.provider, modelID)
+              onSelect(entry.name, modelID)
             },
           }))
       }
@@ -94,15 +94,15 @@ export function DialogModel(props: { providerID?: string }) {
         ? (modelInfo?.name ?? entry.model)
         : ((defaultModelInfo?.name ?? modelID) || entry.provider)
       return [{
-        key: llmOptionKey(entry.name, entry.provider, modelID),
-        value: { providerID: entry.provider, modelID },
+        key: llmOptionKey(entry.name, entry.name, modelID),
+        value: { providerID: entry.name, modelID },
         title,
         description: undefined as string | undefined,
         category: entry.name,
         disabled: false,
         footer: undefined as string | undefined,
         onSelect() {
-          onSelect(entry.name, entry.provider, modelID)
+          onSelect(entry.name, modelID)
         },
       }]
     })
@@ -130,12 +130,11 @@ export function DialogModel(props: { providerID?: string }) {
 
   const currentKey = createMemo(() => {
     const current = local.model.current()
-    const defaultEntry = sync.data.default_llm_entry
-    if (!current || !defaultEntry) return undefined
-    return llmOptionKey(defaultEntry, current.providerID, current.modelID)
+    if (!current) return undefined
+    return llmOptionKey(current.providerID, current.providerID, current.modelID)
   })
 
-  function onSelect(entryName: string | undefined, providerID: string, modelID: string) {
+  function onSelect(providerID: string, modelID: string) {
     local.model.set({ providerID, modelID }, { recent: true })
     const list = local.model.variant.list()
     const cur = local.model.variant.selected()

@@ -43,6 +43,12 @@ export class Info extends Schema.Class<Info>("QuestionInfo")({
   custom: Schema.optional(Schema.Boolean).annotate({
     description: "Allow typing a custom answer (default: true)",
   }),
+  required: Schema.optional(Schema.Boolean).annotate({
+    description: "If true, submission is blocked when no answer is provided",
+  }),
+  defaultValue: Schema.optional(Schema.String).annotate({
+    description: "Value used automatically when the user leaves this question blank",
+  }),
 }) {
   static readonly zod = zod(this)
 }

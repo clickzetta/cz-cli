@@ -72,9 +72,10 @@ describe("resolveDefaultModel", () => {
     expect(result?.providerID).toBe("ghost")
   })
 
-  test("default_llm entry with explicit model uses configModel path", () => {
-    // parseProfilesToml emits configModel="${provider}/${entry.model}" when
-    // the entry has a model. The resolver only sees configModel here.
+  test("default_llm entry with explicit model resolves via entry-default", () => {
+    // When default_llm is set, the entry-default path resolves the model
+    // directly (using the entry's model field) and takes precedence over
+    // configModel.
     const result = resolveDefaultModel({
       configModel: "clickzetta/deepseek/deepseek-v4-pro",
       defaultLlmEntry: "clickzetta",
@@ -89,7 +90,7 @@ describe("resolveDefaultModel", () => {
     expect(result).toEqual({
       providerID: "clickzetta",
       modelID: "deepseek/deepseek-v4-pro",
-      source: "config",
+      source: "entry-default",
     })
   })
 
@@ -107,6 +108,22 @@ describe("resolveDefaultModel", () => {
     expect(result).toEqual({
       providerID: "clickzetta",
       modelID: "qwen/qwen3-max",
+      source: "entry-default",
+    })
+  })
+
+  test("default_llm entry without model returns the entry-named provider id", () => {
+    const result = resolveDefaultModel({
+      defaultLlmEntry: "team-a",
+      llmEntries: [{ name: "team-a", provider: "clickzetta" }],
+      providers: providerMap(provider("team-a", ["deepseek/deepseek-v4-pro"])),
+      recent: [],
+      pickBest: firstModel,
+    })
+
+    expect(result).toEqual({
+      providerID: "team-a",
+      modelID: "deepseek/deepseek-v4-pro",
       source: "entry-default",
     })
   })

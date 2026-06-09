@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, unwatchFile, watchFile, writeFileSync } from "fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unwatchFile, watchFile, writeFileSync } from "fs"
 import os from "os"
 import path from "path"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
+import { CLICKZETTA_PROVIDER_ENTRY } from "../provider/clickzetta"
 
 export interface LlmEntry {
   name: string
@@ -120,6 +121,62 @@ const DEFAULT_PROBE_MODELS: Record<string, string> = {
   azure: "gpt-4.1-mini",
 }
 
+export type AddLlmEntryInput = {
+  name?: string
+  provider: string
+  apiKey: string
+  baseUrl?: string
+  model?: string
+  use?: boolean
+}
+
+function uniqueLlmName(llms: Record<string, unknown>, base: string, index = 0): string {
+  const name = index === 0 ? base : `${base}-${index + 1}`
+  if (!(name in llms)) return name
+  return uniqueLlmName(llms, base, index + 1)
+}
+
+function defaultEntryModel(provider: string) {
+  if (provider === "openai-compatible") return DEFAULT_PROBE_MODELS[provider]
+  return undefined
+}
+
+function normalizeEntryName(input: AddLlmEntryInput) {
+  return (input.name ?? input.provider).trim().replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "custom"
+}
+
+export function addLlmEntry(data: Record<string, unknown>, input: AddLlmEntryInput): LlmEntry {
+  const provider = input.provider.trim()
+  if (!VALID_PROVIDERS.includes(provider as (typeof VALID_PROVIDERS)[number])) {
+    throw new Error(`Invalid provider "${provider}". Valid providers: ${VALID_PROVIDERS.join(", ")}`)
+  }
+  if (!input.apiKey.trim()) throw new Error("API key is required")
+  const model = input.model?.trim() || defaultEntryModel(provider)
+  const llms = getLlms(data)
+  const name = uniqueLlmName(llms, normalizeEntryName(input))
+  llms[name] = {
+    provider,
+    api_key: input.apiKey.trim(),
+    ...(input.baseUrl?.trim() && { base_url: normalizeLlmBaseUrl(provider, input.baseUrl.trim()) }),
+    ...(model && { model }),
+  }
+  data.llm = llms
+  if (input.use !== false) data.default_llm = name
+  return { name, provider, ...(model && { model }) }
+}
+
+export function saveLlmEntry(input: AddLlmEntryInput): LlmEntry {
+  const parsed = existsSync(PROFILES_PATH) ? parseToml(readFileSync(PROFILES_PATH, "utf-8")) : {}
+  const data = isRecord(parsed) ? parsed : {}
+  const result = addLlmEntry(data, input)
+  mkdirSync(CLICKZETTA_DIR, { recursive: true })
+  const tmp = PROFILES_PATH + ".tmp." + Date.now()
+  writeFileSync(tmp, stringifyToml(data as never) + "\n", { encoding: "utf-8", mode: 0o600 })
+  renameSync(tmp, PROFILES_PATH)
+  chmodSync(PROFILES_PATH, 0o600)
+  return result
+}
+
 export function buildLlmProbeRequest(provider: string, baseUrl: string | undefined, apiKey: string, model?: string): LlmProbe | undefined {
   const probeModel = model ?? DEFAULT_PROBE_MODELS[provider] ?? "gpt-4.1-mini"
 
@@ -232,8 +289,16 @@ function asString(value: unknown): string | undefined {
 
 
 function customProviderFromEntry(entry: ParsedLlmEntry) {
+  if (entry.provider === "clickzetta") {
+    return {
+      name: entry.name,
+      npm: CLICKZETTA_PROVIDER_ENTRY.npm,
+      api: CLICKZETTA_PROVIDER_ENTRY.api,
+      env: [],
+      models: CLICKZETTA_PROVIDER_ENTRY.models,
+    }
+  }
   if (!entry.model) return undefined
-  if (entry.provider === "clickzetta") return undefined
   return {
     name: entry.name,
     npm: entry.provider === "openai-compatible" ? "@ai-sdk/openai-compatible" : undefined,
@@ -261,6 +326,17 @@ function getLlms(data: Record<string, unknown>) {
   return isRecord(data.llm) ? data.llm : {}
 }
 
+function providerFromEntry(entry: ParsedLlmEntry) {
+  return {
+    options: {
+      apiKey: entry.apiKey,
+      ...(entry.baseURL && { baseURL: entry.baseURL }),
+      _providerType: entry.provider,
+    },
+    name: entry.name,
+    ...customProviderFromEntry(entry),
+  }
+}
 export function setDefaultLlmModel(data: Record<string, unknown>, model: string): boolean {
   const defaultLlm = asString(data.default_llm)
   if (!defaultLlm) return false
@@ -442,25 +518,8 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
 
   const selectedDefault = defaultLlm ? parsedEntries.find((entry) => entry.name === defaultLlm) : undefined
   if (selectedDefault) {
-    defaultModel = selectedDefault.model ? `${selectedDefault.provider}/${selectedDefault.model}` : undefined
-    providers[selectedDefault.provider] = {
-      options: {
-        apiKey: selectedDefault.apiKey,
-        ...(selectedDefault.baseURL && { baseURL: selectedDefault.baseURL }),
-      },
-      ...customProviderFromEntry(selectedDefault),
-    }
-    for (const entry of parsedEntries) {
-      if (entry === selectedDefault) continue
-      if (!providers[entry.provider]) {
-        providers[entry.provider] = {
-          options: {
-            apiKey: entry.apiKey,
-            ...(entry.baseURL && { baseURL: entry.baseURL }),
-          },
-        }
-      }
-    }
+    defaultModel = selectedDefault.model ? `${selectedDefault.name}/${selectedDefault.model}` : undefined
+    for (const entry of parsedEntries) providers[entry.name] = providerFromEntry(entry)
     return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
   }
 
@@ -470,12 +529,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
 
   if (parsedEntries.length === 1) {
     const selected = parsedEntries[0]
-    providers[selected.provider] = {
-      options: {
-        apiKey: selected.apiKey,
-        ...(selected.baseURL && { baseURL: selected.baseURL }),
-      },
-    }
+    providers[selected.name] = providerFromEntry(selected)
     return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
   }
 
@@ -485,23 +539,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
     )
   }
 
-  for (const [provider, entries] of Object.entries(entriesByProvider)) {
-    const selected = entries[0]
-    if (!selected) continue
-    if (entries.length > 1) {
-      warnings.push(
-        `multiple [llm.*] entries use provider "${provider}" but default_llm does not select one; using [llm.${selected.name}]`,
-      )
-    }
-    if (!providers[selected.provider]) {
-      providers[selected.provider] = {
-        options: {
-          apiKey: selected.apiKey,
-          ...(selected.baseURL && { baseURL: selected.baseURL }),
-        },
-      }
-    }
-  }
+  for (const entry of parsedEntries) providers[entry.name] = providerFromEntry(entry)
 
   return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
 }

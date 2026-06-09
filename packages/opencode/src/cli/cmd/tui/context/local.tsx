@@ -398,6 +398,13 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     })
 
+    // Switch model when server requests it (e.g. after quota recovery)
+    createEffect(() => {
+      const requested = sync.data.requested_model
+      if (!requested) return
+      model.set({ providerID: requested.providerID, modelID: requested.modelID })
+    })
+
     const result = {
       model,
       agent,

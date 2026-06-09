@@ -1,18 +1,15 @@
-import { trace, SpanStatusCode, type Span } from "@opentelemetry/api"
+import { SpanKind, trace, SpanStatusCode, type Span } from "@opentelemetry/api"
 import { SeverityNumber, type Logger } from "@opentelemetry/api-logs"
-import { setCurrentSessionSpanContext, getSessionOtelContext } from "./context"
+import {
+  clearCurrentLlmSpan,
+  getSessionOtelContext,
+  setCurrentLlmSpan,
+  setCurrentSessionSpanContext,
+  setRawRequestCaptureEnabled,
+} from "./context"
 import * as m from "./metrics"
 
 const tracer = trace.getTracer("opencode")
-
-// OTel span attribute value limit — keep content under 32KB to avoid
-// collector rejections while still capturing useful context.
-const ATTR_VALUE_LIMIT = 32 * 1024
-
-function truncateAttr(value: string): string {
-  if (value.length <= ATTR_VALUE_LIMIT) return value
-  return value.slice(0, ATTR_VALUE_LIMIT) + "...[truncated]"
-}
 
 function safeStringify(value: unknown): string {
   try {
@@ -57,6 +54,7 @@ const sessionStartMs = new Map<string, number>()
 export function initHandlers(logger: Logger, recordContent?: boolean) {
   _logger = logger
   _recordContent = recordContent ?? true
+  setRawRequestCaptureEnabled(_recordContent)
 }
 
 function sessionAttributes(
@@ -279,19 +277,22 @@ export function handleEvent(event: { type: string; properties: Record<string, an
         if (!tracingEnabled("llm")) break
         const spanName = `chat ${p.model ?? "unknown"}`
         const span = tracer.startSpan(spanName, {
+          kind: SpanKind.CLIENT,
           attributes: {
             "gen_ai.operation.name": "chat",
             "gen_ai.provider.name": p.providerID ?? "",
             "gen_ai.request.model": p.model ?? "",
+            "gen_ai.conversation.id": p.sessionID ?? "",
             "opencode.session.id": p.sessionID ?? "",
             "langfuse.session.id": p.sessionID ?? "",
-            ...(p.inputMessages && _recordContent ? { "gen_ai.input.messages": truncateAttr(p.inputMessages) } : {}),
+            ...(p.inputMessages && _recordContent ? { "gen_ai.input.messages": p.inputMessages } : {}),
             ...(p.systemInstructions && _recordContent
-              ? { "gen_ai.system_instructions": truncateAttr(p.systemInstructions) }
+              ? { "gen_ai.system_instructions": p.systemInstructions }
               : {}),
           },
         }, getSessionOtelContext())
         stepSpans.set(p.stepId, span)
+        setCurrentLlmSpan(span)
         break
       }
 
@@ -302,16 +303,17 @@ export function handleEvent(event: { type: string; properties: Record<string, an
           const outputMessages = buildOutputMessages(p)
           span.setAttributes({
             "gen_ai.response.model": p.model ?? "",
-            "gen_ai.response.finish_reasons": p.finishReason ?? "unknown",
+            "gen_ai.response.finish_reasons": [p.finishReason ?? "unknown"],
             "gen_ai.usage.input_tokens": p.tokens?.input ?? 0,
             "gen_ai.usage.output_tokens": p.tokens?.output ?? 0,
             "gen_ai.usage.cache_read.input_tokens": p.tokens?.cache?.read ?? 0,
             "gen_ai.usage.cache_creation.input_tokens": p.tokens?.cache?.write ?? 0,
             "gen_ai.usage.reasoning.output_tokens": p.tokens?.reasoning ?? 0,
-            ...(outputMessages && _recordContent ? { "gen_ai.output.messages": truncateAttr(outputMessages) } : {}),
+            ...(outputMessages && _recordContent ? { "gen_ai.output.messages": outputMessages } : {}),
           })
           span.end()
           stepSpans.delete(p.stepId)
+          clearCurrentLlmSpan(span)
         }
         const tokens = p.tokens ?? {}
         if (tokens.input) m.tokenUsage.record(tokens.input, { "gen_ai.token.type": "input", "gen_ai.provider.name": p.providerID ?? "", "gen_ai.request.model": p.model ?? "" })
@@ -364,7 +366,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
             span.setStatus({ code: SpanStatusCode.ERROR, message: p.error ?? "unknown" })
             m.errorCounter.add(1, { source: "tool", "gen_ai.tool.name": p.name ?? "unknown" })
           }
-          if (_recordContent && p.output) span.setAttribute("gen_ai.tool.call.result", truncateAttr(p.output))
+          if (_recordContent && p.output) span.setAttribute("gen_ai.tool.call.result", p.output)
           if (p.error) span.setAttribute("error.message", p.error)
           span.end()
           toolSpans.delete(p.id)
@@ -391,6 +393,7 @@ export function handleEvent(event: { type: string; properties: Record<string, an
 export function shutdown() {
   endPromptSpan()
   endPreflightSpan()
+  setCurrentLlmSpan(undefined)
   for (const span of stepSpans.values()) span.end()
   for (const span of toolSpans.values()) span.end()
   stepSpans.clear()

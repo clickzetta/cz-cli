@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { parse as parseToml } from "smol-toml"
 import {
+  addLlmEntry,
   hasUsableLlm,
   migrateLegacyClickzettaConfig,
   parseProfilesToml,
@@ -20,14 +21,11 @@ source_profile = "uat"
 model = "deepseek/deepseek-v4-pro"
 `)
 
-    expect(result.providers).toEqual({
-      clickzetta: {
-        options: {
-          apiKey: "ck-test",
-          baseURL: "https://gateway.clickzetta.com/gateway/v1",
-        },
-      },
+    expect(result.providers.clickzetta.options).toEqual({
+      apiKey: "ck-test",
+      baseURL: "https://gateway.clickzetta.com/gateway/v1",
     })
+    expect(result.providers.clickzetta.models?.["deepseek/deepseek-v4-pro"]).toBeDefined()
     expect(result.defaultModel).toBe("clickzetta/deepseek/deepseek-v4-pro")
     expect(result.entries).toEqual([
       {
@@ -83,7 +81,7 @@ base_url = "https://api.anthropic.com"
 `)
 
     expect(result.providers).toEqual({
-      "openai-compatible": {
+      "prod-openai": {
         options: {
           apiKey: "sk-prod",
           baseURL: "https://prod.example.com/v1",
@@ -104,15 +102,66 @@ base_url = "https://api.anthropic.com"
           },
         },
       },
-      anthropic: {
+      "dev-openai": {
+        name: "dev-openai",
+        options: {
+          apiKey: "sk-dev",
+          baseURL: "https://dev.example.com/v1",
+        },
+      },
+      "my-claude": {
+        name: "my-claude",
         options: {
           apiKey: "sk-ant",
           baseURL: "https://api.anthropic.com/v1",
         },
       },
     })
-    expect(result.defaultModel).toBe("openai-compatible/gpt-5")
+    expect(result.defaultModel).toBe("prod-openai/gpt-5")
     expect(result.warnings).toEqual([])
+  })
+
+  test("registers duplicate clickzetta llm entries as distinct runtime providers", () => {
+    const result = parseProfilesToml(`
+default_llm = "team-a"
+
+[llm.team-a]
+provider = "clickzetta"
+api_key = "ck-team-a"
+base_url = "https://team-a.example.com"
+model = "deepseek/deepseek-v4-pro"
+
+[llm.team-b]
+provider = "clickzetta"
+api_key = "ck-team-b"
+base_url = "https://team-b.example.com"
+model = "deepseek/deepseek-v4-pro"
+`)
+
+    expect(Object.keys(result.providers).sort()).toEqual(["team-a", "team-b"])
+    expect(result.providers["team-a"].options).toEqual({
+      apiKey: "ck-team-a",
+      baseURL: "https://team-a.example.com/gateway/v1",
+    })
+    expect(result.providers["team-b"].options).toEqual({
+      apiKey: "ck-team-b",
+      baseURL: "https://team-b.example.com/gateway/v1",
+    })
+    expect(result.providers["team-a"].models?.["deepseek/deepseek-v4-pro"]).toBeDefined()
+    expect(result.providers["team-b"].models?.["deepseek/deepseek-v4-pro"]).toBeDefined()
+    expect(result.defaultModel).toBe("team-a/deepseek/deepseek-v4-pro")
+    expect(result.entries).toEqual([
+      {
+        name: "team-a",
+        provider: "clickzetta",
+        model: "deepseek/deepseek-v4-pro",
+      },
+      {
+        name: "team-b",
+        provider: "clickzetta",
+        model: "deepseek/deepseek-v4-pro",
+      },
+    ])
   })
 
   test("bridges selected openai-compatible entry into a runnable provider model", () => {
@@ -126,7 +175,7 @@ base_url = "https://codzen.ai/v1"
 model = "glm-5.1"
 `)
 
-    expect(result.providers["openai-compatible"]).toEqual({
+    expect(result.providers.codzen).toEqual({
       options: {
         apiKey: "sk-codzen",
         baseURL: "https://codzen.ai/v1",
@@ -147,7 +196,7 @@ model = "glm-5.1"
         },
       },
     })
-    expect(result.defaultModel).toBe("openai-compatible/glm-5.1")
+    expect(result.defaultModel).toBe("codzen/glm-5.1")
   })
 
   test("does not derive a default model when default_llm has no model", () => {
@@ -161,6 +210,43 @@ api_key = "sk-ant"
 
     expect(result.defaultModel).toBeUndefined()
     expect(result.warnings).toEqual([])
+  })
+
+  test("adds a UI-provided LLM entry and makes it default", () => {
+    const data = parseToml(`
+default_llm = "clickzetta"
+
+[llm.clickzetta]
+provider = "clickzetta"
+api_key = "ck-old"
+base_url = "https://gateway.clickzetta.com"
+`) as Record<string, unknown>
+
+    const result = addLlmEntry(data, {
+      provider: "openai-compatible",
+      apiKey: "sk-user",
+      baseUrl: "https://models.example.com",
+      use: true,
+    })
+
+    expect(result).toEqual({
+      name: "openai-compatible",
+      model: "gpt-4.1-mini",
+      provider: "openai-compatible",
+    })
+    expect(data.default_llm).toBe("openai-compatible")
+    expect(data.llm).toMatchObject({
+      clickzetta: {
+        provider: "clickzetta",
+        api_key: "ck-old",
+      },
+      "openai-compatible": {
+        provider: "openai-compatible",
+        api_key: "sk-user",
+        base_url: "https://models.example.com/v1",
+        model: "gpt-4.1-mini",
+      },
+    })
   })
 
 })

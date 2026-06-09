@@ -47,6 +47,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       provider_auth: Record<string, ProviderAuthMethod[]>
       llm_entries: Array<{ name: string; provider: string; model?: string }>
       default_llm_entry: string | undefined
+      requested_model: { providerID: string; modelID: string } | undefined
       agent: Agent[]
       command: Command[]
       permission: {
@@ -91,6 +92,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       provider_auth: {},
       llm_entries: [],
       default_llm_entry: undefined,
+      requested_model: undefined,
       config: {},
       status: "loading",
       agent: [],
@@ -124,6 +126,20 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         case "server.instance.disposed":
           void bootstrap()
           break
+        case "tui.model.set": {
+          setStore("requested_model", { providerID: event.properties.providerID, modelID: event.properties.modelID })
+          break
+        }
+        case "config.providers.changed": {
+          void sdk.client.config.providers({ workspace: syncedWorkspace }, { throwOnError: true }).then((x) => {
+            const providers = x.data!
+            setStore("provider", reconcile(providers.providers))
+            setStore("provider_default", reconcile(providers.default))
+            setStore("llm_entries", reconcile((providers as any).entries ?? []))
+            setStore("default_llm_entry", (providers as any).defaultEntry)
+          })
+          break
+        }
         case "permission.replied": {
           const requests = store.permission[event.properties.sessionID]
           if (!requests) break

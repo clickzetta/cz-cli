@@ -46,4 +46,11 @@ export const TuiEvent = {
       sessionID: z.string().startsWith("ses").describe("Session ID to navigate to"),
     }),
   ),
+  ModelSet: BusEvent.define(
+    "tui.model.set",
+    z.object({
+      providerID: z.string(),
+      modelID: z.string(),
+    }),
+  ),
 }

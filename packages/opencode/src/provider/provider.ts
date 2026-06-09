@@ -27,12 +27,53 @@ import { AppFileSystem } from "@opencode-ai/shared/filesystem"
 import { isRecord } from "@/util/record"
 import { withStatics } from "@/util/schema"
 import { currentTraceparent } from "@/util/traceparent"
+import { recordRawProviderRequest } from "@/plugin/otel/context"
 
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
 import { resolveDefaultModel, type ModelRef } from "./model-resolution"
 
 const log = Log.create({ service: "provider" })
+
+function rawRequestHeaders(headers: Headers) {
+  return Object.fromEntries(
+    [...headers.entries()].map(([key, value]) => [
+      key,
+      /authorization|cookie|token|secret|api[-_]?key/i.test(key) ? "[redacted]" : value,
+    ]),
+  )
+}
+
+function rawRequestUrl(input: RequestInfo | URL) {
+  if (input instanceof Request) return input.url
+  return String(input)
+}
+
+function rawRequestMethod(input: RequestInfo | URL, init?: BunFetchRequestInit) {
+  if (init?.method) return init.method
+  if (input instanceof Request) return input.method
+  return "GET"
+}
+
+function rawRequestHeadersFrom(input: RequestInfo | URL, init?: BunFetchRequestInit) {
+  const headers = new Headers(input instanceof Request ? input.headers : undefined)
+  new Headers(init?.headers).forEach((value, key) => headers.set(key, value))
+  return headers
+}
+
+function rawRequestBody(body: unknown) {
+  if (typeof body === "string") {
+    return { body, bodyBase64: Buffer.from(body).toString("base64"), bytes: Buffer.byteLength(body) }
+  }
+  if (body instanceof Uint8Array) {
+    return { bodyBase64: Buffer.from(body).toString("base64"), bytes: body.byteLength }
+  }
+  if (body instanceof ArrayBuffer) {
+    return { bodyBase64: Buffer.from(body).toString("base64"), bytes: body.byteLength }
+  }
+  if (body === undefined || body === null) return {}
+  return { body: String(body), bodyBase64: Buffer.from(String(body)).toString("base64"), bytes: Buffer.byteLength(String(body)) }
+}
 
 function shouldUseCopilotResponsesApi(modelID: string): boolean {
   const match = /^gpt-(\d+)/.exec(modelID)
@@ -1556,7 +1597,7 @@ const layer: Layer.Layer<
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
           const fetchFn = customFetch ?? fetch
           const opts = init ?? {}
-          if (model.providerID === "clickzetta") {
+          if (provider?.options["_providerType"] === "clickzetta") {
             const headers = new Headers(opts.headers)
             headers.set("traceparent", currentTraceparent())
             opts.headers = headers
@@ -1591,6 +1632,15 @@ const layer: Layer.Layer<
               opts.body = JSON.stringify(body)
             }
           }
+
+          recordRawProviderRequest({
+            providerID: model.providerID,
+            modelID: model.id,
+            url: rawRequestUrl(input),
+            method: rawRequestMethod(input, opts),
+            headers: rawRequestHeaders(rawRequestHeadersFrom(input, opts)),
+            ...rawRequestBody(opts.body),
+          })
 
           const res = await fetchFn(input, {
             ...opts,

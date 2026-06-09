@@ -7,14 +7,15 @@ import {
 } from "../../../../src/cli/cmd/tui/ui/dialog-select-identity"
 
 describe("dialog select identity", () => {
-  const options = [
+  type ModelValue = { providerID: string; modelID: string; llmEntry?: string }
+  const options: Array<{ key: string; value: ModelValue }> = [
     {
       key: "llm:clickzetta:clickzetta:deepseek/deepseek-v4-pro",
       value: { providerID: "clickzetta", modelID: "deepseek/deepseek-v4-pro" },
     },
     {
       key: "llm:clickzetta-all:clickzetta:deepseek/deepseek-v4-pro",
-      value: { providerID: "clickzetta", modelID: "deepseek/deepseek-v4-pro" },
+      value: { providerID: "clickzetta", modelID: "deepseek/deepseek-v4-pro", llmEntry: "clickzetta-all" },
     },
     {
       key: "llm:test001:clickzetta:qwen/qwen3.5-plus",
@@ -48,7 +49,7 @@ describe("dialog select identity", () => {
     ).toBe(false)
     expect(
       isDialogSelectOptionCurrent(options[1], {
-        current: { providerID: "clickzetta", modelID: "deepseek/deepseek-v4-pro" },
+        current: { providerID: "clickzetta", modelID: "deepseek/deepseek-v4-pro", llmEntry: "clickzetta-all" },
         currentKey: "llm:clickzetta-all:clickzetta:deepseek/deepseek-v4-pro",
       }),
     ).toBe(true)

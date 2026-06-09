@@ -43,8 +43,29 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     return store.answers[store.tab]?.includes(value) ?? false
   })
 
+  function effectiveAnswer(index: number): string {
+    const answered = store.answers[index]?.join(", ")
+    if (answered) return answered
+    return questions()[index]?.defaultValue ?? ""
+  }
+
   function submit() {
-    const answers = questions().map((_, i) => store.answers[i] ?? [])
+    // Fill default values for unanswered questions that have one.
+    // Block submission if a required question has no answer and no default.
+    const qs = questions()
+    for (let i = 0; i < qs.length; i++) {
+      const q = qs[i]!
+      const value = effectiveAnswer(i)
+      if (!value && q.required) {
+        selectTab(i)
+        return
+      }
+    }
+    const answers = qs.map((q, i) => {
+      const answered = store.answers[i] ?? []
+      if (answered.length > 0) return answered
+      return q.defaultValue ? [q.defaultValue] : []
+    })
     void sdk.client.question.reply({
       requestID: props.request.id,
       answers,
@@ -415,14 +436,20 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
           </box>
           <For each={questions()}>
             {(q, index) => {
-              const value = () => store.answers[index()]?.join(", ") ?? ""
+              const value = () => effectiveAnswer(index())
               const answered = () => Boolean(value())
+              const isRequired = () => q.required === true
+              const unansweredRequired = () => isRequired() && !answered()
               return (
                 <box paddingLeft={1}>
                   <text>
                     <span style={{ fg: theme.textMuted }}>{q.header}:</span>{" "}
-                    <span style={{ fg: answered() ? theme.text : theme.error }}>
-                      {answered() ? value() : "(not answered)"}
+                    <span style={{ fg: unansweredRequired() ? theme.error : answered() ? theme.text : theme.textMuted }}>
+                      {unansweredRequired()
+                        ? "(required — press enter to fill)"
+                        : answered()
+                          ? value()
+                          : "(blank)"}
                     </span>
                   </text>
                 </box>

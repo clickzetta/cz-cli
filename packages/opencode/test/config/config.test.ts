@@ -338,10 +338,10 @@ test("bridges default_llm openai-compatible entry into config provider and model
       directory: tmp.path,
       fn: async () => {
         const config = await load()
-        expect(config.model).toBe("openai-compatible/glm-5.1")
-        expect(config.provider?.["openai-compatible"]?.options?.apiKey).toBe("sk-codzen")
-        expect(config.provider?.["openai-compatible"]?.options?.baseURL).toBe("https://codzen.ai/v1")
-        expect(config.provider?.["openai-compatible"]?.models?.["glm-5.1"]?.name).toBe("glm-5.1")
+        expect(config.model).toBe("codzen/glm-5.1")
+        expect(config.provider?.codzen?.options?.apiKey).toBe("sk-codzen")
+        expect(config.provider?.codzen?.options?.baseURL).toBe("https://codzen.ai/v1")
+        expect(config.provider?.codzen?.models?.["glm-5.1"]?.name).toBe("glm-5.1")
       },
     })
   } finally {

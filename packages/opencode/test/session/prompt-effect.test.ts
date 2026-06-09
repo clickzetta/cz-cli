@@ -597,6 +597,42 @@ it.live("job performance tool result is sent to the next model turn", () =>
   ),
 )
 
+it.live("loop sends tool result history to the next model request", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Tool history",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "hello" }],
+      })
+      yield* llm.tool("glob", { pattern: "**/*.txt" })
+      yield* llm.text("second")
+
+      yield* prompt.loop({ sessionID: session.id })
+
+      const hits = yield* llm.hits
+      expect(hits).toHaveLength(2)
+      const messages = hits[1].body.messages
+      expect(Array.isArray(messages)).toBe(true)
+      if (!Array.isArray(messages)) return
+
+      const assistant = messages.find((message) => message.role === "assistant" && Array.isArray(message.tool_calls))
+      const result = messages.find((message) => message.role === "tool")
+      expect(assistant?.tool_calls?.[0]?.function?.name).toBe("glob")
+      expect(assistant?.tool_calls?.[0]?.id).toBe("call_1")
+      expect(result?.tool_call_id).toBe("call_1")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("glob tool keeps instance context during prompt runs", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

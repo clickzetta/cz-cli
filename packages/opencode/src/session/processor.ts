@@ -24,14 +24,20 @@ import { isRecord } from "@/util/record"
 import { Database } from "@/storage"
 import { PartTable } from "./session.sql"
 import { eq, desc } from "drizzle-orm"
+import { Event as ServerEvent } from "@/server/event"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 import {
-  CLICKZETTA_ROTATION_CANCEL_LABEL,
-  CLICKZETTA_ROTATION_CONFIRM_LABEL,
-  CLICKZETTA_ROTATION_HEADER,
-  CLICKZETTA_ROTATION_PROMPT,
-  isClickzettaQuotaExhausted,
   rotateClickzettaLlm,
 } from "@clickzetta/cli/llm/clickzetta-rotation"
+import {
+  AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL,
+  clickzettaQuotaModelQuestions,
+  clickzettaQuotaNameConflictQuestion,
+  clickzettaQuotaProviderQuestion,
+  clickzettaQuotaRecoveryQuestion,
+  isClickzettaAiGatewayQuotaExhausted,
+} from "@/config/llm-quota-recovery"
+import { addLlmEntry, saveLlmEntry } from "@/config/profiles-llm"
 
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
@@ -130,33 +136,60 @@ export const layer: Layer.Layer<
     const status = yield* SessionStatus.Service
     const provider = yield* ProviderRuntime.Service
 
-    const approveRotation = Effect.fn("SessionProcessor.approveRotation")(function* (input: {
-      sessionID: SessionID
-      mode: "tui" | "auto" | "never"
-    }) {
-      if (input.mode === "auto") return true
-      if (input.mode === "never") return false
-      const answers = yield* question.ask({
-        sessionID: input.sessionID,
-        questions: [
-          {
-            header: CLICKZETTA_ROTATION_HEADER,
-            question: CLICKZETTA_ROTATION_PROMPT,
-            custom: false,
-            options: [
-              {
-                label: CLICKZETTA_ROTATION_CONFIRM_LABEL,
-                description: "Create a new virtual key and continue the conversation",
-              },
-              {
-                label: CLICKZETTA_ROTATION_CANCEL_LABEL,
-                description: "Keep the current key and stop this request",
-              },
-            ],
-          },
-        ],
+    const configureCustomModel = Effect.fn("SessionProcessor.configureCustomModel")(function* (sessionID: SessionID) {
+      // Step 1: select provider
+      const providerAnswers = yield* question.ask({
+        sessionID,
+        questions: [clickzettaQuotaProviderQuestion()],
       })
-      return answers[0]?.[0] === CLICKZETTA_ROTATION_CONFIRM_LABEL
+      const providerAnswer = providerAnswers[0]?.[0]?.trim()
+      if (!providerAnswer) return undefined
+
+      // Step 2: model/baseURL/apiKey/name — questions vary by provider
+      const detailAnswers = yield* question.ask({
+        sessionID,
+        questions: clickzettaQuotaModelQuestions(providerAnswer),
+      })
+
+      const questions = clickzettaQuotaModelQuestions(providerAnswer)
+      const modelIdx = questions.findIndex((q) => q.header === "Model")
+      const baseUrlIdx = questions.findIndex((q) => q.header === "Base URL")
+      const apiKeyIdx = questions.findIndex((q) => q.header === "API Key")
+      const nameIdx = questions.findIndex((q) => q.header === "Name")
+
+      const modelAnswer = modelIdx >= 0 ? detailAnswers[modelIdx]?.[0]?.trim() : undefined
+      const baseUrlAnswer = baseUrlIdx >= 0 ? detailAnswers[baseUrlIdx]?.[0]?.trim() : undefined
+      const apiKeyAnswer = apiKeyIdx >= 0 ? detailAnswers[apiKeyIdx]?.[0]?.trim() : undefined
+      const nameAnswer = nameIdx >= 0 ? (detailAnswers[nameIdx]?.[0]?.trim() || providerAnswer) : providerAnswer
+
+      if (!apiKeyAnswer) return undefined
+
+      // Check name conflict — if it already exists, ask for a new name
+      let entryName = nameAnswer
+      const cfg = yield* config.get()
+      const existingNames = new Set((cfg.llm_entries ?? []).map((e: { name: string }) => e.name))
+      while (existingNames.has(entryName)) {
+        const retryAnswers = yield* question.ask({
+          sessionID,
+          questions: [clickzettaQuotaNameConflictQuestion(entryName)],
+        })
+        const retryName = retryAnswers[0]?.[0]?.trim()
+        if (!retryName) return undefined
+        entryName = retryName
+      }
+
+      const entry = saveLlmEntry({
+        name: entryName,
+        provider: providerAnswer,
+        model: modelAnswer,
+        baseUrl: baseUrlAnswer,
+        apiKey: apiKeyAnswer,
+        use: true,
+      })
+      yield* config.invalidateCache()
+      yield* provider.invalidate()
+      yield* bus.publish(ServerEvent.ProvidersChanged, {})
+      return { message: `[llm.${entry.name}] configured, retrying with your model.`, entry }
     })
 
     const recoverRotation = Effect.fn("SessionProcessor.recoverRotation")(function* (input: {
@@ -164,25 +197,36 @@ export const layer: Layer.Layer<
       providerID: string
       error: MessageV2.APIError
       raw: unknown
-      rotated: { done: boolean }
+      rotated: { done: boolean; configured?: boolean }
     }) {
       if (input.rotated.done) {
-        if (input.raw instanceof Error) {
+        if (!input.rotated.configured && input.raw instanceof Error) {
           input.raw.message = `Key rotated successfully, but LLM request failed: ${input.raw.message}. Please check base_url connectivity.`
         }
         return undefined
       }
-      const exhausted = isClickzettaQuotaExhausted({
-        provider: input.providerID,
-        status: input.error.data.statusCode,
-        detail: input.error.data.responseBody ?? input.error.data.message,
+      const cfg = yield* config.get()
+      const entryProviderType = cfg.llm_entries?.find((e) => e.name === input.providerID)?.provider
+      const exhausted = isClickzettaAiGatewayQuotaExhausted({
+        providerType: entryProviderType,
+        statusCode: input.error.data.statusCode,
+        message: input.error.data.message,
+        responseBody: input.error.data.responseBody,
       })
       if (!exhausted) return undefined
-      const mode: "tui" | "auto" = process.stdout.isTTY ? "tui" : "auto"
-      const approved = yield* approveRotation({ sessionID: input.sessionID, mode }).pipe(
-        Effect.catchTag("QuestionRejectedError", () => Effect.succeed(false)),
-      )
-      if (!approved) return undefined
+      if (process.stdout.isTTY) {
+        const answers = yield* question.ask({
+          sessionID: input.sessionID,
+          questions: [clickzettaQuotaRecoveryQuestion()],
+        })
+        if (answers?.[0]?.[0] !== AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL) return undefined
+        const result = yield* configureCustomModel(input.sessionID)
+        if (result) {
+          input.rotated.done = true
+          input.rotated.configured = true
+        }
+        return result
+      }
       const result = yield* Effect.tryPromise(() =>
         rotateClickzettaLlm({ interactive: false }),
       ).pipe(Effect.orElseSucceed(() => undefined))
@@ -737,7 +781,7 @@ export const layer: Layer.Layer<
         let activeStreamInput = prepared.value
         ctx.telemetryInputMessages = activeStreamInput.telemetry?.inputMessages
         ctx.telemetrySystemInstructions = activeStreamInput.telemetry?.systemInstructions
-        const rotated = { done: false }
+        const rotated = { done: false, configured: false }
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
@@ -782,10 +826,22 @@ export const layer: Layer.Layer<
                       error,
                       raw,
                       rotated,
-                    })
+                    }).pipe(Effect.catchTag("QuestionRejectedError", () => Effect.succeed(undefined)))
                     if (!recovered) return undefined
-                    const nextModel = yield* provider.getModel(activeStreamInput.model.providerID, activeStreamInput.model.id)
+                    const cfg = yield* config.get()
+                    const providerID = (cfg.default_llm_entry ?? activeStreamInput.model.providerID) as any
+                    const newEntry = typeof recovered === "object" && "entry" in recovered ? recovered.entry : undefined
+                    const modelID = (newEntry?.model ?? activeStreamInput.model.id) as any
+                    const nextModel = yield* Effect.exit(provider.getModel(providerID, modelID)).pipe(
+                      Effect.map((exit) => Exit.isSuccess(exit) ? exit.value : undefined),
+                    )
+                    if (!nextModel) return undefined
+                    const message = typeof recovered === "object" && "message" in recovered ? recovered.message : recovered
                     ctx.model = nextModel
+                    yield* bus.publish(TuiEvent.ModelSet, {
+                      providerID: nextModel.providerID,
+                      modelID: nextModel.id,
+                    }).pipe(Effect.ignore)
                     const refreshed = yield* Effect.exit(
                       llm.prepare({
                         ...unprepareStreamInput(activeStreamInput),
@@ -796,7 +852,7 @@ export const layer: Layer.Layer<
                     activeStreamInput = refreshed.value
                     ctx.telemetryInputMessages = activeStreamInput.telemetry?.inputMessages
                     ctx.telemetrySystemInstructions = activeStreamInput.telemetry?.systemInstructions
-                    return recovered
+                    return message
                   }),
               }),
             ),

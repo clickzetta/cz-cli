@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, expect, test } from "bun:test"
-import { context, trace } from "@opentelemetry/api"
+import { context, SpanKind, trace } from "@opentelemetry/api"
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks"
 import { SeverityNumber } from "@opentelemetry/api-logs"
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { handleEvent, initHandlers, shutdown } from "../../src/plugin/otel/handlers"
+import { recordRawProviderRequest } from "../../src/plugin/otel/context"
 
 const records: Array<Record<string, unknown>> = []
 const exporter = new InMemorySpanExporter()
@@ -137,10 +138,12 @@ test("v2.step.started span uses full gen_ai input messages and system instructio
   })
   const span = exporter.getFinishedSpans().find((item) => item.name === "chat openai/gpt-5")
   expect(span).toBeDefined()
+  expect(span?.kind).toBe(SpanKind.CLIENT)
   expect(span?.attributes).toMatchObject({
     "gen_ai.operation.name": "chat",
     "gen_ai.provider.name": "openai",
     "gen_ai.request.model": "openai/gpt-5",
+    "gen_ai.conversation.id": "ses-step-1",
     "opencode.session.id": "ses-step-1",
     "gen_ai.input.messages": JSON.stringify([
       { role: "system", content: "workspace rules" },
@@ -148,6 +151,129 @@ test("v2.step.started span uses full gen_ai input messages and system instructio
     ]),
     "gen_ai.system_instructions": "workspace rules",
   })
+})
+
+test("v2.step.started span preserves gen_ai content beyond 32KB", () => {
+  const longSystem = "workspace rules ".repeat(3_000)
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "v2.step.started",
+    properties: {
+      sessionID: "ses-step-long",
+      messageID: "msg-step-long",
+      stepId: "step-long",
+      model: "openai/gpt-5",
+      providerID: "openai",
+      inputMessages: JSON.stringify([{ role: "system", parts: [{ type: "text", content: longSystem }] }]),
+      systemInstructions: longSystem,
+    },
+  })
+  handleEvent({
+    type: "v2.step.ended",
+    properties: {
+      sessionID: "ses-step-long",
+      messageID: "msg-step-long",
+      stepId: "step-long",
+      model: "openai/gpt-5",
+      providerID: "openai",
+      finishReason: "stop",
+      responseText: longSystem,
+      tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0.001,
+      durationMs: 10,
+    },
+  })
+  const span = exporter.getFinishedSpans().find((item) => item.name === "chat openai/gpt-5")
+  expect(span?.attributes["gen_ai.input.messages"]).toContain(longSystem)
+  expect(span?.attributes["gen_ai.system_instructions"]).toBe(longSystem)
+  expect(span?.attributes["gen_ai.output.messages"]).toContain(longSystem)
+  expect(String(span?.attributes["gen_ai.input.messages"])).not.toContain("[truncated]")
+  expect(String(span?.attributes["gen_ai.output.messages"])).not.toContain("[truncated]")
+})
+
+test("llm span records raw request only when content tracing is enabled", () => {
+  initHandlers(makeLogger())
+  handleEvent({
+    type: "v2.step.started",
+    properties: {
+      sessionID: "ses-raw-request",
+      messageID: "msg-raw-request",
+      stepId: "step-raw-request",
+      model: "deepseek/deepseek-v4-pro",
+      providerID: "clickzetta",
+    },
+  })
+  recordRawProviderRequest({
+    providerID: "clickzetta",
+    modelID: "deepseek/deepseek-v4-pro",
+    url: "https://example.test/chat/completions",
+    method: "POST",
+    headers: { authorization: "[redacted]", "content-type": "application/json" },
+    body: '{"messages":[{"role":"user","content":"hello"}]}',
+    bodyBase64: "request-body-base64",
+    bytes: 48,
+  })
+  handleEvent({
+    type: "v2.step.ended",
+    properties: {
+      sessionID: "ses-raw-request",
+      messageID: "msg-raw-request",
+      stepId: "step-raw-request",
+      model: "deepseek/deepseek-v4-pro",
+      providerID: "clickzetta",
+      finishReason: "stop",
+      tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0.001,
+      durationMs: 10,
+    },
+  })
+  const span = exporter.getFinishedSpans().find((item) => item.name === "chat deepseek/deepseek-v4-pro")
+  expect(span?.attributes["clickzetta.llm.raw_request.url"]).toBe("https://example.test/chat/completions")
+  expect(span?.attributes["clickzetta.llm.raw_request.method"]).toBe("POST")
+  expect(span?.attributes["clickzetta.llm.raw_request.headers"]).toContain('"authorization":"[redacted]"')
+  expect(span?.attributes["clickzetta.llm.raw_request.body"]).toContain('"messages"')
+  expect(span?.attributes["clickzetta.llm.raw_request.body_base64"]).toBe("request-body-base64")
+  expect(span?.attributes["clickzetta.llm.raw_request.bytes"]).toBe(48)
+})
+
+test("raw request capture respects recordContent=false", () => {
+  initHandlers(makeLogger(), false)
+  handleEvent({
+    type: "v2.step.started",
+    properties: {
+      sessionID: "ses-raw-request-off",
+      messageID: "msg-raw-request-off",
+      stepId: "step-raw-request-off",
+      model: "deepseek/deepseek-v4-pro",
+      providerID: "clickzetta",
+    },
+  })
+  recordRawProviderRequest({
+    providerID: "clickzetta",
+    modelID: "deepseek/deepseek-v4-pro",
+    url: "https://example.test/chat/completions",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: '{"secret":"prompt"}',
+    bodyBase64: "secret",
+    bytes: 19,
+  })
+  handleEvent({
+    type: "v2.step.ended",
+    properties: {
+      sessionID: "ses-raw-request-off",
+      messageID: "msg-raw-request-off",
+      stepId: "step-raw-request-off",
+      model: "deepseek/deepseek-v4-pro",
+      providerID: "clickzetta",
+      finishReason: "stop",
+      tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0.001,
+      durationMs: 10,
+    },
+  })
+  const span = exporter.getFinishedSpans().find((item) => item.name === "chat deepseek/deepseek-v4-pro")
+  expect(span?.attributes["clickzetta.llm.raw_request.body"]).toBeUndefined()
 })
 
 test("session.preflight.finished emits no-op outcome log", () => {
