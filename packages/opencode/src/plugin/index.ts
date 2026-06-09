@@ -128,7 +128,7 @@ async function getInternalPlugins() {
   const plugins = [...CORE_INTERNAL_PLUGINS]
   if (Flag.CLICKZETTA_DISABLE_DEFAULT_PLUGINS) return plugins
   plugins.push(OtelPlugin)
-  LangfuseTracing.init()
+  await LangfuseTracing.init()
   return plugins
 }
 

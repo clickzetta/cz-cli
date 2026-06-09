@@ -11,13 +11,13 @@ export function isEnabled() {
   return enabled
 }
 
-export function init() {
+export async function init() {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY
   const secretKey = process.env.LANGFUSE_SECRET_KEY
   if (!publicKey || !secretKey) return
 
   try {
-    const { Langfuse } = require("langfuse")
+    const { Langfuse } = await import("langfuse")
     langfuseInstance = new Langfuse({
       publicKey,
       secretKey,
