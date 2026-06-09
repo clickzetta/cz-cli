@@ -5,6 +5,18 @@
 - When making git commits, always append the following co-author trailer (as a separate `-m` paragraph):
   `Co-Authored-By: cz-cli <noreply@clickzetta.com>`
 
+## Development Workflow: TDD + OpenSpec
+
+This project uses **spec-driven development** (OpenSpec) with TDD:
+
+1. **Before any change**, read `openspec/config.yaml` to understand the spec schema and project context.
+2. **Check existing specs** in `openspec/specs/` for relevant contracts.
+3. **Update or create specs first** — any behavior change must have its contract updated in `openspec/specs/<topic>/spec.md` before or alongside the implementation.
+4. **If no spec exists** for the area being changed, create a new one under `openspec/specs/<topic>/spec.md` following the existing format (需求 + 场景 with WHEN/THEN).
+5. **Write/update tests** that verify the spec scenarios.
+6. **Implement** the change to pass the tests and satisfy the spec.
+7. **Commit spec + code + tests together** — specs are not separate PRs.
+
 ## Style Guide
 
 ### General Principles
