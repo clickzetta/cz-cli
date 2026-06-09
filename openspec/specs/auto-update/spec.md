@@ -121,8 +121,8 @@
 
 #### 场景：install.sh 同样事前清除
 
-- **WHEN** `scripts/install.sh` 运行且 `command -v cz-cli` 指向非 `$INSTALL_DIR` 的路径时
-- **THEN** 若为 npm/bun 安装则执行对应 `uninstall -g`，否则 `rm -f`，确保安装后 `which` 指向新 binary
+- **WHEN** `scripts/install.sh` 运行且 `which -a cz-cli` 包含非 `$INSTALL_DIR` 的路径时
+- **THEN** 对每个遮蔽 binary，若为 npm/bun 安装则执行对应 `uninstall -g`，否则 `rm -f`，确保安装后 `which` 指向新 binary
 
 #### 场景：check_version 仅对自管路径生效
 

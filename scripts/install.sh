@@ -430,10 +430,13 @@ remove_shadowing_binary() {
 }
 
 if command -v cz-cli >/dev/null 2>&1; then
-    existing_which=$(command -v cz-cli)
-    if [ "$existing_which" != "${INSTALL_DIR}/${APP}" ]; then
-        remove_shadowing_binary "$existing_which"
-    fi
+    # Remove ALL cz-cli binaries that are not in our install dir
+    while IFS= read -r existing_bin; do
+        [ -z "$existing_bin" ] && continue
+        if [ "$existing_bin" != "${INSTALL_DIR}/${APP}" ]; then
+            remove_shadowing_binary "$existing_bin"
+        fi
+    done <<< "$(which -a cz-cli 2>/dev/null)"
 fi
 
 if [ -n "$binary_path" ]; then
