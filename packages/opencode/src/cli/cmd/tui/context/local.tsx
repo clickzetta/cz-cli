@@ -402,6 +402,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     createEffect(() => {
       const requested = sync.data.requested_model
       if (!requested) return
+      // The provider catalog may lag behind a server-driven switch (e.g. a freshly
+      // rotated key). Wait until the entry is known instead of flashing a spurious
+      // "not valid" toast; this effect re-runs when sync.data.provider updates.
+      if (!isModelValid(requested)) return
       model.set({ providerID: requested.providerID, modelID: requested.modelID })
     })
 

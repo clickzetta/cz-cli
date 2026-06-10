@@ -17,6 +17,7 @@ import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import { Provider as ProviderRuntime } from "@/provider"
 import type { Provider } from "@/provider"
+import { Event as ServerEvent } from "@/server/event"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
 import { Log } from "@/util"
@@ -178,6 +179,7 @@ export const layer: Layer.Layer<
       input.rotated.done = true
       yield* config.invalidateCache()
       yield* provider.invalidate()
+      yield* bus.publish(ServerEvent.ProvidersChanged, {})
       return "Rotated exhausted ClickZetta key, retrying."
     })
 
