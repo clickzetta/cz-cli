@@ -1,4 +1,11 @@
-import { isClickzettaFreeQuotaErrorDetail, isClickzettaVirtualKeyQuotaErrorDetail } from "@clickzetta/cli/llm/clickzetta-rotation"
+import {
+  CLICKZETTA_ROTATION_CANCEL_LABEL,
+  CLICKZETTA_ROTATION_CONFIRM_LABEL,
+  CLICKZETTA_ROTATION_HEADER,
+  CLICKZETTA_ROTATION_PROMPT,
+  isClickzettaFreeQuotaErrorDetail,
+  isClickzettaVirtualKeyQuotaErrorDetail,
+} from "@clickzetta/cli/llm/clickzetta-rotation"
 
 export const AI_GATEWAY_QUOTA_URL = "https://aitoken.clickzetta.com/apikey"
 export const AI_GATEWAY_QUOTA_MESSAGE =
@@ -107,6 +114,24 @@ export function clickzettaQuotaRecoveryQuestion() {
       {
         label: AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL,
         description: "Close this prompt after updating quota, then send your request again.",
+      },
+    ],
+  }
+}
+
+export function clickzettaFreeQuotaRotationQuestion() {
+  return {
+    header: CLICKZETTA_ROTATION_HEADER,
+    question: CLICKZETTA_ROTATION_PROMPT,
+    custom: false,
+    options: [
+      {
+        label: CLICKZETTA_ROTATION_CONFIRM_LABEL,
+        description: "Create and switch to a new ClickZetta virtual key.",
+      },
+      {
+        label: CLICKZETTA_ROTATION_CANCEL_LABEL,
+        description: "Keep the current key and stop retrying.",
       },
     ],
   }

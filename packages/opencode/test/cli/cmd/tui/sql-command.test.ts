@@ -4,6 +4,7 @@ import {
   canInlineSql,
   buildSqlInlineCommand,
   buildSqlFileCommand,
+  buildSqlCommandPrefix,
 } from "../../../../src/cli/cmd/tui/component/prompt/sql-command"
 
 describe("parseSqlInput", () => {
@@ -49,6 +50,10 @@ describe("buildSqlInlineCommand", () => {
   test("single-quotes the SQL and forces table output", () => {
     expect(buildSqlInlineCommand("select 1")).toBe("cz-cli sql --format table 'select 1'")
   })
+
+  test("uses an explicit command prefix", () => {
+    expect(buildSqlInlineCommand("select 1", "/tmp/cz-cli-dev")).toBe("/tmp/cz-cli-dev sql --format table 'select 1'")
+  })
 })
 
 describe("buildSqlFileCommand", () => {
@@ -56,9 +61,29 @@ describe("buildSqlFileCommand", () => {
     expect(buildSqlFileCommand("/tmp/cz-cli-sql-1.sql")).toBe('cz-cli sql --format table --file "/tmp/cz-cli-sql-1.sql"')
   })
 
+  test("uses an explicit command prefix", () => {
+    expect(buildSqlFileCommand("/tmp/cz-cli-sql-1.sql", "/tmp/cz-cli-dev")).toBe('/tmp/cz-cli-dev sql --format table --file "/tmp/cz-cli-sql-1.sql"')
+  })
+
   test("normalizes windows backslashes to forward slashes", () => {
     expect(buildSqlFileCommand("C:\\Users\\John Doe\\Temp\\q.sql")).toBe(
       'cz-cli sql --format table --file "C:/Users/John Doe/Temp/q.sql"',
     )
+  })
+})
+
+describe("buildSqlCommandPrefix", () => {
+  test("uses the current Bun TypeScript entry in dev mode", () => {
+    expect(buildSqlCommandPrefix({
+      execPath: "/Users/yunqi/.bun/bin/bun",
+      argv: ["/Users/yunqi/.bun/bin/bun", "/repo/packages/opencode/src/index.ts", "tui"],
+    })).toBe('"/Users/yunqi/.bun/bin/bun" run --conditions=browser "/repo/packages/opencode/src/index.ts"')
+  })
+
+  test("uses the current binary path in binary mode", () => {
+    expect(buildSqlCommandPrefix({
+      execPath: "/Users/yunqi/.local/bin/cz-cli",
+      argv: ["/Users/yunqi/.local/bin/cz-cli", "/$bunfs/root/cz-cli", "tui"],
+    })).toBe('"/Users/yunqi/.local/bin/cz-cli"')
   })
 })

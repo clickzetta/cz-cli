@@ -24,20 +24,15 @@ import { isRecord } from "@/util/record"
 import { Database } from "@/storage"
 import { PartTable } from "./session.sql"
 import { eq, desc } from "drizzle-orm"
-import { Event as ServerEvent } from "@/server/event"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import {
+  CLICKZETTA_ROTATION_CONFIRM_LABEL,
   rotateClickzettaLlm,
 } from "@clickzetta/cli/llm/clickzetta-rotation"
 import {
-  AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL,
-  clickzettaQuotaModelQuestions,
-  clickzettaQuotaNameConflictQuestion,
-  clickzettaQuotaProviderQuestion,
-  clickzettaQuotaRecoveryQuestion,
+  clickzettaFreeQuotaRotationQuestion,
   isClickzettaAiGatewayQuotaExhausted,
 } from "@/config/llm-quota-recovery"
-import { addLlmEntry, saveLlmEntry } from "@/config/profiles-llm"
 
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
@@ -136,62 +131,6 @@ export const layer: Layer.Layer<
     const status = yield* SessionStatus.Service
     const provider = yield* ProviderRuntime.Service
 
-    const configureCustomModel = Effect.fn("SessionProcessor.configureCustomModel")(function* (sessionID: SessionID) {
-      // Step 1: select provider
-      const providerAnswers = yield* question.ask({
-        sessionID,
-        questions: [clickzettaQuotaProviderQuestion()],
-      })
-      const providerAnswer = providerAnswers[0]?.[0]?.trim()
-      if (!providerAnswer) return undefined
-
-      // Step 2: model/baseURL/apiKey/name — questions vary by provider
-      const detailAnswers = yield* question.ask({
-        sessionID,
-        questions: clickzettaQuotaModelQuestions(providerAnswer),
-      })
-
-      const questions = clickzettaQuotaModelQuestions(providerAnswer)
-      const modelIdx = questions.findIndex((q) => q.header === "Model")
-      const baseUrlIdx = questions.findIndex((q) => q.header === "Base URL")
-      const apiKeyIdx = questions.findIndex((q) => q.header === "API Key")
-      const nameIdx = questions.findIndex((q) => q.header === "Name")
-
-      const modelAnswer = modelIdx >= 0 ? detailAnswers[modelIdx]?.[0]?.trim() : undefined
-      const baseUrlAnswer = baseUrlIdx >= 0 ? detailAnswers[baseUrlIdx]?.[0]?.trim() : undefined
-      const apiKeyAnswer = apiKeyIdx >= 0 ? detailAnswers[apiKeyIdx]?.[0]?.trim() : undefined
-      const nameAnswer = nameIdx >= 0 ? (detailAnswers[nameIdx]?.[0]?.trim() || providerAnswer) : providerAnswer
-
-      if (!apiKeyAnswer) return undefined
-
-      // Check name conflict — if it already exists, ask for a new name
-      let entryName = nameAnswer
-      const cfg = yield* config.get()
-      const existingNames = new Set((cfg.llm_entries ?? []).map((e: { name: string }) => e.name))
-      while (existingNames.has(entryName)) {
-        const retryAnswers = yield* question.ask({
-          sessionID,
-          questions: [clickzettaQuotaNameConflictQuestion(entryName)],
-        })
-        const retryName = retryAnswers[0]?.[0]?.trim()
-        if (!retryName) return undefined
-        entryName = retryName
-      }
-
-      const entry = saveLlmEntry({
-        name: entryName,
-        provider: providerAnswer,
-        model: modelAnswer,
-        baseUrl: baseUrlAnswer,
-        apiKey: apiKeyAnswer,
-        use: true,
-      })
-      yield* config.invalidateCache()
-      yield* provider.invalidate()
-      yield* bus.publish(ServerEvent.ProvidersChanged, {})
-      return { message: `[llm.${entry.name}] configured, retrying with your model.`, entry }
-    })
-
     const recoverRotation = Effect.fn("SessionProcessor.recoverRotation")(function* (input: {
       sessionID: SessionID
       providerID: string
@@ -217,15 +156,9 @@ export const layer: Layer.Layer<
       if (process.stdout.isTTY) {
         const answers = yield* question.ask({
           sessionID: input.sessionID,
-          questions: [clickzettaQuotaRecoveryQuestion()],
+          questions: [clickzettaFreeQuotaRotationQuestion()],
         })
-        if (answers?.[0]?.[0] !== AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL) return undefined
-        const result = yield* configureCustomModel(input.sessionID)
-        if (result) {
-          input.rotated.done = true
-          input.rotated.configured = true
-        }
-        return result
+        if (answers?.[0]?.[0] !== CLICKZETTA_ROTATION_CONFIRM_LABEL) return undefined
       }
       const result = yield* Effect.tryPromise(() =>
         rotateClickzettaLlm({ interactive: false }),
@@ -833,13 +766,11 @@ export const layer: Layer.Layer<
                     if (!recovered) return undefined
                     const cfg = yield* config.get()
                     const providerID = (cfg.default_llm_entry ?? activeStreamInput.model.providerID) as any
-                    const newEntry = typeof recovered === "object" && "entry" in recovered ? recovered.entry : undefined
-                    const modelID = (newEntry?.model ?? activeStreamInput.model.id) as any
+                    const modelID = activeStreamInput.model.id as any
                     const nextModel = yield* Effect.exit(provider.getModel(providerID, modelID)).pipe(
                       Effect.map((exit) => Exit.isSuccess(exit) ? exit.value : undefined),
                     )
                     if (!nextModel) return undefined
-                    const message = typeof recovered === "object" && "message" in recovered ? recovered.message : recovered
                     ctx.model = nextModel
                     yield* bus.publish(TuiEvent.ModelSet, {
                       providerID: nextModel.providerID,
@@ -855,7 +786,7 @@ export const layer: Layer.Layer<
                     activeStreamInput = refreshed.value
                     ctx.telemetryInputMessages = activeStreamInput.telemetry?.inputMessages
                     ctx.telemetrySystemInstructions = activeStreamInput.telemetry?.systemInstructions
-                    return message
+                    return recovered
                   }),
               }),
             ),

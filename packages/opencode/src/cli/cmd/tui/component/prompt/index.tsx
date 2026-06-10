@@ -5,7 +5,7 @@ import path from "path"
 import os from "os"
 import { unlink } from "fs/promises"
 import { fileURLToPath } from "url"
-import { parseSqlInput, canInlineSql, buildSqlInlineCommand, buildSqlFileCommand } from "./sql-command"
+import { parseSqlInput, canInlineSql, buildSqlInlineCommand, buildSqlFileCommand, buildSqlCommandPrefix } from "./sql-command"
 import { Filesystem } from "@/util"
 import { useLocal } from "@tui/context/local"
 import { useTheme } from "@tui/context/theme"
@@ -701,19 +701,21 @@ export function Prompt(props: PromptProps) {
         toast.show({ variant: "warning", message: "Usage: /sql <query>", duration: 3000 })
         return
       }
+      const commandPrefix = buildSqlCommandPrefix()
       const command = canInlineSql(query)
-        ? buildSqlInlineCommand(query)
+        ? buildSqlInlineCommand(query, commandPrefix)
         : await (async () => {
             const file = path.join(os.tmpdir(), `cz-cli-sql-${Date.now()}.sql`)
             await Bun.write(file, query)
             setTimeout(() => void unlink(file).catch(() => {}), 60_000)
-            return buildSqlFileCommand(file)
+            return buildSqlFileCommand(file, commandPrefix)
           })()
       void sdk.client.session.shell({
         sessionID,
         agent: agent.name,
         model: { providerID: selectedModel.providerID, modelID: selectedModel.modelID },
         command,
+        displayCommand: inputText,
       })
     } else if (
       inputText.startsWith("/") &&

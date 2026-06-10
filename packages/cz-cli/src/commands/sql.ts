@@ -378,6 +378,20 @@ function formatQueryError(r: QueryResult, ctx: ExecContext, profileName?: string
   })
 }
 
+function formatClassifiedError(input: {
+  code?: string
+  message: string
+  ctx?: ExecContext
+  profileName?: string
+}) {
+  return formatBillingError({
+    code: input.code,
+    message: input.message,
+    profileName: input.profileName,
+    service: input.ctx?.config.service,
+  })
+}
+
 async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number, profileName?: string): Promise<void> {
   const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
   logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
@@ -460,6 +474,7 @@ async function handler(argv: SqlArgs): Promise<void> {
   }
   const hints = argv.set ? parseKvPairs(argv.set) : undefined
   let currentJobId: string | undefined
+  let ctx: ExecContext | undefined
 
   const sigintHandler = () => {
     const payload: Record<string, unknown> = { error: { code: "ABORTED", message: "Execution interrupted by user." } }
@@ -475,24 +490,26 @@ async function handler(argv: SqlArgs): Promise<void> {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
     }
     if (argv["dry-run"]) {
-      const ctx = await getExecContext(argv)
+      const dryRunCtx = await getExecContext(argv)
+      ctx = dryRunCtx
       const results = await Promise.all(statements.map(async (stmt) => {
         try {
-          const r = await execSql(ctx, `EXPLAIN ${stmt}`, { timeoutMs: argv.timeout * 1000 })
+          const r = await execSql(dryRunCtx, `EXPLAIN ${stmt}`, { timeoutMs: argv.timeout * 1000 })
           if (isQueryResult(r)) {
             if (r.status === JobStatus.FAILED)
-              return { sql: stmt, status: "error", job_id: r.jobId, error: r.errorMessage ?? "EXPLAIN failed" }
+              return { sql: stmt, status: "error", job_id: r.jobId, error: formatQueryError(r, dryRunCtx, argv.profile, "EXPLAIN failed") }
             return { sql: stmt, status: "ok", job_id: r.jobId }
           }
           return { sql: stmt, status: "ok", job_id: (r as { jobId?: string }).jobId }
         } catch (err) {
-          return { sql: stmt, status: "error", error: err instanceof Error ? err.message : String(err) }
+          const { code, message } = classifyExecError(err)
+          return { sql: stmt, status: "error", error: formatClassifiedError({ code, message, ctx: dryRunCtx, profileName: argv.profile }) }
         }
       }))
       success({ statements: results, count: statements.length }, { format })
       return
     }
-    const ctx = await getExecContext(argv)
+    ctx = await getExecContext(argv)
     // Multi-statement: execute all, return all results in batch mode or last result otherwise
     if (statements.length > 1) {
       const accumulatedHints = { ...hints }
@@ -531,7 +548,7 @@ async function handler(argv: SqlArgs): Promise<void> {
             }
           } catch (err) {
             const { code, message } = classifyExecError(err)
-            const line = { index: i, sql: stmt, error: { code, message }, time_ms: Date.now() - t0 }
+            const line = { index: i, sql: stmt, error: { code, message: formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
             process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
             logOperation("sql", { sql: stmt, ok: false, errorCode: code })
           }
@@ -553,7 +570,7 @@ async function handler(argv: SqlArgs): Promise<void> {
   } catch (err) {
     const { code, message, aiMessage, jobId } = classifyExecError(err)
     logOperation("sql", { sql, ok: false, errorCode: code })
-    error(code, message, { format, debug: argv.debug, ...(aiMessage && { aiMessage }), ...(jobId && { extra: { job_id: jobId } }) })
+    error(code, formatClassifiedError({ code, message, ctx, profileName: argv.profile }), { format, debug: argv.debug, ...(aiMessage && { aiMessage }), ...(jobId && { extra: { job_id: jobId } }) })
   } finally {
     process.removeListener("SIGINT", sigintHandler)
   }

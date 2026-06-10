@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import {
+  CLICKZETTA_ROTATION_CANCEL_LABEL,
+  CLICKZETTA_ROTATION_CONFIRM_LABEL,
+  CLICKZETTA_ROTATION_HEADER,
+  CLICKZETTA_ROTATION_PROMPT,
+} from "@clickzetta/cli/llm/clickzetta-rotation"
+import {
   AI_GATEWAY_API_KEY_QUOTA_MESSAGE,
-  AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL,
   AI_GATEWAY_QUOTA_MESSAGE,
+  AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL,
   AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL,
+  clickzettaFreeQuotaRotationQuestion,
   clickzettaQuotaModelQuestions,
   clickzettaQuotaProviderQuestion,
   clickzettaQuotaRecoveryQuestion,
@@ -76,7 +83,7 @@ describe("llm quota recovery", () => {
     expect(AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL).toBe("I've updated the quota")
   })
 
-  test("builds QuestionPrompt-compatible recovery question", () => {
+  test("builds QuestionPrompt-compatible API key quota recovery question", () => {
     expect(clickzettaQuotaRecoveryQuestion()).toMatchObject({
       header: "Quota",
       question: AI_GATEWAY_QUOTA_MESSAGE,
@@ -87,6 +94,18 @@ describe("llm quota recovery", () => {
           label: AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL,
           description: "Close this prompt after updating quota, then send your request again.",
         },
+      ],
+    })
+  })
+
+  test("builds QuestionPrompt-compatible free quota rotation question", () => {
+    expect(clickzettaFreeQuotaRotationQuestion()).toMatchObject({
+      header: CLICKZETTA_ROTATION_HEADER,
+      question: CLICKZETTA_ROTATION_PROMPT,
+      custom: false,
+      options: [
+        { label: CLICKZETTA_ROTATION_CONFIRM_LABEL },
+        { label: CLICKZETTA_ROTATION_CANCEL_LABEL },
       ],
     })
   })

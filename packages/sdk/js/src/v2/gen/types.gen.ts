@@ -4105,6 +4105,7 @@ export type SessionShellData = {
       modelID: string
     }
     command: string
+    displayCommand?: string
   }
   path: {
     sessionID: string

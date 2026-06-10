@@ -54,6 +54,14 @@ describe("classifyExecError", () => {
     expect(r.aiMessage).toBe("")
   })
 
+  test("generic error with string code preserves code", () => {
+    const err = Object.assign(new Error("Account yahexxxi has overdue payments."), { code: "CZLH-60029" })
+    const r = classifyExecError(err)
+    expect(r.code).toBe("CZLH-60029")
+    expect(r.message).toBe("Account yahexxxi has overdue payments.")
+    expect(r.aiMessage).toBe("")
+  })
+
   test("non-Error value → EXEC_ERROR", () => {
     const r = classifyExecError("something went wrong")
     expect(r.code).toBe("EXEC_ERROR")

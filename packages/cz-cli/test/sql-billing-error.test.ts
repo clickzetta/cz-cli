@@ -6,16 +6,20 @@ import { join } from "node:path"
 const home = mkdtempSync(join(tmpdir(), "cz-cli-sql-billing-error-"))
 const profileDir = join(home, ".clickzetta")
 const profileFile = join(profileDir, "profiles.toml")
+let execMode: "result" | "throw" = "result"
 
 mock.module("../src/commands/exec.js", () => ({
   SqlError: class SqlError extends Error {},
   classifyExecError: (err: unknown) => ({
-    code: "EXEC_ERROR",
+    code: errorCode(err) ?? "EXEC_ERROR",
     message: err instanceof Error ? err.message : String(err),
     aiMessage: "",
   }),
   execSql: async () => insufficientBalanceResult(),
-  execSqlWithRetry: async () => insufficientBalanceResult(),
+  execSqlWithRetry: async () => {
+    if (execMode === "throw") throw insufficientBalanceError()
+    return insufficientBalanceResult()
+  },
   getExecContext: async () => ({
     config: {
       pat: "pat",
@@ -62,6 +66,19 @@ function insufficientBalanceResult() {
   }
 }
 
+function insufficientBalanceError() {
+  return Object.assign(
+    new Error("Account yahexxxi has overdue payments. Job submission is currently restricted."),
+    { code: "CZLH-60029" },
+  )
+}
+
+function errorCode(err: unknown) {
+  if (!err || typeof err !== "object" || !("code" in err)) return undefined
+  const code = (err as { code?: unknown }).code
+  return typeof code === "string" ? code : undefined
+}
+
 function firstJson(output: string) {
   return JSON.parse(output.trim().split("\n")[0] ?? "{}") as {
     error?: { code?: string; message?: string }
@@ -72,6 +89,7 @@ beforeEach(() => {
   mkdirSync(profileDir, { recursive: true })
   process.env.CLICKZETTA_TEST_HOME = home
   delete process.env.CZ_PROFILE
+  execMode = "result"
 })
 
 afterAll(() => {
@@ -122,5 +140,24 @@ describe("sql insufficient balance errors", () => {
       code: "CZLH-60029",
       message: "Insufficient account balance. Please visit https://yahexxxi.uat-accounts.clickzetta.com to add funds.",
     })
+  })
+
+  test("wraps classified billing errors in table output", async () => {
+    execMode = "throw"
+    writeFileSync(
+      profileFile,
+      [
+        'default_profile = "test"',
+        "[profiles.test]",
+        'pat = "pat"',
+        'service = "uat-api.clickzetta.com"',
+      ].join("\n"),
+    )
+
+    const result = await execute('sql --format table "SELECT 1 AS test"')
+
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain("ERROR CZLH-60029: Insufficient account balance. Please visit https://yahexxxi.uat-accounts.clickzetta.com to add funds.")
+    expect(result.output).not.toContain("overdue payments")
   })
 })

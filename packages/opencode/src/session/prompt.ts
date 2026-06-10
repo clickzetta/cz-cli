@@ -797,7 +797,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         state: {
           status: "running",
           time: { start: Date.now() },
-          input: { command: input.command },
+          input: { command: input.displayCommand ?? input.command },
         },
       }
       yield* sessions.updatePart(part)
@@ -1894,6 +1894,7 @@ export const ShellInput = z.object({
     })
     .optional(),
   command: z.string(),
+  displayCommand: z.string().optional(),
 })
 export type ShellInput = z.infer<typeof ShellInput>
 

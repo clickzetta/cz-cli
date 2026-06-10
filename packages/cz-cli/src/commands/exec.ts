@@ -143,6 +143,7 @@ function isNetworkError(err: unknown): boolean {
  */
 export function classifyExecError(err: unknown): { code: string; message: string; aiMessage: string; jobId?: string } {
   const message = err instanceof Error ? err.message : String(err)
+  const code = errorCode(err)
   const jobId = (err as { jobId?: string })?.jobId
   if (isAuthError(err)) {
     return {
@@ -169,11 +170,17 @@ export function classifyExecError(err: unknown): { code: string; message: string
     }
   }
   return {
-    code: "EXEC_ERROR",
+    code: code ?? "EXEC_ERROR",
     message,
     aiMessage: "",
     jobId,
   }
+}
+
+function errorCode(err: unknown) {
+  if (!err || typeof err !== "object" || !("code" in err)) return undefined
+  const code = (err as { code?: unknown }).code
+  return typeof code === "string" && code.trim() ? code : undefined
 }
 
 /**
