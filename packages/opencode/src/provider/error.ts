@@ -2,6 +2,7 @@ import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import type { ProviderID } from "./schema"
+import { AI_GATEWAY_API_KEY_QUOTA_MESSAGE, isClickzettaAiGatewayApiKeyQuotaExhausted } from "@/config/llm-quota-recovery"
 
 // Adapted from overflow detection patterns in:
 // https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/utils/overflow.ts
@@ -167,9 +168,10 @@ export type ParsedAPICallError =
       responseHeaders?: Record<string, string>
       responseBody?: string
       metadata?: Record<string, string>
+      userFacing?: boolean
     }
 
-export function parseAPICallError(input: { providerID: ProviderID; error: APICallError }): ParsedAPICallError {
+export function parseAPICallError(input: { providerID: ProviderID; providerType?: string; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
   if (isOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
@@ -181,6 +183,12 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
   }
 
   const bodyStr = input.error.responseBody ?? ""
+  const apiKeyQuotaExhausted = isClickzettaAiGatewayApiKeyQuotaExhausted({
+    providerType: input.providerType ?? input.providerID,
+    statusCode: input.error.statusCode,
+    message: m,
+    responseBody: bodyStr,
+  })
   const quotaExhausted =
     input.error.statusCode === 429 &&
     (bodyStr.includes("daily token limit") || bodyStr.includes("daily limit") || bodyStr.includes("quota exceeded"))
@@ -188,11 +196,12 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
   const metadata = input.error.url ? { url: input.error.url } : undefined
   return {
     type: "api_error",
-    message: m,
+    message: apiKeyQuotaExhausted ? AI_GATEWAY_API_KEY_QUOTA_MESSAGE : m,
     statusCode: input.error.statusCode,
     isRetryable: quotaExhausted ? false : (input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable),
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,
+    ...(apiKeyQuotaExhausted && { userFacing: true }),
   }
 }

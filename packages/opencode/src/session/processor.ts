@@ -272,10 +272,13 @@ export const layer: Layer.Layer<
       }
       let aborted = false
       const slog = log.clone().tag("sessionID", input.sessionID).tag("messageID", input.assistantMessage.id)
+      const initialConfig = yield* config.get()
+      const providerType = initialConfig.llm_entries?.find((entry) => entry.name === input.model.providerID)?.provider
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
           providerID: input.model.providerID,
+          providerType,
           aborted,
         })
 

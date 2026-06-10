@@ -6,6 +6,7 @@ import { success, successRows, error, parseOutputArgs, renderOutput } from "../o
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
+import { formatBillingError } from "./billing-error.js"
 
 const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -131,6 +132,7 @@ async function applyUseStatement(
   hints?: Record<string, string>,
   configStatements?: string[],
   timeoutMs?: number,
+  profileName?: string,
 ): Promise<boolean> {
   if (use.kind === "workspace") {
     ctx.config.workspace = use.target
@@ -145,7 +147,7 @@ async function applyUseStatement(
     }
     if (result.status === JobStatus.FAILED) {
       logOperation("sql", { sql: use.normalized, ok: false, errorCode: result.errorCode })
-      error(result.errorCode ?? "SCHEMA_NOT_FOUND", result.errorMessage ?? `Schema '${use.target}' does not exist.`, { format })
+      error(result.errorCode ?? "SCHEMA_NOT_FOUND", formatQueryError(result, ctx, profileName, `Schema '${use.target}' does not exist.`), { format })
       return false
     }
     ctx.config.schema = extractSchema(use.raw)
@@ -159,7 +161,7 @@ async function applyUseStatement(
   }
   if (result.status === JobStatus.FAILED) {
     logOperation("sql", { sql: use.normalized, ok: false, errorCode: result.errorCode })
-    error(result.errorCode ?? "SQL_ERROR", result.errorMessage ?? "Query failed", { format })
+    error(result.errorCode ?? "SQL_ERROR", formatQueryError(result, ctx, profileName), { format })
     return false
   }
   if (!useTargetExists(result.rows, use.target)) {
@@ -241,7 +243,7 @@ async function executeSingle(
   // Intercept USE statements — client-side context switch
   const use = parseUseStatement(sql)
   if (use) {
-    if (!await applyUseStatement(ctx, use, format, hints, configStatements, argv.timeout * 1000)) return
+    if (!await applyUseStatement(ctx, use, format, hints, configStatements, argv.timeout * 1000, argv.profile)) return
     success({ use: use.normalized }, { format, timeMs: 0 })
     return
   }
@@ -296,7 +298,7 @@ async function executeSingle(
       r = await execSqlWithRetry(ctx, sql, { hints: probeHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
-        await handleFailure(r, sql, ctx, format, t0)
+        await handleFailure(r, sql, ctx, format, t0, argv.profile)
         return
       }
       await emitResult(r, sql, argv, ctx, t0)
@@ -306,7 +308,7 @@ async function executeSingle(
     if (r.status === JobStatus.FAILED) {
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
       logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-      error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format, extra: hint ? { schema: hint } : undefined })
+      error(r.errorCode ?? "SQL_ERROR", formatQueryError(r, ctx, argv.profile), { format, extra: hint ? { schema: hint } : undefined })
       return
     }
     if (r.rowCount > rowLimit) {
@@ -342,7 +344,7 @@ async function executeSingle(
       const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
-        await handleFailure(r, sql, ctx, format, t0)
+        await handleFailure(r, sql, ctx, format, t0, argv.profile)
         return
       }
       let aiMessage: string | undefined
@@ -360,20 +362,29 @@ async function executeSingle(
   const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
   if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
   if (r.status === JobStatus.FAILED) {
-    await handleFailure(r, sql, ctx, format, t0)
+    await handleFailure(r, sql, ctx, format, t0, argv.profile)
     return
   }
 
   await emitResult(r, sql, argv, ctx, t0)
 }
 
-async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number): Promise<void> {
+function formatQueryError(r: QueryResult, ctx: ExecContext, profileName?: string, fallback = "Query failed") {
+  return formatBillingError({
+    code: r.errorCode,
+    message: r.errorMessage ?? fallback,
+    profileName,
+    service: ctx.config.service,
+  })
+}
+
+async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number, profileName?: string): Promise<void> {
   const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
   logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
   const aiMessage = hint
     ? `SQL failed. Available schema info attached in the 'schema' field — check table/column names and retry.`
     : undefined
-  error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", {
+  error(r.errorCode ?? "SQL_ERROR", formatQueryError(r, ctx, profileName), {
     format,
     extra: hint ? { schema: hint } : undefined,
     ...(aiMessage && { aiMessage }),
@@ -498,7 +509,7 @@ async function handler(argv: SqlArgs): Promise<void> {
         // Extract USE statements to update session context client-side
         const use = parseUseStatement(stmt)
         if (use) {
-          if (!await applyUseStatement(ctx, use, format, accumulatedHints, configStatements, argv.timeout * 1000)) return
+          if (!await applyUseStatement(ctx, use, format, accumulatedHints, configStatements, argv.timeout * 1000, argv.profile)) return
           configStatements.push(stmt)
           continue
         }
@@ -508,7 +519,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           try {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-              const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: r.errorMessage ?? "Query failed" }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
               process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             } else if (isQueryResult(r)) {
@@ -529,7 +540,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
           if (isQueryResult(r) && r.status === JobStatus.FAILED) {
             logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
-            error(r.errorCode ?? "SQL_ERROR", r.errorMessage ?? "Query failed", { format })
+            error(r.errorCode ?? "SQL_ERROR", formatQueryError(r, ctx, argv.profile), { format })
             return
           }
         } else {

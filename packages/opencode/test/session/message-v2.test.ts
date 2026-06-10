@@ -5,6 +5,7 @@ import type { Provider } from "../../src/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
 import { Question } from "../../src/question"
+import { AI_GATEWAY_API_KEY_QUOTA_MESSAGE } from "../../src/config/llm-quota-recovery"
 
 const sessionID = SessionID.make("session")
 const providerID = ProviderID.make("test")
@@ -979,6 +980,48 @@ describe("session.message-v2.fromError", () => {
     )
     expect(MessageV2.ContextOverflowError.isInstance(result)).toBe(false)
     expect(MessageV2.APIError.isInstance(result)).toBe(true)
+  })
+
+  test("formats ClickZetta API key quota exhaustion from APICallError", () => {
+    const result = MessageV2.fromError(
+      new APICallError({
+        message: "LLM request failed: Too Many Requests",
+        url: "https://mock-clickzetta.example/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 429,
+        responseHeaders: { "content-type": "application/json" },
+        responseBody: JSON.stringify({
+          code: 429,
+          message: "Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-cli_user_alice', current usage: 10082801 tokens",
+        }),
+        isRetryable: false,
+      }),
+      { providerID, providerType: "clickzetta" },
+    )
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toBe(AI_GATEWAY_API_KEY_QUOTA_MESSAGE)
+  })
+
+  test("does not format virtual key quota exhaustion for non-ClickZetta providers", () => {
+    const result = MessageV2.fromError(
+      new APICallError({
+        message: "LLM request failed: Too Many Requests",
+        url: "https://example.com/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 429,
+        responseHeaders: { "content-type": "application/json" },
+        responseBody: JSON.stringify({
+          code: 429,
+          message: "Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-cli_user_alice', current usage: 10082801 tokens",
+        }),
+        isRetryable: false,
+      }),
+      { providerID, providerType: "openai-compatible" },
+    )
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.message).not.toBe(AI_GATEWAY_API_KEY_QUOTA_MESSAGE)
   })
 
   test("serializes unknown inputs", () => {

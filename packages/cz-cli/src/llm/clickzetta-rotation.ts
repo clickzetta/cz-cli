@@ -12,11 +12,13 @@ const API = {
   SAVE: "/llm-gateway-admin/v2/virtual-key/save",
   GET: "/llm-gateway-admin/v2/virtual-key/getApiKey",
 }
-const QUOTA_EXHAUSTED_PATTERN = /virtual key total quota exceeded/i
-const ALIAS_PREFIX = "cz-code_auto_"
-const PROFILE_ALIAS_PREFIX = "cz-cli_auto_"
+const FREE_ALIAS_PREFIX = "cz-code_auto_"
+const AUTO_ALIAS_PREFIX = "cz-cli_auto_"
+const PROFILE_ALIAS_PREFIX = "cz-cli_user_"
 const ALIAS_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
-export const CLICKZETTA_ROTATION_PROMPT = "Free quota exhausted. Create a new virtual key with the current profile and switch?"
+const VIRTUAL_KEY_QUOTA_EXHAUSTED_PATTERN = /virtual key\s+\w+\s+quota exceeded/i
+const VIRTUAL_KEY_NAME_PATTERN = /virtual key\s+['"]([^'"]+)['"]/i
+export const CLICKZETTA_ROTATION_PROMPT = "Your complimentary token quota has been exhausted.\nWe also offer competitively priced paid token plans, and I'd be happy to help you create and configure a paid API key."
 export const CLICKZETTA_ROTATION_HEADER = "Quota"
 export const CLICKZETTA_ROTATION_CONFIRM_LABEL = "Create & switch"
 export const CLICKZETTA_ROTATION_CANCEL_LABEL = "Keep current"
@@ -85,11 +87,20 @@ export function inferAiGatewayUrl(profile: { service?: string; instance?: string
 
 function randomAlias() {
   const bytes = crypto.getRandomValues(new Uint8Array(8))
-  return ALIAS_PREFIX + Array.from(bytes, (byte) => ALIAS_ALPHABET[byte % ALIAS_ALPHABET.length]).join("")
+  return AUTO_ALIAS_PREFIX + Array.from(bytes, (byte) => ALIAS_ALPHABET[byte % ALIAS_ALPHABET.length]).join("")
 }
 
-function quotaExhausted(detail?: string | null) {
-  return typeof detail === "string" && QUOTA_EXHAUSTED_PATTERN.test(detail)
+export function clickzettaQuotaVirtualKeyName(detail?: string | null) {
+  if (typeof detail !== "string") return undefined
+  return VIRTUAL_KEY_NAME_PATTERN.exec(detail)?.[1]
+}
+
+export function isClickzettaVirtualKeyQuotaErrorDetail(detail?: string | null) {
+  return typeof detail === "string" && VIRTUAL_KEY_QUOTA_EXHAUSTED_PATTERN.test(detail) && !!clickzettaQuotaVirtualKeyName(detail)
+}
+
+export function isClickzettaFreeQuotaErrorDetail(detail?: string | null) {
+  return isClickzettaVirtualKeyQuotaErrorDetail(detail) && clickzettaQuotaVirtualKeyName(detail)?.startsWith(FREE_ALIAS_PREFIX) === true
 }
 
 function promptAllowed(approval: RotateOptions["approval"]) {
@@ -215,7 +226,7 @@ export function isClickzettaQuotaExhausted(input: {
   status?: number
   detail?: string | null
 }) {
-  return input.provider === "clickzetta" && input.status === 429 && quotaExhausted(input.detail)
+  return input.provider === "clickzetta" && input.status === 429 && isClickzettaFreeQuotaErrorDetail(input.detail)
 }
 
 export async function rotateClickzettaLlm(input: {

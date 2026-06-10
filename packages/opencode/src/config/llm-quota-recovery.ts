@@ -1,13 +1,13 @@
-export const AI_GATEWAY_QUOTA_URL = "xxx"
+import { isClickzettaFreeQuotaErrorDetail, isClickzettaVirtualKeyQuotaErrorDetail } from "@clickzetta/cli/llm/clickzetta-rotation"
+
+export const AI_GATEWAY_QUOTA_URL = "https://aitoken.clickzetta.com/apikey"
 export const AI_GATEWAY_QUOTA_MESSAGE =
-  `The current AI Gateway key quota has been exhausted. Configure more quota at ${AI_GATEWAY_QUOTA_URL}.`
+  "Your complimentary token quota has been exhausted.\nWe also offer competitively priced paid token plans, and I'd be happy to help you create and configure a paid API key."
+export const AI_GATEWAY_API_KEY_QUOTA_MESSAGE =
+  `The current API key has run out of quota.\nPlease go to ${AI_GATEWAY_QUOTA_URL} to add quota, or configure another token service source.`
 export const AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL = "Configure my own model"
 export const AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL = "I've updated the quota"
 export const AI_GATEWAY_QUOTA_HEADER = "Quota"
-
-const QUOTA_PATTERNS = [
-  /quota exceeded/i,
-]
 
 export const CUSTOM_MODEL_PROVIDER_OPTIONS = [
   { label: "clickzetta", description: "Use ClickZetta AI Gateway." },
@@ -79,7 +79,19 @@ export function isClickzettaAiGatewayQuotaExhausted(input: {
   if (input.providerType !== "clickzetta") return false
   if (input.statusCode !== 429) return false
   const detail = [input.message, input.responseBody].filter((value): value is string => typeof value === "string").join("\n")
-  return QUOTA_PATTERNS.some((pattern) => pattern.test(detail))
+  return isClickzettaFreeQuotaErrorDetail(detail)
+}
+
+export function isClickzettaAiGatewayApiKeyQuotaExhausted(input: {
+  providerType?: string
+  statusCode?: number
+  message?: string
+  responseBody?: string
+}) {
+  if (input.providerType !== "clickzetta") return false
+  if (input.statusCode !== 429) return false
+  const detail = [input.message, input.responseBody].filter((value): value is string => typeof value === "string").join("\n")
+  return isClickzettaVirtualKeyQuotaErrorDetail(detail) && !isClickzettaFreeQuotaErrorDetail(detail)
 }
 
 export function clickzettaQuotaRecoveryQuestion() {
@@ -171,4 +183,3 @@ export function clickzettaQuotaNameConflictQuestion(name: string) {
     options: [],
   }
 }
-

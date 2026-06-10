@@ -80,7 +80,7 @@ function onboarding() {
     ],
     external_llm: [
       "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
-      "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+      "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://aitoken.clickzetta.com/apikey --api-key <API_KEY> --use",
     ],
     verify: [
       "cz-cli agent llm test",
@@ -477,7 +477,7 @@ const LlmAddCommand = cmd({
         "PROVIDER_REQUIRES_BASE_URL",
         '[llm.' + name + '] uses provider "openai-compatible" and requires --base-url.\n' +
           "  Example: cz-cli agent llm add " + name +
-          " --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+          " --provider openai-compatible --base-url https://aitoken.clickzetta.com/apikey --api-key <API_KEY> --use",
         { provider: entry.provider, required: ["base_url"] },
       )
     }
@@ -575,7 +575,7 @@ const LlmTestCommand = cmd({
         isTTY,
         "MISSING_BASE_URL",
         `[llm.${target.name}] needs a base_url before it can be tested.\n` +
-          `  Update it with: cz-cli agent llm add ${target.name} --base-url https://your-gateway.example.com/v1`,
+          `  Update it with: cz-cli agent llm add ${target.name} --base-url https://aitoken.clickzetta.com/apikey`,
       )
       return
     }

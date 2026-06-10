@@ -21,6 +21,11 @@ import {
   CLICKZETTA_ROTATION_CONFIRM_LABEL,
   CLICKZETTA_ROTATION_HEADER,
 } from "@clickzetta/cli/llm/clickzetta-rotation"
+import {
+  AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL,
+  AI_GATEWAY_QUOTA_HEADER,
+  AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL,
+} from "@/config/llm-quota-recovery"
 import { withClickZettaProfileOption } from "@clickzetta/cli"
 
 type Inline = {
@@ -478,7 +483,34 @@ export const RunCommand = cmd({
             const isRotationQuestion =
               prompt.header === CLICKZETTA_ROTATION_HEADER &&
               prompt.options.some((item) => item.label === CLICKZETTA_ROTATION_CONFIRM_LABEL)
-            if (!isRotationQuestion) continue
+            const isQuotaRecoveryQuestion =
+              prompt.header === AI_GATEWAY_QUOTA_HEADER &&
+              prompt.options.some((item) => item.label === AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL)
+            if (!isRotationQuestion && !isQuotaRecoveryQuestion) continue
+            if (isQuotaRecoveryQuestion) {
+              const fallbackAnswer = AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL
+              if (!process.stdout.isTTY) {
+                await sdk.question.reply({
+                  requestID: request.id,
+                  answers: [[fallbackAnswer]],
+                })
+                continue
+              }
+              const answer = await prompts.select({
+                message: prompt.question,
+                options: prompt.options.map((item) => ({
+                  label: item.label,
+                  value: item.label,
+                  hint: item.description,
+                })),
+                initialValue: fallbackAnswer,
+              })
+              await sdk.question.reply({
+                requestID: request.id,
+                answers: [[prompts.isCancel(answer) ? fallbackAnswer : String(answer)]],
+              })
+              continue
+            }
             if (!process.stdout.isTTY) {
               await sdk.question.reply({
                 requestID: request.id,

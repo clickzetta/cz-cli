@@ -942,7 +942,7 @@ export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: Ses
 
 export function fromError(
   e: unknown,
-  ctx: { providerID: ProviderID; aborted?: boolean },
+  ctx: { providerID: ProviderID; providerType?: string; aborted?: boolean },
 ): NonNullable<Assistant["error"]> {
   switch (true) {
     case e instanceof DOMException && e.name === "AbortError":
@@ -993,6 +993,7 @@ export function fromError(
     case APICallError.isInstance(e):
       const parsed = ProviderError.parseAPICallError({
         providerID: ctx.providerID,
+        providerType: ctx.providerType,
         error: e,
       })
       if (parsed.type === "context_overflow") {
@@ -1007,7 +1008,7 @@ export function fromError(
 
       return new APIError(
         {
-          message: `LLM request failed: ${parsed.message}`,
+          message: parsed.userFacing ? parsed.message : `LLM request failed: ${parsed.message}`,
           statusCode: parsed.statusCode,
           isRetryable: parsed.isRetryable,
           responseHeaders: parsed.responseHeaders,

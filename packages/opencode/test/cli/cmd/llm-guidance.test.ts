@@ -58,7 +58,7 @@ describe("llm guidance", () => {
     ])
     expect(json.data.onboarding.external_llm).toEqual([
       "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
-      "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+      "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://aitoken.clickzetta.com/apikey --api-key <API_KEY> --use",
     ])
   })
 
@@ -85,6 +85,7 @@ describe("llm guidance", () => {
     expect(result.exitCode).toBe(1)
     const json = firstJson(result.stdout)
     expect(json.error.code).toBe("PROVIDER_REQUIRES_BASE_URL")
+    expect(json.error.message).toContain("https://aitoken.clickzetta.com/apikey")
   })
 
   test("agent llm test verifies a GPT-compatible endpoint", () => {
@@ -222,14 +223,14 @@ describe("llm guidance", () => {
   }
   if (req.url === "https://mock-service.example/llm-gateway-admin/v2/virtual-key/listWithAuth") {
     const body = await req.json()
-    if (String(body.vApiKeyAlias ?? "") !== "cz-cli_auto_alice") {
+    if (String(body.vApiKeyAlias ?? "") !== "cz-cli_user_alice") {
       return Response.json({ code: 400, message: "bad alias lookup" })
     }
     return Response.json({ code: 0, data: [] })
   }
   if (req.url === "https://mock-service.example/llm-gateway-admin/v2/virtual-key/save") {
     const body = await req.json()
-    if (String(body.vApiKeyAlias ?? "") !== "cz-cli_auto_alice") {
+    if (String(body.vApiKeyAlias ?? "") !== "cz-cli_user_alice") {
       return Response.json({ code: 400, message: "bad alias" })
     }
     return Response.json({ code: 0, data: 99 })

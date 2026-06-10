@@ -1,34 +1,58 @@
 import { describe, expect, test } from "bun:test"
 import {
+  AI_GATEWAY_API_KEY_QUOTA_MESSAGE,
   AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL,
   AI_GATEWAY_QUOTA_MESSAGE,
   AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL,
   clickzettaQuotaModelQuestions,
   clickzettaQuotaProviderQuestion,
   clickzettaQuotaRecoveryQuestion,
+  isClickzettaAiGatewayApiKeyQuotaExhausted,
   isClickzettaAiGatewayQuotaExhausted,
 } from "../../src/config/llm-quota-recovery"
 
 describe("llm quota recovery", () => {
-  test("recognizes screenshot weekly quota failures for ClickZetta", () => {
+  test("recognizes free ClickZetta virtual key quota failures", () => {
     expect(
       isClickzettaAiGatewayQuotaExhausted({
         providerType: "clickzetta",
         statusCode: 429,
         message:
-          "LLM request failed: Too Many Requests: Virtual key weekly quota exceeded: limit is 10000000 tokens for virtual key 'default', current usage: 10003377 tokens",
+          "LLM request failed: Too Many Requests: Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-code_auto_pdiaxzjq', current usage: 10082801 tokens",
       }),
     ).toBe(true)
   })
 
-  test("recognizes generic ClickZetta quota exceeded failures", () => {
+  test("does not treat non-free ClickZetta virtual key quota failures as free quota", () => {
+    expect(
+      isClickzettaAiGatewayQuotaExhausted({
+        providerType: "clickzetta",
+        statusCode: 429,
+        message:
+          "LLM request failed: Too Many Requests: Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-cli_auto_UAT_TEST', current usage: 10082801 tokens",
+      }),
+    ).toBe(false)
+  })
+
+  test("recognizes non-free ClickZetta virtual key quota failures as API key quota", () => {
+    expect(
+      isClickzettaAiGatewayApiKeyQuotaExhausted({
+        providerType: "clickzetta",
+        statusCode: 429,
+        message:
+          "LLM request failed: Too Many Requests: Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-cli_user_alice', current usage: 10082801 tokens",
+      }),
+    ).toBe(true)
+  })
+
+  test("does not treat generic ClickZetta quota failures without a free key as free quota", () => {
     expect(
       isClickzettaAiGatewayQuotaExhausted({
         providerType: "clickzetta",
         statusCode: 429,
         message: "LLM request failed: Too Many Requests: quota exceeded",
       }),
-    ).toBe(true)
+    ).toBe(false)
   })
 
   test("does not trigger for non-ClickZetta quota failures", () => {
@@ -43,7 +67,10 @@ describe("llm quota recovery", () => {
 
   test("keeps the user-facing recovery copy and labels in English", () => {
     expect(AI_GATEWAY_QUOTA_MESSAGE).toBe(
-      "The current AI Gateway key quota has been exhausted. Configure more quota at xxx.",
+      "Your complimentary token quota has been exhausted.\nWe also offer competitively priced paid token plans, and I'd be happy to help you create and configure a paid API key.",
+    )
+    expect(AI_GATEWAY_API_KEY_QUOTA_MESSAGE).toBe(
+      "The current API key has run out of quota.\nPlease go to https://aitoken.clickzetta.com/apikey to add quota, or configure another token service source.",
     )
     expect(AI_GATEWAY_QUOTA_CONFIGURE_MODEL_LABEL).toBe("Configure my own model")
     expect(AI_GATEWAY_QUOTA_QUOTA_UPDATED_LABEL).toBe("I've updated the quota")
@@ -101,4 +128,3 @@ describe("llm quota recovery", () => {
     expect(questions.map((q) => q.header)).toEqual(["Model", "Base URL", "API Key", "Name"])
   })
 })
-
