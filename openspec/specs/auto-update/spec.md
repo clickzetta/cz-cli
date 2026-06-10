@@ -95,6 +95,21 @@
 - **WHEN** `which cz-cli` 解析到 `~/.cz-cli/bin/` 或 `~/.local/bin/` 时
 - **THEN** 安装方式为 `curl`，使用 install.sh 升级
 
+#### 场景：旧版 install.sh 路径无法 realpath 时仍识别为自管安装
+
+- **WHEN** 当前 binary 路径为 `~/.cz-cli/bin/cz-cli` 且路径暂时无法解析 realpath 时
+- **THEN** 安装方式仍为 `curl`，不因 realpath 失败退化为 `unknown`
+
+#### 场景：macOS 路径大小写不一致时仍识别为自管安装
+
+- **WHEN** 当前 binary 路径为 `~/.Local/bin/cz-cli` 这类大小写不同的自管安装路径时
+- **THEN** 安装方式仍为 `curl`，不因路径大小写差异退化为 `unknown`
+
+#### 场景：realpath 后 HOME 路径前缀变化时仍识别为自管安装
+
+- **WHEN** 当前 binary 的 realpath 与 HOME 路径前缀写法不同（例如 symlink 或 macOS `/var` 与 `/private/var`）时
+- **THEN** 安装方式仍为 `curl`，不因路径规范化差异退化为 `unknown`
+
 #### 场景：which 无法识别时 fallback 到 execPath
 
 - **WHEN** `which cz-cli` 路径既非包管理器安装也非 install.sh 安装时
@@ -140,6 +155,21 @@
 
 - **WHEN** install.sh 将 binary 安装到与 `which cz-cli` 不同的目录时
 - **THEN** update 命令将新 binary 拷贝到 `which cz-cli` 路径，确保版本一致
+
+#### 场景：自动更新恢复重启路径
+
+- **WHEN** 自动更新通过 install.sh 完成升级但原 `process.execPath` 路径已被清理或不是目标版本时
+- **THEN** 自动更新从已知自管安装目录找到目标版本 binary 并拷贝回原重启路径
+
+#### 场景：重启时首次执行被 SIGKILL
+
+- **WHEN** 自动更新完成后重启命令且首次执行新 binary 被系统以 `SIGKILL` 终止时
+- **THEN** 自动更新仅重试一次重启命令，并使用重试后的退出码作为最终退出码
+
+#### 场景：重启命令自身失败
+
+- **WHEN** 重启后的用户命令正常返回非零退出码时
+- **THEN** 自动更新不将该退出码改写为 `0`
 
 #### 场景：CZ_INSTALL_DIR 覆盖安装目录
 

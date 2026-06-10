@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import {
+  ensureRestartBinaryAtPath,
   installMethodFromExecPath,
   latestVersionForMethod,
   loadBootstrapConfig,
@@ -11,6 +12,7 @@ import {
   readInstallMetadata,
   resolveReleaseChannel,
   resolveUpdateAction,
+  restartCurrentProcessResult,
   restartArgs,
   shouldSkipAutoUpdateCommand,
   writeInstallMetadata,
@@ -76,10 +78,68 @@ describe("update bootstrap", () => {
     expect(installMethodFromExecPath(path.join(home, ".cz-cli", "bin", "cz-cli"), home)).toBe("curl")
   })
 
+  test("detects install method from a mixed-case self-managed path on macOS", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+
+    expect(installMethodFromExecPath(path.join(home, ".Local", "bin", "cz-cli"), home, { ...process.env, HOME: home })).toBe("curl")
+  })
+
+  test("detects install method when realpath canonicalizes the home prefix", async () => {
+    const realHome = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-real-home-"))
+    const linkedHome = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-link-root-")), "home")
+    await fs.symlink(realHome, linkedHome)
+    await fs.mkdir(path.join(realHome, ".local", "bin"), { recursive: true })
+    await fs.writeFile(path.join(realHome, ".local", "bin", "cz-cli"), "")
+
+    expect(installMethodFromExecPath(path.join(linkedHome, ".local", "bin", "cz-cli"), linkedHome, { ...process.env, HOME: linkedHome })).toBe("curl")
+  })
+
   test("detects npm install method from platform package binary path", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
 
     expect(installMethodFromExecPath(path.join(home, ".npm-global", "lib", "node_modules", "@clickzetta", "cz-cli-darwin-arm64", "bin", "cz-cli"), home)).toBe("npm")
+  })
+
+  test("restores restart binary when install.sh moves the target to a different self-managed path", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+    const execPath = path.join(home, ".Local", "bin", "cz-cli")
+    await fs.mkdir(path.join(home, ".local", "bin"), { recursive: true })
+    await fs.writeFile(path.join(home, ".local", "bin", "cz-cli"), [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"--version\" ]; then echo 0.5.23; exit 0; fi",
+      "exit 0",
+      "",
+    ].join("\n"), { mode: 0o755 })
+
+    await ensureRestartBinaryAtPath("0.5.23", execPath, { HOME: home })
+
+    expect((await fs.stat(execPath)).mode & 0o111).toBeGreaterThan(0)
+    expect(Bun.spawnSync([execPath, "--version"]).stdout.toString().trim()).toBe("0.5.23")
+  })
+
+  test("retries restart once when the first execution is killed", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-restart-"))
+    const bin = path.join(tmp, "cz-cli")
+    const marker = path.join(tmp, "first")
+    await fs.writeFile(bin, [
+      "#!/bin/sh",
+      `if [ ! -f ${JSON.stringify(marker)} ]; then`,
+      `  touch ${JSON.stringify(marker)}`,
+      "  kill -KILL $$",
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"), { mode: 0o755 })
+
+    expect(restartCurrentProcessResult(bin, [], {})).toBe(0)
+  })
+
+  test("does not mask a restarted command failure", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-restart-"))
+    const bin = path.join(tmp, "cz-cli")
+    await fs.writeFile(bin, "#!/bin/sh\nexit 7\n", { mode: 0o755 })
+
+    expect(restartCurrentProcessResult(bin, [], {})).toBe(7)
   })
 
   test("does not write legacy install method metadata", async () => {

@@ -182,7 +182,11 @@ export function installMethodFromExecPath(execPath: string, home?: string, env: 
     return scriptPath.includes(`${path.sep}.bun${path.sep}`) ? "bun" : "npm"
   }
   const root = homeDirectory(home, env)
-  if (scriptPath.startsWith(path.join(root, ".local", "bin"))) return "curl"
+  const roots = [root]
+  try { roots.push(realpathSync(root)) } catch {}
+  const normalizedScriptPath = scriptPath.toLowerCase()
+  if (roots.some((item) => normalizedScriptPath.startsWith(path.join(item, ".cz-cli", "bin").toLowerCase()))) return "curl"
+  if (roots.some((item) => normalizedScriptPath.startsWith(path.join(item, ".local", "bin").toLowerCase()))) return "curl"
   return "unknown"
 }
 
@@ -265,6 +269,49 @@ export async function performUpgrade(method: InstallMethod, target: string, fetc
   }
 }
 
+function binaryVersion(binaryPath: string, env: NodeJS.ProcessEnv = process.env) {
+  const result = spawnSync(binaryPath, ["--version"], {
+    encoding: "utf-8",
+    env: { ...env, CLICKZETTA_SKIP_UPDATE_ONCE: "1" },
+  })
+  if (result.status !== 0) return undefined
+  return result.stdout.trim()
+}
+
+function repairMacOSBinary(binaryPath: string) {
+  if (process.platform !== "darwin") return
+  spawnSync("xattr", ["-dr", "com.apple.quarantine", binaryPath], { stdio: "ignore" })
+  spawnSync("codesign", ["--force", "--sign", "-", binaryPath], { stdio: "ignore" })
+}
+
+export async function ensureRestartBinaryAtPath(target: string, restartPath = process.execPath, env: NodeJS.ProcessEnv = process.env) {
+  repairMacOSBinary(restartPath)
+  if (binaryVersion(restartPath, env) === target) return
+  const root = homeDirectory(undefined, env)
+  const candidate = [
+    path.join(root, ".local", "bin", "cz-cli"),
+    path.join(root, ".cz-cli", "bin", "cz-cli"),
+  ].find((item) => item !== restartPath && binaryVersion(item, env) === target)
+  if (!candidate) return
+  await fs.mkdir(path.dirname(restartPath), { recursive: true })
+  await fs.copyFile(candidate, restartPath)
+  await fs.chmod(restartPath, 0o755)
+  repairMacOSBinary(restartPath)
+}
+
+export function restartCurrentProcessResult(execPath: string, args: string[], env: NodeJS.ProcessEnv = process.env) {
+  const run = () => spawnSync(execPath, args, {
+    stdio: "inherit",
+    env: { ...env, CLICKZETTA_SKIP_UPDATE_ONCE: "1" },
+  })
+  const result = run()
+  if (result.status === null && result.signal === "SIGKILL") {
+    const retry = run()
+    return retry.status ?? 1
+  }
+  return result.status ?? 1
+}
+
 function restartCurrentProcess(env: NodeJS.ProcessEnv = process.env) {
   // In a compiled bun binary, process.argv is ["bun", "/$bunfs/root/<name>", ...userArgs]
   // and process.execPath is the real binary path. The virtual /$bunfs/ entry at argv[1]
@@ -272,11 +319,8 @@ function restartCurrentProcess(env: NodeJS.ProcessEnv = process.env) {
   // unknown argument. In dev mode (bun run script.ts), argv[0] === execPath so slice(1)
   // is correct. We detect binary mode by checking whether execPath differs from argv[0].
   const args = restartArgs(process.execPath, process.argv)
-  const result = spawnSync(process.execPath, args, {
-    stdio: "inherit",
-    env: { ...env, CLICKZETTA_SKIP_UPDATE_ONCE: "1" },
-  })
-  process.exit(result.status ?? 1)
+  const result = restartCurrentProcessResult(process.execPath, args, env)
+  process.exit(result)
 }
 
 export function restartArgs(execPath: string, argv: string[]): string[] {
@@ -442,6 +486,7 @@ export async function maybeAutoUpdate(input: {
 
   try {
     await performUpgrade(method, latestVersion, input.fetchImpl ?? fetch, channel)
+    await ensureRestartBinaryAtPath(latestVersion, process.execPath, env)
     await writeInstallMetadata({ binary_version: latestVersion, channel }, { env })
     await writeJson(paths.state, {
       last_checked_at: now,

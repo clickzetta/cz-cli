@@ -45,6 +45,17 @@ CI 构建时对 macOS 二进制执行 ad-hoc 签名（`codesign --force --sign -
 
 所有 `xattr` 和 `codesign` 调用必须是非致命的——失败时静默忽略，不影响安装的整体成功判断。
 
+### 需求：自动更新恢复重启路径后重新签名
+
+自动更新若发现 install.sh 将目标版本安装到不同自管目录，并将该 binary 拷贝回原 `process.execPath` 重启路径，则在 macOS 上必须对恢复后的重启路径执行 quarantine 清理和 ad-hoc 重新签名，确保后续 restart 不被 Gatekeeper SIGKILL。
+
+#### 场景：恢复 restart binary 后首次运行不被 kill
+
+- **WHEN** 自动更新将目标版本 binary 从 `~/.local/bin/cz-cli` 或 `~/.cz-cli/bin/cz-cli` 拷贝回原重启路径，且操作系统为 macOS
+- **THEN** 自动更新对恢复后的 binary 执行 `xattr -dr com.apple.quarantine`
+- **AND** 自动更新对恢复后的 binary 执行 `codesign --force --sign -`
+- **AND** 重启后的 `cz-cli --version` 不被 Gatekeeper SIGKILL
+
 #### 场景：codesign 不可用时安装仍成功
 
 - **WHEN** 系统未安装 Xcode Command Line Tools（`codesign` 不在 PATH）
