@@ -17,6 +17,7 @@ export async function studioRequest<T>(
       userId: String(config.userId),
       accountId: String(config.tenantId),
       tenantId: String(config.tenantId),
+      workspaceName: config.workspaceName,
       env: "prod",
       ...config.customHeaders,
       ...extraHeaders,
