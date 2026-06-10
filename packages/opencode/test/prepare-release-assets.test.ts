@@ -11,10 +11,10 @@ describe("prepare release assets", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-skills-"))
     const home = path.join(tmp, "home")
     const binary = path.join(tmp, "cz-cli")
-    fs.mkdirSync(path.join(home, ".cz-cli", "bin", "skills", "fresh-skill"), { recursive: true })
+    fs.mkdirSync(path.join(tmp, "skills", "fresh-skill"), { recursive: true })
     fs.mkdirSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"), { recursive: true })
     fs.writeFileSync(binary, "#!/bin/sh\n")
-    fs.writeFileSync(path.join(home, ".cz-cli", "bin", "skills", "fresh-skill", "SKILL.md"), "fresh")
+    fs.writeFileSync(path.join(tmp, "skills", "fresh-skill", "SKILL.md"), "fresh")
 
     try {
       execFileSync("bash", [
@@ -248,6 +248,142 @@ describe("prepare release assets", () => {
 
       expect(fs.readFileSync(path.join(tmp, "curl.log"), "utf-8")).toContain("https://cz-cli.ai/api/nightly")
       expect(JSON.parse(fs.readFileSync(path.join(home, ".clickzetta", "install.json"), "utf-8")).binary_version).toBe("0.5.17-dev.20260609")
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  const externalAgentSkillDirs = [
+    [".claude", "skills"],
+    [".kiro", "skills"],
+    [".cursor", "skills"],
+    [".codex", "skills"],
+    [".openclaw", "workspace", "skills"],
+    [".singclaw", "workspace", "skills"],
+  ]
+
+  test("install.sh installs cz-cli skill into external agent dirs (delete-then-install)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-ext-skills-"))
+    const home = path.join(tmp, "home")
+    const binary = path.join(tmp, "cz-cli")
+    fs.mkdirSync(path.join(tmp, "skills", "cz-cli"), { recursive: true })
+    fs.writeFileSync(binary, "#!/bin/sh\n")
+    fs.writeFileSync(path.join(tmp, "skills", "cz-cli", "SKILL.md"), "fresh-cz-cli")
+    // Pre-existing stale skill must be replaced, not merged.
+    fs.mkdirSync(path.join(home, ".claude", "skills", "cz-cli"), { recursive: true })
+    fs.writeFileSync(path.join(home, ".claude", "skills", "cz-cli", "STALE.md"), "old")
+
+    try {
+      execFileSync("bash", [
+        path.join(repoRoot, "scripts", "install.sh"),
+        "--binary",
+        binary,
+        "--no-modify-path",
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home, SHELL: "/bin/sh" },
+      })
+
+      for (const seg of externalAgentSkillDirs) {
+        const skillMd = path.join(home, ...seg, "cz-cli", "SKILL.md")
+        expect(fs.existsSync(skillMd)).toBe(true)
+        expect(fs.readFileSync(skillMd, "utf-8")).toBe("fresh-cz-cli")
+      }
+      expect(fs.existsSync(path.join(home, ".claude", "skills", "cz-cli", "STALE.md"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("install.sh skips external agent registration when no cz-cli skill is bundled", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-ext-none-"))
+    const home = path.join(tmp, "home")
+    const binary = path.join(tmp, "cz-cli")
+    fs.mkdirSync(path.join(tmp, "skills", "other-skill"), { recursive: true })
+    fs.writeFileSync(binary, "#!/bin/sh\n")
+    fs.writeFileSync(path.join(tmp, "skills", "other-skill", "SKILL.md"), "other")
+
+    try {
+      execFileSync("bash", [
+        path.join(repoRoot, "scripts", "install.sh"),
+        "--binary",
+        binary,
+        "--no-modify-path",
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home, SHELL: "/bin/sh" },
+      })
+
+      expect(fs.existsSync(path.join(home, ".claude", "skills", "cz-cli"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("npm postinstall installs cz-cli skill into external agent dirs (delete-then-install)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-postinstall-ext-skills-"))
+    const home = path.join(tmp, "home")
+    const packageDir = path.join(tmp, "package")
+    const installedRoot = path.join(tmp, "installed")
+    fs.mkdirSync(path.join(packageDir, "bin"), { recursive: true })
+    fs.mkdirSync(path.join(installedRoot, "skills", "cz-cli"), { recursive: true })
+    fs.writeFileSync(path.join(installedRoot, "skills", "cz-cli", "SKILL.md"), "fresh-cz-cli")
+    // Pre-existing stale skill in one agent dir must be replaced.
+    fs.mkdirSync(path.join(home, ".kiro", "skills", "cz-cli"), { recursive: true })
+    fs.writeFileSync(path.join(home, ".kiro", "skills", "cz-cli", "STALE.md"), "old")
+    fs.copyFileSync(path.join(repoRoot, "packages", "npm", "cz-cli", "bin", "postinstall.js"), path.join(packageDir, "bin", "postinstall.js"))
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ version: "0.0.0-test" }))
+    fs.writeFileSync(path.join(installedRoot, "cz-cli"), "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo 0.0.0-test\n", { mode: 0o755 })
+    fs.writeFileSync(path.join(packageDir, "bin", "platform.js"), [
+      "\"use strict\";",
+      "exports.DEFAULT_FALLBACK_ROOT = \"unused\";",
+      "exports.getPlatformSpec = () => ({ npmPackage: \"fake\" });",
+      `exports.ensureInstalledBinary = async () => ({ rootDir: ${JSON.stringify(installedRoot)}, binPath: ${JSON.stringify(path.join(installedRoot, "cz-cli"))} });`,
+      "",
+    ].join("\n"))
+
+    try {
+      execFileSync(process.execPath, [path.join(packageDir, "bin", "postinstall.js")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home },
+      })
+
+      for (const seg of externalAgentSkillDirs) {
+        const skillMd = path.join(home, ...seg, "cz-cli", "SKILL.md")
+        expect(fs.existsSync(skillMd)).toBe(true)
+        expect(fs.readFileSync(skillMd, "utf-8")).toBe("fresh-cz-cli")
+      }
+      expect(fs.existsSync(path.join(home, ".kiro", "skills", "cz-cli", "STALE.md"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("setup.sh installs cz-cli skill into external agent dirs (delete-then-install)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-setup-ext-skills-"))
+    const installDir = path.join(tmp, "bin")
+    const home = path.join(tmp, "home")
+    const packageDir = path.join(tmp, "package")
+    fs.mkdirSync(path.join(packageDir, "skills", "cz-cli"), { recursive: true })
+    fs.writeFileSync(path.join(packageDir, "cz-cli"), "#!/bin/sh\n")
+    fs.writeFileSync(path.join(packageDir, "skills", "cz-cli", "SKILL.md"), "fresh-cz-cli")
+    fs.copyFileSync(path.join(repoRoot, "scripts", "setup.sh"), path.join(packageDir, "setup.sh"))
+    // Pre-existing stale skill must be replaced.
+    fs.mkdirSync(path.join(home, ".codex", "skills", "cz-cli"), { recursive: true })
+    fs.writeFileSync(path.join(home, ".codex", "skills", "cz-cli", "STALE.md"), "old")
+
+    try {
+      execFileSync("sh", [path.join(packageDir, "setup.sh")], {
+        cwd: packageDir,
+        env: { ...process.env, HOME: home, INSTALL_DIR: installDir },
+      })
+
+      for (const seg of externalAgentSkillDirs) {
+        const skillMd = path.join(home, ...seg, "cz-cli", "SKILL.md")
+        expect(fs.existsSync(skillMd)).toBe(true)
+        expect(fs.readFileSync(skillMd, "utf-8")).toBe("fresh-cz-cli")
+      }
+      expect(fs.existsSync(path.join(home, ".codex", "skills", "cz-cli", "STALE.md"))).toBe(false)
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }

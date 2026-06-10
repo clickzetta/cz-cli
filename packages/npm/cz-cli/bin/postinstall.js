@@ -74,7 +74,9 @@ async function main() {
   const skillsSrc = path.join(installed.rootDir, "skills");
   const builtinDest = path.join(home, ".clickzetta", "skills", ".builtin");
 
-  // Clean up legacy skill installations in agent directories
+  // Register the cz-cli skill into external agent skill directories so that
+  // Claude Code / Kiro / Codex / Cursor etc. can call cz-cli directly. The
+  // builtin (.builtin) install below is unchanged.
   const agentDirs = [
     path.join(home, ".claude", "skills"),
     path.join(home, ".kiro", "skills"),
@@ -83,9 +85,21 @@ async function main() {
     path.join(home, ".openclaw", "workspace", "skills"),
     path.join(home, ".singclaw", "workspace", "skills"),
   ];
+  const externalSkillSrc = path.join(skillsSrc, "cz-cli");
+  const hasExternalSkill = fs.existsSync(externalSkillSrc);
   for (const dir of agentDirs) {
-    for (const legacy of ["czagent", "czcli", "cz-cli-v2", "cz-cli"]) {
+    // Clean up deprecated skill aliases (do not reinstall — folded into cz-cli).
+    for (const legacy of ["czagent", "czcli", "cz-cli-v2"]) {
       try { fs.rmSync(path.join(dir, legacy), { recursive: true, force: true }); } catch (e) {}
+    }
+    // Delete-then-install the cz-cli skill. A per-dir failure must not abort
+    // the npm install or the remaining agent directories.
+    if (hasExternalSkill) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.rmSync(path.join(dir, "cz-cli"), { recursive: true, force: true });
+        fs.cpSync(externalSkillSrc, path.join(dir, "cz-cli"), { recursive: true });
+      } catch (e) {}
     }
   }
 

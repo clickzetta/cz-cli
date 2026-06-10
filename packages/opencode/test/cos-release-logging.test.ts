@@ -239,6 +239,6 @@ describe("cos release logging", () => {
 
     expect(script).toContain("Usage: install.sh [options]")
     expect(script).toContain("--binary <path>")
-    expect(script).toContain("https://cz-cli.ai/api/stable")
+    expect(script).toContain('https://cz-cli.ai/api/${CHANNEL}')
   })
 })

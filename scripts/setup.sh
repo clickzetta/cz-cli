@@ -52,6 +52,28 @@ if [ -d "$SKILLS_SRC" ]; then
   done
 fi
 
+# Register the cz-cli skill into external agent skill directories so that
+# Claude Code / Kiro / Codex / Cursor etc. can call cz-cli directly. Uses
+# delete-then-install semantics; the builtin install above is unchanged.
+for agent_dir in \
+    "$HOME/.claude/skills" \
+    "$HOME/.kiro/skills" \
+    "$HOME/.cursor/skills" \
+    "$HOME/.codex/skills" \
+    "$HOME/.openclaw/workspace/skills" \
+    "$HOME/.singclaw/workspace/skills"; do
+  # Clean up deprecated skill aliases (do not reinstall — folded into cz-cli).
+  for legacy in czagent czcli cz-cli-v2; do
+    rm -rf "${agent_dir}/${legacy}" 2>/dev/null || true
+  done
+  # Delete-then-install the cz-cli skill.
+  if [ -d "$SKILLS_SRC/cz-cli" ]; then
+    mkdir -p "$agent_dir" 2>/dev/null || true
+    rm -rf "${agent_dir}/cz-cli" 2>/dev/null || true
+    cp -r "$SKILLS_SRC/cz-cli" "${agent_dir}/cz-cli" 2>/dev/null || true
+  fi
+done
+
 cat > "$METADATA_FILE" <<EOF
 {
   "version": 1,

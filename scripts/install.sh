@@ -417,6 +417,14 @@ install_from_binary() {
             codesign --force --sign - "${INSTALL_DIR}/${APP}" 2>/dev/null || true
         fi
     fi
+
+    # Bring along bundled skills that sit next to the source binary, mirroring
+    # the download path which places them at "$INSTALL_DIR/skills".
+    src_skills="$(dirname "$binary_path")/skills"
+    if [ -d "$src_skills" ]; then
+        rm -rf "$INSTALL_DIR/skills"
+        cp -r "$src_skills" "$INSTALL_DIR/skills"
+    fi
 }
 
 # Pre-install: detect and remove any cz-cli binary that would shadow our install
@@ -501,7 +509,10 @@ if [ -d "$SKILLS_SRC" ]; then
     done
 fi
 
-# Clean up legacy skill installations in agent directories
+# Register the cz-cli skill into external agent skill directories so that
+# Claude Code / Kiro / Codex / Cursor etc. can call cz-cli directly. Uses
+# delete-then-install semantics; the builtin (.builtin) install above is
+# unchanged. A failure on one directory must not abort the others.
 for agent_dir in \
     "$HOME/.claude/skills" \
     "$HOME/.kiro/skills" \
@@ -509,9 +520,16 @@ for agent_dir in \
     "$HOME/.codex/skills" \
     "$HOME/.openclaw/workspace/skills" \
     "$HOME/.singclaw/workspace/skills"; do
-    for legacy in czagent czcli cz-cli-v2 cz-cli; do
+    # Clean up deprecated skill aliases (do not reinstall — folded into cz-cli).
+    for legacy in czagent czcli cz-cli-v2; do
         rm -rf "${agent_dir}/${legacy}" 2>/dev/null || true
     done
+    # Delete-then-install the cz-cli skill.
+    if [ -d "$SKILLS_SRC/cz-cli" ]; then
+        mkdir -p "$agent_dir" 2>/dev/null || true
+        rm -rf "${agent_dir}/cz-cli" 2>/dev/null || true
+        cp -r "$SKILLS_SRC/cz-cli" "${agent_dir}/cz-cli" 2>/dev/null || true
+    fi
 done
 
 add_to_path() {

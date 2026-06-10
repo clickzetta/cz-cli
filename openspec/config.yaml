@@ -13,6 +13,7 @@ context: |
     install/update 流程、自动更新、渠道选择  → openspec/specs/auto-update/spec.md
     发布渠道（stable/nightly）、install.json  → openspec/specs/release-channel/spec.md
     macOS Gatekeeper、quarantine、codesign    → openspec/specs/macos-gatekeeper/spec.md
+    skill 分发（内置 .builtin、外部 agent 注册）→ openspec/specs/skill-install/spec.md
 
   Areas NOT yet covered by specs (create a new spec when changing):
     GitHub Actions workflow (release-cos.yml, build targets, upload steps)
