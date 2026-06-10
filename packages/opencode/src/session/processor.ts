@@ -29,6 +29,8 @@ import {
   CLICKZETTA_ROTATION_CONFIRM_LABEL,
   rotateClickzettaLlm,
 } from "@clickzetta/cli/llm/clickzetta-rotation"
+import { resolveConnectionConfig, isBillingError as isClickZettaBillingError } from "@clickzetta/cli"
+import { getCurrentUser, getToken, toServiceUrl } from "@clickzetta/sdk"
 import {
   clickzettaFreeQuotaRotationQuestion,
   isClickzettaAiGatewayQuotaExhausted,
@@ -207,11 +209,35 @@ export const layer: Layer.Layer<
       const slog = log.clone().tag("sessionID", input.sessionID).tag("messageID", input.assistantMessage.id)
       const initialConfig = yield* config.get()
       const providerType = initialConfig.llm_entries?.find((entry) => entry.name === input.model.providerID)?.provider
+      let accountDisplayName: string | undefined
+      let billingService: string | undefined
+      let accountDisplayNamePromise: Promise<string | undefined> | undefined
+      const loadAccountDisplayName = () => {
+        accountDisplayNamePromise ??= (async () => {
+          try {
+            const cfg = resolveConnectionConfig({})
+            billingService = cfg.service
+            const token = await getToken(cfg)
+            return (await getCurrentUser(toServiceUrl(cfg.service, cfg.protocol), token.token)).accountDisplayName
+          } catch {
+            return undefined
+          }
+        })()
+        return accountDisplayNamePromise
+      }
+
+      const shouldLoadAccountDisplayName = (e: unknown) => {
+        if (!(e instanceof Error)) return false
+        const responseBody = "responseBody" in e && typeof e.responseBody === "string" ? e.responseBody : ""
+        return isClickZettaBillingError({ message: `${e.message}\n${responseBody}` })
+      }
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
           providerID: input.model.providerID,
           providerType,
+          accountDisplayName,
+          service: billingService,
           aborted,
         })
 
@@ -741,7 +767,14 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
-              (cause) => Effect.fail(Cause.squash(cause)),
+              (cause) =>
+                Effect.gen(function* () {
+                  const error = Cause.squash(cause)
+                  if (shouldLoadAccountDisplayName(error)) {
+                    accountDisplayName = yield* Effect.promise(loadAccountDisplayName)
+                  }
+                  return yield* Effect.fail(error)
+                }),
             ),
             Effect.retry(
               SessionRetry.policy({

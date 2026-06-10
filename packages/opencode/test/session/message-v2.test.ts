@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { APICallError } from "ai"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { Provider } from "../../src/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -9,6 +11,7 @@ import { AI_GATEWAY_API_KEY_QUOTA_MESSAGE } from "../../src/config/llm-quota-rec
 
 const sessionID = SessionID.make("session")
 const providerID = ProviderID.make("test")
+const clickzettaBillingMessage = "Insufficient account balance. Please visit https://xxjrdhjr.accounts.clickzetta.com to add funds."
 const model: Provider.Model = {
   id: ModelID.make("test-model"),
   providerID,
@@ -56,6 +59,23 @@ const model: Provider.Model = {
   options: {},
   headers: {},
   release_date: "2026-01-01",
+}
+
+function writeClickzettaProfile(options: { accountsUrl?: string; accountName?: string; profileName?: string } = {}) {
+  const home = process.env.CLICKZETTA_TEST_HOME
+  if (!home) throw new Error("CLICKZETTA_TEST_HOME is required")
+  const profileName = options.profileName ?? "test"
+  mkdirSync(join(home, ".clickzetta"), { recursive: true })
+  writeFileSync(
+    join(home, ".clickzetta", "profiles.toml"),
+    [
+      `default_profile = "${profileName}"`,
+      `[profiles.${profileName}]`,
+      'service = "uat-api.clickzetta.com"',
+      ...(options.accountName ? [`account_name = "${options.accountName}"`] : []),
+      ...(options.accountsUrl ? [`accounts_url = "${options.accountsUrl}"`] : []),
+    ].join("\n"),
+  )
 }
 
 function userInfo(id: string): MessageV2.User {
@@ -1022,6 +1042,69 @@ describe("session.message-v2.fromError", () => {
 
     expect(MessageV2.APIError.isInstance(result)).toBe(true)
     expect((result as MessageV2.APIError).data.message).not.toBe(AI_GATEWAY_API_KEY_QUOTA_MESSAGE)
+  })
+
+  test("formats ClickZetta tenant overdue from APICallError", () => {
+    writeClickzettaProfile({ accountsUrl: "https://xxjrdhjr.accounts.clickzetta.com/" })
+    const result = MessageV2.fromError(
+      new APICallError({
+        message: "Forbidden",
+        url: "https://mock-clickzetta.example/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 403,
+        responseHeaders: { "content-type": "application/json" },
+        responseBody: JSON.stringify({
+          code: "GATEWAY_TENANT_OVERDUE",
+          message: "[G2] Tenant overdue. path=/gateway/v1/chat/completions, requestId=req, virtualApiKeyAlias=alias, tenantId=100",
+        }),
+        isRetryable: false,
+      }),
+      { providerID, providerType: "clickzetta" },
+    )
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toBe(clickzettaBillingMessage)
+  })
+
+  test("keeps ClickZetta tenant overdue unchanged when no accounts URL or account name is configured", () => {
+    writeClickzettaProfile({ profileName: "badcase" })
+    const message = "[G2] Tenant overdue. path=/v1/chat/completions, requestId=d6f9f22abcac644c7c84683914ba6f09, virtualApiKeyAlias=tmp, tenantId=1082"
+    const result = MessageV2.fromError(
+      new APICallError({
+        message,
+        url: "https://mock-clickzetta.example/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 403,
+        responseHeaders: { "content-type": "application/json" },
+        isRetryable: false,
+      }),
+      { providerID, providerType: "clickzetta" },
+    )
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toBe(`LLM request failed: ${message}`)
+  })
+
+  test("formats ClickZetta tenant over quota from APICallError", () => {
+    writeClickzettaProfile({ accountsUrl: "https://xxjrdhjr.accounts.clickzetta.com/" })
+    const result = MessageV2.fromError(
+      new APICallError({
+        message: "Forbidden",
+        url: "https://mock-clickzetta.example/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 403,
+        responseHeaders: { "content-type": "application/json" },
+        responseBody: JSON.stringify({
+          code: "GATEWAY_TENANT_OVER_QUOTA",
+          message: "[G2] Tenant over quota. path=/gateway/v1/chat/completions, requestId=req, virtualApiKeyAlias=alias, tenantId=100",
+        }),
+        isRetryable: false,
+      }),
+      { providerID, providerType: "clickzetta" },
+    )
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toBe(clickzettaBillingMessage)
   })
 
   test("serializes unknown inputs", () => {

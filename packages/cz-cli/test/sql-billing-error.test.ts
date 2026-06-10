@@ -121,7 +121,7 @@ describe("sql insufficient balance errors", () => {
     })
   })
 
-  test("infers accounts url from service and account name when profile is not configured", async () => {
+  test("infers accounts url from runtime account display name and service", async () => {
     writeFileSync(
       profileFile,
       [
@@ -138,7 +138,28 @@ describe("sql insufficient balance errors", () => {
     expect(result.exitCode).toBe(1)
     expect(json.error).toEqual({
       code: "CZLH-60029",
-      message: "Insufficient account balance. Please visit https://yahexxxi.uat-accounts.clickzetta.com to add funds.",
+      message: "Account yahexxxi has overdue payments. Job submission is currently restricted.",
+    })
+  })
+
+  test("does not infer accounts url from the server error account name or profile name", async () => {
+    writeFileSync(
+      profileFile,
+      [
+        'default_profile = "test"',
+        "[profiles.test]",
+        'pat = "pat"',
+        'service = "uat-api.clickzetta.com"',
+      ].join("\n"),
+    )
+
+    const result = await execute('sql "SELECT 1 AS test" --sync')
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json.error).toEqual({
+      code: "CZLH-60029",
+      message: "Account yahexxxi has overdue payments. Job submission is currently restricted.",
     })
   })
 
@@ -157,7 +178,6 @@ describe("sql insufficient balance errors", () => {
     const result = await execute('sql --format table "SELECT 1 AS test"')
 
     expect(result.exitCode).toBe(1)
-    expect(result.output).toContain("ERROR CZLH-60029: Insufficient account balance. Please visit https://yahexxxi.uat-accounts.clickzetta.com to add funds.")
-    expect(result.output).not.toContain("overdue payments")
+    expect(result.output).toContain("ERROR CZLH-60029: Account yahexxxi has overdue payments. Job submission is currently restricted.")
   })
 })

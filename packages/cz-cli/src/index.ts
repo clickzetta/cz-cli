@@ -11,6 +11,7 @@ export type { OutputOptions } from "./output/index.js"
 export type { CliArgs } from "./connection/config.js"
 export { formatJson, formatPretty, formatTable, formatCsv, formatJsonl, formatToon } from "./output/formatter.js"
 export { logOperation, redactSql } from "./logger.js"
+export { formatBillingError, isBillingError } from "./commands/billing-error.js"
 export { createCli } from "./cli.js"
 export type { GlobalArgs } from "./cli.js"
 export {

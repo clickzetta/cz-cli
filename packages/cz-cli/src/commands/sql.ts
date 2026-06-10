@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { splitSql, stripLeadingComment, JobStatus, request, requestRaw, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
+import { splitSql, stripLeadingComment, JobStatus, request, requestRaw, getCurrentUser, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, parseOutputArgs, renderOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
@@ -147,7 +147,7 @@ async function applyUseStatement(
     }
     if (result.status === JobStatus.FAILED) {
       logOperation("sql", { sql: use.normalized, ok: false, errorCode: result.errorCode })
-      error(result.errorCode ?? "SCHEMA_NOT_FOUND", formatQueryError(result, ctx, profileName, `Schema '${use.target}' does not exist.`), { format })
+      error(result.errorCode ?? "SCHEMA_NOT_FOUND", await formatQueryError(result, ctx, profileName, `Schema '${use.target}' does not exist.`), { format })
       return false
     }
     ctx.config.schema = extractSchema(use.raw)
@@ -161,7 +161,7 @@ async function applyUseStatement(
   }
   if (result.status === JobStatus.FAILED) {
     logOperation("sql", { sql: use.normalized, ok: false, errorCode: result.errorCode })
-    error(result.errorCode ?? "SQL_ERROR", formatQueryError(result, ctx, profileName), { format })
+    error(result.errorCode ?? "SQL_ERROR", await formatQueryError(result, ctx, profileName), { format })
     return false
   }
   if (!useTargetExists(result.rows, use.target)) {
@@ -308,7 +308,7 @@ async function executeSingle(
     if (r.status === JobStatus.FAILED) {
       const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
       logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-      error(r.errorCode ?? "SQL_ERROR", formatQueryError(r, ctx, argv.profile), { format, extra: hint ? { schema: hint } : undefined })
+      error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format, extra: hint ? { schema: hint } : undefined })
       return
     }
     if (r.rowCount > rowLimit) {
@@ -369,16 +369,25 @@ async function executeSingle(
   await emitResult(r, sql, argv, ctx, t0)
 }
 
-function formatQueryError(r: QueryResult, ctx: ExecContext, profileName?: string, fallback = "Query failed") {
+async function resolveAccountDisplayName(ctx: ExecContext) {
+  try {
+    return (await getCurrentUser(ctx.clientOpts.baseUrl, ctx.token.token)).accountDisplayName
+  } catch {
+    return undefined
+  }
+}
+
+async function formatQueryError(r: QueryResult, ctx: ExecContext, profileName?: string, fallback = "Query failed") {
   return formatBillingError({
     code: r.errorCode,
     message: r.errorMessage ?? fallback,
     profileName,
     service: ctx.config.service,
+    accountDisplayName: await resolveAccountDisplayName(ctx),
   })
 }
 
-function formatClassifiedError(input: {
+async function formatClassifiedError(input: {
   code?: string
   message: string
   ctx?: ExecContext
@@ -389,6 +398,7 @@ function formatClassifiedError(input: {
     message: input.message,
     profileName: input.profileName,
     service: input.ctx?.config.service,
+    accountDisplayName: input.ctx ? await resolveAccountDisplayName(input.ctx) : undefined,
   })
 }
 
@@ -398,7 +408,7 @@ async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, form
   const aiMessage = hint
     ? `SQL failed. Available schema info attached in the 'schema' field — check table/column names and retry.`
     : undefined
-  error(r.errorCode ?? "SQL_ERROR", formatQueryError(r, ctx, profileName), {
+  error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, profileName), {
     format,
     extra: hint ? { schema: hint } : undefined,
     ...(aiMessage && { aiMessage }),
@@ -497,13 +507,13 @@ async function handler(argv: SqlArgs): Promise<void> {
           const r = await execSql(dryRunCtx, `EXPLAIN ${stmt}`, { timeoutMs: argv.timeout * 1000 })
           if (isQueryResult(r)) {
             if (r.status === JobStatus.FAILED)
-              return { sql: stmt, status: "error", job_id: r.jobId, error: formatQueryError(r, dryRunCtx, argv.profile, "EXPLAIN failed") }
+              return { sql: stmt, status: "error", job_id: r.jobId, error: await formatQueryError(r, dryRunCtx, argv.profile, "EXPLAIN failed") }
             return { sql: stmt, status: "ok", job_id: r.jobId }
           }
           return { sql: stmt, status: "ok", job_id: (r as { jobId?: string }).jobId }
         } catch (err) {
           const { code, message } = classifyExecError(err)
-          return { sql: stmt, status: "error", error: formatClassifiedError({ code, message, ctx: dryRunCtx, profileName: argv.profile }) }
+          return { sql: stmt, status: "error", error: await formatClassifiedError({ code, message, ctx: dryRunCtx, profileName: argv.profile }) }
         }
       }))
       success({ statements: results, count: statements.length }, { format })
@@ -536,7 +546,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           try {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-              const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: await formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
               process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             } else if (isQueryResult(r)) {
@@ -548,7 +558,7 @@ async function handler(argv: SqlArgs): Promise<void> {
             }
           } catch (err) {
             const { code, message } = classifyExecError(err)
-            const line = { index: i, sql: stmt, error: { code, message: formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
+            const line = { index: i, sql: stmt, error: { code, message: await formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
             process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
             logOperation("sql", { sql: stmt, ok: false, errorCode: code })
           }
@@ -557,7 +567,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
           if (isQueryResult(r) && r.status === JobStatus.FAILED) {
             logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
-            error(r.errorCode ?? "SQL_ERROR", formatQueryError(r, ctx, argv.profile), { format })
+            error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format })
             return
           }
         } else {
@@ -570,7 +580,7 @@ async function handler(argv: SqlArgs): Promise<void> {
   } catch (err) {
     const { code, message, aiMessage, jobId } = classifyExecError(err)
     logOperation("sql", { sql, ok: false, errorCode: code })
-    error(code, formatClassifiedError({ code, message, ctx, profileName: argv.profile }), { format, debug: argv.debug, ...(aiMessage && { aiMessage }), ...(jobId && { extra: { job_id: jobId } }) })
+    error(code, await formatClassifiedError({ code, message, ctx, profileName: argv.profile }), { format, debug: argv.debug, ...(aiMessage && { aiMessage }), ...(jobId && { extra: { job_id: jobId } }) })
   } finally {
     process.removeListener("SIGINT", sigintHandler)
   }

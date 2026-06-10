@@ -1,5 +1,6 @@
 import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
+import { formatBillingError, isBillingError } from "@clickzetta/cli"
 import { iife } from "@/util/iife"
 import type { ProviderID } from "./schema"
 import { AI_GATEWAY_API_KEY_QUOTA_MESSAGE, isClickzettaAiGatewayApiKeyQuotaExhausted } from "@/config/llm-quota-recovery"
@@ -171,7 +172,7 @@ export type ParsedAPICallError =
       userFacing?: boolean
     }
 
-export function parseAPICallError(input: { providerID: ProviderID; providerType?: string; error: APICallError }): ParsedAPICallError {
+export function parseAPICallError(input: { providerID: ProviderID; providerType?: string; accountDisplayName?: string; service?: string; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
   if (isOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
@@ -183,6 +184,18 @@ export function parseAPICallError(input: { providerID: ProviderID; providerType?
   }
 
   const bodyStr = input.error.responseBody ?? ""
+  const billingInput = {
+    code: typeof body?.code === "string" ? body.code : undefined,
+    message: m,
+  }
+  const billingMessage = isBillingError(billingInput)
+    ? formatBillingError({
+      ...billingInput,
+      service: input.service,
+      accountDisplayName: input.accountDisplayName,
+    })
+    : m
+  const billingError = billingMessage !== m
   const apiKeyQuotaExhausted = isClickzettaAiGatewayApiKeyQuotaExhausted({
     providerType: input.providerType ?? input.providerID,
     statusCode: input.error.statusCode,
@@ -196,12 +209,12 @@ export function parseAPICallError(input: { providerID: ProviderID; providerType?
   const metadata = input.error.url ? { url: input.error.url } : undefined
   return {
     type: "api_error",
-    message: apiKeyQuotaExhausted ? AI_GATEWAY_API_KEY_QUOTA_MESSAGE : m,
+    message: billingError ? billingMessage : apiKeyQuotaExhausted ? AI_GATEWAY_API_KEY_QUOTA_MESSAGE : m,
     statusCode: input.error.statusCode,
-    isRetryable: quotaExhausted ? false : (input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable),
+    isRetryable: billingError || quotaExhausted ? false : (input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable),
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,
-    ...(apiKeyQuotaExhausted && { userFacing: true }),
+    ...((billingError || apiKeyQuotaExhausted) && { userFacing: true }),
   }
 }

@@ -542,5 +542,6 @@ describe("setup guidance", () => {
 
     expect(result.exitCode).toBe(0)
     expect(readProfiles(home)).toContain(`service = "http://127.0.0.1:${address.port}/api"`)
+    expect(readProfiles(home)).toContain('account_name = "acct"')
   })
 })

@@ -1394,6 +1394,7 @@ async function runExistingAccountFlowTTY(
   const profile: ProfileEntry = {
     username,
     password,
+    account_name: accountName,
     service: auth.service,
     protocol: "https",
     instance: instance.instanceName,
@@ -1624,6 +1625,7 @@ async function runExistingAccountFlowNonTTY(
   const profile: ProfileEntry = {
     username,
     password,
+    account_name: accountName,
     service: auth.service,
     protocol: "https",
     instance: instance.instanceName,

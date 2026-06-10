@@ -6,6 +6,7 @@ interface UserInfo {
   accountId: number
   name: string
   instanceId: number
+  accountDisplayName?: string
 }
 
 export async function getCurrentUser(

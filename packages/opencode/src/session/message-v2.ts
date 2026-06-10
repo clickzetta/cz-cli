@@ -942,7 +942,7 @@ export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: Ses
 
 export function fromError(
   e: unknown,
-  ctx: { providerID: ProviderID; providerType?: string; aborted?: boolean },
+  ctx: { providerID: ProviderID; providerType?: string; accountDisplayName?: string; service?: string; aborted?: boolean },
 ): NonNullable<Assistant["error"]> {
   switch (true) {
     case e instanceof DOMException && e.name === "AbortError":
@@ -994,6 +994,8 @@ export function fromError(
       const parsed = ProviderError.parseAPICallError({
         providerID: ctx.providerID,
         providerType: ctx.providerType,
+        accountDisplayName: ctx.accountDisplayName,
+        service: ctx.service,
         error: e,
       })
       if (parsed.type === "context_overflow") {
