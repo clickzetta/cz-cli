@@ -87,6 +87,9 @@ describe("prepare release assets", () => {
 
       expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "fresh-skill"))).toBe(true)
       expect(fs.existsSync(path.join(home, ".clickzetta", "skills", ".builtin", "test-skills"))).toBe(false)
+      expect(fs.existsSync(path.join(home, ".local", "bin", "cz-agent"))).toBe(true)
+      expect(fs.statSync(path.join(home, ".local", "bin", "cz-agent")).mode & 0o111).toBeGreaterThan(0)
+      expect(fs.existsSync(path.join(home, ".cz-cli", "bin", "cz-agent"))).toBe(false)
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }

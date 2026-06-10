@@ -99,10 +99,11 @@ async function main() {
     }
   }
 
-  // Install cz-agent convenience wrapper alongside the binary
-  const czCliDir = path.join(home, ".cz-cli", "bin");
-  fs.mkdirSync(czCliDir, { recursive: true });
-  const agentWrapper = path.join(czCliDir, "cz-agent");
+  // Install cz-agent convenience wrapper into ~/.local/bin, consistent with
+  // install.sh / setup.sh (which place it on PATH next to the binary).
+  const localBin = path.join(home, ".local", "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  const agentWrapper = path.join(localBin, "cz-agent");
   fs.writeFileSync(agentWrapper, `#!/bin/sh\nexec "${installed.binPath}" agent "$@"\n`, { mode: 0o755 });
 
   try {

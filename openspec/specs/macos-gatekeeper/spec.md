@@ -51,7 +51,7 @@ CI 构建时对 macOS 二进制执行 ad-hoc 签名（`codesign --force --sign -
 
 #### 场景：恢复 restart binary 后首次运行不被 kill
 
-- **WHEN** 自动更新将目标版本 binary 从 `~/.local/bin/cz-cli` 或 `~/.cz-cli/bin/cz-cli` 拷贝回原重启路径，且操作系统为 macOS
+- **WHEN** 自动更新将目标版本 binary 从 `~/.local/bin/cz-cli` 拷贝回原重启路径，且操作系统为 macOS
 - **THEN** 自动更新对恢复后的 binary 执行 `xattr -dr com.apple.quarantine`
 - **AND** 自动更新对恢复后的 binary 执行 `codesign --force --sign -`
 - **AND** 重启后的 `cz-cli --version` 不被 Gatekeeper SIGKILL

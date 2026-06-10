@@ -124,7 +124,7 @@ fn is_cli_installed() -> bool {
         .unwrap_or(false)
 }
 
-const INSTALL_SCRIPT: &str = include_str!("../../../../scripts/install.sh");
+const INSTALL_SCRIPT: &str = include_str!("../../../../install");
 
 #[tauri::command]
 #[specta::specta]

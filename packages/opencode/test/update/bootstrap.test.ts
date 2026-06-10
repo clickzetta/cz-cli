@@ -75,7 +75,7 @@ describe("update bootstrap", () => {
   test("detects install method from the supplied exec path", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
 
-    expect(installMethodFromExecPath(path.join(home, ".cz-cli", "bin", "cz-cli"), home)).toBe("curl")
+    expect(installMethodFromExecPath(path.join(home, ".local", "bin", "cz-cli"), home)).toBe("curl")
   })
 
   test("detects install method from a mixed-case self-managed path on macOS", async () => {

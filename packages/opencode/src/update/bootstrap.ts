@@ -185,7 +185,6 @@ export function installMethodFromExecPath(execPath: string, home?: string, env: 
   const roots = [root]
   try { roots.push(realpathSync(root)) } catch {}
   const normalizedScriptPath = scriptPath.toLowerCase()
-  if (roots.some((item) => normalizedScriptPath.startsWith(path.join(item, ".cz-cli", "bin").toLowerCase()))) return "curl"
   if (roots.some((item) => normalizedScriptPath.startsWith(path.join(item, ".local", "bin").toLowerCase()))) return "curl"
   return "unknown"
 }
@@ -287,12 +286,8 @@ function repairMacOSBinary(binaryPath: string) {
 export async function ensureRestartBinaryAtPath(target: string, restartPath = process.execPath, env: NodeJS.ProcessEnv = process.env) {
   repairMacOSBinary(restartPath)
   if (binaryVersion(restartPath, env) === target) return
-  const root = homeDirectory(undefined, env)
-  const candidate = [
-    path.join(root, ".local", "bin", "cz-cli"),
-    path.join(root, ".cz-cli", "bin", "cz-cli"),
-  ].find((item) => item !== restartPath && binaryVersion(item, env) === target)
-  if (!candidate) return
+  const candidate = path.join(homeDirectory(undefined, env), ".local", "bin", "cz-cli")
+  if (candidate === restartPath || binaryVersion(candidate, env) !== target) return
   await fs.mkdir(path.dirname(restartPath), { recursive: true })
   await fs.copyFile(candidate, restartPath)
   await fs.chmod(restartPath, 0o755)

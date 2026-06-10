@@ -295,8 +295,7 @@ export function registerUpdateCommand(cli: Argv) {
         await performUpgrade(method, latest, fetch, channel, argv.force)
 
         // Post-upgrade fixup: if install.sh placed the binary in a different dir
-        // than where `which cz-cli` resolves (e.g. old install.sh uses ~/.local/bin
-        // but PATH has ~/.cz-cli/bin first), copy it to the right place.
+        // than where `which cz-cli` resolves, copy it to the right place.
         const postWhich = (() => {
           try { return execSync("which cz-cli", { encoding: "utf-8", stdio: "pipe" }).trim() } catch { return undefined }
         })()

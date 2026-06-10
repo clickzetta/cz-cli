@@ -233,13 +233,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Upload install script
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ needs.resolve-release.outputs.tag }}" \
-            scripts/install.sh \
-            --clobber --repo "${{ github.repository }}"
 
   publish-npm:
     needs: [resolve-release, build]

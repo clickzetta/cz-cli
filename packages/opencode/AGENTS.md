@@ -137,4 +137,4 @@ nativeAddon.subscribe(dir, cb)
 
 ## git commit
 
-you github commit message should be used Chinese to write
+you github commit message should be used Chinese to write (仅在用户本次要求提交时提交，否则不要自行commit)

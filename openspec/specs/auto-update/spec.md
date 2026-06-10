@@ -92,12 +92,12 @@
 
 #### 场景：which 路径为 install.sh 安装
 
-- **WHEN** `which cz-cli` 解析到 `~/.cz-cli/bin/` 或 `~/.local/bin/` 时
+- **WHEN** `which cz-cli` 解析到 `~/.local/bin/` 时
 - **THEN** 安装方式为 `curl`，使用 install.sh 升级
 
-#### 场景：旧版 install.sh 路径无法 realpath 时仍识别为自管安装
+#### 场景：路径无法 realpath 时仍识别为自管安装
 
-- **WHEN** 当前 binary 路径为 `~/.cz-cli/bin/cz-cli` 且路径暂时无法解析 realpath 时
+- **WHEN** 当前 binary 路径为 `~/.local/bin/cz-cli` 且路径暂时无法解析 realpath 时
 - **THEN** 安装方式仍为 `curl`，不因 realpath 失败退化为 `unknown`
 
 #### 场景：macOS 路径大小写不一致时仍识别为自管安装
@@ -149,7 +149,7 @@
 `cz-cli update` 通过 install.sh 升级时，新 binary 必须最终出现在 `which cz-cli` 解析的路径上。由于线上旧版 install.sh 可能安装到不同目录（如 `~/.local/bin`），update 命令应：
 
 1. 通过 `CZ_INSTALL_DIR` 环境变量告知 install.sh 安装到当前 binary 目录（新版 install.sh 支持）
-2. 升级后验证 `which cz-cli --version` 是否为目标版本，若不是则从已知候选路径（`~/.cz-cli/bin`、`~/.local/bin`）找到新 binary 并拷贝到 `which` 路径
+2. 升级后验证 `which cz-cli --version` 是否为目标版本，若不是则从已知候选路径（`~/.local/bin`）找到新 binary 并拷贝到 `which` 路径
 
 #### 场景：install.sh 安装到不同目录
 
@@ -174,4 +174,18 @@
 #### 场景：CZ_INSTALL_DIR 覆盖安装目录
 
 - **WHEN** `CZ_INSTALL_DIR` 环境变量被设置时
-- **THEN** install.sh 使用该值作为安装目录而非默认的 `$HOME/.cz-cli/bin`
+- **THEN** install.sh 使用该值作为安装目录而非默认的 `$HOME/.local/bin`
+
+### 需求：cz-agent 便捷 wrapper 安装位置一致
+
+所有安装方式安装 `cz-agent` 便捷 wrapper 时，必须使用与主 binary 一致的、位于 PATH 上的自管目录 `~/.local/bin`，不得使用已废弃的 `~/.cz-cli/bin`。`install.sh` 和 `setup.sh` 将其写入 `${INSTALL_DIR}`（默认 `~/.local/bin`），npm postinstall 同样写入 `~/.local/bin`。
+
+#### 场景：npm postinstall 安装 cz-agent wrapper
+
+- **WHEN** npm 包的 postinstall 脚本执行完成时
+- **THEN** `cz-agent` wrapper 被写入 `~/.local/bin/cz-agent` 并具有可执行权限
+
+#### 场景：不再使用废弃的 .cz-cli/bin 目录
+
+- **WHEN** npm postinstall 安装 `cz-agent` wrapper 时
+- **THEN** 不在 `~/.cz-cli/bin` 下创建 `cz-agent`

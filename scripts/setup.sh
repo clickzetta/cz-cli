@@ -24,6 +24,14 @@ mkdir -p "$INSTALL_DIR" "$METADATA_DIR"
 cp "$SOURCE_BINARY" "$TARGET_BINARY"
 chmod +x "$TARGET_BINARY"
 
+case "$(uname -s)" in
+  Darwin)
+    xattr -dr com.apple.quarantine "$TARGET_BINARY" 2>/dev/null || true
+    codesign --force --sign - "$TARGET_BINARY" 2>/dev/null || true
+    codesign -v --verbose=4 "$TARGET_BINARY" 2>/dev/null || true
+    ;;
+esac
+
 # cz-agent: convenience wrapper for `cz-cli agent` (same dir, already on PATH;
 # works in any shell and in scripts, unlike a shell alias).
 cat > "${INSTALL_DIR}/cz-agent" <<EOF
