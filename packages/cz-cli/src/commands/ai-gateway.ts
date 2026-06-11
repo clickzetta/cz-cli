@@ -33,6 +33,8 @@ const FIELD_TO_PERIOD: Record<string, string> = {
   quota_pdo: "daily", quota_pwo: "weekly", quota_pmo: "monthly", quota_total: "total",
 }
 const DEFAULT_QUOTA_TOTAL = 10000000
+const DEFAULT_MODEL_LIMIT = 10
+const DEFAULT_MODEL_PAGE_SIZE = 200
 
 type Dict = Record<string, unknown>
 function isRecord(v: unknown): v is Dict {
@@ -625,7 +627,8 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             y
               .positional("ref", { type: "string", describe: "Virtual key value or alias (alias auto-resolves to key value)" })
               .option("page", { type: "number", default: 1, describe: "Page number" })
-              .option("page-size", { type: "number", default: 200, describe: "Items per page" }),
+              .option("page-size", { type: "number", default: DEFAULT_MODEL_PAGE_SIZE, describe: "Items per page when --no-limit is used" })
+              .option("limit", { type: "number", default: DEFAULT_MODEL_LIMIT, describe: "Max models to return. Use --limit N to adjust or --no-limit to remove the default cap." }),
           async (argv) => {
             const format = argv.format
             const t0 = Date.now()
@@ -649,10 +652,12 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 error("USAGE_ERROR", "Masked key value detected (contains ****). Use the full plaintext key, or run `cz-cli ai-gateway key get <alias>` to reveal it.", { format, exitCode: 2 })
                 return
               }
+              const modelLimit = Number(argv.limit)
+              const pageSize = modelLimit === 0 ? Number(argv["page-size"]) : modelLimit
               const resp = await gwRequest<unknown>(sc, API.MODEL_LIST, {
                 virtualKey: key,
                 pageIndex: argv.page,
-                pageSize: argv["page-size"],
+                pageSize,
               })
               const raw = Array.isArray(resp.data) ? resp.data as Dict[] : []
               const models = raw.map((m) => ({
@@ -660,9 +665,12 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 modelName: m.modelName,
                 modelDesc: m.modelDesc,
               }))
+              const total = typeof resp.count === "number" ? resp.count : undefined
               const aiMessage = models.length === 0
                 ? "No AIGW models returned. This usually means the virtual key VALUE is wrong (did you pass the alias by mistake?). Get the actual key value via: cz-cli ai-gateway key get <alias>"
-                : undefined
+                : total !== undefined && modelLimit !== 0 && total > models.length
+                  ? `Showing ${models.length} of ${total} models. Use --limit to increase the cap, or --no-limit to remove the default cap.`
+                  : undefined
               logOperation("gateway model list", { ok: true, timeMs: Date.now() - t0 })
               success(models, { format, timeMs: Date.now() - t0, aiMessage })
             } catch (err) {

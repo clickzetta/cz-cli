@@ -496,7 +496,7 @@ const cases: HelpCase[] = [
   {
     args: ["ai-gateway", "model", "list", "--help"],
     expectHeader: "cz-cli ai-gateway model list",
-    expectOptions: ["key", "--page", "--page-size"],
+    expectOptions: ["key", "--page", "--page-size", "--limit", "--no-limit"],
   },
 
   // setup

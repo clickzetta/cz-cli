@@ -25,6 +25,85 @@ context: |
   Commit convention: Conventional Commits (fix/feat/docs/chore/refactor/test)
   Language: 代码注释和 commit message 用英文；spec/design 文档用中文
 
+agent_contract:
+  canonical_file: openspec/config.yaml
+  agents_md_policy:
+    root_agents_md: "AGENTS.md 只作为入口壳，指向 openspec/config.yaml。不要在 AGENTS.md 中复制长期契约内容。"
+  repository:
+    default_branch: main
+    javascript_sdk_regeneration: "./packages/sdk/js/script/build.ts"
+    tool_usage: "ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE."
+    automation: "Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility."
+    commit:
+      convention: "Conventional Commits (fix/feat/docs/chore/refactor/test)"
+      co_author_trailer: "Co-Authored-By: cz-cli <noreply@clickzetta.com>"
+  command_discovery:
+    help_contract: "Use `cz-cli <command> --help` to discover exact command parameters, including command-specific common flags such as --limit and --no-limit."
+    global_options:
+      order: "Global options appear before subcommand unless a command documents otherwise."
+      examples:
+        - "cz-cli --profile dev sql \"SELECT 1\""
+        - "cz-cli ai-gateway model list <key-or-alias> --limit 10"
+  output_contract:
+    ai_message: "Structured success/error payloads may include `ai_message`; this field is the agent-facing next-step or truncation guidance and should be preserved in agent documentation."
+  development_workflow:
+    policy: "This project uses spec-driven development with TDD. Do not skip the order below for behavior changes."
+    steps:
+      - "Read openspec/config.yaml."
+      - "Identify the relevant spec from the Spec coverage map; create a spec first if the area is uncovered or unclear."
+      - "Update or create openspec/specs/<topic>/spec.md in 中文 with WHEN/THEN scenarios."
+      - "Write or update tests that verify the spec scenarios."
+      - "Implement the code change to pass the tests and satisfy the spec."
+      - "Commit spec, tests, and code together."
+    behavior_changes_requiring_spec:
+      - "install/update/postinstall logic"
+      - "binary placement, signing, or permission changes"
+      - "GitHub Actions build or release steps"
+      - "version resolution, channel selection, or auto-update logic"
+      - "new CLI command or flag"
+    spec_not_required:
+      - "pure refactors with no observable behavior change"
+      - "typo fixes, comment updates, or log message wording"
+      - "test-only changes that add coverage for existing spec scenarios"
+  style_guide:
+    general:
+      - "Keep things in one function unless composable or reusable."
+      - "Avoid try/catch where possible."
+      - "Avoid using the any type."
+      - "Use Bun APIs when possible, such as Bun.file()."
+      - "Rely on type inference; avoid explicit annotations or interfaces unless necessary for exports or clarity."
+      - "Prefer functional array methods over for loops; use type guards on filter to preserve downstream inference."
+      - "In src/config, follow the existing self-export pattern at the top of the file when adding a config module."
+      - "Reduce variable count by inlining values used only once."
+    destructuring: "Avoid unnecessary destructuring; use dot notation to preserve context."
+    variables: "Prefer const over let; use ternaries or early returns instead of reassignment."
+    control_flow: "Avoid else statements; prefer early returns."
+    drizzle_schema: "Use snake_case field names so column names do not need string redefinitions."
+  verification:
+    policy: "Never claim a fix works without running it."
+    after_code_change:
+      - "Run relevant tests from the affected package, for example `cd packages/opencode && bun test <test-file>` or the closest package/test for changed code."
+      - "Run `bun typecheck` from the affected package directory."
+      - "If install/update/CLI binary logic changed, build a local binary and smoke-test the affected command."
+      - "For shell script changes, run `bash -n` and test the specific function with `bash -x`."
+      - "For macOS signing/quarantine changes, verify with `codesign -dvv <binary>` and `xattr -l <binary>` after install."
+    debugging:
+      - "Do not guess root cause from source reading alone; run the code and capture actual output."
+      - "Use bash -x or set -x for shell failures."
+      - "For TypeScript runtime errors, capture the actual execution path."
+      - "For binary/Gatekeeper issues, use `spctl -a -v <binary>` and `codesign -dvv <binary>`."
+      - "If a command fails, show the actual error output before proposing a fix."
+    done_definition:
+      - "Tests pass, with output shown."
+      - "Typecheck passes, with output shown."
+      - "Actual behavior matches the spec scenario, with command and output shown."
+  testing:
+    - "Avoid mocks as much as possible."
+    - "Test actual implementation; do not duplicate logic into tests."
+    - "Tests cannot run from repo root; run from package directories such as packages/opencode or the affected package."
+  typechecking:
+    - "Always run `bun typecheck` from package directories; never run tsc directly."
+
 rules:
   spec:
     - 用中文写作
