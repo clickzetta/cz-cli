@@ -143,6 +143,24 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: "SERVE_HELP: top-level serve exposes opencode server help without profile or LLM gating",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const result = run(["serve", "--help"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const combined = result.stdout + result.stderr
+        if (result.exitCode !== 0) return { pass: false, detail: `exit=${result.exitCode} output=${combined.slice(0, 160)}` }
+        if (!combined.includes("starts a headless cz-cli agent server")) {
+          return { pass: false, detail: `missing serve description: ${combined.slice(0, 200)}` }
+        }
+        if (combined.includes("NO_PROFILE") || combined.includes("NO_ACTIVE_LLM")) {
+          return { pass: false, detail: `serve help was gated: ${combined.slice(0, 160)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
     name: "PRETTY_NO_PROFILE: profile-gated commands honor --format pretty",
     run() {
       const { home, cleanup } = withFakeHome()

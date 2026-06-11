@@ -96,6 +96,24 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     await runLlm(["llm", ...args.slice(1)])
   }
 
+  if (args[0] === "serve") {
+    const [{ default: yargs }, { ServeCommand }, { InstallationVersion }] = await Promise.all([
+      import("yargs"),
+      import("./cli/cmd/serve"),
+      import("./installation/version"),
+    ])
+    await yargs(args)
+      .scriptName("cz-cli")
+      .help("help", "show help")
+      .alias("help", "h")
+      .version("version", "show version number", InstallationVersion)
+      .alias("version", "v")
+      .command(ServeCommand)
+      .demandCommand(1, "")
+      .parseAsync()
+    return (process.exitCode as number) ?? 0
+  }
+
   // Prevent recursive agent invocation
   if (isAgentSubcommand && process.env.CLICKZETTA_PID) {
     process.stderr.write("Cannot start a nested agent session (already running inside an agent).\n")

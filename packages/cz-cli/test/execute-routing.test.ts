@@ -34,4 +34,11 @@ describe("execute() routing", () => {
     expect(result.exitCode).toBe(1)
     expect(json.error.code).toBe("UNSUPPORTED_PROGRAMMATIC_AGENT_RUNTIME")
   })
+
+  test("rejects serve so callers use the real cz-cli binary", async () => {
+    const result = await execute("serve --help")
+    const json = firstJson(result.output)
+    expect(result.exitCode).toBe(1)
+    expect(json.error.code).toBe("UNSUPPORTED_PROGRAMMATIC_AGENT_RUNTIME")
+  })
 })
