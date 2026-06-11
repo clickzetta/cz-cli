@@ -301,7 +301,17 @@ function customProviderFromEntry(entry: ParsedLlmEntry) {
   if (!entry.model) return undefined
   return {
     name: entry.name,
-    npm: entry.provider === "openai-compatible" ? "@ai-sdk/openai-compatible" : undefined,
+    npm: (
+      {
+        "anthropic": "@ai-sdk/anthropic",
+        "openai": "@ai-sdk/openai",
+        "openai-compatible": "@ai-sdk/openai-compatible",
+        "google": "@ai-sdk/google",
+        "azure": "@ai-sdk/azure",
+        "bedrock": "@ai-sdk/amazon-bedrock",
+        "openrouter": "@openrouter/ai-sdk-provider",
+      } as Record<string, string>
+    )[entry.provider] ?? "@ai-sdk/openai-compatible",
     api: entry.baseURL,
     env: [],
     models: {
