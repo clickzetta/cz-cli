@@ -238,10 +238,45 @@ describe("cos release logging", () => {
     expect(ps1).toContain("$env:Path =")
     expect(ps1).toContain("Test-PathEntry")
     expect(ps1).toContain("Normalize-PathEntry")
+    expect(ps1).toContain('$InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path (Join-Path $HOME ".local") "bin" }')
+    expect(ps1).not.toContain('Join-Path $HOME ".local/bin"')
+    expect(ps1).toContain("[System.IO.Path]::GetFullPath($InstallDir)")
     expect(ps1).toContain("Current shell PATH updated. You can run: cz-cli --version")
     expect(ps1).toContain('Join-Path $InstallDir "cz-agent.cmd"')
     expect(ps1).toContain("@echo off")
     expect(ps1).toContain(`'"%~dp0cz-cli.exe" agent %*'`)
+  })
+
+  test("PowerShell installer repairs PATH when target binary already exists", async () => {
+    const Release = await import("../../../scripts/cos-release.mjs")
+    const ps1 = Release.renderBootstrapPs1({
+      version: "1.2.3",
+      channel: "stable",
+      platforms: {
+        "win32-x64": {
+          archive: "cz-cli-1.2.3-win32-x64.zip",
+          format: "zip",
+          binary: "cz-cli.exe",
+          checksum: "b".repeat(64),
+          size: 456,
+          objectKey: "cz-cli-releases/1.2.3/win32-x64/cz-cli-1.2.3-win32-x64.zip",
+          url: "https://example.com/win32-x64.zip?sign=def",
+          expiresAt: "2031-01-01T00:00:00.000Z",
+        },
+      },
+    })
+
+    expect(ps1).toContain('$BinaryTarget = Join-Path $InstallDir "cz-cli.exe"')
+    expect(ps1).toContain("Test-Path -LiteralPath $BinaryTarget")
+    expect(ps1).toContain("& $BinaryTarget --version")
+
+    const existingTargetCheck = ps1.indexOf("Test-Path -LiteralPath $BinaryTarget")
+    const pathRepair = ps1.indexOf("Repair-InstallDirPath $InstallDir", existingTargetCheck)
+    const alreadyInstalledExit = ps1.indexOf("Version $Version already installed", existingTargetCheck)
+
+    expect(existingTargetCheck).toBeGreaterThan(-1)
+    expect(pathRepair).toBeGreaterThan(existingTargetCheck)
+    expect(alreadyInstalledExit).toBeGreaterThan(pathRepair)
   })
 
   test("release installer script supports direct installation options", () => {

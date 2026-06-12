@@ -22,12 +22,20 @@ Windows `install.ps1` 安装成功后 MUST 将安装目录注册到当前用户 
 
 - **WHEN** `install.ps1` 将 `cz-cli.exe` 安装到默认目录 `$HOME\.local\bin` 且该目录不在 User PATH 中
 - **THEN** 脚本将该目录追加到 User PATH
+- **AND** 写入 PATH 的目录使用 Windows 本地路径格式而不是 `$HOME\.local/bin` 这类混合分隔符格式
 - **AND** 当前 PowerShell 进程可通过 `cz-cli` 解析到安装目录中的 binary
 
 #### Scenario: INSTALL_DIR 覆盖目录写入 User PATH
 
 - **WHEN** `INSTALL_DIR` 环境变量指定自定义安装目录且该目录不在 User PATH 中
 - **THEN** 脚本将该自定义目录追加到 User PATH
+
+#### Scenario: 已安装 binary 但 PATH 缺失时重跑安装器
+
+- **WHEN** `$HOME\.local\bin\cz-cli.exe` 已经是目标版本但该目录不在 User PATH 或当前进程 PATH 中
+- **THEN** 脚本将该目录追加到 User PATH
+- **AND** 当前 PowerShell 进程可通过 `cz-cli` 解析到安装目录中的 binary
+- **AND** 脚本不重新下载安装包
 
 #### Scenario: PATH 已包含安装目录时不重复追加
 

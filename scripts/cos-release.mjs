@@ -525,7 +525,7 @@ export function renderBootstrapPs1({ version, channel, platforms }) {
 $ErrorActionPreference = "Stop"
 $Version = '${version}'
 $Channel = '${channel}'
-$InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $HOME ".local/bin" }
+$InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path (Join-Path $HOME ".local") "bin" }
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cz-cli-" + [System.Guid]::NewGuid().ToString("n"))
 
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
@@ -579,7 +579,12 @@ function Test-PathEntry($PathValue, $Entry) {
   return $false
 }
 
+function Resolve-InstallDir($InstallDir) {
+  return [System.IO.Path]::GetFullPath($InstallDir)
+}
+
 function Add-InstallDirToPath($InstallDir) {
+  $InstallDir = Resolve-InstallDir $InstallDir
   $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if (-not (Test-PathEntry $UserPath $InstallDir)) {
     $NewUserPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
@@ -590,11 +595,35 @@ function Add-InstallDirToPath($InstallDir) {
   }
 }
 
+function Repair-InstallDirPath($InstallDir) {
+  try {
+    Add-InstallDirToPath $InstallDir
+    Write-Host "Current shell PATH updated. You can run: cz-cli --version"
+  } catch {
+    Write-Host "Could not add $InstallDir to User PATH automatically." -ForegroundColor Yellow
+    Write-Host "Run this PowerShell command manually:"
+    Write-Host "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$InstallDir', [EnvironmentVariableTarget]::User)"
+  }
+}
+
+$InstallDir = Resolve-InstallDir $InstallDir
+
 try {
+  $BinaryTarget = Join-Path $InstallDir "cz-cli.exe"
+  if (Test-Path -LiteralPath $BinaryTarget) {
+    $InstalledTargetVersion = (& $BinaryTarget --version 2>$null).Trim()
+    if ($InstalledTargetVersion -eq $Version) {
+      Repair-InstallDirPath $InstallDir
+      Write-Host "Version $Version already installed"
+      exit 0
+    }
+  }
+
   $InstalledCommand = Get-Command cz-cli -ErrorAction SilentlyContinue
   if ($InstalledCommand) {
     $InstalledVersion = (& cz-cli --version 2>$null).Trim()
     if ($InstalledVersion -eq $Version) {
+      Repair-InstallDirPath $InstallDir
       Write-Host "Version $Version already installed"
       exit 0
     }
@@ -637,7 +666,6 @@ ${renderPowerShellPlatformCase(platforms)}
   }
 
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  $BinaryTarget = Join-Path $InstallDir "cz-cli.exe"
   Copy-Item -LiteralPath $BinarySource -Destination $BinaryTarget -Force
   $AgentTarget = Join-Path $InstallDir "cz-agent.cmd"
   Set-Content -LiteralPath $AgentTarget -Value @(
@@ -658,14 +686,7 @@ ${renderPowerShellPlatformCase(platforms)}
   Set-Content -LiteralPath (Join-Path $MetadataDir "install.json") -Value $Metadata
 
   Write-Host "Installed to $BinaryTarget"
-  try {
-    Add-InstallDirToPath $InstallDir
-    Write-Host "Current shell PATH updated. You can run: cz-cli --version"
-  } catch {
-    Write-Host "Could not add $InstallDir to User PATH automatically." -ForegroundColor Yellow
-    Write-Host "Run this PowerShell command manually:"
-    Write-Host "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$InstallDir', [EnvironmentVariableTarget]::User)"
-  }
+  Repair-InstallDirPath $InstallDir
   Write-Host "Windows PowerShell 5.1 install command:"
   Write-Host 'powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex ((New-Object Net.WebClient).DownloadString(''https://cz-cli.ai/install.ps1''))"'
 } finally {
