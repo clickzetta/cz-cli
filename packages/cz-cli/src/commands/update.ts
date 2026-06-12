@@ -25,6 +25,15 @@ export function shouldApplyUpdate(currentVersion: string, latestVersion: string,
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
 }
 
+export function manualInstallCommandForPlatform(platform: NodeJS.Platform = process.platform, channel = "stable") {
+  if (platform === "win32") {
+    const script = channel === "nightly" ? "install-nightly.ps1" : "install.ps1"
+    return `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex ((New-Object Net.WebClient).DownloadString('https://cz-cli.ai/${script}'))"`
+  }
+  const script = channel === "nightly" ? "install-nightly.sh" : "install.sh"
+  return `curl -fsSL https://cz-cli.ai/${script} | bash`
+}
+
 type UpdateErrorContext = {
   timeoutMs?: number
   url?: string
@@ -229,7 +238,7 @@ export function registerUpdateCommand(cli: Argv) {
 
       if (!latest) {
         process.stderr.write("Failed to check for updates from all sources.\n")
-        process.stderr.write("Try manually: curl -fsSL https://cz-cli.ai/install | bash\n")
+        process.stderr.write(`Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}\n`)
         process.exitCode = 1
         return
       }
@@ -327,7 +336,7 @@ export function registerUpdateCommand(cli: Argv) {
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
       } catch (err) {
         process.stderr.write(`Update failed: ${err instanceof Error ? err.message : String(err)}\n`)
-        process.stderr.write("Try manually: curl -fsSL https://cz-cli.ai/install | bash\n")
+        process.stderr.write(`Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}\n`)
         process.exitCode = 1
       }
     },

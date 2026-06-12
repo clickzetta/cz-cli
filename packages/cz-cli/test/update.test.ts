@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { describeUpdateError, isCzCliInstallBinary, isPackageManagerBinary, resolveUpdateInstallMethod, shouldApplyUpdate } from "../src/commands/update"
+import { describeUpdateError, manualInstallCommandForPlatform, isCzCliInstallBinary, isPackageManagerBinary, resolveUpdateInstallMethod, shouldApplyUpdate } from "../src/commands/update"
 
 describe("shouldApplyUpdate", () => {
   test("refuses to downgrade when the fetched version is older", () => {
@@ -47,5 +47,15 @@ describe("shouldApplyUpdate", () => {
       timeoutMs: 5000,
       url: "https://cz-cli.ai/api/stable",
     })).toBe("request timed out after 5000ms; url=https://cz-cli.ai/api/stable; error=AbortError: The operation was aborted.")
+  })
+
+  test("uses PowerShell manual install command on Windows", () => {
+    expect(manualInstallCommandForPlatform("win32")).toContain("install.ps1")
+    expect(manualInstallCommandForPlatform("win32")).not.toContain("bash")
+  })
+
+  test("uses shell manual install command on Unix platforms", () => {
+    expect(manualInstallCommandForPlatform("darwin")).toBe("curl -fsSL https://cz-cli.ai/install.sh | bash")
+    expect(manualInstallCommandForPlatform("linux")).toBe("curl -fsSL https://cz-cli.ai/install.sh | bash")
   })
 })

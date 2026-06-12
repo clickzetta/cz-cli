@@ -81,6 +81,24 @@
 - **WHEN** `autoupdate` 配置为 `notify` 时
 - **THEN** 通知用户有可用更新，不执行自动升级
 
+#### 场景：安装脚本失败时输出诊断内容
+
+- **WHEN** `cz-cli update` 通过安装脚本升级且脚本以非零状态退出时
+- **THEN** 错误信息包含退出码
+- **AND** 错误信息包含安装脚本 stderr/stdout 中的诊断摘要
+
+#### 场景：Windows 手动恢复命令使用 PowerShell
+
+- **WHEN** Windows 用户运行 `cz-cli update` 且自动升级失败或无法检查版本时
+- **THEN** 手动恢复提示使用 PowerShell `install.ps1` 命令
+- **AND** 不提示 Unix `curl | bash` 命令
+
+#### 场景：Windows 自动升级使用 PowerShell 安装脚本
+
+- **WHEN** Windows 用户通过 `cz-cli update` 使用安装脚本升级时
+- **THEN** 自动升级下载 `install.ps1` 或 `install-nightly.ps1`
+- **AND** 使用 PowerShell 执行安装脚本，而不是 Unix `sh`
+
 ### 需求：安装方式检测优先使用 which 路径
 
 安装方式检测（`resolveUpdateInstallMethod`）应以 `which cz-cli` 解析的路径为首要判断依据，而非 `process.execPath`。这确保升级命令作用于用户实际执行的 binary 位置。仅当 `which` 结果无法识别时，才 fallback 到 `process.execPath`。

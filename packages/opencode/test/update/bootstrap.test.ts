@@ -378,6 +378,50 @@ describe("update bootstrap", () => {
     })
   })
 
+  describe("install script diagnostics", () => {
+    test("includes script stderr in install script failure errors", async () => {
+      const fetchImpl = mock(async () =>
+        new Response(
+          [
+            "#!/bin/sh",
+            'echo "download failed: access denied" >&2',
+            "exit 23",
+            "",
+          ].join("\n"),
+        ),
+      ) as unknown as typeof fetch
+
+      const upgrade = performUpgrade("curl", "0.5.19", fetchImpl, "stable")
+
+      await expect(upgrade).rejects.toThrow("exit code 23")
+      await expect(upgrade).rejects.toThrow("download failed: access denied")
+    })
+
+    test("uses the PowerShell install script on Windows", async () => {
+      const platform = process.platform
+      Object.defineProperty(process, "platform", { value: "win32" })
+      const urls: string[] = []
+      const fetchImpl = mock(async (url: string) => {
+        urls.push(url)
+        return new Response(
+          [
+            "Write-Error 'stop before executing PowerShell'",
+            "exit 24",
+            "",
+          ].join("\n"),
+        )
+      }) as unknown as typeof fetch
+
+      try {
+        await expect(performUpgrade("curl", "0.5.19", fetchImpl, "stable")).rejects.toThrow("powershell")
+
+        expect(urls).toEqual(["https://cz-cli.ai/install.ps1"])
+      } finally {
+        Object.defineProperty(process, "platform", { value: platform })
+      }
+    })
+  })
+
   describe("channel does not gate auto-update", () => {
     test("resolveUpdateAction upgrades on the stable channel", () => {
       const result = resolveUpdateAction({

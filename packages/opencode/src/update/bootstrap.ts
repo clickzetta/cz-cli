@@ -73,6 +73,10 @@ const INSTALL_SCRIPT_URL = {
   stable: "https://cz-cli.ai/install.sh",
   nightly: "https://cz-cli.ai/install-nightly.sh",
 } as const
+const WINDOWS_INSTALL_SCRIPT_URL = {
+  stable: "https://cz-cli.ai/install.ps1",
+  nightly: "https://cz-cli.ai/install-nightly.ps1",
+} as const
 
 function homeDirectory(home?: string, env: NodeJS.ProcessEnv = process.env) {
   return home ?? env.CLICKZETTA_TEST_HOME ?? os.homedir()
@@ -213,29 +217,43 @@ export function shouldUpgradeToVersion(currentVersion: string, latestVersion: st
 
 async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch, force?: boolean) {
   const ch = channel === "nightly" ? "nightly" : "stable"
-  const response = await fetchWithTimeout(INSTALL_SCRIPT_URL[ch], {}, fetchImpl)
+  const isWindows = process.platform === "win32"
+  const response = await fetchWithTimeout((isWindows ? WINDOWS_INSTALL_SCRIPT_URL : INSTALL_SCRIPT_URL)[ch], {}, fetchImpl)
   if (!response.ok) throw new Error(`Failed to download install script: ${response.status}`)
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-"))
-  const script = path.join(temp, "install.sh")
+  const script = path.join(temp, isWindows ? "install.ps1" : "install.sh")
   await fs.writeFile(script, await response.text(), { mode: 0o755 })
-  // Resolve the directory of the currently running binary so install.sh
+  // Resolve the directory of the currently running binary so the installer
   // places the new binary in the same location (avoids PATH shadowing).
   const currentBinDir = path.dirname(process.execPath)
-  const result = spawnSync("sh", [script], {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      VERSION: target,
-      CZ_VERSION: target,
-      CZ_CHANNEL: ch,
-      CZ_INSTALL_DIR: currentBinDir,
-      NON_INTERACTIVE: "1",
-      SKIP_PATH_PROMPT: "1",
-      ...(force && { CZ_FORCE: "1" }),
+  const result = spawnSync(
+    isWindows ? "powershell" : "sh",
+    isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script] : [script],
+    {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        VERSION: target,
+        CZ_VERSION: target,
+        CZ_CHANNEL: ch,
+        CZ_INSTALL_DIR: currentBinDir,
+        NON_INTERACTIVE: "1",
+        SKIP_PATH_PROMPT: "1",
+        ...(force && { CZ_FORCE: "1" }),
+      },
     },
-  })
+  )
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
   await fs.rm(temp, { recursive: true, force: true })
-  if (result.status !== 0) throw new Error(`Install script failed with exit code ${result.status ?? 1}`)
+  if (result.status !== 0) {
+    const details = [result.error instanceof Error ? result.error.message : undefined, result.stderr, result.stdout]
+      .map((item) => item?.trim())
+      .filter((item): item is string => Boolean(item))
+      .join("\n")
+    throw new Error(`Install script failed with exit code ${result.status ?? 1}${details ? `\n${details}` : ""}`)
+  }
 }
 
 async function upgradeViaPackageManager(method: InstallMethod, target: string, channel?: string) {
