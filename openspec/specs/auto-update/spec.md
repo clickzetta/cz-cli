@@ -152,6 +152,13 @@
 - **WHEN** `which cz-cli` 指向 bun 全局 binary 时
 - **THEN** 升级前执行 `bun remove -g @clickzetta/cz-cli` 移除遮蔽 binary
 
+#### 场景：PATH 中的 cz-cli 不可用
+
+- **WHEN** `which cz-cli` 解析到某个路径但该路径执行 `cz-cli --version` 失败或无输出时
+- **THEN** 安装或升级必须失败
+- **AND** 错误信息提示用户清理该 PATH 项或删除损坏文件
+- **AND** 安装或升级不得基于该不可用路径继续清理其他 binary
+
 #### 场景：install.sh 同样事前清除
 
 - **WHEN** `scripts/install.sh` 运行且 `which -a cz-cli` 包含非 `$INSTALL_DIR` 的路径时
@@ -173,6 +180,12 @@
 
 - **WHEN** install.sh 将 binary 安装到与 `which cz-cli` 不同的目录时
 - **THEN** update 命令将新 binary 拷贝到 `which cz-cli` 路径，确保版本一致
+
+#### 场景：升级后 restart binary 不可用
+
+- **WHEN** 自动更新执行安装脚本后，原重启路径和已知候选路径都无法执行目标版本 `cz-cli --version`
+- **THEN** 自动更新必须记录为 `upgrade-failed`
+- **AND** 不得写入 `upgrade-succeeded` 或重启用户命令
 
 #### 场景：自动更新恢复重启路径
 

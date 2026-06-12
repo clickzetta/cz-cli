@@ -305,7 +305,9 @@ export async function ensureRestartBinaryAtPath(target: string, restartPath = pr
   repairMacOSBinary(restartPath)
   if (binaryVersion(restartPath, env) === target) return
   const candidate = path.join(homeDirectory(undefined, env), ".local", "bin", "cz-cli")
-  if (candidate === restartPath || binaryVersion(candidate, env) !== target) return
+  if (candidate === restartPath || binaryVersion(candidate, env) !== target) {
+    throw new Error(`Updated cz-cli binary is not available at ${restartPath}; clean stale PATH entries and reinstall cz-cli`)
+  }
   await fs.mkdir(path.dirname(restartPath), { recursive: true })
   await fs.copyFile(candidate, restartPath)
   await fs.chmod(restartPath, 0o755)
