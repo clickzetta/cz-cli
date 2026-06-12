@@ -530,6 +530,13 @@ $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cz-cli-" + [System.Guid
 
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 
+function Get-VersionNumber($Numbers, $Index) {
+  if ($Numbers.Length -gt $Index -and -not [string]::IsNullOrEmpty($Numbers[$Index])) {
+    return [int]$Numbers[$Index]
+  }
+  return 0
+}
+
 function Get-VersionParts($RawVersion) {
   $VersionText = $RawVersion -replace '^v', ''
   $Core = $VersionText
@@ -541,9 +548,9 @@ function Get-VersionParts($RawVersion) {
   }
   $Numbers = $Core.Split(".")
   [pscustomobject]@{
-    Major = [int]($Numbers[0] ?? 0)
-    Minor = [int]($Numbers[1] ?? 0)
-    Patch = [int]($Numbers[2] ?? 0)
+    Major = Get-VersionNumber $Numbers 0
+    Minor = Get-VersionNumber $Numbers 1
+    Patch = Get-VersionNumber $Numbers 2
     Suffix = $Suffix
     Weight = if ([string]::IsNullOrEmpty($Suffix)) { 2 } elseif ($Suffix.StartsWith("dev")) { 0 } else { 1 }
   }
@@ -556,6 +563,31 @@ function Test-VersionGreater($LeftVersion, $RightVersion) {
   if ($Left.Minor -ne $Right.Minor) { return $Left.Minor -gt $Right.Minor }
   if ($Left.Patch -ne $Right.Patch) { return $Left.Patch -gt $Right.Patch }
   return $Left.Weight -gt $Right.Weight
+}
+
+function Normalize-PathEntry($PathEntry) {
+  if ([string]::IsNullOrWhiteSpace($PathEntry)) { return "" }
+  return $PathEntry.Trim().TrimEnd("\\", "/").ToLowerInvariant()
+}
+
+function Test-PathEntry($PathValue, $Entry) {
+  $NormalizedEntry = Normalize-PathEntry $Entry
+  if ([string]::IsNullOrEmpty($NormalizedEntry)) { return $false }
+  foreach ($Item in ($PathValue -split ";")) {
+    if ((Normalize-PathEntry $Item) -eq $NormalizedEntry) { return $true }
+  }
+  return $false
+}
+
+function Add-InstallDirToPath($InstallDir) {
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  if (-not (Test-PathEntry $UserPath $InstallDir)) {
+    $NewUserPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
+    [Environment]::SetEnvironmentVariable("Path", $NewUserPath, [EnvironmentVariableTarget]::User)
+  }
+  if (-not (Test-PathEntry $env:Path $InstallDir)) {
+    $env:Path = if ([string]::IsNullOrEmpty($env:Path)) { $InstallDir } else { "$env:Path;$InstallDir" }
+  }
 }
 
 try {
@@ -626,9 +658,16 @@ ${renderPowerShellPlatformCase(platforms)}
   Set-Content -LiteralPath (Join-Path $MetadataDir "install.json") -Value $Metadata
 
   Write-Host "Installed to $BinaryTarget"
-  if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $InstallDir })) {
-    Write-Host "Add $InstallDir to PATH if cz-cli is not found in a new shell."
+  try {
+    Add-InstallDirToPath $InstallDir
+    Write-Host "Current shell PATH updated. You can run: cz-cli --version"
+  } catch {
+    Write-Host "Could not add $InstallDir to User PATH automatically." -ForegroundColor Yellow
+    Write-Host "Run this PowerShell command manually:"
+    Write-Host "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$InstallDir', [EnvironmentVariableTarget]::User)"
   }
+  Write-Host "Windows PowerShell 5.1 install command:"
+  Write-Host 'powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex ((New-Object Net.WebClient).DownloadString(''https://cz-cli.ai/install.ps1''))"'
 } finally {
   if (Test-Path $TempDir) {
     Remove-Item -LiteralPath $TempDir -Recurse -Force
