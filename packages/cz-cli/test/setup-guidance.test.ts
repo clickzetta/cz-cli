@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync } from "fs"
 import { createServer } from "http"
 import { tmpdir } from "os"
 import { join } from "path"
-import { JDBC_EXAMPLE, SETUP_LOGIN_METHODS, accountLoginUrlForService, resolveOrAutoSelectOption } from "../src/commands/setup"
+import { JDBC_EXAMPLE, SETUP_LOGIN_METHODS, accountLoginUrlForService, browserOpenCommandForPlatform, resolveOrAutoSelectOption } from "../src/commands/setup"
 
 function run(args: string[], home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))) {
   const result = spawnSync("bun", ["./src/main.ts", ...args], {
@@ -87,6 +87,13 @@ describe("setup guidance", () => {
     expect(accountLoginUrlForService("https://fumi-cn-south-1-huaweicloud.clickzetta.com/api", "acct")).toBe(
       "https://acct.accounts.clickzetta.com",
     )
+  })
+
+  test("uses cmd.exe for Windows browser open because start is a shell builtin", () => {
+    expect(browserOpenCommandForPlatform("win32", "https://accounts.clickzetta.com/register?ref=cz-cli")).toEqual({
+      command: "cmd.exe",
+      args: ["/c", "start", "", "https://accounts.clickzetta.com/register?ref=cz-cli"],
+    })
   })
 
   test("resolveOrAutoSelectOption auto-selects the only discovered option", () => {

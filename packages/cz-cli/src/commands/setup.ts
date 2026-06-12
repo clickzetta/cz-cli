@@ -403,11 +403,18 @@ function appendRef(url: string): string {
   }
 }
 
+export function browserOpenCommandForPlatform(platform: NodeJS.Platform, url: string): { command: string; args: string[] } {
+  if (platform === "darwin") return { command: "open", args: [url] }
+  if (platform === "win32") return { command: "cmd.exe", args: ["/c", "start", "", url] }
+  return { command: "xdg-open", args: [url] }
+}
+
 function openBrowser(url: string): void {
-  const { platform } = process
-  const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open"
+  const opener = browserOpenCommandForPlatform(process.platform, url)
   try {
-    spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref()
+    spawn(opener.command, opener.args, { detached: true, stdio: "ignore" })
+      .once("error", () => {})
+      .unref()
   } catch {
     // best-effort: user has the URL printed anyway
   }
