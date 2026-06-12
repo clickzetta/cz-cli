@@ -272,11 +272,46 @@ describe("cos release logging", () => {
 
     const existingTargetCheck = ps1.indexOf("Test-Path -LiteralPath $BinaryTarget")
     const pathRepair = ps1.indexOf("Repair-InstallDirPath $InstallDir", existingTargetCheck)
-    const alreadyInstalledExit = ps1.indexOf("Version $Version already installed", existingTargetCheck)
+    const extractArchive = ps1.indexOf("Expand-Archive", existingTargetCheck)
 
     expect(existingTargetCheck).toBeGreaterThan(-1)
     expect(pathRepair).toBeGreaterThan(existingTargetCheck)
-    expect(alreadyInstalledExit).toBeGreaterThan(pathRepair)
+    expect(extractArchive).toBeGreaterThan(pathRepair)
+    expect(ps1).not.toContain("Version $Version already installed")
+  })
+
+  test("PowerShell installer installs bundled skills without setup.sh", async () => {
+    const Release = await import("../../../scripts/cos-release.mjs")
+    const ps1 = Release.renderBootstrapPs1({
+      version: "1.2.3",
+      channel: "stable",
+      platforms: {
+        "win32-x64": {
+          archive: "cz-cli-1.2.3-win32-x64.zip",
+          format: "zip",
+          binary: "cz-cli.exe",
+          checksum: "b".repeat(64),
+          size: 456,
+          objectKey: "cz-cli-releases/1.2.3/win32-x64/cz-cli-1.2.3-win32-x64.zip",
+          url: "https://example.com/win32-x64.zip?sign=def",
+          expiresAt: "2031-01-01T00:00:00.000Z",
+        },
+      },
+    })
+
+    expect(ps1).toContain('Join-Path $HOME ".clickzetta"')
+    expect(ps1).toContain('"skills"')
+    expect(ps1).toContain('".builtin"')
+    expect(ps1).toContain("Copy-BundledSkills")
+    expect(ps1).toContain("Install-ExternalAgentSkill")
+    expect(ps1).toContain("Remove-Item -LiteralPath $BuiltinDest -Recurse -Force")
+    expect(ps1).toContain("Join-Path $ExtractDir \"skills\"")
+    expect(ps1).toContain('Join-Path $SkillsSource "cz-cli"')
+    expect(ps1).toContain('".claude", "skills"')
+    expect(ps1).toContain('".codex", "skills"')
+    expect(ps1).toContain('".openclaw", "workspace", "skills"')
+    expect(ps1).toContain('".singclaw", "workspace", "skills"')
+    expect(ps1).toContain('"czagent", "czcli", "cz-cli-v2"')
   })
 
   test("release installer script supports direct installation options", () => {

@@ -337,7 +337,7 @@ if (Script.archive) {
       if (target.os === "win32") {
         const archive = `dist/${key}.zip`
         const absArchive = path.resolve(archive)
-        await $`7z a -tzip ${absArchive} ${binDir}\\*`
+        await $`7z a -tzip ${absArchive} *`.cwd(binDir)
         return archive
       }
       const archive = `dist/${key}.zip`

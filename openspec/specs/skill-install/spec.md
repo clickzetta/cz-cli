@@ -10,6 +10,7 @@
 
 ## 术语
 - **捆绑 skill 源目录**：安装介质中包含各 skill 子目录（每个子目录含 `SKILL.md`）的 `skills/` 目录。`build.ts` 会把仓库 `skills/*`（含 `skills/cz-cli`）打包进每个平台产物的 `bin/skills/`。
+- **归档根目录**：GitHub Release 平台归档解压后的顶层目录。所有平台归档均应直接包含二进制文件、`setup.sh`（如适用）和 `skills/`，不得额外包裹 `bin/` 目录。
 - **外部 agent skill 目录**：
   - `~/.claude/skills`
   - `~/.kiro/skills`
@@ -35,6 +36,21 @@
 - **WHEN** 安装介质中不存在任何捆绑 skill 时
 - **THEN** `~/.clickzetta/skills/.builtin/` 仍存在且被清空，不残留旧 skill
 
+#### 场景：Windows Release 归档保留顶层 skills
+
+- **WHEN** 构建 Windows Release zip 归档时，平台 dist 的 `bin/skills/cz-cli/SKILL.md` 已存在
+- **THEN** 解压该 zip 后顶层直接包含 `skills/cz-cli/SKILL.md`，install.sh、setup.sh 和 npm 发布准备脚本均可按同一目录结构发现捆绑 skill
+
+#### 场景：Windows npm 平台包包含捆绑 skills
+
+- **WHEN** npm 发布脚本处理 `cz-cli-windows-x64` artifact 且 artifact 中存在 `bin/skills/cz-cli/SKILL.md`
+- **THEN** 生成的 `@clickzetta/cz-cli-win32-x64` 平台包在 `bin/skills/cz-cli/SKILL.md` 中包含同一份捆绑 skill，postinstall 可安装 `.builtin` 与外部 agent skill
+
+#### 场景：Windows PowerShell 原生安装内置 skill
+
+- **WHEN** 用户在 Windows PowerShell/CMD 原生环境执行 COS 发布的 `install.ps1`，且下载归档中包含顶层 `skills/` 目录
+- **THEN** PowerShell 安装器不依赖 `setup.sh` 或 bash，也会清空并重新填充 `$HOME/.clickzetta/skills/.builtin/`
+
 ### 需求：将 cz-cli skill 注册到外部 agent 目录（先删除再安装）
 
 当捆绑 skill 中存在外部注册名单中的 skill（当前为 `cz-cli`）时，每个安装入口应将该 skill 安装到全部外部 agent skill 目录。安装采用「先删除再安装」语义：对每个目标目录，先确保目录存在，再删除该目录下同名 skill 子目录，最后整体复制捆绑源中的该 skill。该操作必须是幂等的，且单个目录失败不应中断其余目录或整个安装流程。
@@ -43,6 +59,11 @@
 
 - **WHEN** 捆绑 skill 中包含 `cz-cli` 且执行任一安装入口时
 - **THEN** `~/.claude/skills/cz-cli`、`~/.kiro/skills/cz-cli`、`~/.cursor/skills/cz-cli`、`~/.codex/skills/cz-cli`、`~/.openclaw/workspace/skills/cz-cli`、`~/.singclaw/workspace/skills/cz-cli` 均存在且内容来自捆绑源（包含 `SKILL.md`）
+
+#### 场景：Windows PowerShell 原生注册外部 agent skill
+
+- **WHEN** 用户在 Windows PowerShell/CMD 原生环境执行 COS 发布的 `install.ps1`，且下载归档中包含 `skills/cz-cli/SKILL.md`
+- **THEN** PowerShell 安装器不依赖 `setup.sh` 或 bash，也会将 `cz-cli` skill 注册到全部外部 agent skill 目录
 
 #### 场景：先删除再安装覆盖旧内容
 

@@ -428,6 +428,37 @@ describe("prepare release assets", () => {
     }
   })
 
+  test("normalizes Windows archives that include a bin directory wrapper", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-release-assets-win-bin-wrapper-"))
+    const assetsDir = path.join(tmp, "assets")
+    const distDir = path.join(tmp, "dist")
+    const archiveRoot = path.join(tmp, "windows-root")
+    fs.mkdirSync(path.join(archiveRoot, "bin", "skills", "cz-cli"), { recursive: true })
+    fs.mkdirSync(assetsDir)
+    fs.writeFileSync(path.join(archiveRoot, "bin", "cz-cli.exe"), "windows")
+    fs.writeFileSync(path.join(archiveRoot, "bin", "skills", "cz-cli", "SKILL.md"), "fresh-cz-cli")
+
+    try {
+      execFileSync("zip", ["-rq", path.join(assetsDir, "cz-cli-windows-x64.zip"), "."], {
+        cwd: archiveRoot,
+      })
+
+      execFileSync(
+        process.execPath,
+        ["run", path.join(repoRoot, "scripts", "prepare-release-assets.mjs"), assetsDir, distDir],
+        { cwd: repoRoot },
+      )
+
+      expect(fs.readFileSync(path.join(distDir, "cz-cli-windows-x64", "bin", "cz-cli.exe"), "utf8")).toBe("windows")
+      expect(
+        fs.readFileSync(path.join(distDir, "cz-cli-windows-x64", "bin", "skills", "cz-cli", "SKILL.md"), "utf8"),
+      ).toBe("fresh-cz-cli")
+      expect(fs.existsSync(path.join(distDir, "cz-cli-windows-x64", "bin", "bin"))).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   test("treats unzip warning exit code as non-fatal", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-release-assets-unzip-warning-"))
     const assetsDir = path.join(tmp, "assets")

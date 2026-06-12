@@ -606,6 +606,51 @@ function Repair-InstallDirPath($InstallDir) {
   }
 }
 
+function Copy-BundledSkills($SkillsSource) {
+  $BuiltinDest = Join-Path (Join-Path (Join-Path $HOME ".clickzetta") "skills") ".builtin"
+  Remove-Item -LiteralPath $BuiltinDest -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $BuiltinDest | Out-Null
+
+  if (Test-Path -LiteralPath $SkillsSource) {
+    Get-ChildItem -LiteralPath $SkillsSource -Directory | ForEach-Object {
+      Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BuiltinDest $_.Name) -Recurse -Force
+    }
+  }
+}
+
+function Install-ExternalAgentSkill($SkillsSource) {
+  $ExternalSkillSource = Join-Path $SkillsSource "cz-cli"
+  $AgentDirs = @(
+    @(".claude", "skills"),
+    @(".kiro", "skills"),
+    @(".cursor", "skills"),
+    @(".codex", "skills"),
+    @(".openclaw", "workspace", "skills"),
+    @(".singclaw", "workspace", "skills")
+  )
+  $LegacySkills = @("czagent", "czcli", "cz-cli-v2")
+
+  foreach ($Segments in $AgentDirs) {
+    try {
+      $AgentDir = $HOME
+      foreach ($Segment in $Segments) {
+        $AgentDir = Join-Path $AgentDir $Segment
+      }
+
+      foreach ($Legacy in $LegacySkills) {
+        Remove-Item -LiteralPath (Join-Path $AgentDir $Legacy) -Recurse -Force -ErrorAction SilentlyContinue
+      }
+
+      if (Test-Path -LiteralPath $ExternalSkillSource) {
+        New-Item -ItemType Directory -Force -Path $AgentDir | Out-Null
+        $Target = Join-Path $AgentDir "cz-cli"
+        Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue
+        Copy-Item -LiteralPath $ExternalSkillSource -Destination $Target -Recurse -Force
+      }
+    } catch {}
+  }
+}
+
 $InstallDir = Resolve-InstallDir $InstallDir
 
 try {
@@ -614,8 +659,7 @@ try {
     $InstalledTargetVersion = (& $BinaryTarget --version 2>$null).Trim()
     if ($InstalledTargetVersion -eq $Version) {
       Repair-InstallDirPath $InstallDir
-      Write-Host "Version $Version already installed"
-      exit 0
+      Write-Host "Version $Version is present; refreshing installation files"
     }
   }
 
@@ -624,10 +668,8 @@ try {
     $InstalledVersion = (& cz-cli --version 2>$null).Trim()
     if ($InstalledVersion -eq $Version) {
       Repair-InstallDirPath $InstallDir
-      Write-Host "Version $Version already installed"
-      exit 0
-    }
-    if ($InstalledVersion -and (Test-VersionGreater $InstalledVersion $Version)) {
+      Write-Host "Version $Version is present; refreshing installation files"
+    } elseif ($InstalledVersion -and (Test-VersionGreater $InstalledVersion $Version)) {
       Write-Host "A newer version is already installed: $InstalledVersion" -ForegroundColor Yellow
       exit 0
     }
@@ -672,6 +714,9 @@ ${renderPowerShellPlatformCase(platforms)}
     "@echo off"
     '"%~dp0cz-cli.exe" agent %*'
   )
+  $SkillsSource = Join-Path $ExtractDir "skills"
+  Copy-BundledSkills $SkillsSource
+  Install-ExternalAgentSkill $SkillsSource
 
   $MetadataDir = Join-Path $HOME ".clickzetta"
   New-Item -ItemType Directory -Force -Path $MetadataDir | Out-Null

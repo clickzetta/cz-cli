@@ -10,3 +10,11 @@ test("macOS build clears quarantine xattr after ad-hoc codesign", () => {
   expect(script).toContain("codesign --force --sign -")
   expect(script).toContain("xattr -dr com.apple.quarantine")
 })
+
+test("Windows archive is created from the platform bin directory", () => {
+  const script = fs.readFileSync(path.join(repoRoot, "packages", "opencode", "script", "build.ts"), "utf8")
+
+  expect(script).toContain("7z a -tzip ${absArchive} *")
+  expect(script).toContain(".cwd(binDir)")
+  expect(script).not.toContain("7z a -tzip ${absArchive} ${binDir}\\\\*")
+})

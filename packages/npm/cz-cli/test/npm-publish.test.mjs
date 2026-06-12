@@ -18,6 +18,12 @@ function createArtifact(root, name, binaryName) {
   fs.writeFileSync(path.join(binDir, binaryName), "")
 }
 
+function createSkill(root, name, content = "skill") {
+  const skillDir = path.join(root, "artifacts", name, "bin", "skills", "cz-cli")
+  fs.mkdirSync(skillDir, { recursive: true })
+  fs.writeFileSync(path.join(skillDir, "SKILL.md"), content)
+}
+
 test("npm-publish uses dev dist-tag for prerelease versions", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cz-npm-publish-"))
   fs.mkdirSync(path.join(tempRoot, "scripts"), { recursive: true })
@@ -61,6 +67,49 @@ test("npm-publish uses dev dist-tag for prerelease versions", () => {
     )
 
     assert.match(output, /\[dry-run\] npm publish --access public --tag dev/)
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test("npm-publish copies bundled skills into Windows platform package", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cz-npm-publish-skills-"))
+  fs.mkdirSync(path.join(tempRoot, "scripts"), { recursive: true })
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "npm-publish.sh"), path.join(tempRoot, "scripts", "npm-publish.sh"))
+
+  writeJson(path.join(tempRoot, "packages", "npm", "cz-cli", "package.json"), {
+    name: "@clickzetta/cz-cli",
+    version: "0.1.0",
+    optionalDependencies: {
+      "@clickzetta/cz-cli-win32-x64": "0.1.0",
+    },
+  })
+  writeJson(path.join(tempRoot, "packages", "npm", "cz-cli-win32-x64", "package.json"), {
+    name: "@clickzetta/cz-cli-win32-x64",
+    version: "0.1.0",
+  })
+
+  createArtifact(tempRoot, "cz-cli-windows-x64", "cz-cli.exe")
+  createSkill(tempRoot, "cz-cli-windows-x64", "fresh-cz-cli")
+
+  try {
+    execFileSync(
+      "bash",
+      [path.join(tempRoot, "scripts", "npm-publish.sh"), "1.2.3", path.join(tempRoot, "artifacts")],
+      {
+        cwd: tempRoot,
+        env: { ...process.env, DRY_RUN: "1" },
+        encoding: "utf8",
+      },
+    )
+
+    assert.equal(
+      fs.readFileSync(
+        path.join(tempRoot, "packages", "npm", "cz-cli-win32-x64", "bin", "skills", "cz-cli", "SKILL.md"),
+        "utf8",
+      ),
+      "fresh-cz-cli",
+    )
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }

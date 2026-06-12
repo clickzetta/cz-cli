@@ -39,10 +39,25 @@ for (const archive of archives) {
     if (fs.readdirSync(binDir).length === 0) {
       throw new Error(`no files extracted from ${archive}`)
     }
+    normalizeBinWrapper(binDir)
     continue
   }
 
   execFileSync("tar", ["-xzf", path.join(assetsDir, archive), "-C", binDir], { stdio: "inherit" })
+  normalizeBinWrapper(binDir)
 }
 
 console.log(`Prepared ${archives.length} release assets in ${distDir}`)
+
+function normalizeBinWrapper(binDir) {
+  const wrappedBinDir = path.join(binDir, "bin")
+  if (!fs.existsSync(wrappedBinDir) || !fs.statSync(wrappedBinDir).isDirectory()) return
+  const entries = fs.readdirSync(binDir)
+  if (entries.some((name) => name !== "bin")) return
+
+  const tmpDir = path.join(path.dirname(binDir), ".bin-wrapper")
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+  fs.renameSync(wrappedBinDir, tmpDir)
+  fs.rmSync(binDir, { recursive: true, force: true })
+  fs.renameSync(tmpDir, binDir)
+}
