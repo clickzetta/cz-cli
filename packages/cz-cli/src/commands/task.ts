@@ -979,6 +979,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               DATETIME:'timestamp_ntz', TIMESTAMP:'timestamp_ltz',
               BINARY:'binary', VARBINARY:'binary', BLOB:'binary', BYTEA:'binary',
               JSON:'json', DECIMAL:'decimal', NUMERIC:'decimal', NUMBER:'decimal',
+              // Complex types: pass through as-is (ARRAY/MAP/STRUCT carry element type info)
+              ARRAY:'array', MAP:'map', STRUCT:'struct',
             }
             type ColAlignIssue = { name: string; source_type: string; expected_lh_type: string; actual_lh_type: string; alter_sql: string }
             type ColAlignment = {
@@ -1018,6 +1020,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     'timestamp_ntz': 'timestamp_ntz', 'timestamp_ltz': 'timestamp_ltz',
                   }
                   const normalizedTarget = LH_ALIASES[targetType] ?? targetType
+                  // Complex types (array/map/struct): match by prefix — ARRAY<int> matches array
                   const compat = normalizedTarget.startsWith(expectedLhType) || expectedLhType.startsWith(normalizedTarget)
                   if (!compat) {
                     type_mismatch.push({
@@ -1214,6 +1217,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 lines.push(`- MySQL DATETIME → timestamp_ntz | MySQL TIMESTAMP → timestamp_ltz`)
                 lines.push(`- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz`)
                 lines.push(`- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json`)
+                lines.push(`- Complex types (Hive/PG): ARRAY<T> → array<T> | MAP<K,V> → map<K,V> | STRUCT<f:T> → struct<f:T>`)
+                lines.push(`  Note: keep element types as-is from source; Lakehouse uses same syntax`)
 
                 // --- Config JSON template ---
                 lines.push(`\nConfig JSON structure (use source_params_template.params for source.params):`)
