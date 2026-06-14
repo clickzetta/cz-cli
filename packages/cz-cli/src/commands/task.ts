@@ -380,7 +380,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ? parseInt(folderRaw, 10)
               : await resolveFolderIdByName(sc, folderRaw, format)
             if (folderId === 0) {
-              error("INVALID_ARGUMENTS", "Creating tasks in root directory (folder_id=0) is not allowed. Specify a valid folder.", { format, exitCode: 2 }); return
+              process.stderr.write("Warning: creating task in root directory. Consider using a subfolder to keep the workspace organized.\n")
             }
             // Check for duplicate name in the same folder
             const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
@@ -442,7 +442,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ? parseInt(folderRaw, 10)
               : await resolveFolderIdByName(sc, folderRaw, format)
             if (folderId === 0) {
-              error("INVALID_ARGUMENTS", "Creating tasks in root directory (folder_id=0) is not allowed. Specify a valid folder.", { format, exitCode: 2 }); return
+              process.stderr.write("Warning: creating task in root directory. Consider using a subfolder to keep the workspace organized.\n")
             }
             // Check for duplicate name
             const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
