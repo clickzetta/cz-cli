@@ -1013,18 +1013,35 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const normalizeSrcType = (raw: string): string => {
                   if (raw.startsWith('_')) {
                     const elem = raw.slice(1)  // _text → text, _int4 → int4
-                    const elemLh = SRC_TO_LH[elem] ?? elem.toLowerCase()
-                    return `array<${elemLh}>`
+                    const elemMapped = normalizeSrcType(elem)  // recurse for element type
+                    return `array<${elemMapped}>`
                   }
-                  // PG serial types are int sequences
-                  if (raw === 'SERIAL' || raw === 'SERIAL4') return 'int'
-                  if (raw === 'BIGSERIAL' || raw === 'SERIAL8') return 'bigint'
-                  if (raw === 'INT2' || raw === 'INT4') return 'int'
-                  if (raw === 'INT8') return 'bigint'
+                  // PG integer aliases
+                  if (raw === 'INT2' || raw === 'SMALLSERIAL') return 'smallint'
+                  if (raw === 'INT4' || raw === 'SERIAL' || raw === 'SERIAL4') return 'int'
+                  if (raw === 'INT8' || raw === 'BIGSERIAL' || raw === 'SERIAL8') return 'bigint'
+                  // PG float aliases
                   if (raw === 'FLOAT4') return 'float'
-                  if (raw === 'FLOAT8') return 'double'
+                  if (raw === 'FLOAT8' || raw === 'DOUBLE PRECISION') return 'double'
+                  // PG numeric
+                  if (raw === 'NUMERIC') return 'decimal'
+                  // PG time with tz
                   if (raw === 'TIMESTAMPTZ') return 'timestamp_ltz'
-                  if (raw === 'VECTOR') return 'string'  // pgvector → ask LLM to use VECTOR(FLOAT, dim)
+                  // PG timestamp without tz (plain TIMESTAMP)
+                  if (raw === 'TIMESTAMP') return 'timestamp_ntz'
+                  // PG char types
+                  if (raw === 'BPCHAR') return 'string'  // blank-padded char = CHAR
+                  if (raw === 'NAME') return 'string'    // PG system type, ~64 chars
+                  // PG misc → string (LLM should verify)
+                  if (raw === 'UUID') return 'string'
+                  if (raw === 'TSVECTOR' || raw === 'TSQUERY') return 'string'
+                  if (raw === 'INTERVAL') return 'string'
+                  if (raw === 'TIMETZ') return 'string'   // time with tz, no direct Lakehouse equivalent
+                  if (raw === 'OID' || raw === 'XID' || raw === 'CID') return 'bigint'
+                  if (raw === 'VARBIT') return 'binary'
+                  if (raw === 'JSONB') return 'json'
+                  // pgvector → ask LLM to use VECTOR(FLOAT, dim)
+                  if (raw === 'VECTOR') return 'string'
                   return SRC_TO_LH[raw] ?? raw.toLowerCase()
                 }
                 const expectedLhType = normalizeSrcType(srcTypeRaw)
