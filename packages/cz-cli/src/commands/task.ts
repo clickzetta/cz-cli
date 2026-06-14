@@ -366,16 +366,30 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               describe:
                 'Available options: SQL, PYTHON, SHELL, JDBC, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI"',
             })
-            .option("folder", { type: "string", default: "0", describe: "Folder ID or name" })
+            .option("folder", { type: "string", describe: "Folder ID or name (required; root directory not allowed)" })
             .option("description", { type: "string", describe: "Task description" }),
         async (argv) => {
           const format = argv.format
           try {
             const sc = await ctx(argv)
-            const folderRaw = (argv.folder as string).trim()
+            const folderRaw = (argv.folder as string | undefined)?.trim()
+            if (!folderRaw) {
+              error("INVALID_ARGUMENTS", "Missing required option: --folder. Specify a folder name or ID. Creating tasks in root directory is not allowed.", { format, exitCode: 2 }); return
+            }
             const folderId = /^\d+$/.test(folderRaw)
               ? parseInt(folderRaw, 10)
               : await resolveFolderIdByName(sc, folderRaw, format)
+            if (folderId === 0) {
+              error("INVALID_ARGUMENTS", "Creating tasks in root directory (folder_id=0) is not allowed. Specify a valid folder.", { format, exitCode: 2 }); return
+            }
+            // Check for duplicate name in the same folder
+            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+            const duplicate = existingList.find((t) => String(t.dataFileName ?? t.fileName ?? "") === argv.name)
+            if (duplicate) {
+              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder (task_id=${duplicate.id ?? duplicate.task_id}). Use a different name or delete the existing task first.`, { format, exitCode: 2 }); return
+            }
             const resp = await createTask(sc, {
               fileType: String(parseTaskType(argv.type as string)),
               createdBy: String(sc.userId),
@@ -389,7 +403,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const data = resp.data as Record<string, unknown> | undefined
             const newFileId = Number(data)
             const url = newFileId ? studioUrl(sc, newFileId) : undefined
-            success({ id:data, studio_url: url }, { format })
+            success({ id: data, studio_url: url }, { format })
           } catch (err) {
             reportTaskError(err, format)
           }
@@ -402,7 +416,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("name", { type: "string", demandOption: true })
             .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC, etc." })
-            .option("folder", { type: "string", default: "0", describe: "Folder ID or name" })
+            .option("folder", { type: "string", describe: "Folder ID or name (required; root directory not allowed)" })
             .option("content", { type: "string", describe: "Script content" })
             .option("file", { alias: "f", type: "string", describe: "Read script from file" })
             .option("cron", { type: "string", describe: "Cron expression (5/6/7 fields)" })
@@ -416,11 +430,28 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (argv.content && argv.file) {
               error("INVALID_ARGUMENTS", "Provide --content or --file, not both.", { format, exitCode: 2 }); return
             }
+            if (!argv.content && !argv.file && !argv.cron) {
+              process.stderr.write("Warning: no --content/--file or --cron provided. Task will be created as an empty draft.\n")
+            }
             const sc = await ctx(argv)
-            const folderRaw = (argv.folder as string).trim()
+            const folderRaw = (argv.folder as string | undefined)?.trim()
+            if (!folderRaw) {
+              error("INVALID_ARGUMENTS", "Missing required option: --folder. Specify a folder name or ID. Creating tasks in root directory is not allowed.", { format, exitCode: 2 }); return
+            }
             const folderId = /^\d+$/.test(folderRaw)
               ? parseInt(folderRaw, 10)
               : await resolveFolderIdByName(sc, folderRaw, format)
+            if (folderId === 0) {
+              error("INVALID_ARGUMENTS", "Creating tasks in root directory (folder_id=0) is not allowed. Specify a valid folder.", { format, exitCode: 2 }); return
+            }
+            // Check for duplicate name
+            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+            const duplicate = existingList.find((t) => String(t.dataFileName ?? t.fileName ?? "") === argv.name)
+            if (duplicate) {
+              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder (task_id=${duplicate.id ?? duplicate.task_id}). Use a different name or delete the existing task first.`, { format, exitCode: 2 }); return
+            }
 
             // Step 1: create
             const createResp = await createTask(sc, {
@@ -435,55 +466,62 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileId = Number((createResp.data as Record<string, unknown>))
             const url = studioUrl(sc, fileId)
 
-            // Step 2: save content (optional)
-            if (argv.content || argv.file) {
-              const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
-              let paramValueList: unknown[] | undefined
-              if (argv.params) {
-                const result = parseParamValueList(argv.params as string)
-                if (!result) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}`, { format }); return }
-                paramValueList = result
+            // Steps 2 & 3 with rollback on failure
+            try {
+              // Step 2: save content (optional)
+              if (argv.content || argv.file) {
+                const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
+                let paramValueList: unknown[] | undefined
+                if (argv.params) {
+                  const result = parseParamValueList(argv.params as string)
+                  if (!result) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}`, { format }); return }
+                  paramValueList = result
+                }
+                await saveTaskContent(sc, {
+                  dataFileId: fileId,
+                  dataFileContent: text,
+                  projectId: sc.projectId,
+                  updateBy: String(sc.userId),
+                  instanceName: sc.instanceName,
+                  replaceEscapedChars: false,
+                  ...(paramValueList && { paramValueList }),
+                })
               }
-              await saveTaskContent(sc, {
-                dataFileId: fileId,
-                dataFileContent: text,
-                projectId: sc.projectId,
-                updateBy: String(sc.userId),
-                instanceName: sc.instanceName,
-                replaceEscapedChars: false,
-                ...(paramValueList && { paramValueList }),
-              })
-            }
 
-            // Step 3: save cron (optional)
-            if (argv.cron) {
-              const cronResult = convertAgentCron(argv.cron as string)
-              if (!cronResult.ok || !cronResult.outputCron) {
-                error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 }); return
+              // Step 3: save cron (optional)
+              if (argv.cron) {
+                const cronResult = convertAgentCron(argv.cron as string)
+                if (!cronResult.ok || !cronResult.outputCron) {
+                  error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 }); return
+                }
+                const oldConfigProps: Record<string, unknown> = {}
+                if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
+                if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
+                await saveTaskConfig(sc, {
+                  dataFileId: fileId,
+                  projectId: sc.projectId,
+                  updateBy: String(sc.userId),
+                  instanceName: sc.instanceName,
+                  cronExpress: cronResult.outputCron,
+                  schemaName: (argv.schema as string | undefined) ?? "public",
+                  etlVcCode: (argv.vc as string | undefined) ?? "DEFAULT",
+                  retryCount: 1,
+                  retryIntervalTime: 1,
+                  retryIntervalTimeUnit: "m",
+                  rerunProperty: "3",
+                  selfDependsJob: 0,
+                  executeTimeout: 0,
+                  executeTimeoutUnit: "m",
+                  activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                  activeEndTime: "2099-01-01T00:00:00.000Z",
+                  dataFileInputListReqs: [],
+                  configProperties: JSON.stringify(oldConfigProps),
+                })
               }
-              const oldConfigProps: Record<string, unknown> = {}
-              if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
-              if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
-              await saveTaskConfig(sc, {
-                dataFileId: fileId,
-                projectId: sc.projectId,
-                updateBy: String(sc.userId),
-                instanceName: sc.instanceName,
-                cronExpress: cronResult.outputCron,
-                schemaName: (argv.schema as string | undefined) ?? "public",
-                etlVcCode: (argv.vc as string | undefined) ?? "DEFAULT",
-                retryCount: 1,
-                retryIntervalTime: 1,
-                retryIntervalTimeUnit: "m",
-                rerunProperty: "3",
-                selfDependsJob: 0,
-                executeTimeout: 0,
-                executeTimeoutUnit: "m",
-                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
-                activeEndTime: "2099-01-01T00:00:00.000Z",
-                dataFileInputListReqs: [],
-                configProperties: JSON.stringify(oldConfigProps),
-              })
+            } catch (setupErr) {
+              // Rollback: delete the created task so no orphan is left
+              await deleteTask(sc, { scheduleTaskId: fileId, projectId: sc.projectId }).catch(() => {})
+              throw setupErr
             }
 
             logOperation("task create-and-setup", { ok: true })
@@ -887,9 +925,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const detail = await getTaskDetail(sc, fileId)
-            const taskDetail = detail.data as Record<string, unknown> | undefined
+            const taskDetailData = detail.data as Record<string, unknown> | undefined
+            const taskDetailInner = (typeof taskDetailData?.taskDetail === "object" && taskDetailData?.taskDetail !== null
+              ? taskDetailData.taskDetail : taskDetailData) as Record<string, unknown> | undefined
             const fileType = Number(
-              taskDetail?.fileType ?? taskDetail?.file_type ?? 0,
+              taskDetailInner?.fileType ?? taskDetailInner?.file_type ?? 0,
             )
             if (fileType === 500) {
               error(
@@ -898,6 +938,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 { format },
               )
               return
+            }
+            // For script-based tasks (SQL/Python/Shell/JDBC), check schedule config is saved
+            const SCRIPT_FILE_TYPES = new Set([4, 5, 7, 15])
+            if (SCRIPT_FILE_TYPES.has(fileType)) {
+              const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
+              if (hasConfig === false || hasConfig === 0) {
+                error("NO_SCHEDULE_CONFIG", "Task schedule configuration has not been saved. Use 'cz-cli task save-cron' before deploying.", { format, exitCode: 2 }); return
+              }
             }
             if (!argv.yes) {
               const ok = await confirm(`Publish and online task ${fileId}?`)
