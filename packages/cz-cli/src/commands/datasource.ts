@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
-import { studioRequest, type StudioConfig } from "@clickzetta/sdk"
+import { studioRequest, listPgSlots, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
@@ -87,12 +87,12 @@ function reportDatasourceError(err: unknown, format: string | undefined): void {
   error("DATASOURCE_ERROR", err instanceof Error ? err.message : String(err), { format })
 }
 
-async function apiSampleData(sc: StudioConfig, params: { id: number; nameSpace: string; dataObjectName: string; dsType?: number; partitions?: string }) {
+async function apiSampleData(sc: StudioConfig, params: { id: number; nameSpace: string; dataObjectName: string; dsType?: number; partitions?: string; where?: string }) {
   return studioRequest<{ fieldNames?: string[]; rows?: unknown[][] }>(sc, API.SAMPLE, {
     id: params.id,
     nameSpace: params.nameSpace,
     dataObjectName: params.dataObjectName,
-    options: { dsType: params.dsType},
+    options: { dsType: params.dsType, ...(params.where && { where: params.where }) },
   })
 }
 
@@ -350,6 +350,113 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(rows, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource sample", { ok: false, timeMs: Date.now() - t0 })
+            reportDatasourceError(err, format)
+          }
+        },
+      )
+      // ── check-cdc ─────────────────────────────────────────────────────────
+      .command(
+        "check-cdc <datasource>",
+        "Check if a datasource meets CDC prerequisites (binlog/WAL config, replication slots)",
+        (y) =>
+          y.positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await getStudioContext(argv)
+            const ds = await resolveDatasource(sc, argv.datasource as string)
+            const dsType = ds.dsType ?? 0
+
+            const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
+            const PG_LIKE    = new Set([7, 22, 40, 46, 48])
+
+            // ── MySQL / TiDB / Aurora MySQL / PolarDB MySQL ────────────────
+            if (MYSQL_LIKE.has(dsType)) {
+              const resp = await apiSampleData(sc, {
+                id: ds.id, nameSpace: "performance_schema", dataObjectName: "global_variables", dsType,
+                where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')",
+              })
+              const data = resp.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+              const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
+              const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
+              const varMap: Record<string, string> = {}
+              for (const row of data?.rows ?? []) {
+                const k = String((row as unknown[])[nameIdx] ?? "").toLowerCase()
+                varMap[k] = String((row as unknown[])[valIdx] ?? "")
+              }
+              const checks = [
+                { name: "log_bin",          required: "ON",   actual: varMap["log_bin"]          ?? "UNKNOWN" },
+                { name: "binlog_format",    required: "ROW",  actual: varMap["binlog_format"]    ?? "UNKNOWN" },
+                { name: "binlog_row_image", required: "FULL", actual: varMap["binlog_row_image"] ?? "UNKNOWN" },
+              ].map(c => ({ ...c, pass: c.actual.toUpperCase() === c.required }))
+
+              const ready = checks.every(c => c.pass)
+              const failed = checks.filter(c => !c.pass)
+              const fixHints = failed.map(c =>
+                c.name === "log_bin"          ? "Enable binary logging: add `log_bin=ON` to my.cnf and restart MySQL" :
+                c.name === "binlog_format"    ? `SET GLOBAL binlog_format = 'ROW';` :
+                c.name === "binlog_row_image" ? `SET GLOBAL binlog_row_image = 'FULL';` : ""
+              ).filter(Boolean)
+
+              logOperation("datasource check-cdc", { ok: ready })
+              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
+                format,
+                aiMessage: ready
+                  ? `MySQL CDC prerequisites met for '${ds.name}'.`
+                  : `MySQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
+              })
+              return
+            }
+
+            // ── PostgreSQL / Aurora PG / PolarDB PG / Greenplum / Redshift ─
+            if (PG_LIKE.has(dsType)) {
+              const checks: { name: string; required: string; actual: string; pass: boolean }[] = []
+
+              // wal_level check
+              const walResp = await apiSampleData(sc, {
+                id: ds.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings", dsType,
+                where: "name = 'wal_level'",
+              }).catch(() => null)
+              const walData = walResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+              const settingIdx = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
+              const walRow = walData?.rows?.[0]
+              const walLevel = walRow ? String((walRow as unknown[])[settingIdx]) : "UNKNOWN"
+              checks.push({ name: "wal_level", required: "logical", actual: walLevel, pass: walLevel === "logical" })
+
+              // slot check
+              const slotResp = await listPgSlots(sc, [ds.id]).catch(() => null)
+              const slots = slotResp?.data?.find(s => s.datasourceId === ds.id)?.pipelineSlotMetaVos ?? []
+              checks.push({
+                name: "replication_slot",
+                required: ">= 1 slot",
+                actual: slots.length > 0 ? slots.map(s => s.slotName).join(", ") : "none",
+                pass: slots.length > 0,
+              })
+
+              const ready = checks.every(c => c.pass)
+              const failed = checks.filter(c => !c.pass)
+              const fixHints = failed.map(c =>
+                c.name === "wal_level"
+                  ? "Set wal_level=logical in postgresql.conf and restart PostgreSQL"
+                  : "Create a replication slot: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput');"
+              )
+
+              logOperation("datasource check-cdc", { ok: ready })
+              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
+                format,
+                aiMessage: ready
+                  ? `PostgreSQL CDC prerequisites met for '${ds.name}'.`
+                  : `PostgreSQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
+              })
+              return
+            }
+
+            // ── Other types ────────────────────────────────────────────────
+            success({ datasource: ds.name, ds_type: dsType, checks: [], ready: true }, {
+              format,
+              aiMessage: `Datasource type ${dsType} does not require CDC prerequisite checks.`,
+            })
+          } catch (err) {
             reportDatasourceError(err, format)
           }
         },

@@ -1442,6 +1442,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("sync-mode", {
               type: "number", default: 1,
               describe: "1=full+incremental (default, recommended for first run), 2=incremental only",
+            })
+            .option("skip-check", {
+              type: "boolean", default: false,
+              describe: "Skip CDC prerequisite check (binlog/WAL validation)",
             }),
         async (argv) => {
           const format = argv.format
@@ -1453,6 +1457,49 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sourceDs = await resolveDatasource(sc, String(argv.source))
             if (!sourceDs.dsType) {
               error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'. Specify a valid datasource.`, { format, exitCode: 2 }); return
+            }
+
+            // CDC prerequisite check (skip with --skip-check)
+            if (!(argv["skip-check"] as boolean)) {
+              const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
+              const PG_LIKE    = new Set([7, 22, 40, 46, 48])
+              if (MYSQL_LIKE.has(sourceDs.dsType)) {
+                const r = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+                  id: sourceDs.id, nameSpace: "performance_schema", dataObjectName: "global_variables",
+                  options: { dsType: sourceDs.dsType, where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')" },
+                }).catch(() => null)
+                const data = (r as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+                const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
+                const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
+                const varMap: Record<string, string> = {}
+                for (const row of data?.rows ?? []) {
+                  varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
+                }
+                const failed: string[] = []
+                if ((varMap["log_bin"] ?? "").toUpperCase() !== "ON") failed.push("log_bin must be ON (add log_bin=ON to my.cnf and restart)")
+                if ((varMap["binlog_format"] ?? "").toUpperCase() !== "ROW") failed.push(`SET GLOBAL binlog_format = 'ROW'`)
+                if ((varMap["binlog_row_image"] ?? "").toUpperCase() !== "FULL") failed.push(`SET GLOBAL binlog_row_image = 'FULL'`)
+                if (failed.length > 0) {
+                  error("CDC_PREREQ_FAILED", `MySQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nUse --skip-check to bypass.`, { format, exitCode: 2 }); return
+                }
+              } else if (PG_LIKE.has(sourceDs.dsType)) {
+                const walR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+                  id: sourceDs.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings",
+                  options: { dsType: sourceDs.dsType, where: "name = 'wal_level'" },
+                }).catch(() => null)
+                const walData = (walR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+                const si = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
+                const walRow = walData?.rows?.[0]
+                const walLevel = walRow ? String((walRow as unknown[])[si]) : ""
+                const slotR = await listPgSlots(sc, [sourceDs.id]).catch(() => null)
+                const slots = slotR?.data?.find(s => s.datasourceId === sourceDs.id)?.pipelineSlotMetaVos ?? []
+                const failed: string[] = []
+                if (walLevel !== "logical") failed.push(`wal_level must be 'logical' (current: '${walLevel || "unknown"}') — set in postgresql.conf and restart`)
+                if (slots.length === 0) failed.push("No replication slot found — run: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput')")
+                if (failed.length > 0) {
+                  error("CDC_PREREQ_FAILED", `PostgreSQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nUse --skip-check to bypass.`, { format, exitCode: 2 }); return
+                }
+              }
             }
 
             // Resolve target datasource (default to first Lakehouse type if not specified)
