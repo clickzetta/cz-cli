@@ -355,6 +355,50 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "folder-tree",
+        "Show full folder hierarchy as a tree (use this to find the right folder before creating a task)",
+        (y) => y.option("parent", { type: "number", default: 0, describe: "Root folder ID (0 = workspace root)" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+
+            // BFS to build full tree
+            interface FolderNode { id: number; name: string; path: string; children: FolderNode[] }
+            const buildTree = async (parentId: number, parentPath: string): Promise<FolderNode[]> => {
+              const resp = await listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 500, parentFolderId: parentId })
+              const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
+              const folders = Array.isArray(data.list) ? data.list as Record<string, unknown>[] : []
+              return Promise.all(folders.map(async (f) => {
+                const id = Number(f.id ?? f.dataFolderId)
+                const name = String(f.dataFolderName ?? f.folderName ?? id)
+                const path = parentPath ? `${parentPath}/${name}` : name
+                const children = f.hasChildren ? await buildTree(id, path) : []
+                return { id, name, path, children }
+              }))
+            }
+
+            const tree = await buildTree(argv.parent as number, "")
+
+            // Flatten to list with indent for readability
+            const flatten = (nodes: FolderNode[], depth: number): { id: number; name: string; path: string; indent: string }[] =>
+              nodes.flatMap((n) => [
+                { id: n.id, name: n.name, path: n.path, indent: "  ".repeat(depth) + (depth > 0 ? "└─ " : "") },
+                ...flatten(n.children, depth + 1),
+              ])
+
+            const flat = flatten(tree, 0)
+            logOperation("task folder-tree", { ok: true })
+            success(flat, {
+              format,
+              aiMessage: `Found ${flat.length} folder(s). Use the 'id' field with --folder when creating tasks. Example: cz-cli task create <name> --type SQL --folder <id>`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "create <name>",
         "Create a new task",
         (y) =>
@@ -374,7 +418,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const folderRaw = (argv.folder as string | undefined)?.trim()
             if (!folderRaw) {
-              error("INVALID_ARGUMENTS", "Missing required option: --folder. Specify a folder name or ID. Creating tasks in root directory is not allowed.", { format, exitCode: 2 }); return
+              error("INVALID_ARGUMENTS", "Missing required option: --folder. Run 'cz-cli task folder-tree' to see available folders and their IDs, then pass the correct folder with --folder <id_or_name>.", { format, exitCode: 2 }); return
             }
             const folderId = /^\d+$/.test(folderRaw)
               ? parseInt(folderRaw, 10)
@@ -436,7 +480,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const folderRaw = (argv.folder as string | undefined)?.trim()
             if (!folderRaw) {
-              error("INVALID_ARGUMENTS", "Missing required option: --folder. Specify a folder name or ID. Creating tasks in root directory is not allowed.", { format, exitCode: 2 }); return
+              error("INVALID_ARGUMENTS", "Missing required option: --folder. Run 'cz-cli task folder-tree' to see available folders and their IDs, then pass the correct folder with --folder <id_or_name>.", { format, exitCode: 2 }); return
             }
             const folderId = /^\d+$/.test(folderRaw)
               ? parseInt(folderRaw, 10)
