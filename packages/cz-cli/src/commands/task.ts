@@ -13,6 +13,7 @@ import {
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
   saveCdcTask,
+  resolveVclusterId,
   studioRequest,
   type StudioConfig,
 } from "@clickzetta/sdk"
@@ -1192,6 +1193,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
             if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
 
+            const vcCodeFinal = (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT"
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
@@ -1199,7 +1201,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               instanceName: sc.instanceName,
               cronExpress: cronResult.outputCron!,
               schemaName: (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public",
-              etlVcCode: (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT",
+              etlVcCode: vcCodeFinal,
               etlVcId: argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined),
               retryCount: (oldData.retryCount as number | undefined) ?? 1,
               retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
@@ -1516,28 +1518,33 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
             // Resolve VC + content + saved paramValueList from task detail
             let vcCode = argv.vc as string | undefined
-            const detail = await getTaskDetail(sc, fileId)
+            const [detail, cfgDetail] = await Promise.all([
+              getTaskDetail(sc, fileId),
+              getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }).catch(() => null),
+            ])
             const data = detail.data as Record<string, unknown> | undefined
             const taskDetail = (
               typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
             ) as Record<string, unknown> | undefined
+            // Parse connectionParam for etlVcCode/etlVcId (set by scheduler, not in taskDetail)
+            const connParam = (() => {
+              const raw = (cfgDetail?.data as Record<string, unknown> | undefined)?.connectionParam
+              if (!raw) return {} as Record<string, unknown>
+              try { return JSON.parse(String(raw)) as Record<string, unknown> } catch { return {} as Record<string, unknown> }
+            })()
+            const INTEGRATION_FILE_TYPES = new Set([1, 14, 17, 280, 281, 291])
+            const execFileType = Number(taskDetail?.fileType ?? data?.fileType ?? 0)
             if (!vcCode) {
-              vcCode = (taskDetail?.defaultVcName ??
-                taskDetail?.default_vc_name ??
+              // For INTEGRATION types, skip defaultVcName (it's the general VC, not the Sync VC)
+              const skipDefaultVc = INTEGRATION_FILE_TYPES.has(execFileType)
+              vcCode = ((!skipDefaultVc ? (taskDetail?.defaultVcName ?? taskDetail?.default_vc_name) : undefined) ??
+                connParam?.etlVcCode ??
                 taskDetail?.etlVcCode ??
                 taskDetail?.etl_vc_code) as string | undefined
               if (!vcCode) {
                 const config = resolveConnectionConfig(argv as Record<string, unknown>)
                 vcCode = config.vcluster || undefined
               }
-            }
-            // For INTEGRATION task types, adhocVcCode must be a Sync VCluster.
-            // If user didn't pass --vc, use etlVcCode from schedule config.
-            const INTEGRATION_FILE_TYPES = new Set([1, 14, 17, 280, 281, 291])
-            const execFileType = Number(taskDetail?.fileType ?? data?.fileType ?? 0)
-            if (INTEGRATION_FILE_TYPES.has(execFileType) && !(argv.vc as string | undefined)) {
-              // etlVcCode already resolved above into vcCode — keep it.
-              vcCode = vcCode ?? "DEFAULT"
             }
             if (!content) {
               content = (taskDetail?.taskContent ??
@@ -1570,6 +1577,21 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             let dsType = adhocConfigs?.dsType as number | undefined
             const sessionSchemaName = (argv.database as string | undefined)
               ?? (adhocConfigs?.sessionSchemaName as string | undefined)
+            // For INTEGRATION task types: override vcCode with adhocConfigs.adhocVcCode if set to a real Sync VC
+            if (INTEGRATION_FILE_TYPES.has(execFileType) && !(argv.vc as string | undefined)) {
+              const adhocVcFromConfig = adhocConfigs?.adhocVcCode as string | undefined
+              if (adhocVcFromConfig && adhocVcFromConfig !== "default" && adhocVcFromConfig !== "DEFAULT") {
+                vcCode = adhocVcFromConfig
+              } else if (!vcCode || vcCode === "DEFAULT" || vcCode === "default") {
+                // No valid Sync VC found anywhere — require explicit --vc
+                error("INTEGRATION_VC_REQUIRED",
+                  `INTEGRATION task ad-hoc execution requires a Sync VCluster.\n` +
+                  `Configure via 'cz-cli task save-integration ... --vc <SYNC_VC>', or\n` +
+                  `pass explicitly: cz-cli task execute ${fileId} --vc <SYNC_VC_NAME>\n` +
+                  `Run 'cz-cli sql --sync "SHOW VCLUSTERS"' to list available Sync VClusters.`,
+                  { format, exitCode: 2 }); return
+              }
+            }
             if (argv.datasource != null) {
               const resolved = await resolveDatasource(sc, String(argv.datasource))
               datasourceId = resolved.id
@@ -1600,6 +1622,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               )
               return
             }
+            // Resolve VC name to numeric ID (required by adhoc execute API)
+            // For INTEGRATION types, also resolve etlVcId from connectionParam.etlVcCode if not already set
+            let adhocVcId: string | number = vcCode
+            if (INTEGRATION_FILE_TYPES.has(execFileType)) {
+              const resolvedId = await resolveVclusterId(sc, vcCode).catch(() => undefined)
+              if (resolvedId) adhocVcId = resolvedId
+            }
             const resp = await executeAdhoc(sc, {
               updateBy: String(sc.userId),
               dataFileId: fileId,
@@ -1611,12 +1640,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               multiDataSource: [],
               adhocVcCode: vcCode ?? "",
               adhocSchemaName: argv.schema ?? "",
-              adhocVcId: vcCode ?? 0,  // VC ID = VC Name for Sync VClusters
+              adhocVcId,
               dataFileContent: content,
               params,
               datasourceId,
               sessionSchemaName,
               dsType,
+              ...(connParam?.etlVcCode != null && { etlVcCode: connParam.etlVcCode as string }),
+              ...(connParam?.etlVcId != null && { etlVcId: connParam.etlVcId as string }),
             })
             const execData = resp.data as Record<string, unknown> | undefined
             const runInstanceId = execData?.scheduleInstanceId ?? execData?.instanceId

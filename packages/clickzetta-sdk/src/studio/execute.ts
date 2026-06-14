@@ -1,6 +1,25 @@
 import type { StudioConfig } from "../types/index.js"
 import { studioRequest } from "./client.js"
 
+export interface VclusterInfo {
+  id: string
+  name: string
+  type: string  // "INTEGRATION" | "ANALYTICS" | "GENERAL"
+}
+
+export async function listVclusters(config: StudioConfig): Promise<VclusterInfo[]> {
+  const r = await studioRequest(config, "/clickzetta-lakeconsole/api/v1/vcluster/list", {
+    instanceId: (config as unknown as Record<string, unknown>).lakeHouseInstanceId ?? (config as unknown as Record<string, unknown>).instanceId,
+    workspaceId: config.workspaceId,
+  })
+  return (r?.data as VclusterInfo[]) ?? []
+}
+
+export async function resolveVclusterId(config: StudioConfig, vcName: string): Promise<string | undefined> {
+  const list = await listVclusters(config)
+  return list.find(v => v.name === vcName || v.id === vcName)?.id
+}
+
 export interface ExecuteAdhocParams {
   updateBy: string
   dataFileId: number
@@ -18,6 +37,8 @@ export interface ExecuteAdhocParams {
   datasourceId?: number
   sessionSchemaName?: string
   dsType?: number
+  etlVcCode?: string
+  etlVcId?: string | number
 }
 
 export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
@@ -38,6 +59,8 @@ export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
     ...(params.datasourceId != null && { datasourceId: params.datasourceId }),
     ...(params.sessionSchemaName != null && { sessionSchemaName: params.sessionSchemaName }),
     ...(params.dsType != null && { dsType: params.dsType }),
+    ...(params.etlVcCode != null && { etlVcCode: params.etlVcCode }),
+    ...(params.etlVcId != null && { etlVcId: params.etlVcId }),
   },
     {
       env: "prod",
