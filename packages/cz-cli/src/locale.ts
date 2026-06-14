@@ -20,6 +20,8 @@ type MessageKey =
   | "refill_confirm"
   | "execute_confirm"
   | "flow_submit_confirm"
+  | "task_search_result"
+  | "task_stats_result"
 
 const MESSAGES: Record<MessageKey, [zh: string, en: string]> = {
   task_content: [
@@ -78,6 +80,14 @@ const MESSAGES: Record<MessageKey, [zh: string, en: string]> = {
   flow_submit_confirm: [
     "确认提交 Flow？",
     "Confirm submitting this Flow?",
+  ],
+  task_search_result: [
+    "找到 {0} 个匹配任务{1}。path 字段为解析后的文件夹路径。如需更多结果请增大 --limit。",
+    "Found {0} matching tasks{1}. The path field shows the resolved folder path. Use --limit to increase results.",
+  ],
+  task_stats_result: [
+    "任务统计（{0}）：共 {1} 个任务，{2} 个目录。运行实例（{3}）共 {4} 次，成功 {5} / 失败 {6} / 运行中 {7}。",
+    "Task stats ({0}): {1} tasks, {2} folders. Run instances ({3}): {4} total, {5} succeeded / {6} failed / {7} running.",
   ],
 }
 

@@ -1352,7 +1352,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("status", {
               type: "string",
               choices: ["draft", "published", "offline"],
-              describe: "Task status filter: draft=10, published=20, offline=100",
+              describe: "Task status filter",
+            })
+            .option("folder", { type: "string", describe: "Filter by folder name or ID (searches within this folder)" })
+            .option("owner", { type: "string", describe: "Filter by owner username (fuzzy match)" })
+            .option("sort", {
+              type: "string",
+              choices: ["last_edit", "name", "type"],
+              default: "last_edit",
+              describe: "Sort order: last_edit=most recently modified first, name=alphabetical, type=by task type",
             })
             .option("limit", { type: "number", default: 50, describe: "Max results to return" }),
         async (argv) => {
@@ -1362,7 +1370,18 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileType = argv.type ? String(parseTaskType(argv.type as string)) : undefined
             const STATUS_CODE: Record<string, number> = { draft: 10, published: 20, offline: 100 }
             const statusFilter = argv.status ? STATUS_CODE[argv.status as string] : undefined
+            const ownerFilter = (argv.owner as string | undefined)?.toLowerCase()
+            const sortBy = (argv.sort as string) ?? "last_edit"
             const limit = argv.limit as number
+
+            // Resolve folder filter to id (server-side filter)
+            const folderArg = argv.folder as string | undefined
+            let folderIdFilter: number | undefined
+            if (folderArg) {
+              folderIdFilter = /^\d+$/.test(folderArg)
+                ? parseInt(folderArg, 10)
+                : await resolveFolderIdByName(sc, folderArg, format)
+            }
 
             // Build folder id→name map by BFS across all folder levels
             const folderMap = new Map<number, string>()
@@ -1390,13 +1409,21 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             let page = 1
             const pageSize = 100
             while (results.length < limit) {
-              const resp = await listTasks(sc, { projectId: sc.projectId, page, pageSize, fileName: argv.name as string | undefined, fileType })
+              const resp = await listTasks(sc, {
+                projectId: sc.projectId, page, pageSize,
+                fileName: argv.name as string | undefined,
+                fileType,
+                // Only use folderId as server filter when no recursive folder match needed
+                // (listTasks folderId filters direct children only; we use location for recursive)
+              })
               const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
               const tasks = Array.isArray(data.list) ? data.list as Record<string, unknown>[] : []
               if (tasks.length === 0) break
               for (const task of tasks) {
                 if (results.length >= limit) break
                 if (statusFilter != null && Number(task.fileFlowStatus ?? task.taskEditState) !== statusFilter) continue
+                // Folder filter: task's location must include the target folder id
+                if (folderIdFilter != null && !String(task.location ?? "").split(".").includes(String(folderIdFilter))) continue
                 const taskId = Number(task.id ?? task.task_id)
                 const location = String(task.location ?? "")
                 results.push({
@@ -1409,14 +1436,20 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               page++
             }
 
-            // Enrich with last_edit_time via rate-limited parallel getTaskDetail calls (max 20 concurrent)
+            // Enrich with last_edit_time and owner via rate-limited parallel getTaskDetail calls (max 20 concurrent)
             const enriched = await pMap(
               results.slice(0, limit),
               async (t) => {
                 try {
                   const detail = await getTaskDetail(sc, Number(t.task_id))
                   const data = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
-                  return { ...t, last_edit_time: data.lastEditTime ?? data.last_edit_time, last_edit_user: data.lastEditUser ?? data.last_edit_user }
+                  return {
+                    ...t,
+                    last_edit_time: data.lastEditTime ?? data.last_edit_time,
+                    last_edit_user: data.lastEditUser ?? data.last_edit_user,
+                    owner_cn_name: data.ownerCnName ?? data.owner_cn_name,
+                    owner_en_name: data.ownerEnName ?? data.owner_en_name,
+                  }
                 } catch {
                   return t
                 }
@@ -1424,15 +1457,25 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               20,
             )
 
-            // Sort by last_edit_time descending (most recently modified first)
-            enriched.sort((a, b) => {
-              const ta = Number(a.last_edit_time ?? 0)
-              const tb = Number(b.last_edit_time ?? 0)
-              return tb - ta
+            // Apply owner filter (client-side, needs detail data)
+            const filtered = ownerFilter
+              ? enriched.filter((t) =>
+                  String(t.owner_en_name ?? "").toLowerCase().includes(ownerFilter) ||
+                  String(t.owner_cn_name ?? "").toLowerCase().includes(ownerFilter) ||
+                  String(t.last_edit_user ?? "").toLowerCase().includes(ownerFilter)
+                )
+              : enriched
+
+            // Sort
+            filtered.sort((a, b) => {
+              if (sortBy === "name") return String(a.task_name ?? "").localeCompare(String(b.task_name ?? ""))
+              if (sortBy === "type") return Number(a.task_type ?? 0) - Number(b.task_type ?? 0)
+              // default: last_edit descending
+              return Number(b.last_edit_time ?? 0) - Number(a.last_edit_time ?? 0)
             })
 
             const EDIT_STATE: Record<number, string> = { 10: "draft", 20: "published", 100: "offline" }
-            const displayed = enriched.map((t) => ({
+            const displayed = filtered.map((t) => ({
               ...t,
               task_edit_state: EDIT_STATE[Number(t.task_edit_state)] ?? t.task_edit_state,
               last_edit_time: t.last_edit_time ? new Date(Number(t.last_edit_time)).toISOString().replace("T", " ").slice(0, 19) : undefined,
@@ -1441,9 +1484,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task search", { ok: true })
             success(displayed, {
               format,
-              extra: { total_matched: results.length, limit },
-              aiMessage: `找到 ${results.length} 个匹配任务${results.length >= limit ? `（已截断，最多显示 ${limit} 条）` : ""}。` +
-                `path 字段为解析后的文件夹路径。如需更多结果请增大 --limit。`,
+              extra: { total_matched: filtered.length, limit },
+              aiMessage: t("task_search_result",
+                filtered.length,
+                filtered.length >= limit ? `（已截断，最多显示 ${limit} 条 / truncated at ${limit}）` : "",
+              ),
             })
           } catch (err) {
             reportTaskError(err, format)
@@ -1578,9 +1623,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(taskRunRows.length > 0 ? { task_run_breakdown: taskRunRows } : {}),
             }, {
               format,
-              aiMessage: `任务统计（${folderId ? `folder=${folderId}` : "全部文件夹"}）：共 ${taskTotal} 个任务，${folderTotal} 个目录。` +
-                `运行实例（${fromStr}~${toStr}）共 ${instanceTotal} 次，` +
-                `成功 ${byStatus["SUCCESS"] ?? 0} / 失败 ${byStatus["FAILED"] ?? 0} / 运行中 ${byStatus["RUNNING"] ?? 0}。`,
+              aiMessage: t("task_stats_result",
+                folderId ? `folder=${folderId}` : (fileType ? `type=${argv.type}` : "all"),
+                taskTotal,
+                folderTotal,
+                `${fromStr}~${toStr}`,
+                instanceTotal,
+                byStatus["SUCCESS"] ?? 0,
+                byStatus["FAILED"] ?? 0,
+                byStatus["RUNNING"] ?? 0,
+              ),
             })
           } catch (err) {
             reportTaskError(err, format)
