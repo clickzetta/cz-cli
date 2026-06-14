@@ -64,6 +64,7 @@ describe("setup --credential", () => {
       schema: "clickzetta_account",
       virtualCluster: "CXH_TEST_1",
       accessToken: "czt_test_pat",
+      analysisAgentEndpoint: "https://analysis-agent.clickzetta.com",
       apiKey: "ck_test_api_key",
       aimeshEndpointBaseUrl: "https://uat-aimesh.clickzetta.com/",
     })
@@ -88,6 +89,7 @@ describe("setup --credential", () => {
         pat: "czt_test_pat",
         service: "https://uat-api.clickzetta.com",
         protocol: "https",
+        analysis_agent_endpoint: "https://analysis-agent.clickzetta.com",
         ai_gateway_url: "https://uat-aimesh.clickzetta.com/",
       },
     })

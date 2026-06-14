@@ -235,6 +235,7 @@ function applyCredentialToProfiles(
         pat: String(cred.accessToken),
         service: String(cred.service ?? "dev-api.clickzetta.com"),
         protocol: String(cred.protocol ?? "https"),
+        ...(typeof cred.analysisAgentEndpoint === "string" ? { analysis_agent_endpoint: cred.analysisAgentEndpoint } : {}),
         ...(typeof cred.aimeshEndpointBaseUrl === "string" && { ai_gateway_url: String(cred.aimeshEndpointBaseUrl) }),
       },
     },
@@ -1727,6 +1728,7 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           pat: accessToken,
           service: (cred.service as string) ?? "dev-api.clickzetta.com",
           protocol: (cred.protocol as string) ?? "https",
+          ...(typeof cred.analysisAgentEndpoint === "string" ? { analysis_agent_endpoint: cred.analysisAgentEndpoint } : {}),
         }
         try {
           const data = loadFullFile()

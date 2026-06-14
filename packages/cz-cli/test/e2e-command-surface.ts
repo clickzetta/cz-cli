@@ -5,7 +5,7 @@
  * Run: bun test/e2e-command-surface.ts
  */
 import { spawnSync } from "child_process"
-import { mkdirSync, rmSync } from "fs"
+import { mkdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 
@@ -38,6 +38,26 @@ function withFakeHome() {
   const home = join(tmpdir(), `cz-surface-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   mkdirSync(join(home, ".clickzetta"), { recursive: true })
   return { home, cleanup: () => rmSync(home, { recursive: true, force: true }) }
+}
+
+function withProfileButNoAnalysisEndpoint() {
+  const { home, cleanup } = withFakeHome()
+  writeFileSync(
+    join(home, ".clickzetta", "profiles.toml"),
+    [
+      'default_profile = "default"',
+      "",
+      "[profiles.default]",
+      'pat = "test-pat"',
+      'service = "cn-shanghai-alicloud.api.clickzetta.com"',
+      'instance = "test-instance"',
+      'workspace = "test-workspace"',
+      'schema = "public"',
+      'vcluster = "default"',
+      "",
+    ].join("\n"),
+  )
+  return { home, cleanup }
 }
 
 interface TestCase {
@@ -74,6 +94,12 @@ const noProfileCases = [
   ["job", "profile", "1"],
   ["datasource", "list"],
   ["datasource", "catalogs", "ds"],
+  ["analytics-agent", "datasource", "list"],
+  ["analytics-agent", "service", "enabled"],
+  ["analytics-agent", "session", "create"],
+  ["analytics-agent", "session", "run", "1"],
+  ["analytics-agent", "session", "result", "1"],
+  ["analytics-agent", "session", "stop", "1", "1"],
 ] as const
 
 const tests: TestCase[] = [
@@ -94,6 +120,23 @@ const tests: TestCase[] = [
           if (combined.includes("USAGE_ERROR") || combined.includes("INTERNAL_ERROR") || combined.includes("undefined is not an object")) {
             return { pass: false, detail: `${args.join(" ")} leaked internal/usage error` }
           }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "ANALYTICS_AGENT: configured profile without analysis_agent_endpoint returns a dedicated config error",
+    run() {
+      const { home, cleanup } = withProfileButNoAnalysisEndpoint()
+      try {
+        const result = run(["analytics-agent", "service", "enabled"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const combined = result.stdout + result.stderr
+        if (result.exitCode !== 1) {
+          return { pass: false, detail: `exit=${result.exitCode}` }
+        }
+        if (!expectCode(result.stdout, "NO_ANALYSIS_AGENT_ENDPOINT")) {
+          return { pass: false, detail: `unexpected output=${combined.slice(0, 200)}` }
         }
         return { pass: true }
       } finally { cleanup() }

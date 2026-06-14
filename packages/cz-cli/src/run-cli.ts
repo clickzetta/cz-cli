@@ -31,6 +31,7 @@ const PROFILE_REQUIRED_COMMANDS = new Set([
   "attempts",
   "job",
   "datasource",
+  "analytics-agent",
 ])
 
 const LLM_ONBOARDING = {
