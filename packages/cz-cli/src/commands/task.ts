@@ -471,7 +471,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("vc", { type: "string", describe: "Virtual cluster code" })
             .option("schema", { type: "string", describe: "Schema name" })
             .option("description", { type: "string", describe: "Task description" })
-            .option("params", { type: "string", describe: 'Runtime parameters JSON, e.g. \'{"bizdate":"bizdate","city":"beijing"}\'' }),
+            .option("params", { type: "string", describe: 'Runtime parameters JSON, e.g. \'{"bizdate":"bizdate","city":"beijing"}\'' })
+            .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (auto-resolves dsType)" })
+            .option("database", { type: "string", describe: "JDBC database/schema name to USE after connecting" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -525,6 +527,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   if (!result) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}`, { format }); return }
                   paramValueList = result
                 }
+                let casAdhocConfigs: string | undefined
+                if (argv.datasource) {
+                  const ds = await resolveDatasource(sc, String(argv.datasource))
+                  casAdhocConfigs = JSON.stringify({
+                    datasourceId: ds.id,
+                    dsType: ds.dsType,
+                    sessionSchemaName: argv.database ?? "",
+                    multiDataSource: [],
+                    schema: "public",
+                  })
+                }
                 await saveTaskContent(sc, {
                   dataFileId: fileId,
                   dataFileContent: text,
@@ -533,6 +546,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   instanceName: sc.instanceName,
                   replaceEscapedChars: false,
                   ...(paramValueList && { paramValueList }),
+                  ...(casAdhocConfigs && { adhocConfigs: casAdhocConfigs }),
                 })
               }
 
@@ -743,7 +757,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .positional("task", { type: "string", demandOption: true })
             .option("content", { type: "string", describe: "Script content" })
             .option("file", { alias: "f", type: "string", describe: "Read content from file" })
-            .option("params", { type: "string", describe: 'Runtime parameters as JSON object. Values starting with "$[" or matching system param names (bizdate, sys_biz_day, sys_plan_day, etc.) are treated as system/expression params automatically. e.g. \'{"city":"beijing","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}\'' }),
+            .option("params", { type: "string", describe: 'Runtime parameters as JSON object. Values starting with "$[" or matching system param names (bizdate, sys_biz_day, sys_plan_day, etc.) are treated as system/expression params automatically. e.g. \'{"city":"beijing","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}\'' })
+            .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (auto-resolves dsType)" })
+            .option("database", { type: "string", describe: "JDBC database/schema name to USE after connecting" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -768,6 +784,18 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
               paramValueList = result
             }
+            // Build adhocConfigs for JDBC datasource binding
+            let adhocConfigs: string | undefined
+            if (argv.datasource) {
+              const ds = await resolveDatasource(sc, String(argv.datasource))
+              adhocConfigs = JSON.stringify({
+                datasourceId: ds.id,
+                dsType: ds.dsType,
+                sessionSchemaName: argv.database ?? "",
+                multiDataSource: [],
+                schema: "public",
+              })
+            }
             const resp = await saveTaskContent(sc, {
               dataFileId: fileId,
               dataFileContent: text,
@@ -776,6 +804,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               instanceName: sc.instanceName,
               replaceEscapedChars: false,
               ...(paramValueList && { paramValueList }),
+              ...(adhocConfigs && { adhocConfigs }),
             })
             logOperation("task save-content", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })

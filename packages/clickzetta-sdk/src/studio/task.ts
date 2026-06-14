@@ -34,6 +34,7 @@ export interface SaveTaskContentParams {
   instanceName: string
   replaceEscapedChars?: boolean
   paramValueList?: unknown[]
+  adhocConfigs?: string
 }
 
 export interface SaveTaskConfigParams {
@@ -137,6 +138,7 @@ export function saveTaskContent(config: StudioConfig, params: SaveTaskContentPar
       paramValueList: params.paramValueList ?? [],
       instanceName: params.instanceName,
       ...(params.replaceEscapedChars !== undefined && { replace_escaped_chars: params.replaceEscapedChars }),
+      ...(params.adhocConfigs !== undefined && { adhocConfigs: params.adhocConfigs }),
     },
   )
 }
