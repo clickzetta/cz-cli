@@ -939,6 +939,31 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 parallelism: 1,
                 where: null,
               },
+              // Source params template varies by datasource type
+              source_params_template: (() => {
+                const dt = sourceDs.dsType
+                if (dt === 3) return { // Hive: NO table/database in params
+                  note: "Hive source: table and database are ONLY in dataObject/namespace, NOT in params",
+                  params: { dsType: dt, operatorType: "source" }
+                }
+                if (dt === 2) return { // Kafka
+                  note: "Kafka source: requires topic, groupId, offset params",
+                  params: { dsType: dt, operatorType: "source", topic: "<topic_name>", groupId: "<consumer_group>", offset: "latest" }
+                }
+                if (dt === 9) return { // OSS
+                  note: "OSS source: requires path, fileType params",
+                  params: { dsType: dt, operatorType: "source", path: "<oss_path>", fileType: "CSV", encoding: "UTF-8" }
+                }
+                if (dt === 12) return { // MongoDB
+                  note: "MongoDB source: requires collection param",
+                  params: { dsType: dt, operatorType: "source", table: "<collection_name>", database: argv["source-db"] as string }
+                }
+                // Default: relational DB (MySQL/PG/SQLServer/Oracle/etc)
+                return {
+                  note: "Relational DB source: requires table and database in params",
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                }
+              })(),
             }, {
               format,
               aiMessage:
@@ -968,8 +993,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 `- MySQL DATETIME → timestamp_ntz | MySQL TIMESTAMP → timestamp_ltz\n` +
                 `- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz\n` +
                 `- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json\n` +
-                `\nConfig JSON structure:\n` +
-                `{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":{"dsType":<n>,"operatorType":"source","table":"<table>","database":"<db>","splitPk":"<col_or_empty>","where":"<condition_or_empty>"},"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"APPEND","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`,
+                `\nConfig JSON structure (use source_params_template.params from this response for source.params):\n` +
+                `{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":<use source_params_template.params>,"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"APPEND","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`,
             })
           } catch (err) {
             reportTaskError(err, format)
