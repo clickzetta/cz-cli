@@ -113,6 +113,20 @@ async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: 
   return results
 }
 
+async function autoResolveLakehouseDs(sc: StudioConfig): Promise<{ id: number; name: string } | null> {
+  const resp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
+    current: 1, pageSize: 50, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
+  })
+  const list = (resp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined ?? []
+  if (list.length === 0) return null
+  // Prefer datasource whose name contains the workspace name (e.g. LAKEHOUSE_quick_start for workspace quick_start)
+  const wsName = sc.workspaceName?.toLowerCase() ?? ""
+  const match = list.find((ds) => String(ds.dsName ?? "").toLowerCase().includes(wsName))
+    ?? list.find((ds) => String(ds.dsName ?? "").toUpperCase().startsWith("LAKEHOUSE_"))
+    ?? list[0]
+  return { id: Number(match.id), name: String(match.dsName ?? "LAKEHOUSE") }
+}
+
 async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> {
   const detail = await getTaskDetail(sc, fileId)
   const data = detail.data as Record<string, unknown> | undefined
@@ -868,18 +882,24 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const targetDs = await resolveDatasource(sc, String(argv.target))
               targetDsId = targetDs.id; targetDsName = targetDs.name
             } else {
-              const lhResp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
-                current: 1, pageSize: 5, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
-              })
-              const lhList = (lhResp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined ?? []
-              if (lhList.length === 0) { error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target.", { format, exitCode: 2 }); return }
-              targetDsId = Number(lhList[0].id)
-              targetDsName = String((lhList[0] as Record<string, unknown>).dsName ?? "LAKEHOUSE")
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) { error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target.", { format, exitCode: 2 }); return }
+              targetDsId = lhDs.id
+              targetDsName = lhDs.name
             }
-            // Fetch columns
-            const metaResp = await studioRequest<unknown>(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
-              id: sourceDs.id, nameSpace: argv["source-db"] as string, dataObjectName: argv["source-table"] as string,
-            })
+            // Fetch columns + check target table existence + list sync VClusters in parallel
+            const sinkTargetTable = (argv["target-table"] as string | undefined) ?? argv["source-table"] as string
+            const targetSchema = argv["target-schema"] as string
+            const [metaResp, targetColsResp] = await Promise.all([
+              // Source table columns
+              studioRequest<unknown>(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
+                id: sourceDs.id, nameSpace: argv["source-db"] as string, dataObjectName: argv["source-table"] as string,
+              }),
+              // Check target table columns in Lakehouse (to see if it exists)
+              studioRequest<unknown>(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
+                id: targetDsId, nameSpace: targetSchema, dataObjectName: sinkTargetTable,
+              }).catch(() => null),
+            ])
             const metaData = (metaResp.data as Record<string, unknown> | null) ?? {}
             const sourceColumns = (Array.isArray((metaData as Record<string, unknown>).columns)
               ? (metaData as Record<string, unknown>).columns
@@ -887,29 +907,69 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (sourceColumns.length === 0) {
               error("NO_COLUMNS", `Cannot fetch columns for ${argv["source-db"]}.${argv["source-table"]}.`, { format, exitCode: 2 }); return
             }
+            // Check target table existence
+            const targetCols = (() => {
+              if (!targetColsResp) return null
+              const d = ((targetColsResp as unknown) as Record<string, unknown>).data as Record<string, unknown> | null
+              if (!d) return null
+              const cols = (d as Record<string, unknown>).columns
+              return Array.isArray(cols) && cols.length > 0 ? cols : null
+            })()
+            const targetTableExists = targetCols !== null
+            // Infer recommended splitPk (first primary key column, or first numeric column)
+            const primaryCols = sourceColumns.filter((c) => c.primary === true || c.isPrimary === true)
+            const numericTypes = new Set(['INT','INTEGER','BIGINT','SMALLINT','TINYINT','MEDIUMINT','SERIAL','BIGSERIAL'])
+            const numericCols = sourceColumns.filter((c) => numericTypes.has(String(c.type ?? "").toUpperCase().split("(")[0].trim()))
+            const recommendedSplitPk = primaryCols[0]?.name ?? numericCols[0]?.name ?? null
+
             logOperation("task integration-schema", { ok: true })
             success({
               task_id: fileId,
               source: { datasource_id: sourceDs.id, datasource_name: sourceDs.name, ds_type: sourceDs.dsType, db: argv["source-db"], table: argv["source-table"] },
-              target: { datasource_id: targetDsId, datasource_name: targetDsName, ds_type: 1, schema: argv["target-schema"], table: (argv["target-table"] as string | undefined) ?? argv["source-table"] as string },
+              target: {
+                datasource_id: targetDsId, datasource_name: targetDsName, ds_type: 1,
+                schema: targetSchema, table: sinkTargetTable,
+                table_exists: targetTableExists,
+                existing_columns: targetCols ?? undefined,
+              },
               source_columns: sourceColumns,
+              recommendations: {
+                split_pk: recommendedSplitPk,
+                write_mode: "APPEND",
+                parallelism: 1,
+                where: null,
+              },
             }, {
               format,
-              aiMessage: `Retrieved ${sourceColumns.length} columns from ${argv["source-db"]}.${argv["source-table"]}. ` +
-                `\n\nNext step: generate the integration config JSON with correct Lakehouse sink column types, then call:\n` +
-                `  cz-cli task save-integration ${fileId} --config '<json>'\n` +
+              aiMessage:
+                `Retrieved ${sourceColumns.length} columns from ${argv["source-db"]}.${argv["source-table"]}.\n` +
+                `Target table ${targetSchema}.${sinkTargetTable}: ${targetTableExists ? "EXISTS ✓" : "NOT EXISTS — must create before deploy"}\n` +
+                (recommendedSplitPk ? `Recommended splitPk: ${recommendedSplitPk} (speeds up parallel reads)\n` : "") +
+                `\n**REQUIRED: Confirm the following with the user before proceeding:**\n` +
+                `1. Target schema: "${targetSchema}" — correct? (required)\n` +
+                `2. Target table: "${sinkTargetTable}" — correct? (required)\n` +
+                (targetTableExists
+                  ? `3. Table exists. Write mode: APPEND (add rows) or OVERWRITE (replace all)? Default: APPEND\n`
+                  : `3. Table does NOT exist. Create it? If yes: need partition columns? (e.g. date column for partitioning)\n`) +
+                `4. splitPk: "${recommendedSplitPk ?? "none"}" — use this for parallel read? (optional, improves performance)\n` +
+                `5. where filter: any condition to filter source rows? (optional, e.g. "status='active'")\n` +
+                `6. parallelism: 1 — change? (optional)\n` +
+                `7. Sync VCluster: run 'cz-cli sql --sync "SHOW VCLUSTERS"' to list available VClusters, ` +
+                `then pick one with VCLUSTER_TYPE=INTEGRATION. If none exists, create one first:\n` +
+                `   CREATE VCLUSTER IF NOT EXISTS sync_vc VCLUSTER_TYPE=INTEGRATION VCLUSTER_SIZE=1 AUTO_RESUME=TRUE;\n` +
+                `\nAfter user confirms all above, generate config JSON using Lakehouse type mapping rules below,\n` +
+                `then call: cz-cli task save-integration ${fileId} --config '<json>' --vc <sync_vc_name>\n` +
                 `\nLakehouse type mapping rules:\n` +
                 `- VARCHAR/CHAR/TEXT/CLOB/NVARCHAR → string\n` +
                 `- TINYINT → tinyint | SMALLINT → smallint | INT/INTEGER → int | BIGINT → bigint\n` +
                 `- MySQL UNSIGNED promotion: TINYINT UNSIGNED→smallint, INT UNSIGNED→bigint, BIGINT UNSIGNED→decimal\n` +
                 `- FLOAT/REAL → float | DOUBLE → double | DECIMAL/NUMERIC/NUMBER → decimal(p,s)\n` +
-                `- BOOLEAN/BOOL/BIT(1) → boolean\n` +
-                `- DATE → date | TIME → time\n` +
-                `- MySQL DATETIME → timestamp_ntz (no timezone) | MySQL TIMESTAMP → timestamp_ltz (with timezone)\n` +
+                `- BOOLEAN/BOOL/BIT(1) → boolean | DATE → date | TIME → time\n` +
+                `- MySQL DATETIME → timestamp_ntz | MySQL TIMESTAMP → timestamp_ltz\n` +
                 `- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz\n` +
                 `- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json\n` +
-                `\nConfig JSON structure (fill in sink column types using mapping above):\n` +
-                `{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":{"dsType":<n>,"operatorType":"source","table":"<table>","database":"<db>"},"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"APPEND","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`,
+                `\nConfig JSON structure:\n` +
+                `{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":{"dsType":<n>,"operatorType":"source","table":"<table>","database":"<db>","splitPk":"<col_or_empty>","where":"<condition_or_empty>"},"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"APPEND","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`,
             })
           } catch (err) {
             reportTaskError(err, format)
@@ -1026,15 +1086,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               targetDsId = targetDs.id
               targetDsType = targetDs.dsType ?? 1
             } else {
-              // Auto-find Lakehouse datasource
-              const lhResp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
-                current: 1, pageSize: 5, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
-              })
-              const lhList = (lhResp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined ?? []
-              if (lhList.length === 0) {
+              // Auto-find Lakehouse datasource matching current workspace
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) {
                 error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Please specify --target <datasource_name>.", { format, exitCode: 2 }); return
               }
-              targetDsId = Number(lhList[0].id)
+              targetDsId = lhDs.id
             }
 
             // Build sync object list
