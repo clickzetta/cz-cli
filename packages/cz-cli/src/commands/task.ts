@@ -12,6 +12,7 @@ import {
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
+  saveCdcTask,
   studioRequest,
   type StudioConfig,
 } from "@clickzetta/sdk"
@@ -834,6 +835,93 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })
             logOperation("task save-content", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "save-cdc <task>",
+        "Configure CDC multi-table real-time sync task (MULTI_REALTIME type) with source and target datasource",
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true, describe: "Task name or ID (must be MULTI_REALTIME type)" })
+            .option("source", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
+            .option("database", { type: "string", demandOption: true, describe: "Source database/schema to sync" })
+            .option("tables", { type: "string", describe: "Comma-separated table names to sync. Omit for whole-database mirror." })
+            .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolves if omitted)" })
+            .option("pipeline-type", {
+              type: "number", default: 3,
+              describe: "1=multi-table mirror (specific tables), 2=multi-table merge (sharding), 3=whole-database mirror (default)",
+            })
+            .option("sync-mode", {
+              type: "number", default: 1,
+              describe: "1=full+incremental (default, recommended for first run), 2=incremental only",
+            }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+
+            // Resolve source datasource
+            const sourceDs = await resolveDatasource(sc, String(argv.source))
+            if (!sourceDs.dsType) {
+              error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'. Specify a valid datasource.`, { format, exitCode: 2 }); return
+            }
+
+            // Resolve target datasource (default to first Lakehouse type if not specified)
+            let targetDsId: number
+            let targetDsType = 1
+            if (argv.target) {
+              const targetDs = await resolveDatasource(sc, String(argv.target))
+              targetDsId = targetDs.id
+              targetDsType = targetDs.dsType ?? 1
+            } else {
+              // Auto-find Lakehouse datasource
+              const lhResp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
+                current: 1, pageSize: 5, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
+              })
+              const lhList = (lhResp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined ?? []
+              if (lhList.length === 0) {
+                error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Please specify --target <datasource_name>.", { format, exitCode: 2 }); return
+              }
+              targetDsId = Number(lhList[0].id)
+            }
+
+            // Build sync object list
+            const tablesArg = argv.tables as string | undefined
+            const pipelineType = argv["pipeline-type"] as number
+            const syncObjectList = tablesArg
+              ? tablesArg.split(",").map((t) => ({ schemaName: argv.database as string, tableName: t.trim() }))
+              : [{ schemaName: argv.database as string }]
+
+            // If tables specified but pipeline-type is 3, auto-switch to 1
+            const effectivePipelineType = tablesArg && pipelineType === 3 ? 1 : pipelineType
+
+            const resp = await saveCdcTask(sc, {
+              dataFileId: fileId,
+              projectId: sc.projectId,
+              pipelineType: effectivePipelineType,
+              syncMode: argv["sync-mode"] as number,
+              sourceDatasourceList: [{ datasourceId: sourceDs.id, datasourceType: sourceDs.dsType }],
+              syncObjectList,
+              targetDatasource: { datasourceId: targetDsId, datasourceType: targetDsType },
+            })
+
+            logOperation("task save-cdc", { ok: true })
+            success({
+              task_id: fileId,
+              pipeline_type: effectivePipelineType === 1 ? "multi-table mirror" : effectivePipelineType === 2 ? "multi-table merge" : "whole-database mirror",
+              source: { datasource: sourceDs.name, database: argv.database, tables: tablesArg ?? "all" },
+              target: { datasource_id: targetDsId, ds_type: targetDsType },
+              sync_mode: argv["sync-mode"] === 1 ? "full+incremental" : "incremental only",
+              studio_url: studioUrl(sc, fileId),
+              raw: resp.data,
+            }, {
+              format,
+              aiMessage: `CDC task configured. Deploy with: cz-cli task deploy ${fileId} -y\nNote: CDC tasks run continuously after deploy — no cron schedule needed.`,
+            })
           } catch (err) {
             reportTaskError(err, format)
           }
