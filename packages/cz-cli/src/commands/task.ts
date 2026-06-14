@@ -1208,17 +1208,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 lines.push(`cz-cli task save-integration ${fileId} --config '<json>' --vc <sync_vc_name>`)
 
                 // --- Type mapping rules ---
-                lines.push(`\nLakehouse type mapping rules:`)
-                lines.push(`- VARCHAR/CHAR/TEXT/CLOB/NVARCHAR → string`)
-                lines.push(`- TINYINT → tinyint | SMALLINT → smallint | INT/INTEGER → int | BIGINT → bigint`)
-                lines.push(`- MySQL UNSIGNED promotion: TINYINT UNSIGNED→smallint, INT UNSIGNED→bigint, BIGINT UNSIGNED→decimal`)
-                lines.push(`- FLOAT/REAL → float | DOUBLE → double | DECIMAL/NUMERIC/NUMBER → decimal(p,s)`)
-                lines.push(`- BOOLEAN/BOOL/BIT(1) → boolean | DATE → date | TIME → time`)
-                lines.push(`- MySQL DATETIME → timestamp_ntz | MySQL TIMESTAMP → timestamp_ltz`)
-                lines.push(`- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz`)
-                lines.push(`- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json`)
-                lines.push(`- Complex types (Hive/PG): ARRAY<T> → array<T> | MAP<K,V> → map<K,V> | STRUCT<f:T> → struct<f:T>`)
-                lines.push(`  Note: keep element types as-is from source; Lakehouse uses same syntax`)
+                lines.push(`\nLakehouse type system principles (use these to derive mappings, not a fixed lookup table):`)
+                lines.push(`- Numeric: TINYINT/SMALLINT/INT/BIGINT/FLOAT/DOUBLE/DECIMAL(p,s) map directly. MySQL UNSIGNED integers promote one size up (e.g. INT UNSIGNED → bigint). Use DECIMAL for money/exact values.`)
+                lines.push(`- String: all char/text variants → STRING (recommended default). VARCHAR(n)/CHAR(n) only if length constraint is meaningful.`)
+                lines.push(`- Time: key distinction — with-timezone → TIMESTAMP (= TIMESTAMP_LTZ), without-timezone → TIMESTAMP_NTZ. MySQL DATETIME is no-tz; MySQL TIMESTAMP is with-tz. PostgreSQL TIMESTAMP (no tz) → TIMESTAMP_NTZ; TIMESTAMPTZ → TIMESTAMP.`)
+                lines.push(`- Boolean/Binary/JSON map directly. ARRAY<T>/MAP<K,V>/STRUCT<f:T> keep same syntax. VECTOR(type,dim) for embeddings. BITMAP for cardinality estimation.`)
+                lines.push(`- When uncertain: prefer the wider/safer type (e.g. STRING over VARCHAR, BIGINT over INT, DOUBLE over FLOAT). Correctness > compactness.`)
 
                 // --- Config JSON template ---
                 lines.push(`\nConfig JSON structure (use source_params_template.params for source.params):`)
