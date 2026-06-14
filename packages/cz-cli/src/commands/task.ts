@@ -641,13 +641,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })
             const fileId = Number(created.data)
 
-            // Step 6: resolve target datasource
+            // Step 6: resolve target datasource (Lakehouse only)
             let targetDsId: number
             let targetDsType = 1
             if (argv.target) {
               const targetDs = await resolveDatasource(sc, String(argv.target))
+              if ((targetDs.dsType ?? 1) !== 1) {
+                error("INVALID_ARGUMENTS", `CDC multi-table sync only supports Lakehouse as target. '${targetDs.name}' is not a Lakehouse datasource.`, { format, exitCode: 2 }); return
+              }
               targetDsId = targetDs.id
-              targetDsType = targetDs.dsType ?? 1
+              targetDsType = 1
             } else {
               const lhDs = await autoResolveLakehouseDs(sc)
               if (!lhDs) {
@@ -1710,13 +1713,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               if (!check.ok) { error("CDC_PREREQ_FAILED", check.message, { format, exitCode: 2 }); return }
             }
 
-            // Resolve target datasource (default to first Lakehouse type if not specified)
+            // Resolve target datasource (Lakehouse only)
             let targetDsId: number
             let targetDsType = 1
             if (argv.target) {
               const targetDs = await resolveDatasource(sc, String(argv.target))
+              if ((targetDs.dsType ?? 1) !== 1) {
+                error("INVALID_ARGUMENTS", `CDC multi-table sync only supports Lakehouse as target. '${targetDs.name}' is not a Lakehouse datasource.`, { format, exitCode: 2 }); return
+              }
               targetDsId = targetDs.id
-              targetDsType = targetDs.dsType ?? 1
+              targetDsType = 1
             } else {
               // Auto-find Lakehouse datasource matching current workspace
               const lhDs = await autoResolveLakehouseDs(sc)
