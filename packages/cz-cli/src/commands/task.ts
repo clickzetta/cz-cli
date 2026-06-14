@@ -1141,15 +1141,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 291: "MULTI_DI (multi-table offline sync)",
               }
               const typeName = syncTypeName[fileType] ?? `type=${fileType}`
-              // For MULTI_REALTIME, check if cdc was configured via save-cdc
-              // For others, just warn and let server decide
               if (fileType === 281) {
                 const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
                 if (!hasConfig) {
                   error("NO_SYNC_CONFIG", `CDC task not configured. Run 'cz-cli task save-cdc ${fileId} --source <ds> --database <db>' first.`, { format, exitCode: 2 }); return
                 }
-              } else if (fileType === 291 || fileType === 280) {
-                process.stderr.write(`Warning: ${typeName} task source/target must be configured in Studio UI before deploying.\n`)
+              } else {
+                // All other sync types require Studio UI configuration
+                process.stderr.write(`Warning: ${typeName} task — source/target/field-mapping must be configured in Studio UI before deploying. Open: ${studioUrl(sc, fileId)}\n`)
               }
             }
             if (SCRIPT_FILE_TYPES.has(fileType)) {
