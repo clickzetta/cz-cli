@@ -479,6 +479,191 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "create-multi-realtime <name>",
+        "Create and configure a MULTI_REALTIME CDC task in one step (checks prerequisites first)",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true, describe: "Task name" })
+            .option("folder", { type: "string", demandOption: true, describe: "Folder ID or name" })
+            .option("source", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
+            .option("database", { type: "string", demandOption: true, describe: "Source database/schema to sync" })
+            .option("tables", { type: "string", describe: "Comma-separated table names. Omit for whole-database mirror." })
+            .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolves if omitted)" })
+            .option("vc", { type: "string", describe: "Virtual cluster name for CDC execution" })
+            .option("slot-name", { type: "string", describe: "PostgreSQL replication slot name (auto-detected if omitted)" })
+            .option("logic-plugin", { type: "string", default: "pgoutput", describe: "PostgreSQL logical replication plugin (default: pgoutput)" })
+            .option("pipeline-type", {
+              type: "number", default: 3,
+              describe: "1=multi-table mirror (specific tables), 2=multi-table merge, 3=whole-database mirror (default)",
+            })
+            .option("sync-mode", {
+              type: "number", default: 1,
+              describe: "1=full+incremental (default), 2=incremental only",
+            })
+            .option("skip-check", { type: "boolean", default: false, describe: "Skip CDC prerequisite check" })
+            .option("description", { type: "string", describe: "Task description" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+
+            // Step 1: resolve source datasource
+            const sourceDs = await resolveDatasource(sc, String(argv.source))
+            if (!sourceDs.dsType) {
+              error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 2: CDC prerequisite check (before creating anything)
+            if (!(argv["skip-check"] as boolean)) {
+              const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
+              const PG_LIKE    = new Set([7, 22, 40, 46, 48])
+              if (MYSQL_LIKE.has(sourceDs.dsType)) {
+                const r = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+                  id: sourceDs.id, nameSpace: "performance_schema", dataObjectName: "global_variables",
+                  options: { dsType: sourceDs.dsType, where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')" },
+                }).catch(() => null)
+                const data = (r as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+                const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
+                const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
+                const varMap: Record<string, string> = {}
+                for (const row of data?.rows ?? []) {
+                  varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
+                }
+                const failed: string[] = []
+                if ((varMap["log_bin"] ?? "").toUpperCase() !== "ON") failed.push("log_bin must be ON (add log_bin=ON to my.cnf and restart)")
+                if ((varMap["binlog_format"] ?? "").toUpperCase() !== "ROW") failed.push(`SET GLOBAL binlog_format = 'ROW'`)
+                if ((varMap["binlog_row_image"] ?? "").toUpperCase() !== "FULL") failed.push(`SET GLOBAL binlog_row_image = 'FULL'`)
+                if (failed.length > 0) {
+                  error("CDC_PREREQ_FAILED", `MySQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${argv.source}' for details. Use --skip-check to bypass.`, { format, exitCode: 2 }); return
+                }
+              } else if (PG_LIKE.has(sourceDs.dsType)) {
+                const walR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+                  id: sourceDs.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings",
+                  options: { dsType: sourceDs.dsType, where: "name = 'wal_level'" },
+                }).catch(() => null)
+                const walData = (walR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+                const si = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
+                const walLevel = walData?.rows?.[0] ? String((walData.rows[0] as unknown[])[si]) : ""
+                const slotR = await listPgSlots(sc, [sourceDs.id]).catch(() => null)
+                const slots = slotR?.data?.find(s => s.datasourceId === sourceDs.id)?.pipelineSlotMetaVos ?? []
+                const failed: string[] = []
+                if (walLevel !== "logical") failed.push(`wal_level must be 'logical' (current: '${walLevel || "unknown"}') — set in postgresql.conf and restart`)
+                if (slots.length === 0) failed.push("No replication slot found — run: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput')")
+                if (failed.length > 0) {
+                  error("CDC_PREREQ_FAILED", `PostgreSQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${argv.source}' for details. Use --skip-check to bypass.`, { format, exitCode: 2 }); return
+                }
+              }
+            }
+
+            // Step 3: resolve folder
+            const folderRaw = (argv.folder as string).trim()
+            const folderId = /^\d+$/.test(folderRaw)
+              ? parseInt(folderRaw, 10)
+              : await resolveFolderIdByName(sc, folderRaw, format)
+
+            // Step 4: check duplicate name
+            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
+              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 5: create task
+            const created = await createTask(sc, {
+              fileType: "281",
+              createdBy: String(sc.userId),
+              projectId: sc.projectId,
+              dataFileName: argv.name as string,
+              fileDescription: argv.description as string | undefined,
+              dataFolderId: folderId,
+              workspaceName: sc.workspaceName,
+            })
+            const fileId = Number(created.data)
+
+            // Step 6: resolve target datasource
+            let targetDsId: number
+            let targetDsType = 1
+            if (argv.target) {
+              const targetDs = await resolveDatasource(sc, String(argv.target))
+              targetDsId = targetDs.id
+              targetDsType = targetDs.dsType ?? 1
+            } else {
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) {
+                error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Please specify --target.", { format, exitCode: 2 }); return
+              }
+              targetDsId = lhDs.id
+            }
+
+            // Step 7: resolve PG slot
+            const PG_LIKE = new Set([7, 22, 40, 46, 48])
+            const isPg = PG_LIKE.has(sourceDs.dsType)
+            let slotName = argv["slot-name"] as string | undefined
+            const logicPlugin = (argv["logic-plugin"] as string | undefined) ?? "pgoutput"
+            if (isPg && !slotName) {
+              const slotResp = await listPgSlots(sc, [sourceDs.id]).catch(() => null)
+              const slots = slotResp?.data?.find(s => s.datasourceId === sourceDs.id)?.pipelineSlotMetaVos ?? []
+              if (slots.length > 0) slotName = slots[0].slotName
+            }
+
+            // Step 8: save CDC config
+            const tablesArg = argv.tables as string | undefined
+            const pipelineType = argv["pipeline-type"] as number
+            const syncObjectList = tablesArg
+              ? tablesArg.split(",").map(t => ({ schemaName: argv.database as string, tableName: t.trim() }))
+              : [{ schemaName: argv.database as string }]
+            const effectivePipelineType = tablesArg && pipelineType === 3 ? 1 : pipelineType
+
+            await saveCdcTask(sc, {
+              dataFileId: fileId,
+              projectId: sc.projectId,
+              pipelineType: effectivePipelineType,
+              syncMode: argv["sync-mode"] as number,
+              sourceDatasourceList: [{
+                datasourceId: sourceDs.id,
+                datasourceType: sourceDs.dsType,
+                ...(isPg && slotName && { slotName, logicPlugin }),
+              }],
+              syncObjectList,
+              targetDatasource: { datasourceId: targetDsId, datasourceType: targetDsType },
+            })
+
+            // Step 9: save VC config
+            const vcName = argv.vc as string | undefined
+            if (vcName) {
+              const resolvedVcId = await resolveVclusterId(sc, vcName).catch(() => undefined)
+              await saveTaskConfig(sc, {
+                dataFileId: fileId,
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.workspaceName,
+                etlVcCode: vcName,
+                ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
+                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                activeEndTime: "2099-01-01T00:00:00.000Z",
+              }).catch(() => null)
+            }
+
+            logOperation("task create-multi-realtime", { ok: true })
+            success({
+              task_id: fileId,
+              task_name: argv.name,
+              pipeline_type: effectivePipelineType === 1 ? "multi-table mirror" : effectivePipelineType === 2 ? "multi-table merge" : "whole-database mirror",
+              source: { datasource: sourceDs.name, database: argv.database, tables: tablesArg ?? "all", ...(isPg && slotName && { slot: slotName }) },
+              target: { datasource_id: targetDsId },
+              sync_mode: argv["sync-mode"] === 1 ? "full+incremental" : "incremental only",
+              studio_url: studioUrl(sc, fileId),
+            }, {
+              format,
+              aiMessage: `MULTI_REALTIME CDC task created (id=${fileId}). Next: deploy with 'cz-cli task deploy ${fileId} -y', then start with 'cz-cli task start ${fileId}'.`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "create-and-setup <name>",
         "Create a task, save script content and cron schedule in one step",
         (y) =>
