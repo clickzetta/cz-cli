@@ -13,6 +13,8 @@ import {
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
   saveCdcTask,
+  startCdcTask,
+  stopCdcTask,
   resolveVclusterId,
   studioRequest,
   type StudioConfig,
@@ -690,6 +692,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileId = await resolveTaskId(sc, argv.task as string, format)
 
             // Parallel: draft detail + config + deployed schedule detail
+            const CDC_TYPES = new Set([14, 17, 280, 281, 291])
             const [detail, config, scheduleResp] = await Promise.all([
               getTaskDetail(sc, fileId),
               getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
@@ -712,19 +715,31 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             const scheduleData = scheduleResp?.data as Record<string, unknown> | null | undefined
 
+            const fileType = Number(detailObj.fileType ?? 0)
+            const isCdcType = CDC_TYPES.has(fileType)
+            const CDC_DEPLOY_STATUS: Record<number, string> = { 0: "not_deployed", 1: "deployed", 2: "running", 3: "stopped", 4: "failed" }
+            const cdcDeployStatus = isCdcType
+              ? (CDC_DEPLOY_STATUS[Number(detailObj.deployStatus ?? 0)] ?? String(detailObj.deployStatus ?? "unknown"))
+              : undefined
+
             logOperation("task status", { ok: true })
             success({
               task_id: fileId,
               task_name: detailObj.dataFileName ?? detailObj.task_name,
               edit_state: EDIT_STATE[editState] ?? String(editState),
               studio_url: studioUrl(sc, fileId),
+              ...(isCdcType && {
+                cdc_status: cdcDeployStatus,
+                cdc_task_id: detailObj.cdcTaskId,
+                note: "CDC/streaming task: use 'task start' to launch, 'task stop' to pause",
+              }),
               draft: {
                 task_content: detailObj.fileContent ?? detailObj.dataFileContent,
                 cron_express: scheduleConfig.cron_express,
                 vc: scheduleConfig.etl_vc_code,
                 schema: scheduleConfig.schema_name,
               },
-              deployed: scheduleData ?? "not deployed or not accessible",
+              deployed: isCdcType ? (detailObj.deployStatus != null ? { cdc_deploy_status: cdcDeployStatus, cdc_task_id: detailObj.cdcTaskId } : "not deployed") : (scheduleData ?? "not deployed or not accessible"),
             }, { format })
           } catch (err) {
             reportTaskError(err, format)
@@ -1749,6 +1764,50 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })
             logOperation("task online", { ok: true })
             success({ data: resp.data, status: "online", studio_url: studioUrl(sc, fileId) }, { format })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "start <task>",
+        "Start a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
+        (y) => y.positional("task", { type: "string", demandOption: true }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            const resp = await startCdcTask(sc, {
+              fileId,
+              updateBy: String(sc.userId),
+              workspace: sc.workspaceName,
+            })
+            logOperation("task start", { ok: true })
+            success({ task_id: fileId, action: "start", result: resp.data }, {
+              format,
+              aiMessage: `CDC task ${fileId} start triggered. Check status with: cz-cli task status ${fileId}`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "stop <task>",
+        "Stop a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
+        (y) => y.positional("task", { type: "string", demandOption: true }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            const resp = await stopCdcTask(sc, fileId, String(sc.userId), sc.workspaceName)
+            logOperation("task stop", { ok: true })
+            success({ task_id: fileId, action: "stop", result: resp.data }, {
+              format,
+              aiMessage: `CDC task ${fileId} stop triggered. Check status with: cz-cli task status ${fileId}`,
+            })
           } catch (err) {
             reportTaskError(err, format)
           }

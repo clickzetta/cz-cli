@@ -257,6 +257,40 @@ export interface SaveCdcTaskParams {
   targetDatasource: { datasourceId: number; datasourceType: number }
 }
 
+export interface CdcTaskStartParams {
+  fileId: number
+  updateBy: string
+  workspace: string
+  startupMode?: number   // 0 = normal start
+  engineType?: number    // 5 = default
+  snapshotTaskSwitch?: number  // 0 = off
+  blacklistStrategy?: number   // 2 = default
+}
+
+export function startCdcTask(config: StudioConfig, params: CdcTaskStartParams) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/micro/start", {
+    fileId: String(params.fileId),
+    updateBy: params.updateBy,
+    startupMode: params.startupMode ?? 0,
+    startupParams: {
+      engineType: params.engineType ?? 5,
+      startupMode: params.startupMode ?? 0,
+      snapshotTaskSwitch: params.snapshotTaskSwitch ?? 0,
+      blacklistStrategy: params.blacklistStrategy ?? 2,
+    },
+    workspace: params.workspace,
+  })
+}
+
+export function stopCdcTask(config: StudioConfig, fileId: number, updateBy: string, workspace: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/micro/stop", {
+    fileId: String(fileId),
+    updateBy,
+    workspace,
+  })
+}
+
+
 export function saveCdcTask(config: StudioConfig, params: SaveCdcTaskParams) {
   return studioRequest(config, "/ide-admin/v1/ai/mcp/saveCdcTask", {
     dataFileId: params.dataFileId,
