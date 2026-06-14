@@ -11,6 +11,7 @@ import {
   removeFlowNode, submitFlow, listFlowInstances,
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
   getInstanceStats, getTaskRunStats,
+  getAllDownstream, previewScheduleInstanceTimes,
   studioRequest,
   type StudioConfig,
 } from "@clickzetta/sdk"
@@ -1337,6 +1338,83 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const resp = await deleteTask(sc, { scheduleTaskId: taskId, projectId: sc.projectId })
             logOperation("task delete", { ok: true })
             success(resp, { format })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "schedule-detail <task>",
+        "Get published schedule state for a deployed task (cron, next run time, last run result, etc.)",
+        (y) => y.positional("task", { type: "string", demandOption: true, describe: "Task name or ID" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            // getScheduleDetail uses scheduleTaskId = fileId (same id as draft task)
+            const resp = await studioRequest(sc,
+              "/ide-admin/v1/scheduleTask/getDetail",
+              { scheduleTaskId: fileId, projectId: sc.projectId },
+              { env: "prod" },
+            )
+            logOperation("task schedule-detail", { ok: true })
+            success(resp.data, { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "downstream <task>",
+        "List all downstream tasks that depend on this task (flattened)",
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            const resp = await getAllDownstream(sc, fileId, sc.projectId)
+            const items = Array.isArray(resp.data) ? resp.data : []
+            logOperation("task downstream", { ok: true })
+            success(items, {
+              format,
+              aiMessage: `Found ${items.length} downstream task(s). Use cz-cli task upstream <task> for upstream dependencies.`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "cron-preview <cron>",
+        "Preview the next scheduled run times for a cron expression",
+        (y) =>
+          y
+            .positional("cron", { type: "string", demandOption: true, describe: "Cron expression (5, 6, or 7 fields)" })
+            .option("count", { type: "number", default: 5, describe: "Number of upcoming run times to show" })
+            .option("start", { type: "string", describe: "Window start time HH:MM (default 00:00)" })
+            .option("end", { type: "string", describe: "Window end time HH:MM (default 23:59)" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const cronExpress = normalizeCron(argv.cron as string)
+            const resp = await previewScheduleInstanceTimes(sc, {
+              cronExpress,
+              ...(argv.start ? { scheduleStartTime: argv.start as string } : {}),
+              ...(argv.end ? { scheduleEndTime: argv.end as string } : {}),
+              scheduleEnv: "prod",
+            })
+            const times = Array.isArray(resp.data) ? resp.data : []
+            const limited = times.slice(0, argv.count as number)
+            logOperation("task cron-preview", { ok: true })
+            success({ cron: cronExpress, next_runs: limited, count: limited.length }, {
+              format,
+              aiMessage: `Next ${limited.length} scheduled run times for cron: ${cronExpress}`,
+            })
           } catch (err) {
             reportTaskError(err, format)
           }
