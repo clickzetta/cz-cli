@@ -10,6 +10,7 @@ import {
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
   removeFlowNode, submitFlow, listFlowInstances,
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
+  getInstanceStats, getTaskRunStats,
   studioRequest,
   type StudioConfig,
 } from "@clickzetta/sdk"
@@ -1323,6 +1324,143 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const resp = await deleteTask(sc, { scheduleTaskId: taskId, projectId: sc.projectId })
             logOperation("task delete", { ok: true })
             success(resp, { format })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "stats",
+        "Get task and run instance statistics",
+        (y) =>
+          y
+            .option("folder", { type: "string", describe: "Filter by folder name or ID" })
+            .option("type", { type: "string", describe: "Filter by task type (SQL, PYTHON, SHELL, JDBC, etc.)" })
+            .option("task", { type: "string", describe: "Filter run stats by task name (fuzzy)" })
+            .option("from", { type: "string", describe: "Run stats start time (YYYY-MM-DD or ISO). Defaults to 7 days ago." })
+            .option("to", { type: "string", describe: "Run stats end time (YYYY-MM-DD or ISO). Defaults to now." })
+            .option("vc", { type: "string", describe: "Filter run stats by VCluster code" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+
+            // Resolve folder id if provided
+            const folderArg = argv.folder as string | undefined
+            let folderId: number | undefined
+            if (folderArg) {
+              folderId = /^\d+$/.test(folderArg)
+                ? parseInt(folderArg, 10)
+                : await resolveFolderIdByName(sc, folderArg, format)
+            }
+
+            const fileType = argv.type ? String(parseTaskType(argv.type as string)) : undefined
+            // cycleTaskType used by getInstanceStats is FILE_TYPE_TO_TASK_TYPE converted value
+            const cycleTaskType = fileType != null ? (FILE_TYPE_TO_TASK_TYPE[Number(fileType)] ?? Number(fileType)) : undefined
+            const now = Date.now()
+            const fromMs = argv.from
+              ? new Date(argv.from as string).getTime()
+              : now - 7 * 86400000
+            const toMs = argv.to
+              ? (() => {
+                  const ms = new Date(argv.to as string).getTime()
+                  return /^\d{4}-\d{2}-\d{2}$/.test((argv.to as string).trim()) ? ms + 86400000 - 1 : ms
+                })()
+              : now
+
+            // Parallel: task total, folder total, instance stats, task run stats
+            const [taskResp, folderResp, instanceStatsResp, taskRunStatsResp] = await Promise.all([
+              listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, folderId, fileType }),
+              listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 1, parentFolderId: folderId ?? 0 }),
+              getInstanceStats(sc, {
+                projectId: sc.projectId,
+                queryStartPlanTime: fromMs,
+                queryEndPlanTime: toMs,
+                ...(argv.task ? { scheduleTaskName: argv.task as string } : {}),
+                ...(cycleTaskType != null ? { taskType: cycleTaskType } : {}),
+                ...(argv.vc ? { vcCode: argv.vc as string } : {}),
+              }),
+              getTaskRunStats(sc, {
+                projectId: sc.projectId,
+                queryPlanTimeLeft: fromMs,
+                queryPlanTimeRight: toMs,
+                ...(argv.task ? { taskNameRlike: argv.task as string } : {}),
+              }),
+            ])
+
+            // Task summary
+            const taskData = (taskResp.data && typeof taskResp.data === "object" ? taskResp.data : {}) as Record<string, unknown>
+            const taskTotal = taskData.total as number ?? 0
+            const folderData = (folderResp.data && typeof folderResp.data === "object" ? folderResp.data : {}) as Record<string, unknown>
+            const folderTotal = folderData.total as number ?? 0
+
+            // Instance stats: group by status and type
+            const STATUS_NAME: Record<number, string> = { 1: "SUCCESS", 2: "WAITING", 3: "FAILED", 4: "RUNNING" }
+            const RUN_TYPE_NAME: Record<number, string> = { 1: "SCHEDULE", 3: "TEMP", 4: "REFILL" }
+            const TASK_TYPE_NAME: Record<number, string> = {
+              23: "SQL", 24: "SHELL", 26: "PYTHON", 29: "JDBC",
+              400: "SPARK", 500: "FLOW", 10: "INTEGRATION", 28: "REALTIME",
+              280: "FULL_INCREMENTAL", 281: "MULTI_REALTIME", 291: "MULTI_DI",
+            }
+            // fileType codes (used by getTaskRunStats) → name
+            const FILE_TYPE_NAME: Record<number, string> = {
+              4: "SQL", 5: "SHELL", 7: "PYTHON", 15: "JDBC",
+              400: "SPARK", 500: "FLOW", 1: "INTEGRATION", 14: "REALTIME",
+              280: "FULL_INCREMENTAL", 281: "MULTI_REALTIME", 291: "MULTI_DI",
+            }
+
+            const instanceRows = Array.isArray(instanceStatsResp.data) ? instanceStatsResp.data as Record<string, unknown>[] : []
+            const byStatus: Record<string, number> = {}
+            const byRunType: Record<string, number> = {}
+            const byTaskType: Record<string, number> = {}
+            let instanceTotal = 0
+            for (const row of instanceRows) {
+              // Raw API fields: instanceStatus, taskType, instanceType, count
+              const cnt = Number(row.count ?? 0)
+              const statusKey = STATUS_NAME[Number(row.instanceStatus)] ?? String(row.instanceStatus)
+              const runTypeKey = RUN_TYPE_NAME[Number(row.instanceType)] ?? String(row.instanceType)
+              const taskTypeKey = TASK_TYPE_NAME[Number(row.taskType)] ?? String(row.taskType)
+              byStatus[statusKey] = (byStatus[statusKey] ?? 0) + cnt
+              byRunType[runTypeKey] = (byRunType[runTypeKey] ?? 0) + cnt
+              byTaskType[taskTypeKey] = (byTaskType[taskTypeKey] ?? 0) + cnt
+              instanceTotal += cnt
+            }
+
+            // Task run stats: raw fields are fileType (task type), cnt (count)
+            // fileFlowStatus: 10=draft, 20=published
+            const FILE_STATUS_NAME: Record<number, string> = { 10: "DRAFT", 20: "PUBLISHED", 100: "OFFLINE" }
+            const taskRunRows = (Array.isArray(taskRunStatsResp.data) ? taskRunStatsResp.data as Record<string, unknown>[] : [])
+              .map((row) => ({
+                task_type: FILE_TYPE_NAME[Number(row.fileType)] ?? String(row.fileType),
+                status: FILE_STATUS_NAME[Number(row.fileFlowStatus)] ?? String(row.fileFlowStatus),
+                count: Number(row.cnt ?? 0),
+              }))
+
+            const fromStr = new Date(fromMs).toISOString().slice(0, 10)
+            const toStr = new Date(toMs).toISOString().slice(0, 10)
+
+            logOperation("task stats", { ok: true })
+            success({
+              tasks: {
+                total: taskTotal,
+                folders: folderTotal,
+                ...(folderId ? { folder_filter: folderId } : {}),
+                ...(fileType ? { type_filter: argv.type } : {}),
+              },
+              run_instances: {
+                total: instanceTotal,
+                period: `${fromStr} ~ ${toStr}`,
+                by_status: byStatus,
+                by_run_type: byRunType,
+                by_task_type: byTaskType,
+              },
+              ...(taskRunRows.length > 0 ? { task_run_breakdown: taskRunRows } : {}),
+            }, {
+              format,
+              aiMessage: `任务统计（${folderId ? `folder=${folderId}` : "全部文件夹"}）：共 ${taskTotal} 个任务，${folderTotal} 个目录。` +
+                `运行实例（${fromStr}~${toStr}）共 ${instanceTotal} 次，` +
+                `成功 ${byStatus["SUCCESS"] ?? 0} / 失败 ${byStatus["FAILED"] ?? 0} / 运行中 ${byStatus["RUNNING"] ?? 0}。`,
+            })
           } catch (err) {
             reportTaskError(err, format)
           }
