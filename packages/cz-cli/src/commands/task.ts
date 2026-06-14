@@ -1330,6 +1330,91 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "search",
+        "Search tasks by name with resolved folder path",
+        (y) =>
+          y
+            .option("name", { type: "string", describe: "Task name (fuzzy match)" })
+            .option("type", { type: "string", describe: "Task type filter: SQL, PYTHON, SHELL, JDBC, etc." })
+            .option("status", {
+              type: "string",
+              choices: ["draft", "published", "offline"],
+              describe: "Task status filter: draft=10, published=20, offline=100",
+            })
+            .option("limit", { type: "number", default: 50, describe: "Max results to return" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileType = argv.type ? String(parseTaskType(argv.type as string)) : undefined
+            const STATUS_CODE: Record<string, number> = { draft: 10, published: 20, offline: 100 }
+            const statusFilter = argv.status ? STATUS_CODE[argv.status as string] : undefined
+            const limit = argv.limit as number
+
+            // Build folder id→name map by BFS across all folder levels
+            const folderMap = new Map<number, string>()
+            const buildFolderMap = async (parentId: number): Promise<void> => {
+              const resp = await listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 500, parentFolderId: parentId })
+              const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
+              const folders = Array.isArray(data.list) ? data.list as Record<string, unknown>[] : []
+              await Promise.all(folders.map(async (f) => {
+                const id = Number(f.id ?? f.dataFolderId)
+                const name = String(f.dataFolderName ?? f.folderName ?? id)
+                folderMap.set(id, name)
+                if (f.hasChildren) await buildFolderMap(id)
+              }))
+            }
+            await buildFolderMap(0)
+
+            // Resolve location "0.folderId1.folderId2.taskId" → "folder1/folder2"
+            const resolvePath = (location: string, taskId: number): string => {
+              const parts = location.split(".").map(Number).filter((n) => n !== 0 && n !== taskId)
+              return parts.map((id) => folderMap.get(id) ?? String(id)).join("/")
+            }
+
+            // Fetch tasks with pagination until we have enough matches
+            const results: Record<string, unknown>[] = []
+            let page = 1
+            const pageSize = 100
+            while (results.length < limit) {
+              const resp = await listTasks(sc, { projectId: sc.projectId, page, pageSize, fileName: argv.name as string | undefined, fileType })
+              const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
+              const tasks = Array.isArray(data.list) ? data.list as Record<string, unknown>[] : []
+              if (tasks.length === 0) break
+              for (const task of tasks) {
+                if (results.length >= limit) break
+                if (statusFilter != null && Number(task.fileFlowStatus ?? task.taskEditState) !== statusFilter) continue
+                const taskId = Number(task.id ?? task.task_id)
+                const location = String(task.location ?? "")
+                results.push({
+                  ...convertTaskFields(task),
+                  path: resolvePath(location, taskId),
+                })
+              }
+              const total = data.total as number ?? 0
+              if (page * pageSize >= total) break
+              page++
+            }
+
+            const EDIT_STATE: Record<number, string> = { 10: "draft", 20: "published", 100: "offline" }
+            const displayed = results.slice(0, limit).map((t) => ({
+              ...t,
+              task_edit_state: EDIT_STATE[Number(t.task_edit_state)] ?? t.task_edit_state,
+            }))
+
+            logOperation("task search", { ok: true })
+            success(displayed, {
+              format,
+              extra: { total_matched: results.length, limit },
+              aiMessage: `找到 ${results.length} 个匹配任务${results.length >= limit ? `（已截断，最多显示 ${limit} 条）` : ""}。` +
+                `path 字段为解析后的文件夹路径。如需更多结果请增大 --limit。`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "stats",
         "Get task and run instance statistics",
         (y) =>
