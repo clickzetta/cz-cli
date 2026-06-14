@@ -1054,13 +1054,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Read existing config to preserve cron and other settings
             const existingCfg = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }).catch(() => null)
             const oldData = (existingCfg?.data as Record<string, unknown> | undefined) ?? {}
-            if (vcCode && vcCode !== "DEFAULT") {
+            const existingCron = oldData.cronExpress as string | undefined
+            if (vcCode && vcCode !== "DEFAULT" && existingCron) {
+              // Only update scheduler config when a cron is already set (otherwise let save-cron handle it)
               await saveTaskConfig(sc, {
                 dataFileId: fileId,
                 projectId: sc.projectId,
                 updateBy: String(sc.userId),
                 instanceName: sc.instanceName,
-                cronExpress: (oldData.cronExpress as string | undefined) ?? "0 0 * * *",
+                cronExpress: existingCron,
                 schemaName: (argv["target-schema"] as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public",
                 etlVcCode: vcCode,
                 etlVcId: etlVcId as number | undefined,
