@@ -1532,12 +1532,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             }
             // For INTEGRATION task types, adhocVcCode must be a Sync VCluster.
-            // If user didn't pass --vc, use etlVcCode from schedule config (same VC used for scheduled runs).
+            // If user didn't pass --vc, use etlVcCode from schedule config.
             const INTEGRATION_FILE_TYPES = new Set([1, 14, 17, 280, 281, 291])
             const execFileType = Number(taskDetail?.fileType ?? data?.fileType ?? 0)
             if (INTEGRATION_FILE_TYPES.has(execFileType) && !(argv.vc as string | undefined)) {
               // etlVcCode already resolved above into vcCode — keep it.
-              // But adhocConfigs may have a different adhocVcCode; override with etlVcCode for consistency
               vcCode = vcCode ?? "DEFAULT"
             }
             if (!content) {
@@ -1612,7 +1611,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               multiDataSource: [],
               adhocVcCode: vcCode ?? "",
               adhocSchemaName: argv.schema ?? "",
-              adhocVcId: 0,
+              adhocVcId: vcCode ?? 0,  // VC ID = VC Name for Sync VClusters
               dataFileContent: content,
               params,
               datasourceId,

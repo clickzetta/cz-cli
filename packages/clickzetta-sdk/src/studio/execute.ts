@@ -12,7 +12,7 @@ export interface ExecuteAdhocParams {
   multiDataSource: unknown[]
   adhocVcCode: string
   adhocSchemaName: string
-  adhocVcId: number
+  adhocVcId: number | string  // string VC name works as ID for Sync VClusters
   dataFileContent: string
   params?: unknown
   datasourceId?: number
