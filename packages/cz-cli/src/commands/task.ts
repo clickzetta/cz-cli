@@ -65,73 +65,6 @@ const SYSTEM_PARAM_NAMES = new Set([
   "sys_task_id", "sys_task_name", "sys_task_owner",
 ])
 
-// Type mapping: source DB type → Lakehouse type
-const TO_LAKEHOUSE_TYPE: Record<string, string> = {
-  // String
-  VARCHAR: "string", CHAR: "string", TEXT: "string", STRING: "string",
-  NVARCHAR: "string", NCHAR: "string", NTEXT: "string",
-  CLOB: "string", NCLOB: "string", LONGTEXT: "string",
-  MEDIUMTEXT: "string", TINYTEXT: "string", BPCHAR: "string",
-  VARCHAR2: "string", "CHARACTER VARYING": "string", CHARACTER: "string",
-  NAME: "string", LONGVARCHAR: "string",
-  UUID: "string", INET: "string", CIDR: "string", XML: "string",
-  JSONB: "string", INTERVAL: "string",
-  // Integer
-  TINYINT: "tinyint", BYTE: "tinyint",
-  SMALLINT: "smallint", INT2: "smallint", SHORT: "smallint", SMALLSERIAL: "smallint",
-  INT: "int", INTEGER: "int", INT4: "int", MEDIUMINT: "int", SERIAL: "int",
-  BIGINT: "bigint", INT8: "bigint", LONG: "bigint", BIGSERIAL: "bigint", OID: "bigint",
-  // MySQL UNSIGNED (promoted one level)
-  "TINYINT UNSIGNED": "smallint", "SMALLINT UNSIGNED": "int",
-  "MEDIUMINT UNSIGNED": "bigint", "INT UNSIGNED": "bigint", "INTEGER UNSIGNED": "bigint",
-  "BIGINT UNSIGNED": "decimal",
-  // Float
-  FLOAT: "float", FLOAT4: "float", REAL: "float",
-  DOUBLE: "double", "DOUBLE PRECISION": "double",
-  DECIMAL: "decimal", NUMERIC: "decimal", NUMBER: "decimal",
-  MONEY: "decimal", SMALLMONEY: "decimal",
-  // Boolean
-  BOOLEAN: "boolean", BOOL: "boolean",
-  // Date/Time
-  DATE: "date",
-  TIME: "time",
-  TIMESTAMP: "timestamp_ltz", DATETIME: "timestamp_ltz",
-  TIMESTAMPTZ: "timestamp_ltz", "TIMESTAMP WITH TIME ZONE": "timestamp_ltz",
-  DATETIME2: "timestamp_ltz",
-  "TIMESTAMP WITHOUT TIME ZONE": "timestamp_ntz", TIMESTAMP_NTZ: "timestamp_ntz",
-  // Binary
-  BINARY: "binary", VARBINARY: "binary", BLOB: "binary", BYTEA: "binary",
-  LONGBLOB: "binary", MEDIUMBLOB: "binary", TINYBLOB: "binary",
-  IMAGE: "binary", GEOMETRY: "binary",
-  // JSON
-  JSON: "json",
-  // BIT
-  "BIT(1)": "tinyint", BIT: "tinyint",
-}
-
-function mapToLakehouseType(sourceType: string): string {
-  if (!sourceType) return "string"
-  // Exact match
-  if (TO_LAKEHOUSE_TYPE[sourceType]) return TO_LAKEHOUSE_TYPE[sourceType]
-  const upper = sourceType.toUpperCase()
-  if (TO_LAKEHOUSE_TYPE[upper]) return TO_LAKEHOUSE_TYPE[upper]
-  // Pattern match fallbacks
-  if (/CHAR|TEXT|STRING/i.test(upper)) return "string"
-  if (/TINY.*INT/i.test(upper)) return "tinyint"
-  if (/SMALL.*INT/i.test(upper)) return "smallint"
-  if (/BIG.*INT/i.test(upper)) return "bigint"
-  if (/INT/i.test(upper)) return "int"
-  if (/FLOAT|REAL/i.test(upper)) return "float"
-  if (/DOUBLE/i.test(upper)) return "double"
-  if (/DECIMAL|NUMERIC|NUMBER/i.test(upper)) return "decimal"
-  if (/BOOL/i.test(upper)) return "boolean"
-  if (/DATETIME|TIMESTAMP/i.test(upper)) return "timestamp_ltz"
-  if (/DATE/i.test(upper)) return "date"
-  if (/TIME/i.test(upper)) return "time"
-  if (/BINARY|BLOB|BYTE/i.test(upper)) return "binary"
-  return "string" // safe fallback
-}
-
 function inferParamType(value: string): "manual" | "system" {
   if (value.startsWith("$[")) return "system"
   if (SYSTEM_PARAM_NAMES.has(value)) return "system"
@@ -908,129 +841,104 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-integration <task>",
-        "Configure INTEGRATION (single-table offline sync) task — auto-generates field mapping from source table metadata",
+        "integration-schema <task>",
+        "Fetch source table column metadata for an INTEGRATION task — use output to generate field mapping with an Agent",
         (y) =>
           y
-            .positional("task", { type: "string", demandOption: true, describe: "Task name or ID (must be INTEGRATION type)" })
+            .positional("task", { type: "string", demandOption: true })
             .option("source", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
             .option("source-db", { type: "string", demandOption: true, describe: "Source database/schema" })
             .option("source-table", { type: "string", demandOption: true, describe: "Source table name" })
-            .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolved if omitted)" })
-            .option("target-schema", { type: "string", default: "public", describe: "Target schema in Lakehouse" })
-            .option("target-table", { type: "string", describe: "Target table name (defaults to source-table)" })
-            .option("write-mode", {
-              type: "string", choices: ["APPEND", "OVERWRITE"], default: "APPEND",
-              describe: "Write mode: APPEND adds rows, OVERWRITE replaces table each run",
-            })
-            .option("vc", { type: "string", describe: "VCluster for execution (e.g. FLINK_ON_VC)" })
-            .option("parallelism", { type: "number", default: 1, describe: "Task parallelism" }),
+            .option("target", { type: "string", describe: "Target Lakehouse datasource (auto-resolved if omitted)" })
+            .option("target-schema", { type: "string", default: "public", describe: "Target schema" })
+            .option("target-table", { type: "string", describe: "Target table name (defaults to source-table)" }),
         async (argv) => {
           const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-
-            // Resolve source datasource
             const sourceDs = await resolveDatasource(sc, String(argv.source))
             if (!sourceDs.dsType) {
-              error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'.`, { format, exitCode: 2 }); return
+              error("INVALID_ARGUMENTS", `Cannot determine dsType for datasource '${argv.source}'.`, { format, exitCode: 2 }); return
             }
-
-            // Resolve target (Lakehouse) datasource
+            // Resolve target datasource
             let targetDsId: number
             let targetDsName: string
             if (argv.target) {
               const targetDs = await resolveDatasource(sc, String(argv.target))
-              targetDsId = targetDs.id
-              targetDsName = targetDs.name
+              targetDsId = targetDs.id; targetDsName = targetDs.name
             } else {
               const lhResp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
                 current: 1, pageSize: 5, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
               })
               const lhList = (lhResp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined ?? []
-              if (lhList.length === 0) {
-                error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target <datasource_name>.", { format, exitCode: 2 }); return
-              }
+              if (lhList.length === 0) { error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target.", { format, exitCode: 2 }); return }
               targetDsId = Number(lhList[0].id)
               targetDsName = String((lhList[0] as Record<string, unknown>).dsName ?? "LAKEHOUSE")
             }
-
-            // Fetch source table columns via datasource describe API
+            // Fetch columns
             const metaResp = await studioRequest<unknown>(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
               id: sourceDs.id, nameSpace: argv["source-db"] as string, dataObjectName: argv["source-table"] as string,
             })
             const metaData = (metaResp.data as Record<string, unknown> | null) ?? {}
             const sourceColumns = (Array.isArray((metaData as Record<string, unknown>).columns)
               ? (metaData as Record<string, unknown>).columns
-              : Array.isArray(metaData)
-              ? metaData
-              : []) as Record<string, unknown>[]
-
+              : Array.isArray(metaData) ? metaData : []) as Record<string, unknown>[]
             if (sourceColumns.length === 0) {
-              error("NO_COLUMNS", `Cannot fetch columns for ${argv["source-db"]}.${argv["source-table"]}. Check datasource connection and table name.`, { format, exitCode: 2 }); return
+              error("NO_COLUMNS", `Cannot fetch columns for ${argv["source-db"]}.${argv["source-table"]}.`, { format, exitCode: 2 }); return
             }
-
-            // Build source columns (as-is from API)
-            const sinkTargetTable = (argv["target-table"] as string | undefined) ?? argv["source-table"] as string
-            const writeMode = argv["write-mode"] as string
-
-            // Map source columns → sink columns with Lakehouse types
-            const sinkColumns = sourceColumns.map((col) => ({
-              name: col.name,
-              type: mapToLakehouseType(String(col.type ?? col.columnType ?? "")),
-              physicalType: null,
-              comment: String(col.comment ?? ""),
-              nullable: col.nullable !== false,
-              supportAsSplitKey: false,
-              properties: null,
-              partitionColumn: false,
-              sorted: false,
-              primary: col.primary === true || col.isPrimary === true,
-              cluster: false,
-              helper: true,
-            }))
-
-            // Build columnMapping (source → sink, same names)
-            const columnMapping = Object.fromEntries(sourceColumns.map((col) => [col.name, col.name]))
-
-            // Build integration config JSON (the fileContent)
-            const integrationConfig = {
-              templateKey: 1,
-              advancedParamStr: [],
-              userParams: {},
-              sourceConnection: { datasourceId: sourceDs.id, datasourceName: sourceDs.name, type: sourceDs.dsType },
-              sinkConnection: { datasourceId: targetDsId, datasourceName: targetDsName, type: 1 },
-              jobs: [{
-                source: {
-                  dataObject: argv["source-table"] as string,
-                  namespace: argv["source-db"] as string,
-                  params: { dsType: sourceDs.dsType, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string },
-                  columns: sourceColumns,
-                },
-                sink: {
-                  dataObject: sinkTargetTable,
-                  namespace: argv["target-schema"] as string,
-                  params: { dsType: 1, writeMode, operatorType: "sink", table: sinkTargetTable, database: argv["target-schema"] as string, is_partition: false },
-                  columns: sinkColumns,
-                },
-                setting: {
-                  parallelism: argv.parallelism as number,
-                  errorLimit: { maxCount: -1, collectDirtyData: true, record: -1 },
-                },
-                columnMapping,
-              }],
+            logOperation("task integration-schema", { ok: true })
+            success({
+              task_id: fileId,
+              source: { datasource_id: sourceDs.id, datasource_name: sourceDs.name, ds_type: sourceDs.dsType, db: argv["source-db"], table: argv["source-table"] },
+              target: { datasource_id: targetDsId, datasource_name: targetDsName, ds_type: 1, schema: argv["target-schema"], table: (argv["target-table"] as string | undefined) ?? argv["source-table"] as string },
+              source_columns: sourceColumns,
+            }, {
+              format,
+              aiMessage: `Retrieved ${sourceColumns.length} columns from ${argv["source-db"]}.${argv["source-table"]}. ` +
+                `Next step: map source column types to Lakehouse types (refer to Lakehouse data type docs), ` +
+                `then call: cz-cli task save-integration ${fileId} --config '<json>'`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "save-integration <task>",
+        "Save INTEGRATION task configuration with agent-generated field mapping",
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true })
+            .option("config", {
+              type: "string", demandOption: true,
+              describe: "Integration config JSON (output from agent after reviewing integration-schema). Must contain templateKey, sourceConnection, sinkConnection, jobs[].",
+            })
+            .option("vc", { type: "string", describe: "VCluster for execution" })
+            .option("target-schema", { type: "string", default: "public", describe: "Target schema (used in adhocConfigs)" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            // Parse and validate config JSON
+            let integrationConfig: Record<string, unknown>
+            try {
+              const raw = (argv.config as string).replace(/^'|'$/g, "")
+              integrationConfig = JSON.parse(raw)
+            } catch {
+              error("INVALID_ARGUMENTS", "--config is not valid JSON. Pass the JSON string output from 'task integration-schema' after agent mapping.", { format, exitCode: 2 }); return
             }
-
-            // Build adhocConfigs with VC
+            if (!integrationConfig.jobs || !integrationConfig.sourceConnection || !integrationConfig.sinkConnection) {
+              error("INVALID_ARGUMENTS", "--config JSON must have templateKey, sourceConnection, sinkConnection, and jobs fields.", { format, exitCode: 2 }); return
+            }
             const vcCode = (argv.vc as string | undefined) ?? "DEFAULT"
             const adhocConfigs = JSON.stringify({
               multiDataSource: [],
               schema: argv["target-schema"] as string,
               adhocVcCode: vcCode,
             })
-
-            const resp = await saveTaskContent(sc, {
+            await saveTaskContent(sc, {
               dataFileId: fileId,
               dataFileContent: JSON.stringify(integrationConfig),
               projectId: sc.projectId,
@@ -1039,16 +947,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               replaceEscapedChars: false,
               adhocConfigs,
             })
-
+            const jobs = Array.isArray(integrationConfig.jobs) ? integrationConfig.jobs as Record<string, unknown>[] : []
+            const colCount = Array.isArray((jobs[0] as Record<string, unknown>)?.source) ? 0 :
+              ((jobs[0] as Record<string, unknown>)?.source as Record<string, unknown>)?.columns as unknown[]
             logOperation("task save-integration", { ok: true })
             success({
               task_id: fileId,
-              source: { datasource: sourceDs.name, db: argv["source-db"], table: argv["source-table"], columns: sourceColumns.length },
-              sink: { datasource: targetDsName, schema: argv["target-schema"], table: sinkTargetTable, write_mode: writeMode },
+              jobs_count: jobs.length,
               studio_url: studioUrl(sc, fileId),
             }, {
               format,
-              aiMessage: `Integration task configured with ${sourceColumns.length} columns. Review field mapping in Studio: ${studioUrl(sc, fileId)}\nDeploy with: cz-cli task deploy ${fileId} -y`,
+              aiMessage: `Integration task configured. Review in Studio: ${studioUrl(sc, fileId)}\nDeploy with: cz-cli task deploy ${fileId} -y`,
             })
           } catch (err) {
             reportTaskError(err, format)
