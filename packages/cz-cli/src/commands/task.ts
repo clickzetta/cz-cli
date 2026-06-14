@@ -1511,17 +1511,38 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             const sc = await ctx(argv)
 
-            // Resolve folder id if provided
+            // Resolve folder id if provided, then collect all descendant folder ids (recursive)
             const folderArg = argv.folder as string | undefined
-            let folderId: number | undefined
+            let rootFolderId: number | undefined
             if (folderArg) {
-              folderId = /^\d+$/.test(folderArg)
+              rootFolderId = /^\d+$/.test(folderArg)
                 ? parseInt(folderArg, 10)
                 : await resolveFolderIdByName(sc, folderArg, format)
             }
 
+            // BFS: collect all folder ids under rootFolderId (inclusive)
+            const collectFolderIds = async (parentId: number): Promise<number[]> => {
+              const resp = await listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 500, parentFolderId: parentId })
+              const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
+              const folders = Array.isArray(data.list) ? data.list as Record<string, unknown>[] : []
+              const childIds = await Promise.all(
+                folders.map(async (f) => {
+                  const id = Number(f.id ?? f.dataFolderId)
+                  return f.hasChildren ? [id, ...(await collectFolderIds(id))] : [id]
+                })
+              )
+              return childIds.flat()
+            }
+
+            let folderIds: number[] | undefined
+            let folderCount: number | undefined
+            if (rootFolderId != null) {
+              const descendants = await collectFolderIds(rootFolderId)
+              folderIds = [rootFolderId, ...descendants]
+              folderCount = folderIds.length
+            }
+
             const fileType = argv.type ? String(parseTaskType(argv.type as string)) : undefined
-            // cycleTaskType used by getInstanceStats is FILE_TYPE_TO_TASK_TYPE converted value
             const cycleTaskType = fileType != null ? (FILE_TYPE_TO_TASK_TYPE[Number(fileType)] ?? Number(fileType)) : undefined
             const now = Date.now()
             const fromMs = argv.from
@@ -1535,9 +1556,23 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               : now
 
             // Parallel: task total, folder total, instance stats, task run stats
-            const [taskResp, folderResp, instanceStatsResp, taskRunStatsResp] = await Promise.all([
-              listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, folderId, fileType }),
-              listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 1, parentFolderId: folderId ?? 0 }),
+            // Task count: if folder filter, sum totals across all collected folder ids
+            const taskTotalPromise = folderIds
+              ? Promise.all(folderIds.map((fid) =>
+                  listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, folderId: fid, fileType })
+                    .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
+                )).then((totals) => totals.reduce((a, b) => a + b, 0))
+              : listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, fileType })
+                  .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
+
+            const folderCountPromise = rootFolderId != null
+              ? Promise.resolve(folderCount ?? 0)
+              : listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 1, parentFolderId: 0 })
+                  .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
+
+            const [taskTotal, resolvedFolderCount, instanceStatsResp, taskRunStatsResp] = await Promise.all([
+              taskTotalPromise,
+              folderCountPromise,
               getInstanceStats(sc, {
                 projectId: sc.projectId,
                 queryStartPlanTime: fromMs,
@@ -1553,12 +1588,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 ...(argv.task ? { taskNameRlike: argv.task as string } : {}),
               }),
             ])
-
-            // Task summary
-            const taskData = (taskResp.data && typeof taskResp.data === "object" ? taskResp.data : {}) as Record<string, unknown>
-            const taskTotal = taskData.total as number ?? 0
-            const folderData = (folderResp.data && typeof folderResp.data === "object" ? folderResp.data : {}) as Record<string, unknown>
-            const folderTotal = folderData.total as number ?? 0
+            const folderTotal = resolvedFolderCount
 
             // Instance stats: group by status and type
             const STATUS_NAME: Record<number, string> = { 1: "SUCCESS", 2: "WAITING", 3: "FAILED", 4: "RUNNING" }
@@ -1610,7 +1640,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               tasks: {
                 total: taskTotal,
                 folders: folderTotal,
-                ...(folderId ? { folder_filter: folderId } : {}),
+                ...(rootFolderId ? { folder_filter: rootFolderId, folder_count_recursive: folderTotal } : {}),
                 ...(fileType ? { type_filter: argv.type } : {}),
               },
               run_instances: {
@@ -1624,7 +1654,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }, {
               format,
               aiMessage: t("task_stats_result",
-                folderId ? `folder=${folderId}` : (fileType ? `type=${argv.type}` : "all"),
+                rootFolderId ? `folder=${rootFolderId}` : (fileType ? `type=${argv.type}` : "all"),
                 taskTotal,
                 folderTotal,
                 `${fromStr}~${toStr}`,
