@@ -917,26 +917,53 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               return Array.isArray(cols) && cols.length > 0 ? cols : null
             })()
             const targetTableExists = targetCols !== null
-            // Infer recommended splitPk (first primary key column, or first numeric column)
+            // DB type groupings for dsType-specific behavior
+            const dsType = sourceDs.dsType ?? 0
+            const MYSQL_LIKE  = new Set([5, 17, 18, 19, 39])   // MySQL, TiDB, MariaDB, PolarDB MySQL, Aurora MySQL
+            const PG_LIKE     = new Set([7, 22, 40, 46, 48])   // PostgreSQL, Greenplum, Aurora PG, Redshift, PolarDB PG
+            const ORACLE_LIKE = new Set([25, 21])               // Oracle, DB2
+            const SS_LIKE     = new Set([8])                    // SQLServer
+            const COMPAT_LIKE = new Set([4, 14, 15, 16])       // ClickHouse, Doris, StarRocks, SelectDB (MySQL-like SQL)
+            const NO_SPLITPK  = new Set([2, 12, 13, 43, 51])   // Kafka, MongoDB, ES, Redis, DynamoDB
+            const NO_WHERE    = new Set([2, 9, 27, 38, 43, 51]) // Streaming/object-store/KV
+
+            // where clause format differs by DB
+            const BIZDATE = '${bizdate}'
+            const buildWhereClause = (colName: string): string => {
+              if (PG_LIKE.has(dsType))     return `${colName} >= '${BIZDATE}'::date`
+              if (ORACLE_LIKE.has(dsType)) return `${colName} >= TO_DATE('${BIZDATE}', 'YYYY-MM-DD')`
+              return `${colName} >= '${BIZDATE}'`  // MySQL, SQLServer, ClickHouse, Doris, etc.
+            }
+
+            // Infer recommended splitPk (only for types that support it)
+            const supportsSplitPk = !NO_SPLITPK.has(dsType)
             const primaryCols = sourceColumns.filter((c) => c.primary === true || c.isPrimary === true)
             const numericTypes = new Set(['INT','INTEGER','BIGINT','SMALLINT','TINYINT','MEDIUMINT','SERIAL','BIGSERIAL'])
             const numericCols = sourceColumns.filter((c) => numericTypes.has(String(c.type ?? "").toUpperCase().split("(")[0].trim()))
-            const recommendedSplitPk = primaryCols[0]?.name ?? numericCols[0]?.name ?? null
+            const recommendedSplitPk = supportsSplitPk
+              ? (primaryCols[0]?.name ?? numericCols[0]?.name ?? null)
+              : null
             const splitPkIsValid = recommendedSplitPk != null && (
               primaryCols.some(c => c.name === recommendedSplitPk) ||
               numericCols.some(c => c.name === recommendedSplitPk)
             )
 
             // Detect incremental column for write_mode + where inference
+            // Only applies to relational/Hive DBs; streaming/KV types don't use where
+            const supportsIncremental = !NO_WHERE.has(dsType)
             const UPDATE_TIME_PAT = /^(update_time|updated_at|gmt_modif(y|ied)|modify_time|last_modified|update_date)$/i
             const CREATE_TIME_PAT = /^(create_time|created_at|gmt_create|create_date)$/i
-            const updateTimeCol = sourceColumns.find(c => UPDATE_TIME_PAT.test(String(c.name ?? "")))
-            const createTimeCol = sourceColumns.find(c => CREATE_TIME_PAT.test(String(c.name ?? "")))
+            const updateTimeCol = supportsIncremental
+              ? sourceColumns.find(c => UPDATE_TIME_PAT.test(String(c.name ?? "")))
+              : undefined
+            const createTimeCol = supportsIncremental
+              ? sourceColumns.find(c => CREATE_TIME_PAT.test(String(c.name ?? "")))
+              : undefined
             const incrementalCol = updateTimeCol ?? createTimeCol
             const recommendedWriteMode = incrementalCol ? "APPEND" : "OVERWRITE"
             // ${bizdate} is a built-in system param injected by scheduler (previous day date)
             const recommendedWhere = incrementalCol
-              ? `${String(incrementalCol.name)} >= '\${bizdate}'`
+              ? buildWhereClause(String(incrementalCol.name))
               : null
 
             // Column alignment check (only when target table exists)
@@ -1015,9 +1042,25 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               return (t === 'TIMESTAMP' || t === 'DATETIME' || t === 'DATE') &&
                 (n.includes('create') || n.includes('update') || n.includes('time') || n.includes('date'))
             }) : undefined
-            const partitionSuggestion = timeColForPartition
-              ? { column: timeColForPartition.name, ddl_hint: `PARTITION BY date_trunc('day', ${String(timeColForPartition.name)})` }
-              : null
+            const partitionSuggestion = (() => {
+              if (!timeColForPartition) return null
+              const col = String(timeColForPartition.name)
+              const tbl = sinkTargetTable.toLowerCase()
+              // Infer granularity from table name patterns
+              const granularity = /log|event|click|access|track|behavior|action/.test(tbl) ? 'day'
+                : /order|transact|payment|trade|invoice/.test(tbl) ? 'day'
+                : /summary|report|agg|stat|monthly/.test(tbl) ? 'month'
+                : 'day'
+              const truncExpr = granularity === 'month'
+                ? `date_trunc('month', ${col})`
+                : `date_trunc('day', ${col})`
+              return {
+                column: col,
+                granularity,
+                ddl_hint: `PARTITION BY ${truncExpr}`,
+                size_warning: `⚠ Partition only if table has >500万 rows. Small tables (<100万 rows) don't benefit — partitioning adds overhead.`,
+              }
+            })()
 
             logOperation("task integration-schema", { ok: true })
             success({
@@ -1042,27 +1085,48 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               source_params_template: (() => {
                 const dt = sourceDs.dsType
                 if (dt === 3) return { // Hive: NO table/database in params
-                  note: "Hive source: table and database are ONLY in dataObject/namespace, NOT in params",
+                  note: "Hive source: table and database are ONLY in dataObject/namespace, NOT in params. No splitPk support. Incremental is done via partition filters, not where clause.",
                   params: { dsType: dt, operatorType: "source" }
                 }
                 if (dt === 2) return { // Kafka
-                  note: "Kafka source: requires topic, groupId, offset params",
+                  note: "Kafka source: no splitPk or where support. offset='latest' reads new messages; use 'earliest' for full replay.",
                   params: { dsType: dt, operatorType: "source", topic: "<topic_name>", groupId: "<consumer_group>", offset: "latest" }
                 }
-                if (dt === 9) return { // OSS
-                  note: "OSS source: requires path, fileType params",
-                  params: { dsType: dt, operatorType: "source", path: "<oss_path>", fileType: "CSV", encoding: "UTF-8" }
+                if (dt === 9 || dt === 27 || dt === 38) return { // OSS/COS/S3
+                  note: "Object storage source: path-based, no splitPk or where support.",
+                  params: { dsType: dt, operatorType: "source", path: "<path>", fileType: "CSV", encoding: "UTF-8" }
                 }
                 if (dt === 12) return { // MongoDB
-                  note: "MongoDB source: requires collection param",
+                  note: "MongoDB source: no splitPk support. Use filter param for conditional sync (MongoDB query syntax).",
                   params: { dsType: dt, operatorType: "source", table: "<collection_name>", database: argv["source-db"] as string }
                 }
-                // Default: relational DB (MySQL/PG/SQLServer/Oracle/etc)
+                if (ORACLE_LIKE.has(dt ?? 0)) return { // Oracle / DB2
+                  note: `Oracle/DB2: 'database' = schema name (not instance name). where format: col >= TO_DATE('${BIZDATE}', 'YYYY-MM-DD'). splitPk must be numeric.`,
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                }
+                if (PG_LIKE.has(dt ?? 0)) return { // PostgreSQL family
+                  note: `PostgreSQL/Greenplum/Redshift: where clause needs explicit cast: col >= '${BIZDATE}'::date. splitPk supported.`,
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                }
+                if (SS_LIKE.has(dt ?? 0)) return { // SQLServer
+                  note: `SQLServer: default schema is 'dbo'. where format: col >= '${BIZDATE}'. splitPk supported.`,
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                }
+                // MySQL family + ClickHouse/Doris/StarRocks + default relational
+                const isMysqlFamily = MYSQL_LIKE.has(dt ?? 0)
+                const isAnalytic = COMPAT_LIKE.has(dt ?? 0)
+                const note = isMysqlFamily
+                  ? `MySQL/TiDB/MariaDB: where format: col >= '${BIZDATE}'. splitPk supported (use numeric primary key).`
+                  : isAnalytic
+                  ? `ClickHouse/Doris/StarRocks: MySQL-compatible SQL, where format: col >= '${BIZDATE}'. splitPk supported.`
+                  : `Relational DB: standard JDBC params. where format: col >= '${BIZDATE}'.`
                 return {
-                  note: "Relational DB source: requires table and database in params",
+                  note,
                   params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
                 }
               })(),
+              ...(partitionSuggestion && { partition_suggestion: partitionSuggestion }),
+              ...(colAlignment && { col_alignment: colAlignment }),
             }, {
               format,
               aiMessage: (() => {
@@ -1115,6 +1179,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   lines.push(`- Detected time column: ${String(partitionSuggestion.column)} — consider creating as partitioned table:`)
                   lines.push(`  ${partitionSuggestion.ddl_hint}`)
                   lines.push(`  If partitioned: set sink.params.is_partition=true in config JSON`)
+                  lines.push(`  ${partitionSuggestion.size_warning}`)
+                  if (partitionSuggestion.granularity === 'month') {
+                    lines.push(`  Granularity: month (inferred from table name — adjust to day if needed)`)
+                  } else {
+                    lines.push(`  Granularity: day — if daily partition rows are too few (<1万/day), switch to month: date_trunc('month', ${String(partitionSuggestion.column)})`)
+                  }
                 }
 
                 // --- Confirm with user (only non-inferred items) ---
