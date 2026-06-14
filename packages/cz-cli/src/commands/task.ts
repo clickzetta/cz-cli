@@ -1430,6 +1430,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("database", { type: "string", demandOption: true, describe: "Source database/schema to sync" })
             .option("tables", { type: "string", describe: "Comma-separated table names to sync. Omit for whole-database mirror." })
             .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolves if omitted)" })
+            .option("vc", { type: "string", describe: "Virtual cluster name for CDC execution (e.g. FLINK_ON_VC)" })
             .option("pipeline-type", {
               type: "number", default: 3,
               describe: "1=multi-table mirror (specific tables), 2=multi-table merge (sharding), 3=whole-database mirror (default)",
@@ -1485,6 +1486,22 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               syncObjectList,
               targetDatasource: { datasourceId: targetDsId, datasourceType: targetDsType },
             })
+
+            // Save VC config if --vc specified
+            const vcName = argv.vc as string | undefined
+            if (vcName) {
+              const resolvedVcId = await resolveVclusterId(sc, vcName).catch(() => undefined)
+              await saveTaskConfig(sc, {
+                dataFileId: fileId,
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.workspaceName,
+                etlVcCode: vcName,
+                ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
+                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                activeEndTime: "2099-01-01T00:00:00.000Z",
+              }).catch(() => null)
+            }
 
             logOperation("task save-cdc", { ok: true })
             success({
