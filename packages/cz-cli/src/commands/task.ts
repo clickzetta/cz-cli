@@ -1061,7 +1061,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 column: col,
                 granularity,
                 ddl_hint: `PARTITION BY ${truncExpr}`,
-                size_warning: `⚠ Partition only if table has >500万 rows. Small tables (<100万 rows) don't benefit — partitioning adds overhead.`,
               }
             })()
 
@@ -1143,15 +1142,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 lines.push(`\n**Inferred configuration:**`)
                 if (incrementalCol) {
                   lines.push(`- Incremental column detected: ${String(incrementalCol.name)} → write_mode=APPEND, where="${recommendedWhere}"`)
-                  lines.push(`  (${String(incrementalCol.name)} is a ${updateTimeCol ? "update-time" : "create-time"} column; \${bizdate} is auto-injected by scheduler as previous day date)`)
+                  lines.push(`  (\${bizdate} is the scheduler date parameter — confirm with user what date range each run should cover)`)
                 } else {
                   lines.push(`- No incremental column detected → write_mode=OVERWRITE (full reload each run)`)
                 }
                 if (recommendedSplitPk) {
                   const pkNote = primaryCols.some(c => c.name === recommendedSplitPk) ? "primary key" : "first numeric col"
-                  lines.push(`- splitPk: ${String(recommendedSplitPk)} (${pkNote}, enables parallel read)`)
+                  lines.push(`- splitPk: ${String(recommendedSplitPk)} (${pkNote}) — enables range-split parallel reads; ask user whether to increase parallelism`)
                 } else {
-                  lines.push(`- splitPk: none (no primary key or numeric column found; single-thread read)`)
+                  lines.push(`- splitPk: none (no suitable split column found) — confirm with user if a custom split column is needed`)
                 }
 
                 // --- Column alignment (target exists) ---
@@ -1179,15 +1178,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 // --- Partition suggestion (target not exists) ---
                 if (partitionSuggestion) {
                   lines.push(`\n**Partition suggestion** (target table does not exist yet):`)
-                  lines.push(`- Detected time column: ${String(partitionSuggestion.column)} — consider creating as partitioned table:`)
-                  lines.push(`  ${partitionSuggestion.ddl_hint}`)
-                  lines.push(`  If partitioned: set sink.params.is_partition=true in config JSON`)
-                  lines.push(`  ${partitionSuggestion.size_warning}`)
-                  if (partitionSuggestion.granularity === 'month') {
-                    lines.push(`  Granularity: month (inferred from table name — adjust to day if needed)`)
-                  } else {
-                    lines.push(`  Granularity: day — if daily partition rows are too few (<1万/day), switch to month: date_trunc('month', ${String(partitionSuggestion.column)})`)
-                  }
+                  lines.push(`- Detected time column: ${String(partitionSuggestion.column)} — confirm with user whether partitioning makes sense for this table.`)
+                  lines.push(`  Partitioning principle: beneficial when queries commonly filter by time range and the table is large enough that partition pruning matters. Not worth the overhead for small or rarely-queried tables.`)
+                  lines.push(`  Granularity principle: choose the coarsest granularity that still gives useful pruning — day for high-frequency data, month or year for sparse/aggregated data. Ask the user about expected data volume and query patterns.`)
+                  lines.push(`  If partitioned: ${partitionSuggestion.ddl_hint} — set sink.params.is_partition=true in config JSON`)
                 }
 
                 // --- Confirm with user (only non-inferred items) ---
