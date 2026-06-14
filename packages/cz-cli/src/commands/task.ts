@@ -938,10 +938,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Infer recommended splitPk (only for types that support it)
             const supportsSplitPk = !NO_SPLITPK.has(dsType)
             const primaryCols = sourceColumns.filter((c) => c.primary === true || c.isPrimary === true)
+            // Good splitPk candidates: INT/BIGINT/SERIAL with wide range — exclude TINYINT/SMALLINT (too narrow for effective splitting)
+            const splitPkTypes = new Set(['INT','INTEGER','BIGINT','MEDIUMINT','SERIAL','BIGSERIAL','INT4','INT8','INT2'])
+            const splitPkExclude = new Set(['TINYINT','SMALLINT','INT2'])
             const numericTypes = new Set(['INT','INTEGER','BIGINT','SMALLINT','TINYINT','MEDIUMINT','SERIAL','BIGSERIAL'])
             const numericCols = sourceColumns.filter((c) => numericTypes.has(String(c.type ?? "").toUpperCase().split("(")[0].trim()))
-            const recommendedSplitPk = supportsSplitPk
-              ? (primaryCols[0]?.name ?? numericCols[0]?.name ?? null)
+            const splitPkCols = sourceColumns.filter((c) => {
+              const t = String(c.type ?? "").toUpperCase().split("(")[0].trim()
+              return splitPkTypes.has(t) && !splitPkExclude.has(t)
+            })
+            const recommendedSplitPk = supportsSplitPk && primaryCols.length > 0
+              ? primaryCols[0]?.name
               : null
             const splitPkIsValid = recommendedSplitPk != null && (
               primaryCols.some(c => c.name === recommendedSplitPk) ||
