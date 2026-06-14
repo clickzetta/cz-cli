@@ -727,6 +727,182 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "create-multi-di <name>",
+        "Create and configure a MULTI_DI offline batch sync task in one step (checks prerequisites first)",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true, describe: "Task name" })
+            .option("folder", { type: "string", demandOption: true, describe: "Folder ID or name" })
+            .option("source", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
+            .option("database", { type: "string", demandOption: true, describe: "Source database/schema to sync" })
+            .option("tables", { type: "string", describe: "Comma-separated table names. Omit for whole-database." })
+            .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolves if omitted)" })
+            .option("vc", { type: "string", describe: "Virtual cluster name for execution" })
+            .option("cron", { type: "string", describe: "Cron expression for scheduled execution" })
+            .option("pipeline-type", { type: "number", default: 1, describe: "1=multi-table mirror (default), 2=multi-table merge" })
+            .option("batch-size", { type: "number", default: 4, describe: "Tables per group (default: 4)" })
+            .option("connections", { type: "number", default: 4, describe: "Max source connections per group (default: 4)" })
+            .option("parallelism", { type: "number", default: 4, describe: "Concurrent groups (default: 4)" })
+            .option("pk-write-mode", { type: "string", default: "OVERWRITE", choices: ["OVERWRITE", "APPEND"], describe: "Write mode for tables with PK (default: OVERWRITE)" })
+            .option("non-pk-write-mode", { type: "string", default: "OVERWRITE", choices: ["OVERWRITE", "APPEND"], describe: "Write mode for tables without PK (default: OVERWRITE)" })
+            .option("skip-check", { type: "boolean", default: false, describe: "Skip CDC prerequisite check" })
+            .option("description", { type: "string", describe: "Task description" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+
+            // Step 1: resolve source datasource
+            const sourceDs = await resolveDatasource(sc, String(argv.source))
+            if (!sourceDs.dsType) {
+              error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 2: CDC prerequisite check
+            if (!(argv["skip-check"] as boolean)) {
+              const check = await checkCdcPrereqs(sc, sourceDs as { id: number; name: string; dsType: number }, String(argv.source))
+              if (!check.ok) { error("CDC_PREREQ_FAILED", check.message, { format, exitCode: 2 }); return }
+            }
+
+            // Step 3: resolve folder
+            const folderRaw = (argv.folder as string).trim()
+            const folderId = /^\d+$/.test(folderRaw)
+              ? parseInt(folderRaw, 10)
+              : await resolveFolderIdByName(sc, folderRaw, format)
+
+            // Step 4: check duplicate name
+            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
+              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 5: create task
+            const created = await createTask(sc, {
+              fileType: "291",
+              createdBy: String(sc.userId),
+              projectId: sc.projectId,
+              dataFileName: argv.name as string,
+              fileDescription: argv.description as string | undefined,
+              dataFolderId: folderId,
+              workspaceName: sc.workspaceName,
+            })
+            const fileId = Number(created.data)
+
+            // Step 6: resolve target datasource (Lakehouse only)
+            let targetDsId: number
+            if (argv.target) {
+              const targetDs = await resolveDatasource(sc, String(argv.target))
+              if ((targetDs.dsType ?? 1) !== 1) {
+                error("INVALID_ARGUMENTS", `MULTI_DI only supports Lakehouse as target. '${targetDs.name}' is not a Lakehouse datasource.`, { format, exitCode: 2 }); return
+              }
+              targetDsId = targetDs.id
+            } else {
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) {
+                error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Please specify --target.", { format, exitCode: 2 }); return
+              }
+              targetDsId = lhDs.id
+            }
+
+            // Step 7: build jobs list
+            const tablesArg = argv.tables as string | undefined
+            const database = argv.database as string
+            const jobs = tablesArg
+              ? tablesArg.split(",").map(t => ({
+                  source: { dataObject: t.trim(), namespace: database, columns: [], datasourceId: sourceDs.id },
+                  sink: { dataObject: t.trim(), namespace: database, columns: [] },
+                  columnMapping: {},
+                }))
+              : []
+
+            // Step 8: build and save content
+            const content = {
+              templateKey: 1,
+              userParams: {},
+              pipelineType: argv["pipeline-type"] as number,
+              heterogeneous: false,
+              sourceConnection: {
+                datasource: [{ datasourceId: sourceDs.id, datasourceName: sourceDs.name, type: sourceDs.dsType }],
+                params: { dsType: sourceDs.dsType, readMode: "BINLOG", operatorType: "source", heterogeneous: false },
+              },
+              sinkConnection: {
+                datasourceId: targetDsId,
+                datasourceName: "",
+                type: 1,
+                syncMode: 1,
+                params: { dsType: 1, operatorType: "sink" },
+              },
+              nameRule: { schema: { mode: "2" }, table: { mode: "1" } },
+              setting: {
+                groupingStrategy: {
+                  strategy: "SIZE",
+                  batchSize: argv["batch-size"] as number,
+                  connections: argv.connections as number,
+                  parallelism: argv.parallelism as number,
+                },
+                pkWriteMode: argv["pk-write-mode"] as string,
+                nonPkWriteMode: argv["non-pk-write-mode"] as string,
+              },
+              sourceEventTypes: ["c", "u", "d"],
+              dataFilterSwitch: false,
+              syncAllAtFirst: true,
+              jobs,
+            }
+
+            const vcName = argv.vc as string | undefined
+            const resolvedVcId = vcName ? await resolveVclusterId(sc, vcName).catch(() => undefined) : undefined
+
+            await saveTaskContent(sc, {
+              dataFileId: fileId,
+              dataFileContent: JSON.stringify(content),
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.workspaceName,
+              ...(vcName && {
+                adhocConfigs: JSON.stringify({
+                  multiDataSource: [],
+                  schema: "public",
+                  adhocVcCode: vcName,
+                  ...(resolvedVcId != null && { adhocVcId: String(resolvedVcId) }),
+                }),
+              }),
+            })
+
+            // Step 9: save cron + VC if provided
+            if (argv.cron || vcName) {
+              await saveTaskConfig(sc, {
+                dataFileId: fileId,
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.workspaceName,
+                ...(argv.cron && { cronExpress: normalizeCron(argv.cron as string) }),
+                ...(vcName && { etlVcCode: vcName }),
+                ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
+                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                activeEndTime: "2099-01-01T00:00:00.000Z",
+              }).catch(() => null)
+            }
+
+            logOperation("task create-multi-di", { ok: true })
+            success({
+              task_id: fileId,
+              task_name: argv.name,
+              source: { datasource: sourceDs.name, database, tables: tablesArg ?? "all" },
+              target: { datasource_id: targetDsId },
+              setting: { batch_size: argv["batch-size"], connections: argv.connections, parallelism: argv.parallelism },
+              studio_url: studioUrl(sc, fileId),
+            }, {
+              format,
+              aiMessage: `MULTI_DI task created (id=${fileId}). Next: deploy with 'cz-cli task deploy ${fileId} -y', then execute with 'cz-cli task execute ${fileId} --vc <vc_name>'.`,
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "create-and-setup <name>",
         "Create a task, save script content and cron schedule in one step",
         (y) =>
@@ -2028,10 +2204,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 291: "MULTI_DI (multi-table offline sync)",
               }
               const typeName = syncTypeName[fileType] ?? `type=${fileType}`
-              if (fileType === 281) {
+              if (fileType === 281 || fileType === 291) {
                 const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
                 if (!hasConfig) {
-                  error("NO_SYNC_CONFIG", `CDC task not configured. Run 'cz-cli task save-cdc ${fileId} --source <ds> --database <db>' first.`, { format, exitCode: 2 }); return
+                  const cmd = fileType === 281
+                    ? `cz-cli task save-cdc ${fileId} --source <ds> --database <db>`
+                    : `cz-cli task create-multi-di <name> --source <ds> --database <db>`
+                  error("NO_SYNC_CONFIG", `${syncTypeName[fileType]} task not configured. Run '${cmd}' first.`, { format, exitCode: 2 }); return
                 }
               } else if (fileType === 1) {
                 // INTEGRATION: check both fileContent (field mapping) and hasConfig (schedule)
