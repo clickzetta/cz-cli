@@ -980,7 +980,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               studio_url: studioUrl(sc, fileId),
             }, {
               format,
-              aiMessage: `Integration task configured. Review in Studio: ${studioUrl(sc, fileId)}\nDeploy with: cz-cli task deploy ${fileId} -y`,
+              aiMessage: `Integration task configured. Review in Studio: ${studioUrl(sc, fileId)}\n` +
+                `Next: configure schedule with 'cz-cli task save-cron ${fileId} --cron <expr> --vc <vc>', then deploy with: cz-cli task deploy ${fileId} -y`,
             })
           } catch (err) {
             reportTaskError(err, format)
@@ -1294,14 +1295,22 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   error("NO_SYNC_CONFIG", `CDC task not configured. Run 'cz-cli task save-cdc ${fileId} --source <ds> --database <db>' first.`, { format, exitCode: 2 }); return
                 }
               } else if (fileType === 1) {
-                // INTEGRATION: check fileContent is saved via save-integration
+                // INTEGRATION: check both fileContent (field mapping) and hasConfig (schedule)
                 const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
                 if (!content || content.length < 10) {
                   error("NO_INTEGRATION_CONFIG",
                     `INTEGRATION task has no field mapping configured. Run:\n` +
                     `  cz-cli task integration-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
                     `  # Agent maps types, then:\n` +
-                    `  cz-cli task save-integration ${fileId} --config '<json>'`,
+                    `  cz-cli task save-integration ${fileId} --config '<json>'\n` +
+                    `  cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
+                    { format, exitCode: 2 }); return
+                }
+                const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
+                if (!hasConfig) {
+                  error("NO_SCHEDULE_CONFIG",
+                    `INTEGRATION task field mapping is saved but schedule is not configured.\n` +
+                    `Run: cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
                     { format, exitCode: 2 }); return
                 }
               } else {
