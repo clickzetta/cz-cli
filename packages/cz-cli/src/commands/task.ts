@@ -959,6 +959,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               replaceEscapedChars: false,
               adhocConfigs,
             })
+            // Verify the content was actually saved by reading it back
+            const verify = await getTaskDetail(sc, fileId)
+            const verifyData = (verify.data && typeof verify.data === "object" ? verify.data : {}) as Record<string, unknown>
+            const savedContent = verifyData.fileContent ?? verifyData.dataFileContent
+            if (!savedContent || String(savedContent).length < 10) {
+              error("SAVE_FAILED", "Integration config was not saved — server returned empty content. Check datasource IDs and config structure.", { format, exitCode: 2 }); return
+            }
+            // Validate saved JSON parses correctly
+            try { JSON.parse(String(savedContent)) } catch {
+              error("SAVE_FAILED", "Integration config saved but content is not valid JSON. Review the --config input.", { format, exitCode: 2 }); return
+            }
             const jobs = Array.isArray(integrationConfig.jobs) ? integrationConfig.jobs as Record<string, unknown>[] : []
             const colCount = Array.isArray((jobs[0] as Record<string, unknown>)?.source) ? 0 :
               ((jobs[0] as Record<string, unknown>)?.source as Record<string, unknown>)?.columns as unknown[]
@@ -1281,6 +1292,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
                 if (!hasConfig) {
                   error("NO_SYNC_CONFIG", `CDC task not configured. Run 'cz-cli task save-cdc ${fileId} --source <ds> --database <db>' first.`, { format, exitCode: 2 }); return
+                }
+              } else if (fileType === 1) {
+                // INTEGRATION: check fileContent is saved via save-integration
+                const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
+                if (!content || content.length < 10) {
+                  error("NO_INTEGRATION_CONFIG",
+                    `INTEGRATION task has no field mapping configured. Run:\n` +
+                    `  cz-cli task integration-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
+                    `  # Agent maps types, then:\n` +
+                    `  cz-cli task save-integration ${fileId} --config '<json>'`,
+                    { format, exitCode: 2 }); return
                 }
               } else {
                 // All other sync types require Studio UI configuration
