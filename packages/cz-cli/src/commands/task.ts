@@ -1531,6 +1531,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 vcCode = config.vcluster || undefined
               }
             }
+            // For INTEGRATION task types, adhocVcCode must be a Sync VCluster.
+            // If user didn't pass --vc, use etlVcCode from schedule config (same VC used for scheduled runs).
+            const INTEGRATION_FILE_TYPES = new Set([1, 14, 17, 280, 281, 291])
+            const execFileType = Number(taskDetail?.fileType ?? data?.fileType ?? 0)
+            if (INTEGRATION_FILE_TYPES.has(execFileType) && !(argv.vc as string | undefined)) {
+              // etlVcCode already resolved above into vcCode — keep it.
+              // But adhocConfigs may have a different adhocVcCode; override with etlVcCode for consistency
+              vcCode = vcCode ?? "DEFAULT"
+            }
             if (!content) {
               content = (taskDetail?.taskContent ??
                 taskDetail?.fileContent ??
