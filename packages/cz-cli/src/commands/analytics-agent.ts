@@ -601,7 +601,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "Create a safe text2insight session",
             (y) =>
               y
-                .option("domain-id", { type: "number", describe: "Domain ID" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                 .option("title", { type: "string", describe: "Session title" })
                 .option("source-type", { type: "string", describe: "Session sourceType" })
                 .option("source-id", { type: "number", describe: "Session sourceId" })
@@ -640,11 +640,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             },
           )
           .command(
-            "result [question-id]",
+            "result <question-id>",
             "Poll a text2insight question result",
             (y) =>
               y
-                .positional("question-id", { type: "number", describe: "Question ID" })
+                .positional("question-id", { type: "number", demandOption: true, describe: "Question ID" })
                 .option("wait", { type: "boolean", describe: "Poll until finish, finish_stop, error, or timeout" })
                 .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
