@@ -504,8 +504,34 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
 
             // Step 1: create
+            const parsedFileType = parseTaskType(argv.type as string)
+            // UI_ONLY types: content must be configured in Studio UI
+            if (UI_ONLY_TYPES.has(parsedFileType)) {
+              const createResp = await createTask(sc, {
+                fileType: String(parsedFileType),
+                createdBy: String(sc.userId),
+                projectId: sc.projectId,
+                dataFileName: argv.name as string,
+                fileDescription: argv.description,
+                dataFolderId: folderId,
+                workspaceName: sc.workspaceName,
+              })
+              const fileId = Number(createResp.data as Record<string, unknown>)
+              logOperation("task create-and-setup", { ok: true })
+              success({
+                task_id: fileId,
+                task_name: argv.name,
+                content_saved: false,
+                cron_saved: false,
+                studio_url: studioUrl(sc, fileId),
+              }, {
+                format,
+                aiMessage: `Task created (type=${argv.type} is UI-only). Open Studio to configure data source, field mapping, and sync rules: ${studioUrl(sc, fileId)}`,
+              })
+              return
+            }
             const createResp = await createTask(sc, {
-              fileType: String(parseTaskType(argv.type as string)),
+              fileType: String(parsedFileType),
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
@@ -1025,7 +1051,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             }
             if (!argv.yes) {
-              const ok = await confirm(`Publish and online task ${fileId}?`)
+              // Show cron so user can confirm before schedule takes effect
+              const configResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
+              const configData = (configResp.data && typeof configResp.data === "object" ? configResp.data : {}) as Record<string, unknown>
+              const cron = configData.cronExpress ?? (configData as any).taskConfigurationDetail?.cronExpress ?? "(not set)"
+              const ok = await confirm(`Publish task ${fileId}? Cron: ${cron}\nSchedule takes effect immediately after deploy. Confirm?`)
               if (!ok) {
                 success(
                   {
@@ -1255,7 +1285,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   execution_status: STATUS_NAME[statusCode as number] ?? statusCode,
                 }
                 const aiMessage =
-                  `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
+                  `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
                 if (statusCode === 3 || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
                   return
