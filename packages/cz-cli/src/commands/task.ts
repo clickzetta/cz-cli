@@ -98,6 +98,19 @@ function parseParamValueList(raw: string): unknown[] | null {
   }))
 }
 
+async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: number): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let idx = 0
+  const worker = async (): Promise<void> => {
+    while (idx < items.length) {
+      const i = idx++
+      results[i] = await fn(items[i]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker))
+  return results
+}
+
 async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> {
   const detail = await getTaskDetail(sc, fileId)
   const data = detail.data as Record<string, unknown> | undefined
@@ -1396,19 +1409,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               page++
             }
 
-            // Enrich with last_edit_time via parallel getTaskDetail calls
-            const enriched = await Promise.all(
-              results.slice(0, limit).map(async (t) => {
+            // Enrich with last_edit_time via rate-limited parallel getTaskDetail calls (max 20 concurrent)
+            const enriched = await pMap(
+              results.slice(0, limit),
+              async (t) => {
                 try {
                   const detail = await getTaskDetail(sc, Number(t.task_id))
                   const data = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
-                  const lastEditTime = data.lastEditTime ?? data.last_edit_time
-                  const lastEditUser = data.lastEditUser ?? data.last_edit_user
-                  return { ...t, last_edit_time: lastEditTime, last_edit_user: lastEditUser }
+                  return { ...t, last_edit_time: data.lastEditTime ?? data.last_edit_time, last_edit_user: data.lastEditUser ?? data.last_edit_user }
                 } catch {
                   return t
                 }
-              })
+              },
+              20,
             )
 
             // Sort by last_edit_time descending (most recently modified first)
