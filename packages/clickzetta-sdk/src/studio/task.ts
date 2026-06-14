@@ -257,26 +257,39 @@ export interface SaveCdcTaskParams {
   targetDatasource: { datasourceId: number; datasourceType: number }
 }
 
+export interface CdcStartupPositionConfig {
+  datasourceId: number | string
+  startupMode: number   // 2=指定时间, 3=指定文件
+  startTimestamp?: string   // unix ms string, for startupMode=2
+  file?: string             // binlog file, for startupMode=3
+  pos?: string              // binlog offset, for startupMode=3
+}
+
 export interface CdcTaskStartParams {
   fileId: number
   updateBy: string
   workspace: string
-  startupMode?: number   // 0 = normal start
-  engineType?: number    // 5 = default
-  snapshotTaskSwitch?: number  // 0 = off
-  blacklistStrategy?: number   // 2 = default
+  startupMode?: number          // 0=无状态启动, 1=从上次保存状态恢复, 4=自定义起始位置
+  engineType?: number           // 5=default
+  snapshotTaskSwitch?: number   // 0=off, 1=on
+  snapshotTaskPoolSize?: number // snapshot concurrency (default 1, only when snapshotTaskSwitch=1)
+  blacklistStrategy?: number    // 2=default
+  config?: CdcStartupPositionConfig[]  // required when startupMode=4
 }
 
 export function startCdcTask(config: StudioConfig, params: CdcTaskStartParams) {
+  const startupMode = params.startupMode ?? 0
   return studioRequest(config, "/ide-admin/v1/timelyTask/micro/start", {
     fileId: String(params.fileId),
     updateBy: params.updateBy,
-    startupMode: params.startupMode ?? 0,
+    startupMode,
     startupParams: {
       engineType: params.engineType ?? 5,
-      startupMode: params.startupMode ?? 0,
+      startupMode,
       snapshotTaskSwitch: params.snapshotTaskSwitch ?? 0,
+      ...(params.snapshotTaskSwitch === 1 && { snapshotTaskPoolSize: params.snapshotTaskPoolSize ?? 1 }),
       blacklistStrategy: params.blacklistStrategy ?? 2,
+      ...(params.config && params.config.length > 0 && { config: params.config }),
     },
     workspace: params.workspace,
   })
@@ -287,6 +300,12 @@ export function stopCdcTask(config: StudioConfig, fileId: number, updateBy: stri
     fileId: String(fileId),
     updateBy,
     workspace,
+  })
+}
+
+export function getCdcTaskRunStatus(config: StudioConfig, timelyId: number) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/getDetail", {
+    timelyId,
   })
 }
 

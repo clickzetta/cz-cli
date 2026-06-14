@@ -15,6 +15,7 @@ import {
   saveCdcTask,
   startCdcTask,
   stopCdcTask,
+  getCdcTaskRunStatus,
   resolveVclusterId,
   studioRequest,
   type StudioConfig,
@@ -693,18 +694,23 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             // Parallel: draft detail + config + deployed schedule detail
             const CDC_TYPES = new Set([14, 17, 280, 281, 291])
-            const [detail, config, scheduleResp] = await Promise.all([
-              getTaskDetail(sc, fileId),
+
+            // Pre-fetch getDetail to know fileType before deciding whether to call CDC run status
+            const detail = await getTaskDetail(sc, fileId)
+            const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
+            const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
+              ? detailData.taskDetail : detailData) as Record<string, unknown>
+            const fileType = Number(detailObj.fileType ?? 0)
+            const isCdcType = CDC_TYPES.has(fileType)
+
+            const [config, scheduleResp, cdcRunResp] = await Promise.all([
               getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
               studioRequest(sc, "/ide-admin/v1/scheduleTask/getDetail",
                 { scheduleTaskId: fileId, projectId: sc.projectId },
                 { env: "prod" },
               ).catch(() => null),
+              isCdcType ? getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null) : Promise.resolve(null),
             ])
-
-            const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
-            const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
-              ? detailData.taskDetail : detailData) as Record<string, unknown>
 
             const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<string, unknown>
             const scheduleConfig = convertConfigFields((configData.taskConfigurationDetail ??
@@ -715,8 +721,24 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             const scheduleData = scheduleResp?.data as Record<string, unknown> | null | undefined
 
-            const fileType = Number(detailObj.fileType ?? 0)
-            const isCdcType = CDC_TYPES.has(fileType)
+            // CDC run status: from /timelyTask/getDetail (taskStatus: 2=running, 4=stopped)
+            const CDC_RUN_STATUS: Record<number, string> = { 2: "running", 4: "stopped" }
+            let cdcRunStatus: string | undefined
+            if (isCdcType) {
+              if (cdcRunResp) {
+                const cdcRunData = (cdcRunResp.data && typeof cdcRunResp.data === "object" ? cdcRunResp.data : {}) as Record<string, unknown>
+                const taskStatus = Number(cdcRunData.taskStatus ?? -1)
+                cdcRunStatus = (cdcRunData.taskStatusName as string | undefined)
+                  ?? CDC_RUN_STATUS[taskStatus]
+                  ?? (taskStatus >= 0 ? String(taskStatus) : undefined)
+              } else {
+                // API errors when task is not running — treat as stopped (if deployed)
+                const deployStatus = Number(detailObj.deployStatus ?? 0)
+                cdcRunStatus = deployStatus >= 1 ? "stopped" : "not_deployed"
+              }
+            }
+
+            // Fallback: deployStatus from getDetail (1=deployed, not necessarily running)
             const CDC_DEPLOY_STATUS: Record<number, string> = { 0: "not_deployed", 1: "deployed", 2: "running", 3: "stopped", 4: "failed" }
             const cdcDeployStatus = isCdcType
               ? (CDC_DEPLOY_STATUS[Number(detailObj.deployStatus ?? 0)] ?? String(detailObj.deployStatus ?? "unknown"))
@@ -729,7 +751,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               edit_state: EDIT_STATE[editState] ?? String(editState),
               studio_url: studioUrl(sc, fileId),
               ...(isCdcType && {
-                cdc_status: cdcDeployStatus,
+                cdc_status: cdcRunStatus ?? cdcDeployStatus,
                 cdc_task_id: detailObj.cdcTaskId,
                 note: "CDC/streaming task: use 'task start' to launch, 'task stop' to pause",
               }),
@@ -1772,21 +1794,75 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "start <task>",
         "Start a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
-        (y) => y.positional("task", { type: "string", demandOption: true }),
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true })
+            .option("startup-mode", {
+              type: "number",
+              default: 0,
+              describe: "0=无状态启动 (default), 1=从上次保存状态恢复, 4=自定义起始位置",
+            })
+            .option("engine-type", {
+              type: "number",
+              default: 5,
+              describe: "Engine type (default: 5)",
+            })
+            .option("snapshot", {
+              type: "boolean",
+              default: false,
+              describe: "Enable full snapshot before incremental sync",
+            })
+            .option("snapshot-pool-size", {
+              type: "number",
+              default: 1,
+              describe: "Snapshot concurrency (only when --snapshot is set)",
+            })
+            .option("blacklist-strategy", {
+              type: "number",
+              default: 2,
+              describe: "Blacklist strategy (default: 2)",
+            })
+            .option("config", {
+              type: "string",
+              describe:
+                "JSON string for custom startup position (required when --startup-mode=4). " +
+                'Array of {datasourceId, startupMode (2=指定时间|3=指定文件), startTimestamp|file+pos}. ' +
+                'Example: \'[{"datasourceId":123,"startupMode":2,"startTimestamp":"1718000000000"}]\'',
+            }),
         async (argv) => {
           const format = argv.format
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
+
+            const startupMode = argv["startup-mode"] as number
+            let positionConfig: import("@clickzetta/sdk").CdcStartupPositionConfig[] | undefined
+            if (startupMode === 4) {
+              if (!argv.config) {
+                throw new Error("--config is required when --startup-mode=4")
+              }
+              try {
+                positionConfig = JSON.parse(argv.config as string)
+              } catch {
+                throw new Error("--config must be valid JSON")
+              }
+            }
+
             const resp = await startCdcTask(sc, {
               fileId,
               updateBy: String(sc.userId),
               workspace: sc.workspaceName,
+              startupMode,
+              engineType: argv["engine-type"] as number,
+              snapshotTaskSwitch: (argv.snapshot as boolean) ? 1 : 0,
+              snapshotTaskPoolSize: argv["snapshot-pool-size"] as number,
+              blacklistStrategy: argv["blacklist-strategy"] as number,
+              config: positionConfig,
             })
             logOperation("task start", { ok: true })
             success({ task_id: fileId, action: "start", result: resp.data }, {
               format,
-              aiMessage: `CDC task ${fileId} start triggered. Check status with: cz-cli task status ${fileId}`,
+              aiMessage: `CDC task ${fileId} start triggered (startupMode=${startupMode}). Check status with: cz-cli task status ${fileId}`,
             })
           } catch (err) {
             reportTaskError(err, format)
