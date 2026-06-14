@@ -922,6 +922,102 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const numericTypes = new Set(['INT','INTEGER','BIGINT','SMALLINT','TINYINT','MEDIUMINT','SERIAL','BIGSERIAL'])
             const numericCols = sourceColumns.filter((c) => numericTypes.has(String(c.type ?? "").toUpperCase().split("(")[0].trim()))
             const recommendedSplitPk = primaryCols[0]?.name ?? numericCols[0]?.name ?? null
+            const splitPkIsValid = recommendedSplitPk != null && (
+              primaryCols.some(c => c.name === recommendedSplitPk) ||
+              numericCols.some(c => c.name === recommendedSplitPk)
+            )
+
+            // Detect incremental column for write_mode + where inference
+            const UPDATE_TIME_PAT = /^(update_time|updated_at|gmt_modif(y|ied)|modify_time|last_modified|update_date)$/i
+            const CREATE_TIME_PAT = /^(create_time|created_at|gmt_create|create_date)$/i
+            const updateTimeCol = sourceColumns.find(c => UPDATE_TIME_PAT.test(String(c.name ?? "")))
+            const createTimeCol = sourceColumns.find(c => CREATE_TIME_PAT.test(String(c.name ?? "")))
+            const incrementalCol = updateTimeCol ?? createTimeCol
+            const recommendedWriteMode = incrementalCol ? "APPEND" : "OVERWRITE"
+            // ${bizdate} is a built-in system param injected by scheduler (previous day date)
+            const recommendedWhere = incrementalCol
+              ? `${String(incrementalCol.name)} >= '\${bizdate}'`
+              : null
+
+            // Column alignment check (only when target table exists)
+            // Source type → expected Lakehouse type
+            const SRC_TO_LH: Record<string, string> = {
+              BIGINT:'bigint', INT:'int', INTEGER:'int', MEDIUMINT:'int',
+              SMALLINT:'smallint', TINYINT:'tinyint',
+              FLOAT:'float', REAL:'float', DOUBLE:'double',
+              VARCHAR:'string', CHAR:'string', TEXT:'string', LONGTEXT:'string',
+              TINYTEXT:'string', MEDIUMTEXT:'string', CLOB:'string', NVARCHAR:'string',
+              BOOLEAN:'boolean', BOOL:'boolean', BIT:'boolean',
+              DATE:'date', TIME:'time',
+              DATETIME:'timestamp_ntz', TIMESTAMP:'timestamp_ltz',
+              BINARY:'binary', VARBINARY:'binary', BLOB:'binary', BYTEA:'binary',
+              JSON:'json', DECIMAL:'decimal', NUMERIC:'decimal', NUMBER:'decimal',
+            }
+            type ColAlignIssue = { name: string; source_type: string; expected_lh_type: string; actual_lh_type: string; alter_sql: string }
+            type ColAlignment = {
+              ok_count: number
+              missing: { name: string; source_type: string; expected_lh_type: string; alter_sql: string }[]
+              type_mismatch: ColAlignIssue[]
+              extra_in_target: string[]
+            }
+            const colAlignment: ColAlignment | null = (() => {
+              if (!targetCols) return null
+              const targetMap = new Map((targetCols as Record<string, unknown>[]).map(c => [
+                String(c.name ?? "").toLowerCase(),
+                String(c.type ?? "").toLowerCase()
+              ]))
+              const missing: ColAlignment['missing'] = []
+              const type_mismatch: ColAlignment['type_mismatch'] = []
+              let ok_count = 0
+              for (const sc of sourceColumns) {
+                const colName = String(sc.name ?? "")
+                const srcTypeRaw = String(sc.type ?? "").toUpperCase().split("(")[0].trim()
+                const expectedLhType = SRC_TO_LH[srcTypeRaw] ?? srcTypeRaw.toLowerCase()
+                const targetType = targetMap.get(colName.toLowerCase())
+                if (targetType === undefined) {
+                  missing.push({
+                    name: colName,
+                    source_type: srcTypeRaw,
+                    expected_lh_type: expectedLhType,
+                    alter_sql: `ALTER TABLE ${targetSchema}.${sinkTargetTable} ADD COLUMN ${colName} ${expectedLhType};`,
+                  })
+                } else {
+                  // Check compatibility: target type starts with expected (e.g. "decimal(10,2)" matches "decimal")
+                  // Also handle Lakehouse physical type aliases: int64=bigint, int32=int, float64=double, etc.
+                  const LH_ALIASES: Record<string, string> = {
+                    'int64': 'bigint', 'int32': 'int', 'int16': 'smallint', 'int8': 'tinyint',
+                    'float32': 'float', 'float64': 'double',
+                    'utf8': 'string', 'large_utf8': 'string',
+                    'timestamp_ntz': 'timestamp_ntz', 'timestamp_ltz': 'timestamp_ltz',
+                  }
+                  const normalizedTarget = LH_ALIASES[targetType] ?? targetType
+                  const compat = normalizedTarget.startsWith(expectedLhType) || expectedLhType.startsWith(normalizedTarget)
+                  if (!compat) {
+                    type_mismatch.push({
+                      name: colName, source_type: srcTypeRaw, expected_lh_type: expectedLhType,
+                      actual_lh_type: targetType,
+                      alter_sql: `ALTER TABLE ${targetSchema}.${sinkTargetTable} MODIFY COLUMN ${colName} ${expectedLhType};`,
+                    })
+                  } else {
+                    ok_count++
+                  }
+                }
+              }
+              const sourceNames = new Set(sourceColumns.map(c => String(c.name ?? "").toLowerCase()))
+              const extra_in_target = [...targetMap.keys()].filter(n => !sourceNames.has(n))
+              return { ok_count, missing, type_mismatch, extra_in_target }
+            })()
+
+            // Partition suggestion (only when target table does NOT exist)
+            const timeColForPartition = !targetTableExists ? sourceColumns.find(c => {
+              const t = String(c.type ?? "").toUpperCase().split("(")[0].trim()
+              const n = String(c.name ?? "").toLowerCase()
+              return (t === 'TIMESTAMP' || t === 'DATETIME' || t === 'DATE') &&
+                (n.includes('create') || n.includes('update') || n.includes('time') || n.includes('date'))
+            }) : undefined
+            const partitionSuggestion = timeColForPartition
+              ? { column: timeColForPartition.name, ddl_hint: `PARTITION BY date_trunc('day', ${String(timeColForPartition.name)})` }
+              : null
 
             logOperation("task integration-schema", { ok: true })
             success({
@@ -936,9 +1032,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               source_columns: sourceColumns,
               recommendations: {
                 split_pk: recommendedSplitPk,
-                write_mode: "APPEND",
+                split_pk_valid: splitPkIsValid,
+                write_mode: recommendedWriteMode,
                 parallelism: 1,
-                where: null,
+                where: recommendedWhere,
+                incremental_col: incrementalCol?.name ?? null,
               },
               // Source params template varies by datasource type
               source_params_template: (() => {
@@ -967,35 +1065,92 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               })(),
             }, {
               format,
-              aiMessage:
-                `Retrieved ${sourceColumns.length} columns from ${argv["source-db"]}.${argv["source-table"]}.\n` +
-                `Target table ${targetSchema}.${sinkTargetTable}: ${targetTableExists ? "EXISTS ✓" : "NOT EXISTS — must create before deploy"}\n` +
-                (recommendedSplitPk ? `Recommended splitPk: ${recommendedSplitPk} (speeds up parallel reads)\n` : "") +
-                `\n**REQUIRED: Confirm the following with the user before proceeding:**\n` +
-                `1. Target schema: "${targetSchema}" — correct? (required)\n` +
-                `2. Target table: "${sinkTargetTable}" — correct? (required)\n` +
-                (targetTableExists
-                  ? `3. Table exists. Write mode: APPEND (add rows) or OVERWRITE (replace all)? Default: APPEND\n`
-                  : `3. Table does NOT exist. Create it? If yes: need partition columns? (e.g. date column for partitioning)\n`) +
-                `4. splitPk: "${recommendedSplitPk ?? "none"}" — use this for parallel read? (optional, improves performance)\n` +
-                `5. where filter: any condition to filter source rows? (optional, e.g. "status='active'")\n` +
-                `6. parallelism: 1 — change? (optional)\n` +
-                `7. Sync VCluster: run 'cz-cli sql --sync "SHOW VCLUSTERS"' to list available VClusters, ` +
-                `then pick one with VCLUSTER_TYPE=INTEGRATION. If none exists, create one first:\n` +
-                `   CREATE VCLUSTER IF NOT EXISTS sync_vc VCLUSTER_TYPE=INTEGRATION VCLUSTER_SIZE=1 AUTO_RESUME=TRUE;\n` +
-                `\nAfter user confirms all above, generate config JSON using Lakehouse type mapping rules below,\n` +
-                `then call: cz-cli task save-integration ${fileId} --config '<json>' --vc <sync_vc_name>\n` +
-                `\nLakehouse type mapping rules:\n` +
-                `- VARCHAR/CHAR/TEXT/CLOB/NVARCHAR → string\n` +
-                `- TINYINT → tinyint | SMALLINT → smallint | INT/INTEGER → int | BIGINT → bigint\n` +
-                `- MySQL UNSIGNED promotion: TINYINT UNSIGNED→smallint, INT UNSIGNED→bigint, BIGINT UNSIGNED→decimal\n` +
-                `- FLOAT/REAL → float | DOUBLE → double | DECIMAL/NUMERIC/NUMBER → decimal(p,s)\n` +
-                `- BOOLEAN/BOOL/BIT(1) → boolean | DATE → date | TIME → time\n` +
-                `- MySQL DATETIME → timestamp_ntz | MySQL TIMESTAMP → timestamp_ltz\n` +
-                `- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz\n` +
-                `- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json\n` +
-                `\nConfig JSON structure (use source_params_template.params from this response for source.params):\n` +
-                `{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":<use source_params_template.params>,"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"APPEND","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`,
+              aiMessage: (() => {
+                const lines: string[] = []
+
+                // --- Summary ---
+                lines.push(`Retrieved ${sourceColumns.length} columns from ${argv["source-db"]}.${argv["source-table"]}.`)
+                lines.push(`Target table ${targetSchema}.${sinkTargetTable}: ${targetTableExists ? "EXISTS ✓" : "NOT EXISTS"}`)
+
+                // --- Inferred config ---
+                lines.push(`\n**Inferred configuration:**`)
+                if (incrementalCol) {
+                  lines.push(`- Incremental column detected: ${String(incrementalCol.name)} → write_mode=APPEND, where="${recommendedWhere}"`)
+                  lines.push(`  (${String(incrementalCol.name)} is a ${updateTimeCol ? "update-time" : "create-time"} column; \${bizdate} is auto-injected by scheduler as previous day date)`)
+                } else {
+                  lines.push(`- No incremental column detected → write_mode=OVERWRITE (full reload each run)`)
+                }
+                if (recommendedSplitPk) {
+                  const pkNote = primaryCols.some(c => c.name === recommendedSplitPk) ? "primary key" : "first numeric col"
+                  lines.push(`- splitPk: ${String(recommendedSplitPk)} (${pkNote}, enables parallel read)`)
+                } else {
+                  lines.push(`- splitPk: none (no primary key or numeric column found; single-thread read)`)
+                }
+
+                // --- Column alignment (target exists) ---
+                if (colAlignment) {
+                  lines.push(`\n**Column alignment check:**`)
+                  if (colAlignment.missing.length === 0 && colAlignment.type_mismatch.length === 0) {
+                    lines.push(`- ✓ All ${colAlignment.ok_count} columns match`)
+                  } else {
+                    if (colAlignment.ok_count > 0) lines.push(`- ✓ ${colAlignment.ok_count} columns OK`)
+                    if (colAlignment.missing.length > 0) {
+                      lines.push(`- ⚠ Missing columns in target (run these BEFORE deploy):`)
+                      colAlignment.missing.forEach(m => lines.push(`    ${m.alter_sql}`))
+                    }
+                    if (colAlignment.type_mismatch.length > 0) {
+                      lines.push(`- ⚠ Type mismatches (review and fix if needed):`)
+                      colAlignment.type_mismatch.forEach(m =>
+                        lines.push(`    ${m.name}: source ${m.source_type}→${m.expected_lh_type}, target has ${m.actual_lh_type}`)
+                      )
+                    }
+                  }
+                  if (colAlignment.extra_in_target.length > 0)
+                    lines.push(`- ℹ Extra columns in target (not in source, will not be written): ${colAlignment.extra_in_target.join(", ")}`)
+                }
+
+                // --- Partition suggestion (target not exists) ---
+                if (partitionSuggestion) {
+                  lines.push(`\n**Partition suggestion** (target table does not exist yet):`)
+                  lines.push(`- Detected time column: ${String(partitionSuggestion.column)} — consider creating as partitioned table:`)
+                  lines.push(`  ${partitionSuggestion.ddl_hint}`)
+                  lines.push(`  If partitioned: set sink.params.is_partition=true in config JSON`)
+                }
+
+                // --- Confirm with user (only non-inferred items) ---
+                lines.push(`\n**Confirm with user before proceeding:**`)
+                lines.push(`1. Target: ${targetSchema}.${sinkTargetTable} — correct schema/table?`)
+                if (incrementalCol) {
+                  lines.push(`2. WHERE condition "${recommendedWhere}" — does this incremental filter fit your use case?`)
+                  lines.push(`   If you need full reload instead: use write_mode=OVERWRITE and remove the where condition`)
+                } else {
+                  lines.push(`2. No incremental column found — confirm full OVERWRITE each run is acceptable`)
+                  lines.push(`   Or specify a custom where condition if you want partial sync`)
+                }
+                lines.push(`3. Sync VCluster: run 'cz-cli sql --sync "SHOW VCLUSTERS"' to list VClusters with VCLUSTER_TYPE=INTEGRATION`)
+                lines.push(`   If none exists: CREATE VCLUSTER IF NOT EXISTS sync_vc VCLUSTER_TYPE=INTEGRATION VCLUSTER_SIZE=1 AUTO_RESUME=TRUE;`)
+
+                // --- Next step ---
+                lines.push(`\nAfter confirming, generate config JSON and call:`)
+                lines.push(`cz-cli task save-integration ${fileId} --config '<json>' --vc <sync_vc_name>`)
+
+                // --- Type mapping rules ---
+                lines.push(`\nLakehouse type mapping rules:`)
+                lines.push(`- VARCHAR/CHAR/TEXT/CLOB/NVARCHAR → string`)
+                lines.push(`- TINYINT → tinyint | SMALLINT → smallint | INT/INTEGER → int | BIGINT → bigint`)
+                lines.push(`- MySQL UNSIGNED promotion: TINYINT UNSIGNED→smallint, INT UNSIGNED→bigint, BIGINT UNSIGNED→decimal`)
+                lines.push(`- FLOAT/REAL → float | DOUBLE → double | DECIMAL/NUMERIC/NUMBER → decimal(p,s)`)
+                lines.push(`- BOOLEAN/BOOL/BIT(1) → boolean | DATE → date | TIME → time`)
+                lines.push(`- MySQL DATETIME → timestamp_ntz | MySQL TIMESTAMP → timestamp_ltz`)
+                lines.push(`- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz`)
+                lines.push(`- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json`)
+
+                // --- Config JSON template ---
+                lines.push(`\nConfig JSON structure (use source_params_template.params for source.params):`)
+                lines.push(`{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":<source_params_template.params with splitPk and where added>,"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"${recommendedWriteMode}","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`)
+
+                return lines.join("\n")
+              })(),
             })
           } catch (err) {
             reportTaskError(err, format)
