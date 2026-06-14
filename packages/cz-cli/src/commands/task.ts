@@ -389,9 +389,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             const flat = flatten(tree, 0)
             logOperation("task folder-tree", { ok: true })
+            const aiMsg = flat.length > 0
+              ? `Found ${flat.length} folder(s). Use the 'id' or 'name' field with --folder when creating tasks. Example: cz-cli task create <name> --type SQL --folder <id>`
+              : "No folders found. Either no folders exist in this workspace yet, or your account may lack folder read permissions. " +
+                "You can: (1) create a folder first with 'cz-cli task create-folder <name>', or (2) create a task in root with '--folder 0' (not recommended)."
             success(flat, {
               format,
-              aiMessage: `Found ${flat.length} folder(s). Use the 'id' field with --folder when creating tasks. Example: cz-cli task create <name> --type SQL --folder <id>`,
+              aiMessage: aiMsg,
             })
           } catch (err) {
             reportTaskError(err, format)
