@@ -1147,15 +1147,24 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 }
                 if (ORACLE_LIKE.has(dt ?? 0)) return { // Oracle / DB2
                   note: `Oracle/DB2: 'database' = schema name (not instance name). where format: col >= TO_DATE('${BIZDATE}', 'YYYY-MM-DD'). splitPk must be numeric.`,
-                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string,
+                    ...(recommendedSplitPk != null ? { splitPk: recommendedSplitPk } : {}),
+                    ...(recommendedWhere != null ? { where: recommendedWhere } : {}),
+                  }
                 }
                 if (PG_LIKE.has(dt ?? 0)) return { // PostgreSQL family
                   note: `PostgreSQL/Greenplum/Redshift: where clause needs explicit cast: col >= '${BIZDATE}'::date. splitPk supported.`,
-                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string,
+                    ...(recommendedSplitPk != null ? { splitPk: recommendedSplitPk } : {}),
+                    ...(recommendedWhere != null ? { where: recommendedWhere } : {}),
+                  }
                 }
                 if (SS_LIKE.has(dt ?? 0)) return { // SQLServer
                   note: `SQLServer: default schema is 'dbo'. where format: col >= '${BIZDATE}'. splitPk supported.`,
-                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string,
+                    ...(recommendedSplitPk != null ? { splitPk: recommendedSplitPk } : {}),
+                    ...(recommendedWhere != null ? { where: recommendedWhere } : {}),
+                  }
                 }
                 // MySQL family + ClickHouse/Doris/StarRocks + default relational
                 const isMysqlFamily = MYSQL_LIKE.has(dt ?? 0)
@@ -1167,7 +1176,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   : `Relational DB: standard JDBC params. where format: col >= '${BIZDATE}'.`
                 return {
                   note,
-                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string }
+                  params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string,
+                    ...(recommendedSplitPk != null ? { splitPk: recommendedSplitPk } : {}),
+                    ...(recommendedWhere != null ? { where: recommendedWhere } : {}),
+                  }
                 }
               })(),
               ...(partitionSuggestion && { partition_suggestion: partitionSuggestion }),
