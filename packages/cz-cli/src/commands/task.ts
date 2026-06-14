@@ -396,6 +396,113 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "create-and-setup <name>",
+        "Create a task, save script content and cron schedule in one step",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true })
+            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC, etc." })
+            .option("folder", { type: "string", default: "0", describe: "Folder ID or name" })
+            .option("content", { type: "string", describe: "Script content" })
+            .option("file", { alias: "f", type: "string", describe: "Read script from file" })
+            .option("cron", { type: "string", describe: "Cron expression (5/6/7 fields)" })
+            .option("vc", { type: "string", describe: "Virtual cluster code" })
+            .option("schema", { type: "string", describe: "Schema name" })
+            .option("description", { type: "string", describe: "Task description" })
+            .option("params", { type: "string", describe: 'Runtime parameters JSON, e.g. \'{"bizdate":"bizdate","city":"beijing"}\'' }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            if (argv.content && argv.file) {
+              error("INVALID_ARGUMENTS", "Provide --content or --file, not both.", { format, exitCode: 2 }); return
+            }
+            const sc = await ctx(argv)
+            const folderRaw = (argv.folder as string).trim()
+            const folderId = /^\d+$/.test(folderRaw)
+              ? parseInt(folderRaw, 10)
+              : await resolveFolderIdByName(sc, folderRaw, format)
+
+            // Step 1: create
+            const createResp = await createTask(sc, {
+              fileType: String(parseTaskType(argv.type as string)),
+              createdBy: String(sc.userId),
+              projectId: sc.projectId,
+              dataFileName: argv.name as string,
+              fileDescription: argv.description,
+              dataFolderId: folderId,
+              workspaceName: sc.workspaceName,
+            })
+            const fileId = Number((createResp.data as Record<string, unknown>))
+            const url = studioUrl(sc, fileId)
+
+            // Step 2: save content (optional)
+            if (argv.content || argv.file) {
+              const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
+              let paramValueList: unknown[] | undefined
+              if (argv.params) {
+                const result = parseParamValueList(argv.params as string)
+                if (!result) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}`, { format }); return }
+                paramValueList = result
+              }
+              await saveTaskContent(sc, {
+                dataFileId: fileId,
+                dataFileContent: text,
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.instanceName,
+                replaceEscapedChars: false,
+                ...(paramValueList && { paramValueList }),
+              })
+            }
+
+            // Step 3: save cron (optional)
+            if (argv.cron) {
+              const cronResult = convertAgentCron(argv.cron as string)
+              if (!cronResult.ok || !cronResult.outputCron) {
+                error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 }); return
+              }
+              const oldConfigProps: Record<string, unknown> = {}
+              if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
+              if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
+              await saveTaskConfig(sc, {
+                dataFileId: fileId,
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.instanceName,
+                cronExpress: cronResult.outputCron,
+                schemaName: (argv.schema as string | undefined) ?? "public",
+                etlVcCode: (argv.vc as string | undefined) ?? "DEFAULT",
+                retryCount: 1,
+                retryIntervalTime: 1,
+                retryIntervalTimeUnit: "m",
+                rerunProperty: "3",
+                selfDependsJob: 0,
+                executeTimeout: 0,
+                executeTimeoutUnit: "m",
+                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                activeEndTime: "2099-01-01T00:00:00.000Z",
+                dataFileInputListReqs: [],
+                configProperties: JSON.stringify(oldConfigProps),
+              })
+            }
+
+            logOperation("task create-and-setup", { ok: true })
+            success({
+              task_id: fileId,
+              task_name: argv.name,
+              content_saved: !!(argv.content || argv.file),
+              cron_saved: !!argv.cron,
+              studio_url: url,
+            }, {
+              format,
+              aiMessage: t("task_save_online_reminder", fileId),
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "create-folder <name>",
         "Create a task folder",
         (y) =>
@@ -425,6 +532,58 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
               throw createErr
             }
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "status <task>",
+        "Get combined draft + deployed status in one call",
+        (y) => y.positional("task", { type: "string", demandOption: true }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+
+            // Parallel: draft detail + config + deployed schedule detail
+            const [detail, config, scheduleResp] = await Promise.all([
+              getTaskDetail(sc, fileId),
+              getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
+              studioRequest(sc, "/ide-admin/v1/scheduleTask/getDetail",
+                { scheduleTaskId: fileId, projectId: sc.projectId },
+                { env: "prod" },
+              ).catch(() => null),
+            ])
+
+            const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
+            const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
+              ? detailData.taskDetail : detailData) as Record<string, unknown>
+
+            const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<string, unknown>
+            const scheduleConfig = convertConfigFields((configData.taskConfigurationDetail ??
+              configData.task_configuration_detail ?? configData) as Record<string, unknown>)
+
+            const EDIT_STATE: Record<number, string> = { 10: "draft", 20: "published", 100: "offline" }
+            const editState = Number(detailObj.fileFlowStatus ?? detailObj.fileStatus ?? 0)
+
+            const scheduleData = scheduleResp?.data as Record<string, unknown> | null | undefined
+
+            logOperation("task status", { ok: true })
+            success({
+              task_id: fileId,
+              task_name: detailObj.dataFileName ?? detailObj.task_name,
+              edit_state: EDIT_STATE[editState] ?? String(editState),
+              studio_url: studioUrl(sc, fileId),
+              draft: {
+                task_content: detailObj.fileContent ?? detailObj.dataFileContent,
+                cron_express: scheduleConfig.cron_express,
+                vc: scheduleConfig.etl_vc_code,
+                schema: scheduleConfig.schema_name,
+              },
+              deployed: scheduleData ?? "not deployed or not accessible",
+            }, { format })
           } catch (err) {
             reportTaskError(err, format)
           }
