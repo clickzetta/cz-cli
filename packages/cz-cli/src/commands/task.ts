@@ -1396,10 +1396,33 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               page++
             }
 
+            // Enrich with last_edit_time via parallel getTaskDetail calls
+            const enriched = await Promise.all(
+              results.slice(0, limit).map(async (t) => {
+                try {
+                  const detail = await getTaskDetail(sc, Number(t.task_id))
+                  const data = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
+                  const lastEditTime = data.lastEditTime ?? data.last_edit_time
+                  const lastEditUser = data.lastEditUser ?? data.last_edit_user
+                  return { ...t, last_edit_time: lastEditTime, last_edit_user: lastEditUser }
+                } catch {
+                  return t
+                }
+              })
+            )
+
+            // Sort by last_edit_time descending (most recently modified first)
+            enriched.sort((a, b) => {
+              const ta = Number(a.last_edit_time ?? 0)
+              const tb = Number(b.last_edit_time ?? 0)
+              return tb - ta
+            })
+
             const EDIT_STATE: Record<number, string> = { 10: "draft", 20: "published", 100: "offline" }
-            const displayed = results.slice(0, limit).map((t) => ({
+            const displayed = enriched.map((t) => ({
               ...t,
               task_edit_state: EDIT_STATE[Number(t.task_edit_state)] ?? t.task_edit_state,
+              last_edit_time: t.last_edit_time ? new Date(Number(t.last_edit_time)).toISOString().replace("T", " ").slice(0, 19) : undefined,
             }))
 
             logOperation("task search", { ok: true })
