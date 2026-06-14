@@ -369,6 +369,8 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
 
             const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
             const PG_LIKE    = new Set([7, 22, 40, 46, 48])
+            const SS_LIKE    = new Set([8])   // SQL Server
+            const DM_LIKE    = new Set([26])  // DM 达梦
 
             // ── MySQL / TiDB / Aurora MySQL / PolarDB MySQL ────────────────
             if (MYSQL_LIKE.has(dsType)) {
@@ -447,6 +449,114 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
                 aiMessage: ready
                   ? `PostgreSQL CDC prerequisites met for '${ds.name}'.`
                   : `PostgreSQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
+              })
+              return
+            }
+
+            // ── SQL Server ─────────────────────────────────────────────────
+            // Note: not tested (no environment available) — based on standard SQL Server CDC docs
+            if (SS_LIKE.has(dsType)) {
+              const checks: { name: string; required: string; actual: string; pass: boolean }[] = []
+
+              // Check if CDC is enabled at database level: sys.databases.is_cdc_enabled = 1
+              const dbResp = await apiSampleData(sc, {
+                id: ds.id, nameSpace: "master", dataObjectName: "sys.databases", dsType,
+                where: "name = DB_NAME()",
+              }).catch(() => null)
+              const dbData = dbResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+              const cdcIdx = dbData?.fieldNames?.findIndex(f => f.toLowerCase() === "is_cdc_enabled") ?? -1
+              const isCdcEnabled = cdcIdx >= 0 && dbData?.rows?.[0]
+                ? String((dbData.rows[0] as unknown[])[cdcIdx]) === "1" || String((dbData.rows[0] as unknown[])[cdcIdx]).toLowerCase() === "true"
+                : false
+              checks.push({
+                name: "cdc_enabled",
+                required: "1 (enabled)",
+                actual: isCdcEnabled ? "1" : (cdcIdx >= 0 ? "0" : "UNKNOWN"),
+                pass: isCdcEnabled,
+              })
+
+              // Check if SQL Server Agent is running: sys.dm_server_services
+              const agentResp = await apiSampleData(sc, {
+                id: ds.id, nameSpace: "master", dataObjectName: "sys.dm_server_services", dsType,
+                where: "servicename LIKE 'SQL Server Agent%'",
+              }).catch(() => null)
+              const agentData = agentResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+              const statusIdx = agentData?.fieldNames?.findIndex(f => f.toLowerCase() === "status_desc") ?? -1
+              const agentStatus = statusIdx >= 0 && agentData?.rows?.[0]
+                ? String((agentData.rows[0] as unknown[])[statusIdx])
+                : "UNKNOWN"
+              checks.push({
+                name: "sql_server_agent",
+                required: "Running",
+                actual: agentStatus,
+                pass: agentStatus.toLowerCase() === "running",
+              })
+
+              const ready = checks.every(c => c.pass)
+              const failed = checks.filter(c => !c.pass)
+              const fixHints = failed.map(c =>
+                c.name === "cdc_enabled"
+                  ? "Enable CDC on the database: EXEC sys.sp_cdc_enable_db"
+                  : "Start SQL Server Agent service (required for CDC capture jobs)"
+              )
+
+              logOperation("datasource check-cdc", { ok: ready })
+              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
+                format,
+                aiMessage: ready
+                  ? `SQL Server CDC prerequisites met for '${ds.name}'.`
+                  : `SQL Server CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
+              })
+              return
+            }
+
+            // ── DM 达梦 ────────────────────────────────────────────────────
+            // Note: not tested (no environment available) — based on standard DM CDC docs
+            if (DM_LIKE.has(dsType)) {
+              const checks: { name: string; required: string; actual: string; pass: boolean }[] = []
+
+              // Check archive log mode: V$DATABASE ARCH_MODE = 1
+              const archResp = await apiSampleData(sc, {
+                id: ds.id, nameSpace: "SYS", dataObjectName: "V$DATABASE", dsType,
+              }).catch(() => null)
+              const archData = archResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+              const archIdx = archData?.fieldNames?.findIndex(f => f.toUpperCase() === "ARCH_MODE") ?? -1
+              const archMode = archIdx >= 0 && archData?.rows?.[0]
+                ? String((archData.rows[0] as unknown[])[archIdx])
+                : "UNKNOWN"
+              checks.push({
+                name: "arch_mode",
+                required: "1 (archiving enabled)",
+                actual: archMode,
+                pass: archMode === "1",
+              })
+
+              // Check supplemental log: V$DATABASE SUPPLEMENTAL_LOG_DATA_MIN
+              const suppIdx = archData?.fieldNames?.findIndex(f => f.toUpperCase() === "SUPPLEMENTAL_LOG_DATA_MIN") ?? -1
+              const suppLog = suppIdx >= 0 && archData?.rows?.[0]
+                ? String((archData.rows[0] as unknown[])[suppIdx])
+                : "UNKNOWN"
+              checks.push({
+                name: "supplemental_log",
+                required: "YES",
+                actual: suppLog,
+                pass: suppLog.toUpperCase() === "YES",
+              })
+
+              const ready = checks.every(c => c.pass)
+              const failed = checks.filter(c => !c.pass)
+              const fixHints = failed.map(c =>
+                c.name === "arch_mode"
+                  ? "Enable archive log mode in DM: ALTER DATABASE MOUNT; ALTER DATABASE ARCHIVELOG; ALTER DATABASE OPEN;"
+                  : "Enable supplemental logging: ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;"
+              )
+
+              logOperation("datasource check-cdc", { ok: ready })
+              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
+                format,
+                aiMessage: ready
+                  ? `DM CDC prerequisites met for '${ds.name}'.`
+                  : `DM CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
               })
               return
             }

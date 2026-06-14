@@ -119,6 +119,102 @@ async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: 
   return results
 }
 
+// CDC prerequisite check helper — returns { ok, message } without throwing
+async function checkCdcPrereqs(
+  sc: StudioConfig,
+  ds: { id: number; name: string; dsType: number },
+  sourceArg: string,
+): Promise<{ ok: boolean; message: string }> {
+  const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
+  const PG_LIKE    = new Set([7, 22, 40, 46, 48])
+  const SS_LIKE    = new Set([8])
+  const DM_LIKE    = new Set([26])
+
+  const dsType = ds.dsType
+
+  if (MYSQL_LIKE.has(dsType)) {
+    const r = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+      id: ds.id, nameSpace: "performance_schema", dataObjectName: "global_variables",
+      options: { dsType, where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')" },
+    }).catch(() => null)
+    const data = (r as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+    const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
+    const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
+    const varMap: Record<string, string> = {}
+    for (const row of data?.rows ?? []) {
+      varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
+    }
+    const failed: string[] = []
+    if ((varMap["log_bin"] ?? "").toUpperCase() !== "ON") failed.push("log_bin must be ON (add log_bin=ON to my.cnf and restart)")
+    if ((varMap["binlog_format"] ?? "").toUpperCase() !== "ROW") failed.push("SET GLOBAL binlog_format = 'ROW'")
+    if ((varMap["binlog_row_image"] ?? "").toUpperCase() !== "FULL") failed.push("SET GLOBAL binlog_row_image = 'FULL'")
+    if (failed.length > 0) return { ok: false, message: `MySQL CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+    return { ok: true, message: "" }
+  }
+
+  if (PG_LIKE.has(dsType)) {
+    const walR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+      id: ds.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings",
+      options: { dsType, where: "name = 'wal_level'" },
+    }).catch(() => null)
+    const walData = (walR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+    const si = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
+    const walLevel = walData?.rows?.[0] ? String((walData.rows[0] as unknown[])[si]) : ""
+    const slotR = await listPgSlots(sc, [ds.id]).catch(() => null)
+    const slots = slotR?.data?.find(s => s.datasourceId === ds.id)?.pipelineSlotMetaVos ?? []
+    const failed: string[] = []
+    if (walLevel !== "logical") failed.push(`wal_level must be 'logical' (current: '${walLevel || "unknown"}') — set in postgresql.conf and restart`)
+    if (slots.length === 0) failed.push("No replication slot found — run: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput')")
+    if (failed.length > 0) return { ok: false, message: `PostgreSQL CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+    return { ok: true, message: "" }
+  }
+
+  // SQL Server — not tested, based on standard SQL Server CDC docs
+  if (SS_LIKE.has(dsType)) {
+    const dbR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+      id: ds.id, nameSpace: "master", dataObjectName: "sys.databases",
+      options: { dsType, where: "name = DB_NAME()" },
+    }).catch(() => null)
+    const dbData = (dbR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+    const cdcIdx = dbData?.fieldNames?.findIndex(f => f.toLowerCase() === "is_cdc_enabled") ?? -1
+    const isCdcEnabled = cdcIdx >= 0 && dbData?.rows?.[0]
+      ? String((dbData.rows[0] as unknown[])[cdcIdx]) === "1"
+      : false
+    const agentR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+      id: ds.id, nameSpace: "master", dataObjectName: "sys.dm_server_services",
+      options: { dsType, where: "servicename LIKE 'SQL Server Agent%'" },
+    }).catch(() => null)
+    const agentData = (agentR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+    const stIdx = agentData?.fieldNames?.findIndex(f => f.toLowerCase() === "status_desc") ?? -1
+    const agentStatus = stIdx >= 0 && agentData?.rows?.[0] ? String((agentData.rows[0] as unknown[])[stIdx]) : "UNKNOWN"
+    const failed: string[] = []
+    if (!isCdcEnabled) failed.push("Enable CDC: EXEC sys.sp_cdc_enable_db")
+    if (agentStatus.toLowerCase() !== "running") failed.push(`SQL Server Agent must be Running (current: ${agentStatus}) — start the service`)
+    if (failed.length > 0) return { ok: false, message: `SQL Server CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+    return { ok: true, message: "" }
+  }
+
+  // DM 达梦 — not tested, based on standard DM CDC docs
+  if (DM_LIKE.has(dsType)) {
+    const dbR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
+      id: ds.id, nameSpace: "SYS", dataObjectName: "V$DATABASE",
+      options: { dsType },
+    }).catch(() => null)
+    const dbData = (dbR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
+    const archIdx = dbData?.fieldNames?.findIndex(f => f.toUpperCase() === "ARCH_MODE") ?? -1
+    const archMode = archIdx >= 0 && dbData?.rows?.[0] ? String((dbData.rows[0] as unknown[])[archIdx]) : "UNKNOWN"
+    const suppIdx = dbData?.fieldNames?.findIndex(f => f.toUpperCase() === "SUPPLEMENTAL_LOG_DATA_MIN") ?? -1
+    const suppLog = suppIdx >= 0 && dbData?.rows?.[0] ? String((dbData.rows[0] as unknown[])[suppIdx]) : "UNKNOWN"
+    const failed: string[] = []
+    if (archMode !== "1") failed.push(`ARCH_MODE must be 1 (current: ${archMode}) — ALTER DATABASE MOUNT; ALTER DATABASE ARCHIVELOG; ALTER DATABASE OPEN;`)
+    if (suppLog.toUpperCase() !== "YES") failed.push(`Supplemental logging must be enabled (current: ${suppLog}) — ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;`)
+    if (failed.length > 0) return { ok: false, message: `DM CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+    return { ok: true, message: "" }
+  }
+
+  return { ok: true, message: "" } // other types: no check needed
+}
+
 async function autoResolveLakehouseDs(sc: StudioConfig): Promise<{ id: number; name: string } | null> {
   const resp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
     current: 1, pageSize: 50, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
@@ -515,44 +611,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             // Step 2: CDC prerequisite check (before creating anything)
             if (!(argv["skip-check"] as boolean)) {
-              const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
-              const PG_LIKE    = new Set([7, 22, 40, 46, 48])
-              if (MYSQL_LIKE.has(sourceDs.dsType)) {
-                const r = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-                  id: sourceDs.id, nameSpace: "performance_schema", dataObjectName: "global_variables",
-                  options: { dsType: sourceDs.dsType, where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')" },
-                }).catch(() => null)
-                const data = (r as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-                const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
-                const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
-                const varMap: Record<string, string> = {}
-                for (const row of data?.rows ?? []) {
-                  varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
-                }
-                const failed: string[] = []
-                if ((varMap["log_bin"] ?? "").toUpperCase() !== "ON") failed.push("log_bin must be ON (add log_bin=ON to my.cnf and restart)")
-                if ((varMap["binlog_format"] ?? "").toUpperCase() !== "ROW") failed.push(`SET GLOBAL binlog_format = 'ROW'`)
-                if ((varMap["binlog_row_image"] ?? "").toUpperCase() !== "FULL") failed.push(`SET GLOBAL binlog_row_image = 'FULL'`)
-                if (failed.length > 0) {
-                  error("CDC_PREREQ_FAILED", `MySQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${argv.source}' for details. Use --skip-check to bypass.`, { format, exitCode: 2 }); return
-                }
-              } else if (PG_LIKE.has(sourceDs.dsType)) {
-                const walR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-                  id: sourceDs.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings",
-                  options: { dsType: sourceDs.dsType, where: "name = 'wal_level'" },
-                }).catch(() => null)
-                const walData = (walR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-                const si = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
-                const walLevel = walData?.rows?.[0] ? String((walData.rows[0] as unknown[])[si]) : ""
-                const slotR = await listPgSlots(sc, [sourceDs.id]).catch(() => null)
-                const slots = slotR?.data?.find(s => s.datasourceId === sourceDs.id)?.pipelineSlotMetaVos ?? []
-                const failed: string[] = []
-                if (walLevel !== "logical") failed.push(`wal_level must be 'logical' (current: '${walLevel || "unknown"}') — set in postgresql.conf and restart`)
-                if (slots.length === 0) failed.push("No replication slot found — run: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput')")
-                if (failed.length > 0) {
-                  error("CDC_PREREQ_FAILED", `PostgreSQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${argv.source}' for details. Use --skip-check to bypass.`, { format, exitCode: 2 }); return
-                }
-              }
+              const check = await checkCdcPrereqs(sc, sourceDs as { id: number; name: string; dsType: number }, String(argv.source))
+              if (!check.ok) { error("CDC_PREREQ_FAILED", check.message, { format, exitCode: 2 }); return }
             }
 
             // Step 3: resolve folder
@@ -1646,45 +1706,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             // CDC prerequisite check (skip with --skip-check)
             if (!(argv["skip-check"] as boolean)) {
-              const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
-              const PG_LIKE    = new Set([7, 22, 40, 46, 48])
-              if (MYSQL_LIKE.has(sourceDs.dsType)) {
-                const r = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-                  id: sourceDs.id, nameSpace: "performance_schema", dataObjectName: "global_variables",
-                  options: { dsType: sourceDs.dsType, where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')" },
-                }).catch(() => null)
-                const data = (r as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-                const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
-                const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
-                const varMap: Record<string, string> = {}
-                for (const row of data?.rows ?? []) {
-                  varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
-                }
-                const failed: string[] = []
-                if ((varMap["log_bin"] ?? "").toUpperCase() !== "ON") failed.push("log_bin must be ON (add log_bin=ON to my.cnf and restart)")
-                if ((varMap["binlog_format"] ?? "").toUpperCase() !== "ROW") failed.push(`SET GLOBAL binlog_format = 'ROW'`)
-                if ((varMap["binlog_row_image"] ?? "").toUpperCase() !== "FULL") failed.push(`SET GLOBAL binlog_row_image = 'FULL'`)
-                if (failed.length > 0) {
-                  error("CDC_PREREQ_FAILED", `MySQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nUse --skip-check to bypass.`, { format, exitCode: 2 }); return
-                }
-              } else if (PG_LIKE.has(sourceDs.dsType)) {
-                const walR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-                  id: sourceDs.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings",
-                  options: { dsType: sourceDs.dsType, where: "name = 'wal_level'" },
-                }).catch(() => null)
-                const walData = (walR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-                const si = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
-                const walRow = walData?.rows?.[0]
-                const walLevel = walRow ? String((walRow as unknown[])[si]) : ""
-                const slotR = await listPgSlots(sc, [sourceDs.id]).catch(() => null)
-                const slots = slotR?.data?.find(s => s.datasourceId === sourceDs.id)?.pipelineSlotMetaVos ?? []
-                const failed: string[] = []
-                if (walLevel !== "logical") failed.push(`wal_level must be 'logical' (current: '${walLevel || "unknown"}') — set in postgresql.conf and restart`)
-                if (slots.length === 0) failed.push("No replication slot found — run: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput')")
-                if (failed.length > 0) {
-                  error("CDC_PREREQ_FAILED", `PostgreSQL CDC prerequisites not met for '${sourceDs.name}':\n${failed.join("\n")}\n\nUse --skip-check to bypass.`, { format, exitCode: 2 }); return
-                }
-              }
+              const check = await checkCdcPrereqs(sc, sourceDs as { id: number; name: string; dsType: number }, String(argv.source))
+              if (!check.ok) { error("CDC_PREREQ_FAILED", check.message, { format, exitCode: 2 }); return }
             }
 
             // Resolve target datasource (default to first Lakehouse type if not specified)
