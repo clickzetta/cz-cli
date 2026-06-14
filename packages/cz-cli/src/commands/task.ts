@@ -983,7 +983,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               TINYTEXT:'string', MEDIUMTEXT:'string', CLOB:'string', NVARCHAR:'string',
               BOOLEAN:'boolean', BOOL:'boolean', BIT:'boolean',
               DATE:'date', TIME:'time',
-              DATETIME:'timestamp_ntz', TIMESTAMP:'timestamp_ltz',
+              DATETIME:'timestamp', TIMESTAMP:'timestamp',
               BINARY:'binary', VARBINARY:'binary', BLOB:'binary', BYTEA:'binary',
               JSON:'json', DECIMAL:'decimal', NUMERIC:'decimal', NUMBER:'decimal',
               // Complex types: pass through as-is (ARRAY/MAP/STRUCT carry element type info)
@@ -1026,9 +1026,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   // PG numeric
                   if (raw === 'NUMERIC') return 'decimal'
                   // PG time with tz
-                  if (raw === 'TIMESTAMPTZ') return 'timestamp_ltz'
-                  // PG timestamp without tz (plain TIMESTAMP)
-                  if (raw === 'TIMESTAMP') return 'timestamp_ntz'
+                  if (raw === 'TIMESTAMPTZ') return 'timestamp'
+                  // PG timestamp without tz — use timestamp (timestamp_ntz not supported by INTEGRATION sink)
+                  if (raw === 'TIMESTAMP') return 'timestamp'
                   // PG char types
                   if (raw === 'BPCHAR') return 'string'  // blank-padded char = CHAR
                   if (raw === 'NAME') return 'string'    // PG system type, ~64 chars
@@ -1248,7 +1248,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 lines.push(`\nLakehouse type system principles (use these to derive mappings, not a fixed lookup table):`)
                 lines.push(`- Numeric: TINYINT/SMALLINT/INT/BIGINT/FLOAT/DOUBLE/DECIMAL(p,s) map directly. MySQL UNSIGNED integers promote one size up (e.g. INT UNSIGNED → bigint). Use DECIMAL for money/exact values.`)
                 lines.push(`- String: all char/text variants → STRING (recommended default). VARCHAR(n)/CHAR(n) only if length constraint is meaningful.`)
-                lines.push(`- Time: key distinction — with-timezone → TIMESTAMP (= TIMESTAMP_LTZ), without-timezone → TIMESTAMP_NTZ. MySQL DATETIME is no-tz; MySQL TIMESTAMP is with-tz. PostgreSQL TIMESTAMP (no tz) → TIMESTAMP_NTZ; TIMESTAMPTZ → TIMESTAMP.`)
+                lines.push(`- Time: use TIMESTAMP for all datetime columns in INTEGRATION sink (timestamp_ntz is NOT supported by the sync engine). DATE and TIME map directly.`)
                 lines.push(`- Boolean/Binary/JSON map directly. ARRAY<T>/MAP<K,V>/STRUCT<f:T> keep same syntax. VECTOR(type,dim) for embeddings. BITMAP for cardinality estimation.`)
                 lines.push(`- PostgreSQL native types: int4/int8→int/bigint, float4/float8→float/double, timestamptz→TIMESTAMP, _text/_int4 etc (underscore prefix) are arrays→array<element_type>. pgvector 'vector' type → VECTOR(FLOAT, dim) — confirm dimension with user.`)
                 lines.push(`- When uncertain: prefer the wider/safer type (e.g. STRING over VARCHAR, BIGINT over INT, DOUBLE over FLOAT). Correctness > compactness.`)
