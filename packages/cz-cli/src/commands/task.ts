@@ -1001,7 +1001,26 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               for (const sc of sourceColumns) {
                 const colName = String(sc.name ?? "")
                 const srcTypeRaw = String(sc.type ?? "").toUpperCase().split("(")[0].trim()
-                const expectedLhType = SRC_TO_LH[srcTypeRaw] ?? srcTypeRaw.toLowerCase()
+                // PostgreSQL array types use _xxx prefix (e.g. _text = text[], _int4 = int4[])
+                // Map them to array<element_type>
+                const normalizeSrcType = (raw: string): string => {
+                  if (raw.startsWith('_')) {
+                    const elem = raw.slice(1)  // _text → text, _int4 → int4
+                    const elemLh = SRC_TO_LH[elem] ?? elem.toLowerCase()
+                    return `array<${elemLh}>`
+                  }
+                  // PG serial types are int sequences
+                  if (raw === 'SERIAL' || raw === 'SERIAL4') return 'int'
+                  if (raw === 'BIGSERIAL' || raw === 'SERIAL8') return 'bigint'
+                  if (raw === 'INT2' || raw === 'INT4') return 'int'
+                  if (raw === 'INT8') return 'bigint'
+                  if (raw === 'FLOAT4') return 'float'
+                  if (raw === 'FLOAT8') return 'double'
+                  if (raw === 'TIMESTAMPTZ') return 'timestamp_ltz'
+                  if (raw === 'VECTOR') return 'string'  // pgvector → ask LLM to use VECTOR(FLOAT, dim)
+                  return SRC_TO_LH[raw] ?? raw.toLowerCase()
+                }
+                const expectedLhType = normalizeSrcType(srcTypeRaw)
                 const targetType = targetMap.get(colName.toLowerCase())
                 if (targetType === undefined) {
                   missing.push({
@@ -1207,6 +1226,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 lines.push(`- String: all char/text variants → STRING (recommended default). VARCHAR(n)/CHAR(n) only if length constraint is meaningful.`)
                 lines.push(`- Time: key distinction — with-timezone → TIMESTAMP (= TIMESTAMP_LTZ), without-timezone → TIMESTAMP_NTZ. MySQL DATETIME is no-tz; MySQL TIMESTAMP is with-tz. PostgreSQL TIMESTAMP (no tz) → TIMESTAMP_NTZ; TIMESTAMPTZ → TIMESTAMP.`)
                 lines.push(`- Boolean/Binary/JSON map directly. ARRAY<T>/MAP<K,V>/STRUCT<f:T> keep same syntax. VECTOR(type,dim) for embeddings. BITMAP for cardinality estimation.`)
+                lines.push(`- PostgreSQL native types: int4/int8→int/bigint, float4/float8→float/double, timestamptz→TIMESTAMP, _text/_int4 etc (underscore prefix) are arrays→array<element_type>. pgvector 'vector' type → VECTOR(FLOAT, dim) — confirm dimension with user.`)
                 lines.push(`- When uncertain: prefer the wider/safer type (e.g. STRING over VARCHAR, BIGINT over INT, DOUBLE over FLOAT). Correctness > compactness.`)
 
                 // --- Config JSON template ---
