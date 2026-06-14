@@ -1031,6 +1031,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               error("INVALID_ARGUMENTS", "--config JSON must have templateKey, sourceConnection, sinkConnection, and jobs fields.", { format, exitCode: 2 }); return
             }
             const vcCode = (argv.vc as string | undefined) ?? "DEFAULT"
+            // Resolve VC name to numeric ID for scheduler
+            let etlVcId: string | number | undefined
+            if (vcCode && vcCode !== "DEFAULT") {
+              etlVcId = await resolveVclusterId(sc, vcCode).catch(() => undefined)
+            }
             const adhocConfigs = JSON.stringify({
               multiDataSource: [],
               schema: argv["target-schema"] as string,
@@ -1045,6 +1050,33 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               replaceEscapedChars: false,
               adhocConfigs,
             })
+            // Also save etlVcCode/etlVcId for scheduled execution
+            // Read existing config to preserve cron and other settings
+            const existingCfg = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }).catch(() => null)
+            const oldData = (existingCfg?.data as Record<string, unknown> | undefined) ?? {}
+            if (vcCode && vcCode !== "DEFAULT") {
+              await saveTaskConfig(sc, {
+                dataFileId: fileId,
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.instanceName,
+                cronExpress: (oldData.cronExpress as string | undefined) ?? "0 0 * * *",
+                schemaName: (argv["target-schema"] as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public",
+                etlVcCode: vcCode,
+                etlVcId: etlVcId as number | undefined,
+                retryCount: (oldData.retryCount as number | undefined) ?? 1,
+                retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
+                retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
+                rerunProperty: String((oldData.rerunProperty as number | undefined) ?? 3),
+                selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? 0,
+                executeTimeout: (oldData.executeTimeout as number | undefined) ?? 0,
+                activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
+                activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
+                ownerEnName: (oldData.ownerEnName as string | undefined),
+                ownerCnName: (oldData.ownerCnName as string | undefined),
+                configProperties: (oldData.configProperties as Record<string, unknown> | undefined),
+              })
+            }
             // Verify the content was actually saved by reading it back
             const verify = await getTaskDetail(sc, fileId)
             const verifyData = (verify.data && typeof verify.data === "object" ? verify.data : {}) as Record<string, unknown>
@@ -1194,6 +1226,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
 
             const vcCodeFinal = (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT"
+            // Resolve VC name to numeric ID for scheduler (mirrors frontend vcluster/list lookup)
+            let etlVcIdFinal: number | string | undefined = argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined)
+            if (!etlVcIdFinal && vcCodeFinal && vcCodeFinal !== "DEFAULT") {
+              const resolvedId = await resolveVclusterId(sc, vcCodeFinal).catch(() => undefined)
+              if (resolvedId) etlVcIdFinal = resolvedId
+            }
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
@@ -1202,7 +1240,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               cronExpress: cronResult.outputCron!,
               schemaName: (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public",
               etlVcCode: vcCodeFinal,
-              etlVcId: argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined),
+              etlVcId: etlVcIdFinal as number | undefined,
               retryCount: (oldData.retryCount as number | undefined) ?? 1,
               retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
               retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",

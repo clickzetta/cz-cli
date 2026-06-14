@@ -54,12 +54,13 @@ export interface SaveTaskConfigParams {
   ownerCnName?: string
   schemaName?: string
   etlVcCode?: string
-  etlVcId?: number
+  etlVcId?: number | string
   executeTimeout?: number
   executeTimeoutUnit?: string
   dataFileInputListReqs?: unknown[]
   configProperties?: unknown
   taskPriority?: string
+  connectionParam?: string
 }
 
 export interface SubmitTaskParams {
@@ -159,8 +160,8 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       retryIntervalTimeUnit: params.retryIntervalTimeUnit,
       rerunProperty: params.rerunProperty,
       selfDependsJob: params.selfDependsJob,
-      activeStartTime: params.activeStartTime,
-      activeEndTime: params.activeEndTime,
+      ...(params.activeStartTime !== undefined && { activeStartTime: params.activeStartTime }),
+      ...(params.activeEndTime !== undefined && { activeEndTime: params.activeEndTime }),
       ownerEnName: params.ownerEnName,
       ownerCnName: params.ownerCnName,
       schemaName: params.schemaName,
@@ -172,6 +173,7 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       dataFileOutputListReqs: [],
       configProperties: params.configProperties,
       taskPriority: params.taskPriority ?? "1",
+      ...(params.connectionParam !== undefined && { connectionParam: params.connectionParam }),
       scheduleRateType: 2,
       scheduleType: 1,
       fileCreateType: 1,
