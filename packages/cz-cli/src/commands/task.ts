@@ -1132,6 +1132,26 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
             // For script-based tasks (SQL/Python/Shell/JDBC), check schedule config is saved
             const SCRIPT_FILE_TYPES = new Set([4, 5, 7, 15])
+            // UI_ONLY sync types need source/target configured before deploy
+            const UI_ONLY_SYNC_TYPES = new Set([1, 14, 17, 280, 281, 291])
+            if (UI_ONLY_SYNC_TYPES.has(fileType)) {
+              const syncTypeName: Record<number, string> = {
+                1: "INTEGRATION (single-table sync)", 14: "REALTIME (single-table CDC)",
+                17: "STREAMING", 280: "FULL_INCREMENTAL", 281: "MULTI_REALTIME (multi-table CDC)",
+                291: "MULTI_DI (multi-table offline sync)",
+              }
+              const typeName = syncTypeName[fileType] ?? `type=${fileType}`
+              // For MULTI_REALTIME, check if cdc was configured via save-cdc
+              // For others, just warn and let server decide
+              if (fileType === 281) {
+                const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
+                if (!hasConfig) {
+                  error("NO_SYNC_CONFIG", `CDC task not configured. Run 'cz-cli task save-cdc ${fileId} --source <ds> --database <db>' first.`, { format, exitCode: 2 }); return
+                }
+              } else if (fileType === 291 || fileType === 280) {
+                process.stderr.write(`Warning: ${typeName} task source/target must be configured in Studio UI before deploying.\n`)
+              }
+            }
             if (SCRIPT_FILE_TYPES.has(fileType)) {
               const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
               if (hasConfig === false || hasConfig === 0) {
