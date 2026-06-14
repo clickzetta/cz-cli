@@ -16,6 +16,8 @@ import {
   startCdcTask,
   stopCdcTask,
   getCdcTaskRunStatus,
+  listPgSlots,
+  listPgPublications,
   resolveVclusterId,
   studioRequest,
   type StudioConfig,
@@ -1431,6 +1433,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("tables", { type: "string", describe: "Comma-separated table names to sync. Omit for whole-database mirror." })
             .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolves if omitted)" })
             .option("vc", { type: "string", describe: "Virtual cluster name for CDC execution (e.g. FLINK_ON_VC)" })
+            .option("slot-name", { type: "string", describe: "PostgreSQL replication slot name (auto-detected for PG sources if omitted)" })
+            .option("logic-plugin", { type: "string", default: "pgoutput", describe: "PostgreSQL logical replication plugin (default: pgoutput)" })
             .option("pipeline-type", {
               type: "number", default: 3,
               describe: "1=multi-table mirror (specific tables), 2=multi-table merge (sharding), 3=whole-database mirror (default)",
@@ -1477,12 +1481,33 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // If tables specified but pipeline-type is 3, auto-switch to 1
             const effectivePipelineType = tablesArg && pipelineType === 3 ? 1 : pipelineType
 
+            // PG (dsType=7,22,40,46,48): resolve slot name
+            const PG_TYPES = new Set([7, 22, 40, 46, 48])
+            const isPg = PG_TYPES.has(sourceDs.dsType)
+            let slotName = argv["slot-name"] as string | undefined
+            const logicPlugin = (argv["logic-plugin"] as string | undefined) ?? "pgoutput"
+
+            if (isPg && !slotName) {
+              // Auto-detect: use first available inactive slot
+              const slotResp = await listPgSlots(sc, [sourceDs.id]).catch(() => null)
+              const slots = slotResp?.data?.find((s: { datasourceId: number }) => s.datasourceId === sourceDs.id)?.pipelineSlotMetaVos ?? []
+              if (slots.length > 0) {
+                slotName = slots[0].slotName
+              } else {
+                error("PG_SLOT_REQUIRED", `No replication slots found on datasource '${sourceDs.name}'. Create a slot in PostgreSQL first, then pass --slot-name <slot>.`, { format, exitCode: 2 }); return
+              }
+            }
+
             const resp = await saveCdcTask(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
               pipelineType: effectivePipelineType,
               syncMode: argv["sync-mode"] as number,
-              sourceDatasourceList: [{ datasourceId: sourceDs.id, datasourceType: sourceDs.dsType }],
+              sourceDatasourceList: [{
+                datasourceId: sourceDs.id,
+                datasourceType: sourceDs.dsType,
+                ...(isPg && slotName && { slotName, logicPlugin }),
+              }],
               syncObjectList,
               targetDatasource: { datasourceId: targetDsId, datasourceType: targetDsType },
             })
@@ -1507,7 +1532,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             success({
               task_id: fileId,
               pipeline_type: effectivePipelineType === 1 ? "multi-table mirror" : effectivePipelineType === 2 ? "multi-table merge" : "whole-database mirror",
-              source: { datasource: sourceDs.name, database: argv.database, tables: tablesArg ?? "all" },
+              source: { datasource: sourceDs.name, database: argv.database, tables: tablesArg ?? "all", ...(isPg && slotName && { slot: slotName, logic_plugin: logicPlugin }) },
               target: { datasource_id: targetDsId, ds_type: targetDsType },
               sync_mode: argv["sync-mode"] === 1 ? "full+incremental" : "incremental only",
               studio_url: studioUrl(sc, fileId),

@@ -252,7 +252,7 @@ export interface SaveCdcTaskParams {
   pipelineType: number      // 1=multi-table mirror, 2=multi-table merge, 3=whole-database mirror
   saveMode?: number         // 1=overwrite, 2=append (default), 3=modify
   syncMode?: number         // 1=full+incremental (default), 2=incremental only
-  sourceDatasourceList: { datasourceId: number; datasourceType: number }[]
+  sourceDatasourceList: { datasourceId: number; datasourceType: number; slotName?: string; logicPlugin?: string }[]
   syncObjectList: { schemaName: string; tableName?: string }[]
   targetDatasource: { datasourceId: number; datasourceType: number }
 }
@@ -306,6 +306,55 @@ export function stopCdcTask(config: StudioConfig, fileId: number, updateBy: stri
 export function getCdcTaskRunStatus(config: StudioConfig, timelyId: number) {
   return studioRequest(config, "/ide-admin/v1/timelyTask/getDetail", {
     timelyId,
+  })
+}
+
+export interface PgSlotInfo {
+  slotName: string
+  slotType: string
+  active: string
+}
+
+export interface PgSlotListItem {
+  datasourceId: number
+  db: string
+  pipelineSlotMetaVos: PgSlotInfo[]
+}
+
+export function listPgSlots(config: StudioConfig, datasourceIds: number[]): Promise<{ data: PgSlotListItem[] }> {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/pipeline/slotList", {
+    datasourceIds,
+  })
+}
+
+export interface PgPublicationInfo {
+  name: string
+  owner: string
+  allTables: boolean
+  publishInsert: boolean
+  publishUpdate: boolean
+  publishDelete: boolean
+  publishTruncate: boolean
+  publishViaPartitionRoot: boolean
+}
+
+export interface PgPublicationListItem {
+  datasourceId: number
+  publications: PgPublicationInfo[]
+}
+
+export function listPgPublications(config: StudioConfig, datasourceIds: number[]): Promise<{ data: PgPublicationListItem[] }> {
+  return studioRequest(config, "/clickzetta-rocket/api/v1/task/pipeline/listPublications", {
+    datasourceIds,
+  })
+}
+
+export function checkCdcTables(config: StudioConfig, pipelineId: number, workspace: string, pipelineType: number, heterogeneous = false) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/pipeline/checkTables", {
+    pipelineId,
+    workspace,
+    heterogeneous,
+    pipelineType,
   })
 }
 
