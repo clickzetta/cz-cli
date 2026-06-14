@@ -1141,7 +1141,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               default: 300,
               describe: "Max seconds to wait for completion",
             })
-            .option("poll-interval", { type: "number", default: 5, describe: "Polling interval seconds" }),
+            .option("poll-interval", { type: "number", default: 5, describe: "Polling interval seconds" })
+            .option("save-params", { type: "boolean", default: false, describe: "After execution, persist --param values back to task paramValueList so scheduled runs use the same values" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -1285,10 +1286,31 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   execution_status: STATUS_NAME[statusCode as number] ?? statusCode,
                 }
                 const aiMessage =
-                  `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
+                  `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。` +
+                  (argv["save-params"] && Object.keys(cliParams).length > 0
+                    ? `--param 值已通过 --save-params 写回任务 paramValueList，调度运行将使用这些参数值。`
+                    : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。`) +
+                  `如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
                 if (statusCode === 3 || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
                   return
+                }
+                // If --save-params, persist cliParams back to paramValueList for scheduled runs
+                if (argv["save-params"] && Object.keys(cliParams).length > 0) {
+                  const updatedParamList = parseParamValueList(
+                    "{" + Object.entries(cliParams).map(([k, v]) => `"${k}":"${v}"`).join(",") + "}"
+                  )
+                  if (updatedParamList) {
+                    await saveTaskContent(sc, {
+                      dataFileId: fileId,
+                      dataFileContent: content,
+                      projectId: sc.projectId,
+                      updateBy: String(sc.userId),
+                      instanceName: sc.instanceName,
+                      replaceEscapedChars: false,
+                      paramValueList: updatedParamList,
+                    }).catch(() => {}) // non-fatal
+                  }
                 }
                 logOperation("task execute", { ok: true })
                 success(result, { format, aiMessage })
