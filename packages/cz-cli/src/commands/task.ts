@@ -896,8 +896,20 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }, {
               format,
               aiMessage: `Retrieved ${sourceColumns.length} columns from ${argv["source-db"]}.${argv["source-table"]}. ` +
-                `Next step: map source column types to Lakehouse types (refer to Lakehouse data type docs), ` +
-                `then call: cz-cli task save-integration ${fileId} --config '<json>'`,
+                `\n\nNext step: generate the integration config JSON with correct Lakehouse sink column types, then call:\n` +
+                `  cz-cli task save-integration ${fileId} --config '<json>'\n` +
+                `\nLakehouse type mapping rules:\n` +
+                `- VARCHAR/CHAR/TEXT/CLOB/NVARCHAR → string\n` +
+                `- TINYINT → tinyint | SMALLINT → smallint | INT/INTEGER → int | BIGINT → bigint\n` +
+                `- MySQL UNSIGNED promotion: TINYINT UNSIGNED→smallint, INT UNSIGNED→bigint, BIGINT UNSIGNED→decimal\n` +
+                `- FLOAT/REAL → float | DOUBLE → double | DECIMAL/NUMERIC/NUMBER → decimal(p,s)\n` +
+                `- BOOLEAN/BOOL/BIT(1) → boolean\n` +
+                `- DATE → date | TIME → time\n` +
+                `- MySQL DATETIME → timestamp_ntz (no timezone) | MySQL TIMESTAMP → timestamp_ltz (with timezone)\n` +
+                `- PostgreSQL TIMESTAMP (no tz) → timestamp_ntz | PostgreSQL TIMESTAMPTZ → timestamp_ltz\n` +
+                `- BINARY/VARBINARY/BLOB/BYTEA → binary | JSON → json\n` +
+                `\nConfig JSON structure (fill in sink column types using mapping above):\n` +
+                `{"templateKey":1,"userParams":{},"sourceConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":<dsType>},"sinkConnection":{"datasourceId":<id>,"datasourceName":"<name>","type":1},"jobs":[{"source":{"dataObject":"<table>","namespace":"<db>","params":{"dsType":<n>,"operatorType":"source","table":"<table>","database":"<db>"},"columns":[...source columns as-is...]},"sink":{"dataObject":"<table>","namespace":"<schema>","params":{"dsType":1,"writeMode":"APPEND","operatorType":"sink","table":"<table>","database":"<schema>","is_partition":false},"columns":[...same columns with Lakehouse types...]},"setting":{"parallelism":1,"errorLimit":{"maxCount":-1,"collectDirtyData":true,"record":-1}},"columnMapping":{"col":"col",...}}]}`,
             })
           } catch (err) {
             reportTaskError(err, format)
