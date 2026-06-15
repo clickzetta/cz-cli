@@ -2077,7 +2077,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               describe: "Integration config JSON (output from agent after reviewing integration-schema). Must contain templateKey, sourceConnection, sinkConnection, jobs[].",
             })
             .option("vc", { type: "string", describe: "VCluster for execution" })
-            .option("target-schema", { type: "string", default: "public", describe: "Target schema (used in adhocConfigs)" }),
+            .option("target-schema", { type: "string", default: "public", describe: "Target schema (used in adhocConfigs)" })
+            .option("flow-id", { type: "number", describe: "Parent flow task ID (when this is a flow node)" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -2105,15 +2106,33 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               schema: argv["target-schema"] as string,
               adhocVcCode: vcCode,
             })
-            await saveTaskContent(sc, {
-              dataFileId: fileId,
-              dataFileContent: JSON.stringify(integrationConfig),
-              projectId: sc.projectId,
-              updateBy: String(sc.userId),
-              instanceName: sc.instanceName,
-              replaceEscapedChars: false,
-              adhocConfigs,
-            })
+            const flowId = argv["flow-id"] as number | undefined
+            if (flowId !== undefined) {
+              // Flow node: saveDataFileConfiguration with flow's dataFileId + nodeId
+              await studioRequest(sc, "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration", {
+                dataFileId: Number(flowId),
+                nodeId: fileId,
+                dataFileContent: JSON.stringify(integrationConfig),
+                projectId: sc.projectId,
+                collectType: 2,
+                onlySaveContent: 1,
+                updateBy: String(sc.userId),
+                instanceName: sc.instanceName,
+                paramValueList: [],
+                inputParamValueList: null,
+                outputParamValueList: null,
+              })
+            } else {
+              await saveTaskContent(sc, {
+                dataFileId: fileId,
+                dataFileContent: JSON.stringify(integrationConfig),
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.instanceName,
+                replaceEscapedChars: false,
+                adhocConfigs,
+              })
+            }
             // Also save etlVcCode/etlVcId for scheduled execution
             // Read existing config to preserve cron and other settings
             const existingCfg = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }).catch(() => null)
@@ -2144,9 +2163,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               })
             }
             // Verify the content was actually saved by reading it back
-            const verify = await getTaskDetail(sc, fileId)
-            const verifyData = (verify.data && typeof verify.data === "object" ? verify.data : {}) as Record<string, unknown>
-            const savedContent = verifyData.fileContent ?? verifyData.dataFileContent
+            let savedContent: unknown
+            if (flowId !== undefined) {
+              const verify = await getFlowNodeDetail(sc, Number(flowId), fileId)
+              const verifyData = (verify.data && typeof verify.data === "object" ? verify.data : {}) as Record<string, unknown>
+              savedContent = verifyData.fileContent ?? verifyData.dataFileContent
+            } else {
+              const verify = await getTaskDetail(sc, fileId)
+              const verifyData = (verify.data && typeof verify.data === "object" ? verify.data : {}) as Record<string, unknown>
+              savedContent = verifyData.fileContent ?? verifyData.dataFileContent
+            }
             if (!savedContent || String(savedContent).length < 10) {
               error("SAVE_FAILED", "Integration config was not saved — server returned empty content. Check datasource IDs and config structure.", { format, exitCode: 2 }); return
             }
