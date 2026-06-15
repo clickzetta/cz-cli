@@ -2,11 +2,10 @@ import {
   listTasks, listRuns, getRunDetail, getFlowDag, listFolders,
   type StudioConfig,
 } from "@clickzetta/sdk"
-import { error } from "./output/index.js"
+import { error, handledError } from "./output/index.js"
 
 function fail(code: string, message: string, format: string): never {
-  error(code, message, { format })
-  throw new Error(message)
+  handledError(code, message, { format })
 }
 
 const DEFAULT_RUN_TYPES = [1, 3, 4]
