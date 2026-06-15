@@ -905,6 +905,219 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "create-realtime <name>",
+        "Create and configure a REALTIME single-table streaming task (Kafka/AutoMQ → Lakehouse)",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true, describe: "Task name" })
+            .option("folder", { type: "string", demandOption: true, describe: "Folder ID or name" })
+            .option("source", { type: "string", demandOption: true, describe: "Kafka/AutoMQ datasource name or ID" })
+            .option("topic", { type: "string", demandOption: true, describe: "Kafka topic name" })
+            .option("target", { type: "string", describe: "Target Lakehouse datasource (auto-resolves if omitted)" })
+            .option("target-schema", { type: "string", default: "public", describe: "Target schema (default: public)" })
+            .option("target-table", { type: "string", describe: "Target table name (defaults to topic name)" })
+            .option("vc", { type: "string", describe: "Virtual cluster name for execution" })
+            .option("mode", { type: "string", default: "latest-offset", describe: "Kafka offset mode: latest-offset, earliest-offset, specific-offsets (default: latest-offset)" })
+            .option("codec", { type: "string", default: "json", describe: "Message codec: json, avro, csv (default: json)" })
+            .option("group-id", { type: "string", default: "1", describe: "Kafka consumer group ID (default: 1)" })
+            .option("parallelism", { type: "number", default: 1, describe: "Task parallelism (default: 1)" })
+            .option("cron", { type: "string", describe: "Cron expression for scheduled heartbeat (required for deploy)" })
+            .option("description", { type: "string", describe: "Task description" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+
+            // Step 1: resolve source datasource
+            const sourceDs = await resolveDatasource(sc, String(argv.source))
+            const KAFKA_TYPES = new Set([2, 45]) // Kafka=2, AutoMQ=45
+            if (!KAFKA_TYPES.has(sourceDs.dsType ?? 0)) {
+              error("INVALID_ARGUMENTS", `REALTIME task only supports Kafka/AutoMQ as source. '${sourceDs.name}' (dsType=${sourceDs.dsType}) is not supported.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 2: resolve target datasource (Lakehouse only)
+            let targetDsId: number
+            let targetDsName: string
+            if (argv.target) {
+              const targetDs = await resolveDatasource(sc, String(argv.target))
+              if ((targetDs.dsType ?? 1) !== 1) {
+                error("INVALID_ARGUMENTS", `REALTIME task only supports Lakehouse as target.`, { format, exitCode: 2 }); return
+              }
+              targetDsId = targetDs.id; targetDsName = targetDs.name
+            } else {
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) { error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target.", { format, exitCode: 2 }); return }
+              targetDsId = lhDs.id; targetDsName = lhDs.name
+            }
+
+            const topic = argv.topic as string
+            const targetTable = (argv["target-table"] as string | undefined) ?? topic
+            const targetSchema = argv["target-schema"] as string
+
+            // Step 3: check if target table exists
+            const targetColsResp = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
+              id: targetDsId, nameSpace: targetSchema, dataObjectName: targetTable,
+            }).catch(() => null)
+            const targetCols = (() => {
+              if (!targetColsResp) return null
+              const d = ((targetColsResp as unknown) as Record<string, unknown>).data as Record<string, unknown> | null
+              if (!d) return null
+              const cols = (d as Record<string, unknown>).columns
+              return Array.isArray(cols) && cols.length > 0 ? cols : null
+            })()
+            const targetTableExists = targetCols !== null
+
+            // Step 4: resolve folder + check duplicate
+            const folderRaw = (argv.folder as string).trim()
+            const folderId = /^\d+$/.test(folderRaw)
+              ? parseInt(folderRaw, 10)
+              : await resolveFolderIdByName(sc, folderRaw, format)
+            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
+              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 5: create task
+            const created = await createTask(sc, {
+              fileType: "14",
+              createdBy: String(sc.userId),
+              projectId: sc.projectId,
+              dataFileName: argv.name as string,
+              fileDescription: argv.description as string | undefined,
+              dataFolderId: folderId,
+              workspaceName: sc.workspaceName,
+            })
+            const fileId = Number(created.data)
+
+            // Step 6: Kafka system columns (fixed schema)
+            const kafkaColumns = [
+              { name: "__key__",       type: "STRING",  physicalType: null, comment: null, nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__value__",     type: "STRING",  physicalType: null, comment: null, nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__partition__", type: "INTEGER", physicalType: null, comment: null, nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__offset__",    type: "LONG",    physicalType: null, comment: null, nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__timestamp__", type: "LONG",    physicalType: null, comment: null, nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+            ]
+            const sinkColumns = [
+              { name: "__key__",       type: "string",  physicalType: null, comment: "", nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__value__",     type: "string",  physicalType: null, comment: "", nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__partition__", type: "int",     physicalType: null, comment: "", nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__offset__",    type: "bigint",  physicalType: null, comment: "", nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+              { name: "__timestamp__", type: "bigint",  physicalType: null, comment: "", nullable: false, supportAsSplitKey: false, properties: null, primary: false, sorted: false, cluster: false, partitionColumn: false },
+            ]
+
+            // Step 7: build and save content
+            const content = {
+              templateKey: 1,
+              userParams: {},
+              sourceConnection: {
+                datasourceId: sourceDs.id,
+                datasourceName: sourceDs.name,
+                type: sourceDs.dsType,
+              },
+              sinkConnection: {
+                datasourceId: targetDsId,
+                datasourceName: targetDsName,
+                type: 1,
+              },
+              jobs: [{
+                source: {
+                  dataObject: topic,
+                  namespace: "--",
+                  params: {
+                    dsType: sourceDs.dsType,
+                    mode: argv.mode as string,
+                    codec: argv.codec as string,
+                    groupId: argv["group-id"] as string,
+                    operatorType: "source",
+                    table: topic,
+                    database: "--",
+                  },
+                  columns: kafkaColumns,
+                },
+                sink: {
+                  dataObject: targetTable,
+                  namespace: targetSchema,
+                  params: {
+                    dsType: 1,
+                    writeMode: "APPEND",
+                    operatorType: "sink",
+                    table: targetTable,
+                    database: targetSchema,
+                    is_partition: false,
+                  },
+                  columns: sinkColumns,
+                },
+                setting: {
+                  parallelism: argv.parallelism as number,
+                  errorLimit: { maxCount: -1, record: -1 },
+                },
+                columnMapping: {
+                  __key__: "__key__", __value__: "__value__",
+                  __partition__: "__partition__", __offset__: "__offset__", __timestamp__: "__timestamp__",
+                },
+              }],
+            }
+
+            const vcName = argv.vc as string | undefined
+            const resolvedVcId = vcName ? await resolveVclusterId(sc, vcName).catch(() => undefined) : undefined
+            await saveTaskContent(sc, {
+              dataFileId: fileId,
+              dataFileContent: JSON.stringify(content),
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.workspaceName,
+              ...(vcName && {
+                adhocConfigs: JSON.stringify({
+                  multiDataSource: [],
+                  schema: targetSchema,
+                  adhocVcCode: vcName,
+                  ...(resolvedVcId != null && { adhocVcId: String(resolvedVcId) }),
+                }),
+              }),
+            })
+
+            // Save cron + VC config (required for deploy)
+            await saveTaskConfig(sc, {
+              dataFileId: fileId,
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.workspaceName,
+              cronExpress: normalizeCron((argv.cron as string | undefined) ?? "0 0 2 * * ? *"),
+              ...(vcName && { etlVcCode: vcName }),
+              ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
+              activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+              activeEndTime: "2099-01-01T00:00:00.000Z",
+            }).catch(() => null)
+
+            // DDL hint for target table if not exists
+            const ddlHint = !targetTableExists
+              ? `CREATE TABLE IF NOT EXISTS ${targetSchema}.${targetTable} (\n  __key__ STRING,\n  __value__ STRING,\n  __partition__ INT,\n  __offset__ BIGINT,\n  __timestamp__ BIGINT\n);`
+              : null
+
+            logOperation("task create-realtime", { ok: true })
+            success({
+              task_id: fileId,
+              task_name: argv.name,
+              source: { datasource: sourceDs.name, topic, mode: argv.mode, codec: argv.codec },
+              target: { datasource: targetDsName, schema: targetSchema, table: targetTable, table_exists: targetTableExists },
+              studio_url: studioUrl(sc, fileId),
+              ...(ddlHint && { create_table_ddl: ddlHint }),
+            }, {
+              format,
+              aiMessage: [
+                `REALTIME task created (id=${fileId}).`,
+                !targetTableExists ? `⚠ Target table '${targetSchema}.${targetTable}' does not exist. Run:\n  cz-cli sql "${ddlHint?.replace(/\n/g, " ")}"` : null,
+                `Next: deploy with 'cz-cli task deploy ${fileId} -y', then start with 'cz-cli task start ${fileId}'.`,
+              ].filter(Boolean).join("\n"),
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "create-and-setup <name>",
         "Create a task, save script content and cron schedule in one step",
         (y) =>
