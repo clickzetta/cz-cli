@@ -870,20 +870,18 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }),
             })
 
-            // Step 9: save cron + VC if provided
-            if (argv.cron || vcName) {
-              await saveTaskConfig(sc, {
-                dataFileId: fileId,
-                projectId: sc.projectId,
-                updateBy: String(sc.userId),
-                instanceName: sc.workspaceName,
-                ...(argv.cron && { cronExpress: normalizeCron(argv.cron as string) }),
-                ...(vcName && { etlVcCode: vcName }),
-                ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
-                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
-                activeEndTime: "2099-01-01T00:00:00.000Z",
-              }).catch(() => null)
-            }
+            // Step 9: save cron + VC config (required for deploy)
+            await saveTaskConfig(sc, {
+              dataFileId: fileId,
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.workspaceName,
+              cronExpress: normalizeCron((argv.cron as string | undefined) ?? "0 0 2 * * ? *"),
+              ...(vcName && { etlVcCode: vcName }),
+              ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
+              activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+              activeEndTime: "2099-01-01T00:00:00.000Z",
+            }).catch(() => null)
 
             logOperation("task create-batch-sync", { ok: true })
             success({
