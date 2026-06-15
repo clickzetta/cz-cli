@@ -8,7 +8,7 @@ import {
    listFolders, createFolder,
   executeAdhoc, getRunDetail,
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
-  removeFlowNode, submitFlow, listFlowInstances,
+  removeFlowNode, executeFlow, getFlowParams, listFlowInstances,
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
@@ -3040,7 +3040,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   projectId: sc.projectId,
                   nodeName: argv.name as string,
                   fileType: String(parseTaskType(argv.type as string)),
-                  env: sc.env,
+                  env: "prod",
                   nodeDescription: argv.description,
                   dependencyNodeId: depNodeId,
                   content: argv.content,
@@ -3096,6 +3096,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 const upstreamNodeId = await resolveNodeId(sc, fileId, argv.upstream as string, format)
                 const downstreamNodeId = await resolveNodeId(sc, fileId, argv.downstream as string, format)
+                // Check if dep already exists
+                const dagResp = await getFlowDag(sc, fileId)
+                const dagNodes = (dagResp.data ?? []) as Record<string, unknown>[]
+                const downstreamNode = dagNodes.find((n) => Number(n.id) === downstreamNodeId)
+                const existingDeps = (downstreamNode?.dependencies ?? []) as Record<string, unknown>[]
+                if (existingDeps.some((d) => Number(d.dependencyNodeId) === upstreamNodeId)) {
+                  success({ message: `Dependency '${argv.upstream}' → '${argv.downstream}' already exists.` }, { format })
+                  return
+                }
                 const resp = await bindFlowNode(sc, {
                   currentFileId: fileId,
                   currentNodeId: downstreamNodeId,
@@ -3117,14 +3126,27 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("dependency-id", { alias: "dep-id", type: "number", demandOption: true }),
+                .option("upstream", { type: "string", describe: "Upstream node name", demandOption: true })
+                .option("downstream", { type: "string", describe: "Downstream node name", demandOption: true }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
+                const upstreamNodeId = await resolveNodeId(sc, fileId, argv.upstream as string, format)
+                const downstreamNodeId = await resolveNodeId(sc, fileId, argv.downstream as string, format)
+                // Find the dep id from DAG
+                const dagResp = await getFlowDag(sc, fileId)
+                const dagNodes = (dagResp.data ?? []) as Record<string, unknown>[]
+                const downstreamNode = dagNodes.find((n) => Number(n.id) === downstreamNodeId)
+                const deps = (downstreamNode?.dependencies ?? []) as Record<string, unknown>[]
+                const dep = deps.find((d) => Number(d.dependencyNodeId) === upstreamNodeId)
+                if (!dep) {
+                  error("NOT_FOUND", `No dependency found from '${argv.upstream}' to '${argv.downstream}'.`, { format, exitCode: 2 })
+                  return
+                }
                 const resp = await unbindFlowNode(sc, {
-                  depId: argv["dependency-id"] as number,
+                  depId: Number(dep.id),
                   fileId,
                 })
                 logOperation("task flow unbind", { ok: true })
@@ -3240,20 +3262,124 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "submit <task>",
-            "Publish flow",
-            (y) => y.positional("task", { type: "string", demandOption: true }),
+            "Submit/publish flow (saves schedule config)",
+            (y) =>
+              y
+                .positional("task", { type: "string", demandOption: true })
+                .option("vc", { type: "string", describe: "Virtual cluster code" })
+                .option("cron", { type: "string", describe: "Cron expression" })
+                .option("retry-count", { type: "number", describe: "Retry count" }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                const resp = await submitFlow(sc, {
-                  fileId,
+                const oldResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
+                const oldData = (oldResp.data && typeof oldResp.data === "object" ? oldResp.data : {}) as Record<string, unknown>
+                const vcCode = (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT"
+                await saveTaskConfig(sc, {
+                  dataFileId: fileId,
                   projectId: sc.projectId,
-                  env: sc.env,
+                  updateBy: String(sc.userId),
+                  instanceName: sc.instanceName,
+                  cronExpress: argv.cron ? normalizeCron(argv.cron as string) : (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *",
+                  activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
+                  activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
+                  etlVcCode: vcCode,
+                  retryCount: (argv["retry-count"] as number | undefined) ?? (oldData.retryCount as number | undefined) ?? 1,
+                  retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
+                  retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
+                  rerunProperty: String((oldData.rerunProperty as number | undefined) ?? 3),
+                  selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? 0,
+                  schemaName: (oldData.schemaName as string | undefined) ?? "public",
+                  dataFileInputListReqs: (oldData.dataFileDependencyDTOS as unknown[]) ?? [],
+                  configProperties: oldData.configProperties ?? "{}",
+                  dataFileVersion: -1,
+                  scheduleRateType: 3,
+                  triggerType: 1,
+                  fileType: 500,
+                  dataFileName: oldData.dataFileName as string | undefined,
+                  fileDescription: oldData.fileDescription as string | undefined,
+                  useFlowConfig: false,
+                  connectionParam: JSON.stringify({
+                    lakeHouseInstanceId: String(sc.instanceId),
+                    adhocVcCode: vcCode.toLowerCase(),
+                    workspaceName: sc.workspaceName,
+                    schemaName: (oldData.schemaName as string | undefined) ?? "public",
+                  }),
                 })
-                logOperation("task flow submit", { ok: true })
-                success(resp.data, { format })
+                // Poll for fileFlowStatus=100 && deployStatus=1
+                let published = false
+                for (let i = 0; i < 10; i++) {
+                  await new Promise((r) => setTimeout(r, 1500))
+                  const detail = await getTaskDetail(sc, fileId)
+                  const d = (detail.data ?? {}) as Record<string, unknown>
+                  if (Number(d.fileFlowStatus) === 100 && Number(d.deployStatus) === 1) {
+                    published = true; break
+                  }
+                }
+                logOperation("task flow submit", { ok: published })
+                success({
+                  task_id: fileId,
+                  published,
+                  studio_url: studioUrl(sc, fileId),
+                }, { format, aiMessage: published ? "Flow submitted successfully." : "Flow saved but publish status not confirmed within timeout." })
+              } catch (err) {
+                reportTaskError(err, format)
+              }
+            },
+          )
+          .command(
+            "run <task>",
+            "Execute flow ad-hoc",
+            (y) =>
+              y
+                .positional("task", { type: "string", demandOption: true })
+                .option("vc", { type: "string", describe: "Virtual cluster code (default: DEFAULT)" })
+                .option("param", { type: "array", string: true, describe: "Override param value: key=value (can repeat)" }),
+            async (argv) => {
+              const format = argv.format
+              try {
+                const sc = await ctx(argv)
+                const fileId = await resolveTaskId(sc, argv.task as string, format)
+                const vcCode = (argv.vc as string | undefined) ?? "DEFAULT"
+                const vcId = await resolveVclusterId(sc, vcCode)
+                // Parse --param key=value overrides
+                const overrides: Record<string, string> = {}
+                for (const p of (argv.param as string[] | undefined) ?? []) {
+                  const eq = p.indexOf("=")
+                  if (eq > 0) overrides[p.slice(0, eq)] = p.slice(eq + 1)
+                }
+                // Get node list from params API
+                const paramsResp = await getFlowParams(sc, fileId)
+                const paramsData = (paramsResp.data ?? {}) as Record<string, unknown>
+                // Merge overrides into flow-level paramValueList
+                const flowParams = ((paramsData.paramValueList ?? []) as Record<string, unknown>[]).map((p) => {
+                  const key = String(p.paramName ?? p.name ?? "")
+                  return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
+                })
+                const children = ((paramsData.children ?? []) as Record<string, unknown>[]).map((c) => {
+                  const nodeParamList = ((c.paramValueList ?? []) as Record<string, unknown>[]).map((p) => {
+                    const key = String(p.paramName ?? p.name ?? "")
+                    return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
+                  })
+                  return { id: Number(c.id), name: String(c.name), paramValueList: nodeParamList.length ? nodeParamList : undefined }
+                })
+                const resp = await executeFlow(sc, {
+                  dataFileId: fileId,
+                  instanceName: sc.instanceName,
+                  updateBy: String(sc.userId),
+                  vcCode,
+                  vcId: String(vcId),
+                  paramValueList: flowParams,
+                  nodeParams: children,
+                })
+                logOperation("task flow run", { ok: true })
+                const d = (resp.data ?? {}) as Record<string, unknown>
+                success({
+                  schedule_instance_id: d.scheduleInstanceId,
+                  session_id: d.sessionId,
+                }, { format, aiMessage: `Flow started. Instance ID: ${d.scheduleInstanceId}` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3288,7 +3414,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .strictCommands()
           .strictOptions()
-          .demandCommand(1, "Missing subcommand for 'task flow'. Available: list, detail, submit, instances, node-save-config"),
+          .demandCommand(1, "Missing subcommand for 'task flow'. Available: dag, create-node, remove-node, bind, unbind, node-detail, node-save, node-save-config, submit, run, instances"),
       )
       .command(
         "delete-folder <folder>",

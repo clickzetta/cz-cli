@@ -61,6 +61,13 @@ export interface SaveTaskConfigParams {
   configProperties?: unknown
   taskPriority?: string
   connectionParam?: string
+  dataFileVersion?: number
+  scheduleRateType?: number
+  triggerType?: number
+  fileType?: number
+  dataFileName?: string
+  fileDescription?: string
+  useFlowConfig?: boolean
 }
 
 export interface SubmitTaskParams {
@@ -174,11 +181,17 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       configProperties: params.configProperties,
       taskPriority: params.taskPriority ?? "1",
       ...(params.connectionParam !== undefined && { connectionParam: params.connectionParam }),
-      scheduleRateType: 2,
+      ...(params.dataFileVersion !== undefined && { dataFileVersion: params.dataFileVersion }),
+      scheduleRateType: params.scheduleRateType ?? 2,
       scheduleType: 1,
       fileCreateType: 1,
       scheduleCreatedType: "2",
       scheduleConfigType: "1",
+      ...(params.triggerType !== undefined && { triggerType: params.triggerType }),
+      ...(params.fileType !== undefined && { fileType: params.fileType }),
+      ...(params.dataFileName !== undefined && { dataFileName: params.dataFileName }),
+      ...(params.fileDescription !== undefined && { fileDescription: params.fileDescription }),
+      ...(params.useFlowConfig !== undefined && { useFlowConfig: params.useFlowConfig }),
     },
   )
 }

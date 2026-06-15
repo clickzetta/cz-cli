@@ -7,6 +7,7 @@ export async function studioRequest<T>(
   path: string,
   body: unknown,
   extraHeaders?: Record<string, string>,
+  method: string = "POST",
 ) {
   const opts: ClientOptions = {
     baseUrl: config.baseUrl,
@@ -23,7 +24,7 @@ export async function studioRequest<T>(
       ...extraHeaders,
     },
   }
-  const resp = await request<T>(opts, path, body)
+  const resp = await request<T>(opts, path, body, method)
   const code = resp.code
   if (code !== 0 && code !== "0" && code !== "200" && code !== 200) {
     throw new ClickZettaApiError(

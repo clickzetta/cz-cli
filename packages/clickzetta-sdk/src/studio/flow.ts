@@ -35,10 +35,14 @@ export interface RemoveFlowNodeParams {
   nodeId: number
 }
 
-export interface SubmitFlowParams {
-  fileId: number
-  projectId: number
-  env: string
+export interface ExecuteFlowParams {
+  dataFileId: number
+  instanceName: string
+  updateBy: string
+  vcCode: string
+  vcId: string
+  paramValueList?: unknown[]
+  nodeParams?: { id: number; name: string; paramValueList?: unknown[] }[]
 }
 
 export interface ListFlowInstancesParams {
@@ -179,19 +183,37 @@ export function removeFlowNode(config: StudioConfig, params: RemoveFlowNodeParam
   )
 }
 
-export function submitFlow(config: StudioConfig, params: SubmitFlowParams) {
+export function getFlowParams(config: StudioConfig, dataFileId: number) {
   return studioRequest(
     config,
-    "/ide-admin/v1/flow/submit",
-    {
-      fileId: params.fileId,
-      projectId: params.projectId,
-      env: params.env,
-    },
+    `/ide-admin/v1/flow/list/params?fileId=${dataFileId}`,
+    undefined,
     {
       tenantId: String(config.tenantId),
       userId: String(config.userId),
       ...FLOW_HEADERS,
+    },
+    "GET",
+  )
+}
+
+export function executeFlow(config: StudioConfig, params: ExecuteFlowParams) {
+  const nodeParams = params.nodeParams ?? []
+  return studioRequest(
+    config,
+    "/ide-admin/v1/adhoc/flow/execute",
+    {
+      sqlVcId: params.vcId,
+      sqlVcCode: params.vcCode,
+      flowParamValuesDto: {
+        id: params.dataFileId,
+        paramValueList: params.paramValueList ?? [],
+        children: nodeParams,
+      },
+      useAdHocSchema: true,
+      updateBy: params.updateBy,
+      dataFileId: params.dataFileId,
+      instanceName: params.instanceName,
     },
   )
 }
