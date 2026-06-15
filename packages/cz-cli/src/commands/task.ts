@@ -3244,6 +3244,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   return
                 }
                 const text = argv.content ?? (argv.file ? readFileSync(argv.file as string, "utf-8") : undefined)
+                // If no content provided, fetch existing content to avoid overwriting
+                let finalContent: string
+                if (text !== undefined) {
+                  finalContent = text
+                } else {
+                  const existing = await getFlowNodeDetail(sc, fileId, nodeId)
+                  finalContent = ((existing.data as Record<string, unknown>)?.fileContent as string | undefined) ?? ""
+                }
                 // Build paramValueList from --param key=value
                 const paramList = ((argv.param as string[] | undefined) ?? []).map((p, i) => {
                   const eq = p.indexOf("=")
@@ -3259,7 +3267,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const resp = await saveFlowNodeContent(sc, {
                   dataFileId: fileId,
                   nodeId,
-                  dataFileContent: text ?? "",
+                  dataFileContent: finalContent,
                   projectId: sc.projectId,
                   updateBy: String(sc.userId),
                   instanceName: sc.instanceName,
