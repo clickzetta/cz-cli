@@ -577,7 +577,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-multi-realtime <name>",
+        "create-multi-table-realtime-sync <name>",
         "Create and configure a MULTI_REALTIME CDC task in one step (checks prerequisites first)",
         (y) =>
           y
@@ -710,7 +710,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }).catch(() => null)
             }
 
-            logOperation("task create-multi-realtime", { ok: true })
+            logOperation("task create-multi-table-realtime-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -729,7 +729,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-multi-di <name>",
+        "create-multi-table-batch-sync <name>",
         "Create and configure a MULTI_DI offline batch sync task in one step (checks prerequisites first)",
         (y) =>
           y
@@ -885,7 +885,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }).catch(() => null)
             }
 
-            logOperation("task create-multi-di", { ok: true })
+            logOperation("task create-multi-table-batch-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -903,7 +903,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-realtime <name>",
+        "create-single-stream-sync <name>",
         "Create and configure a REALTIME single-table streaming task (Kafka/AutoMQ → Lakehouse)",
         (y) =>
           y
@@ -1092,7 +1092,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ? `CREATE TABLE IF NOT EXISTS ${targetSchema}.${targetTable} (\n  __key__ STRING,\n  __value__ STRING,\n  __partition__ INT,\n  __offset__ BIGINT,\n  __timestamp__ BIGINT\n);`
               : null
 
-            logOperation("task create-realtime", { ok: true })
+            logOperation("task create-single-stream-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -2424,7 +2424,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (!hasConfig) {
                   const cmd = fileType === 281
                     ? `cz-cli task save-cdc ${fileId} --source <ds> --database <db>`
-                    : `cz-cli task create-multi-di <name> --source <ds> --database <db>`
+                    : `cz-cli task create-multi-table-batch-sync <name> --source <ds> --database <db>`
                   error("NO_SYNC_CONFIG", `${syncTypeName[fileType]} task not configured. Run '${cmd}' first.`, { format, exitCode: 2 }); return
                 }
               } else if (fileType === 1) {
