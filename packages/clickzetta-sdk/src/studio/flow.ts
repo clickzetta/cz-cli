@@ -60,6 +60,8 @@ export interface SaveFlowNodeContentParams {
   updateBy: string
   instanceName: string
   paramValueList?: unknown[]
+  vcCode?: string
+  schemaName?: string
 }
 
 export interface SaveFlowNodeConfigParams {
@@ -260,8 +262,8 @@ export function saveFlowNodeContent(config: StudioConfig, params: SaveFlowNodeCo
       instanceName: params.instanceName,
       adhocConfigs: JSON.stringify({
         multiDataSource: [],
-        schema: "public",
-        adhocVcCode: "DEFAULT",
+        schema: params.schemaName ?? "public",
+        adhocVcCode: params.vcCode ?? "DEFAULT",
       }),
       extendConfigs: null,
     },

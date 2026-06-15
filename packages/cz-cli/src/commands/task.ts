@@ -1347,7 +1347,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               isCdcType
                 ? (fileType === 14
                     ? getCdcTaskRunStatus(sc, fileId).catch(() => null)           // REALTIME: use fileId directly
-                    : getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null))  // MULTI_REALTIME: use cdcTaskId
+                    : detailObj.cdcTaskId != null
+                        ? getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null)  // MULTI_REALTIME: use cdcTaskId
+                        : Promise.resolve(null))   // not yet deployed, no cdcTaskId
                 : Promise.resolve(null),
             ])
 
@@ -1562,21 +1564,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
             }
 
-            // Step 2: create task
-            const created = await createTask(sc, {
-              fileType: "1",
-              createdBy: String(sc.userId),
-              projectId: sc.projectId,
-              dataFileName: argv.name as string,
-              fileDescription: argv.description as string | undefined,
-              dataFolderId: folderId,
-              workspaceName: sc.workspaceName,
-            })
-            const fileId = Number(created.data)
-
-            // Step 3: run integration-schema logic with the new fileId
-
-            // Inline: same as integration-schema but with fileId already resolved
+            // Step 1.5: resolve datasources BEFORE creating task (avoid orphan on failure)
             const sourceDs = await resolveDatasource(sc, String(argv.source))
             if (!sourceDs.dsType) {
               error("INVALID_ARGUMENTS", `Cannot determine dsType for datasource '${argv.source}'.`, { format, exitCode: 2 }); return
@@ -1591,6 +1579,21 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               if (!lhDs) { error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target.", { format, exitCode: 2 }); return }
               targetDsId = lhDs.id; targetDsName = lhDs.name
             }
+
+            // Step 2: create task
+            const created = await createTask(sc, {
+              fileType: "1",
+              createdBy: String(sc.userId),
+              projectId: sc.projectId,
+              dataFileName: argv.name as string,
+              fileDescription: argv.description as string | undefined,
+              dataFolderId: folderId,
+              workspaceName: sc.workspaceName,
+            })
+            const fileId = Number(created.data)
+
+            // Step 3: run integration-schema logic with the new fileId
+            // (datasources already resolved above)
             const sinkTargetTable = (argv["target-table"] as string | undefined) ?? argv["source-table"] as string
             const targetSchema = argv["target-schema"] as string
             const [metaResp, targetColsResp] = await Promise.all([
@@ -2125,6 +2128,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 paramValueList: [],
                 inputParamValueList: null,
                 outputParamValueList: null,
+                adhocConfigs,
               })
             } else {
               await saveTaskContent(sc, {
@@ -2746,8 +2750,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const resp = await (async () => {
               // REALTIME (14) uses a different API than MULTI_REALTIME (281)
               const det = await getTaskDetail(sc, fileId)
-              const detObj = (det?.data as Record<string, unknown>)?.taskDetail ?? det?.data ?? {}
-              const ft = Number((detObj as Record<string, unknown>).fileType ?? 0)
+              const detData = det?.data as Record<string, unknown> | undefined
+              const detObj = (typeof detData?.taskDetail === "object" && detData?.taskDetail !== null
+                ? detData.taskDetail : detData) as Record<string, unknown>
+              const ft = Number(detObj?.fileType ?? 0)
               if (ft === 14) {
                 return startRealtimeTask(sc, fileId, String(sc.userId), sc.workspaceName, sc.projectId, startupMode)
               }
@@ -2784,8 +2790,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             // REALTIME (14) uses a different stop API
             const det = await getTaskDetail(sc, fileId)
-            const detObj = (det?.data as Record<string, unknown>)?.taskDetail ?? det?.data ?? {}
-            const ft = Number((detObj as Record<string, unknown>).fileType ?? 0)
+            const detData = det?.data as Record<string, unknown> | undefined
+            const detObj = (typeof detData?.taskDetail === "object" && detData?.taskDetail !== null
+              ? detData.taskDetail : detData) as Record<string, unknown>
+            const ft = Number(detObj?.fileType ?? 0)
             const resp = ft === 14
               ? await stopRealtimeTask(sc, fileId, String(sc.userId), sc.workspaceName, sc.projectId)
               : await stopCdcTask(sc, fileId, String(sc.userId), sc.workspaceName)

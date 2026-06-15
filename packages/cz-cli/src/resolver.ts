@@ -87,7 +87,7 @@ async function resolveTaskIdsForRunLookup(
   })
 
   const data = resp.data as Record<string, unknown> | undefined
-  const tasks = (Array.isArray(data) ? data : (data?.tasks ?? data?.data ?? [])) as Record<string, unknown>[]
+  const tasks = (Array.isArray(data) ? data : (data?.list ?? data?.data ?? [])) as Record<string, unknown>[]
   if (!Array.isArray(tasks) || tasks.length === 0) {
     return fail("TASK_NOT_FOUND", `No task found matching '${taskName}'.`, format)
   }
