@@ -509,7 +509,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const flat = flatten(tree, 0)
             logOperation("task folder-tree", { ok: true })
             const aiMsg = flat.length > 0
-              ? `Found ${flat.length} folder(s). Use the 'id' or 'name' field with --folder when creating tasks. Example: cz-cli task create <name> --type SQL --folder <id>`
+              ? `Found ${flat.length} folder(s). Use the 'id' or 'name' field with --folder when creating tasks. Example: cz-cli task create-script-task <name> --type SQL --folder <id>`
               : "No folders found. Either no folders exist in this workspace yet, or your account may lack folder read permissions. " +
                 "You can: (1) create a folder first with 'cz-cli task create-folder <name>', or (2) create a task in root with '--folder 0' (not recommended)."
             success(flat, {
@@ -522,7 +522,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create <name>",
+        "create-script-task <name>",
         "Create a new task",
         (y) =>
           y
@@ -566,7 +566,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFolderId: folderId,
               workspaceName: sc.workspaceName,
             })
-            logOperation("task create", { ok: true })
+            logOperation("task create-script-task", { ok: true })
             const data = resp.data as Record<string, unknown> | undefined
             const newFileId = Number(data)
             const url = newFileId ? studioUrl(sc, newFileId) : undefined
@@ -1114,7 +1114,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-and-setup <name>",
+        "create-script-task-with-config <name>",
         "Create a task, save script content and cron schedule in one step",
         (y) =>
           y
@@ -1173,7 +1173,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 workspaceName: sc.workspaceName,
               })
               const fileId = Number(createResp.data as Record<string, unknown>)
-              logOperation("task create-and-setup", { ok: true })
+              logOperation("task create-script-task-with-config", { ok: true })
               success({
                 task_id: fileId,
                 task_name: argv.name,
@@ -1268,7 +1268,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               throw setupErr
             }
 
-            logOperation("task create-and-setup", { ok: true })
+            logOperation("task create-script-task-with-config", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -1410,7 +1410,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        ["content <task>", "detail <task>"],
+        ["get-task-content <task>", "detail <task>"],
         "Get task content and config",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
@@ -1462,7 +1462,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ds_type: adhocConfigs?.dsType ?? detailData.dsType ?? undefined,
               schedule_config: scheduleConfig,
             }
-            logOperation("task content", { ok: true })
+            logOperation("task get-task-content", { ok: true })
             success({ ...merged, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_content") })
           } catch (err) {
             reportTaskError(err, format)
@@ -1470,7 +1470,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-content <task>",
+        "save-script-content <task>",
         "Save task script content",
         (y) =>
           y
@@ -1526,7 +1526,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(paramValueList && { paramValueList }),
               ...(adhocConfigs && { adhocConfigs }),
             })
-            logOperation("task save-content", { ok: true })
+            logOperation("task save-script-content", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             reportTaskError(err, format)
@@ -1634,7 +1634,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 `Source: ${sourceDs.name}.${argv["source-db"]}.${argv["source-table"]} (${sourceColumns.length} columns)`,
                 `Target: ${targetDsName}.${targetSchema}.${sinkTargetTable} — ${targetTableExists ? "table EXISTS" : "table NOT EXISTS (needs CREATE TABLE)"}`,
                 `\nNext: review source_columns and generate field mapping config, then run:`,
-                `  cz-cli task integration-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
+                `  cz-cli task get-single-table-batch-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
                 `  # (for full recommendations including write_mode, splitPk, where)`,
                 `  cz-cli task save-single-table-batch-sync ${fileId} --config '<json>' --vc <vc_name>`,
                 `  cz-cli task save-cron ${fileId} --cron '0 0 2 * * ? *' --vc <vc_name>`,
@@ -1647,7 +1647,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "integration-schema <task>",
+        "get-single-table-batch-schema <task>",
         "Fetch source table column metadata for an INTEGRATION task — use output to generate field mapping with an Agent",
         (y) =>
           y
@@ -1898,7 +1898,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             })()
 
-            logOperation("task integration-schema", { ok: true })
+            logOperation("task get-single-table-batch-schema", { ok: true })
             success({
               task_id: fileId,
               source: { datasource_id: sourceDs.id, datasource_name: sourceDs.name, ds_type: sourceDs.dsType, db: argv["source-db"], table: argv["source-table"] },
@@ -2091,7 +2091,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const raw = (argv.config as string).replace(/^'|'$/g, "")
               integrationConfig = JSON.parse(raw)
             } catch {
-              error("INVALID_ARGUMENTS", "--config is not valid JSON. Pass the JSON string output from 'task integration-schema' after agent mapping.", { format, exitCode: 2 }); return
+              error("INVALID_ARGUMENTS", "--config is not valid JSON. Pass the JSON string output from 'task get-single-table-batch-schema' after agent mapping.", { format, exitCode: 2 }); return
             }
             if (!integrationConfig.jobs || !integrationConfig.sourceConnection || !integrationConfig.sinkConnection) {
               error("INVALID_ARGUMENTS", "--config JSON must have templateKey, sourceConnection, sinkConnection, and jobs fields.", { format, exitCode: 2 }); return
@@ -2382,7 +2382,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-config <task>",
+        "save-schedule-config <task>",
         "Save non-cron task configuration (retry, deps, VC, timeout — preserves cron)",
         (y) =>
           y
@@ -2446,7 +2446,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileInputListReqs: deps,
               configProperties: oldData.configProperties ?? "{}",
             })
-            logOperation("task save-config", { ok: true })
+            logOperation("task save-schedule-config", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             reportTaskError(err, format)
@@ -2546,7 +2546,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (!content || content.length < 10) {
                   error("NO_INTEGRATION_CONFIG",
                     `INTEGRATION task has no field mapping configured. Run:\n` +
-                    `  cz-cli task integration-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
+                    `  cz-cli task get-single-table-batch-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
                     `  # Agent maps types, then:\n` +
                     `  cz-cli task save-single-table-batch-sync ${fileId} --config '<json>'\n` +
                     `  cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
@@ -2959,7 +2959,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。` +
                   (argv["save-params"] && Object.keys(cliParams).length > 0
                     ? `--param 值已通过 --save-params 写回任务 paramValueList，调度运行将使用这些参数值。`
-                    : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。`) +
+                    : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-script-content --params 设置）。`) +
                   `如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
                 if (statusCode === 3 || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
@@ -3350,7 +3350,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "schedule-detail <task>",
+        "deployed-schedule <task>",
         "Get published schedule state for a deployed task (cron, next run time, last run result, etc.)",
         (y) => y.positional("task", { type: "string", demandOption: true, describe: "Task name or ID" }),
         async (argv) => {
@@ -3364,7 +3364,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               { scheduleTaskId: fileId, projectId: sc.projectId },
               { env: "prod" },
             )
-            logOperation("task schedule-detail", { ok: true })
+            logOperation("task deployed-schedule", { ok: true })
             success(resp.data, { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
           } catch (err) {
             reportTaskError(err, format)
