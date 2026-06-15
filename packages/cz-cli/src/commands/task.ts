@@ -1534,6 +1534,119 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "create-single-table-batch-sync <name>",
+        "Create an INTEGRATION task and fetch source schema in one step — output is used by Agent to generate field mapping, then call save-integration",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true, describe: "Task name" })
+            .option("folder", { type: "string", demandOption: true, describe: "Folder ID or name" })
+            .option("source", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
+            .option("source-db", { type: "string", demandOption: true, describe: "Source database/schema" })
+            .option("source-table", { type: "string", demandOption: true, describe: "Source table name" })
+            .option("target", { type: "string", describe: "Target Lakehouse datasource (auto-resolved if omitted)" })
+            .option("target-schema", { type: "string", default: "public", describe: "Target schema" })
+            .option("target-table", { type: "string", describe: "Target table name (defaults to source-table)" })
+            .option("description", { type: "string", describe: "Task description" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+
+            // Step 1: resolve folder + check duplicate
+            const folderRaw = (argv.folder as string).trim()
+            const folderId = /^\d+$/.test(folderRaw)
+              ? parseInt(folderRaw, 10)
+              : await resolveFolderIdByName(sc, folderRaw, format)
+            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
+              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
+            }
+
+            // Step 2: create task
+            const created = await createTask(sc, {
+              fileType: "1",
+              createdBy: String(sc.userId),
+              projectId: sc.projectId,
+              dataFileName: argv.name as string,
+              fileDescription: argv.description as string | undefined,
+              dataFolderId: folderId,
+              workspaceName: sc.workspaceName,
+            })
+            const fileId = Number(created.data)
+
+            // Step 3: run integration-schema logic with the new fileId
+
+            // Inline: same as integration-schema but with fileId already resolved
+            const sourceDs = await resolveDatasource(sc, String(argv.source))
+            if (!sourceDs.dsType) {
+              error("INVALID_ARGUMENTS", `Cannot determine dsType for datasource '${argv.source}'.`, { format, exitCode: 2 }); return
+            }
+            let targetDsId: number
+            let targetDsName: string
+            if (argv.target) {
+              const targetDs = await resolveDatasource(sc, String(argv.target))
+              targetDsId = targetDs.id; targetDsName = targetDs.name
+            } else {
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) { error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Specify --target.", { format, exitCode: 2 }); return }
+              targetDsId = lhDs.id; targetDsName = lhDs.name
+            }
+            const sinkTargetTable = (argv["target-table"] as string | undefined) ?? argv["source-table"] as string
+            const targetSchema = argv["target-schema"] as string
+            const [metaResp, targetColsResp] = await Promise.all([
+              studioRequest<unknown>(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
+                id: sourceDs.id, nameSpace: argv["source-db"] as string, dataObjectName: argv["source-table"] as string,
+              }),
+              studioRequest<unknown>(sc, "/ide-authority/v1/projectDataSources/getDataObjectMeta", {
+                id: targetDsId, nameSpace: targetSchema, dataObjectName: sinkTargetTable,
+              }).catch(() => null),
+            ])
+            const metaData = (metaResp.data as Record<string, unknown> | null) ?? {}
+            const sourceColumns = (Array.isArray((metaData as Record<string, unknown>).columns)
+              ? (metaData as Record<string, unknown>).columns
+              : Array.isArray(metaData) ? metaData : []) as Record<string, unknown>[]
+            if (sourceColumns.length === 0) {
+              error("NO_COLUMNS", `Cannot fetch columns for ${argv["source-db"]}.${argv["source-table"]}.`, { format, exitCode: 2 }); return
+            }
+            const targetCols = (() => {
+              if (!targetColsResp) return null
+              const d = ((targetColsResp as unknown) as Record<string, unknown>).data as Record<string, unknown> | null
+              if (!d) return null
+              const cols = (d as Record<string, unknown>).columns
+              return Array.isArray(cols) && cols.length > 0 ? cols : null
+            })()
+            const targetTableExists = targetCols !== null
+
+            logOperation("task create-single-table-batch-sync", { ok: true })
+            success({
+              task_id: fileId,
+              task_name: argv.name,
+              source: { datasource_id: sourceDs.id, datasource_name: sourceDs.name, ds_type: sourceDs.dsType, db: argv["source-db"], table: argv["source-table"] },
+              target: { datasource_id: targetDsId, datasource_name: targetDsName, ds_type: 1, schema: targetSchema, table: sinkTargetTable, table_exists: targetTableExists, existing_columns: targetCols ?? undefined },
+              source_columns: sourceColumns,
+              studio_url: studioUrl(sc, fileId),
+            }, {
+              format,
+              aiMessage: [
+                `INTEGRATION task '${argv.name}' created (id=${fileId}).`,
+                `Source: ${sourceDs.name}.${argv["source-db"]}.${argv["source-table"]} (${sourceColumns.length} columns)`,
+                `Target: ${targetDsName}.${targetSchema}.${sinkTargetTable} — ${targetTableExists ? "table EXISTS" : "table NOT EXISTS (needs CREATE TABLE)"}`,
+                `\nNext: review source_columns and generate field mapping config, then run:`,
+                `  cz-cli task integration-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
+                `  # (for full recommendations including write_mode, splitPk, where)`,
+                `  cz-cli task save-integration ${fileId} --config '<json>' --vc <vc_name>`,
+                `  cz-cli task save-cron ${fileId} --cron '0 0 2 * * ? *' --vc <vc_name>`,
+                `  cz-cli task deploy ${fileId} -y`,
+              ].join("\n"),
+            })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "integration-schema <task>",
         "Fetch source table column metadata for an INTEGRATION task — use output to generate field mapping with an Agent",
         (y) =>
