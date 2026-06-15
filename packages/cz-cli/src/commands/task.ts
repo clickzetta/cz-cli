@@ -862,13 +862,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               projectId: sc.projectId,
               updateBy: String(sc.userId),
               instanceName: sc.workspaceName,
-              ...(vcName && {
-                adhocConfigs: JSON.stringify({
-                  multiDataSource: [],
-                  schema: "public",
-                  adhocVcCode: vcName,
-                  ...(resolvedVcId != null && { adhocVcId: String(resolvedVcId) }),
-                }),
+              adhocConfigs: JSON.stringify({
+                multiDataSource: [],
+                schema: "public",
+                ...(vcName && { adhocVcCode: vcName }),
+                ...(vcName && resolvedVcId != null && { adhocVcId: String(resolvedVcId) }),
               }),
             })
 
@@ -1090,8 +1088,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
               activeEndTime: "2099-01-01T00:00:00.000Z",
             }).catch(() => null)
-
-            // DDL hint for target table if not exists
             const ddlHint = !targetTableExists
               ? `CREATE TABLE IF NOT EXISTS ${targetSchema}.${targetTable} (\n  __key__ STRING,\n  __value__ STRING,\n  __partition__ INT,\n  __offset__ BIGINT,\n  __timestamp__ BIGINT\n);`
               : null
