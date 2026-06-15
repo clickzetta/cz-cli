@@ -303,6 +303,41 @@ export function stopCdcTask(config: StudioConfig, fileId: number, updateBy: stri
   })
 }
 
+// REALTIME (type=14) single-table streaming task — different API from MULTI_REALTIME
+export function startRealtimeTask(
+  config: StudioConfig,
+  timelyId: number,
+  updateBy: string,
+  workspace: string,
+  projectId: number,
+  startupMode = 0,
+) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/startTimelyTask", {
+    timelyId,
+    updateBy,
+    workspace,
+    projectId,
+    env: "prod",
+    startupMode,
+  })
+}
+
+export function stopRealtimeTask(
+  config: StudioConfig,
+  timelyId: number,
+  updateBy: string,
+  workspace: string,
+  projectId: number,
+) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/stopTimelyTask", {
+    timelyId,
+    updateBy,
+    workspace,
+    projectId,
+    env: "prod",
+  })
+}
+
 export function getCdcTaskRunStatus(config: StudioConfig, timelyId: number) {
   return studioRequest(config, "/ide-admin/v1/timelyTask/getDetail", {
     timelyId,

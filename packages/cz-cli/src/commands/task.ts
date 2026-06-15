@@ -16,6 +16,8 @@ import {
   startCdcTask,
   stopCdcTask,
   getCdcTaskRunStatus,
+  startRealtimeTask,
+  stopRealtimeTask,
   listPgSlots,
   listPgPublications,
   resolveVclusterId,
@@ -1135,7 +1137,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 { scheduleTaskId: fileId, projectId: sc.projectId },
                 { env: "prod" },
               ).catch(() => null),
-              isCdcType ? getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null) : Promise.resolve(null),
+              isCdcType
+                ? (fileType === 14
+                    ? getCdcTaskRunStatus(sc, fileId).catch(() => null)           // REALTIME: use fileId directly
+                    : getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null))  // MULTI_REALTIME: use cdcTaskId
+                : Promise.resolve(null),
             ])
 
             const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<string, unknown>
@@ -2330,17 +2336,26 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             }
 
-            const resp = await startCdcTask(sc, {
-              fileId,
-              updateBy: String(sc.userId),
-              workspace: sc.workspaceName,
-              startupMode,
-              engineType: argv["engine-type"] as number,
-              snapshotTaskSwitch: (argv.snapshot as boolean) ? 1 : 0,
-              snapshotTaskPoolSize: argv["snapshot-pool-size"] as number,
-              blacklistStrategy: argv["blacklist-strategy"] as number,
-              config: positionConfig,
-            })
+            const resp = await (async () => {
+              // REALTIME (14) uses a different API than MULTI_REALTIME (281)
+              const det = await getTaskDetail(sc, fileId)
+              const detObj = (det?.data as Record<string, unknown>)?.taskDetail ?? det?.data ?? {}
+              const ft = Number((detObj as Record<string, unknown>).fileType ?? 0)
+              if (ft === 14) {
+                return startRealtimeTask(sc, fileId, String(sc.userId), sc.workspaceName, sc.projectId, startupMode)
+              }
+              return startCdcTask(sc, {
+                fileId,
+                updateBy: String(sc.userId),
+                workspace: sc.workspaceName,
+                startupMode,
+                engineType: argv["engine-type"] as number,
+                snapshotTaskSwitch: (argv.snapshot as boolean) ? 1 : 0,
+                snapshotTaskPoolSize: argv["snapshot-pool-size"] as number,
+                blacklistStrategy: argv["blacklist-strategy"] as number,
+                config: positionConfig,
+              })
+            })()
             logOperation("task start", { ok: true })
             success({ task_id: fileId, action: "start", result: resp.data }, {
               format,
@@ -2360,7 +2375,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            const resp = await stopCdcTask(sc, fileId, String(sc.userId), sc.workspaceName)
+            // REALTIME (14) uses a different stop API
+            const det = await getTaskDetail(sc, fileId)
+            const detObj = (det?.data as Record<string, unknown>)?.taskDetail ?? det?.data ?? {}
+            const ft = Number((detObj as Record<string, unknown>).fileType ?? 0)
+            const resp = ft === 14
+              ? await stopRealtimeTask(sc, fileId, String(sc.userId), sc.workspaceName, sc.projectId)
+              : await stopCdcTask(sc, fileId, String(sc.userId), sc.workspaceName)
             logOperation("task stop", { ok: true })
             success({ task_id: fileId, action: "stop", result: resp.data }, {
               format,
