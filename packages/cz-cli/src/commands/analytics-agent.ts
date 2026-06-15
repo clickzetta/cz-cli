@@ -26,6 +26,8 @@ const ROUTES = {
   domainDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}` },
   domainDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}` },
   domainTableAdd: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables` },
+  domainTableRemove: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables/${encodePath(argv["table-id"])}` },
+  sessionList: { method: "POST", path: "/open/session/list" },
   sessionCreate: { method: "POST", path: "/open/session/safe_new", openSessionAuth: true },
   sessionRun: { method: "POST", path: "/open/text2insight/query", openSessionAuth: true },
   sessionResult: { method: "POST", path: "/open/safe_question_poll", openSessionAuth: true },
@@ -227,6 +229,42 @@ function unwrapResponse(payload: unknown): unknown {
   return data ?? payload
 }
 
+/**
+ * Analytics Agent backend always returns HTTP 200, using `success: false`
+ * inside the envelope to signal business errors. Detect that here so callers
+ * can route to the error path instead of the success path.
+ *
+ * The response can be either:
+ *   - `{data: {code, message, success: false, ...}}` (domain/datasource APIs)
+ *   - `{code, message, success: false, ...}` (already unwrapped by some routes)
+ */
+function extractBusinessError(payload: unknown): { code: string; message: string } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null
+  const p = payload as Record<string, unknown>
+
+  // Case 1: top-level envelope — {data: {success: false, code, message}}
+  const inner = p.data
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const d = inner as Record<string, unknown>
+    if (d.success === false) {
+      return {
+        code: typeof d.code === "string" ? d.code : "ANALYTICS_AGENT_ERROR",
+        message: typeof d.message === "string" ? d.message : "Unknown error",
+      }
+    }
+  }
+
+  // Case 2: already-unwrapped — {success: false, code, message}
+  if (p.success === false) {
+    return {
+      code: typeof p.code === "string" ? p.code : "ANALYTICS_AGENT_ERROR",
+      message: typeof p.message === "string" ? p.message : "Unknown error",
+    }
+  }
+
+  return null
+}
+
 function latestResponseDataType(payload: unknown): string {
   const data = unwrapResponse(payload)
   if (!data || typeof data !== "object" || Array.isArray(data)) return ""
@@ -253,6 +291,12 @@ async function executeAnalyticsCommand(
   const t0 = Date.now()
   try {
     const payload = await requestAnalytics(argv, route, body, query)
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(bizErr.code, bizErr.message, { format })
+      return
+    }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
     success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
   } catch (err) {
@@ -578,6 +622,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   await executeAnalyticsCommand("analytics-agent domain table add", argv as Record<string, unknown>, ROUTES.domainTableAdd, body)
                 },
               )
+              table.command(
+                "remove <domain-id> <table-id>",
+                "Remove table from domain",
+                (y) =>
+                  y
+                    .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .positional("table-id", { type: "number", demandOption: true, describe: "Table ID" }),
+                async (argv) => {
+                  await executeAnalyticsCommand("analytics-agent domain table remove", argv as Record<string, unknown>, ROUTES.domainTableRemove, {})
+                },
+              )
               return commandGroup(table, "analytics-agent domain table")
             },
           )
@@ -596,6 +651,24 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
       })
       .command("session", "Manage Analytics Agent text2insight sessions", (session) => {
         session
+          .command(
+            "list",
+            "List text2insight sessions",
+            (y) =>
+              y
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("source-type", { type: "string", describe: "Session sourceType" })
+                .option("source-id", { type: "number", describe: "Session sourceId" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                domainId: argv["domain-id"],
+                sourceType: argv["source-type"],
+                sourceId: argv["source-id"],
+              })
+              await executeAnalyticsCommand("analytics-agent session list", argv as Record<string, unknown>, ROUTES.sessionList, body)
+            },
+          )
           .command(
             "create",
             "Create a safe text2insight session",
