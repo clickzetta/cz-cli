@@ -1535,7 +1535,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create-single-table-batch-sync <name>",
-        "Create an INTEGRATION task and fetch source schema in one step — output is used by Agent to generate field mapping, then call save-integration",
+        "Create an INTEGRATION task and fetch source schema in one step — output is used by Agent to generate field mapping, then call save-single-table-batch-sync",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Task name" })
@@ -1636,7 +1636,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 `\nNext: review source_columns and generate field mapping config, then run:`,
                 `  cz-cli task integration-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
                 `  # (for full recommendations including write_mode, splitPk, where)`,
-                `  cz-cli task save-integration ${fileId} --config '<json>' --vc <vc_name>`,
+                `  cz-cli task save-single-table-batch-sync ${fileId} --config '<json>' --vc <vc_name>`,
                 `  cz-cli task save-cron ${fileId} --cron '0 0 2 * * ? *' --vc <vc_name>`,
                 `  cz-cli task deploy ${fileId} -y`,
               ].join("\n"),
@@ -2045,7 +2045,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
                 // --- Next step ---
                 lines.push(`\nAfter confirming, generate config JSON and call:`)
-                lines.push(`cz-cli task save-integration ${fileId} --config '<json>' --vc <sync_vc_name>`)
+                lines.push(`cz-cli task save-single-table-batch-sync ${fileId} --config '<json>' --vc <sync_vc_name>`)
 
                 // --- Type mapping rules ---
                 lines.push(`\nLakehouse type system principles (use these to derive mappings, not a fixed lookup table):`)
@@ -2069,7 +2069,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-integration <task>",
+        "save-single-table-batch-sync <task>",
         "Save INTEGRATION task configuration with agent-generated field mapping",
         (y) =>
           y
@@ -2159,7 +2159,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const jobs = Array.isArray(integrationConfig.jobs) ? integrationConfig.jobs as Record<string, unknown>[] : []
             const colCount = Array.isArray((jobs[0] as Record<string, unknown>)?.source) ? 0 :
               ((jobs[0] as Record<string, unknown>)?.source as Record<string, unknown>)?.columns as unknown[]
-            logOperation("task save-integration", { ok: true })
+            logOperation("task save-single-table-batch-sync", { ok: true })
             success({
               task_id: fileId,
               jobs_count: jobs.length,
@@ -2175,7 +2175,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-cdc <task>",
+        "save-multi-table-realtime-sync <task>",
         "Configure CDC multi-table real-time sync task (MULTI_REALTIME type) with source and target datasource",
         (y) =>
           y
@@ -2293,7 +2293,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }).catch(() => null)
             }
 
-            logOperation("task save-cdc", { ok: true })
+            logOperation("task save-multi-table-realtime-sync", { ok: true })
             success({
               task_id: fileId,
               pipeline_type: effectivePipelineType === 1 ? "multi-table mirror" : effectivePipelineType === 2 ? "multi-table merge" : "whole-database mirror",
@@ -2536,7 +2536,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
                 if (!hasConfig) {
                   const cmd = fileType === 281
-                    ? `cz-cli task save-cdc ${fileId} --source <ds> --database <db>`
+                    ? `cz-cli task save-multi-table-realtime-sync ${fileId} --source <ds> --database <db>`
                     : `cz-cli task create-multi-table-batch-sync <name> --source <ds> --database <db>`
                   error("NO_SYNC_CONFIG", `${syncTypeName[fileType]} task not configured. Run '${cmd}' first.`, { format, exitCode: 2 }); return
                 }
@@ -2548,7 +2548,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     `INTEGRATION task has no field mapping configured. Run:\n` +
                     `  cz-cli task integration-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
                     `  # Agent maps types, then:\n` +
-                    `  cz-cli task save-integration ${fileId} --config '<json>'\n` +
+                    `  cz-cli task save-single-table-batch-sync ${fileId} --config '<json>'\n` +
                     `  cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
                     { format, exitCode: 2 }); return
                 }
@@ -2861,7 +2861,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 // No valid Sync VC found anywhere — require explicit --vc
                 error("INTEGRATION_VC_REQUIRED",
                   `INTEGRATION task ad-hoc execution requires a Sync VCluster.\n` +
-                  `Configure via 'cz-cli task save-integration ... --vc <SYNC_VC>', or\n` +
+                  `Configure via 'cz-cli task save-single-table-batch-sync ... --vc <SYNC_VC>', or\n` +
                   `pass explicitly: cz-cli task execute ${fileId} --vc <SYNC_VC_NAME>\n` +
                   `Run 'cz-cli sql --sync "SHOW VCLUSTERS"' to list available Sync VClusters.`,
                   { format, exitCode: 2 }); return
