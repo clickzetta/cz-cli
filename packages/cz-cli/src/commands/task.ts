@@ -2162,6 +2162,28 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 configProperties: (oldData.configProperties as Record<string, unknown> | undefined),
               })
             }
+            // Auto-create target table if it doesn't exist
+            const jobs = Array.isArray(integrationConfig.jobs) ? integrationConfig.jobs as Record<string, unknown>[] : []
+            const firstJob = jobs[0] as Record<string, unknown> | undefined
+            const sinkCfg = firstJob?.sink as Record<string, unknown> | undefined
+            const sinkNs = String(sinkCfg?.namespace ?? argv["target-schema"] ?? "public")
+            const sinkTable = String(sinkCfg?.dataObject ?? "")
+            const sinkCols = Array.isArray(sinkCfg?.columns) ? sinkCfg.columns as Record<string, unknown>[] : []
+            const sinkParams = sinkCfg?.params as Record<string, unknown> | undefined
+            const isPartition = Boolean(sinkParams?.is_partition)
+
+            let createTableDdl: string | null = null
+            if (sinkTable && sinkCols.length > 0) {
+              const colDefs = sinkCols.map((c) => `  ${String(c.name)} ${String(c.type ?? "STRING")}`).join(",\n")
+              const partitionClause = isPartition
+                ? (() => {
+                  const timeCols = sinkCols.filter((c) => /timestamp|datetime|date/i.test(String(c.type ?? "")))
+                  return timeCols.length > 0 ? ` PARTITION BY date_trunc('day', ${String(timeCols[0].name)})` : ""
+                })()
+                : ""
+              createTableDdl = `CREATE TABLE IF NOT EXISTS ${sinkNs}.${sinkTable} (\n${colDefs}\n)${partitionClause}`
+            }
+
             // Verify the content was actually saved by reading it back
             let savedContent: unknown
             if (flowId !== undefined) {
@@ -2180,18 +2202,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             try { JSON.parse(String(savedContent)) } catch {
               error("SAVE_FAILED", "Integration config saved but content is not valid JSON. Review the --config input.", { format, exitCode: 2 }); return
             }
-            const jobs = Array.isArray(integrationConfig.jobs) ? integrationConfig.jobs as Record<string, unknown>[] : []
-            const colCount = Array.isArray((jobs[0] as Record<string, unknown>)?.source) ? 0 :
-              ((jobs[0] as Record<string, unknown>)?.source as Record<string, unknown>)?.columns as unknown[]
             logOperation("task save-offline-sync", { ok: true })
             success({
               task_id: fileId,
               jobs_count: jobs.length,
               studio_url: studioUrl(sc, fileId),
+              ...(createTableDdl && { create_table_ddl: createTableDdl }),
             }, {
               format,
-              aiMessage: `Integration task configured. Review in Studio: ${studioUrl(sc, fileId)}\n` +
-                `Next: configure schedule with 'cz-cli task save-cron ${fileId} --cron <expr> --vc <vc>', then deploy with: cz-cli task deploy ${fileId} -y`,
+              aiMessage: [
+                `Integration task configured.`,
+                createTableDdl ? `⚠ Target table '${sinkNs}.${sinkTable}' may not exist. Run before deploy:\n  cz-cli sql "${createTableDdl.replace(/\n/g, " ")}" --write` : null,
+                `Next: configure schedule with 'cz-cli task save-cron ${flowId !== undefined ? flowId : fileId} --cron <expr> --vc <vc>', then deploy with: cz-cli task deploy ${flowId !== undefined ? flowId : fileId} -y`,
+              ].filter(Boolean).join("\n"),
             })
           } catch (err) {
             reportTaskError(err, format)
