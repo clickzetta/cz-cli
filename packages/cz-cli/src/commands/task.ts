@@ -2396,11 +2396,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("timeout", { type: "number", describe: "Execute timeout" })
             .option("timeout-unit", { type: "string", describe: "Timeout unit (m/s)" })
             .option("deps", { type: "string", choices: ["keep", "replace", "clear"], describe: "Dependency action" })
-            .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array. Each item requires taskId (number) and taskName (string), e.g. '[{\"taskId\":123,\"taskName\":\"upstream_task\"}]'" }),
+            .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array. Each item requires taskId (number) and taskName (string), e.g. '[{\"taskId\":123,\"taskName\":\"upstream_task\"}]'" })
+            .option("param", { type: "array", string: true, describe: "Set task param: key=value (can repeat)" }),
         async (argv) => {
           const format = argv.format
           try {
-            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vc-id", "schema", "timeout", "timeout-unit", "deps"] as const
+            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vc-id", "schema", "timeout", "timeout-unit", "deps", "param"] as const
             if (!configOpts.some((k) => argv[k] != null)) {
               error("INVALID_ARGUMENTS", "At least one configuration option is required.", { format, exitCode: 2 })
               return
@@ -2421,6 +2422,28 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             } else {
               deps = (oldData.dataFileDependencyDTOS as unknown[]) ?? []
+            }
+
+            // Build paramValueList from --param, merging with existing
+            const existingParams = (oldData.paramValueList as Record<string, unknown>[] | undefined) ?? []
+            const paramOverrides = (argv.param as string[] | undefined) ?? []
+            let paramValueList: unknown[] | undefined
+            if (paramOverrides.length > 0) {
+              const overrideMap: Record<string, string> = {}
+              for (const p of paramOverrides) {
+                const eq = p.indexOf("=")
+                if (eq > 0) overrideMap[p.slice(0, eq)] = p.slice(eq + 1)
+              }
+              // Update existing params, add new ones
+              const updated = existingParams.map((p) => {
+                const key = String((p as any).paramKey ?? (p as any).paramName ?? "")
+                return key in overrideMap ? { ...p, paramValue: overrideMap[key] } : p
+              })
+              const existingKeys = new Set(existingParams.map((p) => String((p as any).paramKey ?? "")))
+              const newParams = Object.entries(overrideMap)
+                .filter(([k]) => !existingKeys.has(k))
+                .map(([k, v], i) => ({ encrypt: false, id: String(Date.now() + i), ignore: false, paramKey: k, paramType: inferParamType(v), paramValue: v, ref: 0 }))
+              paramValueList = [...updated, ...newParams]
             }
 
             const resp = await saveTaskConfig(sc, {
@@ -2444,6 +2467,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileInputListReqs: deps,
               configProperties: oldData.configProperties ?? "{}",
             })
+            // Save params separately via saveTaskContent (paramValueList is stored with content, not config)
+            if (paramValueList !== undefined) {
+              await saveTaskContent(sc, {
+                dataFileId: fileId,
+                dataFileContent: (oldData.fileContent as string | undefined) ?? "",
+                projectId: sc.projectId,
+                updateBy: String(sc.userId),
+                instanceName: sc.instanceName,
+                paramValueList,
+              })
+            }
             logOperation("task save-schedule", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
@@ -3192,7 +3226,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("content", { type: "string" })
                 .option("file", { alias: "f", type: "string" })
-                .option("param", { type: "array", string: true, describe: "Set param: key=value (can repeat, value is default)" }),
+                .option("param", { type: "array", string: true, describe: "Set param with manual default: key=value" })
+                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow: key (no value needed)" }),
             async (argv) => {
               const format = argv.format
               try {
@@ -3204,8 +3239,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
                 }
                 // Require content or params
-                if (!argv.content && !argv.file && !(argv.param as string[] | undefined)?.length) {
-                  error("INVALID_ARGUMENTS", "Provide --content, --file, or --param.", { format, exitCode: 2 })
+                if (!argv.content && !argv.file && !(argv.param as string[] | undefined)?.length && !(argv["flow-param"] as string[] | undefined)?.length) {
+                  error("INVALID_ARGUMENTS", "Provide --content, --file, --param, or --flow-param.", { format, exitCode: 2 })
                   return
                 }
                 const text = argv.content ?? (argv.file ? readFileSync(argv.file as string, "utf-8") : undefined)
@@ -3216,6 +3251,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   const val = eq > 0 ? p.slice(eq + 1) : ""
                   return { encrypt: false, id: String(Date.now() + i), ignore: false, paramKey: key, paramType: inferParamType(val), paramValue: val, ref: 0 }
                 })
+                const flowParamList = ((argv["flow-param"] as string[] | undefined) ?? []).map((p, i) => {
+                  // ref: 2 = inherit from parent flow, no value stored
+                  return { encrypt: false, id: String(Date.now() + 1000 + i), ignore: false, paramKey: p.split("=")[0], paramType: "auto", ref: 2 }
+                })
+                const allParams = [...paramList, ...flowParamList]
                 const resp = await saveFlowNodeContent(sc, {
                   dataFileId: fileId,
                   nodeId,
@@ -3223,7 +3263,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   projectId: sc.projectId,
                   updateBy: String(sc.userId),
                   instanceName: sc.instanceName,
-                  ...(paramList.length > 0 && { paramValueList: paramList }),
+                  ...(allParams.length > 0 && { paramValueList: allParams }),
                 })
                 logOperation("task flow node-save", { ok: true })
                 success(resp.data, { format })
@@ -3360,25 +3400,32 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   const eq = p.indexOf("=")
                   if (eq > 0) overrides[p.slice(0, eq)] = p.slice(eq + 1)
                 }
-                // Get node list from params API
+                // Get node list from params API, flow-level params from getTaskDetail
                 const paramsResp = await getFlowParams(sc, fileId)
                 const paramsData = (paramsResp.data ?? {}) as Record<string, unknown>
+                // getFlowParams returns empty paramValueList; actual params are in getTaskDetail
+                const taskDetailResp = await getTaskDetail(sc, fileId)
+                const taskDetailParams = ((taskDetailResp.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
                 // Merge overrides into flow-level paramValueList
-                const flowParams = ((paramsData.paramValueList ?? []) as Record<string, unknown>[]).map((p) => {
-                  const key = String(p.paramName ?? p.name ?? "")
+                const flowParams = taskDetailParams.map((p) => {
+                  const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
                   return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
                 })
+                // Add new override keys not in existing params
+                const existingKeys = new Set(taskDetailParams.map((p) => String(p.paramKey ?? p.paramName ?? p.name ?? "")))
+                for (const [k, v] of Object.entries(overrides)) {
+                  if (!existingKeys.has(k)) {
+                    flowParams.push({ paramKey: k, paramValue: v, paramType: inferParamType(v), encrypt: false, ignore: false, ref: 0 })
+                  }
+                }
                 const children = await Promise.all(
                   ((paramsData.children ?? []) as Record<string, unknown>[]).map(async (c) => {
                     const nodeId = Number(c.id)
-                    // Fetch actual paramValueList from node detail (getFlowParams returns null for it)
                     let nodeParamList: Record<string, unknown>[] = []
-                    if (Object.keys(overrides).length > 0) {
-                      try {
-                        const nd = await getFlowNodeDetail(sc, fileId, nodeId)
-                        nodeParamList = ((nd.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
-                      } catch { /* ignore, use empty */ }
-                    }
+                    try {
+                      const nd = await getFlowNodeDetail(sc, fileId, nodeId)
+                      nodeParamList = ((nd.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
+                    } catch { /* ignore */ }
                     const merged = nodeParamList.map((p) => {
                       const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
                       return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
