@@ -509,7 +509,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const flat = flatten(tree, 0)
             logOperation("task folder-tree", { ok: true })
             const aiMsg = flat.length > 0
-              ? `Found ${flat.length} folder(s). Use the 'id' or 'name' field with --folder when creating tasks. Example: cz-cli task create-script-task <name> --type SQL --folder <id>`
+              ? `Found ${flat.length} folder(s). Use the 'id' or 'name' field with --folder when creating tasks. Example: cz-cli task create <name> --type SQL --folder <id>`
               : "No folders found. Either no folders exist in this workspace yet, or your account may lack folder read permissions. " +
                 "You can: (1) create a folder first with 'cz-cli task create-folder <name>', or (2) create a task in root with '--folder 0' (not recommended)."
             success(flat, {
@@ -522,8 +522,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-script-task <name>",
-        "Create a new task",
+        "create <name>",
+        "Create a SQL/Python/Shell script task",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
@@ -566,7 +566,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFolderId: folderId,
               workspaceName: sc.workspaceName,
             })
-            logOperation("task create-script-task", { ok: true })
+            logOperation("task create", { ok: true })
             const data = resp.data as Record<string, unknown> | undefined
             const newFileId = Number(data)
             const url = newFileId ? studioUrl(sc, newFileId) : undefined
@@ -577,8 +577,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-multi-table-realtime-sync <name>",
-        "Create and configure a MULTI_REALTIME CDC task in one step (checks prerequisites first)",
+        "create-realtime-sync <name>",
+        "Create a multi-table realtime CDC sync task (MULTI_REALTIME) — one step: prereq check + create + configure",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Task name" })
@@ -710,7 +710,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }).catch(() => null)
             }
 
-            logOperation("task create-multi-table-realtime-sync", { ok: true })
+            logOperation("task create-realtime-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -729,8 +729,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-multi-table-batch-sync <name>",
-        "Create and configure a MULTI_DI offline batch sync task in one step (checks prerequisites first)",
+        "create-batch-sync <name>",
+        "Create a multi-table offline batch sync task (MULTI_DI) — one step: prereq check + create + configure",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Task name" })
@@ -885,7 +885,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }).catch(() => null)
             }
 
-            logOperation("task create-multi-table-batch-sync", { ok: true })
+            logOperation("task create-batch-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -903,8 +903,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-single-stream-sync <name>",
-        "Create and configure a REALTIME single-table streaming task (Kafka/AutoMQ → Lakehouse)",
+        "create-stream-sync <name>",
+        "Create a single-table streaming sync task from Kafka/AutoMQ to Lakehouse (REALTIME type)",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Task name" })
@@ -1092,7 +1092,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ? `CREATE TABLE IF NOT EXISTS ${targetSchema}.${targetTable} (\n  __key__ STRING,\n  __value__ STRING,\n  __partition__ INT,\n  __offset__ BIGINT,\n  __timestamp__ BIGINT\n);`
               : null
 
-            logOperation("task create-single-stream-sync", { ok: true })
+            logOperation("task create-stream-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -1114,8 +1114,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-script-task-with-config <name>",
-        "Create a task, save script content and cron schedule in one step",
+        "create-setup <name>",
+        "Create a script task with content and schedule configured in one step",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
@@ -1173,7 +1173,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 workspaceName: sc.workspaceName,
               })
               const fileId = Number(createResp.data as Record<string, unknown>)
-              logOperation("task create-script-task-with-config", { ok: true })
+              logOperation("task create-setup", { ok: true })
               success({
                 task_id: fileId,
                 task_name: argv.name,
@@ -1268,7 +1268,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               throw setupErr
             }
 
-            logOperation("task create-script-task-with-config", { ok: true })
+            logOperation("task create-setup", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -1410,8 +1410,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        ["get-task-content <task>", "detail <task>"],
-        "Get task content and config",
+        ["get-content <task>", "detail <task>"],
+        "Get task script content and configuration",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
           const format = argv.format
@@ -1462,7 +1462,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ds_type: adhocConfigs?.dsType ?? detailData.dsType ?? undefined,
               schedule_config: scheduleConfig,
             }
-            logOperation("task get-task-content", { ok: true })
+            logOperation("task get-content", { ok: true })
             success({ ...merged, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_content") })
           } catch (err) {
             reportTaskError(err, format)
@@ -1470,8 +1470,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-script-content <task>",
-        "Save task script content",
+        "save-content <task>",
+        "Save script content for a SQL/Python/Shell task",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -1526,7 +1526,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(paramValueList && { paramValueList }),
               ...(adhocConfigs && { adhocConfigs }),
             })
-            logOperation("task save-script-content", { ok: true })
+            logOperation("task save-content", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             reportTaskError(err, format)
@@ -1534,8 +1534,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "create-single-table-batch-sync <name>",
-        "Create an INTEGRATION task and fetch source schema in one step — output is used by Agent to generate field mapping, then call save-single-table-batch-sync",
+        "create-offline-sync <name>",
+        "Create a single-table offline batch sync task (INTEGRATION) and fetch source schema for Agent field mapping",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Task name" })
@@ -1619,7 +1619,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })()
             const targetTableExists = targetCols !== null
 
-            logOperation("task create-single-table-batch-sync", { ok: true })
+            logOperation("task create-offline-sync", { ok: true })
             success({
               task_id: fileId,
               task_name: argv.name,
@@ -1634,9 +1634,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 `Source: ${sourceDs.name}.${argv["source-db"]}.${argv["source-table"]} (${sourceColumns.length} columns)`,
                 `Target: ${targetDsName}.${targetSchema}.${sinkTargetTable} — ${targetTableExists ? "table EXISTS" : "table NOT EXISTS (needs CREATE TABLE)"}`,
                 `\nNext: review source_columns and generate field mapping config, then run:`,
-                `  cz-cli task get-single-table-batch-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
+                `  cz-cli task offline-sync-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
                 `  # (for full recommendations including write_mode, splitPk, where)`,
-                `  cz-cli task save-single-table-batch-sync ${fileId} --config '<json>' --vc <vc_name>`,
+                `  cz-cli task save-offline-sync ${fileId} --config '<json>' --vc <vc_name>`,
                 `  cz-cli task save-cron ${fileId} --cron '0 0 2 * * ? *' --vc <vc_name>`,
                 `  cz-cli task deploy ${fileId} -y`,
               ].join("\n"),
@@ -1647,8 +1647,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "get-single-table-batch-schema <task>",
-        "Fetch source table column metadata for an INTEGRATION task — use output to generate field mapping with an Agent",
+        "offline-sync-schema <task>",
+        "Fetch source table schema for INTEGRATION task — Agent uses output to generate field mapping for save-offline-sync",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -1898,7 +1898,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             })()
 
-            logOperation("task get-single-table-batch-schema", { ok: true })
+            logOperation("task offline-sync-schema", { ok: true })
             success({
               task_id: fileId,
               source: { datasource_id: sourceDs.id, datasource_name: sourceDs.name, ds_type: sourceDs.dsType, db: argv["source-db"], table: argv["source-table"] },
@@ -2045,7 +2045,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
                 // --- Next step ---
                 lines.push(`\nAfter confirming, generate config JSON and call:`)
-                lines.push(`cz-cli task save-single-table-batch-sync ${fileId} --config '<json>' --vc <sync_vc_name>`)
+                lines.push(`cz-cli task save-offline-sync ${fileId} --config '<json>' --vc <sync_vc_name>`)
 
                 // --- Type mapping rules ---
                 lines.push(`\nLakehouse type system principles (use these to derive mappings, not a fixed lookup table):`)
@@ -2069,7 +2069,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-single-table-batch-sync <task>",
+        "save-offline-sync <task>",
         "Save INTEGRATION task configuration with agent-generated field mapping",
         (y) =>
           y
@@ -2091,7 +2091,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const raw = (argv.config as string).replace(/^'|'$/g, "")
               integrationConfig = JSON.parse(raw)
             } catch {
-              error("INVALID_ARGUMENTS", "--config is not valid JSON. Pass the JSON string output from 'task get-single-table-batch-schema' after agent mapping.", { format, exitCode: 2 }); return
+              error("INVALID_ARGUMENTS", "--config is not valid JSON. Pass the JSON string output from 'task offline-sync-schema' after agent mapping.", { format, exitCode: 2 }); return
             }
             if (!integrationConfig.jobs || !integrationConfig.sourceConnection || !integrationConfig.sinkConnection) {
               error("INVALID_ARGUMENTS", "--config JSON must have templateKey, sourceConnection, sinkConnection, and jobs fields.", { format, exitCode: 2 }); return
@@ -2159,7 +2159,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const jobs = Array.isArray(integrationConfig.jobs) ? integrationConfig.jobs as Record<string, unknown>[] : []
             const colCount = Array.isArray((jobs[0] as Record<string, unknown>)?.source) ? 0 :
               ((jobs[0] as Record<string, unknown>)?.source as Record<string, unknown>)?.columns as unknown[]
-            logOperation("task save-single-table-batch-sync", { ok: true })
+            logOperation("task save-offline-sync", { ok: true })
             success({
               task_id: fileId,
               jobs_count: jobs.length,
@@ -2175,7 +2175,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-multi-table-realtime-sync <task>",
+        "save-realtime-sync <task>",
         "Configure CDC multi-table real-time sync task (MULTI_REALTIME type) with source and target datasource",
         (y) =>
           y
@@ -2293,7 +2293,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }).catch(() => null)
             }
 
-            logOperation("task save-multi-table-realtime-sync", { ok: true })
+            logOperation("task save-realtime-sync", { ok: true })
             success({
               task_id: fileId,
               pipeline_type: effectivePipelineType === 1 ? "multi-table mirror" : effectivePipelineType === 2 ? "multi-table merge" : "whole-database mirror",
@@ -2382,7 +2382,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-schedule-config <task>",
+        "save-schedule <task>",
         "Save non-cron task configuration (retry, deps, VC, timeout — preserves cron)",
         (y) =>
           y
@@ -2446,7 +2446,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileInputListReqs: deps,
               configProperties: oldData.configProperties ?? "{}",
             })
-            logOperation("task save-schedule-config", { ok: true })
+            logOperation("task save-schedule", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             reportTaskError(err, format)
@@ -2536,8 +2536,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
                 if (!hasConfig) {
                   const cmd = fileType === 281
-                    ? `cz-cli task save-multi-table-realtime-sync ${fileId} --source <ds> --database <db>`
-                    : `cz-cli task create-multi-table-batch-sync <name> --source <ds> --database <db>`
+                    ? `cz-cli task save-realtime-sync ${fileId} --source <ds> --database <db>`
+                    : `cz-cli task create-batch-sync <name> --source <ds> --database <db>`
                   error("NO_SYNC_CONFIG", `${syncTypeName[fileType]} task not configured. Run '${cmd}' first.`, { format, exitCode: 2 }); return
                 }
               } else if (fileType === 1) {
@@ -2546,9 +2546,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (!content || content.length < 10) {
                   error("NO_INTEGRATION_CONFIG",
                     `INTEGRATION task has no field mapping configured. Run:\n` +
-                    `  cz-cli task get-single-table-batch-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
+                    `  cz-cli task offline-sync-schema ${fileId} --source <ds> --source-db <db> --source-table <table>\n` +
                     `  # Agent maps types, then:\n` +
-                    `  cz-cli task save-single-table-batch-sync ${fileId} --config '<json>'\n` +
+                    `  cz-cli task save-offline-sync ${fileId} --config '<json>'\n` +
                     `  cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
                     { format, exitCode: 2 }); return
                 }
@@ -2861,7 +2861,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 // No valid Sync VC found anywhere — require explicit --vc
                 error("INTEGRATION_VC_REQUIRED",
                   `INTEGRATION task ad-hoc execution requires a Sync VCluster.\n` +
-                  `Configure via 'cz-cli task save-single-table-batch-sync ... --vc <SYNC_VC>', or\n` +
+                  `Configure via 'cz-cli task save-offline-sync ... --vc <SYNC_VC>', or\n` +
                   `pass explicitly: cz-cli task execute ${fileId} --vc <SYNC_VC_NAME>\n` +
                   `Run 'cz-cli sql --sync "SHOW VCLUSTERS"' to list available Sync VClusters.`,
                   { format, exitCode: 2 }); return
@@ -2959,7 +2959,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。` +
                   (argv["save-params"] && Object.keys(cliParams).length > 0
                     ? `--param 值已通过 --save-params 写回任务 paramValueList，调度运行将使用这些参数值。`
-                    : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-script-content --params 设置）。`) +
+                    : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。`) +
                   `如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
                 if (statusCode === 3 || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
@@ -3350,7 +3350,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "deployed-schedule <task>",
+        "schedule-info <task>",
         "Get published schedule state for a deployed task (cron, next run time, last run result, etc.)",
         (y) => y.positional("task", { type: "string", demandOption: true, describe: "Task name or ID" }),
         async (argv) => {
@@ -3364,7 +3364,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               { scheduleTaskId: fileId, projectId: sc.projectId },
               { env: "prod" },
             )
-            logOperation("task deployed-schedule", { ok: true })
+            logOperation("task schedule-info", { ok: true })
             success(resp.data, { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
           } catch (err) {
             reportTaskError(err, format)
