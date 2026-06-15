@@ -2775,6 +2775,34 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   dependencyNodeId: upstreamNodeId,
                   dependencyProjectId: sc.projectId,
                 })
+                // Verify the edge actually persisted — bind API has async write behavior
+                let verified = false
+                for (let attempt = 0; attempt < 3; attempt++) {
+                  if (attempt > 0) await new Promise((r) => setTimeout(r, 800))
+                  const verifyResp = await getFlowDag(sc, fileId)
+                  const verifyNodes = (verifyResp.data ?? []) as Record<string, unknown>[]
+                  const verifyDownstream = verifyNodes.find((n) => Number(n.id) === downstreamNodeId)
+                  const verifyDeps = (verifyDownstream?.dependencies ?? []) as Record<string, unknown>[]
+                  if (verifyDeps.some((d) => Number(d.dependencyNodeId) === upstreamNodeId)) {
+                    verified = true; break
+                  }
+                  // Not persisted yet — retry bind
+                  if (attempt < 2) {
+                    await bindFlowNode(sc, {
+                      currentFileId: fileId,
+                      currentNodeId: downstreamNodeId,
+                      currentProjectId: sc.projectId,
+                      dependencyFileId: fileId,
+                      dependencyNodeId: upstreamNodeId,
+                      dependencyProjectId: sc.projectId,
+                    }).catch(() => null)
+                  }
+                }
+                logOperation("task flow bind", { ok: verified })
+                if (!verified) {
+                  success({ ...resp.data as object, warning: "Bind API returned success but edge not confirmed in DAG. Run 'cz-cli task flow dag' to check, and retry if missing." }, { format, aiMessage: `Dependency bind returned success but could not be verified in DAG. Retry: cz-cli task flow bind ${argv.task} --upstream ${argv.upstream} --downstream ${argv.downstream}` })
+                  return
+                }
                 logOperation("task flow bind", { ok: true })
                 success(resp.data, { format, aiMessage: `Dependency bound. Add more bindings as needed, then publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
