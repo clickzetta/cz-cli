@@ -34,15 +34,30 @@ import { studioUrl } from "./studio-url.js"
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
-import { resolveDatasource } from "./datasource.js"
+import { resolveDatasource, checkCdcPrereqs } from "./datasource.js"
 import { convertAgentCron } from "../cron-adapter.js"
 
 function formatIsoStartOfDay(value: string | undefined | null): string {
-  if (!value) return new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
+  if (!value) return formatIsoStartOfDay(undefined)
   const trimmed = String(value).trim()
   // Already ISO with time? strip time to start of day
   if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10) + "T00:00:00.000Z"
   return trimmed
+}
+
+async function checkDuplicateTaskName(
+  sc: StudioConfig,
+  folderId: number,
+  name: string,
+  format: string | undefined,
+): Promise<void> {
+  const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: name })
+  const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+  const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+  const duplicate = existingList.find((t) => String(t.dataFileName ?? t.fileName ?? "") === name)
+  if (duplicate) {
+    error("DUPLICATE_TASK", `Task '${name}' already exists in this folder (task_id=${duplicate.id ?? duplicate.task_id}). Use a different name or delete the existing task first.`, { format, exitCode: 2 })
+  }
 }
 
 
@@ -119,102 +134,6 @@ async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: 
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker))
   return results
-}
-
-// CDC prerequisite check helper — returns { ok, message } without throwing
-async function checkCdcPrereqs(
-  sc: StudioConfig,
-  ds: { id: number; name: string; dsType: number },
-  sourceArg: string,
-): Promise<{ ok: boolean; message: string }> {
-  const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
-  const PG_LIKE    = new Set([7, 22, 40, 46, 48])
-  const SS_LIKE    = new Set([8])
-  const DM_LIKE    = new Set([26])
-
-  const dsType = ds.dsType
-
-  if (MYSQL_LIKE.has(dsType)) {
-    const r = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-      id: ds.id, nameSpace: "performance_schema", dataObjectName: "global_variables",
-      options: { dsType, where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')" },
-    }).catch(() => null)
-    const data = (r as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-    const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
-    const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
-    const varMap: Record<string, string> = {}
-    for (const row of data?.rows ?? []) {
-      varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
-    }
-    const failed: string[] = []
-    if ((varMap["log_bin"] ?? "").toUpperCase() !== "ON") failed.push("log_bin must be ON (add log_bin=ON to my.cnf and restart)")
-    if ((varMap["binlog_format"] ?? "").toUpperCase() !== "ROW") failed.push("SET GLOBAL binlog_format = 'ROW'")
-    if ((varMap["binlog_row_image"] ?? "").toUpperCase() !== "FULL") failed.push("SET GLOBAL binlog_row_image = 'FULL'")
-    if (failed.length > 0) return { ok: false, message: `MySQL CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
-    return { ok: true, message: "" }
-  }
-
-  if (PG_LIKE.has(dsType)) {
-    const walR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-      id: ds.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings",
-      options: { dsType, where: "name = 'wal_level'" },
-    }).catch(() => null)
-    const walData = (walR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-    const si = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
-    const walLevel = walData?.rows?.[0] ? String((walData.rows[0] as unknown[])[si]) : ""
-    const slotR = await listPgSlots(sc, [ds.id]).catch(() => null)
-    const slots = slotR?.data?.find(s => s.datasourceId === ds.id)?.pipelineSlotMetaVos ?? []
-    const failed: string[] = []
-    if (walLevel !== "logical") failed.push(`wal_level must be 'logical' (current: '${walLevel || "unknown"}') — set in postgresql.conf and restart`)
-    if (slots.length === 0) failed.push("No replication slot found — run: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput')")
-    if (failed.length > 0) return { ok: false, message: `PostgreSQL CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
-    return { ok: true, message: "" }
-  }
-
-  // SQL Server — not tested, based on standard SQL Server CDC docs
-  if (SS_LIKE.has(dsType)) {
-    const dbR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-      id: ds.id, nameSpace: "master", dataObjectName: "sys.databases",
-      options: { dsType, where: "name = DB_NAME()" },
-    }).catch(() => null)
-    const dbData = (dbR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-    const cdcIdx = dbData?.fieldNames?.findIndex(f => f.toLowerCase() === "is_cdc_enabled") ?? -1
-    const isCdcEnabled = cdcIdx >= 0 && dbData?.rows?.[0]
-      ? String((dbData.rows[0] as unknown[])[cdcIdx]) === "1"
-      : false
-    const agentR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-      id: ds.id, nameSpace: "master", dataObjectName: "sys.dm_server_services",
-      options: { dsType, where: "servicename LIKE 'SQL Server Agent%'" },
-    }).catch(() => null)
-    const agentData = (agentR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-    const stIdx = agentData?.fieldNames?.findIndex(f => f.toLowerCase() === "status_desc") ?? -1
-    const agentStatus = stIdx >= 0 && agentData?.rows?.[0] ? String((agentData.rows[0] as unknown[])[stIdx]) : "UNKNOWN"
-    const failed: string[] = []
-    if (!isCdcEnabled) failed.push("Enable CDC: EXEC sys.sp_cdc_enable_db")
-    if (agentStatus.toLowerCase() !== "running") failed.push(`SQL Server Agent must be Running (current: ${agentStatus}) — start the service`)
-    if (failed.length > 0) return { ok: false, message: `SQL Server CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
-    return { ok: true, message: "" }
-  }
-
-  // DM 达梦 — not tested, based on standard DM CDC docs
-  if (DM_LIKE.has(dsType)) {
-    const dbR = await studioRequest(sc, "/ide-authority/v1/projectDataSources/getSampleData", {
-      id: ds.id, nameSpace: "SYS", dataObjectName: "V$DATABASE",
-      options: { dsType },
-    }).catch(() => null)
-    const dbData = (dbR as { data?: { fieldNames?: string[]; rows?: unknown[][] } } | null)?.data
-    const archIdx = dbData?.fieldNames?.findIndex(f => f.toUpperCase() === "ARCH_MODE") ?? -1
-    const archMode = archIdx >= 0 && dbData?.rows?.[0] ? String((dbData.rows[0] as unknown[])[archIdx]) : "UNKNOWN"
-    const suppIdx = dbData?.fieldNames?.findIndex(f => f.toUpperCase() === "SUPPLEMENTAL_LOG_DATA_MIN") ?? -1
-    const suppLog = suppIdx >= 0 && dbData?.rows?.[0] ? String((dbData.rows[0] as unknown[])[suppIdx]) : "UNKNOWN"
-    const failed: string[] = []
-    if (archMode !== "1") failed.push(`ARCH_MODE must be 1 (current: ${archMode}) — ALTER DATABASE MOUNT; ALTER DATABASE ARCHIVELOG; ALTER DATABASE OPEN;`)
-    if (suppLog.toUpperCase() !== "YES") failed.push(`Supplemental logging must be enabled (current: ${suppLog}) — ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;`)
-    if (failed.length > 0) return { ok: false, message: `DM CDC prerequisites not met for '${ds.name}':\n${failed.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
-    return { ok: true, message: "" }
-  }
-
-  return { ok: true, message: "" } // other types: no check needed
 }
 
 async function autoResolveLakehouseDs(sc: StudioConfig): Promise<{ id: number; name: string } | null> {
@@ -550,13 +469,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               process.stderr.write("Warning: creating task in root directory. Consider using a subfolder to keep the workspace organized.\n")
             }
             // Check for duplicate name in the same folder
-            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
-            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
-            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
-            const duplicate = existingList.find((t) => String(t.dataFileName ?? t.fileName ?? "") === argv.name)
-            if (duplicate) {
-              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder (task_id=${duplicate.id ?? duplicate.task_id}). Use a different name or delete the existing task first.`, { format, exitCode: 2 }); return
-            }
+            await checkDuplicateTaskName(sc, folderId, argv.name as string, format)
             const resp = await createTask(sc, {
               fileType: String(parseTaskType(argv.type as string)),
               createdBy: String(sc.userId),
@@ -624,12 +537,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               : await resolveFolderIdByName(sc, folderRaw, format)
 
             // Step 4: check duplicate name
-            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
-            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
-            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
-            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
-              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
-            }
+            await checkDuplicateTaskName(sc, folderId, argv.name as string, format)
 
             // Step 5: create task
             const created = await createTask(sc, {
@@ -652,7 +560,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 error("INVALID_ARGUMENTS", `CDC multi-table sync only supports Lakehouse as target. '${targetDs.name}' is not a Lakehouse datasource.`, { format, exitCode: 2 }); return
               }
               targetDsId = targetDs.id
-              targetDsType = 1
             } else {
               const lhDs = await autoResolveLakehouseDs(sc)
               if (!lhDs) {
@@ -705,7 +612,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 instanceName: sc.workspaceName,
                 etlVcCode: vcName,
                 ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
-                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                activeStartTime: formatIsoStartOfDay(undefined),
                 activeEndTime: "2099-01-01T00:00:00.000Z",
               }).catch(() => null)
             }
@@ -773,12 +680,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               : await resolveFolderIdByName(sc, folderRaw, format)
 
             // Step 4: check duplicate name
-            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
-            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
-            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
-            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
-              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
-            }
+            await checkDuplicateTaskName(sc, folderId, argv.name as string, format)
 
             // Step 5: create task
             const created = await createTask(sc, {
@@ -879,7 +781,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               cronExpress: normalizeCron((argv.cron as string | undefined) ?? "0 0 2 * * ? *"),
               ...(vcName && { etlVcCode: vcName }),
               ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
-              activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+              activeStartTime: formatIsoStartOfDay(undefined),
               activeEndTime: "2099-01-01T00:00:00.000Z",
             }).catch(() => null)
 
@@ -968,12 +870,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const folderId = /^\d+$/.test(folderRaw)
               ? parseInt(folderRaw, 10)
               : await resolveFolderIdByName(sc, folderRaw, format)
-            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
-            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
-            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
-            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
-              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
-            }
+            await checkDuplicateTaskName(sc, folderId, argv.name as string, format)
 
             // Step 5: create task
             const created = await createTask(sc, {
@@ -1083,7 +980,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               cronExpress: normalizeCron((argv.cron as string | undefined) ?? "0 0 2 * * ? *"),
               ...(vcName && { etlVcCode: vcName }),
               ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
-              activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+              activeStartTime: formatIsoStartOfDay(undefined),
               activeEndTime: "2099-01-01T00:00:00.000Z",
             }).catch(() => null)
             const ddlHint = !targetTableExists
@@ -1149,13 +1046,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               process.stderr.write("Warning: creating task in root directory. Consider using a subfolder to keep the workspace organized.\n")
             }
             // Check for duplicate name
-            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
-            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
-            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
-            const duplicate = existingList.find((t) => String(t.dataFileName ?? t.fileName ?? "") === argv.name)
-            if (duplicate) {
-              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder (task_id=${duplicate.id ?? duplicate.task_id}). Use a different name or delete the existing task first.`, { format, exitCode: 2 }); return
-            }
+            await checkDuplicateTaskName(sc, folderId, argv.name as string, format)
 
             // Step 1: create
             const parsedFileType = parseTaskType(argv.type as string)
@@ -1254,7 +1145,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   selfDependsJob: 0,
                   executeTimeout: 0,
                   executeTimeoutUnit: "m",
-                  activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                  activeStartTime: formatIsoStartOfDay(undefined),
                   activeEndTime: "2099-01-01T00:00:00.000Z",
                   dataFileInputListReqs: [],
                   configProperties: JSON.stringify(oldConfigProps),
@@ -1557,12 +1448,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const folderId = /^\d+$/.test(folderRaw)
               ? parseInt(folderRaw, 10)
               : await resolveFolderIdByName(sc, folderRaw, format)
-            const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
-            const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
-            const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
-            if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
-              error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
-            }
+            await checkDuplicateTaskName(sc, folderId, argv.name as string, format)
 
             // Step 1.5: resolve datasources BEFORE creating task (avoid orphan on failure)
             const sourceDs = await resolveDatasource(sc, String(argv.source))
@@ -1734,7 +1620,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const primaryCols = sourceColumns.filter((c) => c.primary === true || c.isPrimary === true)
             // Good splitPk candidates: INT/BIGINT/SERIAL with wide range — exclude TINYINT/SMALLINT (too narrow for effective splitting)
             const splitPkTypes = new Set(['INT','INTEGER','BIGINT','MEDIUMINT','SERIAL','BIGSERIAL','INT4','INT8','INT2'])
-            const splitPkExclude = new Set(['TINYINT','SMALLINT','INT2'])
+            const splitPkExclude = new Set(['INT2'])  // INT2 (smallint) is too small for reliable range splits
             const numericTypes = new Set(['INT','INTEGER','BIGINT','SMALLINT','TINYINT','MEDIUMINT','SERIAL','BIGSERIAL'])
             const numericCols = sourceColumns.filter((c) => numericTypes.has(String(c.type ?? "").toUpperCase().split("(")[0].trim()))
             const splitPkCols = sourceColumns.filter((c) => {
@@ -2281,7 +2167,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 error("INVALID_ARGUMENTS", `CDC multi-table sync only supports Lakehouse as target. '${targetDs.name}' is not a Lakehouse datasource.`, { format, exitCode: 2 }); return
               }
               targetDsId = targetDs.id
-              targetDsType = 1
             } else {
               // Auto-find Lakehouse datasource matching current workspace
               const lhDs = await autoResolveLakehouseDs(sc)
@@ -2343,7 +2228,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 instanceName: sc.workspaceName,
                 etlVcCode: vcName,
                 ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
-                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                activeStartTime: formatIsoStartOfDay(undefined),
                 activeEndTime: "2099-01-01T00:00:00.000Z",
               }).catch(() => null)
             }

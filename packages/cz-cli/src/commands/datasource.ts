@@ -140,6 +140,120 @@ export async function resolveDatasource(sc: StudioConfig, nameOrId: string): Pro
 }
 
 // ---------------------------------------------------------------------------
+// CDC prerequisite check — shared helper used by check-cdc command and task commands
+// ---------------------------------------------------------------------------
+export interface CdcPrereqCheck {
+  name: string
+  required: string
+  actual: string
+  pass: boolean
+}
+
+export interface CdcPrereqResult {
+  ok: boolean
+  message: string
+  checks: CdcPrereqCheck[]
+}
+
+export async function checkCdcPrereqs(
+  sc: StudioConfig,
+  ds: { id: number; name: string; dsType: number },
+  sourceArg: string,
+): Promise<CdcPrereqResult> {
+  const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
+  const PG_LIKE    = new Set([7, 22, 40, 46, 48])
+  const SS_LIKE    = new Set([8])
+  const DM_LIKE    = new Set([26])
+  const dsType = ds.dsType
+
+  if (MYSQL_LIKE.has(dsType)) {
+    const resp = await apiSampleData(sc, {
+      id: ds.id, nameSpace: "performance_schema", dataObjectName: "global_variables", dsType,
+      where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')",
+    }).catch(() => null)
+    const data = resp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+    const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
+    const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
+    const varMap: Record<string, string> = {}
+    for (const row of data?.rows ?? []) {
+      varMap[String((row as unknown[])[nameIdx] ?? "").toLowerCase()] = String((row as unknown[])[valIdx] ?? "")
+    }
+    const checks: CdcPrereqCheck[] = [
+      { name: "log_bin",          required: "ON",   actual: varMap["log_bin"]          ?? "UNKNOWN" },
+      { name: "binlog_format",    required: "ROW",  actual: varMap["binlog_format"]    ?? "UNKNOWN" },
+      { name: "binlog_row_image", required: "FULL", actual: varMap["binlog_row_image"] ?? "UNKNOWN" },
+    ].map(c => ({ ...c, pass: c.actual.toUpperCase() === c.required }))
+    const ready = checks.every(c => c.pass)
+    const failed = checks.filter(c => !c.pass)
+    const fixHints = failed.map(c =>
+      c.name === "log_bin"          ? "Enable binary logging: add `log_bin=ON` to my.cnf and restart MySQL" :
+      c.name === "binlog_format"    ? `SET GLOBAL binlog_format = 'ROW';` :
+      c.name === "binlog_row_image" ? `SET GLOBAL binlog_row_image = 'FULL';` : ""
+    ).filter(Boolean)
+    return { ok: ready, checks, message: ready ? "" : `MySQL CDC prerequisites not met for '${ds.name}':\n${fixHints.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+  }
+
+  if (PG_LIKE.has(dsType)) {
+    const checks: CdcPrereqCheck[] = []
+    const walResp = await apiSampleData(sc, {
+      id: ds.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings", dsType,
+      where: "name = 'wal_level'",
+    }).catch(() => null)
+    const walData = walResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+    const settingIdx = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
+    const walLevel = walData?.rows?.[0] ? String((walData.rows[0] as unknown[])[settingIdx]) : "UNKNOWN"
+    checks.push({ name: "wal_level", required: "logical", actual: walLevel, pass: walLevel === "logical" })
+    const slotResp = await listPgSlots(sc, [ds.id]).catch(() => null)
+    const slots = slotResp?.data?.find(s => s.datasourceId === ds.id)?.pipelineSlotMetaVos ?? []
+    checks.push({ name: "replication_slot", required: ">= 1 slot", actual: slots.length > 0 ? slots.map(s => s.slotName).join(", ") : "none", pass: slots.length > 0 })
+    const ready = checks.every(c => c.pass)
+    const failed = checks.filter(c => !c.pass)
+    const fixHints = failed.map(c =>
+      c.name === "wal_level"
+        ? "Set wal_level=logical in postgresql.conf and restart PostgreSQL"
+        : "Create a replication slot: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput');"
+    )
+    return { ok: ready, checks, message: ready ? "" : `PostgreSQL CDC prerequisites not met for '${ds.name}':\n${fixHints.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+  }
+
+  if (SS_LIKE.has(dsType)) {
+    const checks: CdcPrereqCheck[] = []
+    const dbResp = await apiSampleData(sc, { id: ds.id, nameSpace: "master", dataObjectName: "sys.databases", dsType, where: "name = DB_NAME()" }).catch(() => null)
+    const dbData = dbResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+    const cdcIdx = dbData?.fieldNames?.findIndex(f => f.toLowerCase() === "is_cdc_enabled") ?? -1
+    const isCdcEnabled = cdcIdx >= 0 && dbData?.rows?.[0] ? String((dbData.rows[0] as unknown[])[cdcIdx]) === "1" || String((dbData.rows[0] as unknown[])[cdcIdx]).toLowerCase() === "true" : false
+    checks.push({ name: "cdc_enabled", required: "1 (enabled)", actual: isCdcEnabled ? "1" : (cdcIdx >= 0 ? "0" : "UNKNOWN"), pass: isCdcEnabled })
+    const agentResp = await apiSampleData(sc, { id: ds.id, nameSpace: "master", dataObjectName: "sys.dm_server_services", dsType, where: "servicename LIKE 'SQL Server Agent%'" }).catch(() => null)
+    const agentData = agentResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+    const statusIdx = agentData?.fieldNames?.findIndex(f => f.toLowerCase() === "status_desc") ?? -1
+    const agentStatus = statusIdx >= 0 && agentData?.rows?.[0] ? String((agentData.rows[0] as unknown[])[statusIdx]) : "UNKNOWN"
+    checks.push({ name: "sql_server_agent", required: "Running", actual: agentStatus, pass: agentStatus.toLowerCase() === "running" })
+    const ready = checks.every(c => c.pass)
+    const failed = checks.filter(c => !c.pass)
+    const fixHints = failed.map(c => c.name === "cdc_enabled" ? "Enable CDC on the database: EXEC sys.sp_cdc_enable_db" : "Start SQL Server Agent service (required for CDC capture jobs)")
+    return { ok: ready, checks, message: ready ? "" : `SQL Server CDC prerequisites not met for '${ds.name}':\n${fixHints.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+  }
+
+  if (DM_LIKE.has(dsType)) {
+    const checks: CdcPrereqCheck[] = []
+    const archResp = await apiSampleData(sc, { id: ds.id, nameSpace: "SYS", dataObjectName: "V$DATABASE", dsType }).catch(() => null)
+    const archData = archResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+    const archIdx = archData?.fieldNames?.findIndex(f => f.toUpperCase() === "ARCH_MODE") ?? -1
+    const archMode = archIdx >= 0 && archData?.rows?.[0] ? String((archData.rows[0] as unknown[])[archIdx]) : "UNKNOWN"
+    checks.push({ name: "arch_mode", required: "1 (archiving enabled)", actual: archMode, pass: archMode === "1" })
+    const suppIdx = archData?.fieldNames?.findIndex(f => f.toUpperCase() === "SUPPLEMENTAL_LOG_DATA_MIN") ?? -1
+    const suppLog = suppIdx >= 0 && archData?.rows?.[0] ? String((archData.rows[0] as unknown[])[suppIdx]) : "UNKNOWN"
+    checks.push({ name: "supplemental_log", required: "YES", actual: suppLog, pass: suppLog.toUpperCase() === "YES" })
+    const ready = checks.every(c => c.pass)
+    const failed = checks.filter(c => !c.pass)
+    const fixHints = failed.map(c => c.name === "arch_mode" ? "Enable archive log mode in DM: ALTER DATABASE MOUNT; ALTER DATABASE ARCHIVELOG; ALTER DATABASE OPEN;" : "Enable supplemental logging: ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;")
+    return { ok: ready, checks, message: ready ? "" : `DM CDC prerequisites not met for '${ds.name}':\n${fixHints.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
+  }
+
+  return { ok: true, message: "", checks: [] }
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
@@ -370,205 +484,17 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             const sc = await getStudioContext(argv)
             const ds = await resolveDatasource(sc, argv.datasource as string)
             const dsType = ds.dsType ?? 0
-
-            const MYSQL_LIKE = new Set([5, 17, 18, 19, 39])
-            const PG_LIKE    = new Set([7, 22, 40, 46, 48])
-            const SS_LIKE    = new Set([8])   // SQL Server
-            const DM_LIKE    = new Set([26])  // DM 达梦
-
-            // ── MySQL / TiDB / Aurora MySQL / PolarDB MySQL ────────────────
-            if (MYSQL_LIKE.has(dsType)) {
-              const resp = await apiSampleData(sc, {
-                id: ds.id, nameSpace: "performance_schema", dataObjectName: "global_variables", dsType,
-                where: "VARIABLE_NAME IN ('log_bin','binlog_format','binlog_row_image')",
-              })
-              const data = resp.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-              const nameIdx = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_NAME") ?? 0
-              const valIdx  = data?.fieldNames?.findIndex(f => f.toUpperCase() === "VARIABLE_VALUE") ?? 1
-              const varMap: Record<string, string> = {}
-              for (const row of data?.rows ?? []) {
-                const k = String((row as unknown[])[nameIdx] ?? "").toLowerCase()
-                varMap[k] = String((row as unknown[])[valIdx] ?? "")
-              }
-              const checks = [
-                { name: "log_bin",          required: "ON",   actual: varMap["log_bin"]          ?? "UNKNOWN" },
-                { name: "binlog_format",    required: "ROW",  actual: varMap["binlog_format"]    ?? "UNKNOWN" },
-                { name: "binlog_row_image", required: "FULL", actual: varMap["binlog_row_image"] ?? "UNKNOWN" },
-              ].map(c => ({ ...c, pass: c.actual.toUpperCase() === c.required }))
-
-              const ready = checks.every(c => c.pass)
-              const failed = checks.filter(c => !c.pass)
-              const fixHints = failed.map(c =>
-                c.name === "log_bin"          ? "Enable binary logging: add `log_bin=ON` to my.cnf and restart MySQL" :
-                c.name === "binlog_format"    ? `SET GLOBAL binlog_format = 'ROW';` :
-                c.name === "binlog_row_image" ? `SET GLOBAL binlog_row_image = 'FULL';` : ""
-              ).filter(Boolean)
-
-              logOperation("datasource check-cdc", { ok: ready })
-              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
-                format,
-                aiMessage: ready
-                  ? `MySQL CDC prerequisites met for '${ds.name}'. Proceed to: cz-cli task create-realtime-sync <name> --folder <folder> --source ${ds.name} --database <db> --target <lakehouse_ds>`
-                  : `MySQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
-              })
-              return
-            }
-
-            // ── PostgreSQL / Aurora PG / PolarDB PG / Greenplum / Redshift ─
-            if (PG_LIKE.has(dsType)) {
-              const checks: { name: string; required: string; actual: string; pass: boolean }[] = []
-
-              // wal_level check
-              const walResp = await apiSampleData(sc, {
-                id: ds.id, nameSpace: "pg_catalog", dataObjectName: "pg_settings", dsType,
-                where: "name = 'wal_level'",
-              }).catch(() => null)
-              const walData = walResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-              const settingIdx = walData?.fieldNames?.findIndex(f => f.toLowerCase() === "setting") ?? 1
-              const walRow = walData?.rows?.[0]
-              const walLevel = walRow ? String((walRow as unknown[])[settingIdx]) : "UNKNOWN"
-              checks.push({ name: "wal_level", required: "logical", actual: walLevel, pass: walLevel === "logical" })
-
-              // slot check
-              const slotResp = await listPgSlots(sc, [ds.id]).catch(() => null)
-              const slots = slotResp?.data?.find(s => s.datasourceId === ds.id)?.pipelineSlotMetaVos ?? []
-              checks.push({
-                name: "replication_slot",
-                required: ">= 1 slot",
-                actual: slots.length > 0 ? slots.map(s => s.slotName).join(", ") : "none",
-                pass: slots.length > 0,
-              })
-
-              const ready = checks.every(c => c.pass)
-              const failed = checks.filter(c => !c.pass)
-              const fixHints = failed.map(c =>
-                c.name === "wal_level"
-                  ? "Set wal_level=logical in postgresql.conf and restart PostgreSQL"
-                  : "Create a replication slot: SELECT pg_create_logical_replication_slot('slot_name', 'pgoutput');"
-              )
-
-              logOperation("datasource check-cdc", { ok: ready })
-              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
-                format,
-                aiMessage: ready
-                  ? `PostgreSQL CDC prerequisites met for '${ds.name}'. Proceed to: cz-cli task create-realtime-sync <name> --folder <folder> --source ${ds.name} --database <db> --target <lakehouse_ds>`
-                  : `PostgreSQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
-              })
-              return
-            }
-
-            // ── SQL Server ─────────────────────────────────────────────────
-            // Note: not tested (no environment available) — based on standard SQL Server CDC docs
-            if (SS_LIKE.has(dsType)) {
-              const checks: { name: string; required: string; actual: string; pass: boolean }[] = []
-
-              // Check if CDC is enabled at database level: sys.databases.is_cdc_enabled = 1
-              const dbResp = await apiSampleData(sc, {
-                id: ds.id, nameSpace: "master", dataObjectName: "sys.databases", dsType,
-                where: "name = DB_NAME()",
-              }).catch(() => null)
-              const dbData = dbResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-              const cdcIdx = dbData?.fieldNames?.findIndex(f => f.toLowerCase() === "is_cdc_enabled") ?? -1
-              const isCdcEnabled = cdcIdx >= 0 && dbData?.rows?.[0]
-                ? String((dbData.rows[0] as unknown[])[cdcIdx]) === "1" || String((dbData.rows[0] as unknown[])[cdcIdx]).toLowerCase() === "true"
-                : false
-              checks.push({
-                name: "cdc_enabled",
-                required: "1 (enabled)",
-                actual: isCdcEnabled ? "1" : (cdcIdx >= 0 ? "0" : "UNKNOWN"),
-                pass: isCdcEnabled,
-              })
-
-              // Check if SQL Server Agent is running: sys.dm_server_services
-              const agentResp = await apiSampleData(sc, {
-                id: ds.id, nameSpace: "master", dataObjectName: "sys.dm_server_services", dsType,
-                where: "servicename LIKE 'SQL Server Agent%'",
-              }).catch(() => null)
-              const agentData = agentResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-              const statusIdx = agentData?.fieldNames?.findIndex(f => f.toLowerCase() === "status_desc") ?? -1
-              const agentStatus = statusIdx >= 0 && agentData?.rows?.[0]
-                ? String((agentData.rows[0] as unknown[])[statusIdx])
-                : "UNKNOWN"
-              checks.push({
-                name: "sql_server_agent",
-                required: "Running",
-                actual: agentStatus,
-                pass: agentStatus.toLowerCase() === "running",
-              })
-
-              const ready = checks.every(c => c.pass)
-              const failed = checks.filter(c => !c.pass)
-              const fixHints = failed.map(c =>
-                c.name === "cdc_enabled"
-                  ? "Enable CDC on the database: EXEC sys.sp_cdc_enable_db"
-                  : "Start SQL Server Agent service (required for CDC capture jobs)"
-              )
-
-              logOperation("datasource check-cdc", { ok: ready })
-              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
-                format,
-                aiMessage: ready
-                  ? `SQL Server CDC prerequisites met for '${ds.name}'.`
-                  : `SQL Server CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
-              })
-              return
-            }
-
-            // ── DM 达梦 ────────────────────────────────────────────────────
-            // Note: not tested (no environment available) — based on standard DM CDC docs
-            if (DM_LIKE.has(dsType)) {
-              const checks: { name: string; required: string; actual: string; pass: boolean }[] = []
-
-              // Check archive log mode: V$DATABASE ARCH_MODE = 1
-              const archResp = await apiSampleData(sc, {
-                id: ds.id, nameSpace: "SYS", dataObjectName: "V$DATABASE", dsType,
-              }).catch(() => null)
-              const archData = archResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-              const archIdx = archData?.fieldNames?.findIndex(f => f.toUpperCase() === "ARCH_MODE") ?? -1
-              const archMode = archIdx >= 0 && archData?.rows?.[0]
-                ? String((archData.rows[0] as unknown[])[archIdx])
-                : "UNKNOWN"
-              checks.push({
-                name: "arch_mode",
-                required: "1 (archiving enabled)",
-                actual: archMode,
-                pass: archMode === "1",
-              })
-
-              // Check supplemental log: V$DATABASE SUPPLEMENTAL_LOG_DATA_MIN
-              const suppIdx = archData?.fieldNames?.findIndex(f => f.toUpperCase() === "SUPPLEMENTAL_LOG_DATA_MIN") ?? -1
-              const suppLog = suppIdx >= 0 && archData?.rows?.[0]
-                ? String((archData.rows[0] as unknown[])[suppIdx])
-                : "UNKNOWN"
-              checks.push({
-                name: "supplemental_log",
-                required: "YES",
-                actual: suppLog,
-                pass: suppLog.toUpperCase() === "YES",
-              })
-
-              const ready = checks.every(c => c.pass)
-              const failed = checks.filter(c => !c.pass)
-              const fixHints = failed.map(c =>
-                c.name === "arch_mode"
-                  ? "Enable archive log mode in DM: ALTER DATABASE MOUNT; ALTER DATABASE ARCHIVELOG; ALTER DATABASE OPEN;"
-                  : "Enable supplemental logging: ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;"
-              )
-
-              logOperation("datasource check-cdc", { ok: ready })
-              success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
-                format,
-                aiMessage: ready
-                  ? `DM CDC prerequisites met for '${ds.name}'.`
-                  : `DM CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
-              })
-              return
-            }
-
-            // ── Other types ────────────────────────────────────────────────
-            success({ datasource: ds.name, ds_type: dsType, checks: [], ready: true }, {
-              format,
-              aiMessage: `Datasource type ${dsType} does not require CDC prerequisite checks.`,
+            const result = await checkCdcPrereqs(sc, { id: ds.id, name: ds.name, dsType }, ds.name)
+            logOperation("datasource check-cdc", { ok: result.ok })
+            const aiMsg = result.ok
+              ? (dsType === 0
+                  ? `Datasource type ${dsType} does not require CDC prerequisite checks.`
+                  : result.checks.length === 0
+                    ? `Datasource type ${dsType} does not require CDC prerequisite checks.`
+                    : `${ds.name} CDC prerequisites met. Proceed to: cz-cli task create-realtime-sync <name> --folder <folder> --source ${ds.name} --database <db> --target <lakehouse_ds>`)
+              : result.message
+            success({ datasource: ds.name, ds_type: dsType, checks: result.checks, ready: result.ok }, {
+              format, aiMessage: aiMsg,
             })
           } catch (err) {
             reportDatasourceError(err, format)
