@@ -721,7 +721,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               studio_url: studioUrl(sc, fileId),
             }, {
               format,
-              aiMessage: `MULTI_REALTIME CDC task created (id=${fileId}). Next: deploy with 'cz-cli task deploy ${fileId} -y', then start with 'cz-cli task start ${fileId}'.`,
+              aiMessage: `MULTI_REALTIME CDC task created and fully configured in one step (id=${fileId}). Do NOT run save-realtime-sync separately. Next: deploy with 'cz-cli task deploy ${fileId} -y', then start with 'cz-cli task start ${fileId}'.`,
             })
           } catch (err) {
             reportTaskError(err, format)
@@ -893,7 +893,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               studio_url: studioUrl(sc, fileId),
             }, {
               format,
-              aiMessage: `MULTI_DI task created (id=${fileId}). Next: deploy with 'cz-cli task deploy ${fileId} -y', then execute with 'cz-cli task execute ${fileId} --vc <vc_name>'.`,
+              aiMessage: `MULTI_DI task created and fully configured in one step (id=${fileId}). Next: deploy with 'cz-cli task deploy ${fileId} -y', then execute with 'cz-cli task execute ${fileId} --vc <sync_vc_name>'.\nNote: --vc must be a Sync VCluster (VCLUSTER_TYPE=INTEGRATION). Run: cz-cli sql --sync "SHOW VCLUSTERS" to find one.`,
             })
           } catch (err) {
             reportTaskError(err, format)
@@ -1102,7 +1102,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               format,
               aiMessage: [
                 `REALTIME task created (id=${fileId}).`,
-                !targetTableExists ? `⚠ Target table '${targetSchema}.${targetTable}' does not exist. Run:\n  cz-cli sql "${ddlHint?.replace(/\n/g, " ")}"` : null,
+                !targetTableExists ? `⚠ Target table '${targetSchema}.${targetTable}' does not exist. Create it before deploy:\n  Write the 'create_table_ddl' field from this response to a file, then run: cz-cli sql --file /tmp/create_table.sql --write` : null,
                 `Next: deploy with 'cz-cli task deploy ${fileId} -y', then start with 'cz-cli task start ${fileId}'.`,
               ].filter(Boolean).join("\n"),
             })
@@ -1630,13 +1630,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               aiMessage: [
                 `INTEGRATION task '${argv.name}' created (id=${fileId}).`,
                 `Source: ${sourceDs.name}.${argv["source-db"]}.${argv["source-table"]} (${sourceColumns.length} columns)`,
-                `Target: ${targetDsName}.${targetSchema}.${sinkTargetTable} — ${targetTableExists ? "table EXISTS" : "table NOT EXISTS (needs CREATE TABLE)"}`,
-                `\nNext: review source_columns and generate field mapping config, then run:`,
-                `  cz-cli task offline-sync-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
-                `  # (for full recommendations including write_mode, splitPk, where)`,
-                `  cz-cli task save-offline-sync ${fileId} --config '<json>' --vc <vc_name>`,
-                `  cz-cli task save-cron ${fileId} --cron '0 0 2 * * ? *' --vc <vc_name>`,
-                `  cz-cli task deploy ${fileId} -y`,
+                `Target: ${targetDsName}.${targetSchema}.${sinkTargetTable} — ${targetTableExists ? "table EXISTS" : "table NOT EXISTS (will need CREATE TABLE before deploy)"}`,
+                `\nBefore save-offline-sync: find a Sync VCluster with: cz-cli sql --sync "SHOW VCLUSTERS" (need VCLUSTER_TYPE=INTEGRATION)`,
+                `If source table names are unknown: cz-cli datasource objects ${argv.source} ${argv["source-db"]} to list tables first`,
+                `\nNext steps:`,
+                `  1. cz-cli task offline-sync-schema ${fileId} --source ${argv.source} --source-db ${argv["source-db"]} --source-table ${argv["source-table"]} --target-schema ${targetSchema} --target-table ${sinkTargetTable}`,
+                `  2. cz-cli task save-offline-sync ${fileId} --config '<json>' --vc <sync_vc_name>`,
+                `  3. If save-offline-sync returns 'create_table_ddl': write to file, run 'cz-cli sql --file /tmp/create_table.sql --write' BEFORE deploy`,
+                `  4. cz-cli task save-cron ${fileId} --cron '0 0 2 * * ? *' --vc <sync_vc_name>`,
+                `  5. cz-cli task deploy ${fileId} -y`,
               ].join("\n"),
             })
           } catch (err) {
@@ -2044,6 +2046,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 // --- Next step ---
                 lines.push(`\nAfter confirming, generate config JSON and call:`)
                 lines.push(`cz-cli task save-offline-sync ${fileId} --config '<json>' --vc <sync_vc_name>`)
+                lines.push(`If save-offline-sync returns 'create_table_ddl': write it to a file and run 'cz-cli sql --file /tmp/create_table.sql --write' BEFORE deploying.`)
+                lines.push(`Then deploy: cz-cli task deploy ${fileId} -y`)
 
                 // --- Type mapping rules ---
                 lines.push(`\nLakehouse type system principles (use these to derive mappings, not a fixed lookup table):`)
@@ -2212,7 +2216,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               format,
               aiMessage: [
                 `Integration task configured.`,
-                createTableDdl ? `⚠ Target table '${sinkNs}.${sinkTable}' may not exist. Run before deploy:\n  cz-cli sql "${createTableDdl.replace(/\n/g, " ")}" --write` : null,
+                createTableDdl ? `⚠ Target table '${sinkNs}.${sinkTable}' may not exist. Create it before deploy:\n  Write the 'create_table_ddl' field from this response to a file, then run: cz-cli sql --file /tmp/create_table.sql --write` : null,
                 `Next: configure schedule with 'cz-cli task save-cron ${flowId !== undefined ? flowId : fileId} --cron <expr> --vc <vc>', then deploy with: cz-cli task deploy ${flowId !== undefined ? flowId : fileId} -y`,
               ].filter(Boolean).join("\n"),
             })
@@ -2351,7 +2355,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               raw: resp.data,
             }, {
               format,
-              aiMessage: `CDC task configured. Deploy with: cz-cli task deploy ${fileId} -y\nNote: CDC tasks run continuously after deploy — no cron schedule needed.`,
+              aiMessage: `CDC task configured. Deploy with: cz-cli task deploy ${fileId} -y, then start with: cz-cli task start ${fileId}\nNote: CDC tasks run continuously — no cron schedule needed.`,
             })
           } catch (err) {
             reportTaskError(err, format)
@@ -3129,7 +3133,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   content: argv.content,
                 })
                 logOperation("task flow create-node", { ok: true })
-                success(resp.data, { format })
+                const createdNodeId = (resp.data as Record<string, unknown>)?.id
+                success(resp.data, { format, aiMessage: `Node created (id=${createdNodeId}). Next steps:\n1. Save content: cz-cli task flow node-save ${argv.task} --node-id ${createdNodeId} --content '<sql/python/shell>'\n2. Set VC/schema: cz-cli task flow node-save-config ${argv.task} --node-id ${createdNodeId} --vc <vc>\n3. Bind dependencies if needed: cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>\n4. Publish: cz-cli task flow submit ${argv.task}` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3197,7 +3202,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   dependencyProjectId: sc.projectId,
                 })
                 logOperation("task flow bind", { ok: true })
-                success(resp.data, { format })
+                success(resp.data, { format, aiMessage: `Dependency bound. Add more bindings as needed, then publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3233,7 +3238,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   fileId,
                 })
                 logOperation("task flow unbind", { ok: true })
-                success(resp.data, { format })
+                success(resp.data, { format, aiMessage: `Dependency removed. Verify DAG with 'cz-cli task flow dag ${argv.task}', then publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3323,7 +3328,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   ...(allParams.length > 0 && { paramValueList: allParams }),
                 })
                 logOperation("task flow node-save", { ok: true })
-                success(resp.data, { format })
+                success(resp.data, { format, aiMessage: `Node content saved. Next: set VC/schema with 'cz-cli task flow node-save-config ${argv.task} --name ${argv.name ?? argv["node-id"]} --vc <vc>', then bind dependencies with 'flow bind' if needed, then publish with 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3361,7 +3366,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   schemaName: argv.schema,
                 })
                 logOperation("task flow node-save-config", { ok: true })
-                success(resp.data, { format })
+                success(resp.data, { format, aiMessage: `Node config saved. Repeat node-save/node-save-config for other nodes. Then bind dependencies: 'cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>'. When all nodes are ready, publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3430,7 +3435,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   task_id: fileId,
                   published,
                   studio_url: studioUrl(sc, fileId),
-                }, { format, aiMessage: published ? "Flow submitted successfully." : "Flow saved but publish status not confirmed within timeout." })
+                }, { format, aiMessage: published ? "Flow submitted successfully. Run with: 'cz-cli task flow run <task>'." : "Flow saved but publish status not confirmed within timeout. Check Studio or retry 'cz-cli task flow submit <task>'." })
               } catch (err) {
                 reportTaskError(err, format)
               }

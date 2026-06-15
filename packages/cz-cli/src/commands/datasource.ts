@@ -215,7 +215,9 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             logOperation("datasource catalogs", { ok: true, rows: limited.length, timeMs: Date.now() - t0 })
             success(limited, {
               format, timeMs: Date.now() - t0,
-              aiMessage: total > limited.length ? `Showing ${limited.length} of ${total} catalogs. Use --filter to narrow or --limit to raise the cap.` : undefined,
+              aiMessage: total > limited.length
+                ? `Showing ${limited.length} of ${total} catalogs. Use --filter to narrow or --limit to raise the cap. Use one of these catalog names with: cz-cli datasource objects <datasource> <catalog>`
+                : `Use one of these catalog names with: cz-cli datasource objects ${argv.datasource} <catalog>`,
             })
           } catch (err) {
             logOperation("datasource catalogs", { ok: false, timeMs: Date.now() - t0 })
@@ -257,7 +259,9 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             logOperation("datasource objects", { ok: true, rows: limited.length, timeMs: Date.now() - t0 })
             success(limited, {
               format, timeMs: Date.now() - t0,
-              aiMessage: total > limited.length ? `Showing ${limited.length} of ${total} objects. Use --filter to narrow or --limit to raise the cap.` : undefined,
+              aiMessage: total > limited.length
+                ? `Showing ${limited.length} of ${total} objects. Use --filter to narrow or --limit to raise the cap. Use a table name with: cz-cli datasource describe <datasource> ${argv.catalog} <table>`
+                : `Use a table name with: cz-cli datasource describe ${argv.datasource} ${argv.catalog} <table>`,
             })
           } catch (err) {
             logOperation("datasource objects", { ok: false, timeMs: Date.now() - t0 })
@@ -282,7 +286,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             const ds = await resolveDatasource(sc, argv.datasource as string)
             const resp = await apiMetaDetail(sc, ds.id, argv.catalog as string, argv.object as string)
             logOperation("datasource describe", { ok: true, timeMs: Date.now() - t0 })
-            success(resp.data, { format, timeMs: Date.now() - t0 })
+            success(resp.data, { format, timeMs: Date.now() - t0, aiMessage: `Column metadata retrieved. Use source_columns to generate DDL for target Lakehouse table, or proceed to: cz-cli task create-offline-sync <name> --folder <folder> --source ${argv.datasource} --source-db ${argv.catalog} --source-table ${argv.object}` })
           } catch (err) {
             logOperation("datasource describe", { ok: false, timeMs: Date.now() - t0 })
             reportDatasourceError(err, format)
@@ -404,7 +408,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
                 format,
                 aiMessage: ready
-                  ? `MySQL CDC prerequisites met for '${ds.name}'.`
+                  ? `MySQL CDC prerequisites met for '${ds.name}'. Proceed to: cz-cli task create-realtime-sync <name> --folder <folder> --source ${ds.name} --database <db> --target <lakehouse_ds>`
                   : `MySQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
               })
               return
@@ -447,7 +451,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               success({ datasource: ds.name, ds_type: dsType, checks, ready }, {
                 format,
                 aiMessage: ready
-                  ? `PostgreSQL CDC prerequisites met for '${ds.name}'.`
+                  ? `PostgreSQL CDC prerequisites met for '${ds.name}'. Proceed to: cz-cli task create-realtime-sync <name> --folder <folder> --source ${ds.name} --database <db> --target <lakehouse_ds>`
                   : `PostgreSQL CDC prerequisites NOT met for '${ds.name}'. Fix:\n${fixHints.join("\n")}`,
               })
               return
