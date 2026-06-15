@@ -3191,15 +3191,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("node-id", { type: "number", describe: "Node ID" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("content", { type: "string" })
-                .option("file", { alias: "f", type: "string" }),
+                .option("file", { alias: "f", type: "string" })
+                .option("param", { type: "array", string: true, describe: "Set param: key=value (can repeat, value is default)" }),
             async (argv) => {
               const format = argv.format
               try {
-                if (!argv.content && !argv.file) {
-                  error("INVALID_ARGUMENTS", "Provide --content or --file.", { format, exitCode: 2 })
-                  return
-                }
-                const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 let nodeId = argv["node-id"] as number | undefined
@@ -3207,13 +3203,27 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                   nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
                 }
+                // Require content or params
+                if (!argv.content && !argv.file && !(argv.param as string[] | undefined)?.length) {
+                  error("INVALID_ARGUMENTS", "Provide --content, --file, or --param.", { format, exitCode: 2 })
+                  return
+                }
+                const text = argv.content ?? (argv.file ? readFileSync(argv.file as string, "utf-8") : undefined)
+                // Build paramValueList from --param key=value
+                const paramList = ((argv.param as string[] | undefined) ?? []).map((p, i) => {
+                  const eq = p.indexOf("=")
+                  const key = eq > 0 ? p.slice(0, eq) : p
+                  const val = eq > 0 ? p.slice(eq + 1) : ""
+                  return { encrypt: false, id: String(Date.now() + i), ignore: false, paramKey: key, paramType: inferParamType(val), paramValue: val, ref: 0 }
+                })
                 const resp = await saveFlowNodeContent(sc, {
                   dataFileId: fileId,
                   nodeId,
-                  dataFileContent: text,
+                  dataFileContent: text ?? "",
                   projectId: sc.projectId,
                   updateBy: String(sc.userId),
                   instanceName: sc.instanceName,
+                  ...(paramList.length > 0 && { paramValueList: paramList }),
                 })
                 logOperation("task flow node-save", { ok: true })
                 success(resp.data, { format })
@@ -3358,13 +3368,24 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   const key = String(p.paramName ?? p.name ?? "")
                   return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
                 })
-                const children = ((paramsData.children ?? []) as Record<string, unknown>[]).map((c) => {
-                  const nodeParamList = ((c.paramValueList ?? []) as Record<string, unknown>[]).map((p) => {
-                    const key = String(p.paramName ?? p.name ?? "")
-                    return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
-                  })
-                  return { id: Number(c.id), name: String(c.name), paramValueList: nodeParamList.length ? nodeParamList : undefined }
-                })
+                const children = await Promise.all(
+                  ((paramsData.children ?? []) as Record<string, unknown>[]).map(async (c) => {
+                    const nodeId = Number(c.id)
+                    // Fetch actual paramValueList from node detail (getFlowParams returns null for it)
+                    let nodeParamList: Record<string, unknown>[] = []
+                    if (Object.keys(overrides).length > 0) {
+                      try {
+                        const nd = await getFlowNodeDetail(sc, fileId, nodeId)
+                        nodeParamList = ((nd.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
+                      } catch { /* ignore, use empty */ }
+                    }
+                    const merged = nodeParamList.map((p) => {
+                      const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
+                      return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
+                    })
+                    return { id: nodeId, name: String(c.name), paramValueList: merged.length ? merged : undefined }
+                  }),
+                )
                 const resp = await executeFlow(sc, {
                   dataFileId: fileId,
                   instanceName: sc.instanceName,

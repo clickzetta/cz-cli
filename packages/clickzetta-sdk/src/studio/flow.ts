@@ -59,6 +59,7 @@ export interface SaveFlowNodeContentParams {
   projectId: number
   updateBy: string
   instanceName: string
+  paramValueList?: unknown[]
 }
 
 export interface SaveFlowNodeConfigParams {
@@ -253,7 +254,7 @@ export function saveFlowNodeContent(config: StudioConfig, params: SaveFlowNodeCo
       collectType: 2,
       onlySaveContent: 1,
       updateBy: params.updateBy,
-      paramValueList: [],
+      paramValueList: params.paramValueList ?? [],
       inputParamValueList: null,
       outputParamValueList: null,
       instanceName: params.instanceName,

@@ -68,6 +68,7 @@ export interface SaveTaskConfigParams {
   dataFileName?: string
   fileDescription?: string
   useFlowConfig?: boolean
+  paramValueList?: unknown[]
 }
 
 export interface SubmitTaskParams {
@@ -192,6 +193,7 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       ...(params.dataFileName !== undefined && { dataFileName: params.dataFileName }),
       ...(params.fileDescription !== undefined && { fileDescription: params.fileDescription }),
       ...(params.useFlowConfig !== undefined && { useFlowConfig: params.useFlowConfig }),
+      ...(params.paramValueList !== undefined && { paramValueList: params.paramValueList }),
     },
   )
 }
