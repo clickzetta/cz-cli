@@ -48,6 +48,6 @@ tag-release:
 	@echo "✓ Pushed stable tag v$(VERSION) — GitHub Actions will build release + promote stable"
 
 tag-dev:
-	git tag v$(VERSION)-dev.$(DEV_SUFFIX)
-	git push origin v$(VERSION)-dev.$(DEV_SUFFIX)
-	@echo "✓ Pushed dev tag v$(VERSION)-dev.$(DEV_SUFFIX) — GitHub Actions will build latest"
+	git tag dev-v$(VERSION).$(DEV_SUFFIX)
+	git push origin dev-v$(VERSION).$(DEV_SUFFIX)
+	@echo "✓ Pushed dev tag dev-v$(VERSION).$(DEV_SUFFIX) — GitHub Actions will build latest"
