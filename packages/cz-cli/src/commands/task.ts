@@ -2566,7 +2566,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         "Parse task output tables and schedule dependencies",
         (y) =>
           y
-            .positional("task", { type: "string", demandOption: true })
+            .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
             .option("schema", { type: "string", describe: "Schema name used by Studio dependency parser" })
             .option("content", { type: "string", describe: "Task content to parse instead of saved content" })
             .option("file", { alias: "f", type: "string", describe: "Read task content to parse from file" }),

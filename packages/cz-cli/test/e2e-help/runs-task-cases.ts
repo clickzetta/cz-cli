@@ -113,7 +113,7 @@ export const runsTaskHelpCases: HelpCase[] = [
   {
     args: ["task", "lineage", "--help"],
     expectHeader: "cz-cli task lineage",
-    expectOptions: ["task", "--schema", "--content", "--file"],
+    expectOptions: ["task", "Task name or ID", "--schema", "--content", "--file"],
   },
   {
     args: ["task", "deps", "--help"],
