@@ -49,6 +49,7 @@ interface Credential {
   accessToken?: string
   apiKey?: string
   aimeshEndpointBaseUrl?: string
+  analysisAgentEndpoint?: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -78,6 +79,7 @@ export function applyCredentialToProfiles(
     ...(cred.service && { service: cred.service }),
     protocol: cred.service?.startsWith("http://") ? "http" : "https",
     ...(cred.username && { username: cred.username }),
+    ...(typeof cred.analysisAgentEndpoint === "string" && { analysis_agent_endpoint: cred.analysisAgentEndpoint }),
     ...(cred.aimeshEndpointBaseUrl && { ai_gateway_url: cred.aimeshEndpointBaseUrl }),
   }
 

@@ -15,6 +15,7 @@ import { registerSetupCommand } from "./commands/setup.js"
 import { registerUpdateCommand } from "./commands/update.js"
 import { registerDatasourceCommand } from "./commands/datasource.js"
 import { registerGatewayCommand } from "./commands/ai-gateway.js"
+import { registerAnalyticsAgentCommand } from "./commands/analytics-agent.js"
 
 export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerSqlCommand(cli)
@@ -32,5 +33,6 @@ export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerUpdateCommand(cli)
   registerDatasourceCommand(cli)
   registerGatewayCommand(cli)
+  registerAnalyticsAgentCommand(cli)
   return cli
 }

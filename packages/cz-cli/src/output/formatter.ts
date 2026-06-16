@@ -1,3 +1,99 @@
+const ANSI_BOLD = "\x1b[1m"
+const ANSI_RESET = "\x1b[0m"
+const ANSI_DIM = "\x1b[2m"
+
+/**
+ * Render a markdown string to a human-readable terminal string.
+ * Handles: headings, bold, inline code, horizontal rules, and markdown tables.
+ * Falls back to plain text for anything else.
+ */
+export function formatMarkdown(text: string): string {
+  const lines = text.split("\n")
+  const out: string[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+
+    // Heading: ## Foo or ### Foo
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/)
+    if (headingMatch) {
+      out.push(ANSI_BOLD + renderInline(headingMatch[2]) + ANSI_RESET)
+      i++
+      continue
+    }
+
+    // Horizontal rule: --- or ===
+    if (/^(-{3,}|={3,})$/.test(line.trim())) {
+      out.push(ANSI_DIM + "─".repeat(60) + ANSI_RESET)
+      i++
+      continue
+    }
+
+    // Markdown table: collect header + separator + rows
+    if (line.trimStart().startsWith("|") && i + 1 < lines.length && /^\s*\|[-| :]+\|\s*$/.test(lines[i + 1])) {
+      const tableLines: string[] = [line]
+      i += 2 // skip separator
+      while (i < lines.length && lines[i].trimStart().startsWith("|")) {
+        tableLines.push(lines[i])
+        i++
+      }
+      out.push(renderMarkdownTable(tableLines))
+      continue
+    }
+
+    out.push(renderInline(line))
+    i++
+  }
+  return out.join("\n")
+}
+
+function renderInline(text: string): string {
+  // Bold: **text** or __text__
+  text = text.replace(/\*\*(.+?)\*\*/g, `${ANSI_BOLD}$1${ANSI_RESET}`)
+  text = text.replace(/__(.+?)__/g, `${ANSI_BOLD}$1${ANSI_RESET}`)
+  // Inline code: `code`
+  text = text.replace(/`([^`]+)`/g, `${ANSI_DIM}$1${ANSI_RESET}`)
+  return text
+}
+
+function splitTableRow(line: string): string[] {
+  return line
+    .replace(/^\s*\|/, "")
+    .replace(/\|\s*$/, "")
+    .split("|")
+    .map((c) => c.trim())
+}
+
+function renderMarkdownTable(tableLines: string[]): string {
+  if (tableLines.length === 0) return ""
+  const rows = tableLines.map(splitTableRow)
+  const colCount = Math.max(...rows.map((r) => r.length))
+  const colWidths: number[] = Array.from({ length: colCount }, () => 0)
+  for (const row of rows) {
+    for (let c = 0; c < colCount; c++) {
+      colWidths[c] = Math.max(colWidths[c], displayWidth(row[c] ?? ""))
+    }
+  }
+
+  const renderRow = (row: string[], bold: boolean): string => {
+    const cells = Array.from({ length: colCount }, (_, c) => {
+      const cell = row[c] ?? ""
+      const padded = padToWidth(cell, colWidths[c])
+      return bold ? `${ANSI_BOLD}${padded}${ANSI_RESET}` : padded
+    })
+    return "| " + cells.join(" | ") + " |"
+  }
+
+  const sep = "|-" + colWidths.map((w) => "-".repeat(w)).join("-+-") + "-|"
+  const result: string[] = []
+  result.push(renderRow(rows[0], true))
+  result.push(sep)
+  for (let r = 1; r < rows.length; r++) {
+    result.push(renderRow(rows[r], false))
+  }
+  return result.join("\n")
+}
+
 export function formatJson(data: unknown): string {
   return stringifyJson(data)
 }

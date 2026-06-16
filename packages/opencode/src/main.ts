@@ -185,6 +185,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     "job",
     "update",
     "datasource",
+    "analytics-agent",
   ])
   const PROFILE_REQUIRED_COMMANDS = new Set([
     "sql",
@@ -197,6 +198,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     "attempts",
     "job",
     "datasource",
+    "analytics-agent",
   ])
   const isHelpOrEmpty = args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))
   const isForwardedCliCommand =

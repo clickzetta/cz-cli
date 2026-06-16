@@ -59,6 +59,7 @@ function parseJdbcUrl(jdbc: string): JdbcConfig | undefined {
 const VALID_UPDATE_KEYS = [
   "pat", "username", "password", "service", "protocol",
   "instance", "workspace", "schema", "vcluster",
+  "analysis_agent_endpoint",
 ]
 
 function loadFullFile(): Record<string, unknown> {
@@ -108,6 +109,9 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 instance: String(p.instance ?? ""),
                 workspace: String(p.workspace ?? ""),
                 is_default: name === defaultProfile,
+              }
+              if (typeof p.analysis_agent_endpoint === "string") {
+                entry.analysis_agent_endpoint = p.analysis_agent_endpoint
               }
               if (argv["show-secret"] && !pat && p.password) {
                 entry.password = String(p.password)
@@ -181,6 +185,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             .option("workspace", { type: "string", describe: "Workspace name" })
             .option("schema", { type: "string", describe: "Default schema" })
             .option("vcluster", { type: "string", describe: "Virtual cluster" })
+            .option("analysis-agent-endpoint", { type: "string", describe: "Analysis agent endpoint" })
             .option("header", { type: "string", array: true, describe: "Custom HTTP header KEY=VALUE (repeatable)" })
             .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" }),
         async (argv) => {
@@ -221,6 +226,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               workspace: ws,
               schema: argv.schema ?? jdbcCfg?.schema ?? "public",
               vcluster: argv.vcluster ?? jdbcCfg?.vcluster ?? "default",
+              ...(argv["analysis-agent-endpoint"] ? { analysis_agent_endpoint: argv["analysis-agent-endpoint"] } : {}),
             }
             if (hasPat) {
               profileObj.pat = argv.pat!
@@ -284,11 +290,11 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "update <name> <key> <value>",
-        `Update a profile field. Valid keys: pat, username, password, service, protocol, instance, workspace, schema, vcluster, header.<NAME>`,
+        `Update a profile field. Valid keys: pat, username, password, service, protocol, instance, workspace, schema, vcluster, analysis_agent_endpoint, header.<NAME>`,
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Profile name" })
-            .positional("key", { type: "string", demandOption: true, describe: "Field to update: pat | username | password | service | protocol | instance | workspace | schema | vcluster | header.<NAME>" })
+            .positional("key", { type: "string", demandOption: true, describe: "Field to update: pat | username | password | service | protocol | instance | workspace | schema | vcluster | analysis_agent_endpoint | header.<NAME>" })
             .positional("value", { type: "string", demandOption: true, describe: "New value" }),
         (argv) => {
           const format = argv.format

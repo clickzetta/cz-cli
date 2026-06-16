@@ -138,7 +138,12 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
     const name = profileName ?? (data.default_profile as string | undefined) ?? Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
     if (!name) return undefined
     const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const agent = profiles[name]?.agent as Record<string, unknown> | undefined
+    const profile = profiles[name]
+    if (!profile) return undefined
+    if (typeof profile.analysis_agent_endpoint === "string" && profile.analysis_agent_endpoint) {
+      return profile.analysis_agent_endpoint
+    }
+    const agent = profile.agent as Record<string, unknown> | undefined
     return (agent?.endpoint as string) || undefined
   } catch {
     return undefined
