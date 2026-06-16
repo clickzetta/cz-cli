@@ -362,6 +362,29 @@ function renderSummary(summary: string): string {
   return text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/^#{1,6}\s+/gm, "")
 }
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+function startSpinner(label: string): { stop: () => void } {
+  if (!process.stderr.isTTY) return { stop: () => {} }
+  let frame = 0
+  const t0 = Date.now()
+  const write = (text: string) => process.stderr.write(text)
+  const render = () => {
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+    const line = `\r${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${label} (${elapsed}s)`
+    write(line)
+    frame++
+  }
+  render()
+  const id = setInterval(render, 100)
+  return {
+    stop: () => {
+      clearInterval(id)
+      write("\r\x1b[K") // clear the spinner line
+    },
+  }
+}
+
 async function executeSessionRunCommand(
   name: string,
   argv: Record<string, unknown>,
@@ -390,11 +413,16 @@ async function executeSessionRunCommand(
     const pollBody = { questionId }
     const deadline = Date.now() + timeoutMs
     let payload: unknown
-    do {
-      payload = await requestAnalytics(argv, ROUTES.sessionResult, pollBody, {}, ctx)
-      if (isTerminalResponse(payload) || Date.now() >= deadline) break
-      await Bun.sleep(intervalMs)
-    } while (true)
+    const spinner = startSpinner("Agent 正在分析")
+    try {
+      do {
+        payload = await requestAnalytics(argv, ROUTES.sessionResult, pollBody, {}, ctx)
+        if (isTerminalResponse(payload) || Date.now() >= deadline) break
+        await Bun.sleep(intervalMs)
+      } while (true)
+    } finally {
+      spinner.stop()
+    }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
     const summary = extractSummaryString(payload) ?? extractFinalSummary(payload)
     if (summary) {
