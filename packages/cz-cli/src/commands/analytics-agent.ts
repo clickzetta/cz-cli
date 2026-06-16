@@ -3,7 +3,8 @@ import { createTraceparent } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
-import { success, error, handledError, isHandledCliError } from "../output/index.js"
+import { success, error, handledError, isHandledCliError, shouldColorize } from "../output/index.js"
+import { formatMarkdown } from "../output/formatter.js"
 import { getStudioContext, type StudioContext } from "./studio-context.js"
 import { logOperation } from "../logger.js"
 
@@ -290,12 +291,83 @@ function isTerminalResponse(payload: unknown): boolean {
   return ["finish", "finish_stop", "error"].includes(latestResponseDataType(payload))
 }
 
+function extractModelMessage(entry: unknown): string | undefined {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined
+  const e = entry as Record<string, unknown>
+  const modelRes = e.modelRes
+  if (!modelRes || typeof modelRes !== "object" || Array.isArray(modelRes)) return undefined
+  const data = (modelRes as Record<string, unknown>).data
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined
+  const message = (data as Record<string, unknown>).message
+  return typeof message === "string" ? message : undefined
+}
+
+/**
+ * Extract the final text summary from a completed session run response.
+ *
+ * Strategy:
+ * 1. Group responses by resGroupId, take the entries belonging to the latest group.
+ * 2. Within that group, prefer the last entry whose dataType is "summary".
+ *    Fall back to the last entry whose dataType is "message".
+ * 3. Return the modelRes.data.message string from that entry.
+ */
+function extractFinalSummary(payload: unknown): string | undefined {
+  const data = unwrapResponse(payload)
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined
+  const responses = (data as Record<string, unknown>).responses
+  if (!Array.isArray(responses) || responses.length === 0) return undefined
+
+  // Find the latest resGroupId
+  let latestGroupId: unknown
+  for (const entry of responses) {
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      latestGroupId = (entry as Record<string, unknown>).resGroupId
+    }
+  }
+
+  // Filter to only entries in the latest group
+  const latestGroup = responses.filter(
+    (entry) =>
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      (entry as Record<string, unknown>).resGroupId === latestGroupId,
+  )
+
+  // Prefer last "summary" entry, fall back to last "message" entry
+  let summaryEntry: unknown
+  let messageEntry: unknown
+  for (const entry of latestGroup) {
+    const dataType = (entry as Record<string, unknown>).dataType
+    if (dataType === "summary") summaryEntry = entry
+    if (dataType === "message") messageEntry = entry
+  }
+
+  const target = summaryEntry ?? messageEntry
+  return extractModelMessage(target)
+}
+
+/** Extract summary when the payload is simply {data: "<string>"}. */
+function extractSummaryString(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined
+  const data = (payload as Record<string, unknown>).data
+  return typeof data === "string" ? data : undefined
+}
+
+function renderSummary(summary: string): string {
+  // The backend encodes newlines as literal "\n" (two chars) inside the JSON string.
+  const text = summary.replace(/\\n/g, "\n")
+  if (shouldColorize()) return formatMarkdown(text)
+  // Non-TTY: strip markdown syntax, keep plain text
+  return text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/^#{1,6}\s+/gm, "")
+}
+
 async function executeSessionRunCommand(
   name: string,
   argv: Record<string, unknown>,
   body: Record<string, unknown>,
 ): Promise<void> {
-  const format = typeof argv.format === "string" ? argv.format : "json"
+  const format = typeof argv.format === "string" ? argv.format : undefined
   const timeoutMs = typeof argv["timeout-ms"] === "number" ? argv["timeout-ms"] : 360_000
   const intervalMs = typeof argv["interval-ms"] === "number" ? argv["interval-ms"] : 2_000
   const t0 = Date.now()
@@ -324,7 +396,16 @@ async function executeSessionRunCommand(
       await Bun.sleep(intervalMs)
     } while (true)
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
-    success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
+    const summary = extractSummaryString(payload) ?? extractFinalSummary(payload)
+    if (summary) {
+      if (format === "json") {
+        process.stdout.write(summary + "\n")
+      } else {
+        process.stdout.write(renderSummary(summary) + "\n")
+      }
+    } else {
+      success(null, { format, timeMs: Date.now() - t0 })
+    }
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
@@ -371,7 +452,7 @@ async function executeAnalyticsPollCommand(
   body: Record<string, unknown>,
   query: Record<string, unknown> = {},
 ): Promise<void> {
-  const format = typeof argv.format === "string" ? argv.format : "json"
+  const format = typeof argv.format === "string" ? argv.format : undefined
   const timeoutMs = typeof argv["timeout-ms"] === "number" ? argv["timeout-ms"] : 360_000
   const intervalMs = typeof argv["interval-ms"] === "number" ? argv["interval-ms"] : 2_000
   const t0 = Date.now()
@@ -385,7 +466,16 @@ async function executeAnalyticsPollCommand(
       await Bun.sleep(intervalMs)
     } while (true)
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
-    success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
+    const summary = extractSummaryString(payload) ?? extractFinalSummary(payload)
+    if (summary) {
+      if (format === "json") {
+        process.stdout.write(summary + "\n")
+      } else {
+        process.stdout.write(renderSummary(summary) + "\n")
+      }
+    } else {
+      success(null, { format, timeMs: Date.now() - t0 })
+    }
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
@@ -745,28 +835,61 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             },
           )
           .command(
-            "run [session-id]",
+            "run",
             "Start a text2insight query and wait for the result",
             (y) =>
               y
-                .positional("session-id", { type: "number", describe: "Session ID" })
-                .option("domain-id", { type: "number", describe: "Domain ID" })
+                .option("session-id", { type: "number", describe: "Session ID (creates a new session if omitted)" })
+                .option("domain-id", { type: "number", describe: "Domain ID (required when --session-id is omitted)" })
                 .option("msg", { type: "string", describe: "Question text" })
                 .option("model-name", { type: "string", describe: "Model name" })
                 .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .check((argv) => {
+                  if (!argv["session-id"] && !argv["domain-id"]) {
+                    throw new Error("--domain-id is required when --session-id is not provided")
+                  }
+                  return true
+                }),
             async (argv) => {
+              const argvRec = argv as Record<string, unknown>
+              const format = typeof argv.format === "string" ? argv.format : undefined
               const modelSettings = undefinedIfEmpty(mergeBody({}, {
                 model_name: argv["model-name"],
               }))
+              let sessionId: number | undefined = argv["session-id"]
+              if (!sessionId) {
+                try {
+                  const createPayload = await requestAnalytics(argvRec, ROUTES.sessionCreate, { domainId: argv["domain-id"] })
+                  const bizErr = extractBusinessError(createPayload)
+                  if (bizErr) {
+                    error(bizErr.code, bizErr.message, { format })
+                    return
+                  }
+                  const rawData = unwrapResponse(createPayload)
+                  // session create returns {data: "<sessionId string>"}
+                  const id = typeof rawData === "string" || typeof rawData === "number"
+                    ? rawData
+                    : (rawData as Record<string, unknown>)?.sessionId ?? (rawData as Record<string, unknown>)?.id
+                  if (!id) {
+                    error("ANALYTICS_AGENT_ERROR", "session create did not return a sessionId", { format })
+                    return
+                  }
+                  sessionId = Number(id)
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), { format })
+                  return
+                }
+              }
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 domainId: argv["domain-id"],
-                sessionId: argv["session-id"],
+                sessionId,
                 msg: argv.msg,
                 modelSettings,
               })
-              await executeSessionRunCommand("analytics-agent session run", argv as Record<string, unknown>, body)
+              await executeSessionRunCommand("analytics-agent session run", argvRec, body)
             },
           )
           .command(
