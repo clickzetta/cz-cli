@@ -117,6 +117,15 @@ describe("update bootstrap", () => {
     expect(Bun.spawnSync([execPath, "--version"]).stdout.toString().trim()).toBe("0.5.23")
   })
 
+  test("fails when the restart binary is unavailable after upgrade", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
+    const execPath = path.join(home, ".local", "bin", "cz-cli")
+
+    await expect(ensureRestartBinaryAtPath("0.5.23", execPath, { HOME: home })).rejects.toThrow(
+      "Updated cz-cli binary is not available",
+    )
+  })
+
   test("retries restart once when the first execution is killed", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-restart-"))
     const bin = path.join(tmp, "cz-cli")

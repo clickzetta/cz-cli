@@ -421,11 +421,17 @@ version_gt() {
 }
 
 check_version() {
-  if ! command -v cz-cli > /dev/null 2>&1; then
+  EXISTING_PATH=$(command -v cz-cli 2>/dev/null || true)
+  if [ -z "$EXISTING_PATH" ]; then
     return
   fi
 
-  INSTALLED_VERSION=$(cz-cli --version 2>/dev/null || echo "")
+  INSTALLED_VERSION=$("$EXISTING_PATH" --version 2>/dev/null || echo "")
+  if [ -z "$INSTALLED_VERSION" ]; then
+    print_error "PATH contains a cz-cli entry that cannot run --version: $EXISTING_PATH"
+    print_error "Remove this stale entry from PATH or delete the broken file, then run the installer again."
+    exit 1
+  fi
   if [ "$INSTALLED_VERSION" = "$VERSION" ]; then
     echo "Version $VERSION already installed"
     exit 0
@@ -732,8 +738,6 @@ ${renderPowerShellPlatformCase(platforms)}
 
   Write-Host "Installed to $BinaryTarget"
   Repair-InstallDirPath $InstallDir
-  Write-Host "Windows PowerShell 5.1 install command:"
-  Write-Host 'powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex ((New-Object Net.WebClient).DownloadString(''https://cz-cli.ai/install.ps1''))"'
 } finally {
   if (Test-Path $TempDir) {
     Remove-Item -LiteralPath $TempDir -Recurse -Force

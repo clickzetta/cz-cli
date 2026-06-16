@@ -32,11 +32,12 @@ export interface StudioContext extends StudioConfig {
 }
 
 export async function getGatewayContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<GatewayContext> {
+  const debug = !!args.debug
   const config = resolveConnectionConfig(args)
   const token = await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
   const user = await getCurrentUser(baseUrl, token.token)
-  const instanceId = await resolveInstanceId(baseUrl, token.token, user.accountId, config.instance, token.instanceId, args.debug)
+  const instanceId = await resolveInstanceId(baseUrl, token.token, user.accountId, config.instance, token.instanceId, debug)
   return {
     token: token.token,
     instanceId,
@@ -49,6 +50,7 @@ export async function getGatewayContext(args: Partial<CliArgs> & { format?: stri
     env: detectEnv(config.service),
     baseUrl,
     customHeaders: config.customHeaders,
+    debug,
     userName: user.name,
   }
 }
@@ -102,6 +104,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
     env: detectEnv(config.service),
     baseUrl,
     customHeaders: config.customHeaders,
+    debug,
     userName: user.name,
   }
 }

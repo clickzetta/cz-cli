@@ -269,7 +269,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("ddl", { type: "string", describe: "CREATE TABLE DDL statement (positional takes priority over --from-file)" })
-            .option("from-file", { type: "string", describe: "Read DDL from a file path (used when positional DDL is not provided)" }),
+            .option("from-file", { type: "string", describe: "Read DDL from a file path (used when positional DDL is not provided)" })
+            .option("write", { type: "boolean", hidden: true }),
         async (argv) => {
           const format = argv.format
           try {

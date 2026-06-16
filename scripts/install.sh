@@ -455,10 +455,22 @@ remove_shadowing_binary() {
     fi
 }
 
+validate_path_cz_cli() {
+    local p="$1"
+    local version=""
+    version=$("$p" --version 2>/dev/null || true)
+    if [ -z "$version" ]; then
+        print_message error "PATH contains a cz-cli entry that cannot run --version: $p"
+        print_message error "Remove this stale entry from PATH or delete the broken file, then run the installer again."
+        exit 1
+    fi
+}
+
 if command -v cz-cli >/dev/null 2>&1; then
     # Remove ALL cz-cli binaries that are not in our install dir
     while IFS= read -r existing_bin; do
         [ -z "$existing_bin" ] && continue
+        validate_path_cz_cli "$existing_bin"
         if [ "$existing_bin" != "${INSTALL_DIR}/${APP}" ]; then
             remove_shadowing_binary "$existing_bin"
         fi

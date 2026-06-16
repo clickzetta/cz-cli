@@ -34,6 +34,50 @@ describe("prepare release assets", () => {
     }
   })
 
+  test("install.sh fails when PATH cz-cli cannot report a version", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-bad-path-"))
+    const home = path.join(tmp, "home")
+    const pathBin = path.join(tmp, "path-bin")
+    const installDir = path.join(tmp, "install-bin")
+    const binary = path.join(tmp, "cz-cli")
+    fs.mkdirSync(pathBin, { recursive: true })
+    fs.writeFileSync(path.join(pathBin, "cz-cli"), "#!/bin/sh\nexit 127\n", { mode: 0o755 })
+    fs.writeFileSync(binary, "#!/bin/sh\n")
+
+    try {
+      let output = ""
+      try {
+        execFileSync("bash", [
+          path.join(repoRoot, "scripts", "install.sh"),
+          "--binary",
+          binary,
+          "--no-modify-path",
+        ], {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HOME: home,
+            SHELL: "/bin/sh",
+            CZ_INSTALL_DIR: installDir,
+            PATH: `${pathBin}${path.delimiter}${process.env.PATH}`,
+          },
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        })
+      } catch (error) {
+        output = `${String((error as { stdout?: Buffer }).stdout ?? "")}${String((error as { stderr?: Buffer }).stderr ?? "")}`
+      }
+
+      expect(output).toContain("PATH contains a cz-cli entry that cannot run --version")
+      expect(output).toContain("Remove this stale entry from PATH")
+
+      expect(fs.existsSync(path.join(installDir, "cz-cli"))).toBe(false)
+      expect(fs.existsSync(path.join(pathBin, "cz-cli"))).toBe(true)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   test("install.sh clears builtin skills when no bundled skills are present", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cz-install-empty-skills-"))
     const home = path.join(tmp, "home")
