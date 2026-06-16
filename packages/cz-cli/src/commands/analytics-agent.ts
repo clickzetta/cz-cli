@@ -4,7 +4,7 @@ import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
 import { success, error, handledError, isHandledCliError } from "../output/index.js"
-import { getStudioContext } from "./studio-context.js"
+import { getStudioContext, type StudioContext } from "./studio-context.js"
 import { logOperation } from "../logger.js"
 
 const ROUTES = {
@@ -157,12 +157,12 @@ function responseRequestId(text: string): string | undefined {
   }
 }
 
-async function requestAnalytics(
-  argv: Record<string, unknown>,
-  route: AnalyticsRoute,
-  body: Record<string, unknown>,
-  query: Record<string, unknown> = {},
-): Promise<unknown> {
+interface ResolvedContext {
+  endpoint: string
+  studio: StudioContext
+}
+
+async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<ResolvedContext> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const endpoint = readAgentEndpoint(typeof argv.profile === "string" ? argv.profile : undefined)
   if (!endpoint) {
@@ -180,8 +180,18 @@ async function requestAnalytics(
       },
     )
   }
-
   const studio = await getStudioContext(argv)
+  return { endpoint: endpoint!, studio }
+}
+
+async function requestAnalytics(
+  argv: Record<string, unknown>,
+  route: AnalyticsRoute,
+  body: Record<string, unknown>,
+  query: Record<string, unknown> = {},
+  ctx?: ResolvedContext,
+): Promise<unknown> {
+  const { endpoint, studio } = ctx ?? await resolveAnalyticsContext(argv)
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -321,14 +331,14 @@ async function executeAnalyticsPollCommand(
   const intervalMs = typeof argv["interval-ms"] === "number" ? argv["interval-ms"] : 2_000
   const t0 = Date.now()
   try {
+    const ctx = await resolveAnalyticsContext(argv)
     const deadline = Date.now() + timeoutMs
-    const poll = async (): Promise<unknown> => {
-      const payload = await requestAnalytics(argv, route, body, query)
-      if (isTerminalResponse(payload) || Date.now() >= deadline) return payload
+    let payload: unknown
+    do {
+      payload = await requestAnalytics(argv, route, body, query, ctx)
+      if (isTerminalResponse(payload) || Date.now() >= deadline) break
       await Bun.sleep(intervalMs)
-      return poll()
-    }
-    const payload = await poll()
+    } while (true)
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
     success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
   } catch (err) {

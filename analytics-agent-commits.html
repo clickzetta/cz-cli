@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>analytics-agent CLI — Commit 总结</title>
+<style>
+  /* ── Reset & base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d2e;
+    --surface2: #232740;
+    --border: #2e3354;
+    --accent: #5c73f2;
+    --accent2: #7c3aed;
+    --teal: #0ea5c9;
+    --green: #22c55e;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }
+
+  /* ── Deck layout ── */
+  .deck { width: 100%; }
+  .slide {
+    min-height: 100vh;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    padding: 48px 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .slide::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 60% 50% at 80% 20%, rgba(92,115,242,.12) 0%, transparent 70%),
+                radial-gradient(ellipse 50% 60% at 10% 90%, rgba(14,165,201,.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ── Slide 1 — Cover ── */
+  .cover { text-align: center; gap: 20px; }
+  .cover .eyebrow {
+    font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--teal); font-weight: 600;
+    background: rgba(14,165,201,.1); border: 1px solid rgba(14,165,201,.3);
+    padding: 5px 16px; border-radius: 999px; display: inline-block; margin-bottom: 12px;
+  }
+  .cover h1 {
+    font-size: clamp(2rem, 5vw, 3.4rem); font-weight: 800;
+    background: linear-gradient(135deg, #fff 0%, var(--accent) 60%, var(--teal) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    line-height: 1.15; margin-bottom: 16px;
+  }
+  .cover .subtitle { font-size: 1.1rem; color: var(--muted); max-width: 560px; margin: 0 auto 32px; }
+  .cover .meta {
+    display: flex; gap: 32px; justify-content: center; flex-wrap: wrap;
+    font-size: .85rem; color: var(--muted);
+  }
+  .cover .meta span { display: flex; align-items: center; gap: 6px; }
+  .cover .meta .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot-blue { background: var(--accent); }
+  .dot-teal { background: var(--teal); }
+  .dot-green { background: var(--green); }
+
+  /* ── Section header ── */
+  .section-header { text-align: center; }
+  .commit-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 14px; margin-bottom: 20px;
+  }
+  .commit-badge .sha {
+    font-family: var(--mono); font-size: .8rem; color: var(--teal);
+    background: rgba(14,165,201,.1); padding: 2px 8px; border-radius: 4px;
+  }
+  .commit-badge .date { font-size: .8rem; color: var(--muted); }
+  .section-header h2 {
+    font-size: clamp(1.6rem, 3.5vw, 2.4rem); font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .section-header p { color: var(--muted); font-size: 1rem; max-width: 640px; margin: 0 auto; }
+
+  /* ── Content grid ── */
+  .content-grid {
+    display: grid; gap: 18px; width: 100%; max-width: 1100px; margin: 28px auto 0;
+  }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 24px;
+    position: relative; overflow: hidden;
+    transition: border-color .2s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--teal));
+    opacity: 0; transition: opacity .2s;
+  }
+  .card:hover::after { opacity: 1; }
+  .card-icon { font-size: 1.6rem; margin-bottom: 10px; }
+  .card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 8px; color: #fff; }
+  .card p { font-size: .875rem; color: var(--muted); line-height: 1.6; }
+  .card ul { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .card ul li { font-size: .85rem; color: var(--muted); display: flex; align-items: flex-start; gap: 8px; }
+  .card ul li::before { content: '▸'; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Command list ── */
+  .cmd-group { margin-bottom: 14px; }
+  .cmd-group-title {
+    font-size: .75rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--teal); font-weight: 600; margin-bottom: 8px;
+  }
+  .cmd-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-bottom: 6px;
+  }
+  .cmd {
+    font-family: var(--mono); font-size: .78rem;
+    background: rgba(92,115,242,.12); color: var(--accent);
+    border: 1px solid rgba(92,115,242,.25); border-radius: 5px;
+    padding: 2px 8px; white-space: nowrap; flex-shrink: 0;
+  }
+  .cmd-desc { font-size: .8rem; color: var(--muted); line-height: 1.5; }
+
+  /* ── Diff view ── */
+  .diff-block {
+    background: #0d0f1a; border: 1px solid var(--border); border-radius: 10px;
+    font-family: var(--mono); font-size: .78rem; overflow: hidden;
+  }
+  .diff-header {
+    background: var(--surface); padding: 8px 16px;
+    font-size: .75rem; color: var(--muted); border-bottom: 1px solid var(--border);
+  }
+  .diff-body { padding: 12px 16px; line-height: 1.7; }
+  .diff-add { color: var(--green); }
+  .diff-del { color: var(--red); }
+  .diff-ctx { color: #4a5568; }
+
+  /* ── Pill tags ── */
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: .75rem; padding: 3px 10px; border-radius: 999px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .tag-blue  { background: rgba(92,115,242,.15); color: var(--accent);  border: 1px solid rgba(92,115,242,.3); }
+  .tag-teal  { background: rgba(14,165,201,.12);  color: var(--teal);   border: 1px solid rgba(14,165,201,.3); }
+  .tag-green { background: rgba(34,197,94,.12);   color: var(--green);  border: 1px solid rgba(34,197,94,.3); }
+  .tag-red   { background: rgba(239,68,68,.12);   color: var(--red);    border: 1px solid rgba(239,68,68,.3); }
+  .tag-yellow{ background: rgba(245,158,11,.12);  color: var(--yellow); border: 1px solid rgba(245,158,11,.3); }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+  /* ── Highlight box ── */
+  .highlight-box {
+    background: linear-gradient(135deg, rgba(92,115,242,.08), rgba(14,165,201,.06));
+    border: 1px solid rgba(92,115,242,.25); border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .highlight-box .label {
+    font-size: .72rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin-bottom: 6px;
+  }
+  .highlight-box p { font-size: .875rem; color: var(--text); line-height: 1.6; }
+
+  /* ── Timeline connector ── */
+  .timeline {
+    display: flex; flex-direction: column; gap: 0; width: 100%; max-width: 900px;
+    position: relative;
+  }
+  .timeline::before {
+    content: ''; position: absolute; left: 28px; top: 32px; bottom: 32px;
+    width: 2px; background: linear-gradient(180deg, var(--accent), var(--teal), var(--green));
+  }
+  .timeline-item {
+    display: flex; gap: 20px; align-items: flex-start; padding: 16px 0;
+  }
+  .tl-dot {
+    width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--bg);
+    flex-shrink: 0; margin-top: 4px; position: relative; z-index: 1;
+    margin-left: 20px;
+  }
+  .tl-content { flex: 1; }
+  .tl-content h4 { font-size: .95rem; font-weight: 700; margin-bottom: 4px; }
+  .tl-content p { font-size: .83rem; color: var(--muted); line-height: 1.55; }
+
+  /* ── Divider ── */
+  .slide-divider { width: 60px; height: 3px; border-radius: 2px; margin: 0 auto 24px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .cols-2, .cols-3 { grid-template-columns: 1fr; }
+    .slide { padding: 32px 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 1 — Cover -->
+<section class="slide cover">
+  <div>
+    <div class="eyebrow">Code Review · analytics-agent</div>
+    <h1>Analytics Agent CLI<br>三次提交总结</h1>
+    <p class="subtitle">由 zhaxinmeng（xinmeng.zha）提交，涵盖全新命令新增、参数校验收紧、接口修复与功能补全</p>
+    <div class="meta">
+      <span><span class="dot dot-blue"></span>Commit 1 — 2026-06-14 · 添加命令</span>
+      <span><span class="dot dot-teal"></span>Commit 2 — 2026-06-14 · 参数校验</span>
+      <span><span class="dot dot-green"></span>Commit 3 — 2026-06-15 · 接口修复</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 2 — Commit 1 Overview -->
+<section class="slide" style="background: linear-gradient(160deg, #0f1117 0%, #141828 100%);">
+  <div style="width:100%;max-width:1100px;">
+    <div class="section-header">
+      <div class="commit-badge">
+        <span class="sha">0e6da6c</span>
+        <span class="date">2026-06-14 15:28</span>
+      </div>
+      <h2>Commit 1 — 添加 analytics-agent CLI 命令</h2>
+      <p>新增 683 行核心实现，从零构建完整的 Analytics Agent 命令体系</p>
+    </div>
+    <div class="content-grid cols-3" style="margin-top:32px;">
+      <div class="card">
+        <div class="card-icon">📂</div>
+        <h3>改动范围</h3>
+        <ul>
+          <li>新增 <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">analytics-agent.ts</code> (683 行)</li>
+          <li>注册命令至 cli.ts / register-commands.ts / run-cli.ts</li>
+          <li>profile-store 新增 <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">readAgentEndpoint</code></li>
+          <li>setup 命令增加 <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">--analysis-agent-endpoint</code></li>
+          <li>新增 e2e 测试 &amp; profile-store 单元测试</li>
+        </ul>
+        <div class="tags" style="margin-top:14px;">
+          <span class="tag tag-blue">+807 行</span>
+          <span class="tag tag-teal">12 文件</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🌐</div>
+        <h3>统一 HTTP 请求层</h3>
+        <ul>
+          <li>读取 profile 中的 <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">analysis_agent_endpoint</code></li>
+          <li>携带 x-clickzetta-token / Authorization / traceparent</li>
+          <li>openSessionAuth 路由使用独立 token header</li>
+          <li>支持 <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">--format json/table</code> 输出</li>
+          <li>支持 <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">--body</code> 传完整 JSON 覆盖</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-icon">🛠️</div>
+        <h3>工具函数</h3>
+        <ul>
+          <li><code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">parseJsonObject</code> / <code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">parseJsonArray</code></li>
+          <li><code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">mergeBody</code> — 合并 body 与 CLI 参数</li>
+          <li><code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">encodePath</code> — URL 路径安全编码</li>
+          <li><code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">buildUrl</code> — 构造带 tenantId 的完整 URL</li>
+          <li><code style="font-family:var(--mono);font-size:.78rem;color:var(--teal)">undefinedIfEmpty</code> — 清理空对象</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 3 — Commit 1 Commands -->
+<section class="slide">
+  <div style="width:100%;max-width:1100px;">
+    <div class="section-header">
+      <h2>Commit 1 — 命令树详解</h2>
+      <p style="color:var(--muted)">四大子命令组，覆盖数据源管理、域管理、服务检测与会话控制</p>
+    </div>
+    <div class="content-grid cols-2" style="margin-top:28px;">
+      <div class="card">
+        <h3 style="color:var(--teal);margin-bottom:14px;">📊 datasource — 11 条子命令</h3>
+        <div class="cmd-group">
+          <div class="cmd-row"><span class="cmd">types</span><span class="cmd-desc">获取支持的数据源类型列表</span></div>
+          <div class="cmd-row"><span class="cmd">schema</span><span class="cmd-desc">获取数据源 Schema 信息</span></div>
+          <div class="cmd-row"><span class="cmd">list</span><span class="cmd-desc">列出所有数据源</span></div>
+          <div class="cmd-row"><span class="cmd">meta &lt;id&gt;</span><span class="cmd-desc">获取数据源 Meta 信息</span></div>
+          <div class="cmd-row"><span class="cmd">browse &lt;id&gt;</span><span class="cmd-desc">浏览数据源目录</span></div>
+          <div class="cmd-row"><span class="cmd">search-tables &lt;id&gt;</span><span class="cmd-desc">搜索数据源中的表</span></div>
+          <div class="cmd-row"><span class="cmd">show-table &lt;id&gt; &lt;name&gt;</span><span class="cmd-desc">查看表元数据</span></div>
+          <div class="cmd-row"><span class="cmd">create / update / delete</span><span class="cmd-desc">增删改数据源</span></div>
+          <div class="cmd-row"><span class="cmd">load &lt;id&gt;</span><span class="cmd-desc">将表加载到 Analytics Agent</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--accent);margin-bottom:14px;">🗂️ domain — 域 &amp; 会话管理</h3>
+        <div class="cmd-group">
+          <div class="cmd-group-title">domain</div>
+          <div class="cmd-row"><span class="cmd">list / create / update</span><span class="cmd-desc">域生命周期管理</span></div>
+          <div class="cmd-row"><span class="cmd">detail &lt;id&gt;</span><span class="cmd-desc">查看域详情（含绑定表）</span></div>
+          <div class="cmd-row"><span class="cmd">delete &lt;id&gt;</span><span class="cmd-desc">删除域</span></div>
+          <div class="cmd-row"><span class="cmd">table add &lt;id&gt;</span><span class="cmd-desc">向域添加表</span></div>
+        </div>
+        <div class="cmd-group" style="margin-top:12px;">
+          <div class="cmd-group-title">session（text2insight）</div>
+          <div class="cmd-row"><span class="cmd">create</span><span class="cmd-desc">创建安全 session</span></div>
+          <div class="cmd-row"><span class="cmd">run [session-id]</span><span class="cmd-desc">发起 text2insight 查询</span></div>
+          <div class="cmd-row"><span class="cmd">result [question-id]</span><span class="cmd-desc">轮询查询结果（支持 --wait）</span></div>
+          <div class="cmd-row"><span class="cmd">stop</span><span class="cmd-desc">停止运行中的查询</span></div>
+        </div>
+        <div class="cmd-group" style="margin-top:12px;">
+          <div class="cmd-group-title">service</div>
+          <div class="cmd-row"><span class="cmd">enabled</span><span class="cmd-desc">检查租户是否开启 Analytics Agent</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 4 — Commit 2 -->
+<section class="slide" style="background: linear-gradient(160deg, #0f1117 0%, #12181f 100%);">
+  <div style="width:100%;max-width:1100px;">
+    <div class="section-header">
+      <div class="commit-badge">
+        <span class="sha">66c7c1c</span>
+        <span class="date">2026-06-14 20:12</span>
+      </div>
+      <h2>Commit 2 — 参数校验收紧</h2>
+      <p>创建 session 必须指定 domainId，查询结果必须指定 questionId；同步新增命名规范文档</p>
+    </div>
+    <div class="content-grid cols-2" style="margin-top:32px;">
+      <div class="card">
+        <h3 style="margin-bottom:16px;">🔒 session create — domain-id 变为必填</h3>
+        <div class="diff-block">
+          <div class="diff-header">packages/cz-cli/src/commands/analytics-agent.ts</div>
+          <div class="diff-body">
+            <div class="diff-del">- .option("domain-id", { type: "number",</div>
+            <div class="diff-del">-   describe: "Domain ID" })</div>
+            <div class="diff-add">+ .option("domain-id", { type: "number",</div>
+            <div class="diff-add">+   demandOption: true,</div>
+            <div class="diff-add">+   describe: "Domain ID" })</div>
+          </div>
+        </div>
+        <div class="highlight-box" style="margin-top:14px;">
+          <div class="label">变更原因</div>
+          <p>每个 session 都必须关联一个 domain，domain 决定可查询的数据范围；不传 domainId 会导致后端报错，提前在 CLI 层校验更友好。</p>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:16px;">🔒 session result — question-id 变为必填</h3>
+        <div class="diff-block">
+          <div class="diff-header">packages/cz-cli/src/commands/analytics-agent.ts</div>
+          <div class="diff-body">
+            <div class="diff-del">- "result [question-id]",</div>
+            <div class="diff-add">+ "result &lt;question-id&gt;",</div>
+            <div class="diff-ctx">  "Poll a text2insight question result",</div>
+            <div class="diff-del">- .positional("question-id", { type: "number",</div>
+            <div class="diff-del">-   describe: "Question ID" })</div>
+            <div class="diff-add">+ .positional("question-id", { type: "number",</div>
+            <div class="diff-add">+   demandOption: true,</div>
+            <div class="diff-add">+   describe: "Question ID" })</div>
+          </div>
+        </div>
+        <div class="highlight-box" style="margin-top:14px;">
+          <div class="label">变更原因</div>
+          <p>轮询结果必须知道是哪个问题（question），缺少该参数无法发起有效请求；语法从 <code style="font-family:var(--mono);font-size:.8rem;color:var(--teal)">[可选]</code> 改为 <code style="font-family:var(--mono);font-size:.8rem;color:var(--teal)">&lt;必填&gt;</code>。</p>
+        </div>
+      </div>
+    </div>
+    <div class="content-grid" style="grid-template-columns:1fr;margin-top:16px;">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <span style="font-size:1.3rem;">📄</span>
+          <h3>新增：docs/datagpt-naming-review.md（99 行）</h3>
+        </div>
+        <p style="font-size:.875rem;color:var(--muted);line-height:1.6;">
+          梳理 <strong style="color:var(--text)">datagpt</strong>、<strong style="color:var(--text)">analytics-agent</strong>、<strong style="color:var(--text)">text2insight</strong> 等术语的规范用法，确保 CLI 命令名称、API 路径、文档与代码注释保持一致性。
+        </p>
+        <div class="tags">
+          <span class="tag tag-yellow">命名规范</span>
+          <span class="tag tag-teal">datagpt</span>
+          <span class="tag tag-teal">analytics-agent</span>
+          <span class="tag tag-teal">text2insight</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 5 — Commit 3 -->
+<section class="slide">
+  <div style="width:100%;max-width:1100px;">
+    <div class="section-header">
+      <div class="commit-badge">
+        <span class="sha">0ff4af4</span>
+        <span class="date">2026-06-15 14:33 · CZPDEV-24802</span>
+      </div>
+      <h2>Commit 3 — Analytics Agent 接口修复</h2>
+      <p>补全缺失路由、修复业务错误检测、新增 domain table remove 与 session list 命令</p>
+    </div>
+    <div class="content-grid cols-3" style="margin-top:28px;">
+      <div class="card">
+        <div class="card-icon">➕</div>
+        <h3>新增路由</h3>
+        <div class="cmd-group" style="margin-top:8px;">
+          <div class="cmd-group-title">domainTableRemove</div>
+          <div style="font-family:var(--mono);font-size:.75rem;color:var(--red);background:#0d0f1a;border-radius:6px;padding:8px 10px;line-height:1.6;">
+            DELETE /open/api/v1/analytics-agent/<br>
+            &nbsp;&nbsp;domains/:domainId/tables/:tableId
+          </div>
+        </div>
+        <div class="cmd-group" style="margin-top:12px;">
+          <div class="cmd-group-title">sessionList</div>
+          <div style="font-family:var(--mono);font-size:.75rem;color:var(--teal);background:#0d0f1a;border-radius:6px;padding:8px 10px;line-height:1.6;">
+            POST /open/session/list
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🐛</div>
+        <h3>业务错误检测修复</h3>
+        <p style="font-size:.83rem;color:var(--muted);line-height:1.6;margin-bottom:12px;">
+          后端始终返回 HTTP 200，通过响应体中 <code style="font-family:var(--mono);font-size:.78rem;color:var(--yellow)">success: false</code> 表达业务失败，原代码未检测此状态。
+        </p>
+        <div class="highlight-box">
+          <div class="label">新增 extractBusinessError()</div>
+          <p>兼容两种格式：<br>
+          ① <code style="font-family:var(--mono);font-size:.75rem;color:var(--teal)">{data: {success:false, code, message}}</code><br>
+          ② <code style="font-family:var(--mono);font-size:.75rem;color:var(--teal)">{success:false, code, message}</code><br>
+          检测到业务错误后调用 <code style="font-family:var(--mono);font-size:.75rem;color:var(--red)">error()</code> 提前返回，不再误报成功。</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-icon">✨</div>
+        <h3>新增 CLI 命令</h3>
+        <div class="cmd-group" style="margin-top:8px;">
+          <div class="cmd-group-title">domain table remove</div>
+          <div class="cmd-row">
+            <span class="cmd">remove &lt;domain-id&gt; &lt;table-id&gt;</span>
+          </div>
+          <p style="font-size:.8rem;color:var(--muted);">从指定 domain 中移除绑定的表</p>
+        </div>
+        <div class="cmd-group" style="margin-top:14px;">
+          <div class="cmd-group-title">session list</div>
+          <div class="cmd-row">
+            <span class="cmd">list --domain-id &lt;id&gt;</span>
+          </div>
+          <p style="font-size:.8rem;color:var(--muted);">列出 text2insight sessions；domain-id 必填，支持 --source-type / --source-id 过滤</p>
+        </div>
+      </div>
+    </div>
+    <div class="content-grid" style="grid-template-columns:1fr;margin-top:16px;">
+      <div class="diff-block">
+        <div class="diff-header">executeAnalyticsCommand — 业务错误检测注入点</div>
+        <div class="diff-body">
+          <div class="diff-ctx">&nbsp; const payload = await requestAnalytics(argv, route, body, query)</div>
+          <div class="diff-add">+ const bizErr = extractBusinessError(payload)</div>
+          <div class="diff-add">+ if (bizErr) {</div>
+          <div class="diff-add">+   logOperation(name, { ok: false, timeMs: Date.now() - t0 })</div>
+          <div class="diff-add">+   error(bizErr.code, bizErr.message, { format })</div>
+          <div class="diff-add">+   return</div>
+          <div class="diff-add">+ }</div>
+          <div class="diff-ctx">&nbsp; logOperation(name, { ok: true, timeMs: Date.now() - t0 })</div>
+          <div class="diff-ctx">&nbsp; success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 6 — Summary -->
+<section class="slide" style="background: linear-gradient(160deg, #0f1117 0%, #141828 100%);">
+  <div style="width:100%;max-width:900px;">
+    <div class="section-header" style="margin-bottom:36px;">
+      <div class="slide-divider" style="background:linear-gradient(90deg,var(--accent),var(--teal));"></div>
+      <h2>总结</h2>
+      <p>三次提交完整构建了 analytics-agent CLI 子系统</p>
+    </div>
+    <div class="timeline">
+      <div class="timeline-item">
+        <div class="tl-dot" style="background:var(--accent);"></div>
+        <div class="tl-content">
+          <h4>Commit 1 · 0e6da6c — 从零构建</h4>
+          <p>新增 analytics-agent 命令体系（683行），包含 datasource（11条）、domain（含table）、service、session 四大子命令组；实现统一 HTTP 层、工具函数、e2e 测试。</p>
+          <div class="tags" style="margin-top:8px;"><span class="tag tag-blue">+807 行</span><span class="tag tag-blue">12 文件</span><span class="tag tag-green">新功能</span></div>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="tl-dot" style="background:var(--teal);"></div>
+        <div class="tl-content">
+          <h4>Commit 2 · 66c7c1c — 参数收紧</h4>
+          <p>session create 的 domain-id 改为必填；session result 的 question-id 改为必填位置参数；新增命名规范文档统一术语。</p>
+          <div class="tags" style="margin-top:8px;"><span class="tag tag-teal">+102 行</span><span class="tag tag-yellow">校验增强</span></div>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="tl-dot" style="background:var(--green);"></div>
+        <div class="tl-content">
+          <h4>Commit 3 · 0ff4af4 — 接口修复（CZPDEV-24802）</h4>
+          <p>新增 domainTableRemove 与 sessionList 路由；实现 extractBusinessError() 修复 HTTP 200 包裹业务错误的误报问题；补全 domain table remove 与 session list 命令。</p>
+          <div class="tags" style="margin-top:8px;"><span class="tag tag-green">+73 行</span><span class="tag tag-red">Bug Fix</span><span class="tag tag-green">新命令</span></div>
+        </div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:40px;font-size:.8rem;color:var(--muted);">
+      Branch: <code style="font-family:var(--mono);color:var(--teal)">feature/analytics-agent-cli</code> &nbsp;·&nbsp; Author: xinmeng.zha
+    </div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
