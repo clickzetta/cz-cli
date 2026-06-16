@@ -20,6 +20,19 @@ const outputDtos = [
     parseType: 2,
   },
 ]
+const manualOutputDtos = [
+  {
+    projectId: 9,
+    dataFileId: 123,
+    dataFileVersion: 0,
+    dataFileName: "lineage_smoke",
+    ownerCnName: "owner-cn",
+    ownerEnName: "owner-en",
+    fileShowName: "ws.manual_output",
+    refTableName: "ws.public.manual_output",
+    parseType: 1,
+  },
+]
 const actualSdk = await import("@clickzetta/sdk")
 const actualResolver = await import("../src/resolver.ts")
 const actualDatasource = await import("../src/commands/datasource.ts")
@@ -144,6 +157,21 @@ afterAll(() => {
 })
 
 describe("task save-config dependency validation", () => {
+  test("requires at least one explicit save-config option", async () => {
+    const result = await execute("task save-config 123")
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(2)
+    expect(json).toEqual({
+      error: {
+        code: "INVALID_ARGUMENTS",
+        message: "At least one configuration option is required.",
+      },
+    })
+    expect(saveCalls).toHaveLength(0)
+    expect(parseCalls).toHaveLength(0)
+  })
+
   test("fails fast when a dependency item is missing taskId", async () => {
     const result = await execute(`task save-config 123 --deps replace --dep-tasks '[{"taskName":"upstream"}]'`)
     const json = firstJson(result.output)
@@ -174,8 +202,24 @@ describe("task save-config dependency validation", () => {
     expect(parseCalls).toHaveLength(0)
   })
 
-  test("save-config automatically parses lineage and saves output table DTOs", async () => {
+  test("save-config keeps existing lineage unless auto-lineage is enabled", async () => {
     const result = await execute("task save-config 123 --retry-count 2")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(parseCalls).toHaveLength(0)
+    expect(saveCalls[0]?.dataFileInputListReqs).toEqual([])
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(outputDtos)
+    expect(saveCalls[0]).toMatchObject({
+      ownerCnName: "owner-cn",
+      ownerEnName: "owner-en",
+      etlVcCode: "DEFAULT",
+      etlVcId: "vc-default-id",
+    })
+  })
+
+  test("save-config parses lineage only when auto-lineage is enabled", async () => {
+    const result = await execute("task save-config 123 --retry-count 2 --auto-lineage")
 
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -202,8 +246,24 @@ describe("task save-config dependency validation", () => {
     })
   })
 
-  test("save-cron automatically parses lineage and resolves DEFAULT virtual cluster ID", async () => {
+  test("save-cron keeps existing lineage by default and resolves DEFAULT virtual cluster ID", async () => {
     const result = await execute('task save-cron 123 --cron "0 30 2 * * ? *"')
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(parseCalls).toHaveLength(0)
+    expect(saveCalls[0]?.dataFileInputListReqs).toEqual([])
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(outputDtos)
+    expect(saveCalls[0]).toMatchObject({
+      ownerCnName: "owner-cn",
+      ownerEnName: "owner-en",
+      etlVcCode: "DEFAULT",
+      etlVcId: "vc-default-id",
+    })
+  })
+
+  test("save-cron parses lineage only when auto-lineage is enabled", async () => {
+    const result = await execute('task save-cron 123 --cron "0 30 2 * * ? *" --auto-lineage')
 
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -221,5 +281,23 @@ describe("task save-config dependency validation", () => {
       etlVcCode: "DEFAULT",
       etlVcId: "vc-default-id",
     })
+  })
+
+  test("save-config replaces output tables from manual output parameters", async () => {
+    const result = await execute(`task save-config 123 --outputs replace --output-tables '[{"outputTableName":"ws.manual_output","refTableName":"ws.public.manual_output"}]'`)
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(parseCalls).toHaveLength(0)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(manualOutputDtos)
+  })
+
+  test("save-cron clears output tables from manual output action", async () => {
+    const result = await execute('task save-cron 123 --cron "0 30 2 * * ? *" --outputs clear')
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(parseCalls).toHaveLength(0)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual([])
   })
 })
