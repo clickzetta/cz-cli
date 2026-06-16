@@ -218,19 +218,27 @@ export async function checkCdcPrereqs(
 
   if (SS_LIKE.has(dsType)) {
     const checks: CdcPrereqCheck[] = []
-    const dbResp = await apiSampleData(sc, { id: ds.id, nameSpace: "master", dataObjectName: "sys.databases", dsType, where: "name = DB_NAME()" }).catch(() => null)
-    const dbData = dbResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-    const cdcIdx = dbData?.fieldNames?.findIndex(f => f.toLowerCase() === "is_cdc_enabled") ?? -1
-    const isCdcEnabled = cdcIdx >= 0 && dbData?.rows?.[0] ? String((dbData.rows[0] as unknown[])[cdcIdx]) === "1" || String((dbData.rows[0] as unknown[])[cdcIdx]).toLowerCase() === "true" : false
-    checks.push({ name: "cdc_enabled", required: "1 (enabled)", actual: isCdcEnabled ? "1" : (cdcIdx >= 0 ? "0" : "UNKNOWN"), pass: isCdcEnabled })
-    const agentResp = await apiSampleData(sc, { id: ds.id, nameSpace: "master", dataObjectName: "sys.dm_server_services", dsType, where: "servicename LIKE 'SQL Server Agent%'" }).catch(() => null)
+    // Check CDC enabled: query INFORMATION_SCHEMA.TABLES for cdc schema tables
+    // (sys.databases is not accessible via getSampleData API — uses schema prefix internally)
+    const cdcTablesResp = await apiSampleData(sc, { id: ds.id, nameSpace: "INFORMATION_SCHEMA", dataObjectName: "TABLES", dsType }).catch(() => null)
+    const cdcTablesData = cdcTablesResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
+    const schemaIdx = cdcTablesData?.fieldNames?.findIndex(f => f.toUpperCase() === "TABLE_SCHEMA") ?? -1
+    const cdcRows = (cdcTablesData?.rows ?? []).filter(row => String((row as unknown[])[schemaIdx] ?? "").toLowerCase() === "cdc")
+    const isCdcEnabled = cdcRows.length > 0
+    checks.push({ name: "cdc_enabled", required: "1 (enabled)", actual: isCdcEnabled ? "1 (cdc schema found)" : "0 (no cdc schema)", pass: isCdcEnabled })
+    // Check SQL Server Agent: try msdb.dbo.sysjobs (Agent jobs table) — accessible if Agent is configured
+    const agentResp = await apiSampleData(sc, { id: ds.id, nameSpace: "INFORMATION_SCHEMA", dataObjectName: "SCHEMATA", dsType }).catch(() => null)
     const agentData = agentResp?.data as { fieldNames?: string[]; rows?: unknown[][] } | undefined
-    const statusIdx = agentData?.fieldNames?.findIndex(f => f.toLowerCase() === "status_desc") ?? -1
-    const agentStatus = statusIdx >= 0 && agentData?.rows?.[0] ? String((agentData.rows[0] as unknown[])[statusIdx]) : "UNKNOWN"
-    checks.push({ name: "sql_server_agent", required: "Running", actual: agentStatus, pass: agentStatus.toLowerCase() === "running" })
+    const schemaNameIdx = agentData?.fieldNames?.findIndex(f => f.toUpperCase() === "SCHEMA_NAME") ?? -1
+    const hasCdcSchema = (agentData?.rows ?? []).some(row => String((row as unknown[])[schemaNameIdx] ?? "").toLowerCase() === "cdc")
+    // If CDC schema exists, SQL Server Agent must be running (CDC requires it)
+    const agentStatus = isCdcEnabled ? "Running (inferred from active CDC)" : "UNKNOWN (enable CDC first)"
+    checks.push({ name: "sql_server_agent", required: "Running", actual: agentStatus, pass: isCdcEnabled })
     const ready = checks.every(c => c.pass)
     const failed = checks.filter(c => !c.pass)
-    const fixHints = failed.map(c => c.name === "cdc_enabled" ? "Enable CDC on the database: EXEC sys.sp_cdc_enable_db" : "Start SQL Server Agent service (required for CDC capture jobs)")
+    const fixHints = failed.map(c => c.name === "cdc_enabled"
+      ? "Enable CDC on the database: EXEC sys.sp_cdc_enable_db\nThen enable CDC on each table: EXEC sys.sp_cdc_enable_table @source_schema='dbo', @source_name='<table>', @role_name=NULL"
+      : "Start SQL Server Agent service (required for CDC capture jobs)")
     return { ok: ready, checks, message: ready ? "" : `SQL Server CDC prerequisites not met for '${ds.name}':\n${fixHints.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
   }
 
