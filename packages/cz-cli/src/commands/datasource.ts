@@ -250,6 +250,16 @@ export async function checkCdcPrereqs(
     return { ok: ready, checks, message: ready ? "" : `DM CDC prerequisites not met for '${ds.name}':\n${fixHints.join("\n")}\n\nRun 'cz-cli datasource check-cdc ${sourceArg}' for details. Use --skip-check to bypass.` }
   }
 
+  // Oracle (dsType=25) is not supported for CDC multi-table sync
+  const ORACLE_LIKE = new Set([25])
+  if (ORACLE_LIKE.has(dsType)) {
+    return {
+      ok: false,
+      checks: [{ name: "cdc_support", required: "supported", actual: "not supported", pass: false }],
+      message: `Oracle is not supported as a CDC source for multi-table real-time sync. Supported sources: MySQL, PostgreSQL, SQL Server, DM.`,
+    }
+  }
+
   return { ok: true, message: "", checks: [] }
 }
 

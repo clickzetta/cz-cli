@@ -897,6 +897,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'.`, { format, exitCode: 2 }); return
             }
 
+            // Validate source dsType is supported for CDC multi-table sync
+            const CDC_SUPPORTED_TYPES = new Set([5, 7, 8, 17, 18, 19, 21, 22, 25, 26, 39, 40, 46, 48])
+            // Note: Oracle (25) is listed in DS_TYPE_MAP but NOT supported for CDC — checkCdcPrereqs will reject it
+            const CDC_SUPPORTED_MYSQL = "MySQL/TiDB/MariaDB (5,17,18,19,39)"
+            const CDC_SUPPORTED_PG    = "PostgreSQL/Greenplum (7,22,40,46,48)"
+            const CDC_SUPPORTED_SS    = "SQL Server (8)"
+            const CDC_SUPPORTED_DM    = "DM (26)"
+            if (!CDC_SUPPORTED_TYPES.has(sourceDs.dsType)) {
+              error("UNSUPPORTED_DATASOURCE", `Datasource '${argv.source}' (dsType=${sourceDs.dsType}) is not supported for CDC multi-table sync. Supported: ${CDC_SUPPORTED_MYSQL}, ${CDC_SUPPORTED_PG}, ${CDC_SUPPORTED_SS}, ${CDC_SUPPORTED_DM}.`, { format, exitCode: 2 }); return
+            }
+
             // Step 2: CDC prerequisite check (before creating anything)
             if (!(argv["skip-check"] as boolean)) {
               const check = await checkCdcPrereqs(sc, sourceDs as { id: number; name: string; dsType: number }, String(argv.source))
@@ -1683,6 +1694,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sourceDs = await resolveDatasource(sc, String(argv.source))
             if (!sourceDs.dsType) {
               error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'. Specify a valid datasource.`, { format, exitCode: 2 }); return
+            }
+
+            // Validate source dsType is supported for CDC multi-table sync
+            const CDC_SUPPORTED_TYPES = new Set([5, 7, 8, 17, 18, 19, 21, 22, 25, 26, 39, 40, 46, 48])
+            // Note: Oracle (25) is listed in DS_TYPE_MAP but NOT supported for CDC — checkCdcPrereqs will reject it
+            const CDC_SUPPORTED_MYSQL = "MySQL/TiDB/MariaDB (5,17,18,19,39)"
+            const CDC_SUPPORTED_PG    = "PostgreSQL/Greenplum (7,22,40,46,48)"
+            const CDC_SUPPORTED_SS    = "SQL Server (8)"
+            const CDC_SUPPORTED_DM    = "DM (26)"
+            if (!CDC_SUPPORTED_TYPES.has(sourceDs.dsType)) {
+              error("UNSUPPORTED_DATASOURCE", `Datasource '${argv.source}' (dsType=${sourceDs.dsType}) is not supported for CDC multi-table sync. Supported: ${CDC_SUPPORTED_MYSQL}, ${CDC_SUPPORTED_PG}, ${CDC_SUPPORTED_SS}, ${CDC_SUPPORTED_DM}.`, { format, exitCode: 2 }); return
             }
 
             // CDC prerequisite check (skip with --skip-check)
