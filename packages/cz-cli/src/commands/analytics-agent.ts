@@ -290,6 +290,51 @@ function isTerminalResponse(payload: unknown): boolean {
   return ["finish", "finish_stop", "error"].includes(latestResponseDataType(payload))
 }
 
+async function executeSessionRunCommand(
+  name: string,
+  argv: Record<string, unknown>,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const timeoutMs = typeof argv["timeout-ms"] === "number" ? argv["timeout-ms"] : 360_000
+  const intervalMs = typeof argv["interval-ms"] === "number" ? argv["interval-ms"] : 2_000
+  const t0 = Date.now()
+  try {
+    const ctx = await resolveAnalyticsContext(argv)
+    const runPayload = await requestAnalytics(argv, ROUTES.sessionRun, body, {}, ctx)
+    const bizErr = extractBusinessError(runPayload)
+    if (bizErr) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(bizErr.code, bizErr.message, { format })
+      return
+    }
+    const runData = unwrapResponse(runPayload) as Record<string, unknown>
+    const questionId = runData.questionId
+    if (!questionId) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error("ANALYTICS_AGENT_ERROR", "session run did not return a questionId", { format, extra: { response: runData } })
+      return
+    }
+    const pollBody = { questionId }
+    const deadline = Date.now() + timeoutMs
+    let payload: unknown
+    do {
+      payload = await requestAnalytics(argv, ROUTES.sessionResult, pollBody, {}, ctx)
+      if (isTerminalResponse(payload) || Date.now() >= deadline) break
+      await Bun.sleep(intervalMs)
+    } while (true)
+    logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
+  } catch (err) {
+    logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
 async function executeAnalyticsCommand(
   name: string,
   argv: Record<string, unknown>,
@@ -701,13 +746,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "run [session-id]",
-            "Start a text2insight query in a session",
+            "Start a text2insight query and wait for the result",
             (y) =>
               y
                 .positional("session-id", { type: "number", describe: "Session ID" })
                 .option("domain-id", { type: "number", describe: "Domain ID" })
                 .option("msg", { type: "string", describe: "Question text" })
                 .option("model-name", { type: "string", describe: "Model name" })
+                .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
+                .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" }),
             async (argv) => {
               const modelSettings = undefinedIfEmpty(mergeBody({}, {
@@ -719,7 +766,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 msg: argv.msg,
                 modelSettings,
               })
-              await executeAnalyticsCommand("analytics-agent session run", argv as Record<string, unknown>, ROUTES.sessionRun, body)
+              await executeSessionRunCommand("analytics-agent session run", argv as Record<string, unknown>, body)
             },
           )
           .command(
