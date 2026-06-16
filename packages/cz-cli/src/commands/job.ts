@@ -220,13 +220,19 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
               instanceId: ctx.token.instanceId,
             }
             const raw = await getJobStatus(ctx.clientOpts, jobId)
+            const state = raw.status?.state ?? "UNKNOWN"
             logOperation("job status", { ok: true })
             success({
               job_id: argv["job-id"],
-              state: raw.status?.state ?? "UNKNOWN",
+              state,
               error_code: raw.status?.errorCode || undefined,
               error_message: raw.status?.errorMessage || undefined,
-            }, { format })
+            }, {
+              format,
+              aiMessage: state !== "RUNNING"
+                ? `Job ${argv["job-id"]} has finished (state: ${state}). To see the execution plan: cz-cli job profile ${argv["job-id"]}`
+                : undefined,
+            })
           } catch (err) {
             logOperation("job status", { ok: false, errorCode: "JOB_STATUS_ERROR" })
             error("JOB_STATUS_ERROR", err instanceof Error ? err.message : String(err), { format })
