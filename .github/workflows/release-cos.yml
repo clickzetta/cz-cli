@@ -1,16 +1,17 @@
 name: release-cos
-run-name: Release ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.version) }}
+run-name: Release ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 0.3.78 or 0.3.78-dev.1)"
+        description: "Release version (e.g. 0.3.78 or dev-v0.3.79.20260616200210)"
         required: true
         type: string
   push:
     tags:
       - "v*"
+      - "dev-v*"
 
 permissions:
   contents: write
@@ -29,16 +30,26 @@ jobs:
         id: release
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            TAG="${GITHUB_REF_NAME}"
+            RAW_VERSION="${GITHUB_REF_NAME}"
           else
-            TAG="v${{ inputs.version }}"
+            RAW_VERSION="${{ inputs.version }}"
           fi
-          VERSION="${TAG#v}"
+
+          if printf '%s' "$RAW_VERSION" | grep -Eq '^dev-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9A-Za-z.-]+$'; then
+            TAG="$RAW_VERSION"
+            VERSION="$RAW_VERSION"
+          elif printf '%s' "$RAW_VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VERSION="${RAW_VERSION#v}"
+            TAG="v${VERSION}"
+          else
+            VERSION="$RAW_VERSION"
+            TAG="$RAW_VERSION"
+          fi
 
           if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "is_stable=true" >> "$GITHUB_OUTPUT"
             echo "is_dev=false" >> "$GITHUB_OUTPUT"
-          elif printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-dev([.-][0-9A-Za-z.-]+)?$'; then
+          elif printf '%s' "$VERSION" | grep -Eq '^dev-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9A-Za-z.-]+$'; then
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
             echo "is_dev=true" >> "$GITHUB_OUTPUT"
           else
@@ -239,7 +250,8 @@ jobs:
     if: |
       !cancelled() &&
       needs.resolve-release.result == 'success' &&
-      needs.build.result == 'success'
+      needs.build.result == 'success' &&
+      needs.resolve-release.outputs.is_stable == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

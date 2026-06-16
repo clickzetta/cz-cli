@@ -42,25 +42,46 @@ interface SqlArgs extends GlobalArgs {
   "dry-run": boolean
 }
 
-function truncateLargeFields(rows: unknown[][], maxLen: number): unknown[][] {
+interface TruncateResult {
+  rows: unknown[][]
+  truncated: { col: string; originalLength: number }[]
+}
+
+function truncateLargeFields(rows: unknown[][], columns: string[], maxLen: number, forTable: boolean): TruncateResult {
+  const truncated: { col: string; originalLength: number }[] = []
+  const seen = new Set<string>()
   for (const row of rows) {
     for (let i = 0; i < row.length; i++) {
       const val = row[i]
+      const col = columns[i] ?? String(i)
+      let str: string | undefined
+      let originalLength: number | undefined
       if (typeof val === "string" && val.length > maxLen) {
-        const suffix = `...(truncated, ${val.length} chars)`
-        row[i] = val.slice(0, maxLen - suffix.length) + suffix
+        str = val
+        originalLength = val.length
       } else if (val instanceof Buffer || val instanceof Uint8Array) {
         const s = Buffer.from(val).toString("utf-8")
+        row[i] = s
         if (s.length > maxLen) {
-          const suffix = `...(truncated, ${s.length} chars)`
-          row[i] = s.slice(0, maxLen - suffix.length) + suffix
+          str = s
+          originalLength = s.length
+        }
+      }
+      if (str !== undefined && originalLength !== undefined) {
+        if (forTable) {
+          const suffix = `...(${originalLength} chars)`
+          row[i] = str.slice(0, maxLen - suffix.length) + suffix
         } else {
-          row[i] = s
+          row[i] = str.slice(0, maxLen)
+        }
+        if (!seen.has(col)) {
+          seen.add(col)
+          truncated.push({ col, originalLength })
         }
       }
     }
   }
-  return rows
+  return { rows, truncated }
 }
 
 function applyVariables(sql: string, vars: Record<string, string>): string {
@@ -442,7 +463,16 @@ async function emitResult(
 
   const columns = r.columns.map((c) => c.name)
   let rows = r.rows
-  if (fieldMax !== Infinity) rows = truncateLargeFields(rows, fieldMax)
+  if (fieldMax !== Infinity) {
+    const forTable = format === "table"
+    const tr = truncateLargeFields(rows, columns, fieldMax, forTable)
+    rows = tr.rows
+    if (tr.truncated.length > 0) {
+      const detail = tr.truncated.map((t) => `'${t.col}' (${t.originalLength} chars)`).join(", ")
+      const truncMsg = `Field(s) truncated to ${fieldMax} chars: ${detail}. To get full values, re-run with --no-truncate and redirect to a file, e.g.: cz-cli sql "<SQL>" --no-truncate > output.json`
+      aiMessage = aiMessage ? `${aiMessage} | ${truncMsg}` : truncMsg
+    }
+  }
   rows = maskRows(columns, rows)
   logOperation("sql", { sql, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
   successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage, noHeader: !argv.header || argv.N, extra: extra ? { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) } : (r.jobId ? { job_id: r.jobId } : undefined) })

@@ -6,7 +6,7 @@
 ## 需求
 ### 需求：自动更新不受渠道限制
 
-自动更新应在任何真实安装上运行，不受发布渠道影响。启用条件由以下因素决定：更新未被禁用（通过配置 `autoupdate: false` 或环境变量 `CLICKZETTA_DISABLE_AUTOUPDATE` / `CZ_SKIP_UPDATE` / 一次性 `CLICKZETTA_SKIP_UPDATE_ONCE`），命令不在跳过列表中（`setup`、`update`、`uninstall`、`--help`/`-h`、`--version`/`-v`），已安装版本为有效 semver，安装方式受支持，且检查间隔已到期。渠道值不应决定自动更新是否运行。
+自动更新应在任何真实安装上运行，不受发布渠道影响。启用条件由以下因素决定：更新未被禁用（通过配置 `autoupdate: false` 或环境变量 `CLICKZETTA_DISABLE_AUTOUPDATE` / `CZ_SKIP_UPDATE` / 一次性 `CLICKZETTA_SKIP_UPDATE_ONCE`），命令不在跳过列表中（`setup`、`update`、`uninstall`、`--help`/`-h`、`--version`/`-v`），已安装版本为有效发布版本（stable semver 或 `dev-v<major>.<minor>.<patch>.<timestamp>`），安装方式受支持，且检查间隔已到期。渠道值不应决定自动更新是否运行。
 
 #### 场景：Stable 安装执行升级
 
@@ -17,6 +17,11 @@
 
 - **WHEN** 已安装版本不是有效 semver（例如 `local` 开发构建）时
 - **THEN** 自动更新被跳过
+
+#### 场景：Nightly dev-v 安装继续参与自动更新
+
+- **WHEN** 已安装版本为 `dev-v1.0.7.20260616190000` 且命令为正常命令时
+- **THEN** 自动更新不因版本格式被跳过
 
 #### 场景：真实安装在任何渠道下都不被跳过
 
@@ -36,6 +41,11 @@
 
 - **WHEN** 发布渠道为 `nightly` 时
 - **THEN** 最新版本从 `https://cz-cli.ai/api/nightly` 获取，升级使用 nightly 安装脚本
+
+#### 场景：Nightly dev-v 目标版本执行升级
+
+- **WHEN** 当前安装版本为有效 semver、发布渠道为 `nightly`、最新版本为 `dev-v1.0.8.20260616200210` 且安装方式受支持时
+- **THEN** 解析的操作为 `upgrade`
 
 #### 场景：npm 安装方式不改变版本来源
 

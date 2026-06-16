@@ -69,6 +69,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 const SUPPORTED_AUTO_UPGRADE_METHODS = new Set<InstallMethod>(["curl", "npm", "pnpm", "yarn", "bun"])
 const SKIP_COMMANDS = new Set(["setup", "update", "uninstall"])
 const NPM_METHODS = new Set<InstallMethod>(["npm", "pnpm", "yarn", "bun"])
+const DEV_RELEASE_VERSION_RE = /^dev-v\d+\.\d+\.\d+\.[\w.-]+$/
 const INSTALL_SCRIPT_URL = {
   stable: "https://cz-cli.ai/install.sh",
   nightly: "https://cz-cli.ai/install-nightly.sh",
@@ -210,9 +211,28 @@ export async function latestVersionForMethod(_method: InstallMethod, fetchImpl: 
   return payload.version
 }
 
+function isReleaseVersion(version: string) {
+  return Boolean(semver.valid(version) || DEV_RELEASE_VERSION_RE.test(version))
+}
+
+function compareReleaseVersions(left: string, right: string) {
+  const leftParts = left.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
+  const rightParts = right.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
+  for (let i = 0; i < 3; i++) {
+    const leftNum = Number(leftParts[i] ?? 0)
+    const rightNum = Number(rightParts[i] ?? 0)
+    if (leftNum !== rightNum) return leftNum - rightNum
+  }
+  if (left.startsWith("dev-v") && right.startsWith("dev-v")) {
+    return leftParts.slice(3).join(".").localeCompare(rightParts.slice(3).join("."))
+  }
+  return 0
+}
+
 export function shouldUpgradeToVersion(currentVersion: string, latestVersion: string) {
-  if (!semver.valid(currentVersion) || !semver.valid(latestVersion)) return currentVersion !== latestVersion
-  return semver.gt(latestVersion, currentVersion)
+  if (!isReleaseVersion(currentVersion) || !isReleaseVersion(latestVersion)) return currentVersion !== latestVersion
+  const order = compareReleaseVersions(latestVersion, currentVersion)
+  return order > 0 || (order === 0 && latestVersion !== currentVersion)
 }
 
 async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch, force?: boolean) {
@@ -384,9 +404,9 @@ export function shouldSkipAutoUpdateCommand(input: {
     ["1", "true", "yes"].includes((env.CZ_SKIP_UPDATE ?? "").trim().toLowerCase())
   ) return true
   // Channel does NOT gate whether auto-update runs; it only selects the update
-  // stream. Dev/local builds are guarded by the semver check below
-  // (InstallationVersion === "local" is not valid semver).
-  if (!semver.valid(input.version ?? InstallationVersion)) return true
+  // stream. Local builds are guarded by the release-version check below
+  // (InstallationVersion === "local" is not a release version).
+  if (!isReleaseVersion(input.version ?? InstallationVersion)) return true
   const head = input.args[0]
   if (head && SKIP_COMMANDS.has(head)) return true
   return input.args.includes("--help") || input.args.includes("-h") || input.args.includes("--version") || input.args.includes("-v")
@@ -396,7 +416,7 @@ export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   const autoupdate = input.autoupdate ?? true
   if (autoupdate === false) return { kind: "skip", reason: "disabled" }
   const latestVersion = input.latestVersion
-  if (!semver.valid(input.currentVersion) || !latestVersion || !semver.valid(latestVersion)) {
+  if (!isReleaseVersion(input.currentVersion) || !latestVersion || !isReleaseVersion(latestVersion)) {
     return { kind: "skip", reason: "version" }
   }
   if (input.lastCheckedAt !== undefined && input.now - input.lastCheckedAt < input.intervalMs) {

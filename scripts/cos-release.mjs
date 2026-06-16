@@ -38,16 +38,19 @@ const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
 const META_INF_PREFIX = "META-INF"
 const PRESIGN_EXPIRES_SECONDS = Number(process.env.COS_PRESIGN_EXPIRES_SECONDS ?? 60 * 60 * 24 * 365 * 5)
 
-const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/
-const VERSION_DIR_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?\/$/
+const VERSION_RE = /^(?:\d+\.\d+\.\d+([-+][\w.-]+)?|dev-v\d+\.\d+\.\d+\.[\w.-]+)$/
+const VERSION_DIR_RE = /^(?:\d+\.\d+\.\d+([-+][\w.-]+)?|dev-v\d+\.\d+\.\d+\.[\w.-]+)\/$/
 
-/** Compare two semver strings. Returns <0 if a<b, 0 if equal, >0 if a>b. */
-function semverCompare(a, b) {
-  const pa = a.replace(/[-+].*$/, "").split(".").map(Number)
-  const pb = b.replace(/[-+].*$/, "").split(".").map(Number)
+/** Compare release versions. Returns <0 if a<b, 0 if equal, >0 if a>b. */
+export function compareReleaseVersions(a, b) {
+  const pa = a.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
+  const pb = b.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
   for (let i = 0; i < 3; i++) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0)
+    const left = Number(pa[i] ?? 0)
+    const right = Number(pb[i] ?? 0)
+    if (left !== right) return left - right
   }
+  if (a.startsWith("dev-v") && b.startsWith("dev-v")) return pa.slice(3).join(".").localeCompare(pb.slice(3).join("."))
   return 0
 }
 
@@ -389,6 +392,7 @@ version_gt() {
   awk -v left="$1" -v right="$2" '
     function split_version(version, core, suffix, nums, raw) {
       gsub(/^v/, "", version)
+      gsub(/^dev-v/, "", version)
       raw = version
       suffix = ""
       if (index(version, "-")) {
@@ -545,6 +549,7 @@ function Get-VersionNumber($Numbers, $Index) {
 
 function Get-VersionParts($RawVersion) {
   $VersionText = $RawVersion -replace '^v', ''
+  $VersionText = $VersionText -replace '^dev-v', ''
   $Core = $VersionText
   $Suffix = ""
   if ($VersionText.Contains("-")) {
@@ -797,7 +802,7 @@ async function writeChannel(ctx, channel) {
     Region: ctx.Region,
     key: target,
   })
-  if (current && semverCompare(ctx.version, current.trim()) < 0) {
+  if (current && compareReleaseVersions(ctx.version, current.trim()) < 0) {
     console.log(`  ⚠ skipping ${channel}: current ${current.trim()} > ${ctx.version}`)
     return
   }

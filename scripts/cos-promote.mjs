@@ -10,19 +10,23 @@
  *      COS_PATH_PREFIX (optional, default "cz-cli-releases")
  */
 
+import { pathToFileURL } from "node:url"
 import { Cache, createClient, getJson, putJson, putText, getText } from "./cos-upload.mjs"
 
 const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
 const META_INF_PREFIX = "META-INF"
-const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/
+const VERSION_RE = /^(?:\d+\.\d+\.\d+([-+][\w.-]+)?|dev-v\d+\.\d+\.\d+\.[\w.-]+)$/
 
-/** Compare two semver strings. Returns <0 if a<b, 0 if equal, >0 if a>b. */
-function semverCompare(a, b) {
-  const pa = a.replace(/[-+].*$/, "").split(".").map(Number)
-  const pb = b.replace(/[-+].*$/, "").split(".").map(Number)
+/** Compare release versions. Returns <0 if a<b, 0 if equal, >0 if a>b. */
+export function compareReleaseVersions(a, b) {
+  const pa = a.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
+  const pb = b.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
   for (let i = 0; i < 3; i++) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0)
+    const left = Number(pa[i] ?? 0)
+    const right = Number(pb[i] ?? 0)
+    if (left !== right) return left - right
   }
+  if (a.startsWith("dev-v") && b.startsWith("dev-v")) return pa.slice(3).join(".").localeCompare(pb.slice(3).join("."))
   return 0
 }
 
@@ -93,7 +97,7 @@ async function main() {
       Region: cos.Region,
       key: channelKey,
     })
-    if (current && semverCompare(args.version, current.trim()) < 0) {
+    if (current && compareReleaseVersions(args.version, current.trim()) < 0) {
       throw new Error(`Refusing to downgrade ${args.channel} from ${current.trim()} to ${args.version}. Use a higher version.`)
     }
     await putText({
@@ -143,7 +147,9 @@ async function main() {
   console.log("Done.")
 }
 
-main().catch((err) => {
-  console.error(err.stack ?? err.message ?? err)
-  process.exit(1)
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err.stack ?? err.message ?? err)
+    process.exit(1)
+  })
+}

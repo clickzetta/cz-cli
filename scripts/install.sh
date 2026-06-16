@@ -219,6 +219,8 @@ version_gt() {
     local left_raw right_raw left_core left_suffix right_core right_suffix
     left_raw="${1#v}"
     right_raw="${2#v}"
+    left_raw="${left_raw#dev-v}"
+    right_raw="${right_raw#dev-v}"
     left_core="${left_raw%%-*}"
     right_core="${right_raw%%-*}"
     left_suffix=""

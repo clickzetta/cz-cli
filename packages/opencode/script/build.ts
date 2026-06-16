@@ -347,8 +347,9 @@ if (Script.archive) {
   )
   console.log(`Archived ${archives.length} targets`)
   if (Script.release) {
-    console.log(`Uploading ${archives.length} archives to v${Script.version}...`)
-    await $`gh release upload v${Script.version} ${archives} --clobber --repo ${process.env.GH_REPO}`
+    const releaseTag = Script.version.startsWith("dev-v") ? Script.version : `v${Script.version}`
+    console.log(`Uploading ${archives.length} archives to ${releaseTag}...`)
+    await $`gh release upload ${releaseTag} ${archives} --clobber --repo ${process.env.GH_REPO}`
     console.log("Upload complete")
   }
 }

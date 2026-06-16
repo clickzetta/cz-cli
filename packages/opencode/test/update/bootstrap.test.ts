@@ -337,14 +337,14 @@ describe("update bootstrap", () => {
       const urls: string[] = []
       const fetchImpl = mock(async (url: string) => {
         urls.push(url)
-        return new Response(JSON.stringify({ version: "0.5.17-dev.20260609" }), {
+        return new Response(JSON.stringify({ version: "dev-v0.5.17.20260609" }), {
           headers: { "content-type": "application/json" },
         })
       }) as unknown as typeof fetch
 
       const version = await latestVersionForMethod("npm", fetchImpl, "nightly")
 
-      expect(version).toBe("0.5.17-dev.20260609")
+      expect(version).toBe("dev-v0.5.17.20260609")
       expect(urls).toEqual(["https://cz-cli.ai/api/nightly"])
     })
 
@@ -360,6 +360,34 @@ describe("update bootstrap", () => {
       await latestVersionForMethod("bun", fetchImpl, "stable")
 
       expect(urls.some((u) => u.includes("registry.npmjs.org"))).toBe(false)
+    })
+
+    test("nightly dev-v target resolves to an upgrade action", () => {
+      const result = resolveUpdateAction({
+        autoupdate: true,
+        channel: "nightly",
+        currentVersion: "1.0.7",
+        latestVersion: "dev-v1.0.8.20260616200210",
+        now: Date.now(),
+        intervalMs: 1,
+        method: "curl",
+      })
+
+      expect(result).toEqual({ kind: "upgrade", reason: "managed-install" })
+    })
+
+    test("nightly dev-v install upgrades to a newer dev-v timestamp", () => {
+      const result = resolveUpdateAction({
+        autoupdate: true,
+        channel: "nightly",
+        currentVersion: "dev-v1.0.7.20260616190000",
+        latestVersion: "dev-v1.0.7.20260616200210",
+        now: Date.now(),
+        intervalMs: 1,
+        method: "curl",
+      })
+
+      expect(result).toEqual({ kind: "upgrade", reason: "managed-install" })
     })
   })
 
@@ -378,7 +406,7 @@ describe("update bootstrap", () => {
       process.env.PATH = `${bin}${path.delimiter}${envSnapshot.PATH ?? ""}`
 
       try {
-        await performUpgrade("npm", "0.5.17-dev.20260609", fetch, "nightly")
+        await performUpgrade("npm", "dev-v0.5.17.20260609", fetch, "nightly")
 
         expect(await fs.readFile(path.join(tmp, "channel.txt"), "utf-8")).toBe("nightly")
       } finally {
@@ -449,6 +477,7 @@ describe("update bootstrap", () => {
 
     test("shouldSkipAutoUpdateCommand does not skip a real install on any channel", () => {
       expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "0.5.16" })).toBe(false)
+      expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "dev-v0.5.17.20260609" })).toBe(false)
     })
 
     test("shouldSkipAutoUpdateCommand skips dev/local builds (invalid semver)", () => {

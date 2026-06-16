@@ -267,7 +267,7 @@ describe("prepare release assets", () => {
       "#!/bin/sh",
       `printf '%s\n' "$@" >> ${JSON.stringify(path.join(tmp, "curl.log"))}`,
       `case "$*" in`,
-      `  *api/nightly*) printf '{"version":"0.5.17-dev.20260609"}'; exit 0 ;;`,
+      `  *api/nightly*) printf '{"version":"dev-v0.5.17.20260609"}'; exit 0 ;;`,
       `  *api/stable*) printf '{"version":"0.5.16"}'; exit 0 ;;`,
       "esac",
       "out=''",
@@ -291,7 +291,7 @@ describe("prepare release assets", () => {
       })
 
       expect(fs.readFileSync(path.join(tmp, "curl.log"), "utf-8")).toContain("https://cz-cli.ai/api/nightly")
-      expect(JSON.parse(fs.readFileSync(path.join(home, ".clickzetta", "install.json"), "utf-8")).binary_version).toBe("0.5.17-dev.20260609")
+      expect(JSON.parse(fs.readFileSync(path.join(home, ".clickzetta", "install.json"), "utf-8")).binary_version).toBe("dev-v0.5.17.20260609")
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
