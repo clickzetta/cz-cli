@@ -19,16 +19,32 @@ const DEFAULT_FIELD_MAX = 3000
 const DEFAULT_ROW_LIMIT = 100
 const DEFAULT_RAW_CHAR_LIMIT = 4000
 
-function truncateLargeFields(rows: unknown[][], maxLen: number): unknown[][] {
+interface TruncateResult {
+  rows: unknown[][]
+  truncated: { col: string; originalLength: number }[]
+}
+
+function truncateLargeFields(rows: unknown[][], columns: string[], maxLen: number, forTable: boolean): TruncateResult {
+  const truncated: { col: string; originalLength: number }[] = []
+  const seen = new Set<string>()
   for (const row of rows) {
     for (let i = 0; i < row.length; i++) {
       const val = row[i]
-      if (typeof val === "string" && val.length > maxLen) {
-        row[i] = val.slice(0, maxLen) + `...(truncated, ${val.length} chars)`
+      if (typeof val !== "string" || val.length <= maxLen) continue
+      const col = columns[i] ?? String(i)
+      if (forTable) {
+        const suffix = `...(${val.length} chars)`
+        row[i] = val.slice(0, maxLen - suffix.length) + suffix
+      } else {
+        row[i] = val.slice(0, maxLen)
+      }
+      if (!seen.has(col)) {
+        seen.add(col)
+        truncated.push({ col, originalLength: val.length })
       }
     }
   }
-  return rows
+  return { rows, truncated }
 }
 
 interface RawJobStatus {
@@ -246,6 +262,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("job-id", { type: "string", demandOption: true, describe: "Job ID" })
             .option("limit", { type: "boolean", default: true, describe: "Limit results to 100 rows. Use --no-limit to fetch all rows." })
+            .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
             .option("timeout", { type: "number", default: 300, describe: "Max seconds to wait for job completion. Returns an error if exceeded." }),
         async (argv) => {
           const format = argv.format
@@ -278,7 +295,16 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             }
             const columns = r.columns.map((c) => c.name)
             rows = maskRows(columns, rows)
-            rows = truncateLargeFields(rows, DEFAULT_FIELD_MAX)
+            if (argv.truncate !== false) {
+              const forTable = argv.format === "table"
+              const tr = truncateLargeFields(rows, columns, DEFAULT_FIELD_MAX, forTable)
+              rows = tr.rows
+              if (tr.truncated.length > 0) {
+                const detail = tr.truncated.map((t) => `'${t.col}' (${t.originalLength} chars)`).join(", ")
+                const truncMsg = `Field(s) truncated to ${DEFAULT_FIELD_MAX} chars: ${detail}. To get full values, re-run with --no-truncate and redirect to a file, e.g.: cz-cli job result --no-truncate ${argv["job-id"]} > output.json`
+                aiMessage = aiMessage ? `${aiMessage} | ${truncMsg}` : truncMsg
+              }
+            }
             logOperation("job result", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             successRows(columns, rows, { format, timeMs: Date.now() - t0, aiMessage })
           } catch (err) {
