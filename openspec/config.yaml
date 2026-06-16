@@ -47,6 +47,10 @@ agent_contract:
         - "cz-cli ai-gateway model list <key-or-alias> --limit 10"
   output_contract:
     ai_message: "Structured success/error payloads may include `ai_message`; this field is the agent-facing next-step or truncation guidance and should be preserved in agent documentation."
+    field_naming: "User-facing CLI output MUST use product/domain-friendly names instead of backend DTO/MVC/internal API names. Keep raw backend field names only under explicitly named raw/debug/save payload sections when needed."
+    enum_labels: "Whenever user-facing output includes numeric or string magic values, also expose a stable human-readable enum/label field next to the raw value, for example *_label, *_name, or *_type_name."
+    table_first_shape: "When designing command output, consider `--format table` first: important user-facing data SHOULD be flattened into row/column-friendly fields at the primary output level. Avoid hiding key values inside nested objects or arrays unless they are raw/debug/save payload details."
+    empty_strings: "Preserve empty strings as empty strings in CLI output. Do not replace empty strings with placeholder values such as '-' unless the command explicitly documents that placeholder."
   development_workflow:
     policy: "This project uses spec-driven development with TDD. Do not skip the order below for behavior changes."
     steps:

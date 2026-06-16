@@ -16,6 +16,7 @@ import {
   startCdcTask,
   stopCdcTask,
   getCdcTaskRunStatus,
+  parseTaskDependencyOut,
   startRealtimeTask,
   stopRealtimeTask,
   listPgSlots,
@@ -25,7 +26,7 @@ import {
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error, handledError, isHandledCliError } from "../output/index.js"
+import { success, successRows, error, handledError, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
@@ -66,6 +67,8 @@ function parseTaskType(value: string): number {
 }
 
 const UI_ONLY_TYPES = new Set([400, 500, 1, 14, 16, 17, 280, 281, 291, 300, 301])
+const DEPENDENCY_OUTPUT_PARSE_TYPES = new Set([1, 4])
+const LINEAGE_ROW_FORMATS = new Set(["table", "csv", "text", "jsonl"])
 
 const SYSTEM_PARAM_NAMES = new Set([
   "bizdate", "sys_biz_day", "sys_biz_datetime",
@@ -293,6 +296,198 @@ function parseDependencyTasks(raw: string, format: string | undefined, projectId
       dependencyFileName: fileName,
     }
   })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function getObjectList(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecord) : []
+}
+
+function normalizeDependencyStrategy(dep: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...dep,
+    depStrategy: dep.depStrategy ?? dep.dep_strategy ?? 0,
+  }
+}
+
+function configList(value: unknown): Record<string, unknown>[] {
+  return getObjectList(value).map((item) => ({ ...item }))
+}
+
+async function parseLineageForSave(sc: StudioConfig, fileId: number, schemaName: string, oldData: Record<string, unknown>) {
+  const detail = await getTaskDetail(sc, fileId)
+  const detailData = isRecord(detail.data) ? detail.data : {}
+  const detailObj = isRecord(detailData.taskDetail) ? detailData.taskDetail : detailData
+  const fileType = Number(detailObj.fileType ?? detailData.fileType)
+  const fallback = {
+    ownerCnName: detailObj.ownerCnName ?? detailData.ownerCnName,
+    ownerEnName: detailObj.ownerEnName ?? detailData.ownerEnName,
+    dataFileInputListReqs: configList(oldData.dataFileDependencyDTOS).map(normalizeDependencyStrategy),
+    dataFileOutputListReqs: configList(oldData.fileOutputTableDTOS),
+  }
+  if (!DEPENDENCY_OUTPUT_PARSE_TYPES.has(fileType)) return fallback
+
+  const resp = await parseTaskDependencyOut(sc, {
+    projectId: sc.projectId,
+    workspaceId: sc.workspaceId,
+    schemaName,
+    dataFileContent: String(detailObj.fileContent ?? detailObj.dataFileContent ?? ""),
+    dataFileId: fileId,
+  })
+  const data = isRecord(resp.data) ? resp.data : {}
+  const dataFileInputListReqs = configList(data.dataFileDependencyDTOS).map(normalizeDependencyStrategy)
+  const dataFileOutputListReqs = configList(data.fileOutputTableDTOS)
+  const firstOutput = dataFileOutputListReqs[0]
+  return {
+    ownerCnName: firstOutput?.ownerCnName ?? fallback.ownerCnName,
+    ownerEnName: firstOutput?.ownerEnName ?? fallback.ownerEnName,
+    dataFileInputListReqs,
+    dataFileOutputListReqs,
+  }
+}
+
+async function resolveScheduleVc(sc: StudioConfig, argv: Record<string, unknown>, oldData: Record<string, unknown>) {
+  const etlVcCode = (argv.vc as string | undefined)
+    ?? (argv.vcluster as string | undefined)
+    ?? (oldData.etlVcCode as string | undefined)
+    ?? "DEFAULT"
+  const etlVcId = argv["vc-id"] != null
+    ? Number(argv["vc-id"])
+    : (oldData.etlVcId as number | string | undefined) ?? await resolveVclusterId(sc, etlVcCode).catch(() => undefined)
+  return { etlVcCode, etlVcId }
+}
+
+function addMethodName(value: unknown): "manual" | "system_parsed" | "unknown" {
+  const code = Number(value)
+  if (code === 1) return "manual"
+  if (code === 2) return "system_parsed"
+  return "unknown"
+}
+
+function lineageTaskTypeName(value: unknown): "integration" | "sql" | "unknown" {
+  const code = Number(value)
+  if (code === 1) return "integration"
+  if (code === 4) return "sql"
+  return "unknown"
+}
+
+function scheduleRateTypeName(value: unknown): "minute" | "hourly" | "daily" | "weekly" | "monthly" | "unknown" {
+  const code = Number(value)
+  if (code === 1) return "minute"
+  if (code === 2) return "hourly"
+  if (code === 3) return "daily"
+  if (code === 4) return "weekly"
+  if (code === 5) return "monthly"
+  return "unknown"
+}
+
+function depStrategyName(value: unknown): "default" | "unknown" {
+  const code = Number(value)
+  if (code === 0) return "default"
+  return "unknown"
+}
+
+function normalizeParsedDependency(dep: Record<string, unknown>): Record<string, unknown> {
+  const strategyItem = normalizeDependencyStrategy(dep)
+  return {
+    name: dep.dependencyFileName ?? dep.dataFileName,
+    workspace: dep.projectName,
+    output_table_name: dep.dependencyInputName ?? dep.refTableNames,
+    ref_table_names: dep.refTableNames,
+    schedule_rate_type: dep.scheduleRateType,
+    schedule_rate_type_name: scheduleRateTypeName(dep.scheduleRateType),
+    schedule_start_time: dep.scheduleStartTime,
+    add_method: dep.parseType,
+    add_method_name: addMethodName(dep.parseType),
+    dep_strategy: strategyItem.depStrategy,
+    dep_strategy_name: depStrategyName(strategyItem.depStrategy),
+    dependency_task_id: dep.dependencyFileId ?? dep.dataFileId ?? dep.id,
+    dependency_project_id: dep.dependencyProjectId,
+    dependency_file_version: dep.dependencyFileVersion,
+    file_type: dep.fileType,
+    deploy_status: dep.deployStatus,
+    cron_express: dep.cronExpress,
+    path: dep.path,
+  }
+}
+
+function lineageRows(
+  params: {
+    fileId: number
+    taskName: unknown
+    fileType: number
+    schemaName: string
+    studioUrl: string
+    outputs: Record<string, unknown>[]
+    dependencies: Record<string, unknown>[]
+  },
+): Record<string, unknown>[] {
+  const base = {
+    task_id: params.fileId,
+    task_name: params.taskName,
+    task_type: params.fileType,
+    task_type_name: lineageTaskTypeName(params.fileType),
+    schema_name: params.schemaName,
+    studio_url: params.studioUrl,
+  }
+  const outputs = params.outputs.map((output) => ({
+    record_type: "output",
+    ...base,
+    name: output.task_name,
+    workspace: "",
+    output_table_name: output.output_table_name,
+    ref_table_name: output.ref_table_name,
+    schedule_rate_type: "",
+    schedule_rate_type_name: "",
+    schedule_start_time: "",
+    add_method: output.add_method,
+    add_method_name: output.add_method_name,
+    dep_strategy: "",
+    dep_strategy_name: "",
+    dependency_task_id: "",
+    dependency_project_id: "",
+    dependency_file_version: "",
+  }))
+  const dependencies = params.dependencies.map((dep) => ({
+    record_type: "dependency",
+    ...base,
+    name: dep.name,
+    workspace: dep.workspace,
+    output_table_name: dep.output_table_name,
+    ref_table_name: dep.ref_table_names,
+    schedule_rate_type: dep.schedule_rate_type,
+    schedule_rate_type_name: dep.schedule_rate_type_name,
+    schedule_start_time: dep.schedule_start_time,
+    add_method: dep.add_method,
+    add_method_name: dep.add_method_name,
+    dep_strategy: dep.dep_strategy,
+    dep_strategy_name: dep.dep_strategy_name,
+    dependency_task_id: dep.dependency_task_id,
+    dependency_project_id: dep.dependency_project_id,
+    dependency_file_version: dep.dependency_file_version,
+  }))
+  return [...outputs, ...dependencies]
+}
+
+function normalizeParsedOutput(output: Record<string, unknown>): Record<string, unknown> {
+  return {
+    output_table_name: output.fileShowName ?? output.refTableName ?? output.dataFileName,
+    ref_table_name: output.refTableName,
+    task_id: output.dataFileId,
+    project_id: output.projectId,
+    data_file_version: output.dataFileVersion,
+    task_name: output.dataFileName,
+    owner_cn_name: output.ownerCnName,
+    owner_en_name: output.ownerEnName,
+    add_method: output.parseType,
+    add_method_name: addMethodName(output.parseType),
+    node_id: output.nodeId,
+    node_name: output.nodeName,
+    sequence: output.sequence,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1410,7 +1605,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        ["get-content <task>", "detail <task>"],
+        ["content <task>", "get-content <task>", "detail <task>"],
         "Get task script content and configuration",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
@@ -2367,6 +2562,112 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "lineage <task>",
+        "Parse task output tables and schedule dependencies",
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true })
+            .option("schema", { type: "string", describe: "Schema name used by Studio dependency parser" })
+            .option("content", { type: "string", describe: "Task content to parse instead of saved content" })
+            .option("file", { alias: "f", type: "string", describe: "Read task content to parse from file" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            const [detail, config] = await Promise.all([
+              getTaskDetail(sc, fileId),
+              getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
+            ])
+            const detailData = isRecord(detail.data) ? detail.data : {}
+            const detailObj = isRecord(detailData.taskDetail) ? detailData.taskDetail : detailData
+            const fileType = Number(detailObj.fileType ?? detailData.fileType)
+            if (!DEPENDENCY_OUTPUT_PARSE_TYPES.has(fileType)) {
+              error("UNSUPPORTED_TASK_TYPE", "task lineage only supports SQL and integration tasks.", { format, exitCode: 2 })
+              return
+            }
+
+            const configData = isRecord(config.data) ? config.data : {}
+            const configObj = isRecord(configData.taskConfigurationDetail)
+              ? configData.taskConfigurationDetail
+              : isRecord(configData.task_configuration_detail)
+                ? configData.task_configuration_detail
+                : configData
+            const content = argv.content !== undefined
+              ? String(argv.content)
+              : argv.file
+                ? readFileSync(argv.file as string, "utf-8")
+                : String(detailObj.fileContent ?? detailObj.dataFileContent ?? "")
+            const schemaName = (argv.schema as string | undefined) ?? (configObj.schemaName as string | undefined) ?? "public"
+            const resp = await parseTaskDependencyOut(sc, {
+              projectId: sc.projectId,
+              workspaceId: sc.workspaceId,
+              schemaName,
+              dataFileContent: content,
+              dataFileId: fileId,
+            })
+            const data = isRecord(resp.data) ? resp.data : {}
+            const outputDtos = getObjectList(data.fileOutputTableDTOS)
+            const dependencyDtos = getObjectList(data.dataFileDependencyDTOS)
+            const outputs = outputDtos.map(normalizeParsedOutput)
+            const dependencies = dependencyDtos.map(normalizeParsedDependency)
+            const taskName = detailObj.dataFileName ?? detailObj.task_name
+            const taskStudioUrl = studioUrl(sc, fileId)
+
+            logOperation("task lineage", { ok: true })
+            if (LINEAGE_ROW_FORMATS.has(format ?? "")) {
+              const rows = lineageRows({
+                fileId,
+                taskName,
+                fileType,
+                schemaName,
+                studioUrl: taskStudioUrl,
+                outputs,
+                dependencies,
+              })
+              const columns = [
+                "record_type",
+                "task_id",
+                "task_name",
+                "task_type",
+                "task_type_name",
+                "schema_name",
+                "name",
+                "workspace",
+                "output_table_name",
+                "ref_table_name",
+                "schedule_rate_type",
+                "schedule_rate_type_name",
+                "schedule_start_time",
+                "add_method",
+                "add_method_name",
+                "dep_strategy",
+                "dep_strategy_name",
+                "dependency_task_id",
+                "dependency_project_id",
+                "dependency_file_version",
+                "studio_url",
+              ]
+              successRows(columns, rows.map((row) => columns.map((column) => row[column])), { format })
+              return
+            }
+            success({
+              task_id: fileId,
+              task_name: taskName,
+              task_type: fileType,
+              task_type_name: lineageTaskTypeName(fileType),
+              schema_name: schemaName,
+              outputs,
+              dependencies,
+              table_guid_list_without_task: data.tableGuidListWithoutTask ?? [],
+              studio_url: taskStudioUrl,
+            }, { format })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
         "save-cron <task>",
         "Save cron schedule configuration (preserves non-cron settings)",
         (y) =>
@@ -2401,22 +2702,20 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
             if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
 
-            const vcCodeFinal = (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT"
-            // Resolve VC name to numeric ID for scheduler (mirrors frontend vcluster/list lookup)
-            let etlVcIdFinal: number | string | undefined = argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined)
-            if (!etlVcIdFinal && vcCodeFinal && vcCodeFinal !== "DEFAULT") {
-              const resolvedId = await resolveVclusterId(sc, vcCodeFinal).catch(() => undefined)
-              if (resolvedId) etlVcIdFinal = resolvedId
-            }
+            const schemaName = (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public"
+            const lineage = await parseLineageForSave(sc, fileId, schemaName, oldData)
+            const vc = await resolveScheduleVc(sc, argv, oldData)
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
               updateBy: String(sc.userId),
               instanceName: sc.instanceName,
               cronExpress: cronResult.outputCron!,
-              schemaName: (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public",
-              etlVcCode: vcCodeFinal,
-              etlVcId: etlVcIdFinal as number | undefined,
+              ownerCnName: String(lineage.ownerCnName ?? sc.userId),
+              ownerEnName: String(lineage.ownerEnName ?? sc.userId),
+              schemaName,
+              etlVcCode: vc.etlVcCode,
+              etlVcId: vc.etlVcId,
               retryCount: (oldData.retryCount as number | undefined) ?? 1,
               retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
               retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
@@ -2426,7 +2725,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               executeTimeoutUnit: (oldData.executeTimeoutUnit as string | undefined) ?? "m",
               activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
               activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
-              dataFileInputListReqs: (oldData.dataFileDependencyDTOS as unknown[]) ?? [],
+              dataFileInputListReqs: lineage.dataFileInputListReqs,
+              dataFileOutputListReqs: lineage.dataFileOutputListReqs,
               configProperties: JSON.stringify(oldConfigProps),
             })
             logOperation("task save-cron", { ok: true })
@@ -2437,7 +2737,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "save-schedule <task>",
+        ["save-config <task>", "save-schedule <task>"],
         "Save non-cron task configuration (retry, deps, VC, timeout — preserves cron)",
         (y) =>
           y
@@ -2458,7 +2758,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
-            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vc-id", "schema", "timeout", "timeout-unit", "deps", "param"] as const
+            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vcluster", "vc-id", "schema", "timeout", "timeout-unit", "deps", "param"] as const
             if (!configOpts.some((k) => argv[k] != null)) {
               error("INVALID_ARGUMENTS", "At least one configuration option is required.", { format, exitCode: 2 })
               return
@@ -2468,18 +2768,20 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Fetch existing config
             const oldResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
             const oldData = (oldResp.data && typeof oldResp.data === "object" ? oldResp.data : {}) as Record<string, unknown>
+            const schemaName = (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? ""
             // Dependencies
-            let deps: unknown[]
+            let explicitDeps: unknown[] | undefined
             const depsAction = argv.deps as string | undefined
-            if (depsAction === "clear") deps = []
+            if (depsAction === "clear") explicitDeps = []
             else if (depsAction === "replace") {
               const raw = argv["dep-tasks"] as string | undefined
-              if (!raw) { deps = [] } else {
-                deps = parseDependencyTasks(raw, format, sc.projectId)
+              if (!raw) { explicitDeps = [] } else {
+                explicitDeps = parseDependencyTasks(raw, format, sc.projectId)
               }
-            } else {
-              deps = (oldData.dataFileDependencyDTOS as unknown[]) ?? []
             }
+            const lineage = await parseLineageForSave(sc, fileId, schemaName || "public", oldData)
+            const vc = await resolveScheduleVc(sc, argv, oldData)
+            const deps = explicitDeps ?? lineage.dataFileInputListReqs
 
             // Build paramValueList from --param, merging with existing
             const existingParams = (oldData.paramValueList as Record<string, unknown>[] | undefined) ?? []
@@ -2511,9 +2813,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               cronExpress: (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *",
               activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
               activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
-              schemaName: (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "",
-              etlVcCode: (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT",
-              etlVcId: argv["vc-id"] != null ? Number(argv["vc-id"]) : (oldData.etlVcId as number | undefined),
+              ownerCnName: String(lineage.ownerCnName ?? sc.userId),
+              ownerEnName: String(lineage.ownerEnName ?? sc.userId),
+              schemaName,
+              etlVcCode: vc.etlVcCode,
+              etlVcId: vc.etlVcId,
               retryCount: (argv["retry-count"] as number | undefined) ?? (oldData.retryCount as number | undefined) ?? 1,
               retryIntervalTime: (argv["retry-interval"] as number | undefined) ?? (oldData.retryIntervalTime as number | undefined) ?? 1,
               retryIntervalTimeUnit: (argv["retry-unit"] as string | undefined) ?? (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
@@ -2522,6 +2826,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               executeTimeout: (argv.timeout as number | undefined) ?? (oldData.executeTimeout as number | undefined),
               executeTimeoutUnit: (argv["timeout-unit"] as string | undefined) ?? (oldData.executeTimeoutUnit as string | undefined) ?? "m",
               dataFileInputListReqs: deps,
+              dataFileOutputListReqs: lineage.dataFileOutputListReqs,
               configProperties: oldData.configProperties ?? "{}",
             })
             // Save params separately via saveTaskContent (paramValueList is stored with content, not config)

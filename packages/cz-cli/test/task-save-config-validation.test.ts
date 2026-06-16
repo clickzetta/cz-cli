@@ -8,12 +8,34 @@ const profileDir = join(home, ".clickzetta")
 const profileFile = join(profileDir, "profiles.toml")
 
 const saveCalls: Array<Record<string, unknown>> = []
+const parseCalls: Array<Record<string, unknown>> = []
+const outputDtos = [
+  {
+    projectId: 9,
+    dataFileId: 123,
+    dataFileVersion: 0,
+    dataFileName: "lineage_smoke",
+    fileShowName: "ws.lineage_smoke",
+    refTableName: "ws.public.lineage_smoke_out",
+    parseType: 2,
+  },
+]
 const actualSdk = await import("@clickzetta/sdk")
 const actualResolver = await import("../src/resolver.ts")
 const actualDatasource = await import("../src/commands/datasource.ts")
 
 mock.module("@clickzetta/sdk", () => ({
   ...actualSdk,
+  getTaskDetail: async () => ({
+    data: {
+      id: 123,
+      fileType: 4,
+      dataFileName: "lineage_smoke",
+      fileContent: "create table lineage_smoke_out as select * from upstream_table;",
+      ownerCnName: "owner-cn",
+      ownerEnName: "owner-en",
+    },
+  }),
   getTaskConfigDetail: async () => ({
     data: {
       cronExpress: "0 00 00 * * ? *",
@@ -21,7 +43,6 @@ mock.module("@clickzetta/sdk", () => ({
       activeEndTime: "2099-01-01T00:00:00.000Z",
       schemaName: "public",
       etlVcCode: "DEFAULT",
-      etlVcId: 1,
       retryCount: 1,
       retryIntervalTime: 1,
       retryIntervalTimeUnit: "m",
@@ -30,11 +51,32 @@ mock.module("@clickzetta/sdk", () => ({
       executeTimeout: 0,
       executeTimeoutUnit: "m",
       dataFileDependencyDTOS: [],
+      fileOutputTableDTOS: outputDtos,
       configProperties: "{}",
     },
   }),
-  saveTaskConfig: async (config: Record<string, unknown>) => {
-    saveCalls.push(config)
+  parseTaskDependencyOut: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    parseCalls.push(params)
+    return {
+      data: {
+        dataFileDependencyDTOS: [
+          {
+            dependencyProjectId: 9,
+            dependencyFileId: 456,
+            dependencyFileVersion: 1,
+            dependencyFileName: "upstream",
+            dependencyInputName: "ws.upstream",
+            refTableNames: "ws.public.upstream_table",
+            parseType: 2,
+          },
+        ],
+        fileOutputTableDTOS: outputDtos,
+      },
+    }
+  },
+  resolveVclusterId: async (_config: Record<string, unknown>, vcName: string) => vcName === "DEFAULT" ? "vc-default-id" : undefined,
+  saveTaskConfig: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    saveCalls.push(params)
     return { data: { ok: true } }
   },
 }))
@@ -45,6 +87,8 @@ mock.module("../src/commands/studio-context.js", () => ({
     workspaceId: "wid-1",
     userId: 7,
     instanceName: "inst",
+    workspaceName: "ws",
+    baseUrl: "https://api.example.com",
   }),
 }))
 
@@ -88,6 +132,7 @@ function firstJson(output: string) {
 
 beforeEach(() => {
   saveCalls.length = 0
+  parseCalls.length = 0
   mkdirSync(profileDir, { recursive: true })
   writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n")
   process.env.CLICKZETTA_TEST_HOME = home
@@ -111,6 +156,7 @@ describe("task save-config dependency validation", () => {
       },
     })
     expect(saveCalls).toHaveLength(0)
+    expect(parseCalls).toHaveLength(0)
   })
 
   test("fails fast when a dependency item is missing taskName", async () => {
@@ -125,5 +171,55 @@ describe("task save-config dependency validation", () => {
       },
     })
     expect(saveCalls).toHaveLength(0)
+    expect(parseCalls).toHaveLength(0)
+  })
+
+  test("save-config automatically parses lineage and saves output table DTOs", async () => {
+    const result = await execute("task save-config 123 --retry-count 2")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(parseCalls[0]).toMatchObject({
+      projectId: 9,
+      workspaceId: "wid-1",
+      schemaName: "public",
+      dataFileContent: "create table lineage_smoke_out as select * from upstream_table;",
+      dataFileId: 123,
+    })
+    expect(saveCalls[0]?.dataFileInputListReqs).toEqual([
+      expect.objectContaining({
+        dependencyFileId: 456,
+        dependencyFileName: "upstream",
+        depStrategy: 0,
+      }),
+    ])
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(outputDtos)
+    expect(saveCalls[0]).toMatchObject({
+      ownerCnName: "owner-cn",
+      ownerEnName: "owner-en",
+      etlVcCode: "DEFAULT",
+      etlVcId: "vc-default-id",
+    })
+  })
+
+  test("save-cron automatically parses lineage and resolves DEFAULT virtual cluster ID", async () => {
+    const result = await execute('task save-cron 123 --cron "0 30 2 * * ? *"')
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(parseCalls).toHaveLength(1)
+    expect(saveCalls[0]?.dataFileInputListReqs).toEqual([
+      expect.objectContaining({
+        dependencyFileId: 456,
+        depStrategy: 0,
+      }),
+    ])
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(outputDtos)
+    expect(saveCalls[0]).toMatchObject({
+      ownerCnName: "owner-cn",
+      ownerEnName: "owner-en",
+      etlVcCode: "DEFAULT",
+      etlVcId: "vc-default-id",
+    })
   })
 })

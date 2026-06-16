@@ -26,6 +26,14 @@ export interface GetTaskConfigDetailParams {
   dataFileId: number
 }
 
+export interface ParseTaskDependencyOutParams {
+  projectId: number
+  workspaceId: number | string
+  schemaName: string
+  dataFileContent: string
+  dataFileId: number
+}
+
 export interface SaveTaskContentParams {
   dataFileId: number
   dataFileContent: unknown
@@ -58,6 +66,7 @@ export interface SaveTaskConfigParams {
   executeTimeout?: number
   executeTimeoutUnit?: string
   dataFileInputListReqs?: unknown[]
+  dataFileOutputListReqs?: unknown[]
   configProperties?: unknown
   taskPriority?: string
   connectionParam?: string
@@ -129,6 +138,16 @@ export function getTaskConfigDetail(config: StudioConfig, params: GetTaskConfigD
   )
 }
 
+export function parseTaskDependencyOut(config: StudioConfig, params: ParseTaskDependencyOutParams) {
+  return studioRequest(config, "/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut", {
+    projectId: params.projectId,
+    workspaceId: params.workspaceId,
+    schemaName: params.schemaName,
+    dataFileContent: params.dataFileContent,
+    dataFileId: params.dataFileId,
+  })
+}
+
 export function saveTaskContent(config: StudioConfig, params: SaveTaskContentParams) {
   const content =
     typeof params.dataFileContent === "string"
@@ -178,7 +197,7 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       executeTimeout: params.executeTimeout,
       executeTimeoutUnit: params.executeTimeoutUnit,
       dataFileInputListReqs: params.dataFileInputListReqs,
-      dataFileOutputListReqs: [],
+      dataFileOutputListReqs: params.dataFileOutputListReqs ?? [],
       configProperties: params.configProperties,
       taskPriority: params.taskPriority ?? "1",
       ...(params.connectionParam !== undefined && { connectionParam: params.connectionParam }),

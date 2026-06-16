@@ -55,3 +55,19 @@
 - **WHEN** AI agent 需要了解命令参数、通用 `--help` 发现方式或结构化输出字段
 - **THEN** `openspec/config.yaml` 描述使用 `cz-cli <command> --help` 获取参数契约
 - **且** `openspec/config.yaml` 描述 `ai_message` 是面向 agent 的操作提示字段
+
+### Requirement: task 依赖产出解析命令可发现
+
+`cz-cli task lineage` MUST be registered as a `task` subcommand and MUST be discoverable through CLI help.
+
+#### Scenario: 查看 task 帮助
+
+- **WHEN** 用户执行 `cz-cli task --help`
+- **THEN** 帮助信息 MUST include `lineage`
+
+#### Scenario: 查看 lineage 帮助
+
+- **WHEN** 用户执行 `cz-cli task lineage --help`
+- **THEN** 帮助信息 MUST show the `cz-cli task lineage` command header
+- **AND** 帮助信息 MUST include the `task` positional argument
+- **AND** 帮助信息 MUST include `--schema`, `--content`, and `--file` options

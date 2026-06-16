@@ -85,6 +85,42 @@ describe("traceparent propagation", () => {
     expect(headerValue(call?.init, "traceparent")).toMatch(/^00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-[0-9a-f]{16}-00$/)
   })
 
+  test("studioRequest logs endpoint and body when debug is enabled", async () => {
+    fetchCalls.length = 0
+    const writes: string[] = []
+    const originalWrite = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      writes.push(typeof chunk === "string" ? chunk : chunk.toString())
+      return true
+    }) as typeof process.stderr.write
+
+    try {
+      await studioRequest(
+        {
+          baseUrl: "https://studio.invalid",
+          token: "tok",
+          workspaceId: 1,
+          projectId: 2,
+          instanceName: "inst",
+          userId: 1,
+          tenantId: 2,
+          instanceId: 3,
+          workspaceName: "ws",
+          env: "dev",
+          debug: true,
+        },
+        "/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut",
+        { dataFileId: 123 },
+      )
+    } finally {
+      process.stderr.write = originalWrite
+    }
+
+    expect(writes.join("")).toContain("[debug] studioRequest: POST https://studio.invalid/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut")
+    expect(writes.join("")).toContain('"dataFileId":123')
+    expect(writes.join("")).not.toContain("tok")
+  })
+
   test("submitJob reuses the provided traceparent for request headers", async () => {
     fetchCalls.length = 0
     delete process.env.CLICKZETTA_TRACEPARENT

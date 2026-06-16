@@ -43,4 +43,5 @@ export interface StudioConfig {
   env: string
   baseUrl: string
   customHeaders?: Record<string, string>
+  debug?: boolean
 }
