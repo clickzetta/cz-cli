@@ -46,26 +46,48 @@ The parse command MUST expose user-facing summaries for schedule dependencies an
 - **THEN** CLI MUST expose each output as a user-facing output summary
 - **AND** each output summary MUST include identifiers needed to understand the current task output, such as task ID, project ID, data file version, task name, output table name, referenced table name, and add method when present
 
-### Requirement: 保存调度配置时自动解析依赖和产出
+### Requirement: 保存调度配置时按配置解析依赖和产出
 
-Save commands MUST automatically parse and save lineage for SQL and integration tasks without depending on `task lineage` command output.
+Save commands MUST preserve existing lineage by default and MUST parse dependencies and output tables only when the user explicitly enables automatic lineage parsing.
 
-#### Scenario: 保存 cron 自动解析
+#### Scenario: 保存 cron 默认不自动解析
 
 - **WHEN** 用户执行 `cz-cli task save-cron <task>`
+- **AND** 用户没有传入 `--auto-lineage`
+- **THEN** CLI MUST NOT call `/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut`
+- **AND** CLI MUST submit existing dependencies and output tables from saved configuration
+
+#### Scenario: 保存 cron 显式自动解析
+
+- **WHEN** 用户执行 `cz-cli task save-cron <task> --auto-lineage`
 - **AND** the task type is SQL or integration
 - **THEN** CLI MUST call `/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut`
 - **AND** CLI MUST submit parsed dependencies as `dataFileInputListReqs`
 - **AND** CLI MUST submit parsed output tables as `dataFileOutputListReqs`
 - **AND** CLI MUST include top-level `ownerCnName` and `ownerEnName` when output tables are submitted
 
-#### Scenario: 保存非 cron 配置自动解析
+#### Scenario: 保存非 cron 配置默认不自动解析
 
 - **WHEN** 用户执行 `cz-cli task save-schedule <task>` 或 `cz-cli task save-config <task>`
+- **AND** 用户没有传入 `--auto-lineage`
+- **THEN** CLI MUST NOT call `/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut`
+- **AND** CLI MUST submit existing dependencies and output tables from saved configuration unless the user explicitly overrides them
+
+#### Scenario: 保存非 cron 配置显式自动解析
+
+- **WHEN** 用户执行 `cz-cli task save-schedule <task> --auto-lineage` 或 `cz-cli task save-config <task> --auto-lineage`
 - **AND** the task type is SQL or integration
 - **THEN** CLI MUST call `/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut`
 - **AND** CLI MUST submit parsed dependencies as `dataFileInputListReqs` unless the user explicitly passes `--deps clear` or `--deps replace`
 - **AND** CLI MUST submit parsed output tables as `dataFileOutputListReqs`
+
+#### Scenario: 手工设置任务产出
+
+- **WHEN** 用户执行 `cz-cli task save-cron <task> --outputs replace --output-tables <json>` 或 `cz-cli task save-config <task> --outputs replace --output-tables <json>`
+- **THEN** CLI MUST submit the provided output tables as `dataFileOutputListReqs`
+- **AND** CLI MUST mark the output table add method as manual when no add method is provided
+- **WHEN** 用户执行 `cz-cli task save-cron <task> --outputs clear` 或 `cz-cli task save-config <task> --outputs clear`
+- **THEN** CLI MUST submit an empty `dataFileOutputListReqs`
 
 #### Scenario: 保存调度配置时解析执行集群 ID
 

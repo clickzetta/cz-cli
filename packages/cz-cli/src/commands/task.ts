@@ -298,6 +298,44 @@ function parseDependencyTasks(raw: string, format: string | undefined, projectId
   })
 }
 
+function parseOutputTables(
+  raw: string,
+  format: string | undefined,
+  context: { projectId: number; fileId: number; taskName: string; ownerCnName?: unknown; ownerEnName?: unknown },
+): Record<string, unknown>[] {
+  const cleaned = raw.replace(/^'|'$/g, "")
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch {
+    handledError("INVALID_ARGUMENTS", `--output-tables is not valid JSON: ${raw}`, { format })
+  }
+  if (!Array.isArray(parsed)) {
+    handledError("INVALID_ARGUMENTS", "--output-tables must be a JSON array", { format })
+  }
+  return parsed.map((item, index) => {
+    const record = isRecord(item) ? item : {}
+    const tableName = typeof item === "string"
+      ? item
+      : String(record.refTableName ?? record.ref_table_name ?? record.table ?? record.outputTableName ?? record.output_table_name ?? record.fileShowName ?? record.name ?? "")
+    const showName = typeof item === "string"
+      ? item
+      : String(record.outputTableName ?? record.output_table_name ?? record.fileShowName ?? record.name ?? tableName)
+    if (!tableName) handledError("INVALID_ARGUMENTS", `--output-tables[${index}]: output table name is required`, { format })
+    return {
+      projectId: Number(record.projectId ?? context.projectId),
+      dataFileId: Number(record.taskId ?? record.dataFileId ?? context.fileId),
+      dataFileVersion: Number(record.dataFileVersion ?? 0),
+      dataFileName: String(record.taskName ?? record.dataFileName ?? context.taskName),
+      ...(context.ownerCnName != null ? { ownerCnName: context.ownerCnName } : {}),
+      ...(context.ownerEnName != null ? { ownerEnName: context.ownerEnName } : {}),
+      fileShowName: showName,
+      refTableName: tableName,
+      parseType: Number(record.addMethod ?? record.add_method ?? record.parseType ?? 1),
+    }
+  })
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -317,18 +355,19 @@ function configList(value: unknown): Record<string, unknown>[] {
   return getObjectList(value).map((item) => ({ ...item }))
 }
 
-async function parseLineageForSave(sc: StudioConfig, fileId: number, schemaName: string, oldData: Record<string, unknown>) {
+async function parseLineageForSave(sc: StudioConfig, fileId: number, schemaName: string, oldData: Record<string, unknown>, autoLineage: boolean) {
   const detail = await getTaskDetail(sc, fileId)
   const detailData = isRecord(detail.data) ? detail.data : {}
   const detailObj = isRecord(detailData.taskDetail) ? detailData.taskDetail : detailData
   const fileType = Number(detailObj.fileType ?? detailData.fileType)
   const fallback = {
+    taskName: detailObj.dataFileName ?? detailObj.task_name ?? oldData.dataFileName ?? String(fileId),
     ownerCnName: detailObj.ownerCnName ?? detailData.ownerCnName,
     ownerEnName: detailObj.ownerEnName ?? detailData.ownerEnName,
     dataFileInputListReqs: configList(oldData.dataFileDependencyDTOS).map(normalizeDependencyStrategy),
     dataFileOutputListReqs: configList(oldData.fileOutputTableDTOS),
   }
-  if (!DEPENDENCY_OUTPUT_PARSE_TYPES.has(fileType)) return fallback
+  if (!autoLineage || !DEPENDENCY_OUTPUT_PARSE_TYPES.has(fileType)) return fallback
 
   const resp = await parseTaskDependencyOut(sc, {
     projectId: sc.projectId,
@@ -342,6 +381,7 @@ async function parseLineageForSave(sc: StudioConfig, fileId: number, schemaName:
   const dataFileOutputListReqs = configList(data.fileOutputTableDTOS)
   const firstOutput = dataFileOutputListReqs[0]
   return {
+    taskName: fallback.taskName,
     ownerCnName: firstOutput?.ownerCnName ?? fallback.ownerCnName,
     ownerEnName: firstOutput?.ownerEnName ?? fallback.ownerEnName,
     dataFileInputListReqs,
@@ -2676,7 +2716,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("cron", { type: "string", demandOption: true, describe: "Cron expression — ClickZetta uses 7-field format: second minute hour day month weekday year (e.g. '0 30 9 * * ? *' = daily 09:30)" })
             .option("vc", { type: "string", describe: "Virtual cluster code" })
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
-            .option("schema", { type: "string", describe: "Schema name" }),
+            .option("schema", { type: "string", describe: "Schema name" })
+            .option("auto-lineage", { type: "boolean", describe: "Parse dependencies and output tables from task content before saving" })
+            .option("outputs", { type: "string", choices: ["keep", "replace", "clear"], describe: "Output table action" })
+            .option("output-tables", { type: "string", describe: "Output tables JSON array, e.g. '[{\"outputTableName\":\"ws.table\",\"refTableName\":\"ws.public.table\"}]'" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -2703,7 +2746,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
 
             const schemaName = (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public"
-            const lineage = await parseLineageForSave(sc, fileId, schemaName, oldData)
+            const lineage = await parseLineageForSave(sc, fileId, schemaName, oldData, Boolean(argv["auto-lineage"]))
+            const outputsAction = (argv.outputs as string | undefined) ?? (argv["output-tables"] != null ? "replace" : undefined)
+            const outputTables = outputsAction === "clear"
+              ? []
+              : outputsAction === "replace"
+                ? parseOutputTables(String(argv["output-tables"] ?? "[]"), format, {
+                    projectId: sc.projectId,
+                    fileId,
+                    taskName: String(lineage.taskName),
+                    ownerCnName: lineage.ownerCnName,
+                    ownerEnName: lineage.ownerEnName,
+                  })
+                : lineage.dataFileOutputListReqs
             const vc = await resolveScheduleVc(sc, argv, oldData)
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
@@ -2726,7 +2781,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
               activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
               dataFileInputListReqs: lineage.dataFileInputListReqs,
-              dataFileOutputListReqs: lineage.dataFileOutputListReqs,
+              dataFileOutputListReqs: outputTables,
               configProperties: JSON.stringify(oldConfigProps),
             })
             logOperation("task save-cron", { ok: true })
@@ -2752,13 +2807,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("schema", { type: "string", describe: "Schema name" })
             .option("timeout", { type: "number", describe: "Execute timeout" })
             .option("timeout-unit", { type: "string", describe: "Timeout unit (m/s)" })
+            .option("auto-lineage", { type: "boolean", describe: "Parse dependencies and output tables from task content before saving" })
             .option("deps", { type: "string", choices: ["keep", "replace", "clear"], describe: "Dependency action" })
             .option("dep-tasks", { type: "string", describe: "Dependency tasks JSON array. Each item requires taskId (number) and taskName (string), e.g. '[{\"taskId\":123,\"taskName\":\"upstream_task\"}]'" })
+            .option("outputs", { type: "string", choices: ["keep", "replace", "clear"], describe: "Output table action" })
+            .option("output-tables", { type: "string", describe: "Output tables JSON array, e.g. '[{\"outputTableName\":\"ws.table\",\"refTableName\":\"ws.public.table\"}]'" })
             .option("param", { type: "array", string: true, describe: "Set task param: key=value (can repeat)" }),
         async (argv) => {
           const format = argv.format
           try {
-            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vcluster", "vc-id", "schema", "timeout", "timeout-unit", "deps", "param"] as const
+            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vcluster", "vc-id", "schema", "timeout", "timeout-unit", "auto-lineage", "deps", "outputs", "output-tables", "param"] as const
             if (!configOpts.some((k) => argv[k] != null)) {
               error("INVALID_ARGUMENTS", "At least one configuration option is required.", { format, exitCode: 2 })
               return
@@ -2779,9 +2837,21 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 explicitDeps = parseDependencyTasks(raw, format, sc.projectId)
               }
             }
-            const lineage = await parseLineageForSave(sc, fileId, schemaName || "public", oldData)
+            const lineage = await parseLineageForSave(sc, fileId, schemaName || "public", oldData, Boolean(argv["auto-lineage"]))
             const vc = await resolveScheduleVc(sc, argv, oldData)
             const deps = explicitDeps ?? lineage.dataFileInputListReqs
+            const outputsAction = (argv.outputs as string | undefined) ?? (argv["output-tables"] != null ? "replace" : undefined)
+            const outputTables = outputsAction === "clear"
+              ? []
+              : outputsAction === "replace"
+                ? parseOutputTables(String(argv["output-tables"] ?? "[]"), format, {
+                    projectId: sc.projectId,
+                    fileId,
+                    taskName: String(lineage.taskName),
+                    ownerCnName: lineage.ownerCnName,
+                    ownerEnName: lineage.ownerEnName,
+                  })
+                : lineage.dataFileOutputListReqs
 
             // Build paramValueList from --param, merging with existing
             const existingParams = (oldData.paramValueList as Record<string, unknown>[] | undefined) ?? []
@@ -2826,7 +2896,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               executeTimeout: (argv.timeout as number | undefined) ?? (oldData.executeTimeout as number | undefined),
               executeTimeoutUnit: (argv["timeout-unit"] as string | undefined) ?? (oldData.executeTimeoutUnit as string | undefined) ?? "m",
               dataFileInputListReqs: deps,
-              dataFileOutputListReqs: lineage.dataFileOutputListReqs,
+              dataFileOutputListReqs: outputTables,
               configProperties: oldData.configProperties ?? "{}",
             })
             // Save params separately via saveTaskContent (paramValueList is stored with content, not config)
