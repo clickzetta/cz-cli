@@ -85,6 +85,21 @@ export function inferAiGatewayUrl(profile: { service?: string; instance?: string
   return undefined
 }
 
+/**
+ * The AIGW virtual-key admin routes (`/llm-gateway-admin/*`) are only served
+ * by the Shanghai alicloud portal host — other alicloud regions (e.g. Beijing
+ * `cn-beijing-alicloud.api.clickzetta.com`) return 404 "Can not find suitable
+ * response". Virtual keys themselves are tenant-global, so for any
+ * `cn-<region>-alicloud.api.clickzetta.com` host we pin admin calls to the
+ * Shanghai host regardless of region. Non-alicloud hosts are left untouched.
+ */
+export function pinAlicloudAdminHost(baseUrl: string): string {
+  return baseUrl.replace(
+    /^(https?:\/\/)cn-[^.]+-alicloud\.api\.clickzetta\.com/,
+    "$1cn-shanghai-alicloud.api.clickzetta.com",
+  )
+}
+
 function randomAlias() {
   const bytes = crypto.getRandomValues(new Uint8Array(8))
   return AUTO_ALIAS_PREFIX + Array.from(bytes, (byte) => ALIAS_ALPHABET[byte % ALIAS_ALPHABET.length]).join("")
@@ -184,8 +199,11 @@ async function rotateEntry(input: {
   profile: string
 }) {
   const sc = await getGatewayContext({ profile: input.profile })
+  // Admin virtual-key routes only exist on the Shanghai alicloud portal; pin
+  // the host there for alicloud regions while keeping the original token.
+  const adminSc = { ...sc, baseUrl: pinAlicloudAdminHost(sc.baseUrl) }
   const alias = resolveRotationAlias(input.profile)
-  const listResp = await studioRequest<Array<Record<string, unknown>>>(sc, API.LIST, {
+  const listResp = await studioRequest<Array<Record<string, unknown>>>(adminSc, API.LIST, {
     pageIndex: 1,
     pageSize: 200,
     vApiKeyAlias: alias,
@@ -198,13 +216,13 @@ async function rotateEntry(input: {
       ? Number(existing.id)
       : Number(
           (
-            await studioRequest<number>(sc, API.SAVE, {
+            await studioRequest<number>(adminSc, API.SAVE, {
               vApiKeyAlias: alias,
               rateLimitConfigs: { quota_total: DEFAULT_QUOTA_TOTAL },
             })
           ).data,
         )
-  const keyResp = await studioRequest<string>(sc, `${API.GET}?id=${id}`, {})
+  const keyResp = await studioRequest<string>(adminSc, `${API.GET}?id=${id}`, {})
   const apiKey = String(keyResp.data)
   const entryName = writeRotatedKey({
     apiKey,

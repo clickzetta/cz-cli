@@ -9,6 +9,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getGatewayContext, type GatewayContext } from "./studio-context.js"
+import { pinAlicloudAdminHost } from "../llm/clickzetta-rotation.js"
 
 // ── AIGW admin API paths ────────────────────────────────────────────────────
 // Portal-proxied endpoints (standard portal token auth):
@@ -46,9 +47,12 @@ export function setGatewayDebug(enabled: boolean) { _debug = enabled }
 
 /** Wrapper around studioRequest that logs roundtrip details when --debug is active. */
 async function gwRequest<T>(sc: StudioConfig, path: string, body: unknown): Promise<{ data: T; code: number | string; message?: string; count?: number }> {
+  // Admin virtual-key routes only exist on the Shanghai alicloud portal; pin
+  // the host there for alicloud regions while keeping the original token.
+  const adminSc = { ...sc, baseUrl: pinAlicloudAdminHost(sc.baseUrl) }
   if (_debug) process.stderr.write(`[debug] → POST ${path} ${JSON.stringify(body)}\n`)
   const t0 = Date.now()
-  const resp = await studioRequest<T>(sc, path, body)
+  const resp = await studioRequest<T>(adminSc, path, body)
   if (_debug) process.stderr.write(`[debug] ← ${Date.now() - t0}ms code=${resp.code} data=${JSON.stringify(resp.data)}\n`)
   return resp
 }
