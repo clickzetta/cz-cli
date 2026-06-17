@@ -56,7 +56,11 @@ function init() {
 
   const toast = {
     show(options: ToastOptions) {
-      const { duration, ...currentToast } = options
+      // duration is optional on the type; the zod .default(5000) only applies on
+      // .parse(), not on direct show() calls. Without this fallback, callers that
+      // omit duration get setTimeout(fn, undefined) ≈ 0ms and the toast vanishes
+      // on the next tick (e.g. the copy-on-select "Copied" toast was never visible).
+      const { duration = 5000, ...currentToast } = options
       setStore("currentToast", currentToast)
       if (timeoutHandle) clearTimeout(timeoutHandle)
       timeoutHandle = setTimeout(() => {
