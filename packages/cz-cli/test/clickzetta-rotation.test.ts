@@ -65,6 +65,7 @@ mock.module("@clack/prompts", () => ({
 const {
   isClickzettaQuotaExhausted,
   maybeRotateExhaustedClickzettaLlm,
+  pinAlicloudAdminHost,
 } = await import("../src/llm/clickzetta-rotation.ts")
 
 beforeEach(() => {
@@ -272,5 +273,59 @@ describe("clickzetta key rotation", () => {
 
     expect(result).toBeUndefined()
     expect(studioCalls).toEqual([])
+  })
+
+  test("pins alicloud admin host to shanghai regardless of region", () => {
+    expect(pinAlicloudAdminHost("https://cn-beijing-alicloud.api.clickzetta.com")).toBe(
+      "https://cn-shanghai-alicloud.api.clickzetta.com",
+    )
+    expect(pinAlicloudAdminHost("https://cn-hangzhou-alicloud.api.clickzetta.com")).toBe(
+      "https://cn-shanghai-alicloud.api.clickzetta.com",
+    )
+    // already shanghai → unchanged
+    expect(pinAlicloudAdminHost("https://cn-shanghai-alicloud.api.clickzetta.com")).toBe(
+      "https://cn-shanghai-alicloud.api.clickzetta.com",
+    )
+    // non-alicloud hosts left untouched
+    expect(pinAlicloudAdminHost("https://ap-shanghai-tencentcloud.api.clickzetta.com")).toBe(
+      "https://ap-shanghai-tencentcloud.api.clickzetta.com",
+    )
+    expect(pinAlicloudAdminHost("https://uat-api.clickzetta.com")).toBe(
+      "https://uat-api.clickzetta.com",
+    )
+  })
+
+  test("routes admin calls to shanghai when profile service is a non-shanghai alicloud region", async () => {
+    writeFileSync(
+      profileFile,
+      [
+        'default_profile = "bj"',
+        "",
+        "[profiles.bj]",
+        'pat = "pat-bj"',
+        'instance = "inst-bj"',
+        'workspace = "ws-bj"',
+        'username = "BJ_TEST"',
+        'service = "cn-beijing-alicloud.api.clickzetta.com"',
+        'protocol = "https"',
+        'ai_gateway_url = "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1"',
+        "",
+      ].join("\n"),
+    )
+
+    const result = await maybeRotateExhaustedClickzettaLlm({
+      provider: "clickzetta",
+      status: 429,
+      detail:
+        "{\"code\":429,\"message\":\"Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'cz-code_auto_old', current usage: 10075371 tokens\"}",
+      approval: "auto",
+    })
+
+    expect(result?.rotated).toBe(true)
+    // every admin call must target the shanghai portal, not beijing
+    expect(studioCalls.length).toBeGreaterThan(0)
+    for (const call of studioCalls) {
+      expect(call.baseUrl).toBe("https://cn-shanghai-alicloud.api.clickzetta.com")
+    }
   })
 })
