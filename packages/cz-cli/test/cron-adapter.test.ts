@@ -24,3 +24,47 @@ describe("convertAgentCron minute-gap encoding", () => {
     expect(convertAgentCron(out).outputCron).toBe(out)
   })
 })
+
+describe("convertAgentCron hour=* with fixed minute (hourly)", () => {
+  test("0 00 * * * ? * is hourly at minute 0", () => {
+    const r = convertAgentCron("0 00 * * * ? *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 * * * ? *")
+    expect(r.uiParam.frequency).toBe("2")
+    expect(r.uiParam.timeGap).toBe(1)
+    expect(r.uiParam.scheduleStartTime).toBe("00:00")
+    expect(r.uiParam.scheduleEndTime).toBe("23:59")
+  })
+
+  test("0 10 * * * ? * is hourly at minute 10", () => {
+    const r = convertAgentCron("0 10 * * * ? *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 10 * * * ? *")
+    expect(r.uiParam.frequency).toBe("2")
+    expect(r.uiParam.timeGap).toBe(1)
+    expect(r.uiParam.scheduleStartTime).toBe("00:10")
+    expect(r.uiParam.scheduleEndTime).toBe("23:59")
+  })
+
+  test("0 30 8-18 * * ? * is hourly at :30 within 8-18", () => {
+    const r = convertAgentCron("0 30 8-18 * * ? *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 30 08-18/1 * * ? *")
+    expect(r.uiParam.frequency).toBe("2")
+    expect(r.uiParam.timeGap).toBe(1)
+    expect(r.uiParam.scheduleStartTime).toBe("08:30")
+    expect(r.uiParam.scheduleEndTime).toBe("18:59")
+  })
+
+  test("MON,WED,FRI is not rejected as unsupported token", () => {
+    const r = convertAgentCron("0 0 9 ? * MON,WED,FRI *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 09 ? * MON,WED,FRI *")
+  })
+
+  test("roundtrip stability for hour-range expressions", () => {
+    const r1 = convertAgentCron("0 30 8-18 * * ? *")
+    const r2 = convertAgentCron(r1.outputCron!)
+    expect(r2.outputCron).toBe(r1.outputCron)
+  })
+})

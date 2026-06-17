@@ -300,4 +300,39 @@ describe("task save-config dependency validation", () => {
     expect(parseCalls).toHaveLength(0)
     expect(saveCalls[0]?.dataFileOutputListReqs).toEqual([])
   })
+
+  test("recovers output tables when the runtime splits the JSON into fragments", async () => {
+    // Stripped quotes + an internal space cause the shell/agent to split the value
+    // into a separate positional fragment, which previously failed with "Unknown command".
+    const result = await execute("task save-schedule 123 --outputs replace --output-tables [{outputTableName:ws.manual_output, refTableName:ws.public.manual_output}]")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(manualOutputDtos)
+  })
+
+  test("recovers output tables when quotes are stripped without a split", async () => {
+    const result = await execute("task save-config 123 --outputs replace --output-tables [{outputTableName:ws.manual_output,refTableName:ws.public.manual_output}]")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(manualOutputDtos)
+  })
+
+  test("recovers output tables from a backslash-escaped, split blob", async () => {
+    const result = await execute("task save-schedule 123 --outputs replace --output-tables [{outputTableName\\:\\ws.manual_output\\,\\refTableName\\:\\ws.public.manual_output\\}]")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(manualOutputDtos)
+  })
+
+  test("returns INVALID_ARGUMENTS when output-tables cannot be parsed or recovered", async () => {
+    const result = await execute("task save-schedule 123 --outputs replace --output-tables not-json-at-all")
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect((json.error as Record<string, unknown>)?.code).toBe("INVALID_ARGUMENTS")
+    expect(saveCalls).toHaveLength(0)
+  })
 })

@@ -92,6 +92,10 @@ Save commands MUST preserve existing lineage by default and MUST parse dependenc
 - **WHEN** 用户执行 `cz-cli task save-cron <task> --outputs replace --output-tables <json>` 或 `cz-cli task save-config <task> --outputs replace --output-tables <json>`
 - **THEN** CLI MUST submit the provided output tables as `dataFileOutputListReqs`
 - **AND** CLI MUST mark the output table add method as manual when no add method is provided
+- **WHEN** shell、agent runtime 或 programmatic execute 将 `--output-tables` 的 JSON 引号剥离或拆成额外 positional fragments，但仍保留可识别的 `outputTableName` 与 `refTableName` 键值
+- **THEN** CLI MUST reconstruct and submit the provided output tables instead of failing with `Unknown command`
+- **WHEN** `--output-tables` 的内容既不是 JSON array，也不能从拆分 fragments 中恢复出 output table records
+- **THEN** CLI MUST return an `INVALID_ARGUMENTS` validation error
 - **WHEN** 用户执行 `cz-cli task save-cron <task> --outputs clear` 或 `cz-cli task save-config <task> --outputs clear`
 - **THEN** CLI MUST submit an empty `dataFileOutputListReqs`
 

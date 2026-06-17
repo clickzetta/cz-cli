@@ -304,16 +304,21 @@ function parseOutputTables(
   context: { projectId: number; fileId: number; taskName: string; ownerCnName?: unknown; ownerEnName?: unknown },
 ): Record<string, unknown>[] {
   const cleaned = raw.replace(/^'|'$/g, "")
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(cleaned)
-  } catch {
-    handledError("INVALID_ARGUMENTS", `--output-tables is not valid JSON: ${raw}`, { format })
+  const parsed = (() => {
+    try {
+      return JSON.parse(cleaned)
+    } catch {
+      return undefined
+    }
+  })()
+  // Accept valid JSON arrays as-is. Otherwise try to recover output table records
+  // from a blob whose quotes were stripped or that was split into fragments by the
+  // shell/agent runtime (still carrying recognizable outputTableName/refTableName keys).
+  const records = Array.isArray(parsed) ? parsed : recoverOutputTableRecords(cleaned)
+  if (!records) {
+    handledError("INVALID_ARGUMENTS", `--output-tables must be a JSON array and could not be recovered from fragments: ${raw}`, { format })
   }
-  if (!Array.isArray(parsed)) {
-    handledError("INVALID_ARGUMENTS", "--output-tables must be a JSON array", { format })
-  }
-  return parsed.map((item, index) => {
+  return records.map((item, index) => {
     const record = isRecord(item) ? item : {}
     const tableName = typeof item === "string"
       ? item
@@ -334,6 +339,21 @@ function parseOutputTables(
       parseType: Number(record.addMethod ?? record.add_method ?? record.parseType ?? 1),
     }
   })
+}
+
+// Recover output table records from a quote-stripped or fragment-split blob.
+// Matches outputTableName/refTableName keys (camelCase or snake_case) regardless of
+// surrounding quotes, colons, or backslashes, then pairs them positionally.
+function recoverOutputTableRecords(blob: string): Record<string, string>[] | undefined {
+  const valueTail = `["'\\\\:=\\s]+([\\w.$-]+)`
+  const showNames = [...blob.matchAll(new RegExp(`output_?table_?name${valueTail}`, "gi"))].map((m) => m[1]!)
+  const refNames = [...blob.matchAll(new RegExp(`ref_?table_?names?${valueTail}`, "gi"))].map((m) => m[1]!)
+  const count = Math.max(showNames.length, refNames.length)
+  if (count === 0) return undefined
+  return Array.from({ length: count }, (_, i) => ({
+    ...(showNames[i] != null ? { outputTableName: showNames[i]! } : {}),
+    ...(refNames[i] != null ? { refTableName: refNames[i]! } : {}),
+  }))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
