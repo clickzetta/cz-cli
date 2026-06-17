@@ -30,10 +30,10 @@
 
 迁移旧矩阵时 MUST 将废弃或改名命令映射到当前命令，不能把旧命令作为新仓库承诺。
 
-#### Scenario: ai-guide 被 agent-guide 替代
+#### Scenario: ai-guide 被 skill/help 文档替代
 
 - **WHEN** 旧矩阵包含 `cz-cli ai-guide`
-- **THEN** 当前规格将其映射到 `agent-guide` / skill 文档生成能力
+- **THEN** 当前规格将其映射到捆绑/外部 skill 文档、`cz-cli <command> --help` 或内部 guide 生成能力
 - **AND** 不把 `cz-cli ai-guide` 作为当前公开命令
 
 #### Scenario: executions 被 runs/attempts/job 替代
