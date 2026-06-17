@@ -7,6 +7,8 @@
 
 ### Requirement: 顶层 serve 命令透出 opencode agent server
 
+本需求 MUST 按以下场景执行。
+
 `cz-cli serve` MUST 作为顶层命令透出 opencode 的 headless agent server 能力，并保留 opencode serve 命令的参数语义。该命令属于 agent 运行时命令，MUST 由真实 cz-cli 二进制执行，不应通过 `execute()` 的进程内 API 执行。
 
 #### Scenario: 查看 serve 帮助
@@ -23,6 +25,8 @@
 - **且** 提示调用方使用真实 cz-cli 二进制
 
 ### Requirement: AIGW model list 默认限制并提示 AI agent
+
+本需求 MUST 按以下场景执行。
 
 `cz-cli ai-gateway model list` MUST 默认只请求并返回 10 个模型，MUST 支持 `--limit <n>` 调整上限，MUST 支持 `--no-limit` 取消默认 10 个限制并使用分页参数请求。命令输出被限制且服务端返回总数大于当前结果数时，MUST 在 `ai_message` 中提示当前展示数量、总数，以及可使用 `--limit` 或 `--no-limit` 调整。
 
@@ -42,6 +46,8 @@
 
 ### Requirement: Agent 指令壳只指向 OpenSpec 配置
 
+本需求 MUST 按以下场景执行。
+
 仓库根目录 `AGENTS.md` MUST 作为轻量入口，只说明规范与契约来源是 `openspec/config.yaml`，不应复制长期契约内容。AI agent 需要理解命令参数、输出结构或开发流程时，MUST 读取 `openspec/config.yaml`。
 
 #### Scenario: Agent 读取根目录指令
@@ -56,7 +62,27 @@
 - **THEN** `openspec/config.yaml` 描述使用 `cz-cli <command> --help` 获取参数契约
 - **且** `openspec/config.yaml` 描述 `ai_message` 是面向 agent 的操作提示字段
 
+### Requirement: limit 和 truncate 是命令级参数
+
+本需求 MUST 按以下场景执行。
+
+`--limit`、`--no-limit`、`--truncate`、`--no-truncate` MUST be treated as command-specific options, not global options. The generic output layer MUST NOT apply row limits or field truncation unless the invoked command explicitly implements and documents that behavior.
+
+#### Scenario: 通过 help 判断命令是否支持限制或截断
+
+- **WHEN** 用户或 AI agent 需要判断某个命令是否支持结果数量限制或字段截断
+- **THEN** MUST inspect that command's own `--help`
+- **且** 只有帮助信息列出 `--limit`、`--no-limit`、`--truncate` 或 `--no-truncate` 时，调用方才应认为该命令支持对应参数
+
+#### Scenario: 命令未声明限制或截断参数
+
+- **WHEN** 命令帮助未声明 `--limit`、`--no-limit`、`--truncate` 或 `--no-truncate`
+- **THEN** CLI MUST NOT silently apply a generic global row limit or field truncation through the shared output formatter
+- **且** 若该命令需要限制或截断行为，MUST 在该命令自身实现并在帮助信息中声明
+
 ### Requirement: task 依赖产出解析命令可发现
+
+本需求 MUST 按以下场景执行。
 
 `cz-cli task lineage` MUST be registered as a `task` subcommand and MUST be discoverable through CLI help.
 

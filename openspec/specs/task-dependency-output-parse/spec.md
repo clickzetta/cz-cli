@@ -7,6 +7,8 @@
 
 ### Requirement: 解析 SQL 和集成任务的依赖与产出
 
+本需求 MUST 按以下场景执行。
+
 CLI MUST provide `cz-cli task lineage <task>` to parse schedule dependencies and output tables for SQL tasks and integration tasks by calling Studio `parseDataFileDependencyOut`.
 
 #### Scenario: SQL 任务解析成功
@@ -31,6 +33,8 @@ CLI MUST provide `cz-cli task lineage <task>` to parse schedule dependencies and
 
 ### Requirement: 输出用户可确认的解析结果
 
+本需求 MUST 按以下场景执行。
+
 The parse command MUST expose user-facing summaries for schedule dependencies and output tables without automatically saving them.
 
 #### Scenario: 调度依赖展示字段
@@ -47,6 +51,8 @@ The parse command MUST expose user-facing summaries for schedule dependencies an
 - **AND** each output summary MUST include identifiers needed to understand the current task output, such as task ID, project ID, data file version, task name, output table name, referenced table name, and add method when present
 
 ### Requirement: 保存调度配置时按配置解析依赖和产出
+
+本需求 MUST 按以下场景执行。
 
 Save commands MUST preserve existing lineage by default and MUST parse dependencies and output tables only when the user explicitly enables automatic lineage parsing.
 
@@ -114,6 +120,8 @@ Save commands MUST preserve existing lineage by default and MUST parse dependenc
 - **AND** CLI MUST NOT put `outputs`, `dependencies`, or save payload JSON blobs into table cells
 
 ### Requirement: 拒绝不支持的任务类型
+
+本需求 MUST 按以下场景执行。
 
 The parse command MUST reject task types other than SQL and integration before calling the parse API.
 

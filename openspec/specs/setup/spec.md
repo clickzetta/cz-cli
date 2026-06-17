@@ -7,6 +7,8 @@
 
 ### Requirement: 交互式账号站点打开为 best-effort
 
+本需求 MUST 按以下场景执行。
+
 `cz-cli setup` 在交互式流程中展示登录或注册链接后 MAY 尝试打开系统浏览器，但浏览器打开失败 MUST NOT 中断 setup 流程。命令 MUST 始终把 URL 显示给用户，并继续等待用户粘贴 credential。
 
 #### Scenario: Windows 使用 shell 内建 start 打开浏览器
