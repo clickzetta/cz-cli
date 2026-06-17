@@ -21,8 +21,39 @@ export interface GlobalArgs {
   debug: boolean
 }
 
+// Options that take a single JSON-array value. Shells and AI agent runtimes may
+// strip the surrounding quotes and split the JSON on internal whitespace, leaving
+// stray positional fragments that yargs would reject with "Unknown command". These
+// options never precede a positional argument, so any non-flag tokens immediately
+// following them are fragments of the same value and are merged back together here.
+const JSON_ARRAY_OPTIONS = new Set(["--output-tables"])
+
+export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
+  const result: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!
+    const isLongForm = JSON_ARRAY_OPTIONS.has(arg)
+    const isEqForm = !isLongForm && [...JSON_ARRAY_OPTIONS].some((name) => arg.startsWith(name + "="))
+    // Long form needs a value token that is not itself a flag; otherwise leave it for yargs.
+    if (!isEqForm && (!isLongForm || args[i + 1] === undefined || args[i + 1]!.startsWith("-"))) {
+      result.push(arg)
+      continue
+    }
+    let value = isLongForm ? args[i + 1]! : arg
+    let j = isLongForm ? i + 2 : i + 1
+    while (j < args.length && !args[j]!.startsWith("-")) {
+      value += args[j]!
+      j++
+    }
+    if (isLongForm) result.push(arg, value)
+    else result.push(value)
+    i = j - 1
+  }
+  return result
+}
+
 export function createCli(args: string[]) {
-  return withClickZettaProfileOption(yargs(args))
+  return withClickZettaProfileOption(yargs(coalesceJsonArrayOptionArgs(args)))
     .scriptName("cz-cli")
     .version(VERSION)
     .exitProcess(false)
