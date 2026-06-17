@@ -50,7 +50,7 @@ export function parseCron(expr: string): CronFields {
 function hasUnsupportedToken(fields: CronFields): string | null {
   for (const val of Object.values(fields)) {
     for (const t of UNSUPPORTED_TOKENS) {
-      if (val.includes(t)) return `Unsupported Quartz token: ${t} in '${val}'`
+      if (new RegExp(`(?<![A-Z])${t}(?![A-Z])`).test(val)) return `Unsupported Quartz token: ${t} in '${val}'`
     }
   }
   return null
@@ -115,6 +115,20 @@ function decodeToUi(fields: CronFields): { param: UiParam; warnings: string[]; e
     param.timeGap = parseInt(hStep, 10)
     param.scheduleStartTime = `${pad2(parseInt(hStart, 10))}:${pad2(parseInt(minute, 10))}`
     param.scheduleEndTime = `${pad2(parseInt(hEnd, 10))}:59`
+    return { param, warnings }
+  }
+
+  // Hourly: hour="*" or hour is a range without step, with fixed minute
+  if (hour === "*" || (hStart !== hEnd && !hStep)) {
+    param.frequency = "2"
+    param.timeGap = 1
+    if (hour === "*") {
+      param.scheduleStartTime = `00:${pad2(parseInt(minute, 10))}`
+      param.scheduleEndTime = "23:59"
+    } else {
+      param.scheduleStartTime = `${pad2(parseInt(hStart, 10))}:${pad2(parseInt(minute, 10))}`
+      param.scheduleEndTime = `${pad2(parseInt(hEnd, 10))}:59`
+    }
     return { param, warnings }
   }
 
