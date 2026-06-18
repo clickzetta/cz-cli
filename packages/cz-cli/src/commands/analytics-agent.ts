@@ -3,7 +3,7 @@ import { createTraceparent } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
-import { success, error, handledError, isHandledCliError, shouldColorize } from "../output/index.js"
+import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
 import { getStudioContext, type StudioContext } from "./studio-context.js"
 import { logOperation } from "../logger.js"
@@ -362,6 +362,13 @@ function renderSummary(summary: string): string {
   return text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/^#{1,6}\s+/gm, "")
 }
 
+function writeRenderedPayload(payload: unknown, format: string | undefined, field: string | undefined): void {
+  const output = renderOutput(payload, format, field)
+  if (output !== "") process.stdout.write(output + "\n")
+  ;(process as unknown as Record<string, unknown>).responseBytes = Buffer.byteLength(output, "utf-8")
+  process.exitCode = 0
+}
+
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 function startSpinner(label: string): { stop: () => void } {
@@ -391,6 +398,8 @@ async function executeSessionRunCommand(
   body: Record<string, unknown>,
 ): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : undefined
+  const field = typeof argv.field === "string" ? argv.field : undefined
+  const formatted = argv.formatted === true
   const timeoutMs = typeof argv["timeout-ms"] === "number" ? argv["timeout-ms"] : 360_000
   const intervalMs = typeof argv["interval-ms"] === "number" ? argv["interval-ms"] : 2_000
   const t0 = Date.now()
@@ -423,7 +432,17 @@ async function executeSessionRunCommand(
     } finally {
       spinner.stop()
     }
+    const pollErr = extractBusinessError(payload)
+    if (pollErr) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(pollErr.code, pollErr.message, { format })
+      return
+    }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    if (!formatted) {
+      writeRenderedPayload(payload, format, field)
+      return
+    }
     const summary = extractSummaryString(payload) ?? extractFinalSummary(payload)
     if (summary) {
       if (format === "json") {
@@ -873,6 +892,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("model-name", { type: "string", describe: "Model name" })
                 .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
+                .option("formatted", { type: "boolean", default: false, describe: "Show the formatted final answer instead of the full poll payload" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .check((argv) => {
                   if (!argv["session-id"] && !argv["domain-id"]) {
