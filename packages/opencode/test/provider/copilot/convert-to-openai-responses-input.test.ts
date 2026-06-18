@@ -11,14 +11,14 @@ describe("convertToOpenAIResponsesInput", () => {
             {
               type: "tool-call",
               toolCallId: "call_jobperf",
-              toolName: "fetch_job_performance_data",
+              toolName: "analyze_lakehouse_job",
               input: { job_id: "2026012808001805432z9g3fx1sok" },
               providerExecuted: true,
             },
             {
               type: "tool-result",
               toolCallId: "call_jobperf",
-              toolName: "fetch_job_performance_data",
+              toolName: "analyze_lakehouse_job",
               output: { type: "text", value: "job profile summary" },
             },
           ],

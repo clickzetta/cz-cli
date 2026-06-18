@@ -584,7 +584,7 @@ it.live("job performance tool result is sent to the next model turn", () =>
           noReply: true,
           parts: [{ type: "text", text: "analyze job" }],
         })
-        yield* llm.tool("fetch_job_performance_data", { job_id: "2026012808001805432z9g3fx1sok" })
+        yield* llm.tool("analyze_lakehouse_job", { job_id: "2026012808001805432z9g3fx1sok" })
         yield* llm.text("second")
 
         const result = yield* prompt.loop({ sessionID: session.id })
@@ -926,7 +926,7 @@ it.live(
 )
 
 it.live(
-  "includes fetch_job_performance_data in prompt tool payload",
+  "includes analyze_lakehouse_job in prompt tool payload",
   () =>
     provideTmpdirServer(
       ({ llm }) =>
@@ -945,7 +945,7 @@ it.live(
 
           const inputs = yield* llm.inputs
           const tools = inputs[0]?.tools as Array<{ function?: { name?: string } }> | undefined
-          expect(tools?.some((item) => item.function?.name === "fetch_job_performance_data")).toBe(true)
+          expect(tools?.some((item) => item.function?.name === "analyze_lakehouse_job")).toBe(true)
         }),
       { git: true, config: providerCfg },
     ),

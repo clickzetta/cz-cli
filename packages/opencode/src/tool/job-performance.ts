@@ -153,7 +153,7 @@ export async function callMcp(
   const client = new Client({ name: "cz-cli", version: InstallationVersion })
   try {
     await client.connect(transport)
-    const result = await client.callTool({ name: "fetch_job_performance_data", arguments: args }, CallToolResultSchema, {
+    const result = await client.callTool({ name: "analyze_lakehouse_job", arguments: args }, CallToolResultSchema, {
       signal,
       timeout: 120_000,
       resetTimeoutOnProgress: true,
@@ -170,7 +170,7 @@ export async function callMcp(
 }
 
 export const JobPerformanceTool = Tool.define(
-  "fetch_job_performance_data",
+  "analyze_lakehouse_job",
   Effect.gen(function* () {
     return {
       description: DESCRIPTION,
@@ -178,7 +178,7 @@ export const JobPerformanceTool = Tool.define(
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           yield* ctx.ask({
-            permission: "fetch_job_performance_data",
+            permission: "analyze_lakehouse_job",
             patterns: [params.job_id ?? params.path ?? "*"],
             always: ["*"],
             metadata: { ...params },
