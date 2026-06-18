@@ -132,7 +132,7 @@ describe("analytics-agent session run", () => {
     expect(JSON.parse(result.output.trim())).toEqual(pollPayload)
   })
 
-  test("shows the formatted final-summary output when --formatted is set", async () => {
+  test("shows the final-summary output when --summary is set", async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes("/open/text2insight/query")) {
@@ -169,7 +169,7 @@ describe("analytics-agent session run", () => {
       "7",
       "--msg",
       "hello",
-      "--formatted",
+      "--summary",
     ])
 
     expect(result.exitCode).toBe(0)

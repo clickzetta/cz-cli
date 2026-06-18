@@ -399,7 +399,7 @@ async function executeSessionRunCommand(
 ): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : undefined
   const field = typeof argv.field === "string" ? argv.field : undefined
-  const formatted = argv.formatted === true
+  const summaryOnly = argv.summary === true
   const timeoutMs = typeof argv["timeout-ms"] === "number" ? argv["timeout-ms"] : 360_000
   const intervalMs = typeof argv["interval-ms"] === "number" ? argv["interval-ms"] : 2_000
   const t0 = Date.now()
@@ -439,7 +439,7 @@ async function executeSessionRunCommand(
       return
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
-    if (!formatted) {
+    if (!summaryOnly) {
       writeRenderedPayload(payload, format, field)
       return
     }
@@ -892,7 +892,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("model-name", { type: "string", describe: "Model name" })
                 .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
-                .option("formatted", { type: "boolean", default: false, describe: "Show the formatted final answer instead of the full poll payload" })
+                .option("summary", { type: "boolean", default: false, describe: "Show the final answer instead of the full poll payload" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .check((argv) => {
                   if (!argv["session-id"] && !argv["domain-id"]) {
