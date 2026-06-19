@@ -161,6 +161,14 @@ export function classifyExecError(err: unknown): { code: string; message: string
       jobId,
     }
   }
+  if (jobId && /timed out/i.test(message)) {
+    return {
+      code: "JOB_TIMEOUT",
+      message,
+      aiMessage: `Job ${jobId} timed out waiting for results. For long-running queries, use --async to submit without waiting: cz-cli sql "<SQL>" --async. Then check status with: cz-cli job status ${jobId}. To cancel: cz-cli job cancel ${jobId}`,
+      jobId,
+    }
+  }
   if (isNetworkError(err)) {
     return {
       code: "CONNECTION_ERROR",
