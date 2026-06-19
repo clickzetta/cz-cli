@@ -132,7 +132,7 @@ export async function analyzeJobPerformance(options: AnalyzeJobOptions, debug?: 
   const client = new Client({ name: "cz-cli", version: VERSION })
   try {
     await client.connect(transport)
-    const result = await client.callTool({ name: "fetch_job_performance_data", arguments: args }, CallToolResultSchema, {
+    const result = await client.callTool({ name: "analyze_lakehouse_job", arguments: args }, CallToolResultSchema, {
       signal: options.signal,
       timeout: 120_000,
       resetTimeoutOnProgress: true,

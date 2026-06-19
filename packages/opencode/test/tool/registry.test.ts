@@ -17,12 +17,12 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
-  it.live("registers fetch_job_performance_data as a builtin tool", () =>
+  it.live("registers analyze_lakehouse_job as a builtin tool", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const registry = yield* ToolRegistry.Service
         const ids = yield* registry.ids()
-        expect(ids).toContain("fetch_job_performance_data")
+        expect(ids).toContain("analyze_lakehouse_job")
       }),
     ),
   )
