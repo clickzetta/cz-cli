@@ -39,6 +39,15 @@ describe("classifyExecError", () => {
     expect(r.code).toBe("CONNECTION_ERROR")
   })
 
+  test("job timed out with jobId → JOB_TIMEOUT with async guidance", () => {
+    const err = Object.assign(new Error("Job CZ-abc123 timed out after 300000ms"), { jobId: "CZ-abc123" })
+    const r = classifyExecError(err)
+    expect(r.code).toBe("JOB_TIMEOUT")
+    expect(r.jobId).toBe("CZ-abc123")
+    expect(r.aiMessage).toContain("--async")
+    expect(r.aiMessage).toContain("job cancel")
+  })
+
   test("Authentication required message → NO_CREDENTIALS", () => {
     const err = new Error("Authentication required. Provide --pat or --username/--password, or run `cz-cli setup` to configure a connection profile.")
     const r = classifyExecError(err)

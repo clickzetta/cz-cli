@@ -3,7 +3,7 @@ import { commandGroup } from "../command-group.js"
 import { mkdir, stat, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import {
-  requestRaw, pollJobResult,
+  requestRaw, pollJobResult, cancelJob,
   type ClientOptions, type JobID, type StudioConfig,
   JobStatus,
 } from "@clickzetta/sdk"
@@ -375,6 +375,67 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
           } catch (err) {
             logOperation("job profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
             error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format, debug: argv.debug })
+          }
+        },
+      )
+      .command(
+        "cancel <job-id>",
+        "Cancel a running job",
+        (y) => y.positional("job-id", { type: "string", demandOption: true, describe: "Job ID to cancel" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const ctx = await getExecContext(argv)
+            const jobId: JobID = {
+              id: argv["job-id"] as string,
+              workspace: ctx.config.workspace,
+              instanceId: ctx.token.instanceId,
+            }
+            await cancelJob(ctx.clientOpts, jobId)
+            logOperation("job cancel", { ok: true })
+            success({ job_id: argv["job-id"], cancelled: true }, { format })
+          } catch (err) {
+            logOperation("job cancel", { ok: false, errorCode: "JOB_CANCEL_ERROR" })
+            error("JOB_CANCEL_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      .command(
+        "list",
+        "Show recent jobs (wraps SHOW JOBS)",
+        (y) =>
+          y
+            .option("limit", { type: "number", default: 20, describe: "Max jobs to return" })
+            .option("status", { type: "string", describe: "Filter by status: RUNNING, SUCCEED, FAILED, CANCELLED" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const { execSqlWithRetry, isQueryResult } = await import("./exec.js")
+            const ctx = await getExecContext(argv)
+            const limit = typeof argv.limit === "number" ? argv.limit : 0
+            const sql = limit > 0 ? `SHOW JOBS LIMIT ${limit}` : "SHOW JOBS"
+            const r = await execSqlWithRetry(ctx, sql, { timeoutMs: 30_000 })
+            if (!isQueryResult(r)) { error("JOB_LIST_ERROR", "Unexpected async response", { format }); return }
+            if (r.status === JobStatus.FAILED) {
+              error(r.errorCode ?? "JOB_LIST_ERROR", r.errorMessage ?? "SHOW JOBS failed", { format })
+              return
+            }
+            let rows = r.rows
+            const columns = r.columns.map((c) => c.name)
+            if (argv.status) {
+              const statusIdx = columns.indexOf("status")
+              if (statusIdx >= 0) rows = rows.filter((row) => String(row[statusIdx]).toUpperCase() === argv.status!.toUpperCase())
+            }
+            logOperation("job list", { ok: true, rows: rows.length })
+            successRows(columns, rows, {
+              format,
+              aiMessage: limit > 0 && rows.length >= limit
+                ? `Showing ${limit} jobs. For more results increase --limit or use --no-limit. For complex filtering or large-scale analysis (>10,000 jobs), query INFORMATION_SCHEMA.JOBS directly: cz-cli sql "SELECT * FROM INFORMATION_SCHEMA.JOBS WHERE ..."`
+                : undefined,
+            })
+          } catch (err) {
+            logOperation("job list", { ok: false, errorCode: "JOB_LIST_ERROR" })
+            error("JOB_LIST_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
         },
       )

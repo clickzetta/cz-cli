@@ -7,9 +7,11 @@ Use `cz-cli <command> --help` for authoritative options. This reference is a com
 ```bash
 cz-cli sql "<statement>"                  # Execute SQL, sync by default
 cz-cli sql "<statement>" --async          # Return job_id immediately for large/long-running queries
-cz-cli sql status <job-id>                # Check async SQL job status
+cz-cli job list                           # Show recent jobs (default 20)
+cz-cli job list --limit 50 --status RUNNING  # More results, filter by status
 cz-cli job status <job-id>                # Job status and summary
 cz-cli job result <job-id>                # Fetch job result set
+cz-cli job cancel <job-id>                # Cancel a running job
 cz-cli job profile <job-id>               # Flattened job profile basics; use --raw for raw content
 ```
 

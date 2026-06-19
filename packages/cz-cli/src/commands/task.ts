@@ -5,7 +5,7 @@ import {
   listTasks, createTask, getTaskDetail, getTaskConfigDetail,
   saveTaskContent, saveTaskConfig, submitTask, onlineTask, offlineTask,
   offlineTaskWithDownstream, deleteTask, deleteFolder,
-   listFolders, createFolder,
+  listFolders, createFolder,
   executeAdhoc, getRunDetail,
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
   removeFlowNode, executeFlow, getFlowParams, listFlowInstances,
@@ -82,13 +82,18 @@ function inferParamType(value: string): "manual" | "system" {
   return "manual"
 }
 
-function parseParamValueList(raw: string): unknown[] | null {
-  const cleaned = raw.replace(/^'|'$/g, "")
+export function parseParamValueList(raw: string): unknown[] | null {
+  const cleaned = raw.trim().replace(/^'|'$/g, "")
+  const candidates = [cleaned]
+  if (cleaned.includes('\\"')) candidates.push(cleaned.replace(/\\"/g, "\""))
   const tryJson = (): Record<string, string> | null => {
-    try { return JSON.parse(cleaned) } catch { return null }
+    for (const candidate of candidates) {
+      try { return JSON.parse(candidate) } catch {}
+    }
+    return null
   }
   const tryRelaxed = (): Record<string, string> | null => {
-    const relaxed = cleaned.replace(/^\{|\}$/g, "").trim()
+    const relaxed = candidates[candidates.length - 1]!.replace(/^\{|\}$/g, "").trim()
     if (!relaxed) return null
     const pairs = relaxed.split(",").map((pair) => {
       const idx = pair.indexOf(":")
@@ -109,6 +114,33 @@ function parseParamValueList(raw: string): unknown[] | null {
     paramValue: v,
     ref: 0,
   }))
+}
+
+export function mergeTaskParamValueList(
+  existingParams: Record<string, unknown>[],
+  overrideMap: Record<string, string>,
+): unknown[] {
+  const updated = existingParams.map((param) => {
+    const key = String(param.paramKey ?? param.paramName ?? "")
+    if (!(key in overrideMap)) return param
+    const value = overrideMap[key]!
+    return { ...param, paramValue: value, paramType: inferParamType(value) }
+  })
+
+  const existingKeys = new Set(existingParams.map((param) => String(param.paramKey ?? param.paramName ?? "")))
+  const newParams = Object.entries(overrideMap)
+    .filter(([key]) => !existingKeys.has(key))
+    .map(([key, value], i) => ({
+      encrypt: false,
+      id: String(Date.now() + i),
+      ignore: false,
+      paramKey: key,
+      paramType: inferParamType(value),
+      paramValue: value,
+      ref: 0,
+    }))
+
+  return [...updated, ...newParams]
 }
 
 async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: number): Promise<R[]> {
@@ -766,7 +798,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const aiMsg = flat.length > 0
               ? `Found ${flat.length} folder(s). Use the 'id' or 'name' field with --folder when creating tasks. Example: cz-cli task create <name> --type SQL --folder <id>`
               : "No folders found. Either no folders exist in this workspace yet, or your account may lack folder read permissions. " +
-                "You can: (1) create a folder first with 'cz-cli task create-folder <name>', or (2) create a task in root with '--folder 0' (not recommended)."
+              "You can: (1) create a folder first with 'cz-cli task create-folder <name>', or (2) create a task in root with '--folder 0' (not recommended)."
             success(flat, {
               format,
               aiMessage: aiMsg,
@@ -1068,10 +1100,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const database = argv.database as string
             const jobs = tablesArg
               ? tablesArg.split(",").map(t => ({
-                  source: { dataObject: t.trim(), namespace: database, columns: [], datasourceId: sourceDs.id },
-                  sink: { dataObject: t.trim(), namespace: database, columns: [] },
-                  columnMapping: {},
-                }))
+                source: { dataObject: t.trim(), namespace: database, columns: [], datasourceId: sourceDs.id },
+                sink: { dataObject: t.trim(), namespace: database, columns: [] },
+                columnMapping: {},
+              }))
               : []
 
             // Step 8: build and save content
@@ -1601,10 +1633,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ).catch(() => null),
               isCdcType
                 ? (fileType === 14
-                    ? getCdcTaskRunStatus(sc, fileId).catch(() => null)           // REALTIME: use fileId directly
-                    : detailObj.cdcTaskId != null
-                        ? getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null)  // MULTI_REALTIME: use cdcTaskId
-                        : Promise.resolve(null))   // not yet deployed, no cdcTaskId
+                  ? getCdcTaskRunStatus(sc, fileId).catch(() => null)           // REALTIME: use fileId directly
+                  : detailObj.cdcTaskId != null
+                    ? getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null)  // MULTI_REALTIME: use cdcTaskId
+                    : Promise.resolve(null))   // not yet deployed, no cdcTaskId
                 : Promise.resolve(null),
             ])
 
@@ -2144,8 +2176,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               // Infer granularity from table name patterns
               const granularity = /log|event|click|access|track|behavior|action/.test(tbl) ? 'day'
                 : /order|transact|payment|trade|invoice/.test(tbl) ? 'day'
-                : /summary|report|agg|stat|monthly/.test(tbl) ? 'month'
-                : 'day'
+                  : /summary|report|agg|stat|monthly/.test(tbl) ? 'month'
+                    : 'day'
               const truncExpr = granularity === 'month'
                 ? `date_trunc('month', ${col})`
                 : `date_trunc('day', ${col})`
@@ -2221,8 +2253,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const note = isMysqlFamily
                   ? `MySQL/TiDB/MariaDB: where format: col >= '${BIZDATE}'. splitPk supported (use numeric primary key).`
                   : isAnalytic
-                  ? `ClickHouse/Doris/StarRocks: MySQL-compatible SQL, where format: col >= '${BIZDATE}'. splitPk supported.`
-                  : `Relational DB: standard JDBC params. where format: col >= '${BIZDATE}'.`
+                    ? `ClickHouse/Doris/StarRocks: MySQL-compatible SQL, where format: col >= '${BIZDATE}'. splitPk supported.`
+                    : `Relational DB: standard JDBC params. where format: col >= '${BIZDATE}'.`
                 return {
                   note,
                   params: { dsType: dt, operatorType: "source", table: argv["source-table"] as string, database: argv["source-db"] as string,
@@ -2772,12 +2804,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ? []
               : outputsAction === "replace"
                 ? parseOutputTables(String(argv["output-tables"] ?? "[]"), format, {
-                    projectId: sc.projectId,
-                    fileId,
-                    taskName: String(lineage.taskName),
-                    ownerCnName: lineage.ownerCnName,
-                    ownerEnName: lineage.ownerEnName,
-                  })
+                  projectId: sc.projectId,
+                  fileId,
+                  taskName: String(lineage.taskName),
+                  ownerCnName: lineage.ownerCnName,
+                  ownerEnName: lineage.ownerEnName,
+                })
                 : lineage.dataFileOutputListReqs
             const vc = await resolveScheduleVc(sc, argv, oldData)
             const resp = await saveTaskConfig(sc, {
@@ -2865,34 +2897,32 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ? []
               : outputsAction === "replace"
                 ? parseOutputTables(String(argv["output-tables"] ?? "[]"), format, {
-                    projectId: sc.projectId,
-                    fileId,
-                    taskName: String(lineage.taskName),
-                    ownerCnName: lineage.ownerCnName,
-                    ownerEnName: lineage.ownerEnName,
-                  })
+                  projectId: sc.projectId,
+                  fileId,
+                  taskName: String(lineage.taskName),
+                  ownerCnName: lineage.ownerCnName,
+                  ownerEnName: lineage.ownerEnName,
+                })
                 : lineage.dataFileOutputListReqs
 
             // Build paramValueList from --param, merging with existing
-            const existingParams = (oldData.paramValueList as Record<string, unknown>[] | undefined) ?? []
             const paramOverrides = (argv.param as string[] | undefined) ?? []
             let paramValueList: unknown[] | undefined
+            let existingContent = ""
             if (paramOverrides.length > 0) {
               const overrideMap: Record<string, string> = {}
               for (const p of paramOverrides) {
                 const eq = p.indexOf("=")
                 if (eq > 0) overrideMap[p.slice(0, eq)] = p.slice(eq + 1)
               }
-              // Update existing params, add new ones
-              const updated = existingParams.map((p) => {
-                const key = String((p as any).paramKey ?? (p as any).paramName ?? "")
-                return key in overrideMap ? { ...p, paramValue: overrideMap[key] } : p
-              })
-              const existingKeys = new Set(existingParams.map((p) => String((p as any).paramKey ?? "")))
-              const newParams = Object.entries(overrideMap)
-                .filter(([k]) => !existingKeys.has(k))
-                .map(([k, v], i) => ({ encrypt: false, id: String(Date.now() + i), ignore: false, paramKey: k, paramType: inferParamType(v), paramValue: v, ref: 0 }))
-              paramValueList = [...updated, ...newParams]
+              const detailResp = await getTaskDetail(sc, fileId)
+              const detailData = (detailResp.data && typeof detailResp.data === "object" ? detailResp.data : {}) as Record<string, unknown>
+              const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
+                ? detailData.taskDetail
+                : detailData) as Record<string, unknown>
+              const existingParams = ((detailObj.paramValueList ?? detailData.paramValueList) as Record<string, unknown>[] | undefined) ?? []
+              existingContent = String(detailObj.fileContent ?? detailObj.dataFileContent ?? detailData.fileContent ?? detailData.dataFileContent ?? "")
+              paramValueList = mergeTaskParamValueList(existingParams, overrideMap)
             }
 
             const resp = await saveTaskConfig(sc, {
@@ -2923,7 +2953,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (paramValueList !== undefined) {
               await saveTaskContent(sc, {
                 dataFileId: fileId,
-                dataFileContent: (oldData.fileContent as string | undefined) ?? "",
+                dataFileContent: existingContent,
                 projectId: sc.projectId,
                 updateBy: String(sc.userId),
                 instanceName: sc.instanceName,
@@ -4201,10 +4231,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Apply owner filter (client-side, needs detail data)
             const filtered = ownerFilter
               ? enriched.filter((t) =>
-                  String(t.owner_en_name ?? "").toLowerCase().includes(ownerFilter) ||
-                  String(t.owner_cn_name ?? "").toLowerCase().includes(ownerFilter) ||
-                  String(t.last_edit_user ?? "").toLowerCase().includes(ownerFilter)
-                )
+                String(t.owner_en_name ?? "").toLowerCase().includes(ownerFilter) ||
+                String(t.owner_cn_name ?? "").toLowerCase().includes(ownerFilter) ||
+                String(t.last_edit_user ?? "").toLowerCase().includes(ownerFilter)
+              )
               : enriched
 
             // Sort
@@ -4291,25 +4321,25 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               : now - 7 * 86400000
             const toMs = argv.to
               ? (() => {
-                  const ms = new Date(argv.to as string).getTime()
-                  return /^\d{4}-\d{2}-\d{2}$/.test((argv.to as string).trim()) ? ms + 86400000 - 1 : ms
-                })()
+                const ms = new Date(argv.to as string).getTime()
+                return /^\d{4}-\d{2}-\d{2}$/.test((argv.to as string).trim()) ? ms + 86400000 - 1 : ms
+              })()
               : now
 
             // Parallel: task total, folder total, instance stats, task run stats
             // Task count: if folder filter, sum totals across all collected folder ids
             const taskTotalPromise = folderIds
               ? Promise.all(folderIds.map((fid) =>
-                  listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, folderId: fid, fileType })
-                    .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
-                )).then((totals) => totals.reduce((a, b) => a + b, 0))
-              : listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, fileType })
+                listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, folderId: fid, fileType })
                   .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
+              )).then((totals) => totals.reduce((a, b) => a + b, 0))
+              : listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 1, fileType })
+                .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
 
             const folderCountPromise = rootFolderId != null
               ? Promise.resolve(folderCount ?? 0)
               : listFolders(sc, { projectId: sc.projectId, page: 1, pageSize: 1, parentFolderId: 0 })
-                  .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
+                .then((r) => Number((r.data as Record<string, unknown>)?.total ?? 0))
 
             const [taskTotal, resolvedFolderCount, instanceStatsResp, taskRunStatsResp] = await Promise.all([
               taskTotalPromise,
