@@ -159,7 +159,7 @@ export function saveTaskContent(config: StudioConfig, params: SaveTaskContentPar
     {
       dataFileId: params.dataFileId,
       dataFileContent: content,
-      collectType: 0,
+      collectType: 1,
       onlySaveContent: 1,
       projectId: params.projectId,
       updateBy: params.updateBy,
