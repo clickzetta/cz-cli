@@ -1,6 +1,6 @@
 ---
 name: cz-cli
-description: "Delegate ClickZetta Lakehouse OPERATIONS (run SQL, manage tables/schemas, create Studio tasks, set up sync/ingest pipelines, configure profiles) to the cz-cli agent. TRIGGER when user wants to EXECUTE something on Lakehouse: query data, create/alter tables, deploy tasks, build pipelines, set up a new connection. SKIP when user is developing the cz-cli tool itself (cwd is the cz-cli source repo, editing CLI source/tests, debugging build/install/unlink/permission issues), or only discussing cz-cli design/code without wanting to run anything on Lakehouse."
+description: "Delegate ClickZetta Lakehouse OPERATIONS (run SQL, manage tables/schemas, create Studio tasks, set up sync/ingest pipelines, configure profiles) to the cz-cli agent. TRIGGER when user explicitly mentions ClickZetta, Lakehouse, cz-cli, or a known profile/workspace name AND wants to EXECUTE an operation (query data, create/alter tables, deploy tasks, build pipelines, set up a new connection). SKIP when (1) user is developing the cz-cli tool itself (cwd is the cz-cli source repo, editing CLI source/tests, debugging build/install/unlink/permission issues), (2) only discussing cz-cli design/code without wanting to run anything on Lakehouse, or (3) the current project already has its own datasource query capabilities (e.g. project has AGENTS.md or skills that provide SQL execution endpoints) — do not intercept generic 'query data' or 'run SQL' requests that belong to the host project's own toolchain."
 ---
 
 # cz-cli — ClickZetta Lakehouse Subagent
