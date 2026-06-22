@@ -76,9 +76,7 @@ const SYSTEM_PARAM_NAMES = new Set([
   "sys_task_id", "sys_task_name", "sys_task_owner",
 ])
 
-function inferParamType(value: string): "manual" | "system" {
-  if (value.startsWith("$[")) return "system"
-  if (SYSTEM_PARAM_NAMES.has(value)) return "system"
+function inferParamType(_value: string): "manual" {
   return "manual"
 }
 
@@ -1486,9 +1484,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Steps 2 & 3 with rollback on failure
             try {
               // Step 2: save content (optional)
+              let paramValueList: unknown[] | undefined
               if (argv.content || argv.file) {
                 const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
-                let paramValueList: unknown[] | undefined
                 if (argv.params) {
                   const result = parseParamValueList(argv.params as string)
                   if (!result) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}`, { format }); return }
@@ -1545,6 +1543,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   activeEndTime: "2099-01-01T00:00:00.000Z",
                   dataFileInputListReqs: [],
                   configProperties: JSON.stringify(oldConfigProps),
+                  ...(paramValueList && { paramValueList }),
                 })
               }
             } catch (setupErr) {
@@ -2812,6 +2811,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 })
                 : lineage.dataFileOutputListReqs
             const vc = await resolveScheduleVc(sc, argv, oldData)
+            // Preserve existing params so backend doesn't reset them
+            const cronDetailResp = await getTaskDetail(sc, fileId)
+            const cronDetailData = (cronDetailResp.data && typeof cronDetailResp.data === "object" ? cronDetailResp.data : {}) as Record<string, unknown>
+            const cronDetailObj = (typeof cronDetailData.taskDetail === "object" && cronDetailData.taskDetail !== null ? cronDetailData.taskDetail : cronDetailData) as Record<string, unknown>
+            const cronExistingParams = (cronDetailObj.paramValueList ?? cronDetailData.paramValueList) as unknown[] | undefined
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
@@ -2835,6 +2839,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileInputListReqs: lineage.dataFileInputListReqs,
               dataFileOutputListReqs: outputTables,
               configProperties: JSON.stringify(oldConfigProps),
+              ...(cronExistingParams && cronExistingParams.length > 0 && { paramValueList: cronExistingParams }),
             })
             logOperation("task save-cron", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
@@ -2909,12 +2914,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const paramOverrides = (argv.param as string[] | undefined) ?? []
             let paramValueList: unknown[] | undefined
             let existingContent = ""
-            if (paramOverrides.length > 0) {
-              const overrideMap: Record<string, string> = {}
-              for (const p of paramOverrides) {
-                const eq = p.indexOf("=")
-                if (eq > 0) overrideMap[p.slice(0, eq)] = p.slice(eq + 1)
-              }
+            {
               const detailResp = await getTaskDetail(sc, fileId)
               const detailData = (detailResp.data && typeof detailResp.data === "object" ? detailResp.data : {}) as Record<string, unknown>
               const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
@@ -2922,7 +2922,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 : detailData) as Record<string, unknown>
               const existingParams = ((detailObj.paramValueList ?? detailData.paramValueList) as Record<string, unknown>[] | undefined) ?? []
               existingContent = String(detailObj.fileContent ?? detailObj.dataFileContent ?? detailData.fileContent ?? detailData.dataFileContent ?? "")
-              paramValueList = mergeTaskParamValueList(existingParams, overrideMap)
+              if (paramOverrides.length > 0) {
+                const overrideMap: Record<string, string> = {}
+                for (const p of paramOverrides) {
+                  const eq = p.indexOf("=")
+                  if (eq > 0) overrideMap[p.slice(0, eq)] = p.slice(eq + 1)
+                }
+                paramValueList = mergeTaskParamValueList(existingParams, overrideMap)
+              } else if (existingParams.length > 0) {
+                paramValueList = existingParams
+              }
             }
 
             const resp = await saveTaskConfig(sc, {
@@ -2948,6 +2957,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileInputListReqs: deps,
               dataFileOutputListReqs: outputTables,
               configProperties: oldData.configProperties ?? "{}",
+              ...(paramValueList && { paramValueList }),
             })
             // Save params separately via saveTaskContent (paramValueList is stored with content, not config)
             if (paramValueList !== undefined) {
