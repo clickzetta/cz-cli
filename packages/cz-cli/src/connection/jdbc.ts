@@ -15,8 +15,11 @@ export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefine
   if (hostParts.length < 2 || !hostParts[0]) return undefined
 
   const instance = hostParts[0]
-  const service = hostParts.slice(1).join(".")
-  if (!service) return undefined
+  // Keep the port: downstream toServiceUrl builds `${protocol}://${service}`,
+  // so the port must travel with the host (e.g. "10.155.2.214:8033").
+  const host = hostParts.slice(1).join(".")
+  if (!host) return undefined
+  const service = parsed.port ? `${host}:${parsed.port}` : host
 
   const workspace = parsed.pathname.replace(/^\//, "").split("/")[0] || undefined
   const params = parsed.searchParams
@@ -26,9 +29,16 @@ export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefine
   if (params.get("username")) result.username = params.get("username")!
   if (params.get("password")) result.password = params.get("password")!
   if (params.get("schema")) result.schema = params.get("schema")!
-  if (params.get("virtualCluster")) result.vcluster = params.get("virtualCluster")!
+  // vcluster has three accepted aliases (see SDK parseUrl.ts), match them all.
+  const vcluster =
+    params.get("vcluster") || params.get("virtualCluster") || params.get("virtualcluster")
+  if (vcluster) result.vcluster = vcluster
   if (params.get("workspace")) result.workspace = params.get("workspace")!
   if (params.get("protocol")) result.protocol = params.get("protocol")!
+  // JDBC strings carry transport as use_http=true rather than protocol=http.
+  else if (params.get("use_http")) {
+    result.protocol = params.get("use_http") === "true" ? "http" : "https"
+  }
 
   return result
 }
