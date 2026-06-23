@@ -9,52 +9,13 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { loadProfiles, saveProfiles, getDefaultProfileName, type ProfileEntry } from "../connection/profile-store.js"
+import { parseJdbcUrl } from "../connection/jdbc.js"
 import { registerBootstrapCommands } from "./profile-bootstrap.js"
 import { getExecContext, execSql, isQueryResult } from "./exec.js"
 import { VERSION } from "../version.js"
 
 const PROFILES_DIR = join(homedir(), ".clickzetta")
 const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
-
-interface JdbcConfig {
-  instance: string
-  service: string
-  workspace: string
-  username?: string
-  password?: string
-  schema?: string
-  vcluster?: string
-  protocol?: string
-}
-
-function parseJdbcUrl(jdbc: string): JdbcConfig | undefined {
-  if (!jdbc.startsWith("jdbc:clickzetta://")) return undefined
-  try {
-    const url = new URL(jdbc.slice(5))
-    const host = url.hostname
-    if (!host) return undefined
-    const parts = host.split(".")
-    if (parts.length < 4) return undefined
-    const params = url.searchParams
-    const ws = url.pathname.replace(/^\//, "") || params.get("workspace") || ""
-    const cfg: JdbcConfig = {
-      instance: parts[0],
-      service: parts.slice(1).join("."),
-      workspace: ws,
-    }
-    if (params.has("username")) cfg.username = params.get("username")!
-    if (params.has("password")) cfg.password = params.get("password")!
-    if (params.has("schema")) cfg.schema = params.get("schema")!
-    if (params.has("virtualCluster")) cfg.vcluster = params.get("virtualCluster")!
-    if (params.has("protocol")) {
-      const p = params.get("protocol")!.toLowerCase()
-      cfg.protocol = p === "http" ? "http" : "https"
-    }
-    return cfg
-  } catch {
-    return undefined
-  }
-}
 
 const VALID_UPDATE_KEYS = [
   "pat", "username", "password", "service", "protocol",
@@ -197,7 +158,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             if (profiles[name]) {
               return error("PROFILE_EXISTS", `Profile '${name}' already exists`, { format })
             }
-            let jdbcCfg: JdbcConfig | undefined
+            let jdbcCfg: Partial<import("@clickzetta/sdk").ConnectionConfig> | undefined
             if (argv.jdbc) {
               jdbcCfg = parseJdbcUrl(argv.jdbc)
               if (!jdbcCfg) {
