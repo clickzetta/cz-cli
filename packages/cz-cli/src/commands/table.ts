@@ -1,7 +1,7 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
-import { JobStatus, request } from "@clickzetta/sdk"
+import { JobStatus, request, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
@@ -10,31 +10,90 @@ import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExe
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
 
-function parseDescribeResult(result: import("@clickzetta/sdk").QueryResult) {
+/**
+ * Parse the `properties` cell from `DESC EXTENDED` output. The server encodes
+ * table properties as a tuple of pairs, e.g.
+ *   (("__metadata",'{"owner":"data_team"}'),("owner","alice"))
+ * Keys are double-quoted; values are either double-quoted (plain strings) or
+ * single-quoted (typically JSON blobs). Values that parse as JSON are decoded
+ * so callers get structured objects instead of an opaque string.
+ */
+export function parseTableProperties(raw: string): Record<string, unknown> | null {
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith("((") || !trimmed.endsWith("))")) return null
+  // Strip the outer parentheses, leaving the comma-separated pair tuples.
+  const inner = trimmed.slice(1, -1)
+
+  // Tokenize into quoted segments, tracking the active quote char so that
+  // commas/colons inside a value don't split it.
+  const tokens: string[] = []
+  let buf = ""
+  let quote: '"' | "'" | null = null
+  for (const ch of inner) {
+    if (quote) {
+      if (ch === quote) {
+        tokens.push(buf)
+        buf = ""
+        quote = null
+      } else {
+        buf += ch
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    }
+  }
+  if (tokens.length === 0 || tokens.length % 2 !== 0) return null
+
+  const props: Record<string, unknown> = {}
+  for (let i = 0; i < tokens.length; i += 2) {
+    const key = tokens[i]
+    const value = tokens[i + 1]
+    props[key] = tryParseJson(value)
+  }
+  return Object.keys(props).length > 0 ? props : null
+}
+
+function tryParseJson(value: string): unknown {
+  const t = value.trim()
+  if (t.startsWith("{") || t.startsWith("[")) {
+    try {
+      return JSON.parse(t)
+    } catch {
+      // fall through: keep the raw string when it isn't valid JSON
+    }
+  }
+  return value
+}
+
+function parseDescribeResult(result: QueryResult) {
   const columns: Record<string, unknown>[] = []
   const metadata: Record<string, unknown> = {}
   let inMetadata = false
 
   const records = rowsToRecords(result)
   for (const row of records) {
-    const colName = row["col_name"] ?? row["COL_NAME"] ?? Object.values(row)[0]
-    if (!inMetadata) {
-      if (
-        String(colName ?? "").toLowerCase() === "# detailed table information" ||
-        colName === "" ||
-        colName === null ||
-        colName === undefined
-      ) {
-        inMetadata = true
-        continue
-      }
-      columns.push(row)
-    } else {
-      if (colName && String(colName).trim()) {
-        const vals = Object.values(row)
-        metadata[String(colName).trim()] = vals[1] ?? vals[0]
-      }
+    const colName = String(row["col_name"] ?? row["COL_NAME"] ?? Object.values(row)[0] ?? "").trim()
+
+    // A blank row or the "# detailed table information" header separates the
+    // column list from the metadata section. Either marks the boundary and is
+    // not itself a row to keep.
+    if (colName === "" || colName.toLowerCase() === "# detailed table information") {
+      inMetadata = true
+      continue
     }
+
+    if (!inMetadata) {
+      columns.push(row)
+      continue
+    }
+
+    const vals = Object.values(row)
+    const value = vals[1] ?? vals[0]
+    metadata[colName] =
+      colName === "properties" && typeof value === "string"
+        ? (parseTableProperties(value) ?? value)
+        : value
   }
   return { columns, metadata }
 }
@@ -104,7 +163,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           const format = argv.format
           try {
             const ctx = await getExecContext(argv)
-            const sql = `DESC TABLE ${validateIdentifier(argv.name as string, "table name")}`
+            const sql = `DESC EXTENDED ${validateIdentifier(argv.name as string, "table name")}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
