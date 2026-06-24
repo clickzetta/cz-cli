@@ -45,6 +45,37 @@ function maskSecret(val: string, prefixLen = 8): string {
   return val.length > prefixLen ? val.slice(0, prefixLen) + "****" : "****"
 }
 
+function maskProfileSecrets(profile: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...profile }
+  if (result.pat) result.pat = maskSecret(String(result.pat))
+  if (result.password) result.password = "******"
+  if (result.header && typeof result.header === "object" && !Array.isArray(result.header)) {
+    result.header = Object.fromEntries(
+      Object.entries(result.header as Record<string, unknown>).map(([key, value]) =>
+        key.toLowerCase() === "cookie" ? [key, maskSecret(String(value), 16)] : [key, value],
+      ),
+    )
+  }
+  return result
+}
+
+function hasCookieTokenHeader(headers: string[] | undefined): boolean {
+  return headers?.some((header) => {
+    const separator = header.indexOf("=")
+    if (separator <= 0) return false
+    if (header.slice(0, separator).trim().toLowerCase() !== "cookie") return false
+    return header
+      .slice(separator + 1)
+      .split(";")
+      .some((cookie) => {
+        const cookieSeparator = cookie.indexOf("=")
+        return cookieSeparator > 0
+          && cookie.slice(0, cookieSeparator).trim().toLowerCase() === "x-clickzetta-token"
+          && cookie.slice(cookieSeparator + 1).trim().length > 0
+      })
+  }) ?? false
+}
+
 export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
   cli.command("profile", "Manage connection profiles", (yargs) => {
     yargs
@@ -119,10 +150,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               is_default: argv.name === defaultProfile,
               ...profile,
             }
-            if (!argv["show-secret"]) {
-              if (result.pat) result.pat = maskSecret(String(result.pat))
-              if (result.password) result.password = "******"
-            }
+            if (!argv["show-secret"]) Object.assign(result, maskProfileSecrets(result))
             logOperation("profile detail", { ok: true })
             success(result, { format })
           } catch (err) {
@@ -169,11 +197,12 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const resolvedPassword = argv.password ?? jdbcCfg?.password
             const hasPat = Boolean(argv.pat)
             const hasUserPwd = Boolean(resolvedUsername && resolvedPassword)
+            const headerAuth = hasCookieTokenHeader(argv.header as string[] | undefined)
             if (hasPat && (resolvedUsername || resolvedPassword)) {
               return error("INVALID_ARGUMENTS", "Cannot specify both --pat and --username/--password.", { format, exitCode: 2 })
             }
-            if (!hasPat && !hasUserPwd) {
-              return error("INVALID_ARGUMENTS", "Provide either --pat or both --username and --password.", { format, exitCode: 2 })
+            if (!hasPat && !hasUserPwd && !headerAuth) {
+              return error("INVALID_ARGUMENTS", "Provide either --pat, both --username and --password, or --header Cookie=...", { format, exitCode: 2 })
             }
             const inst = argv.instance ?? jdbcCfg?.instance ?? ""
             const ws = argv.workspace ?? jdbcCfg?.workspace ?? ""
@@ -191,7 +220,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             }
             if (hasPat) {
               profileObj.pat = argv.pat!
-            } else {
+            } else if (hasUserPwd) {
               profileObj.username = resolvedUsername!
               profileObj.password = resolvedPassword!
             }
@@ -207,7 +236,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 profileObj.header = headerDict
               }
             }
-            if (!argv["skip-verify"]) {
+            if (!argv["skip-verify"] && !headerAuth) {
               try {
                 const verifyCfg: import("@clickzetta/sdk").ConnectionConfig = {
                   pat: String(profileObj.pat ?? ""),
