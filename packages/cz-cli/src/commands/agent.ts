@@ -44,15 +44,19 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .command(
               "list",
               "List sessions",
-              (s) =>
-                s
+              (s) => {
+                // Reset inherited global --format choices; this command only supports table|json
+                const opts = (s as any).getOptions?.()
+                if (opts?.choices?.format) opts.choices.format = []
+                return s
                   .option("max-count", { alias: "n", type: "number", describe: "Limit to N most recent sessions" })
                   .option("format", { type: "string", choices: ["table", "json"], default: "table", describe: "Output format" })
                   .option("all", { alias: "a", type: "boolean", default: false, describe: "List sessions from all directories" })
                   .example("cz-cli agent session list", "List all sessions")
                   .example("cz-cli agent session list -n 10", "List 10 most recent sessions")
                   .example("cz-cli agent session list --format json", "Output as JSON")
-                  .example("cz-cli agent session list --all", "List sessions from all directories"),
+                  .example("cz-cli agent session list --all", "List sessions from all directories")
+              },
               () => {},
             )
             .command(
@@ -64,8 +68,11 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             .command(
               "status <sessionID>",
               "Get session status — busy/retry returns progress, idle returns result, on failure returns error",
-              (s) =>
-                s
+              (s) => {
+                // Reset inherited global --format choices; this command only supports json
+                const opts = (s as any).getOptions?.()
+                if (opts?.choices?.format) opts.choices.format = []
+                return s
                   .positional("sessionID", { type: "string", demandOption: true, describe: "Session ID to check" })
                   .option("format", { type: "string", choices: ["json"] as const, default: "json", describe: "Output format" })
                   .option("wait", {
@@ -74,7 +81,8 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
                     describe: "Block until idle, streaming deduplicated NDJSON progress events; returns timeout after long periods with no new progress",
                   })
                   .example("cz-cli agent session status <sessionID>", "One-shot snapshot")
-                  .example("cz-cli agent session status <sessionID> --wait", "Block, stream progress as NDJSON, exit on idle or timeout"),
+                  .example("cz-cli agent session status <sessionID> --wait", "Block, stream progress as NDJSON, exit on idle or timeout")
+              },
               () => {},
             )
             .demandCommand(1, "Missing subcommand for 'agent session'. Available: list, delete, status")

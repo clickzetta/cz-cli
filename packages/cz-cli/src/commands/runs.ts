@@ -362,7 +362,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               (resp.data as Record<string, unknown>) ?? {},
               { run_id: runId },
             )
-            success(normalized, { format })
+            success(normalized, {
+              format,
+              aiMessage: `Stop requested for run ${runId}. Verify the final state with: cz-cli runs detail ${runId}`,
+            })
           } catch (err) {
             reportRunsError(err, format)
           }
@@ -443,7 +446,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             }
             const resp = await rerunInstance(sc, runId)
             logOperation("runs rerun", { ok: true })
-            success(resp.data, { format })
+            success(resp.data, {
+              format,
+              aiMessage: `Rerun submitted for ${runId}. Check status with: cz-cli runs detail ${runId} | View logs: cz-cli runs logs ${runId}`,
+            })
           } catch (err) {
             reportRunsError(err, format)
           }

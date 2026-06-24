@@ -3209,7 +3209,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 success({
                   schedule_instance_id: d.scheduleInstanceId,
                   session_id: d.sessionId,
-                }, { format, aiMessage: `Flow started. Instance ID: ${d.scheduleInstanceId}` })
+                }, { format, aiMessage: `Flow started (instance ${d.scheduleInstanceId}). Check status with: cz-cli task flow instances ${argv.task} --instance ${d.scheduleInstanceId}` })
               } catch (err) {
                 reportTaskError(err, format)
               }

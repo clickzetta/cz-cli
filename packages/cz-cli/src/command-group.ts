@@ -1,7 +1,11 @@
 import type { Argv } from "yargs"
+import { suggestClosest } from "./suggest.js"
+import { parseOutputArgs, renderOutput } from "./output/index.js"
+import { KNOWN_GLOBAL_FLAGS } from "./cli.js"
 
 export function commandGroup(yargs: Argv, commandName: string): Argv {
   const commands = getRegisteredCommands(yargs)
+  const localOptions = getRegisteredOptions(yargs)
   const available = commands.length > 0 ? commands.join(", ") : "see --help"
 
   const humanMsg = `Missing subcommand for '${commandName}'. Available: ${available}`
@@ -12,6 +16,28 @@ export function commandGroup(yargs: Argv, commandName: string): Argv {
     .strictOptions()
     .fail((msg, err) => {
       if (err) throw err
+
+      // Distinguish the two yargs failure shapes so we suggest the right thing:
+      //   "Unknown command: X"  -> X is a bad SUBCOMMAND  -> match subcommand names
+      //   "Unknown argument: X" -> X is a bad FLAG        -> match flag names
+      // (Previously both went through the subcommand matcher, so a flag typo like
+      //  `schema list --limt` wrongly suggested the subcommand 'list'.)
+      let suggestion: string | undefined
+      let badSubcommand: string | undefined
+      let badFlag: string | undefined
+
+      const cmdMatch = msg?.match(/Unknown commands?: (.+)/)
+      const argMatch = msg?.match(/Unknown arguments?: (.+)/)
+      if (cmdMatch) {
+        badSubcommand = cmdMatch[1]!.split(",")[0]!.trim()
+        suggestion = suggestClosest(badSubcommand, commands)
+      } else if (argMatch) {
+        badFlag = argMatch[1]!.split(",")[0]!.trim().replace(/^-+/, "")
+        const flagCandidates = [...localOptions, ...KNOWN_GLOBAL_FLAGS].filter((f) => f.length > 1)
+        const hit = suggestClosest(badFlag, flagCandidates)
+        if (hit) suggestion = `--${hit}`
+      }
+
       const finalMsg = (!msg || msg.trim() === "") ? humanMsg : msg
       let finalAi: string
       if (!msg || msg.trim() === "" || finalMsg === humanMsg) {
@@ -22,13 +48,24 @@ export function commandGroup(yargs: Argv, commandName: string): Argv {
       } else {
         finalAi = `${finalMsg}. Run \`cz-cli ${commandName} --help\` for details.`
       }
-      const output = JSON.stringify({
-        error: { code: "USAGE_ERROR", message: finalMsg },
+
+      const displayMsg = suggestion ? `${finalMsg}. Did you mean '${suggestion}'?` : finalMsg
+      if (suggestion && badSubcommand) {
+        finalAi = `Unknown subcommand '${badSubcommand}' for '${commandName}'. Did you mean '${suggestion}'? Available subcommands: ${available}.`
+      } else if (suggestion && badFlag) {
+        finalAi = `Unknown option '--${badFlag}' for '${commandName}'. Did you mean '${suggestion}'? Run \`cz-cli ${commandName} --help\` for available options.`
+      }
+
+      const errorObj: Record<string, unknown> = { code: "USAGE_ERROR", message: displayMsg }
+      if (suggestion) errorObj.did_you_mean = suggestion
+      const outputArgs = parseOutputArgs(process.argv.slice(2))
+      const output = renderOutput({
+        error: errorObj,
         ai_message: finalAi,
-      })
+      }, outputArgs.format, outputArgs.field)
       process.stdout.write(output + "\n")
       process.exitCode = 2
-      throw new Error(finalMsg)
+      throw new Error(displayMsg)
     })
     .demandCommand(1, humanMsg)
 }
@@ -41,6 +78,18 @@ function getRegisteredCommands(yargs: Argv): string[] {
       if (cmdInstance && typeof cmdInstance.getCommands === "function") {
         return cmdInstance.getCommands().filter((c: string) => c !== "$0")
       }
+    }
+  } catch {}
+  return []
+}
+
+// The group's own declared option names (long forms), used to suggest a fix for
+// a mistyped command-specific flag (e.g. `--limt` -> `--limit`).
+function getRegisteredOptions(yargs: Argv): string[] {
+  try {
+    const opts = (yargs as any).getOptions?.()
+    if (opts && opts.key && typeof opts.key === "object") {
+      return Object.keys(opts.key)
     }
   } catch {}
   return []

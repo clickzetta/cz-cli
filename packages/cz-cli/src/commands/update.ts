@@ -12,6 +12,7 @@ import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync, cop
 import path from "node:path"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
+import { renderOutput } from "../output/index.js"
 import {
   type InstallMethod,
   installMethodFromExecPath,
@@ -23,6 +24,39 @@ import {
 
 export function shouldApplyUpdate(currentVersion: string, latestVersion: string, force: boolean) {
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
+}
+
+/**
+ * `update` is a maintenance command whose human-facing progress goes to stderr.
+ * For scripts/agents we also emit a structured terminal result to stdout — but
+ * only when the output is machine-bound (explicit --format, or non-TTY stdout),
+ * so an interactive user still sees only the clean stderr narrative.
+ */
+interface UpdateArgs {
+  format?: string
+  format_explicit?: boolean
+  field?: string
+}
+
+function isMachineReadable(argv: UpdateArgs): boolean {
+  return !!argv.format_explicit || !process.stdout.isTTY
+}
+
+function emitUpdateResult(
+  rawArgv: Record<string, unknown>,
+  data: Record<string, unknown>,
+  aiMessage?: string,
+): void {
+  const argv: UpdateArgs = {
+    format: typeof rawArgv.format === "string" ? rawArgv.format : undefined,
+    format_explicit: rawArgv.format_explicit === true,
+    field: typeof rawArgv.field === "string" ? rawArgv.field : undefined,
+  }
+  if (!isMachineReadable(argv)) return
+  const payload: Record<string, unknown> = { data }
+  if (aiMessage) payload.ai_message = aiMessage
+  const output = renderOutput(payload, argv.format, argv.field)
+  if (output) process.stdout.write(output + "\n")
 }
 
 export function manualInstallCommandForPlatform(platform: NodeJS.Platform = process.platform, channel = "stable") {
@@ -208,6 +242,12 @@ export function registerUpdateCommand(cli: Argv) {
 
       if (VERSION.includes("-dev") && !argv.force) {
         process.stderr.write("Cannot update development build. Use --force to override.\n")
+        emitUpdateResult(argv, {
+          current_version: VERSION,
+          latest_version: null,
+          updated: false,
+          reason: "development_build",
+        }, "Cannot update development build. Use --force to override.")
         process.exitCode = 1
         return
       }
@@ -239,6 +279,12 @@ export function registerUpdateCommand(cli: Argv) {
       if (!latest) {
         process.stderr.write("Failed to check for updates from all sources.\n")
         process.stderr.write(`Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}\n`)
+        emitUpdateResult(argv, {
+          current_version: VERSION,
+          latest_version: null,
+          updated: false,
+          reason: "check_failed",
+        }, `Failed to check for updates. Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}`)
         process.exitCode = 1
         return
       }
@@ -246,11 +292,23 @@ export function registerUpdateCommand(cli: Argv) {
       if (!shouldApplyUpdate(VERSION, latest, argv.force || !!argv.target)) {
         if (latest === VERSION) {
           process.stderr.write(`Already up to date (${VERSION}).\n`)
+          emitUpdateResult(argv, {
+            current_version: VERSION,
+            latest_version: latest,
+            updated: false,
+            reason: "already_latest",
+          }, `Already up to date (${VERSION}).`)
           return
         }
         process.stderr.write(`Refusing to downgrade: ${VERSION} → ${latest}\n`)
         process.stderr.write("The release channel appears to be pointing to an older version.\n")
         process.stderr.write("Use --target <ver> to explicitly downgrade.\n")
+        emitUpdateResult(argv, {
+          current_version: VERSION,
+          latest_version: latest,
+          updated: false,
+          reason: "refuse_downgrade",
+        }, `Refusing to downgrade ${VERSION} → ${latest}. Use --target ${latest} to explicitly downgrade.`)
         process.exitCode = 1
         return
       }
@@ -334,9 +392,23 @@ export function registerUpdateCommand(cli: Argv) {
 
         await writeInstallMetadata({ binary_version: latest, channel })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
+        emitUpdateResult(argv, {
+          current_version: VERSION,
+          latest_version: latest,
+          updated: true,
+          reason: latest === VERSION ? "reinstalled" : "updated",
+        }, `Updated to ${latest}. Restart cz-cli to use the new version.`)
       } catch (err) {
-        process.stderr.write(`Update failed: ${err instanceof Error ? err.message : String(err)}\n`)
+        const detail = err instanceof Error ? err.message : String(err)
+        process.stderr.write(`Update failed: ${detail}\n`)
         process.stderr.write(`Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}\n`)
+        emitUpdateResult(argv, {
+          current_version: VERSION,
+          latest_version: latest,
+          updated: false,
+          reason: "upgrade_failed",
+          error: detail,
+        }, `Update failed: ${detail}. Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}`)
         process.exitCode = 1
       }
     },
