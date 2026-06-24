@@ -2,6 +2,7 @@ import yargs from "yargs"
 import { VERSION } from "./version.js"
 import { defaultFormat, outputState, parseOutputArgs, renderOutput } from "./output/index.js"
 import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
+import { suggestClosest } from "./suggest.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -27,6 +28,12 @@ export interface GlobalArgs {
 // options never precede a positional argument, so any non-flag tokens immediately
 // following them are fragments of the same value and are merged back together here.
 const JSON_ARRAY_OPTIONS = new Set(["--output-tables"])
+
+// Canonical global option/command names, used by both the top-level fail
+// handler and the nested commandGroup fail handler for "did you mean"
+// suggestions. Kept here as the single source of truth to avoid drift.
+export const KNOWN_GLOBAL_FLAGS = ["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "format", "field", "debug", "d", "help", "h", "version", "target", "t"]
+export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent"]
 
 export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
   const result: string[] = []
@@ -55,6 +62,10 @@ export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
 export function createCli(args: string[]) {
   return withClickZettaProfileOption(yargs(coalesceJsonArrayOptionArgs(args)))
     .scriptName("cz-cli")
+    // Force English so yargs' built-in messages (missing args, invalid choices,
+    // help labels) never localize to the shell's LANG. Agents and our error
+    // assertions expect stable English text in `message`/`ai_message`.
+    .locale("en")
     .version(VERSION)
     .exitProcess(false)
     .option("jdbc", {
@@ -132,19 +143,43 @@ export function createCli(args: string[]) {
     .strict()
     .fail((msg, err, yargs) => {
       if (err) throw err
-      const aiMessage = "Run the command with --help to see available options and usage."
-      const message = (msg && msg.trim() !== "") ? msg : (() => {
-        const KNOWN_FLAGS = new Set(["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "format", "field", "debug", "d", "help", "h", "version", "target", "t"])
-        const KNOWN_COMMANDS = new Set(["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent"])
-        const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => !KNOWN_FLAGS.has(a))
-        if (unknownFlags.length > 0) return `Unknown argument: ${unknownFlags[0]}`
+      const KNOWN_FLAGS = KNOWN_GLOBAL_FLAGS
+      const KNOWN_COMMANDS = KNOWN_TOP_COMMANDS
+      const knownFlagSet = new Set(KNOWN_FLAGS)
+      const knownCommandSet = new Set(KNOWN_COMMANDS)
+
+      // Identify the offending token so we can offer a "did you mean" suggestion.
+      // A bad flag takes priority over a bad command (yargs reports flags first).
+      let badToken: string | undefined
+      let suggestion: string | undefined
+      let isFlag = false
+      const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => a && !knownFlagSet.has(a))
+      if (unknownFlags.length > 0) {
+        isFlag = true
+        badToken = unknownFlags[0]
+        const hit = suggestClosest(badToken!, KNOWN_FLAGS.filter((f) => f.length > 1))
+        if (hit) suggestion = `--${hit}`
+      } else {
         const topLevelCmd = args.find((a) => !a.startsWith("-"))
-        if (topLevelCmd !== undefined && !KNOWN_COMMANDS.has(topLevelCmd)) return `Unknown argument: ${topLevelCmd}`
-        return "Unknown argument"
-      })()
+        if (topLevelCmd !== undefined && !knownCommandSet.has(topLevelCmd)) {
+          badToken = topLevelCmd
+          suggestion = suggestClosest(topLevelCmd, KNOWN_COMMANDS)
+        }
+      }
+
+      const baseMessage = (msg && msg.trim() !== "")
+        ? msg
+        : (badToken !== undefined ? `Unknown argument: ${badToken}` : "Unknown argument")
+      const message = suggestion ? `${baseMessage}. Did you mean '${suggestion}'?` : baseMessage
+      const aiMessage = suggestion
+        ? `Unknown ${isFlag ? "argument" : "command"} '${isFlag ? `--${badToken}` : badToken}'. Did you mean '${suggestion}'? Run cz-cli --help to see all available commands.`
+        : "Run the command with --help to see available options and usage."
+
       const outputArgs = parseOutputArgs(args)
+      const errorObj: Record<string, unknown> = { code: "USAGE_ERROR", message }
+      if (suggestion) errorObj.did_you_mean = suggestion
       const output = renderOutput({
-        error: { code: "USAGE_ERROR", message },
+        error: errorObj,
         ai_message: aiMessage,
       }, outputArgs.format, outputArgs.field)
       process.stdout.write(output + "\n")

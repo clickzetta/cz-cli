@@ -571,25 +571,29 @@ async function handler(argv: SqlArgs): Promise<void> {
           continue
         }
         if (argv.batch) {
-          // Batch mode: emit per-statement result with index and sql
+          // Batch mode: emit per-statement result with index and sql.
+          // Route through renderOutput so --format and --field are honored the
+          // same way as the single-statement path (sql.ts ~522). Default json
+          // stays compact (one line per statement = JSONL stream).
+          const batchField = parseOutputArgs(process.argv.slice(2)).field
           const t0 = Date.now()
           try {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
               const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: await formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
-              process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
+              process.stdout.write(renderOutput(line, format, batchField) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             } else if (isQueryResult(r)) {
               const columns = r.columns.map((c) => c.name)
               const rows = maskRows(columns, r.rows)
               const line = { index: i, sql: stmt, columns, rows, count: rows.length, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
-              process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
+              process.stdout.write(renderOutput(line, format, batchField) + "\n")
               logOperation("sql", { sql: stmt, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             }
           } catch (err) {
             const { code, message } = classifyExecError(err)
             const line = { index: i, sql: stmt, error: { code, message: await formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
-            process.stdout.write((format === "pretty" ? renderOutput(line, format) : JSON.stringify(line)) + "\n")
+            process.stdout.write(renderOutput(line, format, batchField) + "\n")
             logOperation("sql", { sql: stmt, ok: false, errorCode: code })
           }
         } else if (i < statements.length - 1) {

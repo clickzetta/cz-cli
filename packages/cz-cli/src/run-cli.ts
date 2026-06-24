@@ -292,8 +292,14 @@ async function delegateToAgentRuntime(rawArgs: string[]): Promise<never> {
   process.exit(code)
 }
 
-async function parseRegisteredCommands(args: string[]): Promise<void> {
-  await registerCommands(createCli(args)).demandCommand(1, "").help().parseAsync()
+async function parseRegisteredCommands(args: string[], onValidated?: () => void): Promise<void> {
+  const cli = registerCommands(createCli(args)).demandCommand(1, "").help()
+  // Run the profile gate as middleware (applyBeforeValidation=false) so it fires
+  // AFTER yargs validates command/option syntax but BEFORE the handler runs.
+  // This way a mistyped command or unknown option surfaces a USAGE_ERROR instead
+  // of being masked by NO_PROFILE on a machine without a configured profile.
+  if (onValidated) cli.middleware(() => onValidated(), false)
+  await cli.parseAsync()
 }
 
 function agentSubcommand(args: string[], commandIndex: number) {
@@ -409,15 +415,22 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     await delegateToAgentRuntime(normalized.runtimeArgs)
   }
 
-  if (
+  const requiresProfile =
     PROFILE_REQUIRED_COMMANDS.has(normalized.command) &&
-    !normalized.isHelpRequest &&
-    !hasConfiguredProfile()
-  ) {
-    return emitNoProfile(runtime, rawArgs)
-  }
+    !normalized.isHelpRequest
 
-  await parseRegisteredCommands(normalized.args)
+  // Gate runs as post-validation middleware inside parseRegisteredCommands, so
+  // yargs reports syntax errors (unknown command/option, missing positional)
+  // before NO_PROFILE. hasConfiguredProfile() is re-checked here (not above) so
+  // it only fires once the command syntax is known to be valid.
+  await parseRegisteredCommands(
+    normalized.args,
+    requiresProfile
+      ? () => {
+          if (!hasConfiguredProfile()) emitNoProfile(runtime, rawArgs)
+        }
+      : undefined,
+  )
 }
 
 /**

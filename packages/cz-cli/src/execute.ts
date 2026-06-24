@@ -61,17 +61,23 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
         },
       }))
       process.exitCode = 1
-    } else if (normalized.requiresProfile) {
-      emitNoProfile({
-        stdout: { write: process.stdout.write, isTTY: process.stdout.isTTY },
-        stderr: { write: process.stderr.write, isTTY: process.stderr.isTTY },
-        exit: (code) => {
-          process.exitCode = code
-          throw new ControlledExit(code)
-        },
-      })
     } else {
-      await registerCommands(createCli(normalized.args)).demandCommand(1, "").help().parseAsync()
+      // Profile gate runs as post-validation middleware: yargs reports syntax
+      // errors (unknown command/option) before NO_PROFILE, matching runCli.
+      const cli = registerCommands(createCli(normalized.args)).demandCommand(1, "").help()
+      if (normalized.requiresProfile) {
+        cli.middleware(() => {
+          emitNoProfile({
+            stdout: { write: process.stdout.write, isTTY: process.stdout.isTTY },
+            stderr: { write: process.stderr.write, isTTY: process.stderr.isTTY },
+            exit: (code) => {
+              process.exitCode = code
+              throw new ControlledExit(code)
+            },
+          })
+        }, false)
+      }
+      await cli.parseAsync()
     }
   } catch (e) {
     if (e instanceof ControlledExit) {

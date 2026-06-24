@@ -469,6 +469,7 @@ async function executeAnalyticsCommand(
   route: AnalyticsRoute,
   body: Record<string, unknown>,
   query: Record<string, unknown> = {},
+  buildAiMessage?: (data: unknown) => string | undefined,
 ): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
@@ -481,7 +482,8 @@ async function executeAnalyticsCommand(
       return
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
-    success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
+    const data = unwrapResponse(payload)
+    success(data, { format, timeMs: Date.now() - t0, aiMessage: buildAiMessage?.(data) })
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
@@ -878,7 +880,14 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 sourceType: argv["source-type"],
                 sourceId: argv["source-id"],
               })
-              await executeAnalyticsCommand("analytics-agent session create", argv as Record<string, unknown>, ROUTES.sessionCreate, body)
+              await executeAnalyticsCommand("analytics-agent session create", argv as Record<string, unknown>, ROUTES.sessionCreate, body, {}, (data) => {
+                const id = typeof data === "string" || typeof data === "number"
+                  ? data
+                  : (data as Record<string, unknown>)?.sessionId ?? (data as Record<string, unknown>)?.id
+                return id
+                  ? `Session created (id=${id}). Ask a question with: cz-cli analytics-agent session run --session-id ${id} --msg "<your question>"`
+                  : undefined
+              })
             },
           )
           .command(
