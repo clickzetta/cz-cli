@@ -45,3 +45,17 @@ test("parseJdbcUrl maps use_http=true to http protocol", () => {
   )
   expect(cfg!.protocol).toBe("http")
 })
+
+test("parseJdbcUrl handles /api/ path prefix in service", () => {
+  const cfg = parseJdbcUrl(
+    "jdbc:clickzetta://a1b2c3d4.lakehouse-studio.uat.example.com/api/my_workspace?username=user&password=secret&schema=public&virtualCluster=DEFAULT",
+  )
+  expect(cfg).toBeDefined()
+  expect(cfg!.instance).toBe("a1b2c3d4")
+  expect(cfg!.service).toBe("lakehouse-studio.uat.example.com/api")
+  expect(cfg!.workspace).toBe("my_workspace")
+  expect(cfg!.username).toBe("user")
+  expect(cfg!.password).toBe("secret")
+  expect(cfg!.vcluster).toBe("DEFAULT")
+  expect(cfg!.schema).toBe("public")
+})
