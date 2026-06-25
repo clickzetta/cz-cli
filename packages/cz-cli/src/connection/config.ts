@@ -1,5 +1,5 @@
 import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
-import { getProfileConfig } from "./profile-store.js"
+import { getProfileConfig, makeProfileTokenStore } from "./profile-store.js"
 import { parseJdbcUrl } from "./jdbc.js"
 
 export interface CliArgs {
@@ -83,6 +83,17 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // Propagate customHeaders from profile (highest priority: env headers could override if needed)
   if (profileCfg?.customHeaders && Object.keys(profileCfg.customHeaders).length > 0) {
     cfg.customHeaders = { ...profileCfg.customHeaders, ...cfg.customHeaders }
+  }
+
+  // Attach a profile-backed OAuth token store so callers routing through this
+  // function (exec.ts, studio-context.ts) get cross-process persistence
+  // (requirement 9.3, 9.7). The OAuth token represents the user's own login,
+  // so the slot is keyed by INSTANCE ONLY (not pat/username): removing or
+  // rotating a pat must not orphan the persisted token (requirement 9.6/11.6).
+  // The store is self-keyed — the SDK calls load/save/clear on it without
+  // re-deriving a key — so this key need not mirror token.ts's in-memory key.
+  if (cfg.instance) {
+    cfg.tokenStore = makeProfileTokenStore(profileName, cfg.instance)
   }
 
   return cfg

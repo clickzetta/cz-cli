@@ -229,6 +229,11 @@ for (let i = 0; i < targets.length; i++) {
   if (item.os === "darwin" && process.platform === "darwin") {
     const binaryPath = `dist/${name}/bin/cz-cli`
     console.log(`Codesigning: ${binaryPath}`)
+    // Strip any pre-existing signature first. Bun-compiled binaries can embed a
+    // malformed ad-hoc signature that makes `codesign --force` fail with
+    // "invalid or unsupported format for signature"; removing it first lets the
+    // re-sign succeed. Best-effort: a binary with no signature yet is fine.
+    await $`codesign --remove-signature ${binaryPath}`.nothrow()
     await $`codesign --force --sign - ${binaryPath}`
     await $`xattr -dr com.apple.quarantine ${binaryPath}`.nothrow()
   }

@@ -25,10 +25,24 @@ export interface ExecContext {
   clientOpts: ClientOptions
 }
 
+/**
+ * Whether the resolved config carries enough to authenticate a request: an
+ * explicit pat, a username/password pair, OR a persisted (cross-process) OAuth
+ * token loadable from the profile-backed tokenStore. A pure-OAuth profile (no
+ * pat/username, but with a valid login token) is therefore usable for SQL
+ * (requirement 11.8).
+ */
+export function hasUsableCredentials(config: ConnectionConfig): boolean {
+  if (config.pat) return true
+  if (config.username && config.password) return true
+  return config.tokenStore?.load() !== undefined
+}
+
 export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContext> {
   const config = resolveConnectionConfig(args)
-  if (!config.pat && !(config.username && config.password)) {
-    throw new Error("Authentication required. Provide --pat or --username/--password, or run `cz-cli setup` to configure a connection profile.")
+  // Keep the "Authentication required" prefix: classifyExecError maps it to NO_CREDENTIALS.
+  if (!hasUsableCredentials(config)) {
+    throw new Error("Authentication required. Provide --pat or --username/--password, run `cz-cli login --browser` for OAuth, or run `cz-cli setup` to configure a connection profile.")
   }
   if (!config.instance) {
     throw new Error("Instance is required. Provide --instance or configure it in your profile.")
