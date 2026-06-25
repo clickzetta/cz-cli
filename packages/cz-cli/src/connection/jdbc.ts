@@ -19,9 +19,20 @@ export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefine
   // so the port must travel with the host (e.g. "10.155.2.214:8033").
   const host = hostParts.slice(1).join(".")
   if (!host) return undefined
-  const service = parsed.port ? `${host}:${parsed.port}` : host
 
-  const workspace = parsed.pathname.replace(/^\//, "").split("/")[0] || undefined
+  // Handle /api/ path prefix: when the first segment is "api", it belongs to the
+  // service URL and the workspace is the next segment (mirrors SDK parseConnectionUrl).
+  const pathSegments = parsed.pathname.replace(/^\//, "").split("/")
+  let workspace: string | undefined
+  let serviceSuffix = ""
+  if (pathSegments.length >= 2 && pathSegments[0]!.toLowerCase() === "api") {
+    serviceSuffix = "/api"
+    workspace = pathSegments[1] || undefined
+  } else {
+    workspace = pathSegments[0] || undefined
+  }
+
+  const service = (parsed.port ? `${host}:${parsed.port}` : host) + serviceSuffix
   const params = parsed.searchParams
 
   const result: Partial<ConnectionConfig> = { instance, service }
