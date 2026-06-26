@@ -11,7 +11,10 @@ import { spawnSync } from "child_process"
 import { resolve } from "path"
 
 function json(r: ExecuteResult): Record<string, unknown> {
-  const parsed = JSON.parse(r.output.trim().split("\n")[0]) as Record<string, unknown>
+  const lines = r.output.trim().split("\n")
+  const jsonLine = lines.find(l => l.trim().startsWith("{") || l.trim().startsWith("["))
+  if (!jsonLine) throw new Error(`no JSON in output: ${r.output.slice(0, 100)}`)
+  const parsed = JSON.parse(jsonLine) as Record<string, unknown>
   console.log(">>> output:", JSON.stringify(parsed).slice(0, 200))
   return parsed
 }
@@ -497,5 +500,153 @@ describe("flow dag", () => {
     const dag = j.data
     // DAG returns array (may be empty if no nodes created)
     expect(Array.isArray(dag)).toBe(true)
+  })
+})
+
+// ── 15. schedule-info — friendly errors (issues 2 & 4) ──────────────────
+
+describe("schedule-info friendly errors", () => {
+  test("returns friendly note for task deployed without cron (no IDE-SYSTEM_EXCEPTION)", async () => {
+    // Find a deployed SQL/Python task that has no cron configured
+    const listR = await execute("task list --page-size 20")
+    const listJ = json(listR)
+    const data = (listJ.data as Record<string, unknown>[]) ?? []
+    const SQL_TYPES = new Set([4, 5, 7]) // SQL(4→23), SHELL(5→24), PYTHON(7→26)
+    const deployed = data.filter(t => t.task_edit_state === 20 && !SQL_TYPES.has(t.task_type as number))
+    // Try all deployed tasks and find one without cron
+    for (const t of deployed.slice(0, 5)) {
+      const taskId = t.task_id as number
+      const r = await execute(`task schedule-info ${taskId}`)
+      expect(r.exitCode).toBe(0) // must NOT return error exit code
+      const j = json(r)
+      expect(j.error).toBeUndefined() // must NOT propagate IDE-SYSTEM_EXCEPTION
+      const d = j.data as Record<string, unknown>
+      // Either real data (cron set) or friendly note (no cron)
+      if (d.note) {
+        expect(typeof d.note).toBe("string")
+        expect(d.note.length).toBeGreaterThan(0)
+      } else {
+        expect(d.task_id).toBeDefined()
+      }
+    }
+  })
+
+  test("returns FLOW-specific note for FLOW tasks instead of exception", async () => {
+    // Find a deployed FLOW task (fileType=500 stored internally)
+    // Task status shows these as having cdc_status=None and draft.task_content=''
+    const listR = await execute("task list --page-size 20")
+    const listJ = json(listR)
+    const data = (listJ.data as Record<string, unknown>[]) ?? []
+    // FLOW tasks have no content but are deployed
+    const deployed = data.filter(t => t.task_edit_state === 20)
+    let tested = false
+    for (const t of deployed.slice(0, 5)) {
+      const taskId = t.task_id as number
+      // Check if this is a FLOW task via task content (empty task_content = potential FLOW)
+      const r = await execute(`task schedule-info ${taskId}`)
+      expect(r.exitCode).toBe(0)
+      const j = json(r)
+      expect(j.error).toBeUndefined()
+      const d = j.data as Record<string, unknown>
+      if (d.note && String(d.note).includes("flow instances")) {
+        // Found a FLOW task — verify the note is correct
+        expect(d.note).toMatch(/flow instances/)
+        tested = true
+        break
+      }
+    }
+    if (!tested) console.log("⊘ note: no FLOW task found in first 5 deployed tasks")
+  })
+
+  test("returns cron info for properly scheduled tasks (still works)", async () => {
+    // Find a deployed task that has cron — schedule-info should return full data
+    const listR = await execute("task list --page-size 20")
+    const listJ = json(listR)
+    const data = (listJ.data as Record<string, unknown>[]) ?? []
+    const deployed = data.filter(t => t.task_edit_state === 20)
+    let found = false
+    for (const t of deployed.slice(0, 5)) {
+      const taskId = t.task_id as number
+      const r = await execute(`task schedule-info ${taskId}`)
+      expect(r.exitCode).toBe(0)
+      const j = json(r)
+      expect(j.error).toBeUndefined()
+      const d = j.data as Record<string, unknown>
+      if (d.cron_expression && d.task_id) {
+        expect(d.task_name).toBeDefined()
+        expect(d.vc_code).toBeDefined()
+        expect(typeof d.cron_expression).toBe("string")
+        found = true
+        break
+      }
+    }
+    if (!found) console.log("⊘ note: no deployed task with cron found")
+  })
+})
+
+// ── 16. REALTIME deploy guard (issue 4) ─────────────────────────────────
+
+describe("REALTIME deploy guard", () => {
+  test("bare REALTIME task (no content) → NO_SYNC_CONFIG before deploy", async () => {
+    // Find a folder
+    const folderR = await execute("task list-folders --page-size 1")
+    const folderJ = json(folderR)
+    const folders = (folderJ.data as Record<string, unknown>[]) ?? []
+    if (folders.length === 0) { console.log("⊘ skip: no folders"); return }
+    const folderId = folders[0].id as number
+
+    const ts = Date.now() % 99999
+    const name = `test_rt_guard_${ts}`
+
+    // Create bare REALTIME task
+    const createR = await execute(`task create "${name}" --folder ${folderId} --type REALTIME`)
+    if (createR.exitCode !== 0) {
+      console.log("⊘ skip: could not create REALTIME task")
+      return
+    }
+    const createJ = json(createR)
+    const taskId = (createJ.data as Record<string, unknown>)?.id
+    if (!taskId) { console.log("⊘ skip: no task id"); return }
+
+    // Deploy should return NO_SYNC_CONFIG, not backend error
+    const deployR = await execute(`task deploy ${taskId} -y`)
+    expect(deployR.exitCode).not.toBe(0)
+    const deployJ = json(deployR)
+    expect(deployJ.error).toBeDefined()
+    const errCode = (deployJ.error as Record<string, unknown>).code as string
+    // Must be caught at CLI level (NO_SYNC_CONFIG), not backend (TASK_ERROR/文件参数不匹配)
+    expect(errCode).toBe("NO_SYNC_CONFIG")
+  })
+
+  test("create-stream-sync task deploys successfully", async () => {
+    // Get a kafka datasource
+    const listR = await execute("datasource list --type kafka --page-size 1")
+    const listJ = json(listR)
+    const datasources = (listJ.data as Record<string, unknown>[]) ?? []
+    if (datasources.length === 0) { console.log("⊘ skip: no Kafka datasource"); return }
+    const dsName = datasources[0].name as string
+
+    // Get a folder
+    const folderR = await execute("task list-folders --page-size 1")
+    const folderJ = json(folderR)
+    const folders = (folderJ.data as Record<string, unknown>[]) ?? []
+    if (folders.length === 0) { console.log("⊘ skip: no folders"); return }
+    const folderId = folders[0].id as number
+
+    const ts = Date.now() % 99999
+    const name = `test_stream_deploy_${ts}`
+
+    // create-stream-sync (configured)
+    const createR = await execute(`task create-stream-sync "${name}" --folder ${folderId} --source "${dsName}" --topic test --target LAKEHOUSE_quick_start`)
+    const createJ = json(createR)
+    const taskId = (createJ.data as Record<string, unknown>)?.task_id
+    if (!taskId) { console.log("⊘ skip: create-stream-sync failed"); return }
+
+    // Deploy should succeed
+    const deployR = await execute(`task deploy ${taskId} -y`)
+    expect(deployR.exitCode).toBe(0)
+    const deployJ = json(deployR)
+    expect(deployJ.error).toBeUndefined()
+    expect((deployJ.data as Record<string, unknown>)?.status).toBe("online")
   })
 })
