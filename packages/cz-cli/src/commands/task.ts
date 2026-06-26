@@ -647,6 +647,47 @@ function convertTaskFields(data: Record<string, unknown>): Record<string, unknow
   return out
 }
 
+const SCHEDULE_INFO_FIELDS: Record<string, string> = {
+  scheduleTaskId: "task_id", tenantId: "tenant_id", projectId: "project_id",
+  projectName: "project_name", workspaceName: "workspace_name",
+  dataFileId: "data_file_id", dataFileVersion: "data_file_version",
+  cycleTaskName: "task_name", cycleTaskCode: "task_code",
+  cycleTaskType: "task_type", cronExpression: "cron_expression",
+  taskStatus: "task_status", scheduleConfigType: "schedule_config_type",
+  taskOwnerCn: "owner_cn", taskOwnerEn: "owner_en",
+  retryCount: "retry_count", retryIntervalTime: "retry_interval_time",
+  retryIntervalTimeUnit: "retry_interval_time_unit",
+  retryWhenFailure: "retry_when_failure", rerunProperty: "rerun_property",
+  selfDependsJob: "self_depends_job", scheduleRateType: "schedule_rate_type",
+  executeTimeout: "execute_timeout", executeTimeoutUnit: "execute_timeout_unit",
+  triggerType: "trigger_type", vcCode: "vc_code",
+  latestInstanceId: "latest_instance_id",
+  latestInstancePlanTime: "latest_instance_plan_time",
+  latestInstanceStatus: "latest_instance_status",
+  taskPriority: "task_priority", taskGroupId: "task_group_id",
+  taskGroupName: "task_group_name", path: "path",
+  scheduleStartTime: "schedule_start_time", scheduleEndTime: "schedule_end_time",
+  activeStartTime: "active_start_time", activeEndTime: "active_end_time",
+  createdBy: "created_by", updatedBy: "updated_by",
+  createTime: "create_time", createTimeStr: "create_time_str",
+  updateTime: "update_time", updateTimeStr: "update_time_str",
+  publishTime: "publish_time", publishUserId: "publish_user_id",
+  publishUserName: "publish_user_name",
+  extraParams: "extra_params", hasInputParam: "has_input_param",
+}
+
+function convertScheduleInfoFields(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (k in SCHEDULE_INFO_FIELDS) {
+      out[SCHEDULE_INFO_FIELDS[k]!] = v
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
 const CONFIG_DETAIL_FIELDS: Record<string, string> = {
   projectId: "project_id", dataFileId: "task_id", dataFileVersion: "data_file_version",
   retryIntervalTime: "retry_interval_time", retryIntervalTimeUnit: "retry_interval_time_unit",
@@ -3263,7 +3304,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               { env: "prod" },
             )
             logOperation("task schedule-info", { ok: true })
-            success(resp.data, { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
+            success(convertScheduleInfoFields(resp.data as Record<string, unknown>), { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
           } catch (err) {
             reportTaskError(err, format)
           }
