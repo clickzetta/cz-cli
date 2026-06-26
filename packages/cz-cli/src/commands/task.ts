@@ -1323,7 +1323,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("vc", { type: "string", describe: "Virtual cluster code, e.g. CZCODE_DI. Use 'cz-cli --vcluster <vc>' to set globally for the session." })
             .option("params", { type: "string", describe: 'Runtime parameters JSON. Values matching system param names (bizdate, sys_biz_day, sys_plan_day) are auto-detected. e.g. \'{"city":"beijing","dt":"bizdate"}\' — "beijing"=literal, "bizdate"=system param.' })
             .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (JDBC tasks only)" })
-            .option("database", { type: "string", describe: "JDBC database/schema name (JDBC tasks only)" }),
+            .option("database", { type: "string", describe: "JDBC database/schema name (JDBC tasks only)" })
+            .option("description", { type: "string", describe: "Task description" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -2293,7 +2294,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               } else if (fileType === 1) {
                 // INTEGRATION: check both fileContent (field mapping) and hasConfig (schedule)
                 const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
-                if (!content || content.length < 10) {
+                // A valid INTEGRATION field-mapping JSON contains at least "jobs" key.
+                // Treat empty string, "null", "{}", "[]" or very short strings as unconfigured.
+                const hasContent = content.length > 10 && content !== "null" && content !== "[]" && content !== "{}"
+                if (!hasContent) {
                   error("NO_INTEGRATION_CONFIG",
                     `INTEGRATION task has no field mapping configured. Run:\n` +
                     `  cz-cli task integration setup ${fileId} --sync-type single --source-datasource <ds> --source-schema <db> --source-table <table> --sink-datasource <lh_ds>\n` +
@@ -2307,6 +2311,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     `Run: cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
                     { format, exitCode: 2 }); return
                 }
+              } else if (fileType === 14) {
+                // REALTIME: use create-stream-sync which sets up source/target/schema in one step
+                const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
+                // A valid INTEGRATION field-mapping JSON contains at least "jobs" key.
+                // Treat empty string, "null", "{}", "[]" or very short strings as unconfigured.
+                const hasContent = content.length > 10 && content !== "null" && content !== "[]" && content !== "{}"
+                if (!hasContent) {
+                  error("NO_SYNC_CONFIG",
+                    `REALTIME task not configured. Use 'cz-cli task create-stream-sync' to create and configure in one step, or open Studio to configure source/target manually: ${studioUrl(sc, fileId)}`,
+                    { format, exitCode: 2 }); return
+                }
+                // Warn if no schedule config
+                process.stderr.write(`Warning: REALTIME task — verifying source/target configuration before deploy. Open Studio if deploy fails: ${studioUrl(sc, fileId)}\n`)
               } else {
                 // All other sync types require Studio UI configuration
                 process.stderr.write(`Warning: ${typeName} task — source/target/field-mapping must be configured in Studio UI before deploying. Open: ${studioUrl(sc, fileId)}\n`)
@@ -3295,12 +3312,41 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
+
+            // Pre-check: FLOW tasks (type=500 internal, actual fileType=500 from API) don't create
+            // scheduleTask entries — the API throws IDE-SYSTEM_EXCEPTION instead of returning empty.
+            // Also handle tasks deployed without cron by catching and returning friendly message.
+            const detailResp = await getTaskDetail(sc, fileId)
+            const detailData = (detailResp.data && typeof detailResp.data === "object" ? detailResp.data : {}) as Record<string, unknown>
+            const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
+              ? detailData.taskDetail : detailData) as Record<string, unknown>
+            const fileType = Number(detailObj.fileType ?? 0)
+            if (fileType === 500) { // FLOW
+              success({ task_id: fileId, task_name: detailObj.dataFileName, note: "FLOW tasks do not have standalone schedule entries. Use 'cz-cli task flow instances <task>' to see run history." }, {
+                format, aiMessage: `FLOW task: use 'cz-cli task flow instances ${argv.task}' for run history.`
+              })
+              return
+            }
+
             // getScheduleDetail uses scheduleTaskId = fileId (same id as draft task)
-            const resp = await studioRequest(sc,
-              "/ide-admin/v1/scheduleTask/getDetail",
-              { scheduleTaskId: fileId, projectId: sc.projectId },
-              { env: "prod" },
-            )
+            let resp: Awaited<ReturnType<typeof studioRequest>>
+            try {
+              resp = await studioRequest(sc,
+                "/ide-admin/v1/scheduleTask/getDetail",
+                { scheduleTaskId: fileId, projectId: sc.projectId },
+                { env: "prod" },
+              )
+            } catch (apiErr) {
+              // Backend throws IDE-SYSTEM_EXCEPTION for tasks deployed without cron schedule.
+              // Return friendly message instead of raw error.
+              logOperation("task schedule-info", { ok: false })
+              success({
+                task_id: fileId,
+                task_name: detailObj.dataFileName,
+                note: "This task has no active schedule entry (no cron configured, or not yet deployed to the schedule engine). Use 'cz-cli task content <task>' to check draft config.",
+              }, { format, aiMessage: "No schedule entry found. Check 'cz-cli task content <task>' for draft cron config." })
+              return
+            }
             logOperation("task schedule-info", { ok: true })
             success(convertScheduleInfoFields(resp.data as Record<string, unknown>), { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
           } catch (err) {
