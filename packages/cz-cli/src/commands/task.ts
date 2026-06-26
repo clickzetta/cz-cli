@@ -36,7 +36,7 @@ import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { resolveDatasource } from "./datasource.js"
-import { convertAgentCron } from "../cron-adapter.js"
+import { convertAgentCron, cronNextRuns } from "../cron-adapter.js"
 import { registerTaskIntegrationCommands } from "./integration.js"
 
 function formatIsoStartOfDay(value: string | undefined | null): string {
@@ -611,13 +611,24 @@ const TASK_DETAIL_FIELDS: Record<string, string> = {
   deployStatus: "deploy_status", isLock: "is_lock",
 }
 
+const _TASK_INCOMING_SNAKE_KEYS: Set<string> = new Set([
+  "task_id", "task_name", "task_type", "task_edit_state", "folder_id", "project_id",
+  "location", "path", "last_edit_time", "last_edit_user",
+  "owner_cn_name", "owner_en_name",
+])
+
 function convertTaskFields(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(data)) {
     if (k in TASK_DETAIL_FIELDS) {
       out[TASK_DETAIL_FIELDS[k]!] = v
+    } else if (_TASK_INCOMING_SNAKE_KEYS.has(k)) {
+      out[k] = v
     } else if (k === "fileType") {
       out["task_type"] = FILE_TYPE_TO_TASK_TYPE[v as number] ?? v
+    } else if (k !== "data" && k !== "code" && k !== "success" && k !== "message") {
+      // Pass through unknown user-defined / enrichment fields
+      out[k] = v
     }
   }
   return out
@@ -741,7 +752,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               parentFolderId: argv.parent,
             })
             const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const items = Array.isArray(data.list) ? (data.list as unknown[]) : []
+            const rawList = Array.isArray(data.list) ? (data.list as Record<string, unknown>[]) : []
+            const items = rawList.map((f) => ({
+              id: f.id ?? f.folderId ?? f.folder_id,
+              name: f.dataFolderName ?? f.folderName ?? f.name ?? f.folder_name,
+              parent_id: f.parentFolderId ?? f.parentId ?? f.parent_id,
+              project_id: f.projectId ?? f.project_id,
+              created_time: f.createdTime ?? f.created_time,
+              updated_time: f.updatedTime ?? f.updated_time,
+            }))
             const total = data.total as number | undefined
             const totalPages = data.totalPages as number | undefined
             const aiMessage =
@@ -3261,7 +3280,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const resp = await getAllDownstream(sc, fileId, sc.projectId)
-            const items = Array.isArray(resp.data) ? resp.data : []
+            const rawItems = (Array.isArray(resp.data) ? resp.data : []) as Record<string, unknown>[]
+            const items = rawItems.map((raw) => ({
+              task_id: raw.scheduleTaskId ?? raw.schedule_task_id,
+              task_name: raw.cycleTaskName ?? raw.cycle_task_name ?? raw.dataFileName,
+              task_type: raw.cycleTaskType ?? raw.cycle_task_type,
+              cron: raw.cronExpression ?? raw.cron_expression,
+              status: raw.taskStatus ?? raw.task_status,
+              vc: raw.vcCode ?? raw.vc_code,
+              path: raw.path,
+              owner: raw.taskOwnerCn ?? raw.task_owner_cn,
+            }))
             logOperation("task downstream", { ok: true })
             success(items, {
               format,
@@ -3293,11 +3322,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               scheduleEnv: "prod",
             })
             const times = Array.isArray(resp.data) ? resp.data : []
-            const limited = times.slice(0, argv.count as number)
+            // Fallback to local Quartz cron calculator when API returns empty
+            let next_runs: string[]
+            if (times.length > 0) {
+              next_runs = times.slice(0, argv.count as number) as string[]
+            } else {
+              next_runs = cronNextRuns(cronExpress, argv.count as number)
+            }
             logOperation("task cron-preview", { ok: true })
-            success({ cron: cronExpress, next_runs: limited, count: limited.length }, {
+            success({ cron: cronExpress, next_runs, count: next_runs.length }, {
               format,
-              aiMessage: `Next ${limited.length} scheduled run times for cron: ${cronExpress}`,
+              aiMessage: `Next ${next_runs.length} scheduled run times for cron: ${cronExpress}`,
             })
           } catch (err) {
             reportTaskError(err, format)
