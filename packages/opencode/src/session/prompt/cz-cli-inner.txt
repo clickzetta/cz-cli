@@ -28,7 +28,10 @@ cz-cli table drop <name>                      Drop a table
 cz-cli workspace current                      Show current workspace
 
 cz-cli task list                              List Studio tasks
-cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW)
+cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW; offline integration: INTEGRATION=single-table, MULTI_DI=multi-table/whole-db)
+cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. single also: --write-mode OVERWRITE|APPEND|UPSERT, --partitions 'dt=${bizdate}', --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates sink table + default field mapping.
+cz-cli task integration show <task>           Show an existing integration task's current field/table mapping and sync params (read before edit)
+cz-cli task integration edit <task>           Edit an EXISTING integration task (applied+saved immediately). single: --column-mapping '[{"source","sink"}]' (full replace) / --split-pk / --where / --write-mode / --partitions 'dt=${bizdate}' / --param-value-list / --parallelism / --error-limit / --m-bytes. multi/whole_db: --table-mapping / --pk-write-mode / --non-pk-write-mode / --schema-rule / --table-rule / --batch-size / --connections
 cz-cli task content <task>                    Get task script, config and params (draft)
 cz-cli task save-content <task> --file <f>    Save task script; use --params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}' to set params (system params like bizdate/sys_plan_day/sys_biz_datetime etc. auto-detected)
 cz-cli task save-config <task>                Save task non-cron config, like retry, dependency
