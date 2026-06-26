@@ -2294,7 +2294,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               } else if (fileType === 1) {
                 // INTEGRATION: check both fileContent (field mapping) and hasConfig (schedule)
                 const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
-                if (!content || content.length < 10) {
+                // A valid INTEGRATION field-mapping JSON contains at least "jobs" key.
+                // Treat empty string, "null", "{}", "[]" or very short strings as unconfigured.
+                const hasContent = content.length > 10 && content !== "null" && content !== "[]" && content !== "{}"
+                if (!hasContent) {
                   error("NO_INTEGRATION_CONFIG",
                     `INTEGRATION task has no field mapping configured. Run:\n` +
                     `  cz-cli task integration setup ${fileId} --sync-type single --source-datasource <ds> --source-schema <db> --source-table <table> --sink-datasource <lh_ds>\n` +
@@ -2311,7 +2314,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               } else if (fileType === 14) {
                 // REALTIME: use create-stream-sync which sets up source/target/schema in one step
                 const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
-                if (!content || content.length < 10) {
+                // A valid INTEGRATION field-mapping JSON contains at least "jobs" key.
+                // Treat empty string, "null", "{}", "[]" or very short strings as unconfigured.
+                const hasContent = content.length > 10 && content !== "null" && content !== "[]" && content !== "{}"
+                if (!hasContent) {
                   error("NO_SYNC_CONFIG",
                     `REALTIME task not configured. Use 'cz-cli task create-stream-sync' to create and configure in one step, or open Studio to configure source/target manually: ${studioUrl(sc, fileId)}`,
                     { format, exitCode: 2 }); return
