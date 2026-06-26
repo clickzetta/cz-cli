@@ -2971,8 +2971,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("content", { type: "string" })
                 .option("file", { alias: "f", type: "string" })
-                .option("param", { type: "array", string: true, describe: "Set param with manual default: key=value" })
-                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow: key (no value needed)" }),
+                .option("param", { type: "array", string: true, describe: "Set param with manual default value (ref=0): key=value. Re-save replaces ALL params — include all desired params each time." })
+                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow (ref=2): key only, no value. At runtime, value comes from flow execution params." }),
             async (argv) => {
               const format = argv.format
               try {
@@ -3059,7 +3059,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "submit <task>",
-            "Submit/publish flow (saves schedule config)",
+            "Submit/publish flow (saves schedule config and persists all node params). Run with 'cz-cli task flow run <task> --param key=value' to pass flow params to child nodes at runtime.",
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
@@ -3133,7 +3133,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("vc", { type: "string", describe: "Virtual cluster code (default: DEFAULT)" })
-                .option("param", { type: "array", string: true, describe: "Override param value: key=value (can repeat)" }),
+                .option("param", { type: "array", string: true, describe: "Override manual param value (ref=0): key=value. Flow-shared params (ref=2) receive the flow execution param value." }),
             async (argv) => {
               const format = argv.format
               try {
@@ -3290,7 +3290,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "schedule-info <task>",
-        "Get published schedule state for a deployed task (cron, next run time, last run result, etc.)",
+        "Get published schedule state for a deployed task. Works for cron-scheduled tasks. For flow (composite) tasks, use 'task flow instances' instead — flows do not create standalone schedule entries.",
         (y) => y.positional("task", { type: "string", demandOption: true, describe: "Task name or ID" }),
         async (argv) => {
           const format = argv.format
