@@ -1315,7 +1315,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL (sql/query), PYTHON, SHELL, JDBC, FLOW" })
+            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC. For FLOW/INTEGRATION/REALTIME tasks use dedicated create commands instead (e.g. 'task create --type FLOW', 'task create-realtime-sync')." })
             .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
             .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
             .option("file", { alias: "f", type: "string", describe: "Read script from file path. Alternative to --content. Use 'cat > script.sql' then --file script.sql for multi-line scripts." })
