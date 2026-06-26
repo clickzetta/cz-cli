@@ -921,7 +921,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
-              fileDescription: argv.description,
+              fileDescription: argv.description as string | undefined,
               dataFolderId: folderId,
               workspaceName: sc.workspaceName,
             })
@@ -1362,7 +1362,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 createdBy: String(sc.userId),
                 projectId: sc.projectId,
                 dataFileName: argv.name as string,
-                fileDescription: argv.description,
+                fileDescription: argv.description as string | undefined,
                 dataFolderId: folderId,
                 workspaceName: sc.workspaceName,
               })
@@ -1385,7 +1385,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
-              fileDescription: argv.description,
+              fileDescription: argv.description as string | undefined,
               dataFolderId: folderId,
               workspaceName: sc.workspaceName,
             })
