@@ -1323,7 +1323,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("vc", { type: "string", describe: "Virtual cluster code, e.g. CZCODE_DI. Use 'cz-cli --vcluster <vc>' to set globally for the session." })
             .option("params", { type: "string", describe: 'Runtime parameters JSON. Values matching system param names (bizdate, sys_biz_day, sys_plan_day) are auto-detected. e.g. \'{"city":"beijing","dt":"bizdate"}\' — "beijing"=literal, "bizdate"=system param.' })
             .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (JDBC tasks only)" })
-            .option("database", { type: "string", describe: "JDBC database/schema name (JDBC tasks only)" }),
+            .option("database", { type: "string", describe: "JDBC database/schema name (JDBC tasks only)" })
+            .option("description", { type: "string", describe: "Task description" }),
         async (argv) => {
           const format = argv.format
           try {
