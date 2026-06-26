@@ -35,6 +35,50 @@ You have no direct Lakehouse access. Always delegate via cz-cli.
 - Create offline batch sync tasks with Cron scheduling — single-table (task_type=10) or multi-table (task_type=291)
 - Manage sync task lifecycle: start, stop, offline, backfill, add tables, re-sync individual tables
 
+#### Offline integration sync (`cz-cli task integration`)
+Configure offline data-integration (batch sync) task content. Create the task skeleton first, then configure its content:
+
+```bash
+# 1) Create the task skeleton (single-table → INTEGRATION; multi/whole-db → MULTI_DI)
+cz-cli task create my_sync --type INTEGRATION
+cz-cli task create my_db_sync --type MULTI_DI
+
+# 2) Configure content
+#    single-table: creates the sink table from the source DDL + generates a default field mapping
+cz-cli task integration setup my_sync --sync-type single \
+  --source-datasource my_mysql --source-schema app --source-table orders \
+  --sink-datasource lakehouse --sink-schema public --sink-table orders
+#    multi-table: one job per table (no table creation; the running task creates them)
+cz-cli task integration setup my_db_sync --sync-type multi \
+  --source-datasource my_mysql --source-schema app --source-tables orders,users,items \
+  --sink-datasource lakehouse --sink-schema public
+#    whole-db: mirror entire databases
+cz-cli task integration setup my_db_sync --sync-type whole_db \
+  --source-datasource my_mysql --source-schema app --source-dbs app,inventory \
+  --sink-datasource lakehouse --sink-schema public
+
+# 3) Inspect current config (read before editing)
+cz-cli task integration show my_sync
+
+# 4) Edit field mapping / sync params (applied & saved immediately — no UI needed)
+#    single-table — column-mapping is a FULL replace (include every row to keep):
+cz-cli task integration edit my_sync \
+  --column-mapping '[{"source":"id","sink":"id"},{"source":"name","sink":"name"}]' \
+  --parallelism 4 --error-limit -1 --m-bytes 8 --split-pk id --where "dt = bizdate"
+#    multi/whole-db — table mapping + write modes + naming rules + grouping strategy:
+cz-cli task integration edit my_db_sync \
+  --table-mapping '[{"source":"app.orders","sink":"public.orders"}]' \
+  --pk-write-mode OVERWRITE --non-pk-write-mode OVERWRITE \
+  --schema-rule '{SOURCE_DATABASE}' --table-rule '{SOURCE_DATABASE}_{SOURCE_TABLE}' \
+  --parallelism 4 --batch-size 4 --connections 4
+```
+
+Notes:
+- `setup` does NOT change field mapping/params on an existing task — use `edit`. `edit` does NOT change source/sink tables — use `setup`.
+- Datasource types are auto-resolved from the datasource name/ID; no need to pass type codes.
+- **`--where` with date/time scheduling params** (e.g. `bizdate`, `$[yyyyMMdd]`, monthly partitions): look up the correct Studio scheduling-parameter syntax first (`cz-cli ai-guide` / docs). Do NOT invent parameter formats.
+- Integration tasks must execute on an **INTEGRATION-type vcluster** — pick one via the vcluster list, not the default/GENERAL vc.
+
 ### Data Ingestion Pipelines
 - Create continuous OSS/S3/COS ingest PIPE (LIST_PURGE scan mode or EVENT_NOTIFICATION mode)
 - Create continuous Kafka ingest PIPE using READ_KAFKA function
