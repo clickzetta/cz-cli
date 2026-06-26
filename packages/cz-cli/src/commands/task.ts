@@ -31,12 +31,25 @@ import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
 import { resolveTaskId, resolveNodeId, resolveFolderIdByName } from "../resolver.js"
+
+/** Resolve a --node-id value handler, numeric string, or node name. */
+async function resolveNodeArg(
+  sc: StudioConfig,
+  fileId: number,
+  raw: string | number | undefined,
+  format: string,
+): Promise<number> {
+  if (raw === undefined || raw === null) handledError("INVALID_ARGUMENTS", "Provide --node-id.", { format })
+  const n = Number(raw)
+  if (!isNaN(n)) return n
+  return resolveNodeId(sc, fileId, String(raw), format)
+}
 import { studioUrl } from "./studio-url.js"
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { resolveDatasource } from "./datasource.js"
-import { convertAgentCron } from "../cron-adapter.js"
+import { convertAgentCron, cronNextRuns } from "../cron-adapter.js"
 import { registerTaskIntegrationCommands } from "./integration.js"
 
 function formatIsoStartOfDay(value: string | undefined | null): string {
@@ -611,13 +624,65 @@ const TASK_DETAIL_FIELDS: Record<string, string> = {
   deployStatus: "deploy_status", isLock: "is_lock",
 }
 
+const _TASK_INCOMING_SNAKE_KEYS: Set<string> = new Set([
+  "task_id", "task_name", "task_type", "task_edit_state", "folder_id", "project_id",
+  "location", "path", "last_edit_time", "last_edit_user",
+  "owner_cn_name", "owner_en_name",
+])
+
 function convertTaskFields(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(data)) {
     if (k in TASK_DETAIL_FIELDS) {
       out[TASK_DETAIL_FIELDS[k]!] = v
+    } else if (_TASK_INCOMING_SNAKE_KEYS.has(k)) {
+      out[k] = v
     } else if (k === "fileType") {
       out["task_type"] = FILE_TYPE_TO_TASK_TYPE[v as number] ?? v
+    } else if (k !== "data" && k !== "code" && k !== "success" && k !== "message") {
+      // Pass through unknown user-defined / enrichment fields
+      out[k] = v
+    }
+  }
+  return out
+}
+
+const SCHEDULE_INFO_FIELDS: Record<string, string> = {
+  scheduleTaskId: "task_id", tenantId: "tenant_id", projectId: "project_id",
+  projectName: "project_name", workspaceName: "workspace_name",
+  dataFileId: "data_file_id", dataFileVersion: "data_file_version",
+  cycleTaskName: "task_name", cycleTaskCode: "task_code",
+  cycleTaskType: "task_type", cronExpression: "cron_expression",
+  taskStatus: "task_status", scheduleConfigType: "schedule_config_type",
+  taskOwnerCn: "owner_cn", taskOwnerEn: "owner_en",
+  retryCount: "retry_count", retryIntervalTime: "retry_interval_time",
+  retryIntervalTimeUnit: "retry_interval_time_unit",
+  retryWhenFailure: "retry_when_failure", rerunProperty: "rerun_property",
+  selfDependsJob: "self_depends_job", scheduleRateType: "schedule_rate_type",
+  executeTimeout: "execute_timeout", executeTimeoutUnit: "execute_timeout_unit",
+  triggerType: "trigger_type", vcCode: "vc_code",
+  latestInstanceId: "latest_instance_id",
+  latestInstancePlanTime: "latest_instance_plan_time",
+  latestInstanceStatus: "latest_instance_status",
+  taskPriority: "task_priority", taskGroupId: "task_group_id",
+  taskGroupName: "task_group_name", path: "path",
+  scheduleStartTime: "schedule_start_time", scheduleEndTime: "schedule_end_time",
+  activeStartTime: "active_start_time", activeEndTime: "active_end_time",
+  createdBy: "created_by", updatedBy: "updated_by",
+  createTime: "create_time", createTimeStr: "create_time_str",
+  updateTime: "update_time", updateTimeStr: "update_time_str",
+  publishTime: "publish_time", publishUserId: "publish_user_id",
+  publishUserName: "publish_user_name",
+  extraParams: "extra_params", hasInputParam: "has_input_param",
+}
+
+function convertScheduleInfoFields(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (k in SCHEDULE_INFO_FIELDS) {
+      out[SCHEDULE_INFO_FIELDS[k]!] = v
+    } else {
+      out[k] = v
     }
   }
   return out
@@ -669,7 +734,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
     yargs
       .command(
         "list",
-        "List tasks",
+        "List tasks. Use --type, --like, --folder to filter. Shows task_id, task_name, task_type, task_edit_state (10=draft, 20=published, 100=offline).",
         (y) =>
           y
             .option("page", { type: "number", default: 1 })
@@ -741,7 +806,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               parentFolderId: argv.parent,
             })
             const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const items = Array.isArray(data.list) ? (data.list as unknown[]) : []
+            const rawList = Array.isArray(data.list) ? (data.list as Record<string, unknown>[]) : []
+            const items = rawList.map((f) => ({
+              id: f.id ?? f.folderId ?? f.folder_id,
+              name: f.dataFolderName ?? f.folderName ?? f.name ?? f.folder_name,
+              parent_id: f.parentFolderId ?? f.parentId ?? f.parent_id,
+              project_id: f.projectId ?? f.project_id,
+              created_time: f.createdTime ?? f.created_time,
+              updated_time: f.updatedTime ?? f.updated_time,
+            }))
             const total = data.total as number | undefined
             const totalPages = data.totalPages as number | undefined
             const aiMessage =
@@ -809,7 +882,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create <name>",
-        "Create a SQL/Python/Shell script task",
+        "Create a SQL/Python/Shell script task. Typical workflow: create → save-content --content '...' → save-config --vc <vc> → deploy",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
@@ -848,7 +921,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
-              fileDescription: argv.description,
+              fileDescription: argv.description as string | undefined,
               dataFolderId: folderId,
               workspaceName: sc.workspaceName,
             })
@@ -895,6 +968,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sourceDs = await resolveDatasource(sc, String(argv.source))
             if (!sourceDs.dsType) {
               error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'.`, { format, exitCode: 2 }); return
+            }
+
+            // Validate source dsType is supported for CDC multi-table sync
+            const CDC_SUPPORTED_TYPES = new Set([5, 7, 8, 17, 18, 19, 21, 22, 25, 26, 39, 40, 46, 48])
+            // Note: Oracle (25) is listed in DS_TYPE_MAP but NOT supported for CDC — checkCdcPrereqs will reject it
+            const CDC_SUPPORTED_MYSQL = "MySQL/TiDB/MariaDB (5,17,18,19,39)"
+            const CDC_SUPPORTED_PG    = "PostgreSQL/Greenplum (7,22,40,46,48)"
+            const CDC_SUPPORTED_SS    = "SQL Server (8)"
+            const CDC_SUPPORTED_DM    = "DM (26)"
+            if (!CDC_SUPPORTED_TYPES.has(sourceDs.dsType)) {
+              error("UNSUPPORTED_DATASOURCE", `Datasource '${argv.source}' (dsType=${sourceDs.dsType}) is not supported for CDC multi-table sync. Supported: ${CDC_SUPPORTED_MYSQL}, ${CDC_SUPPORTED_PG}, ${CDC_SUPPORTED_SS}, ${CDC_SUPPORTED_DM}.`, { format, exitCode: 2 }); return
             }
 
             // Step 2: CDC prerequisite check (before creating anything)
@@ -1227,21 +1311,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create-setup <name>",
-        "Create a script task with content and schedule configured in one step",
+        "One-step: create + save-content + save-cron + save-config. Equivalent to running create, save-content, save-cron, and save-config separately. For CDC/realtime tasks use 'create-realtime-sync' instead.",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC, etc." })
-            .option("folder", { type: "string", describe: "Folder ID or name (required; root directory not allowed)" })
-            .option("content", { type: "string", describe: "Script content" })
-            .option("file", { alias: "f", type: "string", describe: "Read script from file" })
-            .option("cron", { type: "string", describe: "Cron expression (5/6/7 fields)" })
-            .option("vc", { type: "string", describe: "Virtual cluster code" })
-            .option("schema", { type: "string", describe: "Schema name" })
-            .option("description", { type: "string", describe: "Task description" })
-            .option("params", { type: "string", describe: 'Runtime parameters JSON, e.g. \'{"bizdate":"bizdate","city":"beijing"}\'' })
-            .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (auto-resolves dsType)" })
-            .option("database", { type: "string", describe: "JDBC database/schema name to USE after connecting" }),
+            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC. For FLOW/INTEGRATION/REALTIME tasks use dedicated create commands instead (e.g. 'task create --type FLOW', 'task create-realtime-sync')." })
+            .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
+            .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
+            .option("file", { alias: "f", type: "string", describe: "Read script from file path. Alternative to --content. Use 'cat > script.sql' then --file script.sql for multi-line scripts." })
+            .option("cron", { type: "string", describe: "Cron expression — ClickZetta 7-field format: sec min hr day month weekday year. e.g. '0 30 9 * * ? *' = daily 09:30, '0 0/5 * * * ? *' = every 5 min. Omit for manual-only tasks." })
+            .option("vc", { type: "string", describe: "Virtual cluster code, e.g. CZCODE_DI. Use 'cz-cli --vcluster <vc>' to set globally for the session." })
+            .option("params", { type: "string", describe: 'Runtime parameters JSON. Values matching system param names (bizdate, sys_biz_day, sys_plan_day) are auto-detected. e.g. \'{"city":"beijing","dt":"bizdate"}\' — "beijing"=literal, "bizdate"=system param.' })
+            .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (JDBC tasks only)" })
+            .option("database", { type: "string", describe: "JDBC database/schema name (JDBC tasks only)" }),
         async (argv) => {
           const format = argv.format
           try {
@@ -1280,7 +1362,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 createdBy: String(sc.userId),
                 projectId: sc.projectId,
                 dataFileName: argv.name as string,
-                fileDescription: argv.description,
+                fileDescription: argv.description as string | undefined,
                 dataFolderId: folderId,
                 workspaceName: sc.workspaceName,
               })
@@ -1303,7 +1385,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
-              fileDescription: argv.description,
+              fileDescription: argv.description as string | undefined,
               dataFolderId: folderId,
               workspaceName: sc.workspaceName,
             })
@@ -1685,6 +1767,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               error("INVALID_ARGUMENTS", `Cannot determine dsType for source datasource '${argv.source}'. Specify a valid datasource.`, { format, exitCode: 2 }); return
             }
 
+            // Validate source dsType is supported for CDC multi-table sync
+            const CDC_SUPPORTED_TYPES = new Set([5, 7, 8, 17, 18, 19, 21, 22, 25, 26, 39, 40, 46, 48])
+            // Note: Oracle (25) is listed in DS_TYPE_MAP but NOT supported for CDC — checkCdcPrereqs will reject it
+            const CDC_SUPPORTED_MYSQL = "MySQL/TiDB/MariaDB (5,17,18,19,39)"
+            const CDC_SUPPORTED_PG    = "PostgreSQL/Greenplum (7,22,40,46,48)"
+            const CDC_SUPPORTED_SS    = "SQL Server (8)"
+            const CDC_SUPPORTED_DM    = "DM (26)"
+            if (!CDC_SUPPORTED_TYPES.has(sourceDs.dsType)) {
+              error("UNSUPPORTED_DATASOURCE", `Datasource '${argv.source}' (dsType=${sourceDs.dsType}) is not supported for CDC multi-table sync. Supported: ${CDC_SUPPORTED_MYSQL}, ${CDC_SUPPORTED_PG}, ${CDC_SUPPORTED_SS}, ${CDC_SUPPORTED_DM}.`, { format, exitCode: 2 }); return
+            }
+
             // CDC prerequisite check (skip with --skip-check)
             if (!(argv["skip-check"] as boolean)) {
               const check = await checkCdcPrereqs(sc, sourceDs as { id: number; name: string; dsType: number }, String(argv.source))
@@ -1893,7 +1986,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "save-cron <task>",
-        "Save cron schedule configuration (preserves non-cron settings)",
+        "Save cron schedule configuration (preserves non-cron settings). Cron expression uses ClickZetta 7-field format: sec min hr day month weekday year. e.g. '0 30 9 * * ? *' = daily 09:30.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2152,7 +2245,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         ["deploy <task>", "online <task>"],
-        "Publish/online a task",
+        "Publish/online a task. Prerequisites: task must have content (save-content) and configuration (save-config). Published tasks are scheduled or runnable.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2258,7 +2351,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "start <task>",
-        "Start a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
+        "Start a CDC/streaming task. Only for deployed MULTI_REALTIME/REALTIME/STREAMING tasks. Use 'task stop' to pause, 'task status' to check running state.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2347,7 +2440,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "stop <task>",
-        "Stop a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
+        "Stop a CDC/streaming task. Use 'task start' to resume, 'task status' to confirm stopped state.",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
           const format = argv.format
@@ -2375,7 +2468,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         ["undeploy <task>","offline <task>"],
-        "Take a task offline (clears all run instances, irreversible)",
+        "Take a task offline — clears all run instances (irreversible). Published tasks must be taken offline before they can be deleted.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2657,7 +2750,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .command("flow", "Flow task operations", (flowYargs) =>
+      .command("flow", "Flow (composite) task operations. Workflow: task create --type FLOW → flow create-node (repeat) → flow node-save (each) → flow node-save-config (each) → flow bind → flow submit", (flowYargs) =>
         flowYargs
           .command(
             "dag <task>",
@@ -2721,17 +2814,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("name", { type: "string", describe: "Node name" })
-                .option("node-id", { type: "number", describe: "Node ID" }),
+                .option("node-id", { type: "string", describe: "Node ID or name" }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --name or --node-id.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 const resp = await removeFlowNode(sc, {
                   fileId,
                   nodeId,
@@ -2775,6 +2865,34 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   dependencyNodeId: upstreamNodeId,
                   dependencyProjectId: sc.projectId,
                 })
+                // Verify the edge actually persisted — bind API has async write behavior
+                let verified = false
+                for (let attempt = 0; attempt < 3; attempt++) {
+                  if (attempt > 0) await new Promise((r) => setTimeout(r, 800))
+                  const verifyResp = await getFlowDag(sc, fileId)
+                  const verifyNodes = (verifyResp.data ?? []) as Record<string, unknown>[]
+                  const verifyDownstream = verifyNodes.find((n) => Number(n.id) === downstreamNodeId)
+                  const verifyDeps = (verifyDownstream?.dependencies ?? []) as Record<string, unknown>[]
+                  if (verifyDeps.some((d) => Number(d.dependencyNodeId) === upstreamNodeId)) {
+                    verified = true; break
+                  }
+                  // Not persisted yet — retry bind
+                  if (attempt < 2) {
+                    await bindFlowNode(sc, {
+                      currentFileId: fileId,
+                      currentNodeId: downstreamNodeId,
+                      currentProjectId: sc.projectId,
+                      dependencyFileId: fileId,
+                      dependencyNodeId: upstreamNodeId,
+                      dependencyProjectId: sc.projectId,
+                    }).catch(() => null)
+                  }
+                }
+                logOperation("task flow bind", { ok: verified })
+                if (!verified) {
+                  success({ ...resp.data as object, warning: "Bind API returned success but edge not confirmed in DAG. Run 'cz-cli task flow dag' to check, and retry if missing." }, { format, aiMessage: `Dependency bind returned success but could not be verified in DAG. Retry: cz-cli task flow bind ${argv.task} --upstream ${argv.upstream} --downstream ${argv.downstream}` })
+                  return
+                }
                 logOperation("task flow bind", { ok: true })
                 success(resp.data, { format, aiMessage: `Dependency bound. Add more bindings as needed, then publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
@@ -2824,18 +2942,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("node-id", { type: "number", describe: "Node ID" })
+                .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 const resp = await getFlowNodeDetail(sc, fileId, nodeId)
                 logOperation("task flow node-detail", { ok: true })
                 success(resp.data, { format })
@@ -2850,22 +2965,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("node-id", { type: "number", describe: "Node ID" })
+                .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("content", { type: "string" })
                 .option("file", { alias: "f", type: "string" })
-                .option("param", { type: "array", string: true, describe: "Set param with manual default: key=value" })
-                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow: key (no value needed)" }),
+                .option("param", { type: "array", string: true, describe: "Set param with manual default value (ref=0): key=value. Re-save replaces ALL params — include all desired params each time." })
+                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow (ref=2): key only, no value. At runtime, value comes from flow execution params." }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 // Require content or params
                 if (!argv.content && !argv.file && !(argv.param as string[] | undefined)?.length && !(argv["flow-param"] as string[] | undefined)?.length) {
                   error("INVALID_ARGUMENTS", "Provide --content, --file, --param, or --flow-param.", { format, exitCode: 2 })
@@ -2914,7 +3026,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("node-id", { type: "number", describe: "Node ID" })
+                .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("cron", { type: "string" })
                 .option("vc", { type: "string" })
@@ -2924,11 +3036,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 const resp = await saveFlowNodeConfig(sc, {
                   dataFileId: fileId,
                   nodeId,
@@ -2948,7 +3057,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "submit <task>",
-            "Submit/publish flow (saves schedule config)",
+            "Submit/publish flow (saves schedule config and persists all node params). Run with 'cz-cli task flow run <task> --param key=value' to pass flow params to child nodes at runtime.",
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
@@ -3022,7 +3131,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("vc", { type: "string", describe: "Virtual cluster code (default: DEFAULT)" })
-                .option("param", { type: "array", string: true, describe: "Override param value: key=value (can repeat)" }),
+                .option("param", { type: "array", string: true, describe: "Override manual param value (ref=0): key=value. Flow-shared params (ref=2) receive the flow execution param value." }),
             async (argv) => {
               const format = argv.format
               try {
@@ -3152,7 +3261,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "delete <task>",
-        "[🔴 DESTRUCTIVE] Delete a task in draft/offline state. Published tasks must be taken offline first. Requires confirmation.",
+        "[🔴 DESTRUCTIVE] Delete a task. Draft tasks: delete directly. Published tasks: undeploy first, then delete. Requires confirmation.",
         (y: Argv) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
@@ -3179,7 +3288,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "schedule-info <task>",
-        "Get published schedule state for a deployed task (cron, next run time, last run result, etc.)",
+        "Get published schedule state for a deployed task. Works for cron-scheduled tasks. For flow (composite) tasks, use 'task flow instances' instead — flows do not create standalone schedule entries.",
         (y) => y.positional("task", { type: "string", demandOption: true, describe: "Task name or ID" }),
         async (argv) => {
           const format = argv.format
@@ -3193,7 +3302,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               { env: "prod" },
             )
             logOperation("task schedule-info", { ok: true })
-            success(resp.data, { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
+            success(convertScheduleInfoFields(resp.data as Record<string, unknown>), { format, aiMessage: "This is the deployed (published) schedule state. For draft config use: cz-cli task content <task>" })
           } catch (err) {
             reportTaskError(err, format)
           }
@@ -3211,7 +3320,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const resp = await getAllDownstream(sc, fileId, sc.projectId)
-            const items = Array.isArray(resp.data) ? resp.data : []
+            const rawItems = (Array.isArray(resp.data) ? resp.data : []) as Record<string, unknown>[]
+            const items = rawItems.map((raw) => ({
+              task_id: raw.scheduleTaskId ?? raw.schedule_task_id,
+              task_name: raw.cycleTaskName ?? raw.cycle_task_name ?? raw.dataFileName,
+              task_type: raw.cycleTaskType ?? raw.cycle_task_type,
+              cron: raw.cronExpression ?? raw.cron_expression,
+              status: raw.taskStatus ?? raw.task_status,
+              vc: raw.vcCode ?? raw.vc_code,
+              path: raw.path,
+              owner: raw.taskOwnerCn ?? raw.task_owner_cn,
+            }))
             logOperation("task downstream", { ok: true })
             success(items, {
               format,
@@ -3243,11 +3362,17 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               scheduleEnv: "prod",
             })
             const times = Array.isArray(resp.data) ? resp.data : []
-            const limited = times.slice(0, argv.count as number)
+            // Fallback to local Quartz cron calculator when API returns empty
+            let next_runs: string[]
+            if (times.length > 0) {
+              next_runs = times.slice(0, argv.count as number) as string[]
+            } else {
+              next_runs = cronNextRuns(cronExpress, argv.count as number)
+            }
             logOperation("task cron-preview", { ok: true })
-            success({ cron: cronExpress, next_runs: limited, count: limited.length }, {
+            success({ cron: cronExpress, next_runs, count: next_runs.length }, {
               format,
-              aiMessage: `Next ${limited.length} scheduled run times for cron: ${cronExpress}`,
+              aiMessage: `Next ${next_runs.length} scheduled run times for cron: ${cronExpress}`,
             })
           } catch (err) {
             reportTaskError(err, format)

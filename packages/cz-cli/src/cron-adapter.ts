@@ -182,6 +182,78 @@ function encodeFromUi(param: UiParam): string {
   return crontab.join(" ")
 }
 
+/** Compute next N run times for a 7-field Quartz cron (sec min hr dom mon dow year). */
+export function cronNextRuns(expr: string, count = 5, from?: Date): string[] {
+  let fields: CronFields
+  try { fields = parseCron(expr) } catch { return [] }
+
+  const DOW_NAMES: Record<string, number> = { SUN:1,MON:2,TUE:3,WED:4,THU:5,FRI:6,SAT:7 }
+  const MON_NAMES: Record<string, number> = { JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12 }
+
+  function normalize(field: string, nameMap: Record<string, number>): string {
+    return field.replace(/[A-Z]+/g, (m) => String(nameMap[m] ?? m))
+  }
+
+  function expand(field: string, min: number, max: number, nameMap?: Record<string, number>): Set<number> {
+    const f = nameMap ? normalize(field.toUpperCase(), nameMap) : field
+    if (f === "*" || f === "?") {
+      const s = new Set<number>()
+      for (let i = min; i <= max; i++) s.add(i)
+      return s
+    }
+    const s = new Set<number>()
+    for (const part of f.split(",")) {
+      if (part.includes("/")) {
+        const [rangeStr, stepStr] = part.split("/")
+        const step = parseInt(stepStr, 10)
+        const [lo, hi] = rangeStr === "*" ? [min, max] : rangeStr.split("-").map(Number)
+        for (let v = lo ?? min; v <= (hi ?? max); v += step) s.add(v)
+      } else if (part.includes("-")) {
+        const [lo, hi] = part.split("-").map(Number)
+        for (let v = lo; v <= hi; v++) s.add(v)
+      } else {
+        const n = parseInt(part, 10)
+        if (!isNaN(n)) s.add(n)
+      }
+    }
+    return s
+  }
+
+  const seconds = expand(fields.second, 0, 59)
+  const minutes = expand(fields.minute, 0, 59)
+  const hours   = expand(fields.hour, 0, 23)
+  const months  = expand(fields.month, 1, 12, MON_NAMES)
+  // day-of-week: 1=Sun…7=Sat in Quartz; JS getDay(): 0=Sun…6=Sat
+  const dowField = fields.week === "?" ? null : expand(fields.week, 1, 7, DOW_NAMES)
+  const domField = fields.day === "?" ? null : expand(fields.day, 1, 31)
+
+  const results: string[] = []
+  // Start from next second after `from`
+  const start = new Date(from ?? new Date())
+  start.setMilliseconds(0)
+  start.setSeconds(start.getSeconds() + 1)
+
+  let d = new Date(start)
+  const limit = new Date(start)
+  limit.setFullYear(limit.getFullYear() + 2) // search max 2 years ahead
+
+  while (results.length < count && d < limit) {
+    if (!months.has(d.getMonth() + 1)) { d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() + 1); continue }
+    if (domField && !domField.has(d.getDate())) { d.setDate(d.getDate() + 1); d.setHours(0,0,0,0); continue }
+    if (dowField) {
+      const jsDay = d.getDay() // 0=Sun
+      const quartzDay = jsDay === 0 ? 1 : jsDay + 1 // Sun=1, Mon=2…Sat=7
+      if (!dowField.has(quartzDay)) { d.setDate(d.getDate() + 1); d.setHours(0,0,0,0); continue }
+    }
+    if (!hours.has(d.getHours())) { d.setHours(d.getHours() + 1); d.setMinutes(0,0,0); continue }
+    if (!minutes.has(d.getMinutes())) { d.setMinutes(d.getMinutes() + 1); d.setSeconds(0,0); continue }
+    if (!seconds.has(d.getSeconds())) { d.setSeconds(d.getSeconds() + 1); d.setMilliseconds(0); continue }
+    results.push(d.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC"))
+    d.setSeconds(d.getSeconds() + 1)
+  }
+  return results
+}
+
 /**
  * Convert agent cron expression to Studio-compatible format.
  * Validates, decodes to UI params, re-encodes with constraints.
