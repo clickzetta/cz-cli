@@ -734,7 +734,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
     yargs
       .command(
         "list",
-        "List tasks",
+        "List tasks. Use --type, --like, --folder to filter. Shows task_id, task_name, task_type, task_edit_state (10=draft, 20=published, 100=offline).",
         (y) =>
           y
             .option("page", { type: "number", default: 1 })
@@ -882,7 +882,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create <name>",
-        "Create a SQL/Python/Shell script task",
+        "Create a SQL/Python/Shell script task. Typical workflow: create → save-content --content '...' → save-config --vc <vc> → deploy",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
@@ -1988,7 +1988,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "save-cron <task>",
-        "Save cron schedule configuration (preserves non-cron settings)",
+        "Save cron schedule configuration (preserves non-cron settings). Cron expression uses ClickZetta 7-field format: sec min hr day month weekday year. e.g. '0 30 9 * * ? *' = daily 09:30.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2247,7 +2247,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         ["deploy <task>", "online <task>"],
-        "Publish/online a task",
+        "Publish/online a task. Prerequisites: task must have content (save-content) and configuration (save-config). Published tasks are scheduled or runnable.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2353,7 +2353,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "start <task>",
-        "Start a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
+        "Start a CDC/streaming task. Only for deployed MULTI_REALTIME/REALTIME/STREAMING tasks. Use 'task stop' to pause, 'task status' to check running state.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2442,7 +2442,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "stop <task>",
-        "Stop a CDC/streaming task (MULTI_REALTIME, REALTIME, STREAMING types)",
+        "Stop a CDC/streaming task. Use 'task start' to resume, 'task status' to confirm stopped state.",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
           const format = argv.format
@@ -2470,7 +2470,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         ["undeploy <task>","offline <task>"],
-        "Take a task offline (clears all run instances, irreversible)",
+        "Take a task offline — clears all run instances (irreversible). Published tasks must be taken offline before they can be deleted.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
@@ -2752,7 +2752,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .command("flow", "Flow task operations", (flowYargs) =>
+      .command("flow", "Flow (composite) task operations. Workflow: task create --type FLOW → flow create-node (repeat) → flow node-save (each) → flow node-save-config (each) → flow bind → flow submit", (flowYargs) =>
         flowYargs
           .command(
             "dag <task>",
@@ -3263,7 +3263,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "delete <task>",
-        "[🔴 DESTRUCTIVE] Delete a task in draft/offline state. Published tasks must be taken offline first. Requires confirmation.",
+        "[🔴 DESTRUCTIVE] Delete a task. Draft tasks: delete directly. Published tasks: undeploy first, then delete. Requires confirmation.",
         (y: Argv) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })

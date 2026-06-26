@@ -280,7 +280,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
       // ── list ──────────────────────────────────────────────────────────
       .command(
         "list",
-        "List data sources",
+        "List all data sources. Use --name to filter, --type to filter by db type. After listing, use 'datasource test <name>' to verify connectivity.",
         (y) =>
           y
             .option("name", { type: "string", describe: "Filter by name (fuzzy)" })
@@ -428,7 +428,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
       // ── test ──────────────────────────────────────────────────────────
       .command(
         "test <datasource>",
-        "Test data source connectivity",
+        "Test data source connectivity. Returns {connected: true/false} with latency. Use before creating sync tasks to verify the datasource is reachable.",
         (y) =>
           y.positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" }),
         async (argv) => {
