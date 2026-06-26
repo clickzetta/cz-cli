@@ -1311,21 +1311,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create-setup <name>",
-        "Create a script task with content and schedule configured in one step",
+        "One-step: create + save-content + save-cron + save-config. Equivalent to running create, save-content, save-cron, and save-config separately. For CDC/realtime tasks use 'create-realtime-sync' instead.",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC, etc." })
-            .option("folder", { type: "string", describe: "Folder ID or name (required; root directory not allowed)" })
-            .option("content", { type: "string", describe: "Script content" })
-            .option("file", { alias: "f", type: "string", describe: "Read script from file" })
-            .option("cron", { type: "string", describe: "Cron expression (5/6/7 fields)" })
-            .option("vc", { type: "string", describe: "Virtual cluster code" })
-            .option("schema", { type: "string", describe: "Schema name" })
-            .option("description", { type: "string", describe: "Task description" })
-            .option("params", { type: "string", describe: 'Runtime parameters JSON, e.g. \'{"bizdate":"bizdate","city":"beijing"}\'' })
-            .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (auto-resolves dsType)" })
-            .option("database", { type: "string", describe: "JDBC database/schema name to USE after connecting" }),
+            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL (sql/query), PYTHON, SHELL, JDBC, FLOW" })
+            .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
+            .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
+            .option("file", { alias: "f", type: "string", describe: "Read script from file path. Alternative to --content. Use 'cat > script.sql' then --file script.sql for multi-line scripts." })
+            .option("cron", { type: "string", describe: "Cron expression — ClickZetta 7-field format: sec min hr day month weekday year. e.g. '0 30 9 * * ? *' = daily 09:30, '0 0/5 * * * ? *' = every 5 min. Omit for manual-only tasks." })
+            .option("vc", { type: "string", describe: "Virtual cluster code, e.g. CZCODE_DI. Use 'cz-cli --vcluster <vc>' to set globally for the session." })
+            .option("params", { type: "string", describe: 'Runtime parameters JSON. Values matching system param names (bizdate, sys_biz_day, sys_plan_day) are auto-detected. e.g. \'{"city":"beijing","dt":"bizdate"}\' — "beijing"=literal, "bizdate"=system param.' })
+            .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (JDBC tasks only)" })
+            .option("database", { type: "string", describe: "JDBC database/schema name (JDBC tasks only)" }),
         async (argv) => {
           const format = argv.format
           try {
