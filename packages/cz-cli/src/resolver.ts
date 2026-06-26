@@ -232,7 +232,14 @@ export async function resolveNodeId(
     }
   }
 
-  const match = nodes.find((n) => String(n.fileName) === nodeName)
-  if (match) return Number(match.id)
-  return fail("NODE_NOT_FOUND", `Node '${nodeName}' not found in flow ${taskId}.`, format)
+  const matches = nodes.filter((n) => String(n.fileName) === nodeName)
+  if (matches.length === 0) {
+    const names = nodes.map((n) => `${String(n.fileName ?? "?")} (id=${n.id})`).join(", ")
+    return fail("NODE_NOT_FOUND", `Node '${nodeName}' not found in flow ${taskId}. Available nodes: ${names || "(none)"}`, format)
+  }
+  if (matches.length > 1) {
+    const ids = matches.map((n) => n.id).join(", ")
+    process.stderr.write(`⚠️  Multiple nodes named '${nodeName}' found (ids: ${ids}) in flow ${taskId}. Using the first match (id=${matches[0].id}). Use --node-id <number> to disambiguate.\n`)
+  }
+  return Number(matches[0].id)
 }

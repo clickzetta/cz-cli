@@ -31,6 +31,19 @@ import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
 import { resolveTaskId, resolveNodeId, resolveFolderIdByName } from "../resolver.js"
+
+/** Resolve a --node-id value handler, numeric string, or node name. */
+async function resolveNodeArg(
+  sc: StudioConfig,
+  fileId: number,
+  raw: string | number | undefined,
+  format: string,
+): Promise<number> {
+  if (raw === undefined || raw === null) handledError("INVALID_ARGUMENTS", "Provide --node-id.", { format })
+  const n = Number(raw)
+  if (!isNaN(n)) return n
+  return resolveNodeId(sc, fileId, String(raw), format)
+}
 import { studioUrl } from "./studio-url.js"
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
@@ -2762,17 +2775,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("name", { type: "string", describe: "Node name" })
-                .option("node-id", { type: "number", describe: "Node ID" }),
+                .option("node-id", { type: "string", describe: "Node ID or name" }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --name or --node-id.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 const resp = await removeFlowNode(sc, {
                   fileId,
                   nodeId,
@@ -2893,18 +2903,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("node-id", { type: "number", describe: "Node ID" })
+                .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" }),
             async (argv) => {
               const format = argv.format
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 const resp = await getFlowNodeDetail(sc, fileId, nodeId)
                 logOperation("task flow node-detail", { ok: true })
                 success(resp.data, { format })
@@ -2919,7 +2926,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("node-id", { type: "number", describe: "Node ID" })
+                .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("content", { type: "string" })
                 .option("file", { alias: "f", type: "string" })
@@ -2930,11 +2937,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 // Require content or params
                 if (!argv.content && !argv.file && !(argv.param as string[] | undefined)?.length && !(argv["flow-param"] as string[] | undefined)?.length) {
                   error("INVALID_ARGUMENTS", "Provide --content, --file, --param, or --flow-param.", { format, exitCode: 2 })
@@ -2983,7 +2987,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("node-id", { type: "number", describe: "Node ID" })
+                .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("cron", { type: "string" })
                 .option("vc", { type: "string" })
@@ -2993,11 +2997,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               try {
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
-                let nodeId = argv["node-id"] as number | undefined
-                if (nodeId === undefined) {
-                  if (!argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
-                  nodeId = await resolveNodeId(sc, fileId, argv.name as string, format)
-                }
+                if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
+                const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 const resp = await saveFlowNodeConfig(sc, {
                   dataFileId: fileId,
                   nodeId,
