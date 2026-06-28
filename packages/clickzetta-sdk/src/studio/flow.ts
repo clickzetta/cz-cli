@@ -61,6 +61,7 @@ export interface SaveFlowNodeContentParams {
   instanceName: string
   paramValueList?: unknown[]
   vcCode?: string
+  vcId?: number | string
   schemaName?: string
 }
 
@@ -86,8 +87,17 @@ export interface SaveFlowNodeConfigParams {
   executeTimeout?: number
   executeTimeoutUnit?: string
   dataFileInputListReqs?: unknown[]
+  dataFileOutputListReqs?: unknown[]
   configProperties?: unknown
   taskPriority?: string
+  scheduleRateType?: number
+  schedule?: unknown[][]
+  frequency?: string
+  scheduleStartTime?: string
+  scheduleEndTime?: string
+  isScheduleRateTypeOff?: boolean
+  useActiveEndTime?: boolean
+  enableAutoMv?: boolean
 }
 
 export function getFlowDag(config: StudioConfig, dataFileId: number) {
@@ -264,6 +274,7 @@ export function saveFlowNodeContent(config: StudioConfig, params: SaveFlowNodeCo
         multiDataSource: [],
         schema: params.schemaName ?? "public",
         adhocVcCode: params.vcCode ?? "DEFAULT",
+        ...(params.vcId !== undefined && { adhocVcId: params.vcId }),
       }),
       extendConfigs: null,
     },
@@ -317,14 +328,21 @@ export function saveFlowNodeConfig(config: StudioConfig, params: SaveFlowNodeCon
       executeTimeout: params.executeTimeout,
       executeTimeoutUnit: params.executeTimeoutUnit,
       dataFileInputListReqs: params.dataFileInputListReqs,
-      dataFileOutputListReqs: [],
+      dataFileOutputListReqs: params.dataFileOutputListReqs ?? [],
       configProperties: params.configProperties,
       taskPriority: params.taskPriority ?? "1",
-      scheduleRateType: 2,
+      scheduleRateType: params.scheduleRateType ?? 2,
       scheduleType: 1,
       fileCreateType: 1,
       scheduleCreatedType: "2",
       scheduleConfigType: "1",
+      ...(params.schedule !== undefined && { schedule: params.schedule }),
+      ...(params.frequency !== undefined && { frequency: params.frequency }),
+      ...(params.scheduleStartTime !== undefined && { scheduleStartTime: params.scheduleStartTime }),
+      ...(params.scheduleEndTime !== undefined && { scheduleEndTime: params.scheduleEndTime }),
+      ...(params.isScheduleRateTypeOff !== undefined && { isScheduleRateTypeOff: params.isScheduleRateTypeOff }),
+      ...(params.useActiveEndTime !== undefined && { useActiveEndTime: params.useActiveEndTime }),
+      ...(params.enableAutoMv !== undefined && { enableAutoMv: params.enableAutoMv }),
     },
     {
       tenantId: String(config.tenantId),

@@ -30,6 +30,49 @@ export interface CronResult {
 
 function pad2(v: number): string { return v.toString().padStart(2, "0") }
 
+const STUDIO_WEEKDAY_NAMES: Record<string, number> = {
+  MON: 1,
+  TUE: 2,
+  WED: 3,
+  THU: 4,
+  FRI: 5,
+  SAT: 6,
+  SUN: 7,
+}
+
+function expandStudioWeekdays(value: string): string[] {
+  const result: string[] = []
+  for (const rawPart of value.toUpperCase().split(",")) {
+    const part = rawPart.trim()
+    if (!part) continue
+    const toDay = (token: string) => {
+      const named = STUDIO_WEEKDAY_NAMES[token]
+      if (named !== undefined) return named
+      const numeric = Number(token)
+      return Number.isInteger(numeric) && numeric >= 1 && numeric <= 7 ? numeric : undefined
+    }
+    if (part.includes("-")) {
+      const [rawStart, rawEnd] = part.split("-", 2)
+      const start = toDay(rawStart)
+      const end = toDay(rawEnd)
+      if (start === undefined || end === undefined) {
+        result.push(part)
+        continue
+      }
+      if (start <= end) {
+        for (let day = start; day <= end; day++) result.push(String(day))
+        continue
+      }
+      for (let day = start; day <= 7; day++) result.push(String(day))
+      for (let day = 1; day <= end; day++) result.push(String(day))
+      continue
+    }
+    const day = toDay(part)
+    result.push(day === undefined ? part : String(day))
+  }
+  return Array.from(new Set(result))
+}
+
 export function parseCron(expr: string): CronFields {
   const parts = expr.trim().split(/\s+/)
   if (parts.length === 5) {
@@ -81,7 +124,7 @@ function decodeToUi(fields: CronFields): { param: UiParam; warnings: string[]; e
   if (fields.day !== "*" && fields.day !== "?") {
     param.schedule = fields.day.split(",").map(d => ["daily", d])
   } else if (fields.week !== "*" && fields.week !== "?") {
-    param.schedule = fields.week.split(",").map(d => ["weekly", d])
+    param.schedule = expandStudioWeekdays(fields.week).map(d => ["weekly", d])
   }
 
   const { minute, hour } = fields

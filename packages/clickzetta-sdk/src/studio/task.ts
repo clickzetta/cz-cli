@@ -24,6 +24,8 @@ export interface GetTaskConfigDetailParams {
   projectId: number
   workspaceId: number
   dataFileId: number
+  nodeId?: number
+  collectType?: number
 }
 
 export interface ParseTaskDependencyOutParams {
@@ -72,6 +74,13 @@ export interface SaveTaskConfigParams {
   connectionParam?: string
   dataFileVersion?: number
   scheduleRateType?: number
+  schedule?: unknown[][]
+  frequency?: string
+  scheduleStartTime?: string
+  scheduleEndTime?: string
+  isScheduleRateTypeOff?: boolean
+  useActiveEndTime?: boolean
+  enableAutoMv?: boolean
   triggerType?: number
   fileType?: number
   dataFileName?: string
@@ -134,6 +143,8 @@ export function getTaskConfigDetail(config: StudioConfig, params: GetTaskConfigD
       projectId: params.projectId,
       workspaceId: params.workspaceId,
       dataFileId: params.dataFileId,
+      ...(params.nodeId !== undefined && { nodeId: params.nodeId }),
+      ...(params.collectType !== undefined && { collectType: params.collectType }),
     },
   )
 }
@@ -207,6 +218,13 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       fileCreateType: 1,
       scheduleCreatedType: "2",
       scheduleConfigType: "1",
+      ...(params.schedule !== undefined && { schedule: params.schedule }),
+      ...(params.frequency !== undefined && { frequency: params.frequency }),
+      ...(params.scheduleStartTime !== undefined && { scheduleStartTime: params.scheduleStartTime }),
+      ...(params.scheduleEndTime !== undefined && { scheduleEndTime: params.scheduleEndTime }),
+      ...(params.isScheduleRateTypeOff !== undefined && { isScheduleRateTypeOff: params.isScheduleRateTypeOff }),
+      ...(params.useActiveEndTime !== undefined && { useActiveEndTime: params.useActiveEndTime }),
+      ...(params.enableAutoMv !== undefined && { enableAutoMv: params.enableAutoMv }),
       ...(params.triggerType !== undefined && { triggerType: params.triggerType }),
       ...(params.fileType !== undefined && { fileType: params.fileType }),
       ...(params.dataFileName !== undefined && { dataFileName: params.dataFileName }),

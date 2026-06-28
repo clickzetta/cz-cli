@@ -49,8 +49,40 @@ import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { resolveDatasource } from "./datasource.js"
-import { convertAgentCron, cronNextRuns } from "../cron-adapter.js"
+import { convertAgentCron, cronNextRuns, type CronResult } from "../cron-adapter.js"
 import { registerTaskIntegrationCommands } from "./integration.js"
+import {
+  StudioCdcDeployStatus,
+  StudioCdcRunStatus,
+  StudioDependencyStrategy,
+  StudioFileType,
+  StudioLineageAddMethod,
+  StudioRerunProperty,
+  StudioScheduleRateType,
+  StudioSelfDependsJob,
+  StudioTaskEditState,
+  StudioTaskRunStatus,
+  StudioTaskRunType,
+  StudioTriggerType,
+  CLI_TASK_TYPE_ALIASES,
+  CDC_FILE_TYPES,
+  DEPENDENCY_OUTPUT_PARSE_FILE_TYPES,
+  FILE_TYPE_TO_TASK_TYPE,
+  INTEGRATION_FILE_TYPES,
+  SCRIPT_FILE_TYPES,
+  UI_ONLY_FILE_TYPES,
+  UI_ONLY_SYNC_FILE_TYPES,
+  addMethodName,
+  depStrategyName,
+  fileTypeName,
+  lineageTaskTypeName,
+  scheduleRateTypeName,
+  taskEditStateCliName,
+  taskEditStateStatName,
+  taskRunStatusName,
+  taskRunTypeName,
+  taskTypeName,
+} from "../studio-contracts.js"
 
 function formatIsoStartOfDay(value: string | undefined | null): string {
   if (!value) return new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
@@ -62,26 +94,14 @@ function formatIsoStartOfDay(value: string | undefined | null): string {
 
 
 
-const TASK_TYPE_MAP: Record<string, number> = {
-  SQL: 4, LAKEHOUSE: 4, PYTHON: 7, SHELL: 5, JDBC: 15,
-  SPARK: 400, FLOW: 500, INTEGRATION: 1, DI: 1,
-  REALTIME: 14, CDC: 14, DYNAMIC_TABLE: 16, DT: 16,
-  STREAMING: 17, CONTINUOUS: 17,
-  FULL_INCREMENTAL: 280, MULTI_REALTIME: 281, MULTI_DI: 291,
-  DATABRICKS_SQL: 300, DATABRICKS_NOTEBOOK: 301,
-  VIRTUAL: 0,
-}
-
 function parseTaskType(value: string): number {
   const upper = value.toUpperCase()
-  if (upper in TASK_TYPE_MAP) return TASK_TYPE_MAP[upper]
+  if (upper in CLI_TASK_TYPE_ALIASES) return CLI_TASK_TYPE_ALIASES[upper]
   const n = parseInt(value, 10)
   if (!isNaN(n)) return n
-  throw new Error(`Unsupported task type: ${value}. Use SQL/PYTHON/SHELL/SPARK/FLOW or integer code.`)
+  throw new Error(`Unsupported task type: ${value}. Use SQL/PYTHON/SHELL/JDBC/CONDITION/SPARK/FLOW or integer code.`)
 }
 
-const UI_ONLY_TYPES = new Set([400, 500, 1, 14, 16, 17, 280, 281, 291, 300, 301])
-const DEPENDENCY_OUTPUT_PARSE_TYPES = new Set([1, 4])
 const LINEAGE_ROW_FORMATS = new Set(["table", "csv", "text", "jsonl"])
 
 const SYSTEM_PARAM_NAMES = new Set([
@@ -282,7 +302,7 @@ async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> 
   const detail = await getTaskDetail(sc, fileId)
   const data = detail.data as Record<string, unknown> | undefined
   const fileType = Number(data?.fileType ?? data?.file_type ?? 0)
-  return UI_ONLY_TYPES.has(fileType)
+  return UI_ONLY_FILE_TYPES.has(fileType)
 }
 
 function normalizeCron(value: string): string {
@@ -333,9 +353,9 @@ function parseDependencyTasks(raw: string, format: string | undefined, projectId
     if (!fileId) handledError("INVALID_ARGUMENTS", `--dep-tasks[${index}]: taskId is required`, { format })
     if (!fileName) handledError("INVALID_ARGUMENTS", `--dep-tasks[${index}]: taskName is required`, { format })
     return {
-      parseType: "1",
+      parseType: String(StudioLineageAddMethod.Manual),
       dependencyProjectId: projectId,
-      depStrategy: item.dep_strategy ?? item.depStrategy ?? 0,
+      depStrategy: item.dep_strategy ?? item.depStrategy ?? StudioDependencyStrategy.Default,
       dependencyFileId: fileId,
       dependencyFileName: fileName,
     }
@@ -380,9 +400,64 @@ function parseOutputTables(
       ...(context.ownerEnName != null ? { ownerEnName: context.ownerEnName } : {}),
       fileShowName: showName,
       refTableName: tableName,
-      parseType: Number(record.addMethod ?? record.add_method ?? record.parseType ?? 1),
+      parseType: Number(record.addMethod ?? record.add_method ?? record.parseType ?? StudioLineageAddMethod.Manual),
     }
   })
+}
+
+function conditionBranches(content: unknown): Array<{ outputName: string; sequence?: string }> {
+  const parsed = (() => {
+    if (typeof content !== "string") return content
+    try { return JSON.parse(content) } catch { return undefined }
+  })()
+  if (!isRecord(parsed) || !isRecord(parsed.conditionConfig)) return []
+  const config = parsed.conditionConfig
+  const branches = getObjectList(config.branches)
+    .map((branch) => ({
+      outputName: String(branch.outputName ?? "").trim(),
+      sequence: branch.sequence == null ? undefined : String(branch.sequence),
+    }))
+    .filter((branch) => branch.outputName)
+  const defaultOutputName = String(config.defaultOutputName ?? "").trim()
+  const withDefault = defaultOutputName
+    ? [...branches, { outputName: defaultOutputName, sequence: config.defaultSequence == null ? undefined : String(config.defaultSequence) }]
+    : branches
+  const seen = new Set<string>()
+  return withDefault.filter((branch) => {
+    if (seen.has(branch.outputName)) return false
+    seen.add(branch.outputName)
+    return true
+  })
+}
+
+function conditionOutputTables(
+  content: unknown,
+  context: {
+    projectId: number
+    fileId: number
+    taskName: string
+    workspaceName: string
+    flowName?: string
+    dataFileVersion?: unknown
+  },
+): Record<string, unknown>[] {
+  const fileShowName = context.flowName
+    ? `${context.workspaceName}.${context.flowName}.${context.taskName}`
+    : `${context.workspaceName}.${context.taskName}`
+  return conditionBranches(content).map((branch) => ({
+    projectId: context.projectId,
+    dataFileId: context.fileId,
+    dataFileVersion: Number(context.dataFileVersion ?? 0),
+    dataFileName: context.taskName,
+    ownerCnName: "",
+    ownerEnName: "",
+    fileShowName,
+    refTableName: branch.outputName,
+    parseType: StudioLineageAddMethod.SystemParsed,
+    nodeId: null,
+    nodeName: null,
+    sequence: null,
+  }))
 }
 
 // Recover output table records from a quote-stripped or fragment-split blob.
@@ -411,7 +486,7 @@ function getObjectList(value: unknown): Record<string, unknown>[] {
 function normalizeDependencyStrategy(dep: Record<string, unknown>): Record<string, unknown> {
   return {
     ...dep,
-    depStrategy: dep.depStrategy ?? dep.dep_strategy ?? 0,
+    depStrategy: dep.depStrategy ?? dep.dep_strategy ?? StudioDependencyStrategy.Default,
   }
 }
 
@@ -431,7 +506,20 @@ async function parseLineageForSave(sc: StudioConfig, fileId: number, schemaName:
     dataFileInputListReqs: configList(oldData.dataFileDependencyDTOS).map(normalizeDependencyStrategy),
     dataFileOutputListReqs: configList(oldData.fileOutputTableDTOS),
   }
-  if (!autoLineage || !DEPENDENCY_OUTPUT_PARSE_TYPES.has(fileType)) return fallback
+  if (fileType === StudioFileType.Condition) {
+    const outputs = conditionOutputTables(detailObj.fileContent ?? detailObj.dataFileContent ?? "", {
+      projectId: sc.projectId,
+      fileId,
+      taskName: String(fallback.taskName),
+      workspaceName: sc.workspaceName,
+      dataFileVersion: oldData.dataFileVersion ?? detailObj.dataFileVersion,
+    })
+    return {
+      ...fallback,
+      dataFileOutputListReqs: outputs.length > 0 ? outputs : fallback.dataFileOutputListReqs,
+    }
+  }
+  if (!autoLineage || !DEPENDENCY_OUTPUT_PARSE_FILE_TYPES.has(fileType)) return fallback
 
   const resp = await parseTaskDependencyOut(sc, {
     projectId: sc.projectId,
@@ -464,34 +552,47 @@ async function resolveScheduleVc(sc: StudioConfig, argv: Record<string, unknown>
   return { etlVcCode, etlVcId }
 }
 
-function addMethodName(value: unknown): "manual" | "system_parsed" | "unknown" {
-  const code = Number(value)
-  if (code === 1) return "manual"
-  if (code === 2) return "system_parsed"
-  return "unknown"
+function parseConfigProperties(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try { return JSON.parse(value) as Record<string, unknown> } catch { return {} }
+  }
+  return isRecord(value) ? value : {}
 }
 
-function lineageTaskTypeName(value: unknown): "integration" | "sql" | "unknown" {
-  const code = Number(value)
-  if (code === 1) return "integration"
-  if (code === 4) return "sql"
-  return "unknown"
+function scheduleDateTimeIso(activeStartTime: unknown, clock: string | null | undefined) {
+  if (!clock) return undefined
+  const [hour, minute] = clock.split(":").map(Number)
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return undefined
+  const base = activeStartTime ? new Date(String(activeStartTime)) : new Date()
+  return new Date(base.getFullYear(), base.getMonth(), base.getDate(), hour, minute, 0, 0).toISOString()
 }
 
-function scheduleRateTypeName(value: unknown): "minute" | "hourly" | "daily" | "weekly" | "monthly" | "unknown" {
-  const code = Number(value)
-  if (code === 1) return "minute"
-  if (code === 2) return "hourly"
-  if (code === 3) return "daily"
-  if (code === 4) return "weekly"
-  if (code === 5) return "monthly"
-  return "unknown"
+function studioScheduleFieldsFromCron(cronResult: CronResult, activeStartTime: unknown, configProperties: unknown) {
+  const config = parseConfigProperties(configProperties)
+  const scheduleStartTime = scheduleDateTimeIso(activeStartTime, cronResult.uiParam.scheduleStartTime)
+  const scheduleEndTime = scheduleDateTimeIso(activeStartTime, cronResult.uiParam.scheduleEndTime)
+  return {
+    scheduleRateType: StudioScheduleRateType.Day,
+    schedule: cronResult.uiParam.schedule,
+    frequency: cronResult.uiParam.frequency,
+    ...(scheduleStartTime !== undefined && { scheduleStartTime }),
+    ...(scheduleEndTime !== undefined && { scheduleEndTime }),
+    isScheduleRateTypeOff: false,
+    useActiveEndTime: false,
+    enableAutoMv: Boolean(config.enableAutoMv),
+  }
 }
 
-function depStrategyName(value: unknown): "default" | "unknown" {
-  const code = Number(value)
-  if (code === 0) return "default"
-  return "unknown"
+function existingStudioScheduleFields(data: Record<string, unknown>) {
+  return {
+    ...(Array.isArray(data.schedule) && { schedule: data.schedule as unknown[][] }),
+    ...(data.frequency !== undefined && { frequency: String(data.frequency) }),
+    ...(data.scheduleStartTime !== undefined && { scheduleStartTime: String(data.scheduleStartTime) }),
+    ...(data.scheduleEndTime !== undefined && { scheduleEndTime: String(data.scheduleEndTime) }),
+    ...(data.isScheduleRateTypeOff !== undefined && { isScheduleRateTypeOff: Boolean(data.isScheduleRateTypeOff) }),
+    ...(data.useActiveEndTime !== undefined && { useActiveEndTime: Boolean(data.useActiveEndTime) }),
+    ...(data.enableAutoMv !== undefined && { enableAutoMv: Boolean(data.enableAutoMv) }),
+  }
 }
 
 function normalizeParsedDependency(dep: Record<string, unknown>): Record<string, unknown> {
@@ -597,11 +698,6 @@ function normalizeParsedOutput(output: Record<string, unknown>): Record<string, 
 // ---------------------------------------------------------------------------
 // Field converter — mirrors MCP server convertTaskDetailFields
 // ---------------------------------------------------------------------------
-const FILE_TYPE_TO_TASK_TYPE: Record<number, number> = {
-  0: 0, 1: 10, 4: 23, 5: 24, 7: 26, 14: 28, 15: 29, 16: 30, 17: 31,
-  280: 280, 281: 281, 291: 291, 300: 300, 301: 301, 400: 400, 500: 500,
-}
-
 const TASK_DETAIL_FIELDS: Record<string, string> = {
   id: "task_id", tenantId: "tenant_id", userId: "user_id", projectId: "project_id",
   location: "location", dataFolderId: "folder_id", dataFileName: "task_name",
@@ -722,7 +818,7 @@ function convertConfigFields(data: Record<string, unknown>): Record<string, unkn
       return {
         dependency_task_id: dep.dependencyFileId ?? dep.dataFileId,
         dependency_task_name: dep.dependencyFileName ?? dep.dataFileName,
-        dep_strategy: dep.depStrategy ?? 0,
+        dep_strategy: dep.depStrategy ?? StudioDependencyStrategy.Default,
       }
     })
   }
@@ -748,7 +844,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("type", {
               type: "string",
               describe:
-                "Task type: SQL, PYTHON, SHELL, JDBC, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
+                "Task type: SQL, PYTHON, SHELL, JDBC, CONDITION, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
             }),
         async (argv) => {
           const format = argv.format
@@ -890,7 +986,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               type: "string",
               demandOption: true,
               describe:
-                'Available options: SQL, PYTHON, SHELL, JDBC, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI"',
+                "Available options: SQL, PYTHON, SHELL, JDBC, CONDITION, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
             })
             .option("folder", { type: "string", describe: "Folder ID or name (required; root directory not allowed)" })
             .option("description", { type: "string", describe: "Task description" }),
@@ -1003,7 +1099,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             // Step 5: create task
             const created = await createTask(sc, {
-              fileType: "281",
+              fileType: String(StudioFileType.MultipleRISync),
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
@@ -1175,7 +1271,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
 
             // Step 5: create task
             const created = await createTask(sc, {
-              fileType: "14",
+              fileType: String(StudioFileType.RealTimeDI),
               createdBy: String(sc.userId),
               projectId: sc.projectId,
               dataFileName: argv.name as string,
@@ -1315,7 +1411,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC. For FLOW/INTEGRATION/REALTIME tasks use dedicated create commands instead (e.g. 'task create --type FLOW', 'task create-realtime-sync')." })
+            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC, CONDITION. For FLOW/INTEGRATION/REALTIME tasks use dedicated create commands instead (e.g. 'task create --type FLOW', 'task create-realtime-sync')." })
             .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
             .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
             .option("file", { alias: "f", type: "string", describe: "Read script from file path. Alternative to --content. Use 'cat > script.sql' then --file script.sql for multi-line scripts." })
@@ -1357,7 +1453,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Step 1: create
             const parsedFileType = parseTaskType(argv.type as string)
             // UI_ONLY types: content must be configured in Studio UI
-            if (UI_ONLY_TYPES.has(parsedFileType)) {
+            if (UI_ONLY_FILE_TYPES.has(parsedFileType)) {
               const createResp = await createTask(sc, {
                 fileType: String(parsedFileType),
                 createdBy: String(sc.userId),
@@ -1434,8 +1530,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 }); return
                 }
                 const oldConfigProps: Record<string, unknown> = {}
-                if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
-                if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
+                const activeStartTime = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
                 await saveTaskConfig(sc, {
                   dataFileId: fileId,
                   projectId: sc.projectId,
@@ -1451,10 +1546,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   selfDependsJob: 0,
                   executeTimeout: 0,
                   executeTimeoutUnit: "m",
-                  activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                  activeStartTime,
                   activeEndTime: "2099-01-01T00:00:00.000Z",
                   dataFileInputListReqs: [],
                   configProperties: JSON.stringify(oldConfigProps),
+                  ...studioScheduleFieldsFromCron(cronResult, activeStartTime, oldConfigProps),
                   ...(paramValueList && { paramValueList }),
                 })
               }
@@ -1526,15 +1622,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileId = await resolveTaskId(sc, argv.task as string, format)
 
             // Parallel: draft detail + config + deployed schedule detail
-            const CDC_TYPES = new Set([14, 17, 280, 281, 291])
-
             // Pre-fetch getDetail to know fileType before deciding whether to call CDC run status
             const detail = await getTaskDetail(sc, fileId)
             const detailData = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Record<string, unknown>
             const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
               ? detailData.taskDetail : detailData) as Record<string, unknown>
             const fileType = Number(detailObj.fileType ?? 0)
-            const isCdcType = CDC_TYPES.has(fileType)
+            const isCdcType = CDC_FILE_TYPES.has(fileType)
 
             const [config, scheduleResp, cdcRunResp] = await Promise.all([
               getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
@@ -1543,7 +1637,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 { env: "prod" },
               ).catch(() => null),
               isCdcType
-                ? (fileType === 14
+                ? (fileType === StudioFileType.RealTimeDI
                   ? getCdcTaskRunStatus(sc, fileId).catch(() => null)           // REALTIME: use fileId directly
                   : detailObj.cdcTaskId != null
                     ? getCdcTaskRunStatus(sc, Number(detailObj.cdcTaskId)).catch(() => null)  // MULTI_REALTIME: use cdcTaskId
@@ -1555,39 +1649,45 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const scheduleConfig = convertConfigFields((configData.taskConfigurationDetail ??
               configData.task_configuration_detail ?? configData) as Record<string, unknown>)
 
-            const EDIT_STATE: Record<number, string> = { 10: "draft", 20: "published", 100: "offline" }
             const editState = Number(detailObj.fileFlowStatus ?? detailObj.fileStatus ?? 0)
 
             const scheduleData = scheduleResp?.data as Record<string, unknown> | null | undefined
 
-            // CDC run status: from /timelyTask/getDetail (taskStatus: 2=running, 4=stopped)
-            const CDC_RUN_STATUS: Record<number, string> = { 2: "running", 4: "stopped" }
+            const cdcRunStatusNames: Record<number, string> = {
+              [StudioCdcRunStatus.Running]: "running",
+              [StudioCdcRunStatus.Stopped]: "stopped",
+            }
             let cdcRunStatus: string | undefined
             if (isCdcType) {
               if (cdcRunResp) {
                 const cdcRunData = (cdcRunResp.data && typeof cdcRunResp.data === "object" ? cdcRunResp.data : {}) as Record<string, unknown>
                 const taskStatus = Number(cdcRunData.taskStatus ?? -1)
                 cdcRunStatus = (cdcRunData.taskStatusName as string | undefined)
-                  ?? CDC_RUN_STATUS[taskStatus]
+                  ?? cdcRunStatusNames[taskStatus]
                   ?? (taskStatus >= 0 ? String(taskStatus) : undefined)
               } else {
                 // API errors when task is not running — treat as stopped (if deployed)
-                const deployStatus = Number(detailObj.deployStatus ?? 0)
-                cdcRunStatus = deployStatus >= 1 ? "stopped" : "not_deployed"
+                const deployStatus = Number(detailObj.deployStatus ?? StudioCdcDeployStatus.NotDeployed)
+                cdcRunStatus = deployStatus >= StudioCdcDeployStatus.Deployed ? "stopped" : "not_deployed"
               }
             }
 
-            // Fallback: deployStatus from getDetail (1=deployed, not necessarily running)
-            const CDC_DEPLOY_STATUS: Record<number, string> = { 0: "not_deployed", 1: "deployed", 2: "running", 3: "stopped", 4: "failed" }
+            const cdcDeployStatusNames: Record<number, string> = {
+              [StudioCdcDeployStatus.NotDeployed]: "not_deployed",
+              [StudioCdcDeployStatus.Deployed]: "deployed",
+              [StudioCdcDeployStatus.Running]: "running",
+              [StudioCdcDeployStatus.Stopped]: "stopped",
+              [StudioCdcDeployStatus.Failed]: "failed",
+            }
             const cdcDeployStatus = isCdcType
-              ? (CDC_DEPLOY_STATUS[Number(detailObj.deployStatus ?? 0)] ?? String(detailObj.deployStatus ?? "unknown"))
+              ? (cdcDeployStatusNames[Number(detailObj.deployStatus ?? StudioCdcDeployStatus.NotDeployed)] ?? String(detailObj.deployStatus ?? "unknown"))
               : undefined
 
             logOperation("task status", { ok: true })
             success({
               task_id: fileId,
               task_name: detailObj.dataFileName ?? detailObj.task_name,
-              edit_state: EDIT_STATE[editState] ?? String(editState),
+              edit_state: taskEditStateCliName(editState),
               studio_url: studioUrl(sc, fileId),
               ...(isCdcType && {
                 cdc_status: cdcRunStatus ?? cdcDeployStatus,
@@ -1900,7 +2000,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const detailData = isRecord(detail.data) ? detail.data : {}
             const detailObj = isRecord(detailData.taskDetail) ? detailData.taskDetail : detailData
             const fileType = Number(detailObj.fileType ?? detailData.fileType)
-            if (!DEPENDENCY_OUTPUT_PARSE_TYPES.has(fileType)) {
+            if (!DEPENDENCY_OUTPUT_PARSE_FILE_TYPES.has(fileType)) {
               error("UNSUPPORTED_TASK_TYPE", "task lineage only supports SQL and integration tasks.", { format, exitCode: 2 })
               return
             }
@@ -2017,11 +2117,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               if (typeof raw === "string") { try { return JSON.parse(raw) } catch { return {} } }
               return typeof raw === "object" && raw ? raw : {}
             })() as Record<string, unknown>
-            // Python: pop old schedule times, then add new from ui_param
             delete oldConfigProps["scheduleStartTime"]
             delete oldConfigProps["scheduleEndTime"]
-            if (cronResult.uiParam.scheduleStartTime) oldConfigProps["scheduleStartTime"] = cronResult.uiParam.scheduleStartTime
-            if (cronResult.uiParam.scheduleEndTime) oldConfigProps["scheduleEndTime"] = cronResult.uiParam.scheduleEndTime
 
             const schemaName = (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public"
             const lineage = await parseLineageForSave(sc, fileId, schemaName, oldData, Boolean(argv["auto-lineage"]))
@@ -2043,6 +2140,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const cronDetailData = (cronDetailResp.data && typeof cronDetailResp.data === "object" ? cronDetailResp.data : {}) as Record<string, unknown>
             const cronDetailObj = (typeof cronDetailData.taskDetail === "object" && cronDetailData.taskDetail !== null ? cronDetailData.taskDetail : cronDetailData) as Record<string, unknown>
             const cronExistingParams = (cronDetailObj.paramValueList ?? cronDetailData.paramValueList) as unknown[] | undefined
+            const activeStartTime = formatIsoStartOfDay(oldData.activeStartTime as string | undefined)
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
@@ -2057,15 +2155,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               retryCount: (oldData.retryCount as number | undefined) ?? 1,
               retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
               retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
-              rerunProperty: String((oldData.rerunProperty as number | undefined) ?? 3),
-              selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? 0,
+              rerunProperty: String((oldData.rerunProperty as number | undefined) ?? StudioRerunProperty.NotRerun),
+              selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? StudioSelfDependsJob.No,
               executeTimeout: (oldData.executeTimeout as number | undefined) ?? 0,
               executeTimeoutUnit: (oldData.executeTimeoutUnit as string | undefined) ?? "m",
-              activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
+              activeStartTime,
               activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
               dataFileInputListReqs: lineage.dataFileInputListReqs,
               dataFileOutputListReqs: outputTables,
               configProperties: JSON.stringify(oldConfigProps),
+              ...studioScheduleFieldsFromCron(cronResult, activeStartTime, oldConfigProps),
               ...(cronExistingParams && cronExistingParams.length > 0 && { paramValueList: cronExistingParams }),
             })
             logOperation("task save-cron", { ok: true })
@@ -2177,13 +2276,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               retryCount: (argv["retry-count"] as number | undefined) ?? (oldData.retryCount as number | undefined) ?? 1,
               retryIntervalTime: (argv["retry-interval"] as number | undefined) ?? (oldData.retryIntervalTime as number | undefined) ?? 1,
               retryIntervalTimeUnit: (argv["retry-unit"] as string | undefined) ?? (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
-              rerunProperty: String((argv["rerun-property"] as number | undefined) ?? (oldData.rerunProperty as number | undefined) ?? 3),
-              selfDependsJob: (argv["self-depends"] as number | undefined) ?? (oldData.selfDependsJob as number | undefined) ?? 0,
+              rerunProperty: String((argv["rerun-property"] as number | undefined) ?? (oldData.rerunProperty as number | undefined) ?? StudioRerunProperty.NotRerun),
+              selfDependsJob: (argv["self-depends"] as number | undefined) ?? (oldData.selfDependsJob as number | undefined) ?? StudioSelfDependsJob.No,
               executeTimeout: (argv.timeout as number | undefined) ?? (oldData.executeTimeout as number | undefined),
               executeTimeoutUnit: (argv["timeout-unit"] as string | undefined) ?? (oldData.executeTimeoutUnit as string | undefined) ?? "m",
               dataFileInputListReqs: deps,
               dataFileOutputListReqs: outputTables,
               configProperties: oldData.configProperties ?? "{}",
+              ...existingStudioScheduleFields(oldData),
               ...(paramValueList && { paramValueList }),
             })
             // Save params separately via saveTaskContent (paramValueList is stored with content, not config)
@@ -2229,12 +2329,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const dependencies = depDtos.map((d) => ({
               dependency_task_id: d.dependencyFileId ?? d.dataFileId,
               dependency_task_name: d.dependencyFileName ?? d.dataFileName,
-              dep_strategy: d.depStrategy ?? 0,
+              dep_strategy: d.depStrategy ?? StudioDependencyStrategy.Default,
               dependency_project_id: d.dependencyProjectId,
             }))
             const result = {
               task_id: fileId,
-              self_depends_job: configData.selfDependsJob ?? 0,
+              self_depends_job: configData.selfDependsJob ?? StudioSelfDependsJob.No,
               dependencies,
             }
             logOperation("task deps", { ok: true })
@@ -2264,7 +2364,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileType = Number(
               taskDetailInner?.fileType ?? taskDetailInner?.file_type ?? 0,
             )
-            if (fileType === 500) {
+            if (fileType === StudioFileType.Flow) {
               error(
                 "TASK_ERROR",
                 "Flow tasks cannot be published with task online. Use: cz-cli task flow submit <task>",
@@ -2272,26 +2372,25 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               )
               return
             }
-            // For script-based tasks (SQL/Python/Shell/JDBC), check schedule config is saved
-            const SCRIPT_FILE_TYPES = new Set([4, 5, 7, 15])
-            // UI_ONLY sync types need source/target configured before deploy
-            const UI_ONLY_SYNC_TYPES = new Set([1, 14, 17, 280, 281, 291])
-            if (UI_ONLY_SYNC_TYPES.has(fileType)) {
+            if (UI_ONLY_SYNC_FILE_TYPES.has(fileType)) {
               const syncTypeName: Record<number, string> = {
-                1: "INTEGRATION (single-table sync)", 14: "REALTIME (single-table CDC)",
-                17: "STREAMING", 280: "FULL_INCREMENTAL", 281: "MULTI_REALTIME (multi-table CDC)",
-                291: "MULTI_DI (multi-table offline sync)",
+                [StudioFileType.DataIntegration]: "INTEGRATION (single-table sync)",
+                [StudioFileType.RealTimeDI]: "REALTIME (single-table CDC)",
+                [StudioFileType.ContinuousJob]: "STREAMING",
+                [StudioFileType.FullIncrementalSync]: "FULL_INCREMENTAL",
+                [StudioFileType.MultipleRISync]: "MULTI_REALTIME (multi-table CDC)",
+                [StudioFileType.MultipleDISync]: "MULTI_DI (multi-table offline sync)",
               }
               const typeName = syncTypeName[fileType] ?? `type=${fileType}`
-              if (fileType === 281 || fileType === 291) {
+              if (fileType === StudioFileType.MultipleRISync || fileType === StudioFileType.MultipleDISync) {
                 const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
                 if (!hasConfig) {
-                  const cmd = fileType === 281
+                  const cmd = fileType === StudioFileType.MultipleRISync
                     ? `cz-cli task save-realtime-sync ${fileId} --source <ds> --database <db>`
                     : `cz-cli task integration setup ${fileId} --sync-type multi --source-datasource <ds> --source-schema <db> --source-tables <t1,t2> --sink-datasource <lh_ds>`
                   error("NO_SYNC_CONFIG", `${syncTypeName[fileType]} task not configured. Run '${cmd}' first.`, { format, exitCode: 2 }); return
                 }
-              } else if (fileType === 1) {
+              } else if (fileType === StudioFileType.DataIntegration) {
                 // INTEGRATION: check both fileContent (field mapping) and hasConfig (schedule)
                 const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
                 // A valid INTEGRATION field-mapping JSON contains at least "jobs" key.
@@ -2311,7 +2410,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     `Run: cz-cli task save-cron ${fileId} --cron '0 2 * * *' --vc <vc_name>`,
                     { format, exitCode: 2 }); return
                 }
-              } else if (fileType === 14) {
+              } else if (fileType === StudioFileType.RealTimeDI) {
                 // REALTIME: use create-stream-sync which sets up source/target/schema in one step
                 const content = String(taskDetailInner?.fileContent ?? taskDetailData?.fileContent ?? "").trim()
                 // A valid INTEGRATION field-mapping JSON contains at least "jobs" key.
@@ -2430,7 +2529,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const detObj = (typeof detData?.taskDetail === "object" && detData?.taskDetail !== null
                 ? detData.taskDetail : detData) as Record<string, unknown>
               const ft = Number(detObj?.fileType ?? 0)
-              if (ft === 14) {
+              if (ft === StudioFileType.RealTimeDI) {
                 return startRealtimeTask(sc, fileId, String(sc.userId), sc.workspaceName, sc.projectId, startupMode)
               }
               return startCdcTask(sc, {
@@ -2470,7 +2569,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const detObj = (typeof detData?.taskDetail === "object" && detData?.taskDetail !== null
               ? detData.taskDetail : detData) as Record<string, unknown>
             const ft = Number(detObj?.fileType ?? 0)
-            const resp = ft === 14
+            const resp = ft === StudioFileType.RealTimeDI
               ? await stopRealtimeTask(sc, fileId, String(sc.userId), sc.workspaceName, sc.projectId)
               : await stopCdcTask(sc, fileId, String(sc.userId), sc.workspaceName)
             logOperation("task stop", { ok: true })
@@ -2576,7 +2675,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               if (!raw) return {} as Record<string, unknown>
               try { return JSON.parse(String(raw)) as Record<string, unknown> } catch { return {} as Record<string, unknown> }
             })()
-            const INTEGRATION_FILE_TYPES = new Set([1, 14, 17, 280, 281, 291])
             const execFileType = Number(taskDetail?.fileType ?? data?.fileType ?? 0)
             if (!vcCode) {
               // For INTEGRATION types, skip defaultVcName (it's the general VC, not the Sync VC)
@@ -2705,7 +2803,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const maxWaitMs = (argv["max-wait-seconds"] as number) * 1000
             const pollMs = (argv["poll-interval"] as number) * 1000
             const deadline = Date.now() + maxWaitMs
-            const STATUS_NAME: Record<number, string> = { 1: "SUCCESS", 2: "WAITING", 3: "FAILED", 4: "RUNNING" }
             while (Date.now() < deadline) {
               const detailResp = await getRunDetail(sc, Number(runInstanceId), { projectId: sc.projectId })
               const detailData = detailResp.data as Record<string, unknown> | undefined
@@ -2717,12 +2814,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const statusCode = (taskDetail?.instanceStatus ?? detailData?.instanceStatus) as number | undefined
               const endTime = taskDetail?.executeEndTime ?? detailData?.executeEndTime
               const failMsg = taskDetail?.failMsg ?? detailData?.failMsg
-              const isTerminal = statusCode === 1 || statusCode === 3 || (statusCode == null && endTime != null)
+              const isTerminal = statusCode === StudioTaskRunStatus.Success || statusCode === StudioTaskRunStatus.Failed || (statusCode == null && endTime != null)
               if (isTerminal) {
                 const result = {
                   task_id: fileId,
                   run_id: runInstanceId,
-                  execution_status: STATUS_NAME[statusCode as number] ?? statusCode,
+                  execution_status: taskRunStatusName(statusCode),
                 }
                 const aiMessage =
                   `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。` +
@@ -2730,7 +2827,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     ? `--param 值已通过 --save-params 写回任务 paramValueList，调度运行将使用这些参数值。`
                     : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。`) +
                   `如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
-                if (statusCode === 3 || failMsg) {
+                if (statusCode === StudioTaskRunStatus.Failed || failMsg) {
                   error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
                   return
                 }
@@ -2793,7 +2890,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("name", { type: "string", demandOption: true })
-                .option("type", { type: "string", default: "sql", describe: "SQL/PYTHON/SHELL/SPARK" })
+                .option("type", { type: "string", default: "sql", describe: "SQL/PYTHON/SHELL/JDBC/CONDITION/SPARK" })
                 .option("description", { type: "string" })
                 .option("dependency", { type: "string", describe: "Dependency node name" })
                 .option("content", { type: "string", describe: "Initial node content" }),
@@ -2857,7 +2954,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("upstream", { type: "string", demandOption: true, describe: "Upstream node name" })
-                .option("downstream", { type: "string", demandOption: true, describe: "Downstream node name" }),
+                .option("downstream", { type: "string", demandOption: true, describe: "Downstream node name" })
+                .option("branch", { type: "string", describe: "Condition branch output name to bind from the upstream condition node" }),
             async (argv) => {
               const format = argv.format
               try {
@@ -2865,15 +2963,44 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 const upstreamNodeId = await resolveNodeId(sc, fileId, argv.upstream as string, format)
                 const downstreamNodeId = await resolveNodeId(sc, fileId, argv.downstream as string, format)
+                const branchName = argv.branch as string | undefined
                 // Check if dep already exists
                 const dagResp = await getFlowDag(sc, fileId)
                 const dagNodes = (dagResp.data ?? []) as Record<string, unknown>[]
                 const downstreamNode = dagNodes.find((n) => Number(n.id) === downstreamNodeId)
                 const existingDeps = (downstreamNode?.dependencies ?? []) as Record<string, unknown>[]
-                if (existingDeps.some((d) => Number(d.dependencyNodeId) === upstreamNodeId)) {
+                if (existingDeps.some((d) => Number(d.dependencyNodeId) === upstreamNodeId && (branchName == null || String(d.dependencyRefTables ?? d.refTableNames ?? "") === branchName))) {
                   success({ message: `Dependency '${argv.upstream}' → '${argv.downstream}' already exists.` }, { format })
                   return
                 }
+                const branchDependency = await (async () => {
+                  if (!branchName) return undefined
+                  const [flowDetail, upstreamDetail] = await Promise.all([
+                    getTaskDetail(sc, fileId),
+                    getFlowNodeDetail(sc, fileId, upstreamNodeId),
+                  ])
+                  const flowData = isRecord(flowDetail.data) ? flowDetail.data : {}
+                  const upstreamData = isRecord(upstreamDetail.data) ? upstreamDetail.data : {}
+                  const branch = conditionBranches(upstreamData.fileContent ?? "")
+                    .find((item) => item.outputName === branchName)
+                  if (!branch) {
+                    error("INVALID_ARGUMENTS", `Condition branch '${branchName}' was not found on upstream node '${argv.upstream}'.`, { format, exitCode: 2 })
+                    return undefined
+                  }
+                  const flowName = String(flowData.dataFileName ?? flowData.task_name ?? fileId)
+                  const upstreamName = String(upstreamData.dataFileName ?? upstreamData.fileName ?? argv.upstream)
+                  return {
+                    dependencyProjectId: sc.projectId,
+                    dependencyFileId: fileId,
+                    dependencyInputName: `${sc.workspaceName}.${flowName}.${upstreamName}`,
+                    refTableNames: branch.outputName,
+                    parseType: StudioLineageAddMethod.Manual,
+                    dependencyNodeId: upstreamNodeId,
+                    dependencyNodeName: upstreamName,
+                    ...(branch.sequence !== undefined && { sequence: branch.sequence }),
+                  }
+                })()
+                if (branchName && branchDependency === undefined) return
                 const resp = await bindFlowNode(sc, {
                   currentFileId: fileId,
                   currentNodeId: downstreamNodeId,
@@ -2909,6 +3036,49 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (!verified) {
                   success({ ...resp.data as object, warning: "Bind API returned success but edge not confirmed in DAG. Run 'cz-cli task flow dag' to check, and retry if missing." }, { format, aiMessage: `Dependency bind returned success but could not be verified in DAG. Retry: cz-cli task flow bind ${argv.task} --upstream ${argv.upstream} --downstream ${argv.downstream}` })
                   return
+                }
+                if (branchDependency) {
+                  const configResp = await getTaskConfigDetail(sc, {
+                    projectId: sc.projectId,
+                    workspaceId: sc.workspaceId,
+                    dataFileId: fileId,
+                    nodeId: downstreamNodeId,
+                    collectType: 2,
+                  })
+                  const configData = isRecord(configResp.data) ? configResp.data : {}
+                  const existingConfigDeps = configList(configData.dataFileDependencyDTOS)
+                  const dataFileInputListReqs = [
+                    ...existingConfigDeps.filter((dep) =>
+                      Number(dep.dependencyNodeId) !== upstreamNodeId ||
+                      String(dep.refTableNames ?? "") !== branchName
+                    ),
+                    branchDependency,
+                  ]
+                  await saveFlowNodeConfig(sc, {
+                    dataFileId: fileId,
+                    nodeId: downstreamNodeId,
+                    projectId: sc.projectId,
+                    updateBy: String(sc.userId),
+                    instanceName: sc.instanceName,
+                    cronExpress: configData.cronExpress as string | undefined,
+                    retryCount: configData.retryCount as number | undefined,
+                    retryIntervalTime: configData.retryIntervalTime as number | undefined,
+                    retryIntervalTimeUnit: configData.retryIntervalTimeUnit as string | undefined,
+                    rerunProperty: configData.rerunProperty == null ? undefined : String(configData.rerunProperty),
+                    selfDependsJob: configData.selfDependsJob as boolean | undefined,
+                    activeStartTime: configData.activeStartTime as string | undefined,
+                    activeEndTime: configData.activeEndTime as string | undefined,
+                    ownerCnName: configData.ownerCnName as string | undefined,
+                    ownerEnName: configData.ownerEnName as string | undefined,
+                    schemaName: configData.schemaName as string | undefined,
+                    etlVcCode: configData.etlVcCode as string | undefined,
+                    etlVcId: configData.etlVcId as number | undefined,
+                    executeTimeout: configData.executeTimeout as number | undefined,
+                    executeTimeoutUnit: configData.executeTimeoutUnit as string | undefined,
+                    dataFileInputListReqs,
+                    configProperties: configData.configProperties,
+                    taskPriority: configData.taskPriority == null ? undefined : String(configData.taskPriority),
+                  })
                 }
                 logOperation("task flow bind", { ok: true })
                 success(resp.data, { format, aiMessage: `Dependency bound. Add more bindings as needed, then publish: 'cz-cli task flow submit ${argv.task}'.` })
@@ -3055,15 +3225,45 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                 const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
+                const [flowDetail, nodeDetail] = await Promise.all([
+                  getTaskDetail(sc, fileId),
+                  getFlowNodeDetail(sc, fileId, nodeId),
+                ])
+                const flowData = isRecord(flowDetail.data) ? flowDetail.data : {}
+                const flowName = String(flowData.dataFileName ?? flowData.task_name ?? fileId)
+                const nodeData = isRecord(nodeDetail.data) ? nodeDetail.data : {}
+                const nodeName = String(nodeData.dataFileName ?? nodeData.fileName ?? nodeData.task_name ?? nodeId)
+                const nodeFileType = Number(nodeData.fileType ?? 0)
+                const nodeCronResult = argv.cron ? convertAgentCron(argv.cron) : undefined
+                if (nodeCronResult && (!nodeCronResult.ok || !nodeCronResult.outputCron)) {
+                  error("INVALID_CRON", nodeCronResult.error ?? "Invalid cron expression", { format, exitCode: 2 })
+                  return
+                }
+                const nodeActiveStartTime = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
+                const dataFileOutputListReqs = nodeFileType === StudioFileType.Condition
+                  ? conditionOutputTables(nodeData.fileContent ?? "", {
+                    projectId: sc.projectId,
+                    fileId,
+                    taskName: nodeName,
+                    workspaceName: sc.workspaceName,
+                    flowName,
+                  })
+                  : undefined
                 const resp = await saveFlowNodeConfig(sc, {
                   dataFileId: fileId,
                   nodeId,
                   projectId: sc.projectId,
                   updateBy: String(sc.userId),
                   instanceName: sc.instanceName,
-                  cronExpress: argv.cron ? normalizeCron(argv.cron) : undefined,
+                  cronExpress: nodeCronResult?.outputCron ?? undefined,
+                  ...(nodeCronResult !== undefined && {
+                    activeStartTime: nodeActiveStartTime,
+                    activeEndTime: "2099-01-01T00:00:00.000Z",
+                    ...studioScheduleFieldsFromCron(nodeCronResult, nodeActiveStartTime, {}),
+                  }),
                   etlVcCode: argv.vc,
                   schemaName: argv.schema,
+                  ...(dataFileOutputListReqs !== undefined && { dataFileOutputListReqs }),
                 })
                 logOperation("task flow node-save-config", { ok: true })
                 success(resp.data, { format, aiMessage: `Node config saved. Repeat node-save/node-save-config for other nodes. Then bind dependencies: 'cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>'. When all nodes are ready, publish: 'cz-cli task flow submit ${argv.task}'.` })
@@ -3088,31 +3288,42 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 const oldResp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
                 const oldData = (oldResp.data && typeof oldResp.data === "object" ? oldResp.data : {}) as Record<string, unknown>
-                const vcCode = (argv.vc as string | undefined) ?? (oldData.etlVcCode as string | undefined) ?? "DEFAULT"
+                const vc = await resolveScheduleVc(sc, argv, oldData)
+                const vcCode = vc.etlVcCode
+                const flowCronResult = argv.cron ? convertAgentCron(argv.cron as string) : undefined
+                if (flowCronResult && (!flowCronResult.ok || !flowCronResult.outputCron)) {
+                  error("INVALID_CRON", flowCronResult.error ?? "Invalid cron expression", { format, exitCode: 2 })
+                  return
+                }
+                const activeStartTime = formatIsoStartOfDay(oldData.activeStartTime as string | undefined)
                 await saveTaskConfig(sc, {
                   dataFileId: fileId,
                   projectId: sc.projectId,
                   updateBy: String(sc.userId),
                   instanceName: sc.instanceName,
-                  cronExpress: argv.cron ? normalizeCron(argv.cron as string) : (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *",
-                  activeStartTime: formatIsoStartOfDay(oldData.activeStartTime as string | undefined),
+                  cronExpress: flowCronResult?.outputCron ?? (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *",
+                  activeStartTime,
                   activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
                   etlVcCode: vcCode,
+                  etlVcId: vc.etlVcId,
                   retryCount: (argv["retry-count"] as number | undefined) ?? (oldData.retryCount as number | undefined) ?? 1,
                   retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
                   retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
-                  rerunProperty: String((oldData.rerunProperty as number | undefined) ?? 3),
-                  selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? 0,
+                  rerunProperty: String((oldData.rerunProperty as number | undefined) ?? StudioRerunProperty.NotRerun),
+                  selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? StudioSelfDependsJob.No,
                   schemaName: (oldData.schemaName as string | undefined) ?? "public",
                   dataFileInputListReqs: (oldData.dataFileDependencyDTOS as unknown[]) ?? [],
                   configProperties: oldData.configProperties ?? "{}",
                   dataFileVersion: -1,
-                  scheduleRateType: 3,
-                  triggerType: 1,
-                  fileType: 500,
+                  scheduleRateType: StudioScheduleRateType.Day,
+                  triggerType: StudioTriggerType.Schedule,
+                  fileType: StudioFileType.Flow,
                   dataFileName: oldData.dataFileName as string | undefined,
                   fileDescription: oldData.fileDescription as string | undefined,
                   useFlowConfig: false,
+                  ...(flowCronResult
+                    ? studioScheduleFieldsFromCron(flowCronResult, activeStartTime, oldData.configProperties)
+                    : existingStudioScheduleFields(oldData)),
                   connectionParam: JSON.stringify({
                     lakeHouseInstanceId: String(sc.instanceId),
                     adhocVcCode: vcCode.toLowerCase(),
@@ -3120,13 +3331,53 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     schemaName: (oldData.schemaName as string | undefined) ?? "public",
                   }),
                 })
-                // Poll for fileFlowStatus=100 && deployStatus=1
+                const dagResp = await getFlowDag(sc, fileId)
+                const dagNodes = ((dagResp.data ?? []) as Record<string, unknown>[])
+                  .filter((node) => node.id != null)
+                await Promise.all(dagNodes.map(async (node) => {
+                  const nodeId = Number(node.id)
+                  const [nodeDetailResp, nodeConfigResp] = await Promise.all([
+                    getFlowNodeDetail(sc, fileId, nodeId),
+                    getTaskConfigDetail(sc, {
+                      projectId: sc.projectId,
+                      workspaceId: sc.workspaceId,
+                      dataFileId: fileId,
+                      nodeId,
+                      collectType: 2,
+                    }),
+                  ])
+                  const nodeData = isRecord(nodeDetailResp.data) ? nodeDetailResp.data : {}
+                  const nodeConfig = isRecord(nodeConfigResp?.data) ? nodeConfigResp.data : {}
+                  const nodeVcCode = (nodeConfig.etlVcCode ?? nodeData.defaultVcName ?? vcCode) as string
+                  const nodeSchemaName = (nodeConfig.schemaName ?? nodeData.defaultSchemaName ?? oldData.schemaName ?? "public") as string
+                  const nodeParams = Array.isArray(nodeData.paramValueList) ? nodeData.paramValueList : undefined
+                  const nodeVcId = (nodeConfig.etlVcId as string | number | undefined)
+                    ?? await resolveVclusterId(sc, nodeVcCode).catch(() => undefined)
+                  await saveFlowNodeContent(sc, {
+                    dataFileId: fileId,
+                    nodeId,
+                    dataFileContent: nodeData.fileContent ?? "",
+                    projectId: sc.projectId,
+                    updateBy: String(sc.userId),
+                    instanceName: sc.instanceName,
+                    schemaName: nodeSchemaName,
+                    vcCode: nodeVcCode,
+                    ...(nodeVcId != null && { vcId: nodeVcId }),
+                    ...(nodeParams !== undefined && { paramValueList: nodeParams }),
+                  })
+                }))
+                await submitTask(sc, {
+                  commitMsg: "Published flow via cz-cli",
+                  dataFileId: fileId,
+                  projectId: sc.projectId,
+                  updatedBy: String(sc.userId),
+                })
                 let published = false
                 for (let i = 0; i < 10; i++) {
-                  await new Promise((r) => setTimeout(r, 1500))
+                  if (i > 0) await new Promise((r) => setTimeout(r, 1500))
                   const detail = await getTaskDetail(sc, fileId)
                   const d = (detail.data ?? {}) as Record<string, unknown>
-                  if (Number(d.fileFlowStatus) === 100 && Number(d.deployStatus) === 1) {
+                  if (Number(d.fileFlowStatus) === StudioTaskEditState.Published && Number(d.deployStatus) === StudioCdcDeployStatus.Deployed) {
                     published = true; break
                   }
                 }
@@ -3321,7 +3572,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const detailObj = (typeof detailData.taskDetail === "object" && detailData.taskDetail !== null
               ? detailData.taskDetail : detailData) as Record<string, unknown>
             const fileType = Number(detailObj.fileType ?? 0)
-            if (fileType === 500) { // FLOW
+            if (fileType === StudioFileType.Flow) {
               success({ task_id: fileId, task_name: detailObj.dataFileName, note: "FLOW tasks do not have standalone schedule entries. Use 'cz-cli task flow instances <task>' to see run history." }, {
                 format, aiMessage: `FLOW task: use 'cz-cli task flow instances ${argv.task}' for run history.`
               })
@@ -3451,7 +3702,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             const sc = await ctx(argv)
             const fileType = argv.type ? String(parseTaskType(argv.type as string)) : undefined
-            const STATUS_CODE: Record<string, number> = { draft: 10, published: 20, offline: 100 }
+            const STATUS_CODE: Record<string, number> = {
+              draft: StudioTaskEditState.WaitForSave,
+              published: StudioTaskEditState.WaitForPublish,
+              offline: StudioTaskEditState.Published,
+            }
             const statusFilter = argv.status ? STATUS_CODE[argv.status as string] : undefined
             const ownerFilter = (argv.owner as string | undefined)?.toLowerCase()
             const sortBy = (argv.sort as string) ?? "last_edit"
@@ -3557,10 +3812,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               return Number(b.last_edit_time ?? 0) - Number(a.last_edit_time ?? 0)
             })
 
-            const EDIT_STATE: Record<number, string> = { 10: "draft", 20: "published", 100: "offline" }
             const displayed = filtered.map((t) => ({
               ...t,
-              task_edit_state: EDIT_STATE[Number(t.task_edit_state)] ?? t.task_edit_state,
+              task_edit_state: taskEditStateCliName(t.task_edit_state),
               last_edit_time: t.last_edit_time ? new Date(Number(t.last_edit_time)).toISOString().replace("T", " ").slice(0, 19) : undefined,
             }))
 
@@ -3673,21 +3927,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             ])
             const folderTotal = resolvedFolderCount
 
-            // Instance stats: group by status and type
-            const STATUS_NAME: Record<number, string> = { 1: "SUCCESS", 2: "WAITING", 3: "FAILED", 4: "RUNNING" }
-            const RUN_TYPE_NAME: Record<number, string> = { 1: "SCHEDULE", 3: "TEMP", 4: "REFILL" }
-            const TASK_TYPE_NAME: Record<number, string> = {
-              23: "SQL", 24: "SHELL", 26: "PYTHON", 29: "JDBC",
-              400: "SPARK", 500: "FLOW", 10: "INTEGRATION", 28: "REALTIME",
-              280: "FULL_INCREMENTAL", 281: "MULTI_REALTIME", 291: "MULTI_DI",
-            }
-            // fileType codes (used by getTaskRunStats) → name
-            const FILE_TYPE_NAME: Record<number, string> = {
-              4: "SQL", 5: "SHELL", 7: "PYTHON", 15: "JDBC",
-              400: "SPARK", 500: "FLOW", 1: "INTEGRATION", 14: "REALTIME",
-              280: "FULL_INCREMENTAL", 281: "MULTI_REALTIME", 291: "MULTI_DI",
-            }
-
             const instanceRows = Array.isArray(instanceStatsResp.data) ? instanceStatsResp.data as Record<string, unknown>[] : []
             const byStatus: Record<string, number> = {}
             const byRunType: Record<string, number> = {}
@@ -3696,22 +3935,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             for (const row of instanceRows) {
               // Raw API fields: instanceStatus, taskType, instanceType, count
               const cnt = Number(row.count ?? 0)
-              const statusKey = STATUS_NAME[Number(row.instanceStatus)] ?? String(row.instanceStatus)
-              const runTypeKey = RUN_TYPE_NAME[Number(row.instanceType)] ?? String(row.instanceType)
-              const taskTypeKey = TASK_TYPE_NAME[Number(row.taskType)] ?? String(row.taskType)
+              const statusKey = taskRunStatusName(row.instanceStatus)
+              const runTypeKey = taskRunTypeName(row.instanceType)
+              const taskTypeKey = taskTypeName(row.taskType)
               byStatus[statusKey] = (byStatus[statusKey] ?? 0) + cnt
               byRunType[runTypeKey] = (byRunType[runTypeKey] ?? 0) + cnt
               byTaskType[taskTypeKey] = (byTaskType[taskTypeKey] ?? 0) + cnt
               instanceTotal += cnt
             }
 
-            // Task run stats: raw fields are fileType (task type), cnt (count)
-            // fileFlowStatus: 10=draft, 20=published
-            const FILE_STATUS_NAME: Record<number, string> = { 10: "DRAFT", 20: "PUBLISHED", 100: "OFFLINE" }
             const taskRunRows = (Array.isArray(taskRunStatsResp.data) ? taskRunStatsResp.data as Record<string, unknown>[] : [])
               .map((row) => ({
-                task_type: FILE_TYPE_NAME[Number(row.fileType)] ?? String(row.fileType),
-                status: FILE_STATUS_NAME[Number(row.fileFlowStatus)] ?? String(row.fileFlowStatus),
+                task_type: fileTypeName(row.fileType),
+                status: taskEditStateStatName(row.fileFlowStatus),
                 count: Number(row.cnt ?? 0),
               }))
 

@@ -54,6 +54,11 @@ mock.module("@clickzetta/sdk", () => ({
       cronExpress: "0 00 00 * * ? *",
       activeStartTime: "2026-01-01T00:00:00.000Z",
       activeEndTime: "2099-01-01T00:00:00.000Z",
+      schedule: [["weekly", "1"], ["weekly", "2"]],
+      frequency: "1",
+      scheduleStartTime: "2026-01-01T07:00:00.000Z",
+      isScheduleRateTypeOff: false,
+      useActiveEndTime: false,
       schemaName: "public",
       etlVcCode: "DEFAULT",
       retryCount: 1,
@@ -259,6 +264,43 @@ describe("task save-config dependency validation", () => {
       ownerEnName: "owner-en",
       etlVcCode: "DEFAULT",
       etlVcId: "vc-default-id",
+    })
+  })
+
+  test("save-cron sends Studio weekly selected-day schedule fields", async () => {
+    const result = await execute('task save-cron 123 --cron "0 00 07 ? * MON-FRI *"')
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(saveCalls[0]).toMatchObject({
+      cronExpress: "0 00 07 ? * 1,2,3,4,5 *",
+      scheduleRateType: 3,
+      schedule: [
+        ["weekly", "1"],
+        ["weekly", "2"],
+        ["weekly", "3"],
+        ["weekly", "4"],
+        ["weekly", "5"],
+      ],
+      frequency: "1",
+      isScheduleRateTypeOff: false,
+      useActiveEndTime: false,
+      enableAutoMv: false,
+    })
+    expect(saveCalls[0]?.scheduleStartTime).toBe(new Date(2026, 0, 1, 7, 0, 0, 0).toISOString())
+  })
+
+  test("save-config preserves existing Studio schedule UI fields", async () => {
+    const result = await execute("task save-config 123 --retry-count 2")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(saveCalls[0]).toMatchObject({
+      schedule: [["weekly", "1"], ["weekly", "2"]],
+      frequency: "1",
+      scheduleStartTime: "2026-01-01T07:00:00.000Z",
+      isScheduleRateTypeOff: false,
+      useActiveEndTime: false,
     })
   })
 
