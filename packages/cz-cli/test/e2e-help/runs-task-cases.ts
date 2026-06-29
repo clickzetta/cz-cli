@@ -79,7 +79,7 @@ export const runsTaskHelpCases: HelpCase[] = [
   {
     args: ["task", "list", "--help"],
     expectHeader: "cz-cli task list",
-    expectOptions: ["--like", "--type"],
+    expectOptions: ["--like", "--type", "CONDITION"],
   },
   {
     args: ["task", "list-folders", "--help"],
@@ -88,7 +88,7 @@ export const runsTaskHelpCases: HelpCase[] = [
   {
     args: ["task", "create", "--help"],
     expectHeader: "cz-cli task create",
-    expectOptions: ["name", "--type"],
+    expectOptions: ["name", "--type", "CONDITION"],
   },
   {
     args: ["task", "create-folder", "--help"],
@@ -109,6 +109,11 @@ export const runsTaskHelpCases: HelpCase[] = [
     args: ["task", "save-config", "--help"],
     expectHeader: "cz-cli task save-config",
     expectOptions: ["task", "--vc", "--retry-count", "--auto-lineage", "--outputs", "--output-tables"],
+  },
+  {
+    args: ["task", "save-merge", "--help"],
+    expectHeader: "cz-cli task save-merge",
+    expectOptions: ["task", "--dependency", "--status", "SKIPPED"],
   },
   {
     args: ["task", "save-cron", "--help"],

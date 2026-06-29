@@ -189,26 +189,43 @@ export async function resolveFolderIdByName(
   name: string,
   format: string,
 ): Promise<number> {
+  const segments = name.split("/").map((segment) => segment.trim()).filter(Boolean)
+  if (segments.length === 0) return fail("FOLDER_NOT_FOUND", `Folder '${name}' not found.`, format)
+
+  let parentFolderId = 0
+  for (const segment of segments) {
+    const folderId = await findFolderIdByName(sc, segment, parentFolderId)
+    if (folderId == null) return fail("FOLDER_NOT_FOUND", `Folder '${name}' not found.`, format)
+    parentFolderId = folderId
+  }
+  return parentFolderId
+}
+
+async function findFolderIdByName(
+  sc: StudioConfig,
+  name: string,
+  parentFolderId: number,
+): Promise<number | undefined> {
   let page = 1
   const pageSize = 50
   while (true) {
     const resp = await listFolders(sc, {
       projectId: sc.projectId,
-      parentFolderId: 0,
+      parentFolderId,
       page,
       pageSize,
     })
     const data = resp.data as Record<string, unknown> | undefined
     const items = (Array.isArray(data) ? data : (data?.list ?? [])) as Record<string, unknown>[]
     if (Array.isArray(items)) {
-      const match = items.find((f) => f.dataFolderName === name)
-      if (match) return Number(match.id)
+      const match = items.find((f) => f.dataFolderName === name || f.folderName === name || f.name === name)
+      if (match) return Number(match.id ?? match.dataFolderId ?? match.folderId)
     }
     const totalPages = Number(data?.totalPages ?? 1)
     if (page >= totalPages) break
     page++
   }
-  return fail("FOLDER_NOT_FOUND", `Folder '${name}' not found.`, format)
+  return undefined
 }
 
 export async function resolveNodeId(

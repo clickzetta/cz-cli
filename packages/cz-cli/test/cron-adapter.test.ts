@@ -56,10 +56,30 @@ describe("convertAgentCron hour=* with fixed minute (hourly)", () => {
     expect(r.uiParam.scheduleEndTime).toBe("18:59")
   })
 
-  test("MON,WED,FRI is not rejected as unsupported token", () => {
+  test("MON,WED,FRI is converted to Studio weekly numeric days", () => {
     const r = convertAgentCron("0 0 9 ? * MON,WED,FRI *")
     expect(r.ok).toBe(true)
-    expect(r.outputCron).toBe("0 00 09 ? * MON,WED,FRI *")
+    expect(r.outputCron).toBe("0 00 09 ? * 1,3,5 *")
+    expect(r.uiParam.schedule).toEqual([
+      ["weekly", "1"],
+      ["weekly", "3"],
+      ["weekly", "5"],
+    ])
+  })
+
+  test("MON-FRI is expanded to Studio weekly numeric days", () => {
+    const r = convertAgentCron("0 00 07 ? * MON-FRI *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 07 ? * 1,2,3,4,5 *")
+    expect(r.uiParam.frequency).toBe("1")
+    expect(r.uiParam.scheduleStartTime).toBe("07:00")
+    expect(r.uiParam.schedule).toEqual([
+      ["weekly", "1"],
+      ["weekly", "2"],
+      ["weekly", "3"],
+      ["weekly", "4"],
+      ["weekly", "5"],
+    ])
   })
 
   test("roundtrip stability for hour-range expressions", () => {

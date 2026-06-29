@@ -46,11 +46,88 @@
 
 `task create --folder` MUST 支持整数 folder ID 或 folder name，并在需要时解析名称。
 
+CLI task 类型、状态、调度频率等 Studio 后端契约 MUST 通过集中枚举或常量模块表达，不得在命令实现中重复散落数字魔法值。
+
 #### Scenario: 使用 folder 名称
 
 - **WHEN** 用户执行 `cz-cli task create my_task --folder my_folder --type PYTHON`
 - **THEN** 系统查询 folder 列表并解析名称为 folder ID
 - **AND** 在解析出的 folder 下创建任务
+
+#### Scenario: 创建条件任务
+
+- **WHEN** 用户执行 `cz-cli task create condition_task --folder 389001 --type CONDITION`
+- **THEN** 系统 MUST 调用 Studio 创建任务接口并传入 `fileType=19`
+- **AND** `task create --help` MUST 将 `CONDITION` 作为可发现的任务类型展示
+
+#### Scenario: 创建归并任务
+
+- **WHEN** 用户执行 `cz-cli task create merge_task --folder 389001 --type MERGE`
+- **THEN** 系统 MUST 调用 Studio 创建任务接口并传入 `fileType=20`
+- **AND** `task create --help` MUST 将 `MERGE` 作为可发现的任务类型展示
+
+#### Scenario: 保存独立条件任务配置
+
+- **WHEN** 条件任务内容包含 `conditionConfig.branches[].outputName` 和可选 `defaultOutputName`
+- **THEN** `task save-config` 和 `task save-cron` MUST 将这些分支保存为 `dataFileOutputListReqs`
+- **AND** 每个输出 MUST 使用 `parseType=2`、当前 task ID 和分支名称，保证后续依赖可以引用条件分支
+
+#### Scenario: 保存组合任务中的条件节点配置
+
+- **WHEN** 用户对组合任务中的 `CONDITION` 节点执行 `task flow node-save-config`
+- **THEN** 系统 MUST 从节点 `conditionConfig` 生成分支输出并传入 `dataFileOutputListReqs`
+- **AND** 输出的 `fileShowName` MUST 使用 `workspace.flow.node` 形态
+
+#### Scenario: 绑定条件分支到下游节点
+
+- **WHEN** 用户执行 `cz-cli task flow bind flow --upstream condition_node --downstream succ_node --branch branch_success`
+- **THEN** 系统 MUST 校验 `branch_success` 存在于上游条件节点
+- **AND** 系统 MUST 在下游节点配置中保存包含 `refTableNames=branch_success` 和对应 `sequence` 的依赖 DTO
+
+#### Scenario: 发布组合任务时刷新子节点内容配置
+
+- **WHEN** 用户执行 `cz-cli task flow submit flow --vc FLOW_VC`
+- **THEN** 系统 MUST 先保存父组合任务调度配置
+- **AND** 系统 MUST 遍历组合任务 DAG 中的每个子节点，按节点自己的 VC/schema 配置重新保存节点内容
+- **AND** 若节点未配置独立 VC/schema，系统 SHOULD 回退使用父组合任务的 VC/schema
+
+#### Scenario: 保存每周指定天调度
+
+- **WHEN** 用户执行 `cz-cli task save-cron task --cron "0 00 07 ? * MON-FRI *"` 或 `cz-cli task flow node-save-config flow --node-id node --cron "0 00 07 ? * MON-FRI *"`
+- **THEN** 系统 MUST 将周一到周五转换为 Studio 周调度值 `1,2,3,4,5`
+- **AND** 保存 payload MUST 包含 `schedule=[["weekly","1"],...,["weekly","5"]]`、`frequency="1"` 和顶层 `scheduleStartTime`
+- **AND** `cronExpress` MUST 保存为 `0 00 07 ? * 1,2,3,4,5 *`
+
+#### Scenario: 保留已有 Studio 调度 UI 字段
+
+- **WHEN** 用户执行 `cz-cli task save-config task --retry-count 2` 这类非 cron 配置更新
+- **THEN** 系统 MUST 保留后端已有的 `schedule`、`frequency`、`scheduleStartTime`、`scheduleEndTime`、`isScheduleRateTypeOff` 和 `useActiveEndTime`
+- **AND** 不得因为保存重试、VC、依赖或产出表配置而丢失每周指定天调度定义
+
+#### Scenario: 保存归并任务规则和调度依赖
+
+- **WHEN** 用户执行 `cz-cli task save-merge merge_task --dependency upstream --status SUCCESS --status FAILED --status SKIPPED`
+- **THEN** 系统 MUST 保存任务内容为 `{"mergeRule":{"logic":"AND","conditions":[{"dependencyId":<upstream_id>,"statusIn":["SUCCESS","FAILED","SKIPPED"]}]},"finalStatus":"SUCCESS"}`
+- **AND** 系统 MUST 将上游任务作为调度依赖保存到 `dataFileInputListReqs`
+- **AND** `SKIPPED` 状态 MUST 在 help 中说明仅适用于匹配 if/condition 节点的上游结果
+
+#### Scenario: 归并任务参数校验
+
+- **WHEN** 用户执行 `cz-cli task save-merge merge_task --dependency upstream --status UNKNOWN`
+- **THEN** CLI MUST 返回 `INVALID_ARGUMENTS`
+- **AND** 不调用保存内容或保存配置接口
+
+#### Scenario: 发布未配置的归并任务
+
+- **WHEN** 用户创建 `MERGE` 任务后未执行 `cz-cli task save-merge` 就执行 `cz-cli task deploy merge_task -y`
+- **THEN** CLI MUST 返回 `NO_MERGE_CONFIG`
+- **AND** 不调用发布接口
+
+#### Scenario: 复用 Studio task 契约枚举
+
+- **WHEN** 命令实现需要判断 SQL、Python、Flow、同步任务、运行状态或调度频率等 Studio 枚举
+- **THEN** 系统 MUST 从集中契约模块读取命名常量或映射
+- **AND** 不得在命令处理逻辑中直接重复使用对应整数魔法值
 
 #### Scenario: 名称跨页解析
 
