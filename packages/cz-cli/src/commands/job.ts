@@ -247,7 +247,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
               format,
               aiMessage: state !== "RUNNING"
                 ? `Job ${argv["job-id"]} has finished (state: ${state}). To see the execution plan: cz-cli job profile ${argv["job-id"]}`
-                : `Job ${argv["job-id"]} is still RUNNING. Re-poll with: cz-cli job status ${argv["job-id"]} | Fetch results once done: cz-cli job result ${argv["job-id"]}`,
+                : `Job ${argv["job-id"]} is still RUNNING (this is a point-in-time snapshot). To block until it finishes and fetch the result in one step, use: cz-cli job result ${argv["job-id"]} (waits up to --timeout seconds, default 300). Or take another snapshot anytime with: cz-cli job status ${argv["job-id"]}`,
             })
           } catch (err) {
             logOperation("job status", { ok: false, errorCode: "JOB_STATUS_ERROR" })

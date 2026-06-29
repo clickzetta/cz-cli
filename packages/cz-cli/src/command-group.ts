@@ -1,12 +1,23 @@
 import type { Argv } from "yargs"
 import { suggestClosest } from "./suggest.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
-import { KNOWN_GLOBAL_FLAGS } from "./cli.js"
+import { KNOWN_GLOBAL_FLAGS, INVOCATION_ARGS_KEY } from "./cli.js"
 
 export function commandGroup(yargs: Argv, commandName: string): Argv {
   const commands = getRegisteredCommands(yargs)
   const localOptions = getRegisteredOptions(yargs)
   const available = commands.length > 0 ? commands.join(", ") : "see --help"
+
+  // The raw args for this invocation, stashed by createCli on the top-level
+  // instance (which yargs passes through to nested builders). Captured here so
+  // the fail handler can resolve --format/--field from the real invocation
+  // rather than process.argv, which on the same-process execute() path belongs
+  // to the host process. Falls back to process.argv for any caller that built
+  // its yargs without createCli.
+  const invocationArgs = (yargs as unknown as Record<string, unknown>)[INVOCATION_ARGS_KEY]
+  const outputArgsSource = Array.isArray(invocationArgs)
+    ? (invocationArgs as string[])
+    : process.argv.slice(2)
 
   const humanMsg = `Missing subcommand for '${commandName}'. Available: ${available}`
   const aiMsg = `Missing subcommand. Available subcommands: ${available}. Run \`cz-cli ${commandName} --help\` for details.`
@@ -58,7 +69,7 @@ export function commandGroup(yargs: Argv, commandName: string): Argv {
 
       const errorObj: Record<string, unknown> = { code: "USAGE_ERROR", message: displayMsg }
       if (suggestion) errorObj.did_you_mean = suggestion
-      const outputArgs = parseOutputArgs(process.argv.slice(2))
+      const outputArgs = parseOutputArgs(outputArgsSource)
       const output = renderOutput({
         error: errorObj,
         ai_message: finalAi,

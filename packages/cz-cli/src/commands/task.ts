@@ -4084,7 +4084,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task downstream", { ok: true })
             success(items, {
               format,
-              aiMessage: `Found ${items.length} downstream task(s). Use cz-cli task upstream <task> for upstream dependencies.`,
+              aiMessage: `Found ${items.length} downstream task(s). Use cz-cli task deps <task> for this task's upstream dependencies.`,
             })
           } catch (err) {
             reportTaskError(err, format)
