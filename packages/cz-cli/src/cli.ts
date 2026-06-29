@@ -59,8 +59,23 @@ export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
   return result
 }
 
+// Property key under which createCli stashes the raw invocation args on the
+// yargs instance. The nested commandGroup fail handler reads it (instead of the
+// process-global argv) so that --format/--field are honored even on the
+// same-process execute() path, where process.argv belongs to the host (the TUI
+// or MCP server), not this cz-cli invocation. Non-enumerable to stay invisible
+// to yargs' own option introspection.
+export const INVOCATION_ARGS_KEY = "__czInvocationArgs"
+
 export function createCli(args: string[]) {
-  return withClickZettaProfileOption(yargs(coalesceJsonArrayOptionArgs(args)))
+  const cli = withClickZettaProfileOption(yargs(coalesceJsonArrayOptionArgs(args)))
+  Object.defineProperty(cli, INVOCATION_ARGS_KEY, {
+    value: args,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  })
+  return cli
     .scriptName("cz-cli")
     // Force English so yargs' built-in messages (missing args, invalid choices,
     // help labels) never localize to the shell's LANG. Agents and our error
