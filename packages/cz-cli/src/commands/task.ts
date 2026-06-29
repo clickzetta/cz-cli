@@ -92,14 +92,30 @@ function formatIsoStartOfDay(value: string | undefined | null): string {
   return trimmed
 }
 
+function taskTypeNames(filter?: (fileType: number) => boolean): string[] {
+  const seen = new Set<number>()
+  return Object.values(CLI_TASK_TYPE_ALIASES)
+    .filter((fileType) => {
+      if (seen.has(fileType)) return false
+      seen.add(fileType)
+      return filter ? filter(fileType) : true
+    })
+    .map(fileTypeName)
+}
 
+const TASK_TYPE_OPTIONS = taskTypeNames()
+const SCRIPT_TASK_TYPE_OPTIONS = taskTypeNames((fileType) => SCRIPT_FILE_TYPES.has(fileType))
+const FLOW_NODE_TYPE_OPTIONS = taskTypeNames((fileType) => SCRIPT_FILE_TYPES.has(fileType) || fileType === StudioFileType.Spark)
+const TASK_TYPE_OPTIONS_TEXT = TASK_TYPE_OPTIONS.join(", ")
+const SCRIPT_TASK_TYPE_OPTIONS_TEXT = SCRIPT_TASK_TYPE_OPTIONS.join(", ")
+const FLOW_NODE_TYPE_OPTIONS_TEXT = FLOW_NODE_TYPE_OPTIONS.join("/")
 
 function parseTaskType(value: string): number {
   const upper = value.toUpperCase()
   if (upper in CLI_TASK_TYPE_ALIASES) return CLI_TASK_TYPE_ALIASES[upper]
   const n = parseInt(value, 10)
   if (!isNaN(n)) return n
-  throw new Error(`Unsupported task type: ${value}. Use SQL/PYTHON/SHELL/JDBC/CONDITION/SPARK/FLOW or integer code.`)
+  throw new Error(`Unsupported task type: ${value}. Use ${TASK_TYPE_OPTIONS.join("/")} or integer code.`)
 }
 
 const LINEAGE_ROW_FORMATS = new Set(["table", "csv", "text", "jsonl"])
@@ -843,8 +859,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("name", { type: "string", describe: "Task name filter (alias of --like)", hidden: true })
             .option("type", {
               type: "string",
-              describe:
-                "Task type: SQL, PYTHON, SHELL, JDBC, CONDITION, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
+              describe: `Task type: ${TASK_TYPE_OPTIONS_TEXT}`,
             }),
         async (argv) => {
           const format = argv.format
@@ -978,15 +993,14 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create <name>",
-        "Create a SQL/Python/Shell script task. Typical workflow: create → save-content --content '...' → save-config --vc <vc> → deploy",
+        "Create a Studio task. Typical script workflow: create → save-content --content '...' → save-config --vc <vc> → deploy",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
             .option("type", {
               type: "string",
               demandOption: true,
-              describe:
-                "Available options: SQL, PYTHON, SHELL, JDBC, CONDITION, FLOW, INTEGRATION, REALTIME, VIRTUAL, FULL_INCREMENTAL, MULTI_REALTIME, MULTI_DI",
+              describe: `Available options: ${TASK_TYPE_OPTIONS_TEXT}`,
             })
             .option("folder", { type: "string", describe: "Folder ID or name (required; root directory not allowed)" })
             .option("description", { type: "string", describe: "Task description" }),
@@ -1411,7 +1425,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("type", { type: "string", demandOption: true, describe: "Task type: SQL, PYTHON, SHELL, JDBC, CONDITION. For FLOW/INTEGRATION/REALTIME tasks use dedicated create commands instead (e.g. 'task create --type FLOW', 'task create-realtime-sync')." })
+            .option("type", { type: "string", demandOption: true, describe: `Task type: ${SCRIPT_TASK_TYPE_OPTIONS_TEXT}. For non-script task types, use their dedicated create/setup commands where applicable.` })
             .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
             .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
             .option("file", { alias: "f", type: "string", describe: "Read script from file path. Alternative to --content. Use 'cat > script.sql' then --file script.sql for multi-line scripts." })
@@ -2890,7 +2904,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               y
                 .positional("task", { type: "string", demandOption: true })
                 .option("name", { type: "string", demandOption: true })
-                .option("type", { type: "string", default: "sql", describe: "SQL/PYTHON/SHELL/JDBC/CONDITION/SPARK" })
+                .option("type", { type: "string", default: "sql", describe: FLOW_NODE_TYPE_OPTIONS_TEXT })
                 .option("description", { type: "string" })
                 .option("dependency", { type: "string", describe: "Dependency node name" })
                 .option("content", { type: "string", describe: "Initial node content" }),
@@ -3157,7 +3171,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 .option("content", { type: "string" })
                 .option("file", { alias: "f", type: "string" })
                 .option("param", { type: "array", string: true, describe: "Set param with manual default value (ref=0): key=value. Re-save replaces ALL params — include all desired params each time." })
-                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow (ref=2): key only, no value. At runtime, value comes from flow execution params." }),
+                .option("flow-param", { type: "array", string: true, describe: "Set param inherited from parent flow (ref=2): key only, no value. At runtime, value comes from flow execution params." })
+                .option("output-param", { type: "array", string: true, describe: "Declare this node's output param: key (defaults to '_output'). Value is $[output]. Downstream nodes reference it via --input-param." })
+                .option("input-param", { type: "array", string: true, describe: "Set input param from an upstream node's output: key=upstreamNodeName. The upstream node name is resolved to a dependency id via the flow DAG." }),
             async (argv) => {
               const format = argv.format
               try {
@@ -3166,8 +3182,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                 const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
                 // Require content or params
-                if (!argv.content && !argv.file && !(argv.param as string[] | undefined)?.length && !(argv["flow-param"] as string[] | undefined)?.length) {
-                  error("INVALID_ARGUMENTS", "Provide --content, --file, --param, or --flow-param.", { format, exitCode: 2 })
+                if (!argv.content && !argv.file
+                  && !(argv.param as string[] | undefined)?.length
+                  && !(argv["flow-param"] as string[] | undefined)?.length
+                  && !(argv["output-param"] as string[] | undefined)?.length
+                  && !(argv["input-param"] as string[] | undefined)?.length) {
+                  error("INVALID_ARGUMENTS", "Provide --content, --file, --param, --flow-param, --output-param, or --input-param.", { format, exitCode: 2 })
                   return
                 }
                 const text = argv.content ?? (argv.file ? readFileSync(argv.file as string, "utf-8") : undefined)
@@ -3191,6 +3211,31 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   return { encrypt: false, id: String(Date.now() + 1000 + i), ignore: false, paramKey: p.split("=")[0], paramType: "auto", ref: 2 }
                 })
                 const allParams = [...paramList, ...flowParamList]
+                // Build outputParamValueList from --output-param key (default key '_output'), value $[output]
+                const outputParamList = ((argv["output-param"] as string[] | undefined) ?? []).map((p, i) => {
+                  const key = (p.split("=")[0] || "_output").trim() || "_output"
+                  return { encrypt: false, id: String(Date.now() + 2000 + i), ignore: false, paramKey: key, paramType: "auto", paramValue: "$[output]" }
+                })
+                // Build inputParamValueList from --input-param key=upstreamNodeName.
+                // The upstream node name is resolved to a dependency node id via the flow DAG.
+                const inputParamSpecs = (argv["input-param"] as string[] | undefined) ?? []
+                const inputParamList: Record<string, unknown>[] = []
+                for (let i = 0; i < inputParamSpecs.length; i++) {
+                  const spec = inputParamSpecs[i]!
+                  const eq = spec.indexOf("=")
+                  if (eq <= 0) {
+                    error("INVALID_ARGUMENTS", `Invalid --input-param '${spec}': expected key=upstreamNodeName.`, { format, exitCode: 2 })
+                    return
+                  }
+                  const key = spec.slice(0, eq).trim()
+                  const upstream = spec.slice(eq + 1).trim()
+                  if (!key || !upstream) {
+                    error("INVALID_ARGUMENTS", `Invalid --input-param '${spec}': key and upstreamNodeName are both required.`, { format, exitCode: 2 })
+                    return
+                  }
+                  const upstreamNodeId = await resolveNodeArg(sc, fileId, upstream, format)
+                  inputParamList.push({ encrypt: false, id: String(Date.now() + 3000 + i), ignore: false, paramKey: key, paramType: "auto", paramValue: "$[output]", dependencyId: String(upstreamNodeId), ref: 0 })
+                }
                 const resp = await saveFlowNodeContent(sc, {
                   dataFileId: fileId,
                   nodeId,
@@ -3199,6 +3244,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   updateBy: String(sc.userId),
                   instanceName: sc.instanceName,
                   ...(allParams.length > 0 && { paramValueList: allParams }),
+                  ...(inputParamList.length > 0 && { inputParamValueList: inputParamList }),
+                  ...(outputParamList.length > 0 && { outputParamValueList: outputParamList }),
                 })
                 logOperation("task flow node-save", { ok: true })
                 success(resp.data, { format, aiMessage: `Node content saved. Next: set VC/schema with 'cz-cli task flow node-save-config ${argv.task} --name ${argv.name ?? argv["node-id"]} --vc <vc>', then bind dependencies with 'flow bind' if needed, then publish with 'cz-cli task flow submit ${argv.task}'.` })
