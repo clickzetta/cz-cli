@@ -4,6 +4,8 @@ import {
   StudioTaskType,
   StudioTaskRunStatus,
   StudioScheduleRateType,
+  StudioMergeLogic,
+  StudioMergeStatus,
   STUDIO_TASK_TO_FILE_TYPE,
   CLI_TASK_TYPE_ALIASES,
   UI_ONLY_FILE_TYPES,
@@ -18,11 +20,14 @@ describe("Studio task contracts", () => {
     expect(StudioFileType.LakeHouse).toBe(4)
     expect(StudioFileType.Python3).toBe(7)
     expect(StudioFileType.Flow).toBe(500)
+    expect(StudioFileType.Merge).toBe(20)
     expect(StudioTaskType.LakeHouse).toBe(23)
     expect(StudioTaskType.DataIntegration).toBe(10)
     expect(StudioTaskType.Flow).toBe(500)
+    expect(StudioTaskType.Merge).toBe(20)
     expect(STUDIO_TASK_TO_FILE_TYPE[StudioTaskType.LakeHouse]).toBe(StudioFileType.LakeHouse)
     expect(STUDIO_TASK_TO_FILE_TYPE[StudioTaskType.DataIntegration]).toBe(StudioFileType.DataIntegration)
+    expect(STUDIO_TASK_TO_FILE_TYPE[StudioTaskType.Merge]).toBe(StudioFileType.Merge)
   })
 
   test("keeps condition task as a named Studio file type", () => {
@@ -30,6 +35,9 @@ describe("Studio task contracts", () => {
     expect(CLI_TASK_TYPE_ALIASES.CONDITION).toBe(StudioFileType.Condition)
     expect(fileTypeName(StudioFileType.Condition)).toBe("CONDITION")
     expect(taskTypeName(StudioTaskType.Condition)).toBe("CONDITION")
+    expect(CLI_TASK_TYPE_ALIASES.MERGE).toBe(StudioFileType.Merge)
+    expect(fileTypeName(StudioFileType.Merge)).toBe("MERGE")
+    expect(taskTypeName(StudioTaskType.Merge)).toBe("MERGE")
   })
 
   test("exposes named sets for command branching", () => {
@@ -44,6 +52,8 @@ describe("Studio task contracts", () => {
     expect(StudioTaskRunStatus.Failed).toBe(3)
     expect(StudioScheduleRateType.Day).toBe(3)
     expect(StudioScheduleRateType.Cron).toBe(6)
+    expect(Object.values(StudioMergeStatus)).toEqual(["SUCCESS", "FAILED", "SKIPPED"])
+    expect(Object.values(StudioMergeLogic)).toEqual(["AND", "OR"])
   })
 
   test("preserves unknown enum values in labels", () => {

@@ -10,6 +10,7 @@ export const StudioFileType = {
   DynamicTable: 16,
   ContinuousJob: 17,
   Condition: 19,
+  Merge: 20,
   FullIncrementalSync: 280,
   MultipleRISync: 281,
   MultipleDISync: 291,
@@ -30,6 +31,7 @@ export const StudioTaskType = {
   JDBC: 29,
   DynamicTable: 30,
   ContinuousJob: 31,
+  Merge: 20,
   FullIncrementalSync: 280,
   MultipleRISync: 281,
   MultipleDISync: 291,
@@ -108,6 +110,17 @@ export const StudioDependencyStrategy = {
   Default: 0,
 } as const
 
+export const StudioMergeStatus = {
+  Success: "SUCCESS",
+  Failed: "FAILED",
+  Skipped: "SKIPPED",
+} as const
+
+export const StudioMergeLogic = {
+  And: "AND",
+  Or: "OR",
+} as const
+
 export const StudioCdcRunStatus = {
   Running: 2,
   Stopped: 4,
@@ -132,6 +145,7 @@ export const STUDIO_TASK_TO_FILE_TYPE = {
   [StudioTaskType.JDBC]: StudioFileType.JDBC,
   [StudioTaskType.DynamicTable]: StudioFileType.DynamicTable,
   [StudioTaskType.ContinuousJob]: StudioFileType.ContinuousJob,
+  [StudioTaskType.Merge]: StudioFileType.Merge,
   [StudioTaskType.FullIncrementalSync]: StudioFileType.FullIncrementalSync,
   [StudioTaskType.MultipleRISync]: StudioFileType.MultipleRISync,
   [StudioTaskType.MultipleDISync]: StudioFileType.MultipleDISync,
@@ -152,6 +166,7 @@ export const CLI_TASK_TYPE_ALIASES: Record<string, number> = {
   SHELL: StudioFileType.Shell,
   JDBC: StudioFileType.JDBC,
   CONDITION: StudioFileType.Condition,
+  MERGE: StudioFileType.Merge,
   SPARK: StudioFileType.Spark,
   FLOW: StudioFileType.Flow,
   INTEGRATION: StudioFileType.DataIntegration,
@@ -173,6 +188,7 @@ export const CLI_TASK_TYPE_ALIASES: Record<string, number> = {
 export const UI_ONLY_FILE_TYPES = new Set<number>([
   StudioFileType.Spark,
   StudioFileType.Flow,
+  StudioFileType.Merge,
   StudioFileType.DataIntegration,
   StudioFileType.RealTimeDI,
   StudioFileType.DynamicTable,
@@ -234,6 +250,7 @@ export const FILE_TYPE_NAMES: Record<number, string> = {
   [StudioFileType.DynamicTable]: "DYNAMIC_TABLE",
   [StudioFileType.ContinuousJob]: "CONTINUOUS_SQL",
   [StudioFileType.Condition]: "CONDITION",
+  [StudioFileType.Merge]: "MERGE",
   [StudioFileType.FullIncrementalSync]: "FULL_INCREMENTAL",
   [StudioFileType.MultipleRISync]: "MULTI_REALTIME",
   [StudioFileType.MultipleDISync]: "MULTI_DI",
@@ -254,6 +271,7 @@ export const TASK_TYPE_NAMES: Record<number, string> = {
   [StudioTaskType.JDBC]: "JDBC",
   [StudioTaskType.DynamicTable]: "DYNAMIC_TABLE",
   [StudioTaskType.ContinuousJob]: "CONTINUOUS_SQL",
+  [StudioTaskType.Merge]: "MERGE",
   [StudioTaskType.FullIncrementalSync]: "FULL_INCREMENTAL",
   [StudioTaskType.MultipleRISync]: "MULTI_REALTIME",
   [StudioTaskType.MultipleDISync]: "MULTI_DI",

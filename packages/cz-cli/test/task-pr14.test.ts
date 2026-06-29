@@ -430,6 +430,8 @@ describe("help texts", () => {
   test("task create --help mentions workflow", () => {
     const out = help(["task", "create", "--help"])
     expect(out).toMatch(/workflow/)
+    expect(out).toMatch(/DYNAMIC_TABLE/)
+    expect(out).not.toMatch(/Create a SQL\/Python\/Shell script task/)
   })
 
   test("task flow --help shows full workflow", () => {

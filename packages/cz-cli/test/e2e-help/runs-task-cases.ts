@@ -111,6 +111,11 @@ export const runsTaskHelpCases: HelpCase[] = [
     expectOptions: ["task", "--vc", "--retry-count", "--auto-lineage", "--outputs", "--output-tables"],
   },
   {
+    args: ["task", "save-merge", "--help"],
+    expectHeader: "cz-cli task save-merge",
+    expectOptions: ["task", "--dependency", "--status", "SKIPPED"],
+  },
+  {
     args: ["task", "save-cron", "--help"],
     expectHeader: "cz-cli task save-cron",
     expectOptions: ["task", "--cron", "--auto-lineage", "--outputs", "--output-tables"],

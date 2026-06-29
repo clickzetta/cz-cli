@@ -44,6 +44,8 @@ export interface SaveTaskContentParams {
   instanceName: string
   replaceEscapedChars?: boolean
   paramValueList?: unknown[]
+  inputParamValueList?: unknown[]
+  outputParamValueList?: unknown[]
   adhocConfigs?: string
 }
 
@@ -71,6 +73,8 @@ export interface SaveTaskConfigParams {
   dataFileOutputListReqs?: unknown[]
   configProperties?: unknown
   taskPriority?: string
+  dependencyTimeout?: number
+  dependencyTimeoutUnit?: string
   connectionParam?: string
   dataFileVersion?: number
   scheduleRateType?: number
@@ -176,6 +180,8 @@ export function saveTaskContent(config: StudioConfig, params: SaveTaskContentPar
       updateBy: params.updateBy,
       instanceName: params.instanceName,
       ...(params.paramValueList !== undefined && { paramValueList: params.paramValueList }),
+      ...(params.inputParamValueList !== undefined && { inputParamValueList: params.inputParamValueList }),
+      ...(params.outputParamValueList !== undefined && { outputParamValueList: params.outputParamValueList }),
       ...(params.replaceEscapedChars !== undefined && { replace_escaped_chars: params.replaceEscapedChars }),
       ...(params.adhocConfigs !== undefined && { adhocConfigs: params.adhocConfigs }),
     },
@@ -211,6 +217,8 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       dataFileOutputListReqs: params.dataFileOutputListReqs ?? [],
       configProperties: params.configProperties,
       taskPriority: params.taskPriority ?? "1",
+      ...(params.dependencyTimeout !== undefined && { dependencyTimeout: params.dependencyTimeout }),
+      ...(params.dependencyTimeoutUnit !== undefined && { dependencyTimeoutUnit: params.dependencyTimeoutUnit }),
       ...(params.connectionParam !== undefined && { connectionParam: params.connectionParam }),
       ...(params.dataFileVersion !== undefined && { dataFileVersion: params.dataFileVersion }),
       scheduleRateType: params.scheduleRateType ?? 2,

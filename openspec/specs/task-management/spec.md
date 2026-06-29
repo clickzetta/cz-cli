@@ -60,6 +60,12 @@ CLI task 类型、状态、调度频率等 Studio 后端契约 MUST 通过集中
 - **THEN** 系统 MUST 调用 Studio 创建任务接口并传入 `fileType=19`
 - **AND** `task create --help` MUST 将 `CONDITION` 作为可发现的任务类型展示
 
+#### Scenario: 创建归并任务
+
+- **WHEN** 用户执行 `cz-cli task create merge_task --folder 389001 --type MERGE`
+- **THEN** 系统 MUST 调用 Studio 创建任务接口并传入 `fileType=20`
+- **AND** `task create --help` MUST 将 `MERGE` 作为可发现的任务类型展示
+
 #### Scenario: 保存独立条件任务配置
 
 - **WHEN** 条件任务内容包含 `conditionConfig.branches[].outputName` 和可选 `defaultOutputName`
@@ -97,6 +103,25 @@ CLI task 类型、状态、调度频率等 Studio 后端契约 MUST 通过集中
 - **WHEN** 用户执行 `cz-cli task save-config task --retry-count 2` 这类非 cron 配置更新
 - **THEN** 系统 MUST 保留后端已有的 `schedule`、`frequency`、`scheduleStartTime`、`scheduleEndTime`、`isScheduleRateTypeOff` 和 `useActiveEndTime`
 - **AND** 不得因为保存重试、VC、依赖或产出表配置而丢失每周指定天调度定义
+
+#### Scenario: 保存归并任务规则和调度依赖
+
+- **WHEN** 用户执行 `cz-cli task save-merge merge_task --dependency upstream --status SUCCESS --status FAILED --status SKIPPED`
+- **THEN** 系统 MUST 保存任务内容为 `{"mergeRule":{"logic":"AND","conditions":[{"dependencyId":<upstream_id>,"statusIn":["SUCCESS","FAILED","SKIPPED"]}]},"finalStatus":"SUCCESS"}`
+- **AND** 系统 MUST 将上游任务作为调度依赖保存到 `dataFileInputListReqs`
+- **AND** `SKIPPED` 状态 MUST 在 help 中说明仅适用于匹配 if/condition 节点的上游结果
+
+#### Scenario: 归并任务参数校验
+
+- **WHEN** 用户执行 `cz-cli task save-merge merge_task --dependency upstream --status UNKNOWN`
+- **THEN** CLI MUST 返回 `INVALID_ARGUMENTS`
+- **AND** 不调用保存内容或保存配置接口
+
+#### Scenario: 发布未配置的归并任务
+
+- **WHEN** 用户创建 `MERGE` 任务后未执行 `cz-cli task save-merge` 就执行 `cz-cli task deploy merge_task -y`
+- **THEN** CLI MUST 返回 `NO_MERGE_CONFIG`
+- **AND** 不调用发布接口
 
 #### Scenario: 复用 Studio task 契约枚举
 

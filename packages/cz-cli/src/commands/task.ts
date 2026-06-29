@@ -57,6 +57,8 @@ import {
   StudioDependencyStrategy,
   StudioFileType,
   StudioLineageAddMethod,
+  StudioMergeLogic,
+  StudioMergeStatus,
   StudioRerunProperty,
   StudioScheduleRateType,
   StudioSelfDependsJob,
@@ -611,6 +613,38 @@ function existingStudioScheduleFields(data: Record<string, unknown>) {
   }
 }
 
+const MERGE_STATUSES = new Set<string>(Object.values(StudioMergeStatus))
+const MERGE_FINAL_STATUSES = new Set<string>(Object.values(StudioMergeStatus))
+const MERGE_LOGICS = new Set<string>(Object.values(StudioMergeLogic))
+const MERGE_STATUS_OPTIONS_TEXT = Object.values(StudioMergeStatus).join(", ")
+const MERGE_LOGIC_OPTIONS_TEXT = Object.values(StudioMergeLogic).join(", ")
+
+function parseMergeStatusList(values: string[] | undefined, format: string | undefined) {
+  const statuses = (values?.length ? values : [StudioMergeStatus.Success])
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean)
+  const invalid = statuses.find((status) => !MERGE_STATUSES.has(status))
+  if (invalid) handledError("INVALID_ARGUMENTS", `Unsupported merge status: ${invalid}. Use ${MERGE_STATUS_OPTIONS_TEXT}.`, { format, exitCode: 2 })
+  return Array.from(new Set(statuses))
+}
+
+function parseMergeEnum(raw: unknown, allowed: Set<string>, label: string, format: string | undefined) {
+  const value = String(raw).trim().toUpperCase()
+  if (!allowed.has(value)) {
+    handledError("INVALID_ARGUMENTS", `Unsupported merge ${label}: ${value}. Use ${Array.from(allowed).join(", ")}.`, { format, exitCode: 2 })
+  }
+  return value
+}
+
+function mergeConfigProperties(value: unknown) {
+  const config = parseConfigProperties(value)
+  return JSON.stringify({
+    extConfig: isRecord(config.extConfig) ? config.extConfig : {},
+    enableAutoMv: Boolean(config.enableAutoMv),
+  })
+}
+
 function normalizeParsedDependency(dep: Record<string, unknown>): Record<string, unknown> {
   const strategyItem = normalizeDependencyStrategy(dep)
   return {
@@ -993,7 +1027,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "create <name>",
-        "Create a Studio task. Typical script workflow: create → save-content --content '...' → save-config --vc <vc> → deploy",
+        "Create a Studio task. Typical workflow: create → save-content/save-merge/save-config → deploy",
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
@@ -1040,6 +1074,148 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const newFileId = Number(data)
             const url = newFileId ? studioUrl(sc, newFileId) : undefined
             success({ id: data, studio_url: url }, { format })
+          } catch (err) {
+            reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "save-merge <task>",
+        "Save MERGE task rule content and schedule dependencies. SKIPPED status only applies when the upstream is an if/condition task.",
+        (y) =>
+          y
+            .positional("task", { type: "string", demandOption: true })
+            .option("dependency", { type: "array", string: true, demandOption: true, describe: "Upstream task name or ID. Repeat to add multiple merge conditions." })
+            .option("status", { type: "array", string: true, describe: `Allowed upstream status for all dependencies: ${MERGE_STATUS_OPTIONS_TEXT}. Repeat or comma-separate. SKIPPED only applies to if/condition upstream tasks.` })
+            .option("logic", { type: "string", default: StudioMergeLogic.And, describe: `Merge condition logic: ${MERGE_LOGIC_OPTIONS_TEXT}` })
+            .option("final-status", { type: "string", default: StudioMergeStatus.Success, describe: `Final task status when merge rule matches: ${MERGE_STATUS_OPTIONS_TEXT}` })
+            .option("cron", { type: "string", describe: "Cron expression. Defaults to existing cron or daily midnight." })
+            .option("vc", { type: "string", describe: "Virtual cluster code" })
+            .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
+            .option("schema", { type: "string", describe: "Schema name for adhoc config" })
+            .option("retry-count", { type: "number", describe: "Max retry attempts" })
+            .option("dependency-timeout", { type: "number", default: 3, describe: "Dependency wait timeout value" })
+            .option("dependency-timeout-unit", { type: "string", default: "d", describe: "Dependency wait timeout unit, e.g. d/h/m" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const dependencyNames = ((argv.dependency as string[] | undefined) ?? [])
+              .map((dependency) => String(dependency).trim())
+              .filter(Boolean)
+            if (dependencyNames.length === 0) {
+              error("INVALID_ARGUMENTS", "Provide at least one --dependency.", { format, exitCode: 2 })
+              return
+            }
+            const statusIn = parseMergeStatusList(argv.status as string[] | undefined, format)
+            const logic = parseMergeEnum(argv.logic, MERGE_LOGICS, "logic", format)
+            const finalStatus = parseMergeEnum(argv["final-status"], MERGE_FINAL_STATUSES, "final status", format)
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            const [taskDetailResp, oldResp] = await Promise.all([
+              getTaskDetail(sc, fileId),
+              getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
+            ])
+            const taskDetailData = isRecord(taskDetailResp.data) ? taskDetailResp.data : {}
+            const taskDetail = isRecord(taskDetailData.taskDetail) ? taskDetailData.taskDetail : taskDetailData
+            const fileType = Number(taskDetail.fileType ?? taskDetailData.fileType)
+            if (Number.isFinite(fileType) && fileType !== 0 && fileType !== StudioFileType.Merge) {
+              error("INVALID_TASK_TYPE", `task save-merge requires a MERGE task (fileType=20), got ${fileTypeName(fileType)}.`, { format, exitCode: 2 })
+              return
+            }
+            const oldData = isRecord(oldResp.data) ? oldResp.data : {}
+            const mergeTaskName = String(taskDetail.dataFileName ?? taskDetail.fileName ?? oldData.dataFileName ?? argv.task)
+            const cronText = (argv.cron as string | undefined) ?? (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *"
+            const cronResult = convertAgentCron(cronText)
+            if (!cronResult.ok || !cronResult.outputCron) {
+              error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 })
+              return
+            }
+            const dependencies = await Promise.all(dependencyNames.map(async (dependencyName) => {
+              const dependencyFileId = await resolveTaskId(sc, dependencyName, format)
+              const dependencyDetailResp = await getTaskDetail(sc, dependencyFileId)
+              const dependencyDetailData = isRecord(dependencyDetailResp.data) ? dependencyDetailResp.data : {}
+              const dependencyDetail = isRecord(dependencyDetailData.taskDetail) ? dependencyDetailData.taskDetail : dependencyDetailData
+              const dependencyFileName = String(dependencyDetail.dataFileName ?? dependencyDetail.fileName ?? dependencyName)
+              return {
+                dependencyId: dependencyFileId,
+                config: {
+                  dependencyProjectId: Number(dependencyDetail.projectId ?? dependencyDetailData.projectId ?? sc.projectId),
+                  dependencyFileId,
+                  dependencyFileName,
+                  dependencyInputName: `${sc.workspaceName}.${dependencyFileName}`,
+                  parseType: StudioLineageAddMethod.SystemParsed,
+                  depStrategy: StudioDependencyStrategy.Default,
+                },
+              }
+            }))
+            const schemaName = (argv.schema as string | undefined) ?? (oldData.schemaName as string | undefined) ?? "public"
+            await saveTaskContent(sc, {
+              dataFileId: fileId,
+              dataFileContent: {
+                mergeRule: {
+                  logic,
+                  conditions: dependencies.map((dependency) => ({
+                    dependencyId: dependency.dependencyId,
+                    statusIn,
+                  })),
+                },
+                finalStatus,
+              },
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.instanceName,
+              paramValueList: [],
+              inputParamValueList: [],
+              outputParamValueList: [],
+              adhocConfigs: JSON.stringify({ multiDataSource: [], schema: schemaName }),
+            })
+            const activeStartTime = formatIsoStartOfDay(oldData.activeStartTime as string | undefined)
+            const configProperties = mergeConfigProperties(oldData.configProperties)
+            const vc = await resolveScheduleVc(sc, argv, oldData)
+            const shouldRegenerateSchedule = argv.cron != null || !Array.isArray(oldData.schedule)
+            const resp = await saveTaskConfig(sc, {
+              dataFileId: fileId,
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.instanceName,
+              cronExpress: cronResult.outputCron,
+              activeStartTime,
+              activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
+              ownerCnName: String(taskDetail.ownerCnName ?? taskDetailData.ownerCnName ?? sc.userId),
+              ownerEnName: String(taskDetail.ownerEnName ?? taskDetailData.ownerEnName ?? sc.userId),
+              schemaName,
+              etlVcCode: vc.etlVcCode,
+              etlVcId: vc.etlVcId,
+              retryCount: (argv["retry-count"] as number | undefined) ?? (oldData.retryCount as number | undefined) ?? 1,
+              retryIntervalTime: (oldData.retryIntervalTime as number | undefined) ?? 1,
+              retryIntervalTimeUnit: (oldData.retryIntervalTimeUnit as string | undefined) ?? "m",
+              rerunProperty: String((oldData.rerunProperty as number | string | undefined) ?? StudioRerunProperty.AnyTime),
+              selfDependsJob: (oldData.selfDependsJob as number | undefined) ?? StudioSelfDependsJob.No,
+              executeTimeout: (oldData.executeTimeout as number | undefined) ?? 0,
+              executeTimeoutUnit: (oldData.executeTimeoutUnit as string | undefined) ?? "m",
+              dataFileInputListReqs: dependencies.map((dependency) => dependency.config),
+              dataFileOutputListReqs: [],
+              configProperties,
+              dependencyTimeout: argv["dependency-timeout"] as number,
+              dependencyTimeoutUnit: argv["dependency-timeout-unit"] as string,
+              connectionParam: "{}",
+              fileType: StudioFileType.Merge,
+              dataFileName: mergeTaskName,
+              fileDescription: String(oldData.fileDescription ?? taskDetail.fileDescription ?? ""),
+              scheduleRateType: (oldData.scheduleRateType as number | undefined) ?? StudioScheduleRateType.Day,
+              triggerType: StudioTriggerType.Schedule,
+              taskPriority: String(oldData.taskPriority ?? "1"),
+              ...(shouldRegenerateSchedule
+                ? studioScheduleFieldsFromCron(cronResult, activeStartTime, configProperties)
+                : existingStudioScheduleFields(oldData)),
+            })
+            logOperation("task save-merge", { ok: true })
+            success({
+              ...resp.data as object,
+              task_id: fileId,
+              dependencies: dependencies.map((dependency) => dependency.config),
+              studio_url: studioUrl(sc, fileId),
+            }, { format, aiMessage: `MERGE task saved. SKIPPED status only matches skipped if/condition upstream tasks. Deploy when ready: cz-cli task deploy ${fileId} -y` })
           } catch (err) {
             reportTaskError(err, format)
           }
@@ -2440,6 +2616,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               } else {
                 // All other sync types require Studio UI configuration
                 process.stderr.write(`Warning: ${typeName} task — source/target/field-mapping must be configured in Studio UI before deploying. Open: ${studioUrl(sc, fileId)}\n`)
+              }
+            }
+            if (fileType === StudioFileType.Merge) {
+              const hasConfig = taskDetailInner?.hasConfig ?? taskDetailData?.hasConfig
+              if (hasConfig === false || hasConfig === 0) {
+                error("NO_MERGE_CONFIG", `MERGE task is not configured. Run: cz-cli task save-merge ${fileId} --dependency <upstream> --status SUCCESS`, { format, exitCode: 2 }); return
               }
             }
             if (SCRIPT_FILE_TYPES.has(fileType)) {
