@@ -4,6 +4,7 @@ import { registerSqlCommand } from "./commands/sql.js"
 import { registerSchemaCommand } from "./commands/schema.js"
 import { registerTableCommand } from "./commands/table.js"
 import { registerWorkspaceCommand } from "./commands/workspace.js"
+import { registerWorkspaceParamCommand } from "./commands/workspace-param.js"
 import { registerStatusCommand } from "./commands/status.js"
 import { registerProfileCommand } from "./commands/profile.js"
 import { registerTaskCommand } from "./commands/task.js"
@@ -22,6 +23,7 @@ export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerSchemaCommand(cli)
   registerTableCommand(cli)
   registerWorkspaceCommand(cli)
+  registerWorkspaceParamCommand(cli)
   registerStatusCommand(cli)
   registerProfileCommand(cli)
   registerTaskCommand(cli)
