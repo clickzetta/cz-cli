@@ -3221,7 +3221,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("instance", { type: "number", demandOption: true, describe: "Flow instance ID" })
+                .option("run_id", { type: "number", demandOption: true, describe: "Flow instance ID" })
                 .option("node-id", { type: "number", describe: "Flow node ID" })
                 .option("node-instance-id", { type: "number", describe: "Flow node instance ID" }),
             async (argv) => {
@@ -3231,7 +3231,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 const resp = await listFlowInstances(sc, {
                   flowId: fileId,
-                  flowInstanceId: argv.instance as number | undefined,
+                  flowInstanceId: argv.run_id as number | undefined,
                   flowNodeId: argv["node-id"] as number | undefined,
                   flowNodeInstanceId: argv["node-instance-id"] as number | undefined,
                 })
