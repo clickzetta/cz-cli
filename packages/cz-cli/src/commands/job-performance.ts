@@ -18,6 +18,8 @@ type Profile = {
   vcluster?: string
 }
 
+const VW_UAT_HOST = "lakehouse-studio.uat.cn-vw.volkswagen-cea.com"
+
 function centralApiUrl(host: string): string {
   if (host.startsWith("uat-")) return "https://uat-api.clickzetta.com"
   if (host.startsWith("dev-") || host.startsWith("localhost") || host.startsWith("0.0.0.0")) return "https://dev-api.clickzetta.com"
@@ -43,7 +45,9 @@ function normalizeHost(serviceUrl: string): string {
 }
 
 export function serviceUrlToMcpUrl(serviceUrl: string): string {
-  const apiHost = normalizeHost(centralApiUrl(normalizeHost(serviceUrl)))
+  const host = normalizeHost(serviceUrl)
+  if (host === VW_UAT_HOST) return `http://${VW_UAT_HOST}/mcp`
+  const apiHost = normalizeHost(centralApiUrl(host))
   if (!apiHost.includes("api")) return `https://${apiHost}/mcp`
   return `https://${apiHost.replace(/([.-])api(?=\.)/, "-mcp$1api")}/mcp`
 }

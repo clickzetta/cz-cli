@@ -77,7 +77,9 @@ function normalizeHost(serviceUrl: string): string {
  * 再在 `api` 标签前插入 `-mcp`、路径设为 `/mcp`。
  */
 export function serviceUrlToMcpUrl(serviceUrl: string): string {
-  const apiHost = normalizeHost(centralApiUrl(normalizeHost(serviceUrl)))
+  const host = normalizeHost(serviceUrl)
+  if (host === VW_UAT_HOST) return `http://${VW_UAT_HOST}/mcp`
+  const apiHost = normalizeHost(centralApiUrl(host))
   // OP domains without "api" in hostname: use directly with /mcp path
   if (!apiHost.includes("api")) return `https://${apiHost}/mcp`
   return `https://${apiHost.replace(/([.-])api(?=\.)/, "-mcp$1api")}/mcp`
@@ -93,6 +95,8 @@ type Profile = {
   schema?: string
   vcluster?: string
 }
+
+const VW_UAT_HOST = "lakehouse-studio.uat.cn-vw.volkswagen-cea.com"
 
 /** 取活跃连接：优先 CZ_* 环境变量，否则读 ~/.clickzetta/profiles.toml 的 CZ_PROFILE / default_profile。 */
 function loadProfile(): Profile {
