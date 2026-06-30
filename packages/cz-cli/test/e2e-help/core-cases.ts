@@ -116,6 +116,43 @@ export const coreHelpCases: HelpCase[] = [
     expectOptions: ["name", "--schema", "--persist"],
   },
 
+  // workspace-param
+  {
+    args: ["workspace-param", "--help"],
+    expectHeader: "cz-cli workspace-param",
+    expectCommands: ["list", "add", "update", "enable", "disable", "delete"],
+  },
+  {
+    args: ["workspace-param", "list", "--help"],
+    expectHeader: "cz-cli workspace-param list",
+    expectOptions: ["--project-id", "--page-index", "--page-size"],
+  },
+  {
+    args: ["workspace-param", "add", "--help"],
+    expectHeader: "cz-cli workspace-param add",
+    expectOptions: ["--project-id", "--key", "--value", "--source-type", "--encrypt"],
+  },
+  {
+    args: ["workspace-param", "update", "--help"],
+    expectHeader: "cz-cli workspace-param update",
+    expectOptions: ["--project-id", "--id", "--key", "--value", "--source-type", "--encrypt"],
+  },
+  {
+    args: ["workspace-param", "enable", "--help"],
+    expectHeader: "cz-cli workspace-param enable",
+    expectOptions: ["--project-id", "--id"],
+  },
+  {
+    args: ["workspace-param", "disable", "--help"],
+    expectHeader: "cz-cli workspace-param disable",
+    expectOptions: ["--project-id", "--id"],
+  },
+  {
+    args: ["workspace-param", "delete", "--help"],
+    expectHeader: "cz-cli workspace-param delete",
+    expectOptions: ["--project-id", "--id"],
+  },
+
   // status
   {
     args: ["status", "--help"],
