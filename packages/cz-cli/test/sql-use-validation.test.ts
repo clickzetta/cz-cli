@@ -160,4 +160,19 @@ describe("sql USE validation", () => {
     })
     expect(execCalls).toEqual(["DESC SCHEMA analytics", "SELECT 1 LIMIT 101"])
   })
+
+  test("MERGE is treated as a write operation and requires --write", async () => {
+    const result = await execute('sql "MERGE INTO target USING source ON target.id=source.id WHEN MATCHED THEN UPDATE SET v=source.v" --sync')
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json).toEqual({
+      ai_message: "Add --write flag to execute write operations: cz-cli sql \"<SQL>\" --write",
+      error: {
+        code: "WRITE_NOT_ALLOWED",
+        message: "Write operation detected. Pass --write to confirm.",
+      },
+    })
+    expect(execCalls).toEqual([])
+  })
 })

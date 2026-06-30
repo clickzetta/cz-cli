@@ -8,7 +8,7 @@ import { logOperation } from "../logger.js"
 import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
 
-const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
+const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK|MERGE)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
 const LIMIT_RE = /\bLIMIT\s+\d+/i
 const SHOW_RE = /^\s*SHOW\b/i
