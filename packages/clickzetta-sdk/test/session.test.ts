@@ -1,5 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { AuthToken, ConnectionConfig } from "../src/types/index.js"
+
+/**
+ * `mock.module` registrations persist for the rest of the process. Without
+ * restoring them, the `getToken` stub below leaks into later test files (e.g.
+ * token-refresh.test.ts would see `token: "tok-test"` instead of the real
+ * refresh behavior). Capture the real modules first and re-register them in
+ * `afterAll` to isolate the leak.
+ */
+const realToken = { ...(await import("../src/auth/token.js")) }
+const realRegion = { ...(await import("../src/config/region.js")) }
 
 mock.module("../src/auth/token.js", () => ({
   getToken: async (): Promise<AuthToken> => ({
@@ -14,6 +24,11 @@ mock.module("../src/auth/token.js", () => ({
 mock.module("../src/config/region.js", () => ({
   toServiceUrl: (_service: string, _protocol: string) => "https://test.invalid",
 }))
+
+afterAll(() => {
+  mock.module("../src/auth/token.js", () => realToken)
+  mock.module("../src/config/region.js", () => realRegion)
+})
 
 import {
   DEFAULT_MAXIMUM_TIMEOUT,

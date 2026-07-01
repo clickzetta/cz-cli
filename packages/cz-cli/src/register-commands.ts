@@ -6,6 +6,7 @@ import { registerTableCommand } from "./commands/table.js"
 import { registerWorkspaceCommand } from "./commands/workspace.js"
 import { registerWorkspaceParamCommand } from "./commands/workspace-param.js"
 import { registerStatusCommand } from "./commands/status.js"
+import { registerLoginCommand } from "./commands/login.js"
 import { registerProfileCommand } from "./commands/profile.js"
 import { registerTaskCommand } from "./commands/task.js"
 import { registerRunsCommand } from "./commands/runs.js"
@@ -25,6 +26,7 @@ export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerWorkspaceCommand(cli)
   registerWorkspaceParamCommand(cli)
   registerStatusCommand(cli)
+  registerLoginCommand(cli)
   registerProfileCommand(cli)
   registerTaskCommand(cli)
   registerRunsCommand(cli)
