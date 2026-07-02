@@ -66,3 +66,73 @@ export function resolveMoAPreset(cfg: MoAConfig, name?: string): MoAPreset {
   }
   return preset
 }
+
+import type { ModelMessage } from "ai"
+
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  return content
+    .filter((p: any) => p && p.type === "text" && typeof p.text === "string")
+    .map((p: any) => p.text)
+    .join("")
+}
+
+export function referenceMessages(messages: ModelMessage[]): ModelMessage[] {
+  const out: ModelMessage[] = []
+  for (const msg of messages) {
+    if (msg.role !== "user" && msg.role !== "assistant") continue
+    const text = textFromContent(msg.content)
+    if (!text.trim()) continue
+    out.push({ role: msg.role, content: text })
+  }
+  return out
+}
+
+export function toolListText(tools: { name: string; description?: string }[]): string {
+  if (tools.length === 0) return ""
+  return tools
+    .map((t) => (t.description ? `- ${t.name}: ${t.description.split("\n")[0]}` : `- ${t.name}`))
+    .join("\n")
+}
+
+export function referenceSystemPrompt(toolList: string): string {
+  const base =
+    "You are a reference model in a Mixture of Agents process. Give concise, actionable advice " +
+    "for the acting agent: next steps, tool-use strategy, risks. You cannot call tools yourself; " +
+    "describe the strategy in text."
+  if (!toolList) return base
+  return `${base}\n\nThe acting agent has these tools available:\n${toolList}`
+}
+
+export function synthesizeContext(input: {
+  preset: string
+  aggregatorLabel: string
+  referenceLabels: string[]
+  outputs: { label: string; text: string }[]
+}): string {
+  const joined = input.outputs
+    .map((o, i) => `Reference ${i + 1} — ${o.label}:\n${o.text}`)
+    .join("\n\n")
+  return (
+    "[Mixture of Agents reference context]\n" +
+    `Preset: ${input.preset}\n` +
+    `Aggregator/acting model: ${input.aggregatorLabel}\n` +
+    `References: ${input.referenceLabels.join(", ")}\n\n` +
+    "Use the reference responses below as private context. You are the aggregator and acting model: " +
+    "answer the user directly or call tools as needed.\n\n" +
+    joined
+  )
+}
+
+export function injectContext(messages: ModelMessage[], context: string): ModelMessage[] {
+  const out = messages.map((m) => ({ ...m }))
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].role === "user" && typeof out[i].content === "string") {
+      out[i] = { ...out[i], content: `${out[i].content}\n\n${context}` }
+      return out
+    }
+  }
+  out.push({ role: "user", content: context })
+  return out
+}
