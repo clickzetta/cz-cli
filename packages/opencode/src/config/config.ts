@@ -138,6 +138,30 @@ export const Info = z
     small_model: ConfigModelID.describe(
       "Small model to use for tasks like title generation in the format of provider/model",
     ).optional(),
+    moa: z
+      .object({
+        default_preset: z.string().optional().describe("Default MoA preset name"),
+        reference_concurrency: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Max reference models to call in parallel (default 8)"),
+        presets: z.record(
+          z.string(),
+          z.object({
+            enabled: z.boolean().optional().describe("Enable reference fan-out; false ⇒ aggregator acts alone"),
+            reference_models: z
+              .array(ConfigModelID)
+              .min(1)
+              .describe("Advisory models run in parallel, in provider/model form"),
+            aggregator: ConfigModelID.describe("The acting model that calls tools, in provider/model form"),
+            max_tokens: z.number().int().positive().optional().describe("Output cap; unset ⇒ model maximum"),
+          }),
+        ),
+      })
+      .optional()
+      .describe("Mixture of Agents presets, selectable as models under the 'moa' provider"),
     default_agent: z
       .string()
       .optional()

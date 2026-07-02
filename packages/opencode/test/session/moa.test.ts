@@ -179,3 +179,29 @@ describe("synthesizeContext / injectContext", () => {
     expect(out[out.length - 1]).toEqual({ role: "user", content: "CTX" })
   })
 })
+
+import { Config } from "../../src/config"
+
+describe("Config.Info moa schema", () => {
+  test("parses a moa block", () => {
+    const parsed = Config.Info.parse({
+      moa: {
+        default_preset: "default",
+        reference_concurrency: 4,
+        presets: {
+          default: {
+            reference_models: ["openai/gpt-5.5", "openrouter/deepseek/deepseek-v4-pro"],
+            aggregator: "anthropic/claude-opus-4.8",
+            max_tokens: 2048,
+          },
+        },
+      },
+    })
+    expect(parsed.moa?.presets.default.aggregator).toBe("anthropic/claude-opus-4.8")
+    expect(parsed.moa?.reference_concurrency).toBe(4)
+  })
+
+  test("moa is optional", () => {
+    expect(() => Config.Info.parse({})).not.toThrow()
+  })
+})
