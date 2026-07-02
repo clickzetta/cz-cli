@@ -128,8 +128,9 @@ export function synthesizeContext(input: {
 export function injectContext(messages: ModelMessage[], context: string): ModelMessage[] {
   const out = messages.map((m) => ({ ...m }))
   for (let i = out.length - 1; i >= 0; i--) {
-    if (out[i].role === "user" && typeof out[i].content === "string") {
-      out[i] = { ...out[i], content: `${out[i].content}\n\n${context}` }
+    const msg = out[i]
+    if (msg.role === "user" && typeof msg.content === "string") {
+      out[i] = { ...msg, role: "user", content: `${msg.content}\n\n${context}` }
       return out
     }
   }
