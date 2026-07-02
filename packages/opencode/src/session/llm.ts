@@ -23,6 +23,8 @@ import { Installation } from "@/installation"
 import { InstallationVersion } from "@/installation/version"
 import { EffectBridge } from "@/effect"
 import * as Option from "effect/Option"
+import * as Exit from "effect/Exit"
+import * as Cause from "effect/Cause"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { withSessionOtelContext } from "@/plugin/otel/context"
 import type { AuthError } from "@/auth"
@@ -404,25 +406,43 @@ const live: Layer.Layer<
         const refSystem = referenceSystemPrompt(toolList)
         const calls: ReferenceCall[] = []
         for (const slot of plan.referenceModels) {
-          const refModel = yield* provider.getModel(
-            ProviderID.make(slot.providerID),
-            ModelID.make(slot.modelID),
-          )
-          const refLanguage = yield* provider.getLanguage(refModel)
           const label = `${slot.providerID}/${slot.modelID}`
-          calls.push({
-            label,
-            call: async () => {
-              const res = await generateText({
-                model: refLanguage,
-                system: refSystem,
-                messages: refView,
-                ...(plan.maxTokens ? { maxOutputTokens: plan.maxTokens } : {}),
-                abortSignal: prepared.abort,
-              })
-              return res.text || "(empty response)"
-            },
-          })
+          // Reference models are advisory/best-effort: resolution must degrade
+          // exactly like call failures (captured as [failed: ...]) and must NOT
+          // abort the turn. getModel/getLanguage throw defects when a provider
+          // is misconfigured, so capture the full Exit (Effect.exit covers both
+          // typed failures and defects) and route any failure through the
+          // fan-out as a throwing call() so runReferenceFanout labels it.
+          const resolved = yield* Effect.exit(
+            provider
+              .getModel(ProviderID.make(slot.providerID), ModelID.make(slot.modelID))
+              .pipe(Effect.flatMap((refModel) => provider.getLanguage(refModel))),
+          )
+          if (Exit.isSuccess(resolved)) {
+            const refLanguage = resolved.value
+            calls.push({
+              label,
+              call: async () => {
+                const res = await generateText({
+                  model: refLanguage,
+                  system: refSystem,
+                  messages: refView,
+                  ...(plan.maxTokens ? { maxOutputTokens: plan.maxTokens } : {}),
+                  abortSignal: prepared.abort,
+                })
+                return res.text || "(empty response)"
+              },
+            })
+          } else {
+            const cause = Cause.squash(resolved.cause)
+            const reason = cause instanceof Error ? cause.message : String(cause)
+            calls.push({
+              label,
+              call: async () => {
+                throw new Error(`resolve failed: ${label}: ${reason}`)
+              },
+            })
+          }
         }
         const outputs = yield* Effect.promise(() => runReferenceFanout(calls, plan.concurrency))
         const context = synthesizeContext({
