@@ -1,3 +1,5 @@
+import type { ModelMessage } from "ai"
+
 export const DEFAULT_REFERENCE_CONCURRENCY = 8
 
 export type MoASlot = { providerID: string; modelID: string }
@@ -66,8 +68,6 @@ export function resolveMoAPreset(cfg: MoAConfig, name?: string): MoAPreset {
   }
   return preset
 }
-
-import type { ModelMessage } from "ai"
 
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content
