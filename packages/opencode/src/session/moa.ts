@@ -129,10 +129,16 @@ export function injectContext(messages: ModelMessage[], context: string): ModelM
   const out = messages.map((m) => ({ ...m }))
   for (let i = out.length - 1; i >= 0; i--) {
     const msg = out[i]
-    if (msg.role === "user" && typeof msg.content === "string") {
+    if (msg.role !== "user") continue
+    if (typeof msg.content === "string") {
       out[i] = { ...msg, role: "user", content: `${msg.content}\n\n${context}` }
       return out
     }
+    // Production case: convertToModelMessages yields user content as an array of
+    // parts. Copy the content array (the shallow message spread above does not
+    // clone it) and append the context as a trailing text part.
+    out[i] = { ...msg, role: "user", content: [...msg.content, { type: "text", text: context }] }
+    return out
   }
   out.push({ role: "user", content: context })
   return out

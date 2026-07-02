@@ -163,7 +163,7 @@ describe("synthesizeContext / injectContext", () => {
     expect(ctx).toContain("use grep first")
   })
 
-  test("injects at tail of last user message", () => {
+  test("injects at tail of last user message (string content)", () => {
     const msgs: ModelMessage[] = [
       { role: "user", content: "first" },
       { role: "assistant", content: "ok" },
@@ -172,6 +172,27 @@ describe("synthesizeContext / injectContext", () => {
     const out = injectContext(msgs, "CTX")
     expect(out[2].content).toBe("second\n\nCTX")
     expect(msgs[2].content).toBe("second") // original not mutated
+  })
+
+  test("injects a trailing text part into array-content user message (production case)", () => {
+    const msgs: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: [{ type: "text", text: "second" }] },
+    ]
+    const out = injectContext(msgs, "CTX")
+    expect(out[2].content).toEqual([
+      { type: "text", text: "second" },
+      { type: "text", text: "CTX" },
+    ])
+  })
+
+  test("does not mutate the original array content", () => {
+    const originalContent = [{ type: "text" as const, text: "second" }]
+    const msgs: ModelMessage[] = [{ role: "user", content: originalContent as any }]
+    injectContext(msgs, "CTX")
+    expect(msgs[0].content).toBe(originalContent) // same array reference
+    expect(originalContent).toEqual([{ type: "text", text: "second" }]) // unchanged
   })
 
   test("appends a user message when none present", () => {
