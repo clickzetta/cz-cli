@@ -350,7 +350,7 @@ test("bridges default_llm openai-compatible entry into config provider and model
   }
 })
 
-test("explicit config.model overrides default_llm model bridge", async () => {
+test("profiles.toml model takes precedence over project config.model", async () => {
   await using home = await tmpdir({
     init: async (dir) => {
       const clickzettaDir = path.join(dir, ".clickzetta")
@@ -383,7 +383,9 @@ test("explicit config.model overrides default_llm model bridge", async () => {
       directory: tmp.path,
       fn: async () => {
         const config = await load()
-        expect(config.model).toBe("openai/gpt-5")
+        // model is exclusively owned by profiles.toml: the project config.model
+        // override is discarded in favor of the default_llm bridge value.
+        expect(config.model).toBe("clickzetta/deepseek/deepseek-v4-pro")
         expect(config.provider?.clickzetta?.options?.apiKey).toBe("ck-test")
       },
     })
