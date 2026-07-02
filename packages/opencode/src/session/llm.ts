@@ -2,7 +2,7 @@ import { Provider } from "@/provider"
 import { Log } from "@/util"
 import { Context, Effect, Layer, Record } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
+import { streamText, generateText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
 import { mergeDeep, pipe } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
@@ -26,6 +26,19 @@ import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { withSessionOtelContext } from "@/plugin/otel/context"
 import type { AuthError } from "@/auth"
+import { ProviderID, ModelID } from "@/provider/schema"
+import {
+  normalizeMoAConfig,
+  resolveMoAPreset,
+  referenceMessages,
+  toolListText,
+  referenceSystemPrompt,
+  synthesizeContext,
+  injectContext,
+  runReferenceFanout,
+  type ReferenceCall,
+  type MoASlot,
+} from "@/session/moa"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -54,6 +67,13 @@ export type StreamInput = {
 export type PreparedInput = StreamInput & {
   abort?: AbortSignal
   telemetry: RequestTelemetry
+  moa?: {
+    presetName: string
+    referenceModels: MoASlot[]
+    aggregatorLabel: string
+    concurrency: number
+    maxTokens?: number
+  }
   request: {
     system: string[]
     messages: ModelMessage[]
@@ -89,6 +109,29 @@ const live: Layer.Layer<
 
     const prepare = Effect.fn("LLM.prepare")(function* (input: StreamInput) {
       if (isPreparedInput(input)) return input
+
+      let moaPlan: PreparedInput["moa"] | undefined
+      if (input.model.providerID === "moa") {
+        const cfg = yield* config.get()
+        const moaCfg = normalizeMoAConfig((cfg as any).moa)
+        const preset = resolveMoAPreset(moaCfg, input.model.id) // throws if unknown → aborts turn
+        const agg = preset.aggregator
+        const aggregatorModel = yield* provider.getModel(
+          ProviderID.make(agg.providerID),
+          ModelID.make(agg.modelID),
+        ) // throws if aggregator unresolvable → aborts turn (intended: no acting model)
+        if (preset.enabled && preset.reference_models.length > 0) {
+          moaPlan = {
+            presetName: input.model.id,
+            referenceModels: preset.reference_models,
+            aggregatorLabel: `${agg.providerID}/${agg.modelID}`,
+            concurrency: moaCfg.reference_concurrency,
+            maxTokens: preset.max_tokens,
+          }
+        }
+        // The aggregator is the acting model: everything downstream uses it.
+        input = { ...input, model: aggregatorModel }
+      }
 
       const [language, item, info] = yield* Effect.all(
         [provider.getLanguage(input.model), provider.getProvider(input.model.providerID), auth.get(input.model.providerID)],
@@ -134,6 +177,7 @@ const live: Layer.Layer<
 
       return {
         ...input,
+        moa: moaPlan,
         telemetry: {
           inputMessages: serializeInputMessages(messages),
           systemInstructions: isOpenaiOauth ? serializeSystemInstructions(system) : undefined,
@@ -191,7 +235,6 @@ const live: Layer.Layer<
       if (prepared.request.isOpenaiOauth) {
         options.instructions = system.join("\n")
       }
-      const messages = prepared.request.messages
 
       const params = yield* plugin.trigger(
         "chat.params",
@@ -346,6 +389,49 @@ const live: Layer.Layer<
             unsub?.()
           }
         })
+      }
+
+      let messages = prepared.request.messages
+      if (prepared.moa) {
+        const plan = prepared.moa
+        const refView = referenceMessages(messages)
+        const toolList = toolListText(
+          Object.entries(tools).map(([name, t]) => ({
+            name,
+            description: (t as Tool).description as string | undefined,
+          })),
+        )
+        const refSystem = referenceSystemPrompt(toolList)
+        const calls: ReferenceCall[] = []
+        for (const slot of plan.referenceModels) {
+          const refModel = yield* provider.getModel(
+            ProviderID.make(slot.providerID),
+            ModelID.make(slot.modelID),
+          )
+          const refLanguage = yield* provider.getLanguage(refModel)
+          const label = `${slot.providerID}/${slot.modelID}`
+          calls.push({
+            label,
+            call: async () => {
+              const res = await generateText({
+                model: refLanguage,
+                system: refSystem,
+                messages: refView,
+                ...(plan.maxTokens ? { maxOutputTokens: plan.maxTokens } : {}),
+                abortSignal: prepared.abort,
+              })
+              return res.text || "(empty response)"
+            },
+          })
+        }
+        const outputs = yield* Effect.promise(() => runReferenceFanout(calls, plan.concurrency))
+        const context = synthesizeContext({
+          preset: plan.presetName,
+          aggregatorLabel: plan.aggregatorLabel,
+          referenceLabels: calls.map((c) => c.label),
+          outputs,
+        })
+        messages = injectContext(messages, context)
       }
 
       const tracer = cfg.experimental?.openTelemetry
