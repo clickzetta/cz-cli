@@ -224,3 +224,50 @@ describe("synthesizePresetModel", () => {
     expect(m.limit.context).toBe(200000)
   })
 })
+
+import { runReferenceFanout, type ReferenceCall } from "../../src/session/moa"
+
+describe("runReferenceFanout", () => {
+  test("returns outputs in input order", async () => {
+    const calls: ReferenceCall[] = [
+      { label: "a", call: async () => "AA" },
+      { label: "b", call: async () => "BB" },
+    ]
+    expect(await runReferenceFanout(calls, 8)).toEqual([
+      { label: "a", text: "AA" },
+      { label: "b", text: "BB" },
+    ])
+  })
+
+  test("a failing call degrades to a [failed: …] note without aborting others", async () => {
+    const calls: ReferenceCall[] = [
+      { label: "ok", call: async () => "fine" },
+      { label: "bad", call: async () => { throw new Error("boom") } },
+    ]
+    const out = await runReferenceFanout(calls, 8)
+    expect(out[0]).toEqual({ label: "ok", text: "fine" })
+    expect(out[1].label).toBe("bad")
+    expect(out[1].text).toMatch(/\[failed: .*boom.*\]/)
+  })
+
+  test("respects the concurrency bound", async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const make = (v: string): ReferenceCall => ({
+      label: v,
+      call: async () => {
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((r) => setTimeout(r, 5))
+        inFlight--
+        return v
+      },
+    })
+    await runReferenceFanout([make("1"), make("2"), make("3"), make("4")], 2)
+    expect(maxInFlight).toBeLessThanOrEqual(2)
+  })
+
+  test("empty input ⇒ empty output", async () => {
+    expect(await runReferenceFanout([], 8)).toEqual([])
+  })
+})

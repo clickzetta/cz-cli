@@ -150,3 +150,28 @@ export function synthesizePresetModel(presetName: string, aggregatorModel: any):
     name: `MoA: ${presetName}`,
   }
 }
+
+export type ReferenceCall = { label: string; call: () => Promise<string> }
+
+export async function runReferenceFanout(
+  calls: ReferenceCall[],
+  concurrency: number,
+): Promise<{ label: string; text: string }[]> {
+  const results: { label: string; text: string }[] = new Array(calls.length)
+  let next = 0
+  const limit = Math.max(1, concurrency)
+  async function worker() {
+    while (true) {
+      const i = next++
+      if (i >= calls.length) return
+      const { label, call } = calls[i]
+      try {
+        results[i] = { label, text: await call() }
+      } catch (e) {
+        results[i] = { label, text: `[failed: ${e instanceof Error ? e.message : String(e)}]` }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, calls.length) }, worker))
+  return results
+}
