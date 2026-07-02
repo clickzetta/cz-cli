@@ -205,3 +205,22 @@ describe("Config.Info moa schema", () => {
     expect(() => Config.Info.parse({})).not.toThrow()
   })
 })
+
+import { synthesizePresetModel } from "../../src/session/moa"
+
+describe("synthesizePresetModel", () => {
+  test("copies aggregator capabilities, overrides id/provider/name", () => {
+    const agg = {
+      id: "claude-opus-4.8",
+      providerID: "anthropic",
+      capabilities: { tool_call: true },
+      limit: { context: 200000, output: 8192 },
+    }
+    const m = synthesizePresetModel("default", agg)
+    expect(m.id).toBe("default")
+    expect(m.providerID).toBe("moa")
+    expect(m.name).toBe("MoA: default")
+    expect(m.capabilities.tool_call).toBe(true)
+    expect(m.limit.context).toBe(200000)
+  })
+})

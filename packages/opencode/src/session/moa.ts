@@ -136,3 +136,16 @@ export function injectContext(messages: ModelMessage[], context: string): ModelM
   out.push({ role: "user", content: context })
   return out
 }
+
+// Build a synthesized MoA preset Model by copying capability-bearing fields
+// from the aggregator's Model. `Model` is intentionally typed loosely here to
+// avoid a provider→session import cycle; the provider layer passes its real
+// Model and gets a Model-shaped object back.
+export function synthesizePresetModel(presetName: string, aggregatorModel: any): any {
+  return {
+    ...aggregatorModel,
+    id: presetName,
+    providerID: "moa",
+    name: `MoA: ${presetName}`,
+  }
+}
