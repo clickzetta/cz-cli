@@ -100,9 +100,9 @@ export function previewScheduleInstanceTimes(
     config,
     "/ide-admin/v1/dataFileConfiguration/generateInstanceTimeList",
     {
-      cronExpress: params.cronExpress,
-      ...(params.scheduleStartTime !== undefined && { scheduleStartTime: params.scheduleStartTime }),
-      ...(params.scheduleEndTime !== undefined && { scheduleEndTime: params.scheduleEndTime }),
+      cron: params.cronExpress,
+      scheduleStartTime: params.scheduleStartTime ?? "00:00",
+      scheduleEndTime: params.scheduleEndTime ?? "23:59",
     },
     params.scheduleEnv ? { env: params.scheduleEnv } : undefined,
   )

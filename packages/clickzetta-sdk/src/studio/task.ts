@@ -24,6 +24,8 @@ export interface GetTaskConfigDetailParams {
   projectId: number
   workspaceId: number
   dataFileId: number
+  nodeId?: number
+  collectType?: number
 }
 
 export interface ParseTaskDependencyOutParams {
@@ -42,6 +44,8 @@ export interface SaveTaskContentParams {
   instanceName: string
   replaceEscapedChars?: boolean
   paramValueList?: unknown[]
+  inputParamValueList?: unknown[]
+  outputParamValueList?: unknown[]
   adhocConfigs?: string
 }
 
@@ -69,9 +73,18 @@ export interface SaveTaskConfigParams {
   dataFileOutputListReqs?: unknown[]
   configProperties?: unknown
   taskPriority?: string
+  dependencyTimeout?: number
+  dependencyTimeoutUnit?: string
   connectionParam?: string
   dataFileVersion?: number
   scheduleRateType?: number
+  schedule?: unknown[][]
+  frequency?: string
+  scheduleStartTime?: string
+  scheduleEndTime?: string
+  isScheduleRateTypeOff?: boolean
+  useActiveEndTime?: boolean
+  enableAutoMv?: boolean
   triggerType?: number
   fileType?: number
   dataFileName?: string
@@ -134,6 +147,8 @@ export function getTaskConfigDetail(config: StudioConfig, params: GetTaskConfigD
       projectId: params.projectId,
       workspaceId: params.workspaceId,
       dataFileId: params.dataFileId,
+      ...(params.nodeId !== undefined && { nodeId: params.nodeId }),
+      ...(params.collectType !== undefined && { collectType: params.collectType }),
     },
   )
 }
@@ -165,6 +180,8 @@ export function saveTaskContent(config: StudioConfig, params: SaveTaskContentPar
       updateBy: params.updateBy,
       instanceName: params.instanceName,
       ...(params.paramValueList !== undefined && { paramValueList: params.paramValueList }),
+      ...(params.inputParamValueList !== undefined && { inputParamValueList: params.inputParamValueList }),
+      ...(params.outputParamValueList !== undefined && { outputParamValueList: params.outputParamValueList }),
       ...(params.replaceEscapedChars !== undefined && { replace_escaped_chars: params.replaceEscapedChars }),
       ...(params.adhocConfigs !== undefined && { adhocConfigs: params.adhocConfigs }),
     },
@@ -200,6 +217,8 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       dataFileOutputListReqs: params.dataFileOutputListReqs ?? [],
       configProperties: params.configProperties,
       taskPriority: params.taskPriority ?? "1",
+      ...(params.dependencyTimeout !== undefined && { dependencyTimeout: params.dependencyTimeout }),
+      ...(params.dependencyTimeoutUnit !== undefined && { dependencyTimeoutUnit: params.dependencyTimeoutUnit }),
       ...(params.connectionParam !== undefined && { connectionParam: params.connectionParam }),
       ...(params.dataFileVersion !== undefined && { dataFileVersion: params.dataFileVersion }),
       scheduleRateType: params.scheduleRateType ?? 2,
@@ -207,6 +226,13 @@ export function saveTaskConfig(config: StudioConfig, params: SaveTaskConfigParam
       fileCreateType: 1,
       scheduleCreatedType: "2",
       scheduleConfigType: "1",
+      ...(params.schedule !== undefined && { schedule: params.schedule }),
+      ...(params.frequency !== undefined && { frequency: params.frequency }),
+      ...(params.scheduleStartTime !== undefined && { scheduleStartTime: params.scheduleStartTime }),
+      ...(params.scheduleEndTime !== undefined && { scheduleEndTime: params.scheduleEndTime }),
+      ...(params.isScheduleRateTypeOff !== undefined && { isScheduleRateTypeOff: params.isScheduleRateTypeOff }),
+      ...(params.useActiveEndTime !== undefined && { useActiveEndTime: params.useActiveEndTime }),
+      ...(params.enableAutoMv !== undefined && { enableAutoMv: params.enableAutoMv }),
       ...(params.triggerType !== undefined && { triggerType: params.triggerType }),
       ...(params.fileType !== undefined && { fileType: params.fileType }),
       ...(params.dataFileName !== undefined && { dataFileName: params.dataFileName }),

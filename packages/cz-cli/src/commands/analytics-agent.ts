@@ -20,6 +20,22 @@ const ROUTES = {
   datasourceCreate: { method: "POST", path: "/open/api/v1/datasources" },
   datasourceUpdate: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/datasources/${encodePath(argv["datasource-id"])}` },
   datasourceDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/datasources/${encodePath(argv["datasource-id"])}` },
+  simpleMetricList: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/list" },
+  simpleMetricCreate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/create" },
+  simpleMetricUpdate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/update" },
+  simpleMetricDelete: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/delete" },
+  simpleMetricDetail: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/detail" },
+  simpleMetricValidate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/validate" },
+  simpleMetricEnable: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/enable" },
+  simpleMetricDisable: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/disable" },
+  answerBuilderCreate: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/create" },
+  answerBuilderUpdate: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/update" },
+  answerBuilderDelete: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/delete" },
+  answerBuilderDetail: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/detail" },
+  answerBuilderList: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/list" },
+  answerBuilderValidate: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/validate" },
+  answerBuilderEnable: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/enable" },
+  answerBuilderDisable: { method: "POST", path: "/open/api/v1/analytics-agent/answer-builders/disable" },
   datagptEnabled: { method: "GET", path: "/open/api/v1/analytics-agent/datagpt/enabled" },
   domainList: { method: "GET", path: "/open/api/v1/analytics-agent/domains" },
   domainCreate: { method: "POST", path: "/open/api/v1/analytics-agent/domains" },
@@ -28,6 +44,9 @@ const ROUTES = {
   domainDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}` },
   domainTableAdd: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables` },
   domainTableRemove: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables/${encodePath(argv["table-id"])}` },
+  domainJoinDiscover: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/discover` },
+  domainJoinResult: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/joins/tasks/${encodePath(argv["task-id"])}` },
+  domainJoinApply: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/apply` },
   sessionList: { method: "POST", path: "/open/session/list" },
   sessionCreate: { method: "POST", path: "/open/session/safe_new", openSessionAuth: true },
   sessionRun: { method: "POST", path: "/open/text2insight/query", openSessionAuth: true },
@@ -91,6 +110,26 @@ function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] |
   }
 }
 
+function parseStringList(raw: unknown, fieldName: string): string[] | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined
+  if (Array.isArray(raw)) {
+    const values = raw.flatMap((item) => parseStringList(item, fieldName) ?? [])
+    return values.length > 0 ? values : undefined
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim()
+    if (!trimmed) return undefined
+    if (trimmed.startsWith("[")) {
+      const parsed = parseJsonArray(trimmed, fieldName)
+      const values = (parsed ?? []).map((item) => String(item).trim()).filter(Boolean)
+      return values.length > 0 ? values : undefined
+    }
+    const values = trimmed.split(",").map((item) => item.trim()).filter(Boolean)
+    return values.length > 0 ? values : undefined
+  }
+  return [String(raw)]
+}
+
 function mergeBody(
   body: Record<string, unknown>,
   extra: Record<string, unknown>,
@@ -107,6 +146,52 @@ function undefinedIfEmpty(value: Record<string, unknown>): Record<string, unknow
 
 function encodePath(value: unknown): string {
   return encodeURIComponent(String(value ?? ""))
+}
+
+/**
+ * Parses a --join flag value into a DatasetJoinDTO-shaped object.
+ * Format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>
+ * Example: 101:orders.user_id=202:users.id@n:1
+ */
+function parseJoinFlag(raw: string): Record<string, unknown> {
+  const atIdx = raw.lastIndexOf("@")
+  if (atIdx === -1) throw new Error(`Invalid --join value "${raw}": missing "@" before relation`)
+  const relation = raw.slice(atIdx + 1)
+  if (!["n:1", "1:1", "1:n"].includes(relation)) {
+    throw new Error(`Invalid --join value "${raw}": relation must be one of n:1, 1:1, 1:n (got "${relation}")`)
+  }
+  const rest = raw.slice(0, atIdx)
+  const eqIdx = rest.indexOf("=")
+  if (eqIdx === -1) throw new Error(`Invalid --join value "${raw}": missing "=" between left and right side`)
+  const left = rest.slice(0, eqIdx)
+  const right = rest.slice(eqIdx + 1)
+
+  function parseSide(s: string, label: string) {
+    const colonIdx = s.indexOf(":")
+    if (colonIdx === -1) throw new Error(`Invalid --join value "${raw}": ${label} missing ":"`)
+    const datasetId = Number(s.slice(0, colonIdx))
+    if (!Number.isFinite(datasetId)) throw new Error(`Invalid --join value "${raw}": ${label} datasetId is not a number`)
+    const rest2 = s.slice(colonIdx + 1)
+    const dotIdx = rest2.lastIndexOf(".")
+    if (dotIdx === -1) throw new Error(`Invalid --join value "${raw}": ${label} missing "." between tableName and attrCode`)
+    const tableName = rest2.slice(0, dotIdx)
+    const attrCode = rest2.slice(dotIdx + 1)
+    if (!tableName) throw new Error(`Invalid --join value "${raw}": ${label} tableName is empty`)
+    if (!attrCode) throw new Error(`Invalid --join value "${raw}": ${label} attrCode is empty`)
+    return { datasetId, tableName, attrCode }
+  }
+
+  const l = parseSide(left, "left")
+  const r = parseSide(right, "right")
+  return {
+    datasetId: l.datasetId,
+    tableName: l.tableName,
+    attrCode: l.attrCode,
+    joinDatasetId: r.datasetId,
+    joinTableName: r.tableName,
+    joinAttrCode: r.attrCode,
+    relation,
+  }
 }
 
 function normalizeEndpoint(value: string): string {
@@ -469,6 +554,7 @@ async function executeAnalyticsCommand(
   route: AnalyticsRoute,
   body: Record<string, unknown>,
   query: Record<string, unknown> = {},
+  buildAiMessage?: (data: unknown) => string | undefined,
 ): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
@@ -481,7 +567,8 @@ async function executeAnalyticsCommand(
       return
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
-    success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
+    const data = unwrapResponse(payload)
+    success(data, { format, timeMs: Date.now() - t0, aiMessage: buildAiMessage?.(data) })
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
@@ -828,7 +915,385 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               return commandGroup(table, "analytics-agent domain table")
             },
           )
+          .command("joins", "Discover and apply domain join relations", (joins) => {
+            joins
+              .command(
+                "discover",
+                "Start async join discovery for a domain",
+                (y) =>
+                  y.option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const t0 = Date.now()
+                  try {
+                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinDiscover, {}, {}, ctx)
+                    const bizErr = extractBusinessError(payload)
+                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                    const data = unwrapResponse(payload) as Record<string, unknown> | null
+                    success(data ? { taskId: data.taskId, status: data.status } : {}, { format, timeMs: Date.now() - t0 })
+                  } catch (err) {
+                    if (isHandledCliError(err)) return
+                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                    })
+                  }
+                },
+              )
+              .command(
+                "result",
+                "Poll the result of a join discovery task",
+                (y) =>
+                  y.option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by discover" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const t0 = Date.now()
+                  try {
+                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinResult, {}, {}, ctx)
+                    const bizErr = extractBusinessError(payload)
+                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                    const data = unwrapResponse(payload) as Record<string, unknown> | null
+                    if (!data) { success({}, { format, timeMs: Date.now() - t0 }); return }
+                    const resultJoins = (data.joins as Record<string, unknown>[] | null) ?? []
+                    success({
+                      taskId: data.taskId,
+                      status: data.status,
+                      joinCount: data.joinCount ?? resultJoins.length,
+                      joins: resultJoins.map((j) => ({
+                        datasetId: j.datasetId,
+                        tableName: j.tableName,
+                        attrCode: j.attrCode,
+                        joinDatasetId: j.joinDatasetId,
+                        joinTableName: j.joinTableName,
+                        joinAttrCode: j.joinAttrCode,
+                        relation: j.relation,
+                      })),
+                    }, { format, timeMs: Date.now() - t0 })
+                  } catch (err) {
+                    if (isHandledCliError(err)) return
+                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                    })
+                  }
+                },
+              )
+              .command(
+                "apply",
+                "Apply discovered join relations",
+                (y) =>
+                  y.option("join", {
+                    type: "string",
+                    demandOption: true,
+                    describe:
+                      "Join relation in format: <datasetId>:<table>.<attr>=<joinDatasetId>:<joinTable>.<joinAttr>@<relation>  (e.g. 101:orders.user_id=202:users.id@n:1). Repeat for multiple joins.",
+                  }).option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const t0 = Date.now()
+                  const rawJoins = Array.isArray(argv["join"]) ? argv["join"] : [argv["join"]]
+                  let joins: Record<string, unknown>[]
+                  try {
+                    joins = (rawJoins as string[]).map((r) => parseJoinFlag(r))
+                  } catch (err) {
+                    error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+                    return
+                  }
+                  try {
+                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinApply, { joins }, {}, ctx)
+                    const bizErr = extractBusinessError(payload)
+                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                    success({ submittedCount: joins.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
+                  } catch (err) {
+                    if (isHandledCliError(err)) return
+                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                    })
+                  }
+                },
+              )
+            return commandGroup(joins, "analytics-agent domain joins")
+          })
         return commandGroup(domain, "analytics-agent domain")
+      })
+      .command("metric", "Manage Analytics Agent metrics", (metric) => {
+        metric
+          .command(
+            "list",
+            "List metrics for one or more domains",
+            (y) =>
+              y
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("datasource-id", { type: "number", describe: "Datasource ID" })
+                .option("table-name", { type: "string", describe: "Filter by table name" })
+                .option("page-num", { type: "number", describe: "Page number" })
+                .option("page-size", { type: "number", describe: "Page size" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                domainIds: [argv["domain-id"]],
+                datasourceId: argv["datasource-id"],
+                tableName: argv["table-name"],
+                pageNum: argv["page-num"],
+                pageSize: argv["page-size"],
+              })
+              await executeAnalyticsCommand("analytics-agent metric list", argv as Record<string, unknown>, ROUTES.simpleMetricList, body)
+            },
+          )
+          .command(
+            "create",
+            "Create a simple metric",
+            (y) =>
+              y
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
+                .option("name", { type: "string", demandOption: true, describe: "Metric name" })
+                .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
+                .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
+                .option("description", { type: "string", describe: "Metric description" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                datasourceId: argv["datasource-id"],
+                tableName: argv["table-name"],
+                names: [argv.name],
+                aggExpr: argv.expression,
+                alias: parseStringList(argv.alias, "--alias"),
+                description: argv.description,
+                domainIds: [argv["domain-id"]],
+              })
+              await executeAnalyticsCommand("analytics-agent metric create", argv as Record<string, unknown>, ROUTES.simpleMetricCreate, body)
+            },
+          )
+          .command(
+            "update <metric-id>",
+            "Update a metric",
+            (y) =>
+              y
+                .positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
+                .option("name", { type: "string", demandOption: true, describe: "Metric name" })
+                .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
+                .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
+                .option("description", { type: "string", describe: "Metric description" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                id: argv["metric-id"],
+                datasourceId: argv["datasource-id"],
+                tableName: argv["table-name"],
+                names: [argv.name],
+                aggExpr: argv.expression,
+                alias: parseStringList(argv.alias, "--alias"),
+                description: argv.description,
+                domainIds: [argv["domain-id"]],
+              })
+              await executeAnalyticsCommand("analytics-agent metric update", argv as Record<string, unknown>, ROUTES.simpleMetricUpdate, body)
+            },
+          )
+          .command(
+            "detail <metric-id>",
+            "Show metric detail",
+            (y) =>
+              y.positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["metric-id"] })
+              await executeAnalyticsCommand("analytics-agent metric detail", argv as Record<string, unknown>, ROUTES.simpleMetricDetail, body)
+            },
+          )
+          .command(
+            "validate",
+            "Validate a metric definition",
+            (y) =>
+              y
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
+                .option("name", { type: "string", demandOption: true, describe: "Metric name" })
+                .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
+                .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
+                .option("description", { type: "string", describe: "Metric description" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                datasourceId: argv["datasource-id"],
+                tableName: argv["table-name"],
+                names: [argv.name],
+                aggExpr: argv.expression,
+                alias: parseStringList(argv.alias, "--alias"),
+                description: argv.description,
+                domainIds: [argv["domain-id"]],
+              })
+              await executeAnalyticsCommand("analytics-agent metric validate", argv as Record<string, unknown>, ROUTES.simpleMetricValidate, body)
+            },
+          )
+          .command(
+            "enable <metric-id>",
+            "Enable a metric",
+            (y) =>
+              y.positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["metric-id"] })
+              await executeAnalyticsCommand("analytics-agent metric enable", argv as Record<string, unknown>, ROUTES.simpleMetricEnable, body)
+            },
+          )
+          .command(
+            "disable <metric-id>",
+            "Disable a metric",
+            (y) =>
+              y.positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["metric-id"] })
+              await executeAnalyticsCommand("analytics-agent metric disable", argv as Record<string, unknown>, ROUTES.simpleMetricDisable, body)
+            },
+          )
+          .command(
+            "delete <metric-id>",
+            "Delete a metric",
+            (y) =>
+              y.positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["metric-id"] })
+              await executeAnalyticsCommand("analytics-agent metric delete", argv as Record<string, unknown>, ROUTES.simpleMetricDelete, body)
+            },
+          )
+        return commandGroup(metric, "analytics-agent metric")
+      })
+      .command("answer-builder", "Manage Analytics Agent answer builders", (answerBuilder) => {
+        answerBuilder
+          .command(
+            "create",
+            "Create an answer builder",
+            (y) =>
+              y
+                .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
+                .option("analysis-desc", { type: "string", describe: "Answer builder description" })
+                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                analysisName: argv["analysis-name"],
+                analysisDesc: argv["analysis-desc"],
+                datasourceId: argv["datasource-id"],
+                domainIds: [argv["domain-id"]],
+                content: argv.content,
+              })
+              await executeAnalyticsCommand("analytics-agent answer-builder create", argv as Record<string, unknown>, ROUTES.answerBuilderCreate, body)
+            },
+          )
+          .command(
+            "update <analysis-id>",
+            "Update an answer builder",
+            (y) =>
+              y
+                .positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" })
+                .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
+                .option("analysis-desc", { type: "string", describe: "Answer builder description" })
+                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                id: argv["analysis-id"],
+                analysisName: argv["analysis-name"],
+                analysisDesc: argv["analysis-desc"],
+                datasourceId: argv["datasource-id"],
+                domainIds: [argv["domain-id"]],
+                content: argv.content,
+              })
+              await executeAnalyticsCommand("analytics-agent answer-builder update", argv as Record<string, unknown>, ROUTES.answerBuilderUpdate, body)
+            },
+          )
+          .command(
+            "enable <analysis-id>",
+            "Enable an answer builder",
+            (y) =>
+              y.positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["analysis-id"] })
+              await executeAnalyticsCommand("analytics-agent answer-builder enable", argv as Record<string, unknown>, ROUTES.answerBuilderEnable, body)
+            },
+          )
+          .command(
+            "disable <analysis-id>",
+            "Disable an answer builder",
+            (y) =>
+              y.positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["analysis-id"] })
+              await executeAnalyticsCommand("analytics-agent answer-builder disable", argv as Record<string, unknown>, ROUTES.answerBuilderDisable, body)
+            },
+          )
+          .command(
+            "delete <analysis-id>",
+            "Delete an answer builder",
+            (y) =>
+              y.positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["analysis-id"] })
+              await executeAnalyticsCommand("analytics-agent answer-builder delete", argv as Record<string, unknown>, ROUTES.answerBuilderDelete, body)
+            },
+          )
+          .command(
+            "detail <analysis-id>",
+            "Show answer builder detail",
+            (y) =>
+              y.positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" }),
+            async (argv) => {
+              const body = mergeBody({}, { id: argv["analysis-id"] })
+              await executeAnalyticsCommand("analytics-agent answer-builder detail", argv as Record<string, unknown>, ROUTES.answerBuilderDetail, body)
+            },
+          )
+          .command(
+            "list",
+            "List answer builders",
+            (y) =>
+              y
+                .option("domain-id", { type: "number", describe: "Domain ID" })
+                .option("datasource-id", { type: "number", describe: "Datasource ID" })
+                .option("page-num", { type: "number", describe: "Page number" })
+                .option("page-size", { type: "number", describe: "Page size" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                domainIds: argv["domain-id"] === undefined ? undefined : [argv["domain-id"]],
+                datasourceId: argv["datasource-id"],
+                pageNum: argv["page-num"],
+                pageSize: argv["page-size"],
+              })
+              await executeAnalyticsCommand("analytics-agent answer-builder list", argv as Record<string, unknown>, ROUTES.answerBuilderList, body)
+            },
+          )
+          .command(
+            "validate",
+            "Validate an answer builder definition",
+            (y) =>
+              y
+                .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
+                .option("analysis-desc", { type: "string", describe: "Answer builder description" })
+                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                analysisName: argv["analysis-name"],
+                analysisDesc: argv["analysis-desc"],
+                datasourceId: argv["datasource-id"],
+                domainIds: [argv["domain-id"]],
+                content: argv.content,
+              })
+              await executeAnalyticsCommand("analytics-agent answer-builder validate", argv as Record<string, unknown>, ROUTES.answerBuilderValidate, body)
+            },
+          )
+        return commandGroup(answerBuilder, "analytics-agent answer-builder")
       })
       .command("service", "Check Analytics Agent service capability", (service) => {
         service.command(
@@ -878,7 +1343,14 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 sourceType: argv["source-type"],
                 sourceId: argv["source-id"],
               })
-              await executeAnalyticsCommand("analytics-agent session create", argv as Record<string, unknown>, ROUTES.sessionCreate, body)
+              await executeAnalyticsCommand("analytics-agent session create", argv as Record<string, unknown>, ROUTES.sessionCreate, body, {}, (data) => {
+                const id = typeof data === "string" || typeof data === "number"
+                  ? data
+                  : (data as Record<string, unknown>)?.sessionId ?? (data as Record<string, unknown>)?.id
+                return id
+                  ? `Session created (id=${id}). Ask a question with: cz-cli analytics-agent session run --session-id ${id} --msg "<your question>"`
+                  : undefined
+              })
             },
           )
           .command(

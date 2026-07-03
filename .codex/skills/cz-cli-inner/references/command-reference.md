@@ -42,10 +42,11 @@ cz-cli profile list
 
 ```bash
 cz-cli task list
-cz-cli task create <name> --type <TYPE>       # SQL/PYTHON/SHELL/SPARK/FLOW
-cz-cli task content <task>                    # Draft script, config, and params
-cz-cli task save-content <task> --file <f>    # Save task script
-cz-cli task save-config <task>                # Save non-cron config: retry, deps, VC, schema, timeout
+cz-cli task create <name> --type <TYPE>       # SQL/PYTHON/SHELL/SPARK/FLOW/MERGE
+cz-cli task content <task>                    # Draft script, config, params, input_params, output_params
+cz-cli task save-content <task> --file <f>    # Save task script; --params JSON sets runtime params
+cz-cli task save-config <task>                # Save non-cron config: retry, deps, vc, schema, timeout; --param key=value merges params
+cz-cli task save-merge <task>                 # Save MERGE rule content and upstream schedule dependencies
 cz-cli task save-cron <task>                  # Save cron schedule config
 cz-cli task lineage <task>                    # Parse outputs/dependencies; returns save_payload
 cz-cli task deps <task>                       # Draft dependencies
@@ -54,9 +55,37 @@ cz-cli task undeploy <task>                   # Undeploy; alias: offline
 cz-cli task execute <task>                    # Ad-hoc execution
 cz-cli task delete <task>                     # Delete draft/offline task
 cz-cli task flow dag <task>                   # Get flow DAG
+cz-cli task flow node-save <task> --name N    # Save node script/params; supports --param, --flow-param, --output-param, --input-param
 ```
 
-For task params, `save-content` supports `--params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}'`. System params such as `bizdate`, `sys_plan_day`, and `sys_biz_datetime` are auto-detected.
+For standalone task params:
+
+```bash
+cz-cli task save-content <task> --file script.sql --params '{"city":"beijing","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}'
+cz-cli task save-config <task> --param city=shanghai --param tenant=acme
+```
+
+`save-content --params` stores params while saving content. `save-config --param key=value` merges overrides with existing task params and preserves script content. System params such as `bizdate`, `sys_plan_day`, and `sys_biz_datetime` are auto-detected for JSON `--params` values.
+
+For flow node params:
+
+```bash
+cz-cli task flow node-save <flow> --name upstream --output-param result_value
+cz-cli task flow bind <flow> --upstream upstream --downstream downstream
+cz-cli task flow node-save <flow> --name downstream --input-param up_value=upstream
+cz-cli task flow node-save <flow> --name worker --param city=beijing --flow-param bizdate
+```
+
+`--output-param key` declares an output value as `$[output]`. `--input-param key=upstreamNodeName` resolves the upstream node id from the flow DAG, so create/bind nodes before using it. `--flow-param key` marks a child node param as inherited from the parent flow execution params (`ref=2`).
+
+For merge tasks:
+
+```bash
+cz-cli task create merge_task --type MERGE --folder <folder>
+cz-cli task save-merge merge_task --dependency upstream_task --status SUCCESS --status FAILED --status SKIPPED
+```
+
+`save-merge` writes the merge rule content and saves the upstream task as a schedule dependency. `--status` is repeatable or comma-separated. `SKIPPED` only applies to upstream if/condition tasks.
 
 For manual output tables, quote JSON as one argument:
 

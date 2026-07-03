@@ -1,6 +1,7 @@
 import type { StudioConfig } from "@clickzetta/sdk"
 import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv } from "@clickzetta/sdk"
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
+import { getCookieToken } from "../connection/cookie-token.js"
 import { handledError } from "../output/index.js"
 
 async function resolveInstanceId(baseUrl: string, token: string, tenantId: number, instanceName: string, fallbackId: number, debug?: boolean): Promise<number> {
@@ -34,7 +35,7 @@ export interface StudioContext extends StudioConfig {
 export async function getGatewayContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<GatewayContext> {
   const debug = !!args.debug
   const config = resolveConnectionConfig(args)
-  const token = await getToken(config)
+  const token = await getCookieToken(config) ?? await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
   const user = await getCurrentUser(baseUrl, token.token)
   const instanceId = await resolveInstanceId(baseUrl, token.token, user.accountId, config.instance, token.instanceId, debug)
@@ -59,7 +60,7 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
   const format = args.format ?? "json"
   const debug = !!args.debug
   const config = resolveConnectionConfig(args)
-  const token = await getToken(config)
+  const token = await getCookieToken(config) ?? await getToken(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
 
   const user = await getCurrentUser(baseUrl, token.token)  

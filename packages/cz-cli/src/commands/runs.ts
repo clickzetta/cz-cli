@@ -16,13 +16,25 @@ import { resolveTaskId, resolveRunIdOrTaskName } from "../resolver.js"
 import { opsUrl } from "./studio-url.js"
 import { normalizeRunIdentity, normalizeRunIdentityList } from "../identity.js"
 import { t } from "../locale.js"
+import {
+  StudioTaskRunStatus,
+  StudioTaskRunType,
+  taskRunStatusName,
+} from "../studio-contracts.js"
 
 const STATUS_MAP: Record<string, number> = {
-  SUCCESS: 1, WAITING: 2, FAILED: 3, RUNNING: 4,
+  SUCCESS: StudioTaskRunStatus.Success,
+  WAITING: StudioTaskRunStatus.NotStarted,
+  FAILED: StudioTaskRunStatus.Failed,
+  RUNNING: StudioTaskRunStatus.Running,
 }
 const RUN_TYPE_MAP: Record<string, number> = {
-  SCHEDULE: 1, TEMP: 3, REFILL: 4,
-  "1": 1, "3": 3, "4": 4,
+  SCHEDULE: StudioTaskRunType.Schedule,
+  TEMP: StudioTaskRunType.Temp,
+  REFILL: StudioTaskRunType.Refill,
+  "1": StudioTaskRunType.Schedule,
+  "3": StudioTaskRunType.Temp,
+  "4": StudioTaskRunType.Refill,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +250,6 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             const runId = await resolveRunIdOrTaskName(sc, argv.id as string, format)
             const maxAttempts = Math.max(1, argv.attempts as number)
             const intervalMs = Math.max(100, (argv.interval as number) * 1000)
-            const STATUS_NAME: Record<number, string> = { 1: "SUCCESS", 2: "WAITING", 3: "FAILED", 4: "RUNNING" }
             let lastPayload: Record<string, unknown> | undefined
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
               const resp = await getRunDetail(sc, runId, { projectId: sc.projectId })
@@ -248,10 +259,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               const statusCode = (taskDetail?.instanceStatus ?? data?.instanceStatus ?? data?.status) as number | string | undefined
               const endTime = taskDetail?.executeEndTime ?? data?.executeEndTime
               const failMsg = taskDetail?.failMsg ?? data?.failMsg
-              const isTerminal = statusCode === 1 || statusCode === 3 || (statusCode == null && endTime != null)
+              const isTerminal = statusCode === StudioTaskRunStatus.Success || statusCode === StudioTaskRunStatus.Failed || (statusCode == null && endTime != null)
               if (isTerminal) {
-                const polling = { run_id: runId, attempts_used: attempt, attempts_max: maxAttempts, interval_seconds: argv.interval, terminal_status: STATUS_NAME[statusCode as number] ?? statusCode }
-                if (statusCode === 3 || failMsg) {
+                const polling = { run_id: runId, attempts_used: attempt, attempts_max: maxAttempts, interval_seconds: argv.interval, terminal_status: taskRunStatusName(statusCode) }
+                if (statusCode === StudioTaskRunStatus.Failed || failMsg) {
                   return error("RUN_FAILED", String(failMsg ?? `Run ${runId} ended with terminal failure status`), { format, extra: { run_detail: convertFields(taskDetail ?? data ?? {}, TASK_RUN_FIELDS), polling } })
                 }
                 logOperation("runs wait", { ok: true })
@@ -362,7 +373,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               (resp.data as Record<string, unknown>) ?? {},
               { run_id: runId },
             )
-            success(normalized, { format })
+            success(normalized, {
+              format,
+              aiMessage: `Stop requested for run ${runId}. Verify the final state with: cz-cli runs detail ${runId}`,
+            })
           } catch (err) {
             reportRunsError(err, format)
           }
@@ -443,7 +457,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             }
             const resp = await rerunInstance(sc, runId)
             logOperation("runs rerun", { ok: true })
-            success(resp.data, { format })
+            success(resp.data, {
+              format,
+              aiMessage: `Rerun submitted for ${runId}. Check status with: cz-cli runs detail ${runId} | View logs: cz-cli runs logs ${runId}`,
+            })
           } catch (err) {
             reportRunsError(err, format)
           }

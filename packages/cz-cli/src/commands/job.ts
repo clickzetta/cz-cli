@@ -247,7 +247,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
               format,
               aiMessage: state !== "RUNNING"
                 ? `Job ${argv["job-id"]} has finished (state: ${state}). To see the execution plan: cz-cli job profile ${argv["job-id"]}`
-                : undefined,
+                : `Job ${argv["job-id"]} is still RUNNING (this is a point-in-time snapshot). To block until it finishes and fetch the result in one step, use: cz-cli job result ${argv["job-id"]} (waits up to --timeout seconds, default 300). Or take another snapshot anytime with: cz-cli job status ${argv["job-id"]}`,
             })
           } catch (err) {
             logOperation("job status", { ok: false, errorCode: "JOB_STATUS_ERROR" })
@@ -393,7 +393,10 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             }
             await cancelJob(ctx.clientOpts, jobId)
             logOperation("job cancel", { ok: true })
-            success({ job_id: argv["job-id"], cancelled: true }, { format })
+            success({ job_id: argv["job-id"], cancelled: true }, {
+              format,
+              aiMessage: `Cancellation requested for job ${argv["job-id"]}. Verify it stopped with: cz-cli job status ${argv["job-id"]}`,
+            })
           } catch (err) {
             logOperation("job cancel", { ok: false, errorCode: "JOB_CANCEL_ERROR" })
             error("JOB_CANCEL_ERROR", err instanceof Error ? err.message : String(err), { format })

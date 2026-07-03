@@ -696,19 +696,22 @@ export function Prompt(props: PromptProps) {
       // Run SQL directly, equivalent to `cz-cli sql`. Route through session.shell
       // so the command and its output render as a tool part (no LLM involved).
       // The query is passed via a temp file (--file) to avoid shell-quoting it.
-      const query = parseSqlInput(inputText)
-      if (!query) {
-        toast.show({ variant: "warning", message: "Usage: /sql <query>", duration: 3000 })
+      // Leading flags (e.g. `/sql --write INSERT ...`) are parsed out and passed
+      // through to cz-cli; the displayed command stays the user's raw input.
+      const parsed = parseSqlInput(inputText)
+      if (!parsed || !parsed.sql) {
+        toast.show({ variant: "warning", message: "Usage: /sql [flags] <query>", duration: 3000 })
         return
       }
+      const { flags, sql: query } = parsed
       const commandPrefix = buildSqlCommandPrefix()
       const command = canInlineSql(query)
-        ? buildSqlInlineCommand(query, commandPrefix)
+        ? buildSqlInlineCommand(query, commandPrefix, flags)
         : await (async () => {
             const file = path.join(os.tmpdir(), `cz-cli-sql-${Date.now()}.sql`)
             await Bun.write(file, query)
             setTimeout(() => void unlink(file).catch(() => {}), 60_000)
-            return buildSqlFileCommand(file, commandPrefix)
+            return buildSqlFileCommand(file, commandPrefix, flags)
           })()
       void sdk.client.session.shell({
         sessionID,

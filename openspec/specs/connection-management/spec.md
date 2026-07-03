@@ -64,6 +64,24 @@ PAT 与 username/password 是互斥认证模式。PAT 存在时 SHOULD 优先使
 - **THEN** 系统尝试从其它来源补齐
 - **AND** 若最终仍不完整，返回缺失认证字段错误
 
+### Requirement: Cookie header token 认证覆盖所有 Lakehouse 命令
+
+本需求 MUST 按以下场景执行。
+
+当 profile 的 `header.Cookie` 中携带 `X-ClickZetta-Token` 时，该 token 即为完整的 wire 认证凭证。运行时 MUST 在换取 token 前优先识别 cookie token，并直接将其用作 `AuthToken`，而不是回退到 `loginSingle` 登录。此认证方式 MUST 同时覆盖 SQL 执行路径与 studio / analytics-agent / gateway 等经由 `getStudioContext` / `getGatewayContext` 的命令，行为在各路径间保持一致。
+
+#### Scenario: cookie-only profile 执行 studio/agent 命令
+
+- **WHEN** profile 只配置了 `header.Cookie`（含 `X-ClickZetta-Token`），没有 `pat` 也没有 `username/password`，用户执行 `cz-cli analysis agent ...` 或其它 studio/gateway 命令
+- **THEN** 运行时从 cookie 中解析出 token 并直接作为认证凭证，不调用 `/clickzetta-portal/user/loginSingle`
+- **AND** token 中缺失的 instanceId 通过 JWT payload、`header.Instanceid` 或 `serviceInstanceList` 依次回退解析
+
+#### Scenario: cookie token 缺失时回退
+
+- **WHEN** profile 的 `header.Cookie` 中不含 `X-ClickZetta-Token`（或根本没有 Cookie header）
+- **THEN** 运行时回退到既有认证优先级（PAT > username/password）换取 token
+- **AND** 若最终无任何可用认证来源，返回明确的认证缺失错误
+
 ### Requirement: 命令执行前校验必要上下文
 
 本需求 MUST 按以下场景执行。

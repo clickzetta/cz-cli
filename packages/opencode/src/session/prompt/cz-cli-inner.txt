@@ -28,13 +28,14 @@ cz-cli table drop <name>                      Drop a table
 cz-cli workspace current                      Show current workspace
 
 cz-cli task list                              List Studio tasks
-cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW; offline integration: INTEGRATION=single-table, MULTI_DI=multi-table/whole-db)
+cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE; offline integration: INTEGRATION=single-table, MULTI_DI=multi-table/whole-db)
 cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. single also: --write-mode OVERWRITE|APPEND|UPSERT, --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates sink table + default field mapping. PARTITION (single, opt-in): add --partitioned, then EITHER --partitions 'dt=${bizdate}' (static: whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING) sink table) OR --dynamic-partition 'dt:source_col' (dynamic: per-row routing by a source column; source_col must exist or you'll be asked to confirm). Without --partitioned/--dynamic-partition behavior is unchanged (plain non-partition table).
 cz-cli task integration show <task>           Show an existing integration task's current field/table mapping and sync params (read before edit)
 cz-cli task integration edit <task>           Edit an EXISTING integration task (applied+saved immediately). single: --column-mapping '[{"source","sink"}]' (full replace) / --split-pk / --where / --write-mode / --partitions 'dt=${bizdate}' (static) / --dynamic-partition 'dt:source_col' (dynamic, mutually exclusive with --partitions; empty string clears) / --param-value-list / --parallelism / --error-limit / --m-bytes. multi/whole_db: --table-mapping / --pk-write-mode / --non-pk-write-mode / --schema-rule / --table-rule / --batch-size / --connections
-cz-cli task content <task>                    Get task script, config and params (draft)
-cz-cli task save-content <task> --file <f>    Save task script; use --params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}' to set params (system params like bizdate/sys_plan_day/sys_biz_datetime etc. auto-detected)
-cz-cli task save-config <task>                Save task non-cron config, like retry, dependency
+cz-cli task content <task>                    Get task script, config, params, input_params, and output_params (draft)
+cz-cli task save-content <task> --file <f>    Save task script; use --params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}' to set runtime params while saving content (system params like bizdate/sys_plan_day/sys_biz_datetime etc. auto-detected)
+cz-cli task save-config <task>                Save task non-cron config, like retry, dependency; use --param KEY=VAL (repeatable) to merge/update task params without changing content
+cz-cli task save-merge <task>                 Save MERGE task rule content and upstream schedule dependencies: --dependency <upstream> (repeatable), --status SUCCESS|FAILED|SKIPPED (repeatable/comma-separated), --logic AND|OR, --final-status SUCCESS|FAILED|SKIPPED. SKIPPED only applies to if/condition upstream tasks.
 cz-cli task save-cron <task>                  Save task schedule config
 cz-cli task lineage <task>                    Parse SQL/integration task outputs and schedule dependencies; returns save_payload for config save
 cz-cli task deps <task>                       Show task dependencies (draft)
@@ -43,6 +44,7 @@ cz-cli task undeploy <task>                   Undeploy a task, irreversible (ali
 cz-cli task execute <task>                    Execute ad-hoc; auto-uses saved manual params as defaults (--param KEY=VAL overrides); warns if unresolved ${placeholders} remain (SQL will fail, Python/Shell silently keeps literal string)
 cz-cli task delete <task>                     Delete draft/offline task
 cz-cli task flow dag <task>                   Get flow DAG
+cz-cli task flow node-save <flow> --name N    Save flow node content and params. Params: --param key=value (manual default), --flow-param key (inherit parent flow param/ref=2), --output-param key (declare $[output]), --input-param key=upstreamNodeName (consume upstream output; bind/create nodes first so upstream resolves from DAG)
 
 # Realtime CDC pipeline lifecycle (fileType 281 = MULTI_REALTIME, multi-table CDC created via create-realtime-sync). NOT for single-table Kafka streaming (fileType 14) — those use task start/stop.
 cz-cli task cdc list                          List multi-table CDC pipeline tasks (--name/--status/--page/--page-size)
@@ -136,8 +138,11 @@ Run `cz-cli <command> --help` for detailed options on any command.
 
 **SQL is async by default**. Use `--sync` for SELECT when you need data immediately.
 **Write operations ALWAYS require `--write` flag** — this includes ALL DDL (CREATE, ALTER, DROP, CREATE DYNAMIC TABLE, CREATE MATERIALIZED VIEW) and ALL DML (INSERT, UPDATE, DELETE, MERGE INTO, COPY INTO). Without `--write`, the command will be rejected. Always add it proactively.
-**Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW).
+**Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE).
 **Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.
+**Merge tasks**: create with `task create --type MERGE`, then configure with `task save-merge <task> --dependency <upstream> --status SUCCESS --status FAILED`. Add `--status SKIPPED` only when the upstream is an if/condition task.
+**Task params**: for standalone tasks, use `task save-content --params '{"k":"v"}'` when saving content, or `task save-config --param k=v` to merge/update params while preserving content. For flow nodes, use `task flow node-save --param`, `--flow-param`, `--output-param`, and `--input-param`.
+**Flow node input/output params**: declare upstream outputs with `--output-param key`, bind upstream/downstream, then consume them with downstream `--input-param key=upstreamNodeName`. `--input-param` resolves the upstream node ID from the flow DAG.
 **Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.
 **State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.
 **Multi-environment**: use `--profile <name>` to target a specific environment.

@@ -22,6 +22,9 @@ export async function listUserWorkspaces(
     customHeaders: {
       instanceid: String(instanceId),
       instancename: instanceName,
+      userId: String(userId),
+      accountId: String(tenantId),
+      tenantId: String(tenantId),
       env: "prod",
     },
   }

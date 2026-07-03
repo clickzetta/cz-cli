@@ -95,9 +95,24 @@ const noProfileCases = [
   ["datasource", "list"],
   ["datasource", "catalogs", "ds"],
   ["analytics-agent", "datasource", "list"],
+  ["analytics-agent", "metric", "list", "--domain-id", "1"],
+  ["analytics-agent", "metric", "detail", "1"],
+  ["analytics-agent", "metric", "validate", "--domain-id", "1", "--datasource-id", "1", "--table-name", "t1", "--name", "m1", "--expression", "count(1)"],
+  ["analytics-agent", "metric", "enable", "1"],
+  ["analytics-agent", "metric", "disable", "1"],
+  ["analytics-agent", "answer-builder", "list"],
+  ["analytics-agent", "answer-builder", "enable", "1"],
+  ["analytics-agent", "answer-builder", "disable", "1"],
+  ["analytics-agent", "domain", "joins", "discover", "--domain-id", "1"],
+  ["analytics-agent", "domain", "joins", "result", "--task-id", "t1"],
+  ["analytics-agent", "domain", "joins", "apply", "--domain-id", "1", "--join", "1:t.a=2:t2.b@n:1"],
   ["analytics-agent", "service", "enabled"],
-  ["analytics-agent", "session", "create"],
-  ["analytics-agent", "session", "run", "1"],
+  // Use syntactically valid invocations (required options supplied) so this
+  // case tests profile gating, not arg-parse errors. With the profile gate now
+  // running after yargs validation, a missing required option surfaces a
+  // USAGE_ERROR before NO_PROFILE — which is intended (see run-cli.ts).
+  ["analytics-agent", "session", "create", "--domain-id", "1"],
+  ["analytics-agent", "session", "run", "--session-id", "1"],
   ["analytics-agent", "session", "result", "1"],
   ["analytics-agent", "session", "stop", "1", "1"],
 ] as const

@@ -18,8 +18,8 @@
     "test:e2e:full": "bun test/e2e-full.ts",
     "test:e2e:routing": "bun test/e2e-routing.ts",
     "test:e2e:help": "bun test/e2e-help.ts",
-    "test:unit": "bun test test/classify-error.test.ts",
-    "test:all": "bun test test/classify-error.test.ts && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
+    "test:unit": "bun test test/classify-error.test.ts test/suggest.test.ts test/robustness.test.ts",
+    "test:all": "bun test test/classify-error.test.ts test/suggest.test.ts test/robustness.test.ts && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
     "build:local": "cd ../opencode && bun run build --single && mkdir -p ../cz-cli/dist && cp dist/cz-cli-darwin-arm64/bin/cz-cli ../cz-cli/dist/cz-cli && codesign --sign - ../cz-cli/dist/cz-cli",
     "test:ci": "bun run build:local && CZ_CLI_BIN=./dist/cz-cli bun run test:all"
   },
