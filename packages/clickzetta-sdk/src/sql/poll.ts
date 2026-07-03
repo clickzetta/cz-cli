@@ -8,6 +8,7 @@ import {
 } from "./errors.js"
 import { toClickZettaError, OperationalError } from "../types/errors.js"
 import { decodeArrowPayload, deduplicateColumns, fetchArrowFromUrls } from "./arrow.js"
+import { normalizeServiceEndpoint } from "./submit.js"
 import { normaliseTimestampText, resolveResultTimezone } from "./time.js"
 
 const TERMINAL_STATES = new Set(["SUCCEED", "FAILED", "CANCELLED"])
@@ -73,6 +74,7 @@ interface LhResultSet {
 
 interface LhJobResponse {
   status?: LhJobStatus
+  respStatus?: { errorCode?: string; errorMsg?: string }
   resultSet?: LhResultSet
 }
 
@@ -445,19 +447,19 @@ export async function pollJobResult(
 ): Promise<QueryResult> {
   const startTime = Date.now()
   const { jobTimeoutMs, timezone, maxRetries = Infinity, resubmitFn } = params
+  const serviceInfo = normalizeServiceEndpoint(opts.config?.service ?? opts.baseUrl)
 
   const requestBody = {
-    get_result_request: {
-      account: { user_id: 0 },
-      job_id: {
+    getResultRequest: {
+      jobId: {
         id: jobId.id,
         workspace: jobId.workspace,
-        instance_id: jobId.instanceId,
+        instanceId: jobId.instanceId,
       },
-      offset: 0,
-      user_agent: "",
+      userAgent: "",
+      ...(serviceInfo.endpoint ? { jdbcDomain: serviceInfo.endpoint } : {}),
     },
-    user_agent: "",
+    userAgent: "",
   }
 
   let sleepMs = 50
@@ -478,10 +480,16 @@ export async function pollJobResult(
       throw new OperationalError(`Job ${jobId.id} timed out after ${jobTimeoutMs}ms`, { jobId: jobId.id })
     }
 
-    const raw = await requestRaw<LhJobResponse>(opts, "/lh/getJob", requestBody)
+    const raw = await requestRaw<LhJobResponse>({
+      ...opts,
+      customHeaders: {
+        ...opts.customHeaders,
+        instanceId: String(jobId.instanceId),
+      },
+    }, "/lh/getJob", requestBody)
     const state = raw?.status?.state ?? "UNKNOWN"
-    const errorCode = raw?.status?.errorCode || undefined
-    const errorMessage = raw?.status?.errorMessage || raw?.status?.message || undefined
+    const errorCode = raw?.status?.errorCode || raw?.respStatus?.errorCode || undefined
+    const errorMessage = raw?.status?.errorMessage || raw?.status?.message || raw?.respStatus?.errorMsg || undefined
 
     if (isFatalErrorCode(errorCode)) {
       throw toClickZettaError({

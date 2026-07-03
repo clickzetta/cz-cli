@@ -127,7 +127,18 @@ describe("traceparent propagation", () => {
 
     await submitJob(
       {
-        baseUrl: "https://example.invalid",
+        baseUrl: "https://example.invalid/api",
+        config: {
+          pat: "",
+          username: "alice",
+          password: "",
+          service: "example.invalid/api",
+          protocol: "https",
+          instance: "inst",
+          workspace: "ws",
+          schema: "public",
+          vcluster: "vw",
+        },
       },
       {
         sql: "select 1;",
@@ -144,5 +155,14 @@ describe("traceparent propagation", () => {
 
     const call = fetchCalls.at(-1)
     expect(headerValue(call?.init, "traceparent")).toBe("00-1234567890abcdef1234567890abcdef-1111111111111111-01")
+    expect(headerValue(call?.init, "instanceName")).toBe("inst")
+    expect(headerValue(call?.init, "X-Request-ID")).toBe(headerValue(call?.init, "requestId"))
+    expect(headerValue(call?.init, "jobId")).toBe("job-1")
+    const body = JSON.parse(String(call?.init?.body)) as { jobDesc: Record<string, unknown> }
+    expect(body.jobDesc.jdbcDomain).toBe("example.invalid/api")
+    expect(body.jobDesc.clientContext).toBeDefined()
+    const contextJson = JSON.parse(String((body.jobDesc.clientContext as Record<string, unknown>).contextJson)) as Record<string, unknown>
+    expect(contextJson.host).toBe("example.invalid/api")
+    expect(contextJson.user).toBe("alice")
   })
 })

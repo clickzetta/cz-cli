@@ -7,6 +7,7 @@ import {
   submitJob,
   pollJobResult,
   parseJobResponse,
+  isRetryableErrorCode,
   isVolumeSql,
   processVolumeSql,
   ClickZettaApiError,
@@ -46,6 +47,7 @@ export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContex
     baseUrl: toServiceUrl(config.service, config.protocol),
     token: token.token,
     customHeaders: { ...config.customHeaders, instanceName: config.instance },
+    config,
   }
   return { config, token, clientOpts }
 }
@@ -63,6 +65,19 @@ export function buildExecHints(
     return hints
   }
   return { query_tag: defaultQueryTag(traceContext), ...hints } satisfies Record<string, string>
+}
+
+function submitMaxRetries(hints?: Record<string, string>): number {
+  const parsed = Number.parseInt(hints?.["sdk.query.max.retries"] ?? "", 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10
+}
+
+function retryableSubmitCode(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const status = (raw as { status?: { errorCode?: unknown } }).status
+  if (typeof status?.errorCode === "string" && status.errorCode) return status.errorCode
+  const respStatus = (raw as { respStatus?: { errorCode?: unknown } }).respStatus
+  return typeof respStatus?.errorCode === "string" && respStatus.errorCode ? respStatus.errorCode : undefined
 }
 
 export async function execSql(
@@ -93,6 +108,7 @@ export async function execSql(
     asynchronous: opts?.asynchronous,
     configStatements: opts?.configStatements,
     traceparent: traceContext.traceparent,
+    maxRetries: submitMaxRetries(opts?.hints),
   })
   if (opts?.asynchronous) {
     return { jobId: jobId.id, status: "RUNNING" as const }
@@ -102,7 +118,12 @@ export async function execSql(
   const raw = submitResp as { status?: { state?: string } }
   let result: QueryResult
   if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
-    result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone)
+    const errorCode = retryableSubmitCode(submitResp)
+    if (isRetryableErrorCode(errorCode)) {
+      result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
+    } else {
+      result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone)
+    }
   } else {
     result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
   }

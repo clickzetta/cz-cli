@@ -123,3 +123,42 @@
 - **WHEN** 用户执行 `cz-cli sql -N -B --format table "SELECT 1; SELECT 2"`
 - **THEN** 系统按批处理语义执行多条语句
 - **AND** 表格/行格式不输出 header
+
+### Requirement: SQL 网关提交与轮询请求与 Java/JDBC 保持关键字段及重试语义对齐
+
+本需求 MUST 按以下场景执行。
+
+`cz-cli sql` 通过 `/lh/submitJob` 提交 SQL 时，MUST 补齐与官方 Java/JDBC 一致的关键 header、请求体字段与重试语义，避免因请求形状或重试策略差异触发单域或 dedicated 路由兼容性问题。
+
+#### Scenario: 提交 SQL 时自动带上实例与请求标识头
+
+- **WHEN** 用户执行 `cz-cli sql "SELECT 1"`
+- **THEN** `/lh/submitJob` 请求 MUST 带上 `instanceName`
+- **AND** 请求 MUST 带上 `requestId` 与 `X-Request-ID`
+- **AND** 若已生成 job id，请求 SHOULD 同时带上 `jobId` header 便于网关关联日志
+
+#### Scenario: submitJob 使用 Java/JDBC 风格的 job id
+
+- **WHEN** CLI 为 SQL 生成新的 Lakehouse job id
+- **THEN** job id MUST 与 Java `CZRequestIdGenerator` 对齐，使用 `17位时间戳 + base36 后缀`
+- **AND** 同一次重试链路中的 `/lh/submitJob` 与 `/lh/getJob` MUST 复用同一个 job id
+
+#### Scenario: contextJson 与 jdbcDomain 使用 Java 连接上下文中的 endpoint
+
+- **WHEN** 用户执行 `cz-cli sql "SELECT current_workspace() AS workspace"`
+- **THEN** `clientContext.contextJson.host` MUST 使用 Java `CZConnectContext.endpoint` 对应的真实 service endpoint，而不是 `null`
+- **AND** `clientContext.contextJson.user` MUST 优先使用连接上下文中的用户名
+- **AND** 当可推导出 JDBC domain 时，请求 MUST 同时填充 `jobDesc.jdbcDomain`
+
+#### Scenario: submitJob 遇到 Java 定义的可恢复异常时继续走 Lakehouse 重试链路
+
+- **WHEN** `/lh/submitJob` 首次返回 `CZLH-60023`
+- **THEN** CLI MUST 继续使用同一个 Lakehouse job id 重试 `/lh/submitJob`
+- **AND** CLI MUST NOT 调用 Studio adhoc 执行或取数接口
+
+#### Scenario: submitJob 遇到状态未知后继续轮询同一个 Lakehouse job
+
+- **WHEN** `/lh/submitJob` 返回 `CZLH-60022`
+- **THEN** CLI MUST 继续轮询 `/lh/getJob`
+- **AND** `/lh/getJob` 请求体 MUST 使用 Java/JDBC 风格的 `getResultRequest.jobId.instanceId` 与 `jdbcDomain`
+- **AND** 当 `/lh/getJob` 返回 `CZLH-60005` 时，CLI MUST 回到 `/lh/submitJob` 重试，而不是改走 Studio

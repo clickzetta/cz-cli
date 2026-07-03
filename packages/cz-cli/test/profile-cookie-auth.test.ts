@@ -107,6 +107,7 @@ test("getExecContext uses X-ClickZetta-Token from profile Cookie header", async 
     expect(ctx.token.instanceId).toBe(86)
     expect(ctx.token.userId).toBe(7)
     expect(ctx.clientOpts.token).toBe(token)
+    expect(ctx.clientOpts.config?.instance).toBe("inst")
     expect(ctx.clientOpts.customHeaders.Cookie).toContain(token)
     expect(ctx.clientOpts.customHeaders.instanceName).toBe("inst")
   })

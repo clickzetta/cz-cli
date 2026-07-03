@@ -30,27 +30,64 @@ export interface QueryResult {
   errorMessage?: string
 }
 
+const JOB_SEQUENCE_BITS = 12n
+const JOB_SEQUENCE_MASK = (1n << JOB_SEQUENCE_BITS) - 1n
+const JOB_SEQUENCE_BEGIN_MASK = (1n << (JOB_SEQUENCE_BITS - 1n)) - 1n
+const JOB_WORKER_ID_MASK = (1n << 48n) - 1n
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000
+
+let jobSequence = 0n
+let lastJobTimestampMs = -1
+const jobWorkerId = (() => {
+  const bytes = crypto.getRandomValues(new Uint8Array(8))
+  let value = 0n
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte)
+  return value & JOB_WORKER_ID_MASK
+})()
+
+function randomBigInt(): bigint {
+  const bytes = crypto.getRandomValues(new Uint8Array(8))
+  let value = 0n
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte)
+  return value
+}
+
+function shanghaiTimestamp(ms: number): string {
+  const d = new Date(ms + SHANGHAI_OFFSET_MS)
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0")
+  return (
+    d.getUTCFullYear().toString() +
+    pad(d.getUTCMonth() + 1) +
+    pad(d.getUTCDate()) +
+    pad(d.getUTCHours()) +
+    pad(d.getUTCMinutes()) +
+    pad(d.getUTCSeconds()) +
+    pad(d.getUTCMilliseconds(), 3)
+  )
+}
+
 /**
- * client.py:1347-1352 _format_job_id format:
- *   YYYYMMDDHHMMSSffffff + 5-digit random
- * Example: 20240102123456789012 + 98765 → "2024010212345678901298765"
- *
- * The gateway relies on this ID format for routing / log correlation, so we
- * mirror it exactly instead of using an unrelated ID scheme.
+ * Java JDBC `CZRequestIdGenerator` format:
+ *   17-digit Asia/Shanghai timestamp + base36(workerId<<12 | sequence)
  */
 function formatJobIdCore(): string {
-  const now = new Date()
-  const pad = (n: number, w = 2) => String(n).padStart(w, "0")
-  const ts =
-    now.getFullYear().toString() +
-    pad(now.getMonth() + 1) +
-    pad(now.getDate()) +
-    pad(now.getHours()) +
-    pad(now.getMinutes()) +
-    pad(now.getSeconds()) +
-    pad(now.getMilliseconds(), 3) + "000" // microseconds padded with zeros (ms * 1000)
-  const rand = Math.floor(10000 + Math.random() * 90000) // 5-digit [10000,99999]
-  return `${ts}${rand}`
+  let timestampMs = Date.now()
+  if (timestampMs < lastJobTimestampMs) {
+    timestampMs = lastJobTimestampMs
+  }
+  if (timestampMs === lastJobTimestampMs) {
+    jobSequence = (jobSequence + 1n) & JOB_SEQUENCE_MASK
+    if (jobSequence === 0n) {
+      do {
+        timestampMs = Date.now()
+      } while (timestampMs <= lastJobTimestampMs)
+    }
+  } else {
+    jobSequence = randomBigInt() & JOB_SEQUENCE_BEGIN_MASK
+  }
+  lastJobTimestampMs = timestampMs
+  const suffix = ((jobWorkerId << JOB_SEQUENCE_BITS) | jobSequence).toString(36)
+  return `${shanghaiTimestamp(timestampMs)}${suffix}`
 }
 
 export function newJobId(workspace: string, instanceId: number): JobID {

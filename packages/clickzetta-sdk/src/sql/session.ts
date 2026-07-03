@@ -20,7 +20,7 @@ import { toServiceUrl } from "../config/region.js"
 import { InterfaceError, ProgrammingError } from "../types/errors.js"
 import type { ConnectionConfig } from "../types/index.js"
 import { splitSql } from "./split.js"
-import { submitJob } from "./submit.js"
+import { normalizeServiceEndpoint, submitJob } from "./submit.js"
 import { parseJobResponse, pollJobResult } from "./poll.js"
 import { isRetryableErrorCode } from "./errors.js"
 import {
@@ -477,6 +477,7 @@ export class SqlSession {
       priority: prepared.priority,
       configStatements: prepared.configStatements,
       contextJson: prepared.contextJson,
+      maxRetries: prepared.maxRetry,
     })
 
     if (prepared.asynchronous) {
@@ -610,8 +611,9 @@ export class SqlSession {
 
   /** Serialise the CZConnectContext payload (enums.py:143-154). */
   private buildContextJson(): Record<string, unknown> {
+    const serviceInfo = normalizeServiceEndpoint(this.config.service || toServiceUrl(this.config.service, this.config.protocol))
     return {
-      host: null,
+      host: serviceInfo.endpoint ?? serviceInfo.host,
       instance: this.config.instance,
       user: this.config.username || null,
       workspace: this.workspace,

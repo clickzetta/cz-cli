@@ -49,13 +49,17 @@ function generateRequestId(): string {
 }
 
 function buildHeaders(opts: ClientOptions): Record<string, string> {
+  const requestId = generateRequestId()
+  const instanceName = opts.customHeaders?.instanceName ?? opts.config?.instance
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/plain, */*",
     "User-Agent": `tssdk/${SDK_VERSION}`,
     // client.py:293 — trace id header, required by the gateway for correlation
-    "requestId": generateRequestId(),
+    "requestId": requestId,
+    "X-Request-ID": requestId,
     "traceparent": opts.traceparent ?? currentTraceparent(),
+    ...(instanceName ? { instanceName } : {}),
     ...opts.customHeaders,
   }
   if (opts.token) {
