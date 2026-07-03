@@ -428,6 +428,105 @@ export function checkCdcTables(config: StudioConfig, pipelineId: number, workspa
 }
 
 
+/** Take a realtime pipeline task offline (back to draft, offlines table mappings).
+ *  fileId is sent as a number to match the Studio backend (timelyTask/pipeline/offline). */
+export function offlineCdcTask(config: StudioConfig, fileId: number, updateBy: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/pipeline/offline", {
+    fileId,
+    updateBy,
+  })
+}
+
+/** Normalize a scalar/array of table ids into an int array. */
+function normalizeTableIds(value: number | string | (number | string)[]): number[] {
+  const arr = Array.isArray(value) ? value : [value]
+  return arr.map((v) => Math.trunc(Number(v))).filter((n) => Number.isFinite(n))
+}
+
+/** Start incremental sync for specific pipeline tables. Field name: taskIds. */
+export function startCdcTables(config: StudioConfig, pipelineId: number, tableIds: number | string | (number | string)[], workspace: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/start/table", {
+    pipelineId,
+    taskIds: normalizeTableIds(tableIds),
+    workspace,
+  })
+}
+
+/** Stop incremental sync for specific pipeline tables. Field name: taskIds. */
+export function stopCdcTables(config: StudioConfig, pipelineId: number, tableIds: number | string | (number | string)[], workspace: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/stop/table", {
+    pipelineId,
+    taskIds: normalizeTableIds(tableIds),
+    workspace,
+  })
+}
+
+/** Re-sync (re-snapshot) specific pipeline tables. Field name: tables (per backend RocketTaskWrapper). */
+export function resyncCdcTables(config: StudioConfig, pipelineId: number, tableIds: number | string | (number | string)[], workspace: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/resync/table", {
+    pipelineId,
+    tables: normalizeTableIds(tableIds),
+    workspace,
+  })
+}
+
+/** Pause incremental sync for specific tables. Includes sourceTables:[]. Field name: taskIds. */
+export function pauseCdcTables(config: StudioConfig, pipelineId: number, tableIds: number | string | (number | string)[], workspace: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/pause/cdc", {
+    pipelineId,
+    taskIds: normalizeTableIds(tableIds),
+    sourceTables: [],
+    workspace,
+  })
+}
+
+/** Recover (resume) incremental sync for specific tables. Field name: taskIds. No sourceTables. */
+export function recoverCdcTables(config: StudioConfig, pipelineId: number, tableIds: number | string | (number | string)[], workspace: string) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/recover/cdc", {
+    pipelineId,
+    taskIds: normalizeTableIds(tableIds),
+    workspace,
+  })
+}
+
+export interface ListRealtimeTasksParams {
+  projectId: number
+  taskNameLike?: string
+  taskStatus?: number
+  page?: number
+  pageSize?: number
+}
+
+/** List realtime (CDC) tasks. */
+export function listRealtimeTasks(config: StudioConfig, params: ListRealtimeTasksParams) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/list", {
+    pageIndex: params.page ?? 1,
+    pageSize: params.pageSize ?? 20,
+    projectId: params.projectId,
+    taskNameLike: params.taskNameLike ?? "",
+    ...(params.taskStatus !== undefined && { taskStatus: params.taskStatus }),
+  })
+}
+
+export interface ListPipelineTablesParams {
+  fileId: number
+  table?: string
+  schema?: string
+  page?: number
+  pageSize?: number
+}
+
+/** List the tables inside a realtime pipeline (returns each table's id for single-table ops). */
+export function listPipelineTables(config: StudioConfig, params: ListPipelineTablesParams) {
+  return studioRequest(config, "/ide-admin/v1/timelyTask/micro/schedule/list", {
+    fileId: params.fileId,
+    pageIndex: params.page ?? 1,
+    pageSize: params.pageSize ?? 50,
+    ...(params.table && { table: params.table }),
+    ...(params.schema && { schema: params.schema }),
+  })
+}
+
 export function saveCdcTask(config: StudioConfig, params: SaveCdcTaskParams) {
   return studioRequest(config, "/ide-admin/v1/ai/mcp/saveCdcTask", {
     dataFileId: params.dataFileId,

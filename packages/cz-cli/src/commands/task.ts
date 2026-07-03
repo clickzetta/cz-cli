@@ -15,6 +15,14 @@ import {
   saveCdcTask,
   startCdcTask,
   stopCdcTask,
+  offlineCdcTask,
+  startCdcTables,
+  stopCdcTables,
+  resyncCdcTables,
+  pauseCdcTables,
+  recoverCdcTables,
+  listRealtimeTasks,
+  listPipelineTables,
   getCdcTaskRunStatus,
   parseTaskDependencyOut,
   startRealtimeTask,
@@ -299,6 +307,151 @@ async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
 function reportTaskError(err: unknown, format: string | undefined): void {
   if (isHandledCliError(err)) return
   error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+}
+
+// Multi-table CDC pipeline lifecycle subcommands (fileType 281 = MULTI_REALTIME).
+// These operate on a multi-table CDC pipeline and its per-table incremental sync — NOT on a
+// single-table Kafka streaming task (fileType 14 = REALTIME), which has no table-list concept.
+// Table-level ops act on pipeline table ids — get them from `cz-cli task cdc tables <task>`.
+const MULTI_REALTIME_FILE_TYPE = 281
+
+// Resolve a task id and assert it is a multi-table CDC pipeline (281). Returns the id, or throws a
+// handled error explaining that single-table Kafka (14) / other types have no CDC-pipeline table ops.
+async function resolveCdcPipelineId(sc: StudioConfig, task: string, format: string | undefined): Promise<number> {
+  const fileId = await resolveTaskId(sc, task, format ?? "json")
+  const detail = await getTaskDetail(sc, fileId)
+  const data = detail.data as Record<string, unknown> | undefined
+  const detObj = (typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data) as Record<string, unknown> | undefined
+  const fileType = Number(detObj?.fileType ?? data?.fileType ?? 0)
+  if (fileType !== MULTI_REALTIME_FILE_TYPE) {
+    handledError(
+      "NOT_A_CDC_PIPELINE",
+      `Task ${fileId} is not a multi-table CDC pipeline (fileType=${fileType}, expected 281 MULTI_REALTIME). ` +
+        `'task cdc' commands only apply to multi-table CDC pipelines created via 'cz-cli task create-realtime-sync'. ` +
+        `Single-table Kafka streaming tasks (fileType 14) use 'task start' / 'task stop'.`,
+      { format },
+    )
+  }
+  return fileId
+}
+
+function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
+  // Shared runner for per-table ops: resolves the CDC pipeline id, parses --table-ids, calls the SDK fn.
+  const tableOp = (
+    apiFn: (sc: StudioConfig, pipelineId: number, tableIds: (number | string)[], workspace: string) => Promise<{ data: unknown }>,
+    action: string,
+  ) => async (argv: Record<string, unknown>) => {
+    const format = (argv.format as string | undefined) ?? "json"
+    try {
+      const sc = await ctx(argv)
+      const ids = String(argv["table-ids"] ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (!ids.length) {
+        error("INVALID_ARGUMENTS", "--table-ids is required (comma-separated pipeline table ids). List them with: cz-cli task cdc tables <task>", { format, exitCode: 2 })
+        return
+      }
+      const fileId = await resolveCdcPipelineId(sc, argv.task as string, format)
+      const resp = await apiFn(sc, fileId, ids, sc.workspaceName)
+      logOperation(`task cdc ${action}`, { ok: true })
+      success({ task_id: fileId, action, table_ids: ids, result: resp.data }, {
+        format,
+        aiMessage: `CDC pipeline table ${action} triggered for task ${fileId} (tables=${ids.join(",")}). Check status with: cz-cli task cdc tables ${fileId}`,
+      })
+    } catch (err) {
+      reportTaskError(err, format)
+    }
+  }
+
+  const tableOpBuilder = (y: Argv<GlobalArgs>) =>
+    y
+      .positional("task", { type: "string", demandOption: true, describe: "Multi-table CDC pipeline task name or ID (fileType 281)" })
+      .option("table-ids", { type: "string", demandOption: true, describe: "Comma-separated pipeline table ids (from 'task cdc tables <task>')" })
+
+  return cdcYargs
+    .command(
+      "list",
+      "List multi-table CDC pipeline tasks (MULTI_REALTIME, fileType 281)",
+      (y) =>
+        y
+          .option("name", { type: "string", describe: "Filter by task name (substring)" })
+          .option("status", { type: "number", describe: "Filter by task status code" })
+          .option("page", { type: "number", default: 1, describe: "Page index (default: 1)" })
+          .option("page-size", { type: "number", default: 20, describe: "Page size (default: 20)" }),
+      async (argv) => {
+        const format = argv.format
+        try {
+          const sc = await ctx(argv)
+          const resp = await listRealtimeTasks(sc, {
+            projectId: sc.projectId,
+            taskNameLike: argv.name as string | undefined,
+            taskStatus: argv.status as number | undefined,
+            page: argv.page as number,
+            pageSize: argv["page-size"] as number,
+          })
+          logOperation("task cdc list", { ok: true })
+          success({ tasks: resp.data }, { format })
+        } catch (err) {
+          reportTaskError(err, format)
+        }
+      },
+    )
+    .command(
+      "tables <task>",
+      "List the tables inside a multi-table CDC pipeline (returns table ids for per-table ops)",
+      (y) =>
+        y
+          .positional("task", { type: "string", demandOption: true, describe: "Multi-table CDC pipeline task name or ID (fileType 281)" })
+          .option("table", { type: "string", describe: "Filter by table name" })
+          .option("schema", { type: "string", describe: "Filter by schema name" })
+          .option("page", { type: "number", default: 1, describe: "Page index (default: 1)" })
+          .option("page-size", { type: "number", default: 50, describe: "Page size (default: 50)" }),
+      async (argv) => {
+        const format = argv.format
+        try {
+          const sc = await ctx(argv)
+          const fileId = await resolveCdcPipelineId(sc, argv.task as string, format)
+          const resp = await listPipelineTables(sc, {
+            fileId,
+            table: argv.table as string | undefined,
+            schema: argv.schema as string | undefined,
+            page: argv.page as number,
+            pageSize: argv["page-size"] as number,
+          })
+          logOperation("task cdc tables", { ok: true })
+          success({ task_id: fileId, tables: resp.data }, { format })
+        } catch (err) {
+          reportTaskError(err, format)
+        }
+      },
+    )
+    .command(
+      "offline <task>",
+      "Take a multi-table CDC pipeline offline (back to draft, offlines table mappings)",
+      (y) => y.positional("task", { type: "string", demandOption: true, describe: "Multi-table CDC pipeline task name or ID (fileType 281)" }),
+      async (argv) => {
+        const format = argv.format
+        try {
+          const sc = await ctx(argv)
+          const fileId = await resolveCdcPipelineId(sc, argv.task as string, format)
+          const resp = await offlineCdcTask(sc, fileId, String(sc.userId))
+          logOperation("task cdc offline", { ok: true })
+          success({ task_id: fileId, action: "offline", result: resp.data }, {
+            format,
+            aiMessage: `CDC pipeline ${fileId} taken offline (back to draft).`,
+          })
+        } catch (err) {
+          reportTaskError(err, format)
+        }
+      },
+    )
+    .command("start-table <task>", "Start incremental sync for specific CDC pipeline tables", tableOpBuilder, tableOp(startCdcTables, "start-table"))
+    .command("stop-table <task>", "Stop incremental sync for specific CDC pipeline tables", tableOpBuilder, tableOp(stopCdcTables, "stop-table"))
+    .command("resync-table <task>", "Re-sync (re-snapshot) specific CDC pipeline tables", tableOpBuilder, tableOp(resyncCdcTables, "resync-table"))
+    .command("pause-table <task>", "Pause incremental sync for specific CDC pipeline tables", tableOpBuilder, tableOp(pauseCdcTables, "pause-table"))
+    .command("recover-table <task>", "Recover (resume) incremental sync for specific CDC pipeline tables", tableOpBuilder, tableOp(recoverCdcTables, "recover-table"))
+    .demandCommand(1, "Missing subcommand for 'task cdc'. Available: list, tables, offline, start-table, stop-table, resync-table, pause-table, recover-table")
 }
 
 function parseDependencyTasks(raw: string, format: string | undefined, projectId: number): Record<string, unknown>[] {
@@ -1898,7 +2051,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("task", { type: "string", demandOption: true })
             .option("cron", { type: "string", demandOption: true, describe: "Cron expression — ClickZetta uses 7-field format: second minute hour day month weekday year (e.g. '0 30 9 * * ? *' = daily 09:30)" })
-            .option("vc", { type: "string", describe: "Virtual cluster code" })
+            .option("vc", { type: "string", describe: "Virtual cluster code (integration tasks MUST use INTEGRATION type VC)" })
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
             .option("schema", { type: "string", describe: "Schema name" })
             .option("auto-lineage", { type: "boolean", describe: "Parse dependencies and output tables from task content before saving" })
@@ -1992,7 +2145,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("retry-unit", { type: "string", describe: "Retry interval unit (m/s)" })
             .option("rerun-property", { type: "number", describe: "Rerun policy: 1=ANY_TIME, 2=FAILED_ONLY, 3=NOT_RERUN" })
             .option("self-depends", { type: "number", describe: "Self dependency: 0=no, 1=yes" })
-            .option("vc", { type: "string", describe: "Virtual cluster code" })
+            .option("vc", { type: "string", describe: "Virtual cluster code (integration tasks MUST use INTEGRATION type VC)" })
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
             .option("schema", { type: "string", describe: "Schema name" })
             .option("timeout", { type: "number", describe: "Execute timeout" })
@@ -2411,6 +2564,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             reportTaskError(err, format)
           }
         },
+      )
+      .command(
+        "cdc",
+        "Multi-table CDC pipeline lifecycle (MULTI_REALTIME, fileType 281): list tasks/tables, offline, and per-table start/stop/resync/pause/recover. NOT for single-table Kafka streaming (fileType 14 — use task start/stop).",
+        (cdcYargs) => registerCdcCommands(cdcYargs),
       )
       .command(
         "execute <task>",
