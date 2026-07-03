@@ -31,7 +31,7 @@ const API = {
 const OFFLINE_READ_MODE = "BINLOG"
 
 type Json = Record<string, unknown>
-interface ColumnMeta { name?: string; columnName?: string; column?: string; [k: string]: unknown }
+interface ColumnMeta { name?: string; columnName?: string; column?: string; type?: string; inputType?: string; partitionColumn?: boolean; [k: string]: unknown }
 interface MappingRow { source?: string; sink?: string }
 interface KvRow { key?: string; value?: unknown }
 
@@ -294,18 +294,25 @@ function rewriteDdlTarget(ddl: string, sinkSchema: string, sinkTable: string): s
   )
 }
 
-/** Create the sink table by mirroring the source table's DDL. No-op if it already exists. */
+/** Create the sink table by mirroring the source table's DDL. No-op if it already exists.
+ *  Returns "exists" if the sink table was already present, "created" otherwise.
+ *  When partitionColumn is given and the table is created, append PARTITIONED BY (col STRING). */
 async function createSinkTableFromSource(
   sc: StudioConfig,
   source: { id: number; dsType: number; schema: string; table: string },
   sink: { id: number; dsType: number; schema: string; table: string },
   execOptions: Json,
-): Promise<void> {
-  if (await tableExists(sc, sink.id, sink.dsType, sink.schema, sink.table)) return
+  partitionColumn?: string,
+): Promise<"exists" | "created"> {
+  if (await tableExists(sc, sink.id, sink.dsType, sink.schema, sink.table)) return "exists"
   const ddl = await getDatasourceDdl(sc, source, sink)
   if (!ddl) throw new Error(`Could not fetch DDL for source table ${source.schema}.${source.table}`)
   const rewritten = rewriteDdlTarget(ddl, sink.schema, sink.table)
-  await executeDatasourceSql(sc, sink.id, rewritten, execOptions)
+  // Partitioned: strip PRIMARY KEY first (Lakehouse requires the partition column to be a PK
+  // subset; the mirrored source PK conflicts with the appended partition column), then append.
+  const finalDdl = partitionColumn ? appendPartitionedBy(stripPrimaryKey(rewritten), partitionColumn) : rewritten
+  await executeDatasourceSql(sc, sink.id, finalDdl, execOptions)
+  return "created"
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +403,67 @@ function wrapPartitions(partitions: unknown[]): unknown[] {
 }
 
 // ---------------------------------------------------------------------------
+// Partition support (single-table sink). Two mutually exclusive modes:
+//   static  : --partitions 'dt=${bizdate}'    → whole batch written to one partition value
+//   dynamic : --dynamic-partition 'dt:src_col' → each row routed by a source column's value
+// Both require --partitioned (the user explicitly declaring the sink is a partition table).
+// Partition column type is always STRING (matches Studio content + create-table DDL).
+// ---------------------------------------------------------------------------
+const DEFAULT_PARTITION_COLUMN = "dt"
+
+/** Parse the partition column name from a static expr 'dt=${bizdate}' (first expr's left side). */
+export function staticPartitionColumn(exprs: string[]): string | undefined {
+  const first = exprs[0]
+  if (!first) return undefined
+  const eq = first.indexOf("=")
+  const name = (eq >= 0 ? first.slice(0, eq) : first).trim()
+  return name || undefined
+}
+
+/** Parse --dynamic-partition 'col:src_col' or 'src_col' → {column, sourceColumn}. Column defaults to dt. */
+export function parseDynamicPartition(raw: string): { column: string; sourceColumn: string } {
+  const colon = raw.indexOf(":")
+  if (colon >= 0) {
+    const column = raw.slice(0, colon).trim() || DEFAULT_PARTITION_COLUMN
+    const sourceColumn = raw.slice(colon + 1).trim()
+    return { column, sourceColumn }
+  }
+  return { column: DEFAULT_PARTITION_COLUMN, sourceColumn: raw.trim() }
+}
+
+/** Append PARTITIONED BY (col STRING) to a mirrored CREATE TABLE DDL (write-form-two, no column-list edit). */
+export function appendPartitionedBy(ddl: string, partitionColumn: string): string {
+  return `${ddl.trimEnd().replace(/;\s*$/, "")}\nPARTITIONED BY (${partitionColumn} STRING)`
+}
+
+/** Strip PRIMARY KEY from a CREATE TABLE DDL. Lakehouse requires the partition column to be a
+ *  subset of the PK; the mirrored source PK conflicts with the appended partition column, so drop it.
+ *  Handles: ', PRIMARY KEY (...)' clause, leading 'PRIMARY KEY (...),' clause, and inline 'col TYPE PRIMARY KEY'. */
+export function stripPrimaryKey(ddl: string): string {
+  return ddl
+    .replace(/,\s*PRIMARY\s+KEY\s*\([^)]*\)/gi, "")
+    .replace(/PRIMARY\s+KEY\s*\([^)]*\)\s*,/gi, "")
+    .replace(/\s+PRIMARY\s+KEY\b/gi, "")
+}
+
+/** A dynamic-partition sink column: partitionColumn:true, string type, NO inputType. */
+function dynamicPartitionSinkColumn(column: string): ColumnMeta {
+  return {
+    name: column,
+    physicalType: null,
+    type: "string",
+    comment: "",
+    nullable: false,
+    supportAsSplitKey: false,
+    properties: null,
+    sorted: false,
+    primary: false,
+    cluster: false,
+    partitionColumn: true,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Content generators (ported from datasource_utils.py).
 // ---------------------------------------------------------------------------
 function generatePipelineContent(opts: {
@@ -455,7 +523,7 @@ function generatePipelineContent(opts: {
   return content
 }
 
-function generateSingleContent(opts: {
+export function generateSingleContent(opts: {
   source: { id: number; name: string; dsType: number; schema: string; table: string }
   sink: { id: number; name: string; dsType: number; schema: string; table: string }
   sourceColumns: ColumnMeta[]
@@ -463,16 +531,68 @@ function generateSingleContent(opts: {
   writeMode?: string
   outputMode?: string
   partitions?: string[]
+  dynamicPartition?: { column: string; sourceColumn: string }
 }): Json {
-  const { source, sink, sourceColumns, sinkColumns } = opts
+  const { source, sink } = opts
   const writeMode = opts.writeMode || "OVERWRITE"
-  const outputMode = opts.outputMode || writeMode
+  const outputMode = opts.outputMode || opts.writeMode || "OVERWRITE"
+
+  // Phase A — dirty-table idempotent cleanup. The sink may be an EXISTING table whose metadata
+  // still carries a previous run's artifacts. Drop old partition columns; restore inputType copies.
+  const stripInputType = (c: ColumnMeta): ColumnMeta => {
+    if (!c || typeof c !== "object" || !c.inputType) return c
+    const { inputType, ...rest } = c
+    return rest
+  }
+  const sinkColumns = opts.sinkColumns
+    .filter((c) => !(c && typeof c === "object" && c.partitionColumn === true))
+    .map(stripInputType)
+  const seen = new Set<string>()
+  const sourceColumns = opts.sourceColumns
+    .map(stripInputType)
+    .filter((c) => {
+      const n = colName(c)
+      if (!n || seen.has(n)) return false
+      seen.add(n)
+      return true
+    })
+
+  // Phase B — columnMapping by NAME (prefer same-name pairing, positional fallback). {sink: source}
+  const srcNames = new Set(sourceColumns.map((c) => colName(c)).filter(Boolean))
   const columnMapping: Record<string, string> = {}
-  const minLen = Math.min(sourceColumns.length, sinkColumns.length)
-  for (let i = 0; i < minLen; i++) {
-    const s = colName(sourceColumns[i])
-    const t = colName(sinkColumns[i])
-    if (s && t) columnMapping[t] = s
+  sinkColumns.forEach((sinkCol, i) => {
+    const n = colName(sinkCol)
+    if (!n) return
+    if (srcNames.has(n)) columnMapping[n] = n
+    else if (i < sourceColumns.length) {
+      const s = colName(sourceColumns[i])
+      if (s) columnMapping[n] = s
+    }
+  })
+
+  // Phase C — dynamic partition "B semantics": preserve the original time column, replace the
+  // sink column mapped from it IN-PLACE with the dt partition column, and append a duplicate copy
+  // (inputType:default) on both sides so the raw value is still ingested. No sink.params.partitions.
+  const finalSourceCols = [...sourceColumns]
+  const finalSinkCols = [...sinkColumns]
+  const dp = opts.dynamicPartition
+  if (dp) {
+    const srcMeta = sourceColumns.find((c) => colName(c) === dp.sourceColumn)
+    if (!srcMeta) return { code: "400", message: `Dynamic-partition source column '${dp.sourceColumn}' not found in source table ${source.schema}.${source.table}. Confirm the correct source column and pass --dynamic-partition '${dp.column}:<source_col>'.` }
+    const targetSinkName = Object.keys(columnMapping).find((sk) => columnMapping[sk] === dp.sourceColumn)
+    const sinkIdx = finalSinkCols.findIndex((c) => colName(c) === targetSinkName)
+    finalSourceCols.push({ ...srcMeta, inputType: "default" })
+    if (sinkIdx >= 0) {
+      const origSink = finalSinkCols[sinkIdx]
+      const origSinkName = colName(origSink)
+      finalSinkCols[sinkIdx] = dynamicPartitionSinkColumn(dp.column)
+      finalSinkCols.push({ ...origSink, inputType: "default" })
+      columnMapping[dp.column] = dp.sourceColumn
+      if (origSinkName) columnMapping[origSinkName] = dp.sourceColumn
+    } else {
+      finalSinkCols.push(dynamicPartitionSinkColumn(dp.column))
+      columnMapping[dp.column] = dp.sourceColumn
+    }
   }
   return {
     templateKey: 1,
@@ -485,7 +605,7 @@ function generateSingleContent(opts: {
           dataObject: source.table,
           namespace: source.schema,
           params: { dsType: source.dsType, operatorType: "source", table: source.table, database: source.schema },
-          columns: sourceColumns,
+          columns: finalSourceCols,
         },
         sink: {
           dataObject: sink.table,
@@ -500,7 +620,7 @@ function generateSingleContent(opts: {
             outputMode,
             ...(opts.partitions && opts.partitions.length ? { partitions: wrapPartitions(opts.partitions) } : {}),
           },
-          columns: sinkColumns,
+          columns: finalSinkCols,
         },
         setting: { parallelism: 1, errorLimit: { maxCount: -1, collectDirtyData: true, record: -1 } },
         columnMapping,
@@ -597,6 +717,8 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             .option("sink-table", { type: "string", describe: "[single] Sink table name (default: source table name)" })
             .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], default: "OVERWRITE", describe: "[single] Sink write mode (default: OVERWRITE)" })
             .option("partitions", { type: "string", describe: "[single] Comma-separated sink partition expressions, e.g. 'dt=${bizdate}'. When using scheduling date/time params, look up the correct Studio param syntax first (cz-cli ai-guide / docs)." })
+            .option("partitioned", { type: "boolean", describe: "[single] Declare the sink is a partition table. Required to auto-create a PARTITIONED BY sink table. Pair with --partitions (static) or --dynamic-partition." })
+            .option("dynamic-partition", { type: "string", describe: "[single] Dynamic partition routing: 'col:source_col' (col defaults to dt). Each row is routed to a partition by the source column's value. Mutually exclusive with --partitions." })
             .option("param-value-list", { type: "string", describe: "Scheduling parameter declarations as JSON, e.g. '[{\"paramKey\":\"bizdate\",\"paramValue\":\"$[yyyyMMdd-1]\"}]' (needed by partition/where expressions). Look up the correct Studio scheduling-param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." }),
         async (argv) => {
           const format = argv.format
@@ -661,13 +783,32 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             }
             const sinkTable = (argv["sink-table"] as string | undefined) || sourceTable
 
-            // Ensure sink schema, then mirror the source table on the sink.
+            // Partition declaration. Original behavior (no --partitioned / --dynamic-partition) is unchanged:
+            // a plain mirror table is created and --partitions only fills sink.params.partitions.
+            const dynamicPartitionArg = argv["dynamic-partition"] as string | undefined
+            const partitionExprs = splitCsv(argv["partitions"] as string | undefined)
+            const partitioned = Boolean(argv.partitioned) || dynamicPartitionArg !== undefined
+            if (dynamicPartitionArg !== undefined && partitionExprs.length) {
+              error("INVALID_ARGUMENTS", "--partitions and --dynamic-partition are mutually exclusive. Use --partitions for a fixed partition value, --dynamic-partition for per-row routing.", { format, exitCode: 2 })
+              return
+            }
+            const dynamicPartition = dynamicPartitionArg !== undefined ? parseDynamicPartition(dynamicPartitionArg) : undefined
+            if (partitioned && !dynamicPartition && !partitionExprs.length) {
+              error("INVALID_ARGUMENTS", "--partitioned requires a partition spec: pass --partitions 'dt=${bizdate}' (static) or --dynamic-partition 'dt:source_col' (dynamic).", { format, exitCode: 2 })
+              return
+            }
+            const partitionColumn = partitioned
+              ? (dynamicPartition?.column ?? staticPartitionColumn(partitionExprs) ?? DEFAULT_PARTITION_COLUMN)
+              : undefined
+
+            // Ensure sink schema, then mirror the source table on the sink (PARTITIONED BY when declared).
             await ensureSchema(sc, sinkDs.id, sinkDs.dsType, sinkSchema, execOptions)
             await createSinkTableFromSource(
               sc,
               { id: sourceDs.id, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
               { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
               execOptions,
+              partitionColumn,
             )
 
             // Fetch column metadata and build a default position-based mapping.
@@ -676,13 +817,23 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
               { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
             )
+            // Dynamic partition: the routing source column must exist; otherwise ask the user to confirm it.
+            if (dynamicPartition && !meta.source.some((c) => colName(c) === dynamicPartition.sourceColumn)) {
+              error(
+                "INVALID_ARGUMENTS",
+                `Dynamic-partition source column '${dynamicPartition.sourceColumn}' not found in source table ${sourceSchema}.${sourceTable}. Confirm the correct source column and pass --dynamic-partition '${dynamicPartition.column}:<source_col>'.`,
+                { format, exitCode: 2 },
+              )
+              return
+            }
             const content = generateSingleContent({
               source: { id: sourceDs.id, name: sourceDs.name, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
               sink: { id: sinkDs.id, name: sinkDs.name, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
               sourceColumns: meta.source,
               sinkColumns: meta.sink,
               writeMode: argv["write-mode"] as string | undefined,
-              partitions: splitCsv(argv["partitions"] as string | undefined),
+              partitions: partitionExprs,
+              dynamicPartition,
             })
             const paramValueList = parseJsonArg<unknown[]>(argv["param-value-list"] as string | undefined, "param-value-list", format) ?? []
             await saveContent(sc, fileId, content, paramValueList)
@@ -695,6 +846,13 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 source: `${sourceSchema}.${sourceTable}`,
                 sink: `${sinkSchema}.${sinkTable}`,
                 column_mapping: rows,
+                ...(partitioned
+                  ? {
+                      partition_mode: dynamicPartition ? "dynamic" : "static",
+                      partition_column: partitionColumn,
+                      ...(dynamicPartition ? { partition_source_column: dynamicPartition.sourceColumn } : { partition_values: partitionExprs }),
+                    }
+                  : {}),
                 studio_url: studioUrl(sc, fileId),
               },
               {
@@ -805,6 +963,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             .option("advanced-params", { type: "string", describe: "[single] Advanced params as JSON rows [{\"key\":\"k\",\"value\":\"v\"}] (replaces existing)" })
             .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], describe: "[single] Sink write mode: OVERWRITE | APPEND | UPSERT" })
             .option("partitions", { type: "string", describe: "[single] Comma-separated sink partition expressions (empty string clears), e.g. 'dt=${bizdate}'" })
+            .option("dynamic-partition", { type: "string", describe: "[single] Dynamic partition routing: 'col:source_col' (col defaults to dt). Routes each row to a partition by the source column's value. Empty string clears it. Mutually exclusive with --partitions." })
             .option("param-value-list", { type: "string", describe: "Scheduling parameter declarations as JSON [{\"paramKey\":\"bizdate\",\"paramValue\":\"$[yyyyMMdd-1]\"}] (passed to save; needed by partition/where params). Look up the correct Studio scheduling-param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." })
             // multi-table / whole-db
             .option("table-mapping", {
@@ -917,12 +1076,19 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             const where = argv.where as string | undefined
             const writeMode = argv["write-mode"] as string | undefined
             const partitionsArg = argv["partitions"] as string | undefined
+            const dynamicPartitionArg = argv["dynamic-partition"] as string | undefined
             const paramValueList = parseJsonArg<unknown[]>(argv["param-value-list"] as string | undefined, "param-value-list", format)
+
+            if (partitionsArg && dynamicPartitionArg) {
+              error("INVALID_ARGUMENTS", "--partitions and --dynamic-partition are mutually exclusive. Use --partitions for a fixed partition value, --dynamic-partition for per-row routing.", { format, exitCode: 2 })
+              return
+            }
 
             const hasChange =
               columnMapping !== undefined ||
               advancedParams !== undefined ||
               partitionsArg !== undefined ||
+              dynamicPartitionArg !== undefined ||
               paramValueList !== undefined ||
               [parallelism, errorLimit, mBytes, splitPk, where, writeMode].some((v) => v !== undefined)
             if (!hasChange) {
@@ -958,6 +1124,59 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             source.columns = newSourceCols
             sink.columns = newSinkCols
             job0.columnMapping = mapping
+
+            // Dynamic partition (B semantics): preserve the original time column, replace the sink
+            // column mapped from it IN-PLACE with the dt partition column, and append a duplicate
+            // (inputType:default) so the raw value is still ingested. Empty string clears + restores.
+            if (dynamicPartitionArg !== undefined) {
+              // Clear/restore any existing dynamic partition first.
+              const prevPart = (sink.columns as ColumnMeta[]).find((c) => c.partitionColumn === true)
+              if (prevPart) {
+                const prevName = colName(prevPart)
+                const prevSrc = prevName ? mapping[prevName] : undefined
+                if (prevName) delete mapping[prevName]
+                const dropInputType = (c: ColumnMeta): ColumnMeta => {
+                  if (!c.inputType) return c
+                  const { inputType, ...rest } = c
+                  return rest
+                }
+                sink.columns = (sink.columns as ColumnMeta[]).filter((c) => c.partitionColumn !== true).map(dropInputType)
+                source.columns = (source.columns as ColumnMeta[]).map(dropInputType)
+                // Restore the original sink column (from the src it mapped) as a plain, non-partition column.
+                if (prevSrc && origSink[prevSrc]) {
+                  ;(sink.columns as ColumnMeta[]).push({ ...origSink[prevSrc], partitionColumn: false })
+                  mapping[prevSrc] = prevSrc
+                }
+              }
+              // Non-empty: apply the new dynamic partition (empty string = clear only, handled above).
+              if (dynamicPartitionArg) {
+                const dp = parseDynamicPartition(dynamicPartitionArg)
+                if (!origSource[dp.sourceColumn]) {
+                  error(
+                    "INVALID_ARGUMENTS",
+                    `Dynamic-partition source column '${dp.sourceColumn}' not found in the task's source columns. Confirm the correct source column and pass --dynamic-partition '${dp.column}:<source_col>'.`,
+                    { format, exitCode: 2 },
+                  )
+                  return
+                }
+                const targetSinkName = Object.keys(mapping).find((sk) => mapping[sk] === dp.sourceColumn)
+                const sinkCols = sink.columns as ColumnMeta[]
+                const sinkIdx = sinkCols.findIndex((c) => colName(c) === targetSinkName)
+                ;(source.columns as ColumnMeta[]).push({ ...origSource[dp.sourceColumn], inputType: "default" })
+                if (sinkIdx >= 0) {
+                  const origSinkCol = sinkCols[sinkIdx]
+                  const origSinkName = colName(origSinkCol)
+                  sinkCols[sinkIdx] = dynamicPartitionSinkColumn(dp.column)
+                  sinkCols.push({ ...origSinkCol, inputType: "default" })
+                  mapping[dp.column] = dp.sourceColumn
+                  if (origSinkName) mapping[origSinkName] = dp.sourceColumn
+                } else {
+                  sinkCols.push(dynamicPartitionSinkColumn(dp.column))
+                  mapping[dp.column] = dp.sourceColumn
+                }
+              }
+              job0.columnMapping = mapping
+            }
 
             // setting: parallelism / mBytes / errorLimit
             const setting = (job0.setting && typeof job0.setting === "object" ? job0.setting : {}) as Json
@@ -999,6 +1218,18 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               if (parts.length) sinkParams.partitions = wrapPartitions(parts)
               else delete sinkParams.partitions
             }
+            // Static and dynamic partition are mutually exclusive in stored content:
+            // switching to dynamic drops sink.params.partitions; switching to static drops the partition column.
+            if (dynamicPartitionArg) delete sinkParams.partitions
+            if (partitionsArg) {
+              const partCol = (sink.columns as ColumnMeta[]).find((c) => c.partitionColumn === true)
+              if (partCol) {
+                const partName = colName(partCol)
+                sink.columns = (sink.columns as ColumnMeta[]).filter((c) => c.partitionColumn !== true)
+                source.columns = (source.columns as ColumnMeta[]).filter((c) => !c.inputType)
+                if (partName) delete mapping[partName]
+              }
+            }
 
             // advanced params
             if (advancedParams !== undefined) {
@@ -1009,11 +1240,18 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
 
             await saveContent(sc, fileId, content, paramValueList ?? [])
             logOperation("integration edit", { ok: true })
+            const finalPartCol = (sink.columns as ColumnMeta[]).find((c) => c.partitionColumn === true)
+            const finalStatic = (sinkParams.partitions as unknown[] | undefined) ?? []
             success(
               {
                 task_id: fileId,
                 sync_type: "single",
                 column_mapping: mappingToRows(mapping),
+                ...(finalPartCol
+                  ? { partition_mode: "dynamic", partition_column: colName(finalPartCol), partition_source_column: mapping[colName(finalPartCol) ?? ""] }
+                  : finalStatic.length
+                    ? { partition_mode: "static", partition_values: finalStatic }
+                    : {}),
                 studio_url: studioUrl(sc, fileId),
               },
               { format, aiMessage: "已更新集成任务" },
