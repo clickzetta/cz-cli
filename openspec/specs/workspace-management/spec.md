@@ -13,7 +13,7 @@
 #### Scenario: workspace group help
 
 - **WHEN** 用户执行 `cz-cli workspace --help`
-- **THEN** help 显示 `list`、`current`、`use <name>`
+- **THEN** help 显示 `list`、`use <name>`
 - **AND** `use` 说明可用 `--persist` 保存到 profile（若 help 声明）
 
 #### Scenario: 未知子命令
@@ -40,22 +40,23 @@
 - **THEN** CLI 返回业务错误
 - **AND** 错误中包含连接/profile 诊断线索
 
-### Requirement: 显示当前 workspace
+### Requirement: workspace 不再提供 current 子命令
 
 本需求 MUST 按以下场景执行。
 
-系统 MUST 能显示当前运行上下文中的 workspace。
+系统 MUST 不再暴露 `workspace current` 子命令，避免用户依赖已删除的命令入口。
 
-#### Scenario: 显示当前 workspace
+#### Scenario: help 不显示 current
+
+- **WHEN** 用户执行 `cz-cli workspace --help`
+- **THEN** help 中不显示 `current`
+- **AND** 用户可见子命令只包含 `list`、`use <name>`
+
+#### Scenario: 调用已删除的 current 子命令
 
 - **WHEN** 用户执行 `cz-cli workspace current`
-- **THEN** 系统返回 `workspace`、`schema` 等当前上下文字段
-
-#### Scenario: 未配置 workspace
-
-- **WHEN** 当前 profile/连接上下文缺少 workspace
-- **THEN** CLI 返回可操作错误或空态
-- **AND** 提示 setup/profile update 路径
+- **THEN** CLI 返回 usage error
+- **AND** 提示查看 `cz-cli workspace --help`
 
 ### Requirement: 切换 workspace 可选择持久化
 

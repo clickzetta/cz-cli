@@ -77,7 +77,6 @@ const noProfileCases = [
   ["table", "list"],
   ["table", "describe", "demo"],
   ["workspace", "list"],
-  ["workspace", "current"],
   ["workspace", "use", "demo"],
   ["status"],
   ["task", "list"],

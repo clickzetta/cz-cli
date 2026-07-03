@@ -5,6 +5,11 @@ describe("serviceUrlToMcpUrl (central-region only)", () => {
   test("uat- prefix -> uat central", () => {
     expect(serviceUrlToMcpUrl("uat-api.clickzetta.com")).toBe("https://uat-mcp-api.clickzetta.com/mcp")
   })
+  test("Volkswagen UAT host -> Volkswagen UAT MCP endpoint", () => {
+    expect(serviceUrlToMcpUrl("http://lakehouse-studio.uat.cn-vw.volkswagen-cea.com/api")).toBe(
+      "http://lakehouse-studio.uat.cn-vw.volkswagen-cea.com/mcp",
+    )
+  })
   test("dev- / localhost / 0.0.0.0 -> dev central", () => {
     expect(serviceUrlToMcpUrl("dev-api.clickzetta.com")).toBe("https://dev-mcp-api.clickzetta.com/mcp")
     expect(serviceUrlToMcpUrl("http://localhost:8080")).toBe("https://dev-mcp-api.clickzetta.com/mcp")

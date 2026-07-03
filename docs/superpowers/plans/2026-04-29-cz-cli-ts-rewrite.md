@@ -56,7 +56,7 @@
 | `src/commands/profile.ts` | Profile CRUD + discover + list-workspaces |
 | `src/commands/schema.ts` | Schema list/describe/create/drop |
 | `src/commands/table.ts` | Table list/describe/preview/stats/history/create/drop |
-| `src/commands/workspace.ts` | Workspace current/use |
+| `src/commands/workspace.ts` | Workspace list/use |
 | `src/commands/task.ts` | Task CRUD + flow subcommands |
 | `src/commands/runs.ts` | Run instances management |
 | `src/commands/attempts.ts` | Attempt records and logs |

@@ -72,6 +72,12 @@ describe("#1 profile gate runs after yargs syntax validation", () => {
     expect(errorOf(r.stdout).code).toBe("USAGE_ERROR")
   })
 
+  test("removed workspace current subcommand surfaces USAGE_ERROR", () => {
+    const r = run(["workspace", "current"])
+    expect(errorOf(r.stdout).code).toBe("USAGE_ERROR")
+    expect(r.exitCode).toBe(2)
+  })
+
   test("a syntactically valid profile-gated command still reports NO_PROFILE", () => {
     const r = run(["sql", "SELECT 1"])
     expect(errorOf(r.stdout).code).toBe("NO_PROFILE")
@@ -195,5 +201,4 @@ describe("#R2 flag-vs-subcommand suggestion no longer misfires", () => {
     expect(errorOf(run(["schema", "descibe"]).stdout).did_you_mean).toBe("describe")
   })
 })
-
 

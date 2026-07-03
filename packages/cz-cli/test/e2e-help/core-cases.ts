@@ -100,15 +100,11 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["workspace", "--help"],
     expectHeader: "cz-cli workspace",
-    expectCommands: ["list", "current", "use"],
+    expectCommands: ["list", "use"],
   },
   {
     args: ["workspace", "list", "--help"],
     expectHeader: "cz-cli workspace list",
-  },
-  {
-    args: ["workspace", "current", "--help"],
-    expectHeader: "cz-cli workspace current",
   },
   {
     args: ["workspace", "use", "--help"],

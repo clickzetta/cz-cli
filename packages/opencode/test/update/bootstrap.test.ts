@@ -35,31 +35,32 @@ describe("update bootstrap", () => {
     Object.assign(process.env, envSnapshot)
   })
 
-  test("loads autoupdate from ~/.clickzetta/czcli.jsonc", async () => {
+  test("loads autoupdate from update-check.json", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
-    await fs.mkdir(path.join(home, ".clickzetta"), { recursive: true })
+    await fs.mkdir(path.join(home, ".local", "state", "clickzetta"), { recursive: true })
     await fs.writeFile(
-      path.join(home, ".clickzetta", "czcli.jsonc"),
-      `{
-        // keep startup checks on, but notify only
-        "autoupdate": "notify"
-      }`,
+      path.join(home, ".local", "state", "clickzetta", "update-check.json"),
+      JSON.stringify({
+        autoupdate: "notify",
+        last_checked_at: 123,
+      }),
     )
 
     const config = await loadBootstrapConfig({ home, env: {} })
     expect(config.autoupdate).toBe("notify")
   })
 
-  test("managed config overrides ~/.clickzetta config", async () => {
+  test("CLICKZETTA_AUTOUPDATE overrides update-check.json", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-home-"))
-    const managedDir = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-managed-"))
-    await fs.mkdir(path.join(home, ".clickzetta"), { recursive: true })
-    await fs.writeFile(path.join(home, ".clickzetta", "czcli.json"), JSON.stringify({ autoupdate: true }))
-    await fs.writeFile(path.join(managedDir, "opencode.json"), JSON.stringify({ autoupdate: false }))
+    await fs.mkdir(path.join(home, ".local", "state", "clickzetta"), { recursive: true })
+    await fs.writeFile(
+      path.join(home, ".local", "state", "clickzetta", "update-check.json"),
+      JSON.stringify({ autoupdate: true }),
+    )
 
     const config = await loadBootstrapConfig({
       home,
-      env: { CLICKZETTA_TEST_MANAGED_CONFIG_DIR: managedDir },
+      env: { CLICKZETTA_AUTOUPDATE: "false" },
     })
     expect(config.autoupdate).toBe(false)
   })
@@ -159,9 +160,10 @@ describe("update bootstrap", () => {
     expect(JSON.parse(await fs.readFile(path.join(home, ".clickzetta", "install.json"), "utf-8")).method).toBeUndefined()
   })
 
-  test("skips autoupdate for setup, update, help, version, and one-shot restart env", () => {
+  test("skips autoupdate for setup, update, autoupdate, help, version, and one-shot restart env", () => {
     expect(shouldSkipAutoUpdateCommand({ args: ["setup"] })).toBe(true)
     expect(shouldSkipAutoUpdateCommand({ args: ["update"] })).toBe(true)
+    expect(shouldSkipAutoUpdateCommand({ args: ["autoupdate"] })).toBe(true)
     expect(shouldSkipAutoUpdateCommand({ args: ["--help"] })).toBe(true)
     expect(shouldSkipAutoUpdateCommand({ args: ["--version"] })).toBe(true)
     expect(
@@ -452,7 +454,7 @@ describe("update bootstrap", () => {
       try {
         await expect(performUpgrade("curl", "0.5.19", fetchImpl, "stable")).rejects.toThrow("powershell")
 
-        expect(urls).toEqual(["https://cz-cli.ai/install.ps1"])
+        expect(urls).toEqual(["https://cz-cli.ai/install.ps1?version=0.5.19"])
       } finally {
         Object.defineProperty(process, "platform", { value: platform })
       }
@@ -477,12 +479,12 @@ describe("update bootstrap", () => {
 
     test("shouldSkipAutoUpdateCommand does not skip a real install on any channel", () => {
       expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "0.5.16" })).toBe(false)
-      expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "dev-v0.5.17.20260609" })).toBe(false)
     })
 
-    test("shouldSkipAutoUpdateCommand skips dev/local builds (invalid semver)", () => {
-      expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "local" })).toBe(true)
-    })
+  test("shouldSkipAutoUpdateCommand skips dev/local builds", () => {
+    expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "local" })).toBe(true)
+    expect(shouldSkipAutoUpdateCommand({ args: ["sql"], env: {}, version: "dev-v1.0.7.20260616190000" })).toBe(true)
+  })
   })
 
 

@@ -3,7 +3,7 @@ import { editDistance, suggestClosest } from "../src/suggest"
 
 const COMMANDS = [
   "sql", "schema", "table", "workspace", "status", "profile", "task",
-  "runs", "attempts", "job", "agent", "serve", "setup", "update",
+  "runs", "attempts", "job", "agent", "serve", "setup", "update", "autoupdate",
   "datasource", "ai-gateway", "analytics-agent",
 ]
 

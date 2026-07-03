@@ -75,7 +75,7 @@ const tests: Test[] = [
   { name: "TABLE PREVIEW", cmd: "table preview orders --limit 3", check: single },
 
   // === Workspace ===
-  { name: "WORKSPACE CURRENT", cmd: "workspace current", check: single },
+  { name: "WORKSPACE CURRENT REMOVED", cmd: "workspace current", check: all(single, exitCode(2)) },
 
   // === Output Formats ===
   { name: "JSON", cmd: "profile list --format json", check: single },

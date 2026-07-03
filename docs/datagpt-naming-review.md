@@ -6,7 +6,7 @@
 |---|---|
 | 简单 CRUD 动词 | `list`, `create`, `describe`, `drop`, `delete`, `update` |
 | 资源-名词式子命令 | `datasource catalogs`, `datasource objects` |
-| 状态/信息查看 | `workspace current`, `profile status`, `runs stats` |
+| 状态/信息查看 | `profile status`, `runs stats` |
 | 获取结果 | `job result`, `runs logs` |
 | 操作动词 | `execute`, `deploy`, `undeploy`, `refill`, `rerun`, `stop` |
 | 连接测试 | `datasource test` |
@@ -71,7 +71,7 @@
 |---|---|---|---|
 | 33 | `knowledge add` | `knowledge create` | `add` 用于向父资源添加子项。创建独立资源用 `create`（`schema create`、`table create`、`profile create`、`task create`）。 |
 | 34 | `knowledge remove` | `knowledge delete` | `remove` 用于从父资源中移除。删除独立资源用 `delete` 或 `drop`（`profile delete`、`schema drop`）。 |
-| 35 | `tenant is-allowed` | `tenant status` 或 `tenant allowed` | 遵循 `workspace current` / `profile status` 模式。 |
+| 35 | `tenant is-allowed` | `tenant status` 或 `tenant allowed` | 遵循 `profile status` / `runs stats` 模式。 |
 
 ### 中优 — 结构 / 命名冲突
 

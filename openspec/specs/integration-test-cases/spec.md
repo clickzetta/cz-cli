@@ -58,11 +58,11 @@ profile 测试 MUST 覆盖 profile 文件读写、默认 profile 和敏感字段
 - **THEN** 断言 schema 参数传入下游
 - **AND** `--format table` 可渲染
 
-#### Scenario: workspace current
+#### Scenario: workspace current 已删除
 
 - **WHEN** 测试执行 `workspace current`
-- **THEN** 断言当前 workspace 来源于解析后的连接上下文
-- **AND** 缺失 workspace 时返回可诊断错误
+- **THEN** 断言返回 `USAGE_ERROR`
+- **AND** `workspace --help` 不再暴露该子命令
 
 ### Requirement: task/runs 场景覆盖常用 agent 工作流
 

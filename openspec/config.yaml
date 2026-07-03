@@ -8,10 +8,12 @@ context: |
     scripts/install.sh        — curl | sh 安装脚本
     script/build.ts           — CI 构建脚本，产出平台二进制并上传到 GitHub Release
     .github/workflows/        — GitHub Actions，release-cos.yml 驱动构建发布
+    /Users/zhanglin/IdeaProjects/cz-cli-website/ — 官网源码；托管 install.sh、install.ps1、/download、/api/manifest 等发布下载代理
 
   Spec coverage — before touching these areas, read the corresponding spec:
     install/update 流程、自动更新、渠道选择  → openspec/specs/auto-update/spec.md
-    发布渠道（stable/nightly）、install.json  → openspec/specs/release-channel/spec.md
+    发布渠道（stable/nightly）、install.json、COS 发布元数据、官网安装代理  → openspec/specs/release-channel/spec.md
+    二进制打包、安装脚本、npm 平台包、COS/GitHub 下载方式 → openspec/specs/binary-distribution/spec.md
     macOS Gatekeeper、quarantine、codesign    → openspec/specs/macos-gatekeeper/spec.md
     skill 分发（内置 .builtin、外部 agent 注册）→ openspec/specs/skill-install/spec.md
     CLI 顶层命令路由、agent runtime 透出 → openspec/specs/cli-command-routing/spec.md
@@ -20,7 +22,6 @@ context: |
   Areas NOT yet covered by specs (create a new spec when changing):
     GitHub Actions workflow (release-cos.yml, build targets, upload steps)
     Windows 签名 (script/sign-windows.ps1)
-    COS 发布 (scripts/cos-release.mjs, scripts/cos-upload.mjs)
     npm 包结构 (packages/npm/cz-cli/bin/platform.js, prepare-release-assets.mjs)
 
   Commit convention: Conventional Commits (fix/feat/docs/chore/refactor/test)

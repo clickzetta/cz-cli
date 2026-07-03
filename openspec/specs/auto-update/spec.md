@@ -3,12 +3,48 @@
 ## Purpose
 定义 cz-cli 何时自动更新自身、发布渠道如何选择更新流（版本来源和安装机制）、双文件更新状态模型，以及通知与升级行为。
 
+## Governance
+
+本规格是 install/update/自动更新行为的主契约。修改以下任一内容时，MUST 同步更新本规格并补充可验证场景：
+
+- 自动更新启停判断、跳过命令、检查间隔、通知/升级策略
+- `cz-cli autoupdate` 命令语义和持久化字段
+- `update-check.json` 字段、写入时机或保留策略
+- 显式版本安装/更新、降级保护、版本来源
+- install/update 入口的 binary 清理和升级恢复行为
+
+本规格中的“文件边界”和“入口边界”优先于下方各 Requirement 的叙述性文本；如果场景文本与边界冲突，必须先修正场景文本。
+
+## State Files
+
+自动更新相关持久化 MUST 遵循以下文件边界：
+
+- `~/.clickzetta/install.json`：安装身份/渠道记忆文件，仅记录安装来源、安装路径、发布渠道、二进制版本等安装元数据。
+- `~/.local/state/clickzetta/update-check.json`：自动更新状态文件，记录 `autoupdate`、`last_checked_at`、`last_result`、`latest_version`、`error` 等自动更新状态。
+- 自动更新开关 `autoupdate` MUST 只写入并只从 `update-check.json` 读取，不得写入 `install.json`、`profiles.toml`、`czcli.json` 或通用 config 文件。
+- `cz-cli autoupdate` 是修改自动更新开关的唯一 CLI 入口。
+
+## Entry Boundaries
+
+- `cz-cli autoupdate [true|false|notify]`：只读写 `update-check.json.autoupdate`，不执行版本检查，不触发升级。
+- `cz-cli update`：手动更新入口，解析目标版本并执行安装；不得写入 `update-check.json`，除非其子流程实际进入自动更新路径。
+- 自动更新路径：普通命令启动前的后台检查；可写入 `update-check.json` 的检查状态，但写入状态时 MUST 保留既有 `autoupdate` 值。
+- 安装脚本和发布脚本：负责安装资产、安装元数据和版本指针；不得修改 `autoupdate`。
+
+## Version Classes
+
+- stable release：有效 semver，例如 `1.0.20`。
+- nightly/dev release：`dev-v<major>.<minor>.<patch>.<timestamp>`，例如 `dev-v1.0.7.20260616190000`。
+- local/dev build：非发布版本，例如 `local` 或本地开发构建版本。
+
+自动更新对 stable release 运行。`dev-v...` 版本默认跳过自动更新，避免固定历史版本、夜间版本或开发验证版本被渠道指针覆盖。渠道解析仍允许 stable 当前版本升级到 nightly 的 `dev-v...` 目标版本。
+
 ## Requirements
 ### Requirement: 自动更新不受渠道限制
 
 本需求 MUST 按以下场景执行。
 
-自动更新应在任何真实安装上运行，不受发布渠道影响。启用条件由以下因素决定：更新未被禁用（通过配置 `autoupdate: false` 或环境变量 `CLICKZETTA_DISABLE_AUTOUPDATE` / `CZ_SKIP_UPDATE` / 一次性 `CLICKZETTA_SKIP_UPDATE_ONCE`），命令不在跳过列表中（`setup`、`update`、`uninstall`、`--help`/`-h`、`--version`/`-v`），已安装版本为有效发布版本（stable semver 或 `dev-v<major>.<minor>.<patch>.<timestamp>`），安装方式受支持，且检查间隔已到期。渠道值不应决定自动更新是否运行。
+自动更新应在任何真实 stable 安装上运行，不受发布渠道影响。启用条件由以下因素决定：更新未被禁用（通过自动更新状态文件中的 `autoupdate: false` 或环境变量 `CLICKZETTA_DISABLE_AUTOUPDATE` / `CZ_SKIP_UPDATE` / 一次性 `CLICKZETTA_SKIP_UPDATE_ONCE`），命令不在跳过列表中（`setup`、`update`、`autoupdate`、`uninstall`、`--help`/`-h`、`--version`/`-v`），已安装版本为 stable release，安装方式受支持，且检查间隔已到期。渠道值不应决定自动更新是否运行。
 
 #### Scenario: Stable 安装执行升级
 
@@ -20,10 +56,10 @@
 - **WHEN** 已安装版本不是有效 semver（例如 `local` 开发构建）时
 - **THEN** 自动更新被跳过
 
-#### Scenario: Nightly dev-v 安装继续参与自动更新
+#### Scenario: Nightly dev-v 已安装版本被跳过
 
 - **WHEN** 已安装版本为 `dev-v1.0.7.20260616190000` 且命令为正常命令时
-- **THEN** 自动更新不因版本格式被跳过
+- **THEN** 自动更新被跳过，避免开发/夜间版本被 stable 自动覆盖
 
 #### Scenario: 真实安装在任何渠道下都不被跳过
 
@@ -34,7 +70,7 @@
 
 本需求 MUST 按以下场景执行。
 
-发布渠道应是目标版本的唯一来源，始终从 cz-cli.ai 解析：`stable` 来自 `https://cz-cli.ai/api/stable`，`nightly` 来自 `https://cz-cli.ai/api/nightly`。安装方式不应影响版本解析——它仅选择升级机制（`stable` → `install.sh`；`nightly` → `install-nightly.sh`；托管包管理器使用其自身的安装命令）。特别地，版本解析不应查询 npm 仓库的 `latest` dist-tag，即使安装方式为 npm/pnpm/yarn/bun。`stable` 和 `nightly` 均可自动升级。
+发布渠道应是目标版本的唯一来源，始终从 cz-cli.ai 解析：`stable` 来自 `https://cz-cli.ai/api/stable`，`nightly` 来自 `https://cz-cli.ai/api/nightly`。官网 API 的 channel 版本来源必须是 `META-INF/versions.json` 顶层 `stable`/`nightly` 字段，不得读取或创建额外的 `META-INF/stable`、`META-INF/nightly`、`META-INF/channels/<channel>/version` 指针对象。安装方式不应影响版本解析——它仅选择升级机制（`stable` → `install.sh`；`nightly` → `install-nightly.sh`；托管包管理器使用其自身的安装命令）。特别地，版本解析不应查询 npm 仓库的 `latest` dist-tag，即使安装方式为 npm/pnpm/yarn/bun。`stable` 和 `nightly` 均可自动升级。
 
 #### Scenario: Stable 流端点
 
@@ -67,11 +103,84 @@
 - **WHEN** 渠道解析的版本尚未发布到 npm 仓库时
 - **THEN** 包管理器升级可能失败，系统回退到该渠道的安装脚本
 
+### Requirement: 显式目标版本允许降级
+
+本需求 MUST 按以下场景执行。
+
+当用户显式指定目标版本时，安装和更新入口应按该目标版本执行安装，即使当前已安装版本更新。该行为用于回滚和复现历史版本。只有自动解析渠道最新版本的路径应保留“目标版本必须更新”的判断，避免渠道指针意外回退导致静默降级。
+
+#### Scenario: install.sh 显式版本允许降级
+
+- **WHEN** 当前已安装版本为 `1.0.20` 且用户执行 `curl -fsSL https://cz-cli.ai/install | bash -s -- --version 1.0.18` 时
+- **THEN** 安装器继续安装 `1.0.18`
+- **AND** 不因当前版本更新而跳过安装
+- **AND** 历史版本安装资产解析遵守 release-channel 规格中的 `META-INF/releases/<version>/manifest.json` 与 presigned archive URL 契约
+
+#### Scenario: update 显式 target 允许降级
+
+- **WHEN** 当前已安装版本为 `1.0.20` 且用户执行 `cz-cli update -t 1.0.18` 时
+- **THEN** update 命令继续安装 `1.0.18`
+- **AND** 不返回 `refuse_downgrade`
+- **AND** update 入口不得自行拼接 COS 公开 URL 或直接读取 versioned COS 对象
+
+#### Scenario: Windows update 显式 target 使用 versioned PowerShell 安装入口
+
+- **WHEN** Windows 用户执行 `cz-cli update -t 1.0.18` 时
+- **THEN** update 命令下载 `https://cz-cli.ai/install.ps1?version=1.0.18`
+- **AND** 官网安装入口读取 `META-INF/releases/1.0.18/manifest.json`
+- **AND** PowerShell 安装脚本通过 `/download/1.0.18/win32-x64` 间接使用 manifest 内记录的 presigned archive URL
+
+#### Scenario: 自动解析版本不静默降级
+
+- **WHEN** 当前已安装版本为 `1.0.20` 且渠道最新版本解析为 `1.0.18`，用户未显式指定目标版本时
+- **THEN** update 命令拒绝降级
+- **AND** 提示用户使用 `--target` 显式指定回滚版本
+
+### Requirement: 自动更新顶级命令
+
+本需求 MUST 按以下场景执行。
+
+自动更新开关属于自动更新自身状态，不应放在通用 `config` 顶级命令或 ClickZetta profile/连接配置下，以免边界混淆。CLI 应提供专用顶级命令写入自动更新状态文件 `~/.local/state/clickzetta/update-check.json` 的 `autoupdate` 字段，并复用自动更新状态读取逻辑。允许值为 `true`、`false`、`notify`；其中 `false` 关闭自动检查和自动升级，`notify` 仅提示不升级。命令名为 `autoupdate`，不提供 `auto-update` 别名。
+
+#### Scenario: 关闭自动更新
+
+- **WHEN** 用户执行 `cz-cli autoupdate false`
+- **THEN** `~/.local/state/clickzetta/update-check.json` 写入 `"autoupdate": false`
+- **AND** 后续自动更新路径跳过检查
+
+#### Scenario: 调整自动更新时不先触发自动更新
+
+- **WHEN** 用户执行 `cz-cli autoupdate false` 时
+- **THEN** CLI 不在执行该命令前触发自动更新检查
+- **AND** 用户可以在当前版本上完成关闭操作
+
+#### Scenario: 不写入通用配置文件
+
+- **WHEN** 用户执行 `cz-cli autoupdate notify` 时
+- **THEN** CLI 只写入 `~/.local/state/clickzetta/update-check.json`
+- **AND** 不创建或修改 `~/.clickzetta/czcli.json`、`~/.clickzetta/profiles.toml` 或 `install.json`
+
+#### Scenario: 不提供 auto-update 别名
+
+- **WHEN** 用户执行 `cz-cli auto-update false` 时
+- **THEN** CLI 将其视为未知命令
+
+#### Scenario: 查看自动更新配置
+
+- **WHEN** 用户执行 `cz-cli autoupdate`
+- **THEN** 输出当前 `autoupdate` 配置值
+- **AND** 如果未配置则输出默认值 `true`
+
+#### Scenario: 非 dev 版本发现更新时提示关闭方式
+
+- **WHEN** stable semver 安装发现可用更新时
+- **THEN** 自动更新提示包含 `cz-cli autoupdate false`
+
 ### Requirement: 双文件更新状态模型
 
 本需求 MUST 按以下场景执行。
 
-系统应维护两个独立文件。`~/.clickzetta/install.json` 是渠道/身份记忆，由每次安装和更新入口写入。`~/.local/state/clickzetta/update-check.json`（XDG state）仅由自动更新路径写入，记录 `last_checked_at`、`last_result` 和 `latest_version`。判断自动更新是否发生应依赖 `update-check.json`，而非 `install.json.updated_at`。
+系统应维护两个独立文件。`~/.clickzetta/install.json` 是渠道/身份记忆，由每次安装和更新入口写入。`~/.local/state/clickzetta/update-check.json`（XDG state）由自动更新路径和 `cz-cli autoupdate` 写入，记录 `autoupdate`、`last_checked_at`、`last_result`、`latest_version` 和 `error`。判断自动更新是否发生应依赖 `update-check.json`，而非 `install.json.updated_at`。
 
 #### Scenario: 手动更新不写入自动更新状态文件
 
@@ -82,6 +191,11 @@
 
 - **WHEN** 自动更新路径执行检查时
 - **THEN** `update-check.json` 被写入，包含 `last_checked_at` 和 `last_result`
+
+#### Scenario: 自动更新状态写入保留开关
+
+- **WHEN** `update-check.json` 已包含 `"autoupdate": "notify"` 且自动更新路径写入检查结果时
+- **THEN** 写入后的 `update-check.json` 仍保留 `"autoupdate": "notify"`
 
 ### Requirement: 通知与升级
 

@@ -7,7 +7,7 @@
  * 3. Perform upgrade via install script or package manager
  */
 
-import { execSync } from "node:child_process"
+import { execFileSync, execSync } from "node:child_process"
 import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync, copyFileSync, chmodSync, statSync } from "node:fs"
 import path from "node:path"
 import type { Argv } from "yargs"
@@ -24,6 +24,25 @@ import {
 
 export function shouldApplyUpdate(currentVersion: string, latestVersion: string, force: boolean) {
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
+}
+
+function readBinaryVersion(binaryPath: string) {
+  try {
+    return execFileSync(binaryPath, ["--version"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim()
+  } catch {
+    return undefined
+  }
+}
+
+export function assertUpdatedBinaryVersion(binaryPath: string | undefined, targetVersion: string) {
+  if (!binaryPath) throw new Error(`Unable to locate cz-cli after update; expected ${targetVersion}`)
+  const actualVersion = readBinaryVersion(binaryPath)
+  if (actualVersion !== targetVersion) {
+    throw new Error(`Installed cz-cli version mismatch at ${binaryPath}: expected ${targetVersion}, got ${actualVersion ?? "unavailable"}`)
+  }
 }
 
 /**
@@ -368,7 +387,7 @@ export function registerUpdateCommand(cli: Argv) {
         })()
         if (postWhich) {
           const postVersion = (() => {
-            try { return execSync(`${postWhich} --version`, { encoding: "utf-8", stdio: "pipe" }).trim() } catch { return undefined }
+            try { return readBinaryVersion(postWhich) } catch { return undefined }
           })()
           if (postVersion !== latest) {
             // Find the freshly installed binary
@@ -378,7 +397,7 @@ export function registerUpdateCommand(cli: Argv) {
             for (const candidate of candidates) {
               try {
                 if (!statSync(candidate).isFile()) continue
-                const ver = execSync(`${candidate} --version`, { encoding: "utf-8", stdio: "pipe" }).trim()
+                const ver = readBinaryVersion(candidate)
                 if (ver === latest) {
                   copyFileSync(candidate, postWhich)
                   chmodSync(postWhich, 0o755)
@@ -390,6 +409,7 @@ export function registerUpdateCommand(cli: Argv) {
           }
         }
 
+        assertUpdatedBinaryVersion(postWhich ?? currentExec, latest)
         await writeInstallMetadata({ binary_version: latest, channel })
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
         emitUpdateResult(argv, {
