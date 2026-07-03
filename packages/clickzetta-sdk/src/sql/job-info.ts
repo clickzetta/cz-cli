@@ -8,15 +8,16 @@
  */
 
 import { requestRaw, type ClientOptions } from "../client.js"
+import { normalizeServiceEndpoint } from "./submit.js"
 import type { JobID } from "./types.js"
 
 // enums.py:99-104 — JobRequestType
 export const JobRequestType = {
-  PLAN: "get_plan_request",
-  PROFILE: "get_profile_request",
-  RESULT: "get_result_request",
-  PROGRESS: "get_progress_request",
-  SUMMARY: "get_summary_request",
+  PLAN: "getPlanRequest",
+  PROFILE: "getProfileRequest",
+  RESULT: "getResultRequest",
+  PROGRESS: "getProgressRequest",
+  SUMMARY: "getSummaryRequest",
 } as const
 
 export type JobRequestTypeValue = (typeof JobRequestType)[keyof typeof JobRequestType]
@@ -30,20 +31,26 @@ export async function getJobRaw(
   jobId: JobID,
   type: JobRequestTypeValue,
 ): Promise<unknown> {
+  const serviceInfo = normalizeServiceEndpoint(opts.config?.service ?? opts.baseUrl)
   const body: Record<string, unknown> = {
     [type]: {
-      account: { user_id: 0 },
-      job_id: {
+      jobId: {
         id: jobId.id,
         workspace: jobId.workspace,
-        instance_id: jobId.instanceId,
+        instanceId: jobId.instanceId,
       },
-      offset: 0,
-      user_agent: "",
+      userAgent: "",
+      ...(serviceInfo.endpoint ? { jdbcDomain: serviceInfo.endpoint } : {}),
     },
-    user_agent: "",
+    userAgent: "",
   }
-  return requestRaw(opts, "/lh/getJob", body)
+  return requestRaw({
+    ...opts,
+    customHeaders: {
+      ...opts.customHeaders,
+      instanceId: String(jobId.instanceId),
+    },
+  }, "/lh/getJob", body)
 }
 
 /** client.py:1111-1113 get_job_profile */

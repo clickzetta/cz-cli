@@ -318,6 +318,13 @@ describe("prepareSubmit — hints three-layer merge", () => {
     expect(p.workspace).toBe("wsA")
   })
 
+  test("contextJson host uses the resolved service host instead of null", () => {
+    const s = new SqlSession(makeConfig())
+    const p = s.prepareSubmit("SELECT 1")!
+    expect(p.contextJson.host).toBe("dev-api.clickzetta.com")
+    expect(p.contextJson.user).toBe("u")
+  })
+
   test("only SET/USE in SQL returns null", () => {
     const s = new SqlSession(makeConfig())
     expect(s.prepareSubmit("SET a=1; USE WORKSPACE ws1")).toBeNull()
@@ -353,7 +360,7 @@ describe("SqlSession.execute submit retry codes", () => {
 
   test("submit JOB_NOT_EXISTS is treated as retryable instead of terminal failure", async () => {
     const calls: string[] = []
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       calls.push(url)
       if (url.endsWith("/lh/submitJob")) {
@@ -367,6 +374,9 @@ describe("SqlSession.execute submit retry codes", () => {
           }),
         )
       }
+      const body = JSON.parse(String(init?.body)) as { getResultRequest?: { jobId?: { instanceId?: number }; jdbcDomain?: string } }
+      expect(body.getResultRequest?.jobId?.instanceId).toBe(100)
+      expect(body.getResultRequest?.jdbcDomain).toBe("dev-api.clickzetta.com")
       return new Response(
         JSON.stringify({
           status: { state: "SUCCEED" },
@@ -382,23 +392,59 @@ describe("SqlSession.execute submit retry codes", () => {
     expect(result.status).toBe("SUCCEEDED")
     expect(calls.filter((url) => url.endsWith("/lh/getJob")).length).toBe(1)
   })
+
+  test("submit parse error with CZLH-60022 retries submit and then polls getJob", async () => {
+    const calls: string[] = []
+    let submitCalls = 0
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.endsWith("/lh/submitJob")) {
+        submitCalls++
+        if (submitCalls === 1) {
+          return new Response("CZLH-60022:Cannot invoke coordinatorServerManager_", { status: 200 })
+        }
+        return new Response(
+          JSON.stringify({
+            status: {
+              state: "FAILED",
+              errorCode: "CZLH-60022",
+              errorMessage: "request status unknown",
+            },
+          }),
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          status: { state: "SUCCEED" },
+          resultSet: {},
+        }),
+      )
+    }) as typeof fetch
+
+    const result = await new SqlSession(makeConfig()).execute("SELECT 1", {
+      params: { hints: { "sdk.query.max.retries": "2" } },
+    })
+
+    expect(result.status).toBe("SUCCEEDED")
+    expect(submitCalls).toBe(2)
+    expect(calls.filter((url) => url.endsWith("/lh/getJob")).length).toBe(1)
+  })
 })
 
-describe("newJobId format (client.py:1347-1352)", () => {
-  test("produces YYYYMMDDHHMMSSffffff + 5-digit random (≥25 digits)", () => {
+describe("newJobId format (Java CZRequestIdGenerator)", () => {
+  test("produces 17-digit timestamp plus base36 suffix", () => {
     const { newJobId } = require("../src/sql/types.js")
     const { id } = newJobId("ws", 100)
-    // 4+2+2 + 2+2+2 + 6 = 20 digits for timestamp, + 5 for random = 25
-    expect(id).toMatch(/^\d{25}$/)
+    expect(id).toMatch(/^\d{17}[0-9a-z]+$/)
   })
 
-  test("two IDs within the same millisecond differ (5-digit random suffix)", () => {
+  test("two IDs within the same millisecond differ", () => {
     const { newJobId } = require("../src/sql/types.js")
     const a = newJobId("ws", 100).id
     const b = newJobId("ws", 100).id
-    // Same timestamp but differing random tails are statistically near-certain;
-    // tolerate occasional equality by checking format only.
-    expect(a).toMatch(/^\d{25}$/)
-    expect(b).toMatch(/^\d{25}$/)
+    expect(a).toMatch(/^\d{17}[0-9a-z]+$/)
+    expect(b).toMatch(/^\d{17}[0-9a-z]+$/)
+    expect(a).not.toBe(b)
   })
 })
