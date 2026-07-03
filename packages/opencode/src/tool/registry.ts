@@ -15,6 +15,10 @@ import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
+// cz_change: ClickZetta job performance diagnosis tool. The tool.definition hook
+// can only mutate existing tools, not register new ones, so this builtin is woven
+// in at the single point below (no clean plugin path for new builtins).
+import { JobPerformanceTool } from "./job-performance"
 import { SkillTool } from "./skill"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
@@ -105,6 +109,7 @@ export const layer = Layer.effect(
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const jobperf = yield* JobPerformanceTool // cz_change
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -212,6 +217,7 @@ export const layer = Layer.effect(
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
+          jobperf: Tool.init(jobperf), // cz_change
         })
 
         return {
@@ -231,6 +237,7 @@ export const layer = Layer.effect(
             tool.search,
             tool.skill,
             tool.patch,
+            tool.jobperf, // cz_change: ClickZetta job performance diagnosis tool
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
           ],

@@ -185,7 +185,17 @@ for (const item of targets) {
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
-    entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : [])],
+    // cz_change: allow overriding the binary entrypoint (default = upstream
+    // src/index.ts). The cz build sets OPENCODE_BUILD_ENTRYPOINT to the
+    // @clickzetta/entry boot file so the dependency stays one-way (entry →
+    // opencode) with no opencode → entry package edge. Pure-upstream builds leave
+    // the env unset and behave exactly as before.
+    entrypoints: [
+      process.env.OPENCODE_BUILD_ENTRYPOINT ?? "./src/index.ts",
+      parserWorker,
+      workerPath,
+      ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : []),
+    ],
     define: {
       FFF_LIBC: JSON.stringify(item.abi === "musl" ? "musl" : "gnu"),
       OPENCODE_VERSION: `'${Script.version}'`,

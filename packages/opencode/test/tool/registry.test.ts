@@ -75,6 +75,16 @@ describe("tool.registry", () => {
     }),
   )
 
+  // cz_change: ClickZetta job-performance tool is woven into the builtin list.
+  it.instance("exposes the ClickZetta job performance builtin", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).toContain("analyze_lakehouse_job")
+    }),
+  )
+
   it.instance("hides task background parameter unless experimental background subagents are enabled", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service

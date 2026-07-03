@@ -7,6 +7,37 @@ import { iife } from "@/util/iife"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
+// cz_change: ClickZetta models that support gateway prompt caching. The system
+// message is rewritten into a structured content block carrying
+// `cache_control: { type: "ephemeral" }` so the gateway caches the system prompt.
+const CLICKZETTA_CACHE_CONTROL_MODELS = new Set(["qwen/qwen3.6-plus"])
+
+// cz_change: rewrites the system message into a structured content block carrying
+// an ephemeral cache_control for cache-eligible ClickZetta models. Gated on
+// providerID === "clickzetta", so it is a no-op for every other provider.
+function applyClickZettaCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+  if (model.providerID !== "clickzetta") return msgs
+  if (!CLICKZETTA_CACHE_CONTROL_MODELS.has(model.api.id) && !CLICKZETTA_CACHE_CONTROL_MODELS.has(model.id)) return msgs
+
+  const msg = msgs.find((msg) => msg.role === "system")
+  if (!msg || typeof msg.content !== "string" || msg.content === "") return msgs
+
+  const systemText = msg.content
+  return msgs.map((item) => {
+    if (item !== msg) return item
+    return {
+      ...item,
+      content: [
+        {
+          type: "text",
+          text: systemText,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+    } as unknown as ModelMessage
+  })
+}
+
 function mimeToModality(mime: string): Modality | undefined {
   if (mime.startsWith("image/")) return "image"
   if (mime.startsWith("audio/")) return "audio"
@@ -430,6 +461,8 @@ function mapProviderOptions(
 export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
   msgs = unsupportedParts(msgs, model)
   msgs = normalizeMessages(msgs, model, options)
+  // cz_change: ClickZetta qwen prompt caching.
+  msgs = applyClickZettaCaching(msgs, model)
   if (
     (model.providerID === "anthropic" ||
       model.providerID === "google-vertex-anthropic" ||

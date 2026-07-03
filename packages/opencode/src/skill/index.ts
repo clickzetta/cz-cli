@@ -17,6 +17,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Glob } from "@opencode-ai/core/util/glob"
 import { Discovery } from "./discovery"
 import { isRecord } from "@/util/record"
+import { Plugin } from "@/plugin"
 
 const CLAUDE_EXTERNAL_DIR = ".claude"
 const AGENTS_EXTERNAL_DIR = ".agents"
@@ -102,7 +103,12 @@ export interface Interface {
   readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
 }
 
-const add = Effect.fnUntraced(function* (state: State, match: string, events: EventV2Bridge.Service["Service"]) {
+const add = Effect.fnUntraced(function* (
+  state: State,
+  match: string,
+  events: EventV2Bridge.Service["Service"],
+  plugin: Plugin.Service["Service"],
+) {
   const md = yield* Effect.tryPromise({
     try: () => ConfigMarkdown.parse(match),
     catch: (err) => err,
@@ -121,6 +127,11 @@ const add = Effect.fnUntraced(function* (state: State, match: string, events: Ev
   if (!md) return
 
   if (!isSkillFrontmatter(md.data)) return
+
+  // Let plugins veto a skill (e.g. one the agent invokes another way and must
+  // not load, to avoid recursion). Native skill.filter hook.
+  const filter = yield* plugin.trigger("skill.filter", { name: md.data.name }, { exclude: false })
+  if (filter.exclude) return
 
   if (state.skills[md.data.name]) {
     yield* Effect.logWarning("duplicate skill name", {
@@ -236,8 +247,9 @@ const loadSkills = Effect.fnUntraced(function* (
   state: State,
   discovered: DiscoveryState,
   events: EventV2Bridge.Service["Service"],
+  plugin: Plugin.Service["Service"],
 ) {
-  yield* Effect.forEach(discovered.matches, (match) => add(state, match, events), {
+  yield* Effect.forEach(discovered.matches, (match) => add(state, match, events, plugin), {
     concurrency: "unbounded",
     discard: true,
   })
@@ -256,6 +268,7 @@ export const layer = Layer.effect(
     const fsys = yield* FSUtil.Service
     const global = yield* Global.Service
     const flags = yield* RuntimeFlags.Service
+    const plugin = yield* Plugin.Service
     const discovered = yield* InstanceState.make(
       Effect.fn("Skill.discovery")(function* (ctx) {
         return yield* discoverSkills(
@@ -281,7 +294,7 @@ export const layer = Layer.effect(
           location: "<built-in>",
           content: CUSTOMIZE_OPENCODE_SKILL_BODY,
         }
-        yield* loadSkills(s, yield* InstanceState.get(discovered), events)
+        yield* loadSkills(s, yield* InstanceState.get(discovered), events, plugin)
         return s
       }),
     )
@@ -325,6 +338,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(FSUtil.defaultLayer),
   Layer.provide(Global.layer),
   Layer.provide(RuntimeFlags.defaultLayer),
+  Layer.provide(Plugin.defaultLayer),
 )
 
 export function fmt(list: Info[], opts: { verbose: boolean }) {
@@ -361,6 +375,7 @@ export const node = LayerNode.make(layer, [
   FSUtil.node,
   Global.node,
   RuntimeFlags.node,
+  Plugin.node,
 ])
 
 export * as Skill from "."

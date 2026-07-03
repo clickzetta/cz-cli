@@ -1,0 +1,21 @@
+{
+  "name": "@clickzetta/ai-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.srconly.json"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "2.0.41",
+    "@ai-sdk/provider": "3.0.8",
+    "@clickzetta/cli": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}
