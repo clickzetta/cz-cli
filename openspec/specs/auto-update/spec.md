@@ -77,10 +77,26 @@
 - **WHEN** 发布渠道为 `stable` 时
 - **THEN** 最新版本从 `https://cz-cli.ai/api/stable` 获取，升级使用 stable 安装脚本
 
+#### Scenario: stable API 读取 versions.json
+
+- **WHEN** 自动更新请求 `https://cz-cli.ai/api/stable`
+- **THEN** 官网读取 `META-INF/versions.json`
+- **AND** 返回顶层 `stable` 字段中的版本
+- **AND** 不读取 `META-INF/stable`
+- **AND** 不读取 `META-INF/channels/stable/version`
+
 #### Scenario: Nightly 流端点
 
 - **WHEN** 发布渠道为 `nightly` 时
 - **THEN** 最新版本从 `https://cz-cli.ai/api/nightly` 获取，升级使用 nightly 安装脚本
+
+#### Scenario: nightly API 读取 versions.json
+
+- **WHEN** 自动更新请求 `https://cz-cli.ai/api/nightly`
+- **THEN** 官网读取 `META-INF/versions.json`
+- **AND** 返回顶层 `nightly` 字段中的版本
+- **AND** 不读取 `META-INF/nightly`
+- **AND** 不读取 `META-INF/channels/nightly/version`
 
 #### Scenario: Nightly dev-v 目标版本执行升级
 
@@ -127,6 +143,7 @@
 
 - **WHEN** Windows 用户执行 `cz-cli update -t 1.0.18` 时
 - **THEN** update 命令下载 `https://cz-cli.ai/install.ps1?version=1.0.18`
+- **AND** 不下载未带 version 查询参数的 `https://cz-cli.ai/install.ps1` 作为目标版本安装脚本
 - **AND** 官网安装入口读取 `META-INF/releases/1.0.18/manifest.json`
 - **AND** PowerShell 安装脚本通过 `/download/1.0.18/win32-x64` 间接使用 manifest 内记录的 presigned archive URL
 

@@ -30,7 +30,7 @@ release 构建 MUST 为目标平台生成 `cz-cli` 或 `cz-cli.exe` 二进制，
 
 本需求 MUST 按以下场景执行。
 
-`scripts/install.sh` 与 Windows PowerShell 安装入口 MUST 根据发布渠道解析 manifest/bootstrap 并下载安装到 `~/.clickzetta/bin` 或指定目录。
+`scripts/install.sh` 与 Windows PowerShell 安装入口 MUST 根据发布渠道解析 manifest/bootstrap 并下载安装到 `~/.clickzetta/bin` 或指定目录。默认渠道安装从 `META-INF/versions.json` 顶层 `stable`/`nightly` 字段解析当前版本，并读取 `META-INF/channels/<channel>/bootstrap.*` 或 `META-INF/channels/<channel>/manifest.json`。显式历史版本安装从 `META-INF/releases/<version>/manifest.json` 读取，并使用 manifest 中记录的 `platforms[platform].url` 下载平台归档。
 
 #### Scenario: curl 安装
 
@@ -51,10 +51,17 @@ release 构建 MUST 为目标平台生成 `cz-cli` 或 `cz-cli.exe` 二进制，
 - **AND** 该 URL 是发布流程生成并记录的 presigned URL
 - **AND** 安装入口不根据 bucket、prefix、version、platform 或 archive 名称拼接公共 COS URL
 
+#### Scenario: 默认 stable 安装使用 channel 安装资产
+
+- **WHEN** 用户执行默认 stable 安装命令
+- **THEN** 安装入口使用 `META-INF/channels/stable/bootstrap.sh` 或 `META-INF/channels/stable/manifest.json`
+- **AND** 该资产对应 `META-INF/versions.json` 顶层 `stable` 字段指向的版本
+
 #### Scenario: 显式历史版本安装依赖 versioned manifest
 
 - **WHEN** 用户显式安装历史版本 `1.0.18`
 - **THEN** 入口先按 release-channel 规格读取 `META-INF/releases/1.0.18/manifest.json`
+- **AND** 下载 URL 来自 `manifest.platforms[platform].url`
 - **AND** 不直接请求私有构建产物目录下的 `1.0.18/bootstrap.sh`
 - **AND** Windows PowerShell 入口不直接请求私有构建产物目录下的 `1.0.18/bootstrap.ps1`
 - **AND** 不拼接公开 COS 归档 URL

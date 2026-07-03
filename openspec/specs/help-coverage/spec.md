@@ -59,3 +59,60 @@
 - **WHEN** 后续版本移除隐藏兼容 alias
 - **THEN** help coverage 不应失败，只要公开规范命令仍可发现
 - **AND** 迁移提示或 release note SHOULD 说明破坏性变化
+
+### Requirement: workspace-param help 覆盖必须可验证
+
+本需求 MUST 按以下场景执行。
+
+`workspace-param` 命令族 SHALL be covered by executable help tests, and help rendering SHALL NOT require a ClickZetta profile or remote Studio API call.
+
+#### Scenario: workspace-param 子命令 help 全覆盖
+
+- **WHEN** 维护者运行 help coverage 测试
+- **THEN** 测试 SHALL execute `cz-cli workspace-param --help`
+- **AND** 测试 SHALL execute `cz-cli workspace-param list --help`
+- **AND** 测试 SHALL execute `cz-cli workspace-param add --help`
+- **AND** 测试 SHALL execute `cz-cli workspace-param update --help`
+- **AND** 测试 SHALL execute `cz-cli workspace-param enable --help`
+- **AND** 测试 SHALL execute `cz-cli workspace-param disable --help`
+- **AND** 测试 SHALL execute `cz-cli workspace-param delete --help`
+
+#### Scenario: help 不访问 profile
+
+- **WHEN** 用户执行任意 `workspace-param` help 命令
+- **THEN** CLI SHALL render help without requiring an active profile
+- **AND** CLI SHALL NOT call Studio APIs while rendering help
+
+#### Scenario: help 暴露必需参数
+
+- **WHEN** 用户查看 `workspace-param update --help`
+- **THEN** 帮助信息 SHALL include `--project-id`、`--id`、`--key`、`--value`、`--source-type` 和 `--encrypt`
+- **WHEN** 用户查看 `workspace-param enable --help`、`disable --help` 或 `delete --help`
+- **THEN** 帮助信息 SHALL include `--project-id` 和 `--id`
+
+### Requirement: profile login-url help 覆盖必须可验证
+
+本需求 MUST 按以下场景执行。
+
+`profile login-url` 命令的 help MUST be covered by executable help tests, and help rendering MUST NOT require a ClickZetta profile or remote API call.
+
+#### Scenario: profile login-url help 被覆盖
+
+- **WHEN** 维护者运行 help coverage 测试
+- **THEN** 测试 MUST execute `cz-cli profile --help`
+- **AND** 测试 MUST execute `cz-cli profile login-url --help`
+
+#### Scenario: help 不访问 profile 和远端
+
+- **WHEN** 用户执行 `cz-cli profile login-url --help`
+- **THEN** CLI MUST render help without requiring an active profile
+- **AND** CLI MUST NOT call ClickZetta APIs while rendering help
+
+#### Scenario: help 暴露关键参数
+
+- **WHEN** 用户查看 `cz-cli profile login-url --help`
+- **THEN** 帮助信息 MUST include the optional profile name positional argument
+- **AND** 帮助信息 MUST include `--tenant-name`
+- **AND** 帮助信息 MUST include `--resolve`
+- **AND** 帮助信息 MUST include `--no-resolve`
+- **AND** 帮助信息 MUST include `--open`

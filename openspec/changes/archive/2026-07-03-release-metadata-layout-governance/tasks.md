@@ -32,4 +32,4 @@
 - [x] 5.2 Run opencode focused release/update tests and typecheck from `packages/opencode`.
 - [x] 5.3 Run cz-cli update tests and typecheck from `packages/cz-cli`.
 - [x] 5.4 Run `openspec validate --all`.
-- [ ] 5.5 Smoke-test live endpoints after deployment: `/api/versions`, `/api/stable`, `/install.sh?version=1.0.18`, `/install.ps1?version=1.0.18`, and `cz-cli update -t 1.0.18`.
+- [x] 5.5 Smoke-test live endpoints after deployment: `/api/versions`, `/api/stable`, `/install.sh?version=1.0.18`, `/install.ps1?version=1.0.18`, and `cz-cli update -t 1.0.18`.

@@ -123,3 +123,24 @@
 - **WHEN** 用户执行 `cz-cli sql -N -B --format table "SELECT 1; SELECT 2"`
 - **THEN** 系统按批处理语义执行多条语句
 - **AND** 表格/行格式不输出 header
+
+### Requirement: 单域服务 SQL 网关异常时自动回退 Studio Adhoc
+
+本需求 MUST 按以下场景执行。
+
+当 SQL 网关 `/lh/submitJob` 在 dedicated 路由上返回已知后端异常 `CZLH-60022`，且错误文本包含 `SetDedicateEndpoint` 或 `coordinatorServerManager_ is null` 时，同步 SQL 执行 MUST 自动回退到 Studio Adhoc 临时执行链路，而不是直接失败。
+
+#### Scenario: 同步查询命中 dedicated 路由异常后回退成功
+
+- **WHEN** 用户对单域 service profile 执行 `cz-cli sql "SELECT current_workspace() AS workspace"`
+- **AND** `/lh/submitJob` 返回 `CZLH-60022` 且错误文本包含 `SetDedicateEndpoint` 或 `coordinatorServerManager_ is null`
+- **THEN** CLI MUST 通过 Studio API 创建临时 SQL task、调用 `/ide-admin/v1/adhoc/execute` 执行，并轮询 `/ide-admin/v1/adhoc/queryTempDataResults`
+- **AND** CLI 返回与普通 SQL 查询一致的列/行结果
+- **AND** 临时 task 在执行结束后 MUST 被删除
+
+#### Scenario: 异步模式不伪造 job_id
+
+- **WHEN** 用户执行 `cz-cli sql --async "SELECT 1"`
+- **AND** `/lh/submitJob` 返回同一 dedicated 路由异常
+- **THEN** CLI MUST 不使用 Studio fallback 伪造 Lakehouse `job_id`
+- **AND** CLI 返回原始网关错误，提示当前模式下无法提供兼容的异步 job 语义
