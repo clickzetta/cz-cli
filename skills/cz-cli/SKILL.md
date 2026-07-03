@@ -48,6 +48,17 @@ cz-cli task create my_db_sync --type MULTI_DI
 cz-cli task integration setup my_sync --sync-type single \
   --source-datasource my_mysql --source-schema app --source-table orders \
   --sink-datasource lakehouse --sink-schema public --sink-table orders
+#    single-table PARTITION (opt-in via --partitioned; default behavior is a plain non-partition table):
+#      static  — whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING):
+cz-cli task integration setup my_sync --sync-type single \
+  --source-datasource my_mysql --source-schema app --source-table orders \
+  --sink-datasource lakehouse --sink-schema public --sink-table orders_di \
+  --partitioned --partitions 'dt=${bizdate}'
+#      dynamic — per-row routing by a source column (must exist in the source table):
+cz-cli task integration setup my_sync --sync-type single \
+  --source-datasource my_mysql --source-schema app --source-table orders \
+  --sink-datasource lakehouse --sink-schema public --sink-table orders_di \
+  --partitioned --dynamic-partition 'dt:create_time'
 #    multi-table: one job per table (no table creation; the running task creates them)
 cz-cli task integration setup my_db_sync --sync-type multi \
   --source-datasource my_mysql --source-schema app --source-tables orders,users,items \
@@ -75,9 +86,36 @@ cz-cli task integration edit my_db_sync \
 
 Notes:
 - `setup` does NOT change field mapping/params on an existing task — use `edit`. `edit` does NOT change source/sink tables — use `setup`.
+- **Partition tables (single-table)**: the user must declare it explicitly. `setup --partitioned` auto-creates a `PARTITIONED BY (dt STRING)` sink table. Two mutually-exclusive modes: `--partitions 'dt=${bizdate}'` (static — whole batch to one partition value) or `--dynamic-partition 'dt:source_col'` (dynamic — each row routed by a source column; if the source column is missing, confirm the correct one with the user). Partition column defaults to `dt`. Without these flags the sink is a plain non-partition table (unchanged behavior).
 - Datasource types are auto-resolved from the datasource name/ID; no need to pass type codes.
 - **`--where` with date/time scheduling params** (e.g. `bizdate`, `$[yyyyMMdd]`, monthly partitions): look up the correct Studio scheduling-parameter syntax first (`cz-cli ai-guide` / docs). Do NOT invent parameter formats.
 - Integration tasks must execute on an **INTEGRATION-type vcluster** — pick one via the vcluster list, not the default/GENERAL vc.
+
+#### Realtime CDC pipeline lifecycle (`cz-cli task cdc`)
+
+For **multi-table CDC pipelines** (MULTI_REALTIME, fileType 281 — created via `cz-cli task create-realtime-sync`). These commands manage the pipeline and its per-table incremental sync. They do NOT apply to single-table Kafka streaming tasks (fileType 14) — use `task start` / `task stop` for those.
+
+```bash
+# List CDC pipeline tasks
+cz-cli task cdc list --name my_pipeline
+
+# List the tables in a pipeline — returns the per-table ids used by the *-table ops below
+cz-cli task cdc tables my_pipeline
+
+# Per-table incremental sync control (--table-ids is comma-separated ids from 'task cdc tables')
+cz-cli task cdc start-table my_pipeline --table-ids 101,102
+cz-cli task cdc stop-table my_pipeline --table-ids 101
+cz-cli task cdc resync-table my_pipeline --table-ids 101   # re-snapshot
+cz-cli task cdc pause-table my_pipeline --table-ids 101
+cz-cli task cdc recover-table my_pipeline --table-ids 101
+
+# Take the whole pipeline offline (back to draft)
+cz-cli task cdc offline my_pipeline
+```
+
+Notes:
+- All `task cdc` commands validate the task is fileType 281; running them on any other type returns a `NOT_A_CDC_PIPELINE` error with guidance.
+- Get table ids from `task cdc tables` first — the `*-table` ops require them.
 
 ### Data Ingestion Pipelines
 - Create continuous OSS/S3/COS ingest PIPE (LIST_PURGE scan mode or EVENT_NOTIFICATION mode)

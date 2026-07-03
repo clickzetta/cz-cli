@@ -29,9 +29,9 @@ cz-cli workspace current                      Show current workspace
 
 cz-cli task list                              List Studio tasks
 cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW; offline integration: INTEGRATION=single-table, MULTI_DI=multi-table/whole-db)
-cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. single also: --write-mode OVERWRITE|APPEND|UPSERT, --partitions 'dt=${bizdate}', --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates sink table + default field mapping.
+cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. single also: --write-mode OVERWRITE|APPEND|UPSERT, --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates sink table + default field mapping. PARTITION (single, opt-in): add --partitioned, then EITHER --partitions 'dt=${bizdate}' (static: whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING) sink table) OR --dynamic-partition 'dt:source_col' (dynamic: per-row routing by a source column; source_col must exist or you'll be asked to confirm). Without --partitioned/--dynamic-partition behavior is unchanged (plain non-partition table).
 cz-cli task integration show <task>           Show an existing integration task's current field/table mapping and sync params (read before edit)
-cz-cli task integration edit <task>           Edit an EXISTING integration task (applied+saved immediately). single: --column-mapping '[{"source","sink"}]' (full replace) / --split-pk / --where / --write-mode / --partitions 'dt=${bizdate}' / --param-value-list / --parallelism / --error-limit / --m-bytes. multi/whole_db: --table-mapping / --pk-write-mode / --non-pk-write-mode / --schema-rule / --table-rule / --batch-size / --connections
+cz-cli task integration edit <task>           Edit an EXISTING integration task (applied+saved immediately). single: --column-mapping '[{"source","sink"}]' (full replace) / --split-pk / --where / --write-mode / --partitions 'dt=${bizdate}' (static) / --dynamic-partition 'dt:source_col' (dynamic, mutually exclusive with --partitions; empty string clears) / --param-value-list / --parallelism / --error-limit / --m-bytes. multi/whole_db: --table-mapping / --pk-write-mode / --non-pk-write-mode / --schema-rule / --table-rule / --batch-size / --connections
 cz-cli task content <task>                    Get task script, config and params (draft)
 cz-cli task save-content <task> --file <f>    Save task script; use --params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}' to set params (system params like bizdate/sys_plan_day/sys_biz_datetime etc. auto-detected)
 cz-cli task save-config <task>                Save task non-cron config, like retry, dependency
@@ -43,6 +43,16 @@ cz-cli task undeploy <task>                   Undeploy a task, irreversible (ali
 cz-cli task execute <task>                    Execute ad-hoc; auto-uses saved manual params as defaults (--param KEY=VAL overrides); warns if unresolved ${placeholders} remain (SQL will fail, Python/Shell silently keeps literal string)
 cz-cli task delete <task>                     Delete draft/offline task
 cz-cli task flow dag <task>                   Get flow DAG
+
+# Realtime CDC pipeline lifecycle (fileType 281 = MULTI_REALTIME, multi-table CDC created via create-realtime-sync). NOT for single-table Kafka streaming (fileType 14) — those use task start/stop.
+cz-cli task cdc list                          List multi-table CDC pipeline tasks (--name/--status/--page/--page-size)
+cz-cli task cdc tables <task>                 List tables inside a CDC pipeline (returns per-table ids needed by the *-table ops; --table/--schema filters)
+cz-cli task cdc offline <task>                Take a CDC pipeline offline (back to draft, offlines table mappings)
+cz-cli task cdc start-table <task> --table-ids <id,id>    Start incremental sync for specific pipeline tables
+cz-cli task cdc stop-table <task> --table-ids <id,id>     Stop incremental sync for specific pipeline tables
+cz-cli task cdc resync-table <task> --table-ids <id,id>   Re-sync (re-snapshot) specific pipeline tables
+cz-cli task cdc pause-table <task> --table-ids <id,id>    Pause incremental sync for specific pipeline tables
+cz-cli task cdc recover-table <task> --table-ids <id,id>  Recover (resume) incremental sync for specific pipeline tables
 
 cz-cli runs list [--task <name>]              List run instances
 cz-cli runs detail <id>                       Get run detail
