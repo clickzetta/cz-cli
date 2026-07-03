@@ -36,6 +36,7 @@ Use `cz-cli` proactively for ClickZetta operational requests. Do not ask for inf
 - Confirm intent before destructive or state-changing operations: deploy, undeploy, execute, delete, refill/backfill, stop, rerun, and similar actions.
 - For historical reruns or backfills, use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`; this is under `runs`, not `task`.
 - For output table JSON flags such as `--output-tables`, pass the JSON array as one shell argument, usually with single quotes.
+- `cz-cli task cdc *` commands operate on multi-table CDC pipelines only (MULTI_REALTIME, fileType 281). Single-table Kafka streaming tasks (fileType 14) use `task start` / `task stop`, not `task cdc`.
 
 ## Output Handling
 

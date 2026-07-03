@@ -135,6 +135,13 @@ const cb = Instance.bind((err, evts) => {
 nativeAddon.subscribe(dir, cb)
 ```
 
+## cz-cli task save-config / save-cron
+
+- Integration tasks (INTEGRATION, MULTI_DI, single-table sync, multi-table sync) **MUST** use an `INTEGRATION` type VCluster.
+- When calling `task save-config` or `task save-cron` for an integration task, always pass `--vc <INTEGRATION_VC_NAME>`.
+- Use `SHOW VCLUSTERS` to find available INTEGRATION-type VCs.
+- If omitted, the system defaults to `DEFAULT` (GENERAL type) which will cause execution failure.
+
 ## git commit
 
 you github commit message should be used Chinese to write (仅在用户本次要求提交时提交，否则不要自行commit)

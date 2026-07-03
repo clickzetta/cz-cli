@@ -93,6 +93,45 @@ For manual output tables, quote JSON as one argument:
 cz-cli task save-config <task> --outputs replace --output-tables '[{"outputTableName":"ws.table","refTableName":"ws.public.table"}]'
 ```
 
+## Offline Integration Sync (`task integration`)
+
+```bash
+cz-cli task integration setup <task> --sync-type single|multi|whole_db \
+  --source-datasource <ds> --source-schema <db> --source-table <t> \
+  --sink-datasource <lh> --sink-schema <schema> --sink-table <t> \
+  --write-mode OVERWRITE|APPEND|UPSERT
+cz-cli task integration show <task>           # Current field/table mapping and sync params
+cz-cli task integration edit <task>           # Edit mapping/params (applied+saved immediately)
+```
+
+Single-table partition (opt-in via `--partitioned`; default is a plain non-partition table):
+
+```bash
+# static — whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING)
+cz-cli task integration setup <task> ... --partitioned --partitions 'dt=${bizdate}'
+# dynamic — per-row routing by a source column (must exist in the source table)
+cz-cli task integration setup <task> ... --partitioned --dynamic-partition 'dt:create_time'
+```
+
+`--partitions` and `--dynamic-partition` are mutually exclusive; partition column defaults to `dt`. Integration tasks must run on an INTEGRATION-type VC.
+
+## Realtime CDC Pipeline Lifecycle (`task cdc`)
+
+For multi-table CDC pipelines (MULTI_REALTIME, fileType 281, created via `task create-realtime-sync`). NOT for single-table Kafka streaming (fileType 14) — those use `task start` / `task stop`.
+
+```bash
+cz-cli task cdc list                          # List CDC pipeline tasks
+cz-cli task cdc tables <task>                 # List pipeline tables (returns per-table ids)
+cz-cli task cdc offline <task>                # Take pipeline offline (back to draft)
+cz-cli task cdc start-table <task> --table-ids <id,id>    # Start incremental sync for tables
+cz-cli task cdc stop-table <task> --table-ids <id,id>     # Stop incremental sync for tables
+cz-cli task cdc resync-table <task> --table-ids <id,id>   # Re-snapshot tables
+cz-cli task cdc pause-table <task> --table-ids <id,id>    # Pause incremental sync
+cz-cli task cdc recover-table <task> --table-ids <id,id>  # Resume incremental sync
+```
+
+Get table ids from `task cdc tables` first — the `*-table` ops require them. Every `task cdc` command validates fileType 281.
+
 ## Runs and Attempts
 
 ```bash
