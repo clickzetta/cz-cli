@@ -36,6 +36,7 @@ export interface ProfilesLlmResult {
   entries: LlmEntry[]
   defaultLlmEntry?: string
   defaultModel?: string
+  moa?: unknown
   warnings: string[]
 }
 
@@ -447,6 +448,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
   const defaultProfile = process.env.CZ_PROFILE ?? asString(parsed.default_profile) ?? "default"
   const defaultLlm = asString(parsed.default_llm)
   const profileSection = getProfileSection(parsed, defaultProfile)
+  const moa = isRecord(parsed.moa) ? parsed.moa : undefined
 
   if (profileSection) {
     const hasLegacy = LEGACY_FIELDS.some((f) => f in profileSection)
@@ -530,7 +532,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
   if (selectedDefault) {
     defaultModel = selectedDefault.model ? `${selectedDefault.name}/${selectedDefault.model}` : undefined
     for (const entry of parsedEntries) providers[entry.name] = providerFromEntry(entry)
-    return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
+    return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, moa, warnings }
   }
 
   if (legacyClickzettaProvider) {
@@ -540,7 +542,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
   if (parsedEntries.length === 1) {
     const selected = parsedEntries[0]
     providers[selected.name] = providerFromEntry(selected)
-    return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
+    return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, moa, warnings }
   }
 
   if (parsedEntries.length > 1) {
@@ -551,7 +553,7 @@ export function parseProfilesToml(toml: string): ProfilesLlmResult {
 
   for (const entry of parsedEntries) providers[entry.name] = providerFromEntry(entry)
 
-  return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, warnings }
+  return { providers, entries: resultEntries, defaultLlmEntry: defaultLlm, defaultModel, moa, warnings }
 }
 
 export function hasUsableLlm(toml: string): ProfilesLlmGuardResult {

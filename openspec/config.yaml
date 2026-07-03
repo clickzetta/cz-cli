@@ -16,6 +16,7 @@ context: |
     skill 分发（内置 .builtin、外部 agent 注册）→ openspec/specs/skill-install/spec.md
     CLI 顶层命令路由、agent runtime 透出 → openspec/specs/cli-command-routing/spec.md
     setup 交互式引导、账号站点 credential 流程 → openspec/specs/setup/spec.md
+    MoA(Mixture of Agents)配置来源与解析      → openspec/specs/moa-config/spec.md
 
   Areas NOT yet covered by specs (create a new spec when changing):
     GitHub Actions workflow (release-cos.yml, build targets, upload steps)
