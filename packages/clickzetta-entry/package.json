@@ -1,0 +1,25 @@
+{
+  "name": "@clickzetta/entry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./boot": "./src/boot.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.srconly.json"
+  },
+  "dependencies": {
+    "opencode": "workspace:*",
+    "@opencode-ai/core": "workspace:*",
+    "@clickzetta/cli": "workspace:*",
+    "@clickzetta/sdk": "workspace:*",
+    "smol-toml": "1.6.1",
+    "yargs": "18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/yargs": "17.0.33",
+    "typescript": "catalog:"
+  }
+}

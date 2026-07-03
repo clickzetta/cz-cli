@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "customConditions": ["browser"],
+    "paths": {
+      "@/*": ["../opencode/src/*"],
+      "@tui/*": ["../opencode/src/cli/cmd/tui/*"],
+      "@test/*": ["../opencode/test/*"]
+    }
+  },
+  "include": ["src", "../opencode/src/*.d.ts"],
+  "exclude": ["node_modules"]
+}

@@ -20,6 +20,17 @@ import { AzureAuthPlugin } from "./azure"
 import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
+// cz_change: ClickZetta inner system prompt, injected via the real
+// experimental.chat.system.transform hook (upstream system.ts stays pure).
+import { ClickzettaSystemPromptPlugin } from "@/clickzetta/plugin/system-prompt"
+// cz_change: active ClickZetta profile reminder via experimental.chat.messages.transform.
+import { ClickzettaProfileReminderPlugin } from "@/clickzetta/plugin/profile-reminder"
+// cz_change: W3C traceparent on ClickZetta-gateway LLM requests via chat.headers.
+import { ClickzettaOutboundHeadersPlugin } from "@/clickzetta/plugin/outbound-headers"
+// cz_change: exclude the cz-cli skill from loading (native skill.filter hook).
+import { ClickzettaSkillFilterPlugin } from "@/clickzetta/plugin/skill-filter"
+// cz_change: ClickZetta observability — OTEL spans exported to the cz collector.
+import { OtelPlugin } from "./otel"
 import { Effect, Layer, Context } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
@@ -78,6 +89,16 @@ function internalPlugins(flags: RuntimeFlags.Info): PluginInstance[] {
     DigitalOceanAuthPlugin,
     SnowflakeCortexAuthPlugin,
     XaiAuthPlugin,
+    // cz_change: ClickZetta inner system prompt injection.
+    ClickzettaSystemPromptPlugin,
+    // cz_change: active ClickZetta profile reminder (per-turn system-reminder).
+    ClickzettaProfileReminderPlugin,
+    // cz_change: W3C traceparent on ClickZetta-gateway LLM requests (chat.headers).
+    ClickzettaOutboundHeadersPlugin,
+    // cz_change: exclude the cz-cli skill (skill.filter).
+    ClickzettaSkillFilterPlugin,
+    // cz_change: ClickZetta OTEL observability plugin (creates + exports spans).
+    OtelPlugin,
   ]
 }
 

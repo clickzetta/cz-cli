@@ -8,6 +8,11 @@ import { Client, type ClientOptions } from "@modelcontextprotocol/sdk/client/ind
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+// cz_change: W3C traceparent for remote MCP requests. There is no plugin hook on
+// the MCP boundary (unlike chat.headers for LLM), so it is woven in here, gated
+// on the cz runtime marker.
+import { currentTraceparent } from "@/util/traceparent"
+import { isClickzettaRuntime } from "@/clickzetta/runtime"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import {
   ListRootsRequestSchema,
@@ -37,6 +42,15 @@ import { McpCatalog } from "./catalog"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
 
 const DEFAULT_TIMEOUT = 30_000
+
+// cz_change: builds a remote-MCP requestInit that adds a W3C traceparent when the
+// cz runtime is active, so MCP calls join the same distributed trace as the LLM
+// requests. Outside the cz runtime it returns only the configured headers.
+function czMcpRequestInit(headers: Record<string, string> | undefined) {
+  const traceparent = isClickzettaRuntime() ? currentTraceparent() : undefined
+  if (!headers && !traceparent) return undefined
+  return { headers: { ...headers, ...(traceparent && { traceparent }) } }
+}
 const CLIENT_OPTIONS = {
   capabilities: {
     // https://github.com/anomalyco/opencode/issues/11948
@@ -263,14 +277,14 @@ export const layer = Layer.effect(
           name: "StreamableHTTP",
           transport: new StreamableHTTPClientTransport(url, {
             authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            requestInit: czMcpRequestInit(mcp.headers),
           }),
         },
         {
           name: "SSE",
           transport: new SSEClientTransport(url, {
             authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            requestInit: czMcpRequestInit(mcp.headers),
           }),
         },
       ]

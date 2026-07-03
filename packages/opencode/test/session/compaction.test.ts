@@ -14,6 +14,7 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { Token } from "@/util/token"
 import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin"
+import { Question } from "@/question"
 import { provideTmpdirInstance, TestInstance } from "../fixture/fixture"
 import { Session as SessionNs } from "@/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -291,6 +292,8 @@ function compactionProcessLayer(options?: CompactionProcessOptions) {
     Layer.provide(options?.config ?? Config.defaultLayer),
     Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
     Layer.provide(EventV2Bridge.defaultLayer),
+    // cz_change: processor now consumes Question for the retry-recover seam.
+    Layer.provide(Question.defaultLayer),
   )
 }
 

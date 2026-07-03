@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { ModelMessage } from "ai"
 import { Effect } from "effect"
 import { ProviderTransform } from "@/provider/transform"
 import { LLMRequestPrep } from "@/session/llm/request"
@@ -4500,5 +4501,55 @@ describe("ProviderTransform.providerOptions - ai-gateway-provider", () => {
     // which @ai-sdk/openai-compatible never reads, silently dropping reasoningEffort.
     const result = ProviderTransform.providerOptions(createModel(), { reasoningEffort: "high" })
     expect(result).toEqual({ openaiCompatible: { reasoningEffort: "high" } })
+  })
+})
+
+// cz_change: ClickZetta qwen prompt caching, inlined into transform.message()
+// (formerly the provider.transform.messages seam). The system message must be
+// rewritten into a structured content block carrying an ephemeral cache_control
+// for cache-eligible ClickZetta models, and left untouched otherwise.
+describe("ProviderTransform.message - ClickZetta qwen caching", () => {
+  const czModel = (apiId: string, providerID = "clickzetta") =>
+    ({
+      id: apiId,
+      providerID,
+      api: { id: apiId, url: "https://gw.clickzetta.com/gateway/v1", npm: "@clickzetta/ai-provider" },
+      name: apiId,
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 1, output: 1, cache: { read: 0, write: 0 } },
+      limit: { context: 128_000, output: 16_384 },
+      status: "active",
+      options: {},
+      headers: {},
+    }) as any
+
+  const sys = (text: string): ModelMessage => ({ role: "system", content: text })
+  const user = (text: string): ModelMessage => ({ role: "user", content: text })
+  const systemOf = (msgs: ModelMessage[]) => msgs.find((m) => m.role === "system")!
+
+  test("adds ephemeral cache_control to system msg for cache-eligible cz model", () => {
+    const out = ProviderTransform.message([sys("BASE PROMPT"), user("hi")], czModel("qwen/qwen3.6-plus"), {})
+    const block = (systemOf(out).content as any)[0]
+    expect(block.type).toBe("text")
+    expect(block.text).toBe("BASE PROMPT")
+    expect(block.cache_control).toEqual({ type: "ephemeral" })
+  })
+
+  test("no-op for non-cache-eligible cz model (system stays a string)", () => {
+    const out = ProviderTransform.message([sys("BASE"), user("hi")], czModel("qwen/other"), {})
+    expect(typeof systemOf(out).content).toBe("string")
+  })
+
+  test("no-op for non-ClickZetta provider", () => {
+    const out = ProviderTransform.message([sys("BASE"), user("hi")], czModel("qwen/qwen3.6-plus", "anthropic"), {})
+    expect(typeof systemOf(out).content).toBe("string")
   })
 })

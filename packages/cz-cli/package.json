@@ -1,0 +1,39 @@
+{
+  "name": "@clickzetta/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./llm/clickzetta-rotation": "./src/llm/clickzetta-rotation.ts",
+    "./llm/gateway-error": "./src/llm/gateway-error.ts",
+    "./otel-defaults": "./src/otel-defaults.ts",
+    "./command-group": "./src/command-group.ts"
+  },
+  "bin": {
+    "cz-cli": "./src/main.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test:e2e": "bun test/e2e.ts",
+    "test:e2e:full": "bun test/e2e-full.ts",
+    "test:e2e:routing": "bun test/e2e-routing.ts",
+    "test:e2e:help": "bun test/e2e-help.ts",
+    "test:unit": "bun test test/classify-error.test.ts",
+    "test:all": "bun test test/classify-error.test.ts && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
+    "build:local": "cd ../opencode && OPENCODE_BUILD_ENTRYPOINT=../clickzetta-entry/src/boot.ts bun run build --single && mkdir -p ../cz-cli/dist && cp dist/opencode-darwin-arm64/bin/opencode ../cz-cli/dist/cz-cli && codesign --sign - ../cz-cli/dist/cz-cli",
+    "test:ci": "bun run build:local && CZ_CLI_BIN=./dist/cz-cli bun run test:all"
+  },
+  "dependencies": {
+    "@clickzetta/sdk": "workspace:*",
+    "@clack/prompts": "1.0.0-alpha.1",
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "smol-toml": "1.6.1",
+    "yargs": "18.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "@types/yargs": "17.0.33",
+    "typescript": "catalog:"
+  }
+}

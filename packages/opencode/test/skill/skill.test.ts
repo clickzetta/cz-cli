@@ -5,6 +5,7 @@ import { Discovery } from "../../src/skill/discovery"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Config } from "../../src/config/config"
+import { Plugin } from "../../src/plugin"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
@@ -25,6 +26,7 @@ const itWithoutClaudeCodeSkills = testEffect(
       Layer.provide(FSUtil.defaultLayer),
       Layer.provide(Global.layer),
       Layer.provide(RuntimeFlags.layer({ disableClaudeCodeSkills: true })),
+      Layer.provide(Plugin.defaultLayer),
     ),
     node,
     testInstanceStoreLayer,
@@ -39,6 +41,7 @@ const itWithoutExternalSkills = testEffect(
       Layer.provide(FSUtil.defaultLayer),
       Layer.provide(Global.layer),
       Layer.provide(RuntimeFlags.layer({ disableExternalSkills: true })),
+      Layer.provide(Plugin.defaultLayer),
     ),
     node,
     testInstanceStoreLayer,
