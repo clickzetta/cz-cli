@@ -58,6 +58,12 @@
 - **THEN** 系统拒绝执行
 - **AND** 返回 write-protection 错误
 
+#### Scenario: MERGE SQL 未授权
+
+- **WHEN** 用户执行 `cz-cli sql "MERGE INTO t USING s ON t.id=s.id WHEN MATCHED THEN UPDATE SET v=s.v"` 且没有 `--write`
+- **THEN** 系统拒绝执行
+- **AND** 不提交 SQL job
+
 #### Scenario: 危险 DELETE/UPDATE
 
 - **WHEN** 用户执行没有 WHERE 或被 guardrail 判定危险的 DELETE/UPDATE

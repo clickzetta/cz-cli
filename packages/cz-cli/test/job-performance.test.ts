@@ -4,6 +4,9 @@ import { buildAuthHeaders, pruneUndefined, serviceUrlToMcpUrl } from "../src/com
 describe("job performance MCP parity helpers", () => {
   test("maps service URLs to the same central MCP endpoint as the built-in tool", () => {
     expect(serviceUrlToMcpUrl("uat-api.clickzetta.com")).toBe("https://uat-mcp-api.clickzetta.com/mcp")
+    expect(serviceUrlToMcpUrl("http://lakehouse-studio.uat.cn-vw.volkswagen-cea.com/api")).toBe(
+      "http://lakehouse-studio.uat.cn-vw.volkswagen-cea.com/mcp",
+    )
     expect(serviceUrlToMcpUrl("dev-api.clickzetta.com")).toBe("https://dev-mcp-api.clickzetta.com/mcp")
     expect(serviceUrlToMcpUrl("cn-beijing-alicloud.api.clickzetta.com")).toBe(
       "https://cn-shanghai-alicloud-mcp.api.clickzetta.com/mcp",

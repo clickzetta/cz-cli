@@ -294,7 +294,6 @@ export function registerStaticCommands(): void {
       arguments: [{ name: "name", required: true }] },
     { name: "workspace", kind: "group", description: "Manage workspaces" },
     { name: "workspace list", kind: "command", description: "List workspaces" },
-    { name: "workspace current", kind: "command", description: "Show current workspace" },
     { name: "profile", kind: "group", description: "Manage connection profiles" },
     { name: "profile list", kind: "command", description: "List profiles" },
     { name: "profile detail", kind: "command", description: "Show profile details",

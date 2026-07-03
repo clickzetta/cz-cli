@@ -30,11 +30,16 @@ export function stripProtocol(value: string): string {
 }
 
 function extractRootDomain(host: string): string {
+  const portIndex = host.lastIndexOf(":")
+  const hasPort = portIndex > 0 && /^\d+$/.test(host.slice(portIndex + 1))
+  const hostOnly = hasPort ? host.slice(0, portIndex) : host
+  const port = hasPort ? host.slice(portIndex) : ""
+  if (hostOnly === "localhost" || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostOnly)) return hostOnly + port
   for (const suffix of [".clickzetta.com", ".singdata.com", ".clickzetta-inc.com"]) {
-    if (host.endsWith(suffix)) return suffix.slice(1)
+    if (hostOnly.endsWith(suffix)) return suffix.slice(1) + port
   }
-  const parts = host.split(".")
-  return parts.length >= 2 ? parts.slice(-2).join(".") : host
+  const parts = hostOnly.split(".")
+  return parts.length >= 2 ? parts.slice(-2).join(".") + port : host
 }
 
 function serviceHostFromEnv(env: string, rootDomain: string): string {
@@ -76,9 +81,10 @@ function serviceHostFromInput(host: string): string {
 }
 
 function serviceEnvFromApiHost(host: string): string {
-  const hyphenEnv = host.match(/^([^.]+)-api\./)
+  const hostOnly = host.replace(/:\d+$/, "")
+  const hyphenEnv = hostOnly.match(/^([^.]+)-api\./)
   if (hyphenEnv?.[1]) return hyphenEnv[1]
-  const dottedEnv = host.match(/^([^.]+)\.api\./)
+  const dottedEnv = hostOnly.match(/^([^.]+)\.api\./)
   if (dottedEnv?.[1]) return dottedEnv[1]
   return ""
 }

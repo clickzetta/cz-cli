@@ -1,5 +1,6 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
+import { spawnSync } from "node:child_process"
 import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -12,10 +13,17 @@ import { loadProfiles, saveProfiles, getDefaultProfileName, type ProfileEntry } 
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { registerBootstrapCommands } from "./profile-bootstrap.js"
 import { getExecContext, execSql, isQueryResult } from "./exec.js"
+import { accountLoginUrlForService } from "./account-login.js"
+import { browserOpenCommandForPlatform } from "./setup.js"
 import { VERSION } from "../version.js"
 
-const PROFILES_DIR = join(homedir(), ".clickzetta")
-const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
+function profilesDir() {
+  return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta")
+}
+
+function profilesFile() {
+  return join(profilesDir(), "profiles.toml")
+}
 
 const VALID_UPDATE_KEYS = [
   "pat", "username", "password", "service", "protocol",
@@ -25,7 +33,7 @@ const VALID_UPDATE_KEYS = [
 
 function loadFullFile(): Record<string, unknown> {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFile(), "utf-8")
     return parseTOML(text) as Record<string, unknown>
   } catch {
     return {}
@@ -33,11 +41,12 @@ function loadFullFile(): Record<string, unknown> {
 }
 
 function saveFullFile(data: Record<string, unknown>): void {
-  mkdirSync(PROFILES_DIR, { recursive: true })
+  const file = profilesFile()
+  mkdirSync(profilesDir(), { recursive: true })
   const content = stringifyTOML(data)
-  const tmp = PROFILES_FILE + ".tmp." + Date.now()
+  const tmp = file + ".tmp." + Date.now()
   writeFileSync(tmp, content, "utf-8")
-  renameSync(tmp, PROFILES_FILE)
+  renameSync(tmp, file)
 }
 
 function maskSecret(val: string, prefixLen = 8): string {
@@ -74,6 +83,66 @@ function hasCookieTokenHeader(headers: string[] | undefined): boolean {
           && cookie.slice(cookieSeparator + 1).trim().length > 0
       })
   }) ?? false
+}
+
+function selectedProfile(data: Record<string, unknown>, explicitName?: string): { name: string; profile: ProfileEntry } | undefined {
+  const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+  if (explicitName) {
+    const profile = profiles[explicitName]
+    if (!profile) return
+    return { name: explicitName, profile }
+  }
+  const defaultName = typeof data.default_profile === "string" ? data.default_profile : getDefaultProfileName()
+  if (defaultName && profiles[defaultName]) {
+    return { name: defaultName, profile: profiles[defaultName] }
+  }
+  const first = Object.entries(profiles)[0]
+  if (!first) return
+  return { name: first[0], profile: first[1] }
+}
+
+function cachedTenantName(profile: ProfileEntry): string {
+  return String(profile.tenant_name ?? profile.account_display_name ?? "").trim()
+}
+
+async function resolveTenantNameRemotely(profile: ProfileEntry): Promise<{ tenantName: string; source: string }> {
+  const service = String(profile.service ?? "").trim()
+  const protocol = String(profile.protocol ?? "https").trim() || "https"
+  const instance = String(profile.instance ?? "").trim()
+  const pat = String(profile.pat ?? "").trim()
+  const username = String(profile.username ?? "").trim()
+  const password = String(profile.password ?? "").trim()
+  if (!service || !instance) throw new Error("profile service and instance are required to resolve tenant name")
+  if (!pat && !(username && password)) {
+    throw new Error("profile must contain PAT or username/password to resolve tenant name")
+  }
+  const { getCurrentUser, getToken, toServiceUrl } = await import("@clickzetta/sdk")
+  const baseUrl = toServiceUrl(service, protocol)
+  const token = await getToken({
+    pat,
+    username,
+    password,
+    service,
+    protocol,
+    instance,
+    workspace: String(profile.workspace ?? ""),
+    schema: String(profile.schema ?? "public"),
+    vcluster: String(profile.vcluster ?? "default"),
+  })
+  const user = await getCurrentUser(baseUrl, token.token)
+  const tenantName = String(user.accountDisplayName ?? "").trim()
+  if (!tenantName) throw new Error("accountDisplayName not found from current user")
+  return { tenantName, source: pat ? "resolved_pat" : "resolved_password" }
+}
+
+function openBrowserBestEffort(url: string): boolean {
+  const opener = browserOpenCommandForPlatform(process.platform, url)
+  try {
+    const result = spawnSync(opener.command, opener.args, { stdio: "ignore" })
+    return !result.error && (result.status ?? 0) === 0
+  } catch {
+    return false
+  }
 }
 
 export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
@@ -274,6 +343,57 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             success({ message: `Profile '${name}' created successfully` }, { format })
           } catch (err) {
             if ((err as { code?: string }).code === "EXIT") throw err
+            error("INTERNAL_ERROR", err instanceof Error ? err.message : String(err), { format })
+          }
+        },
+      )
+      .command(
+        "login-url [name]",
+        "Show the web login URL for a profile",
+        (y) =>
+          y
+            .positional("name", { type: "string", describe: "Profile name (defaults to default_profile)" })
+            .option("tenant-name", { type: "string", describe: "Explicit tenant/account display name" })
+            .option("resolve", { type: "boolean", default: false, describe: "Resolve tenant name remotely; use --no-resolve to disable" })
+            .option("open", { type: "boolean", default: false, describe: "Open the login URL in the system browser" }),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const data = loadFullFile()
+            const selected = selectedProfile(data, argv.name as string | undefined)
+            if (!selected) {
+              return error("PROFILE_NOT_FOUND", argv.name ? `Profile '${argv.name}' not found` : "No profile found", { format })
+            }
+            const service = String(selected.profile.service ?? "").trim()
+            const protocol = String(selected.profile.protocol ?? "https").trim() || "https"
+            const normalizedService = service ? (await import("@clickzetta/sdk")).toServiceUrl(service, protocol) : ""
+            let tenantName = String(argv["tenant-name"] ?? "").trim()
+            let tenantNameSource = tenantName ? "arg" : ""
+            if (!tenantName) {
+              tenantName = cachedTenantName(selected.profile)
+              tenantNameSource = tenantName ? "profile" : ""
+            }
+            if (!tenantName && argv.resolve) {
+              const resolved = await resolveTenantNameRemotely(selected.profile)
+              tenantName = resolved.tenantName
+              tenantNameSource = resolved.source
+            }
+            if (!tenantName) {
+              return error("TENANT_NAME_REQUIRED", "Tenant name is unavailable. Pass --tenant-name or enable --resolve.", { format })
+            }
+            const webLoginUrl = accountLoginUrlForService(normalizedService || service, tenantName)
+            const opened = argv.open ? openBrowserBestEffort(webLoginUrl) : false
+            logOperation("profile login-url", { ok: true })
+            success({
+              profile: selected.name,
+              service: normalizedService || service,
+              instance: String(selected.profile.instance ?? ""),
+              tenant_name: tenantName,
+              tenant_name_source: tenantNameSource,
+              web_login_url: webLoginUrl,
+              opened,
+            }, { format })
+          } catch (err) {
             error("INTERNAL_ERROR", err instanceof Error ? err.message : String(err), { format })
           }
         },

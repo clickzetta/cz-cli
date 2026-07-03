@@ -77,7 +77,8 @@ const LOGIN_METHOD_URLS = {
   singdata: "https://accounts.singdata.com/login",
 } as const
 
-const SERVICE_ENDPOINTS = [
+export const SERVICE_ENDPOINTS = [
+  "lakehouse-studio.uat.cn-vw.volkswagen-cea.com/api",
   "cn-shanghai-alicloud.api.clickzetta.com",
   "cn-beijing-alicloud.api.clickzetta.com",
   "cn-hangzhou-alicloud.api.clickzetta.com",

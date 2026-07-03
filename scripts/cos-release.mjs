@@ -25,7 +25,6 @@ import {
   formatBytes,
   deleteObjects,
   getJson,
-  getText,
   listPrefix,
   putJson,
   putText,
@@ -195,12 +194,24 @@ function metaRootKey(...parts) {
 }
 
 function metaKey(channel, ...parts) {
-  return metaRootKey(channel, ...parts)
+  return metaRootKey("channels", channel, ...parts)
 }
 
-function releaseChannel(ctx) {
-  if (ctx.promoteStable) return "stable"
-  return "nightly"
+function releaseMetaKey(version, ...parts) {
+  return metaRootKey("releases", version, ...parts)
+}
+
+function requestedChannels(ctx) {
+  const channels = []
+  if (ctx.promoteNightly) channels.push("nightly")
+  if (ctx.promoteStable) channels.push("stable")
+  return channels
+}
+
+function defaultManifestChannel(version, channels) {
+  if (channels.includes("stable")) return "stable"
+  if (channels.includes("nightly")) return "nightly"
+  return version.startsWith("dev-v") ? "nightly" : "stable"
 }
 
 function shellQuote(value) {
@@ -276,26 +287,37 @@ function logPreparedArchives(builds) {
   }
 }
 
+function signReleaseObjectUrl(ctx, targetKey) {
+  if (ctx.dryRun) {
+    return {
+      objectKey: targetKey,
+      url: `https://example.invalid/${targetKey}?sign=dry-run`,
+      expiresAt: new Date(Date.parse(ctx.buildDate) + PRESIGN_EXPIRES_SECONDS * 1000).toISOString(),
+    }
+  }
+  const presigned = presignGetObjectUrl({
+    client: ctx.client,
+    Bucket: ctx.Bucket,
+    Region: ctx.Region,
+    key: targetKey,
+    expiresIn: PRESIGN_EXPIRES_SECONDS,
+  })
+  return {
+    objectKey: targetKey,
+    url: presigned.url,
+    expiresAt: presigned.expiresAt,
+  }
+}
+
 function signArchiveUrls(ctx, builds, platforms) {
   return Object.fromEntries(
     builds.map((build) => {
-      const presigned = ctx.dryRun
-        ? {
-            url: `https://example.invalid/${build.targetKey}?sign=dry-run`,
-            expiresAt: new Date(Date.parse(ctx.buildDate) + PRESIGN_EXPIRES_SECONDS * 1000).toISOString(),
-          }
-        : presignGetObjectUrl({
-            client: ctx.client,
-            Bucket: ctx.Bucket,
-            Region: ctx.Region,
-            key: build.targetKey,
-            expiresIn: PRESIGN_EXPIRES_SECONDS,
-          })
+      const presigned = signReleaseObjectUrl(ctx, build.targetKey)
       return [
         build.platform,
         {
           ...platforms[build.platform],
-          objectKey: build.targetKey,
+          objectKey: presigned.objectKey,
           url: presigned.url,
           expiresAt: presigned.expiresAt,
         },
@@ -304,17 +326,17 @@ function signArchiveUrls(ctx, builds, platforms) {
   )
 }
 
-function buildManifest(ctx, platforms) {
+function buildManifest(ctx, platforms, channel) {
   return {
     version: ctx.version,
-    channel: releaseChannel(ctx),
+    channel,
     commit: ctx.gitSha,
     buildDate: ctx.buildDate,
     generatedAt: new Date().toISOString(),
     bootstrap: {
-      sh: metaKey(releaseChannel(ctx), "bootstrap.sh"),
-      ps1: metaKey(releaseChannel(ctx), "bootstrap.ps1"),
-      manifest: metaKey(releaseChannel(ctx), "manifest.json"),
+      sh: releaseMetaKey(ctx.version, "bootstrap.sh"),
+      ps1: releaseMetaKey(ctx.version, "bootstrap.ps1"),
+      manifest: releaseMetaKey(ctx.version, "manifest.json"),
     },
     platforms,
   }
@@ -380,50 +402,6 @@ verify_checksum() {
   fi
 }
 
-version_weight() {
-  case "$1" in
-    "") echo 2 ;;
-    dev*) echo 0 ;;
-    *) echo 1 ;;
-  esac
-}
-
-version_gt() {
-  awk -v left="$1" -v right="$2" '
-    function split_version(version, core, suffix, nums, raw) {
-      gsub(/^v/, "", version)
-      gsub(/^dev-v/, "", version)
-      raw = version
-      suffix = ""
-      if (index(version, "-")) {
-        core = substr(version, 1, index(version, "-") - 1)
-        suffix = substr(version, index(version, "-") + 1)
-      } else {
-        core = version
-      }
-      split(core, nums, ".")
-      data["major"] = nums[1] + 0
-      data["minor"] = nums[2] + 0
-      data["patch"] = nums[3] + 0
-      data["suffix"] = suffix
-    }
-    BEGIN {
-      split_version(left, left_core, left_suffix, left_nums, left_raw)
-      l_major = data["major"]; l_minor = data["minor"]; l_patch = data["patch"]; l_suffix = data["suffix"]
-      split_version(right, right_core, right_suffix, right_nums, right_raw)
-      r_major = data["major"]; r_minor = data["minor"]; r_patch = data["patch"]; r_suffix = data["suffix"]
-
-      if (l_major != r_major) exit !(l_major > r_major)
-      if (l_minor != r_minor) exit !(l_minor > r_minor)
-      if (l_patch != r_patch) exit !(l_patch > r_patch)
-
-      l_weight = l_suffix == "" ? 2 : (index(l_suffix, "dev") == 1 ? 0 : 1)
-      r_weight = r_suffix == "" ? 2 : (index(r_suffix, "dev") == 1 ? 0 : 1)
-      exit !(l_weight > r_weight)
-    }
-  '
-}
-
 check_version() {
   EXISTING_PATH=$(command -v cz-cli 2>/dev/null || true)
   if [ -z "$EXISTING_PATH" ]; then
@@ -438,10 +416,6 @@ check_version() {
   fi
   if [ "$INSTALLED_VERSION" = "$VERSION" ]; then
     echo "Version $VERSION already installed"
-    exit 0
-  fi
-  if [ -n "$INSTALLED_VERSION" ] && version_gt "$INSTALLED_VERSION" "$VERSION"; then
-    echo "A newer version is already installed: $INSTALLED_VERSION" >&2
     exit 0
   fi
 }
@@ -539,42 +513,6 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path (Join-
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cz-cli-" + [System.Guid]::NewGuid().ToString("n"))
 
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
-
-function Get-VersionNumber($Numbers, $Index) {
-  if ($Numbers.Length -gt $Index -and -not [string]::IsNullOrEmpty($Numbers[$Index])) {
-    return [int]$Numbers[$Index]
-  }
-  return 0
-}
-
-function Get-VersionParts($RawVersion) {
-  $VersionText = $RawVersion -replace '^v', ''
-  $VersionText = $VersionText -replace '^dev-v', ''
-  $Core = $VersionText
-  $Suffix = ""
-  if ($VersionText.Contains("-")) {
-    $Segments = $VersionText.Split("-", 2)
-    $Core = $Segments[0]
-    $Suffix = $Segments[1]
-  }
-  $Numbers = $Core.Split(".")
-  [pscustomobject]@{
-    Major = Get-VersionNumber $Numbers 0
-    Minor = Get-VersionNumber $Numbers 1
-    Patch = Get-VersionNumber $Numbers 2
-    Suffix = $Suffix
-    Weight = if ([string]::IsNullOrEmpty($Suffix)) { 2 } elseif ($Suffix.StartsWith("dev")) { 0 } else { 1 }
-  }
-}
-
-function Test-VersionGreater($LeftVersion, $RightVersion) {
-  $Left = Get-VersionParts $LeftVersion
-  $Right = Get-VersionParts $RightVersion
-  if ($Left.Major -ne $Right.Major) { return $Left.Major -gt $Right.Major }
-  if ($Left.Minor -ne $Right.Minor) { return $Left.Minor -gt $Right.Minor }
-  if ($Left.Patch -ne $Right.Patch) { return $Left.Patch -gt $Right.Patch }
-  return $Left.Weight -gt $Right.Weight
-}
 
 function Normalize-PathEntry($PathEntry) {
   if ([string]::IsNullOrWhiteSpace($PathEntry)) { return "" }
@@ -680,9 +618,6 @@ try {
     if ($InstalledVersion -eq $Version) {
       Repair-InstallDirPath $InstallDir
       Write-Host "Version $Version is present; refreshing installation files"
-    } elseif ($InstalledVersion -and (Test-VersionGreater $InstalledVersion $Version)) {
-      Write-Host "A newer version is already installed: $InstalledVersion" -ForegroundColor Yellow
-      exit 0
     }
   }
 
@@ -752,9 +687,8 @@ ${renderPowerShellPlatformCase(platforms)}
 }
 
 async function writeManifest(ctx, manifest) {
-  const target = metaKey(manifest.channel, "manifest.json")
   if (ctx.dryRun) {
-    console.log(`[dry-run] write manifest -> ${target}`)
+    console.log(`[dry-run] write manifest -> ${releaseMetaKey(manifest.version, "manifest.json")}`)
     console.log(JSON.stringify(manifest, null, 2))
     return
   }
@@ -763,15 +697,50 @@ async function writeManifest(ctx, manifest) {
     Bucket: ctx.Bucket,
     Region: ctx.Region,
     body: manifest,
-    key: target,
+    key: releaseMetaKey(manifest.version, "manifest.json"),
     cacheControl: Cache.bootstrap,
     acl: "public-read",
   })
-  console.log(`  ✓ manifest -> ${target}`)
+  console.log(`  ✓ manifest -> ${releaseMetaKey(manifest.version, "manifest.json")}`)
 }
 
 async function writeBootstrap(ctx, name, body, contentType) {
-  const target = metaKey(releaseChannel(ctx), name)
+  if (ctx.dryRun) {
+    console.log(`[dry-run] write ${name} -> ${releaseMetaKey(ctx.version, name)}`)
+    return
+  }
+  await putText({
+    client: ctx.client,
+    Bucket: ctx.Bucket,
+    Region: ctx.Region,
+    body,
+    key: releaseMetaKey(ctx.version, name),
+    contentType,
+    cacheControl: Cache.bootstrap,
+    acl: "public-read",
+  })
+  console.log(`  ✓ ${name} -> ${releaseMetaKey(ctx.version, name)}`)
+}
+
+async function writeChannelManifest(ctx, channel, manifest) {
+  if (ctx.dryRun) {
+    console.log(`[dry-run] write manifest -> ${metaKey(channel, "manifest.json")}`)
+    return
+  }
+  await putJson({
+    client: ctx.client,
+    Bucket: ctx.Bucket,
+    Region: ctx.Region,
+    body: { ...manifest, channel },
+    key: metaKey(channel, "manifest.json"),
+    cacheControl: Cache.bootstrap,
+    acl: "public-read",
+  })
+  console.log(`  ✓ manifest -> ${metaKey(channel, "manifest.json")}`)
+}
+
+async function writeChannelBootstrap(ctx, channel, name, body, contentType) {
+  const target = metaKey(channel, name)
   if (ctx.dryRun) {
     console.log(`[dry-run] write ${name} -> ${target}`)
     return
@@ -789,48 +758,36 @@ async function writeBootstrap(ctx, name, body, contentType) {
   console.log(`  ✓ ${name} -> ${target}`)
 }
 
-async function writeChannel(ctx, channel) {
-  const target = metaRootKey(channel)
+async function resolveChannelPromotions(ctx) {
+  const channels = requestedChannels(ctx)
   if (ctx.dryRun) {
-    console.log(`[dry-run] write channel ${target} -> ${ctx.version}`)
-    return
+    return { existing: undefined, channels }
   }
-  // Guard: never downgrade a channel pointer
-  const current = await getText({
+
+  const existing = await getJson({
     client: ctx.client,
     Bucket: ctx.Bucket,
     Region: ctx.Region,
-    key: target,
+    key: metaRootKey("versions.json"),
   })
-  if (current && compareReleaseVersions(ctx.version, current.trim()) < 0) {
-    console.log(`  ⚠ skipping ${channel}: current ${current.trim()} > ${ctx.version}`)
-    return
+  return {
+    existing,
+    channels: channels.filter((channel) => {
+      const current = typeof existing?.[channel] === "string" ? existing[channel].trim() : undefined
+      if (current && compareReleaseVersions(ctx.version, current) < 0) {
+        console.log(`  ⚠ skipping ${channel}: current ${current} > ${ctx.version}`)
+        return false
+      }
+      return true
+    }),
   }
-  await putText({
-    client: ctx.client,
-    Bucket: ctx.Bucket,
-    Region: ctx.Region,
-    body: ctx.version,
-    key: target,
-    cacheControl: Cache.short,
-  })
-  console.log(`  ✓ ${channel} -> ${ctx.version}`)
 }
 
-async function updateVersions(ctx) {
+async function updateVersions(ctx, channels, existingDoc) {
   const target = metaRootKey("versions.json")
-  const existing = ctx.dryRun
-    ? null
-    : await getJson({
-        client: ctx.client,
-        Bucket: ctx.Bucket,
-        Region: ctx.Region,
-        key: target,
-      })
+  const existing = existingDoc ?? null
   const prior = (existing?.versions ?? []).filter((v) => v.version !== ctx.version)
-  const channelTags = []
-  if (ctx.promoteNightly) channelTags.push("nightly")
-  if (ctx.promoteStable) channelTags.push("stable")
+  const channelTags = [...channels]
   const next = [
     {
       version: ctx.version,
@@ -844,9 +801,7 @@ async function updateVersions(ctx) {
   for (const entry of next) {
     if (entry.version === ctx.version) continue
     entry.channel_tags = entry.channel_tags?.filter((t) => {
-      if (t === "nightly" && ctx.promoteNightly) return false
-      if (t === "stable" && ctx.promoteStable) return false
-      return true
+      return !channels.includes(t)
     }) ?? []
   }
 
@@ -856,8 +811,8 @@ async function updateVersions(ctx) {
     nightly: existing?.nightly,
     versions: next,
   }
-  if (ctx.promoteNightly) doc.nightly = ctx.version
-  if (ctx.promoteStable) doc.stable = ctx.version
+  if (channels.includes("nightly")) doc.nightly = ctx.version
+  if (channels.includes("stable")) doc.stable = ctx.version
 
   if (ctx.dryRun) {
     console.log(`[dry-run] write ${target}`)
@@ -983,7 +938,8 @@ async function main() {
   console.log(`Uploading archives... (accelerate=${cos.accelerate ?? false})`)
   const uploadedPlatforms = await uploadAllArchives(ctx, builds)
   const manifestPlatforms = signArchiveUrls(ctx, builds, uploadedPlatforms)
-  const manifest = buildManifest(ctx, manifestPlatforms)
+  const promotionPlan = await resolveChannelPromotions(ctx)
+  const manifest = buildManifest(ctx, manifestPlatforms, defaultManifestChannel(ctx.version, promotionPlan.channels))
 
   console.log("Writing META-INF assets...")
   await writeManifest(ctx, manifest)
@@ -1008,17 +964,35 @@ async function main() {
     "text/plain; charset=utf-8",
   )
 
-  if (args.promoteNightly) {
-    console.log("Updating /nightly...")
-    await writeChannel(ctx, "nightly")
-  }
-  if (args.promoteStable) {
-    console.log("Updating /stable...")
-    await writeChannel(ctx, "stable")
+  for (const channel of promotionPlan.channels) {
+    console.log(`Updating /${channel} assets...`)
+    await writeChannelManifest(ctx, channel, manifest)
+    await writeChannelBootstrap(
+      ctx,
+      channel,
+      "bootstrap.sh",
+      renderBootstrapSh({
+        version: manifest.version,
+        channel,
+        platforms: manifest.platforms,
+      }),
+      "text/x-shellscript; charset=utf-8",
+    )
+    await writeChannelBootstrap(
+      ctx,
+      channel,
+      "bootstrap.ps1",
+      renderBootstrapPs1({
+        version: manifest.version,
+        channel,
+        platforms: manifest.platforms,
+      }),
+      "text/plain; charset=utf-8",
+    )
   }
 
   console.log("Updating versions.json...")
-  const versionsDoc = await updateVersions(ctx)
+  const versionsDoc = await updateVersions(ctx, promotionPlan.channels, promotionPlan.existing)
 
   console.log("Retention cleanup...")
   await retentionCleanup(ctx, versionsDoc)

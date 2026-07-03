@@ -34,39 +34,6 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
-        "current",
-        "Show current workspace",
-        () => {},
-        async (argv) => {
-          const format = argv.format
-          try {
-            const ctx = await getExecContext(argv)
-            const sql = "SELECT current_workspace()"
-            const t0 = Date.now()
-            const r = await execSql(ctx, sql)
-            if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
-              const msg = isQueryResult(r) ? (r.errorMessage ?? "Query failed") : "Unexpected result"
-              logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
-              error(isQueryResult(r) ? (r.errorCode ?? "SQL_ERROR") : "SQL_ERROR", msg, { format }); return
-            }
-            const ws = r.rows[0] ? r.rows[0][0] : null
-            if (!ws) {
-              logOperation("workspace current", { sql, ok: false, timeMs: Date.now() - t0 })
-              error("NO_RESULT", "No current workspace set. Use `cz-cli workspace use <name>` to set one.", {
-                format,
-                aiMessage: "No workspace is active. List available workspaces with: cz-cli workspace list, then set one with: cz-cli workspace use <name>",
-              })
-              return
-            }
-            logOperation("workspace current", { sql, ok: true, timeMs: Date.now() - t0 })
-            success({ workspace: ws }, { format, timeMs: Date.now() - t0 })
-          } catch (err) {
-            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
-            error(_ec, _em, { format, ...(_ea && { aiMessage: _ea }) })
-          }
-        },
-      )
-      .command(
         "use <name>",
         "Switch workspace (use --persist to save to profile)",
         (y) =>

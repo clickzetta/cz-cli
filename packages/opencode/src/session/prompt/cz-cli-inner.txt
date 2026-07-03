@@ -25,8 +25,6 @@ cz-cli table history [name]                   Show table history
 cz-cli table create "<ddl>"                   Create table from DDL
 cz-cli table drop <name>                      Drop a table
 
-cz-cli workspace current                      Show current workspace
-
 cz-cli task list                              List Studio tasks
 cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE; offline integration: INTEGRATION=single-table, MULTI_DI=multi-table/whole-db)
 cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. single also: --write-mode OVERWRITE|APPEND|UPSERT, --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates sink table + default field mapping. PARTITION (single, opt-in): add --partitioned, then EITHER --partitions 'dt=${bizdate}' (static: whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING) sink table) OR --dynamic-partition 'dt:source_col' (dynamic: per-row routing by a source column; source_col must exist or you'll be asked to confirm). Without --partitioned/--dynamic-partition behavior is unchanged (plain non-partition table).

@@ -105,6 +105,7 @@ function getRegionByAlias(alias: string): string {
     sit: "sit",
     uat: "uat",
     prod: "cn-shanghai-alicloud",
+    "uat-cn-shanghai-alicloud": "uat-cn-shanghai-alicloud",
   }
   return map[alias.toLowerCase()] || ""
 }
@@ -525,13 +526,14 @@ async function listWorkspacesForInstance(
     .sort((a, b) => a.workspace_name.localeCompare(b.workspace_name))
 }
 
-function resolveServiceHost(serviceHost: string, regionKey: string): string {
+export function resolveServiceHost(serviceHost: string, regionKey: string): string {
   if (serviceHost) return serviceHost.replace(/^https?:\/\//, "")
   // Fallback: derive service URL from region key (matching Python's read_url from config.ini)
   const REGION_URL_MAP: Record<string, string> = {
     dev: "dev-api.clickzetta.com",
     sit: "sit-api.clickzetta.com",
     uat: "uat-api.clickzetta.com",
+    "uat-cn-shanghai-alicloud": "lakehouse-studio.uat.cn-vw.volkswagen-cea.com/api",
     "cn-shanghai-alicloud": "cn-shanghai-alicloud.api.clickzetta.com",
     "ap-southeast-1-alicloud": "ap-southeast-1-alicloud.api.singdata.com",
     "ap-shanghai-tencentcloud": "ap-shanghai-tencentcloud.api.clickzetta.com",

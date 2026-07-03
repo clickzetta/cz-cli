@@ -5,7 +5,12 @@ export const profileJobHelpCases: HelpCase[] = [
   {
     args: ["profile", "--help"],
     expectHeader: "cz-cli profile",
-    expectCommands: ["list", "detail", "create", "update", "delete", "use"],
+    expectCommands: ["list", "detail", "create", "update", "delete", "use", "login-url"],
+  },
+  {
+    args: ["profile", "login-url", "--help"],
+    expectHeader: "cz-cli profile login-url",
+    expectOptions: ["name", "--tenant-name", "--resolve", "--no-resolve", "--open"],
   },
   {
     args: ["profile", "list", "--help"],

@@ -24,6 +24,23 @@
 - **THEN** 返回 `UNSUPPORTED_PROGRAMMATIC_AGENT_RUNTIME`
 - **且** 提示调用方使用真实 cz-cli 二进制
 
+### Requirement: 顶层 autoupdate 命令归属本地管理
+
+本需求 MUST 按以下场景执行。
+
+`cz-cli autoupdate` MUST 作为顶层本地管理命令注册，用于查看或设置自动更新开关。该命令不属于 ClickZetta profile/连接配置命令，也不属于 agent runtime 命令。CLI MUST NOT 注册 `auto-update` 作为别名，避免命令面和自动更新内部术语混淆。
+
+#### Scenario: autoupdate 顶层可发现
+
+- **WHEN** 用户执行 `cz-cli autoupdate --help`
+- **THEN** 帮助信息展示自动更新开关命令
+- **AND** 帮助信息包含 `true`、`false`、`notify`
+
+#### Scenario: auto-update 不作为别名
+
+- **WHEN** 用户执行 `cz-cli auto-update --help`
+- **THEN** CLI 不将其路由到 `autoupdate`
+
 ### Requirement: AIGW model list 默认限制并提示 AI agent
 
 本需求 MUST 按以下场景执行。

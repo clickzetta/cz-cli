@@ -33,7 +33,7 @@ const JSON_ARRAY_OPTIONS = new Set(["--output-tables"])
 // handler and the nested commandGroup fail handler for "did you mean"
 // suggestions. Kept here as the single source of truth to avoid drift.
 export const KNOWN_GLOBAL_FLAGS = ["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "format", "field", "debug", "d", "help", "h", "version", "target", "t"]
-export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent"]
+export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "autoupdate", "datasource", "ai-gateway", "analytics-agent"]
 
 export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
   const result: string[] = []

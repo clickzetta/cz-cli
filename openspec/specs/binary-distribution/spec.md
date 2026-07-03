@@ -3,6 +3,10 @@
 ## Purpose
 迁移 Python/PyInstaller 分发规格到当前 TypeScript/Bun 重写版本。当前分发链路包含 Bun 编译平台二进制、GitHub Release/COS 发布、npm 主包与平台包、curl 安装脚本和 PowerShell 安装入口。
 
+## Release Asset Boundary
+
+二进制归档发布到 COS 后按私有对象处理。安装入口、更新入口和官网下载代理不得自行拼接 COS 公开 URL 下载归档；必须使用 release-channel 规格定义的 manifest/presigned URL 契约。当前渠道版本必须从 `META-INF/versions.json` 的顶层 `stable`/`nightly` 字段解析；当前渠道安装可使用 `META-INF/channels/<channel>/bootstrap.*` 或 `META-INF/channels/<channel>/manifest.json` 作为该指针版本的安装资产；显式历史版本安装必须先读取 `META-INF/releases/<version>/manifest.json`，再使用 manifest 中的 `platforms[platform].url` 下载平台归档。
+
 ## Requirements
 ### Requirement: Bun 编译产物按平台打包
 
@@ -39,6 +43,21 @@ release 构建 MUST 为目标平台生成 `cz-cli` 或 `cz-cli.exe` 二进制，
 - **WHEN** manifest、archive 或校验下载失败
 - **THEN** 安装脚本输出 URL、目标路径和错误原因
 - **AND** 不留下不可执行的半安装 binary 覆盖可用版本
+
+#### Scenario: 私有 COS 归档通过 recorded URL 下载
+
+- **WHEN** 安装入口需要下载 COS 上的 `cz-cli-<version>-<platform>.<ext>` 归档
+- **THEN** 下载 URL 来自 manifest 中记录的 `platforms[platform].url`
+- **AND** 该 URL 是发布流程生成并记录的 presigned URL
+- **AND** 安装入口不根据 bucket、prefix、version、platform 或 archive 名称拼接公共 COS URL
+
+#### Scenario: 显式历史版本安装依赖 versioned manifest
+
+- **WHEN** 用户显式安装历史版本 `1.0.18`
+- **THEN** 入口先按 release-channel 规格读取 `META-INF/releases/1.0.18/manifest.json`
+- **AND** 不直接请求私有构建产物目录下的 `1.0.18/bootstrap.sh`
+- **AND** Windows PowerShell 入口不直接请求私有构建产物目录下的 `1.0.18/bootstrap.ps1`
+- **AND** 不拼接公开 COS 归档 URL
 
 ### Requirement: npm 包结构使用主包加平台包
 

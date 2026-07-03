@@ -6,7 +6,6 @@ import semver from "semver"
 import { parse as parseToml } from "smol-toml"
 import { parse as parseJsonc } from "jsonc-parser"
 import { spawnSync } from "child_process"
-import { ConfigManaged } from "@/config/managed"
 import { InstallationVersion } from "@/installation/version"
 
 // Our own release channel, intentionally isolated from opencode's
@@ -34,6 +33,7 @@ type InstallMetadata = {
 }
 
 type UpdateState = {
+  autoupdate?: boolean | "notify"
   last_checked_at?: number
   last_result?: "up-to-date" | "update-available" | "upgrade-succeeded" | "upgrade-failed" | "check-failed"
   latest_version?: string
@@ -67,7 +67,7 @@ const UPDATE_STATE_FILE = "update-check.json"
 const DEFAULT_UPDATE_INTERVAL_MS = 12 * 60 * 60 * 1000
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 const SUPPORTED_AUTO_UPGRADE_METHODS = new Set<InstallMethod>(["curl", "npm", "pnpm", "yarn", "bun"])
-const SKIP_COMMANDS = new Set(["setup", "update", "uninstall"])
+const SKIP_COMMANDS = new Set(["setup", "update", "uninstall", "autoupdate"])
 const NPM_METHODS = new Set<InstallMethod>(["npm", "pnpm", "yarn", "bun"])
 const DEV_RELEASE_VERSION_RE = /^dev-v\d+\.\d+\.\d+\.[\w.-]+$/
 const INSTALL_SCRIPT_URL = {
@@ -87,22 +87,6 @@ function xdgStateHome(home?: string, env: NodeJS.ProcessEnv = process.env) {
   return env.XDG_STATE_HOME ?? path.join(homeDirectory(home, env), ".local", "state")
 }
 
-function configCandidates(home?: string, env: NodeJS.ProcessEnv = process.env) {
-  const root = homeDirectory(home, env)
-  return [
-    path.join(root, CLICKZETTA_DIR, "czcli.json"),
-    path.join(root, CLICKZETTA_DIR, "czcli.jsonc"),
-    path.join(env.XDG_CONFIG_HOME ?? path.join(root, ".config"), "clickzetta", "opencode.jsonc"),
-    path.join(env.XDG_CONFIG_HOME ?? path.join(root, ".config"), "clickzetta", "opencode.json"),
-    path.join(env.XDG_CONFIG_HOME ?? path.join(root, ".config"), "clickzetta", "config.json"),
-  ]
-}
-
-function managedCandidates(env: NodeJS.ProcessEnv = process.env) {
-  const root = env.CLICKZETTA_TEST_MANAGED_CONFIG_DIR ?? ConfigManaged.managedConfigDir()
-  return [path.join(root, "opencode.json"), path.join(root, "opencode.jsonc")]
-}
-
 function updatePaths(home?: string, env: NodeJS.ProcessEnv = process.env): UpdatePaths {
   return {
     install: path.join(homeDirectory(home, env), CLICKZETTA_DIR, INSTALL_METADATA_FILE),
@@ -117,7 +101,7 @@ function parseConfig(text: string) {
   return toml && typeof toml === "object" && !Array.isArray(toml) ? (toml as Record<string, unknown>) : {}
 }
 
-function coerceAutoupdate(value: unknown) {
+function coerceAutoupdate(value: unknown): BootstrapConfig["autoupdate"] {
   if (value === true || value === false || value === "notify") return value
   return undefined
 }
@@ -238,7 +222,12 @@ export function shouldUpgradeToVersion(currentVersion: string, latestVersion: st
 async function upgradeViaInstallScript(target: string, channel?: string, fetchImpl: typeof fetch = fetch, force?: boolean) {
   const ch = channel === "nightly" ? "nightly" : "stable"
   const isWindows = process.platform === "win32"
-  const response = await fetchWithTimeout((isWindows ? WINDOWS_INSTALL_SCRIPT_URL : INSTALL_SCRIPT_URL)[ch], {}, fetchImpl)
+  const scriptUrl = (isWindows ? WINDOWS_INSTALL_SCRIPT_URL : INSTALL_SCRIPT_URL)[ch]
+  const response = await fetchWithTimeout(
+    isWindows ? `${scriptUrl}?version=${encodeURIComponent(target)}` : scriptUrl,
+    {},
+    fetchImpl,
+  )
   if (!response.ok) throw new Error(`Failed to download install script: ${response.status}`)
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cz-cli-update-"))
   const script = path.join(temp, isWindows ? "install.ps1" : "install.sh")
@@ -248,7 +237,7 @@ async function upgradeViaInstallScript(target: string, channel?: string, fetchIm
   const currentBinDir = path.dirname(process.execPath)
   const result = spawnSync(
     isWindows ? "powershell" : "sh",
-    isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script] : [script],
+    isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script] : [script, "--version", target],
     {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -367,22 +356,8 @@ export function restartArgs(execPath: string, argv: string[]): string[] {
 
 export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.ProcessEnv } = {}): Promise<BootstrapConfig> {
   const env = input.env ?? process.env
-  const merged = { autoupdate: undefined as BootstrapConfig["autoupdate"] }
-
-  for (const file of configCandidates(input.home, env)) {
-    const value = coerceAutoupdate((await readObject(file)).autoupdate)
-    if (value !== undefined) merged.autoupdate = value
-  }
-
-  for (const file of managedCandidates(env)) {
-    const value = coerceAutoupdate((await readObject(file)).autoupdate)
-    if (value !== undefined) merged.autoupdate = value
-  }
-
-  const mobileConfig = await ConfigManaged.readManagedPreferences().catch(() => undefined)
-  if (mobileConfig) {
-    const value = coerceAutoupdate(parseConfig(mobileConfig.text).autoupdate)
-    if (value !== undefined) merged.autoupdate = value
+  const merged = {
+    autoupdate: coerceAutoupdate((await readObject(updatePaths(input.home, env).state)).autoupdate),
   }
 
   const override = env.CLICKZETTA_AUTOUPDATE
@@ -404,8 +379,9 @@ export function shouldSkipAutoUpdateCommand(input: {
     ["1", "true", "yes"].includes((env.CZ_SKIP_UPDATE ?? "").trim().toLowerCase())
   ) return true
   // Channel does NOT gate whether auto-update runs; it only selects the update
-  // stream. Local builds are guarded by the release-version check below
-  // (InstallationVersion === "local" is not a release version).
+  // stream. Dev/nightly builds are intentionally skipped so pinned historical
+  // or development installs are not overwritten by a channel pointer.
+  if ((input.version ?? InstallationVersion).startsWith("dev-v")) return true
   if (!isReleaseVersion(input.version ?? InstallationVersion)) return true
   const head = input.args[0]
   if (head && SKIP_COMMANDS.has(head)) return true
@@ -516,7 +492,10 @@ export async function maybeAutoUpdate(input: {
     error: undefined,
   } satisfies UpdateState)
 
-  process.stderr.write(`A newer cz-cli is available: ${InstallationVersion} -> ${latestVersion}\n`)
+  process.stderr.write(
+    `A newer cz-cli is available: ${InstallationVersion} -> ${latestVersion}\n` +
+    "To disable automatic updates: cz-cli autoupdate false\n",
+  )
   if (action.kind === "notify" || !latestVersion) return
 
   try {
@@ -524,6 +503,7 @@ export async function maybeAutoUpdate(input: {
     await ensureRestartBinaryAtPath(latestVersion, process.execPath, env)
     await writeInstallMetadata({ binary_version: latestVersion, channel }, { env })
     await writeJson(paths.state, {
+      ...state,
       last_checked_at: now,
       last_result: "upgrade-succeeded",
       latest_version: latestVersion,
@@ -532,6 +512,7 @@ export async function maybeAutoUpdate(input: {
     restartCurrentProcess(env)
   } catch (error) {
     await writeJson(paths.state, {
+      ...state,
       last_checked_at: now,
       last_result: "upgrade-failed",
       latest_version: latestVersion,

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { describeUpdateError, manualInstallCommandForPlatform, isCzCliInstallBinary, isPackageManagerBinary, resolveUpdateInstallMethod, shouldApplyUpdate } from "../src/commands/update"
+import { assertUpdatedBinaryVersion, describeUpdateError, manualInstallCommandForPlatform, isCzCliInstallBinary, isPackageManagerBinary, resolveUpdateInstallMethod, shouldApplyUpdate } from "../src/commands/update"
 
 describe("shouldApplyUpdate", () => {
   test("refuses to downgrade when the fetched version is older", () => {
@@ -14,6 +15,11 @@ describe("shouldApplyUpdate", () => {
 
   test("allows downgrade when forced", () => {
     expect(shouldApplyUpdate("0.3.92", "0.3.88", true)).toBe(true)
+  })
+
+  test("allows downgrade when an explicit target is requested", () => {
+    const targetRequested = true
+    expect(shouldApplyUpdate("1.0.20", "1.0.18", targetRequested)).toBe(true)
   })
 
   test("detects npm global shim paths even when npm prefix points elsewhere", () => {
@@ -40,6 +46,19 @@ describe("shouldApplyUpdate", () => {
 
   test("detects install script binaries from .local/bin", () => {
     expect(isCzCliInstallBinary("/Users/liangmo/.local/bin/cz-cli")).toBe(true)
+  })
+
+  test("rejects successful install scripts that leave the wrong binary version", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cz-cli-update-version-"))
+    try {
+      const binary = path.join(dir, "cz-cli")
+      writeFileSync(binary, "#!/bin/sh\necho 1.0.20\n")
+      chmodSync(binary, 0o755)
+
+      expect(() => assertUpdatedBinaryVersion(binary, "1.0.18")).toThrow("Installed cz-cli version mismatch")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   test("formats aborted network errors with url and timeout context", () => {

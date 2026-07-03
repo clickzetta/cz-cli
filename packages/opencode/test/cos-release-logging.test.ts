@@ -76,13 +76,45 @@ describe("cos release logging", () => {
         },
       )
 
-      expect(output).toContain("META-INF/stable/bootstrap.sh")
-      expect(output).toContain("META-INF/stable/manifest.json")
-      expect(output).toContain("write channel cz-cli-releases/META-INF/stable -> 1.2.3")
+      expect(output).toContain("META-INF/channels/stable/bootstrap.sh")
+      expect(output).toContain("META-INF/channels/nightly/bootstrap.sh")
+      expect(output).toContain("META-INF/releases/1.2.3/bootstrap.sh")
+      expect(output).toContain("META-INF/releases/1.2.3/bootstrap.ps1")
+      expect(output).toContain("META-INF/channels/stable/manifest.json")
+      expect(output).toContain("META-INF/channels/nightly/manifest.json")
+      expect(output).toContain("META-INF/releases/1.2.3/manifest.json")
       expect(output).toContain("META-INF/versions.json")
+      expect(output).not.toContain("META-INF/channels/stable/version")
+      expect(output).not.toContain("META-INF/channels/nightly/version")
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
+  })
+
+  test("promote syncs immutable release assets back to the channel pointers", () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        "run",
+        path.join(repoRoot, "scripts", "cos-promote.mjs"),
+        "--channel",
+        "stable",
+        "--version",
+        "1.2.3",
+        "--dry-run",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    )
+
+    expect(output).toContain("would verify cz-cli-releases/META-INF/releases/1.2.3/manifest.json")
+    expect(output).toContain("copy cz-cli-releases/META-INF/releases/1.2.3/manifest.json -> cz-cli-releases/META-INF/channels/stable/manifest.json")
+    expect(output).toContain("copy cz-cli-releases/META-INF/releases/1.2.3/bootstrap.sh -> cz-cli-releases/META-INF/channels/stable/bootstrap.sh")
+    expect(output).toContain("copy cz-cli-releases/META-INF/releases/1.2.3/bootstrap.ps1 -> cz-cli-releases/META-INF/channels/stable/bootstrap.ps1")
+    expect(output).toContain("would patch cz-cli-releases/META-INF/versions.json")
+    expect(output).not.toContain("META-INF/channels/stable/version")
   })
 
   test("upload progress reporter logs start, progress milestones, and completion", async () => {
@@ -222,14 +254,16 @@ describe("cos release logging", () => {
     expect(sh).toContain("https://example.com/darwin-arm64.zip?sign=abc")
     expect(sh).toContain('"$EXISTING_PATH" --version')
     expect(sh).toContain("PATH contains a cz-cli entry that cannot run --version")
-    expect(sh).toContain('A newer version is already installed')
+    expect(sh).not.toContain("A newer version is already installed")
+    expect(sh).not.toContain("version_gt")
     expect(sh).toContain('sh "$EXTRACT_DIR/setup.sh"')
     expect(ps1).toContain("$Version = '1.2.3'")
     expect(ps1).toContain("$Channel = 'stable'")
     expect(ps1).toContain("'win32-x64' {")
     expect(ps1).toContain("https://example.com/win32-x64.zip?sign=def")
     expect(ps1).toContain("Get-Command cz-cli")
-    expect(ps1).toContain("A newer version is already installed")
+    expect(ps1).not.toContain("A newer version is already installed")
+    expect(ps1).not.toContain("Test-VersionGreater")
     expect(ps1).not.toContain("??")
     expect(ps1).not.toContain("Windows PowerShell 5.1 install command")
     expect(ps1).not.toContain("DownloadString(''https://cz-cli.ai/install.ps1'')")

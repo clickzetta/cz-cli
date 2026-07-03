@@ -95,7 +95,7 @@ const tests: TestCase[] = [
   { name: "table list --schema", cmd: "table list --schema public", assert: all(assertSingleLine, assertOk) },
 
   // === 6. Workspace ===
-  { name: "workspace current", cmd: "workspace current", assert: assertSingleLine },
+  { name: "workspace current removed", cmd: "workspace current", assert: all(assertSingleLine, assertError("USAGE_ERROR"), assertExitCode(2)) },
 
   // === 7. Output formats ===
   { name: "output json", cmd: "profile list --format json", assert: assertSingleLine },

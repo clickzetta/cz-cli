@@ -63,8 +63,9 @@ describe("dev release version format", () => {
 
       expect(output).toContain("archive=cz-cli-dev-v1.0.7.20260616200210-darwin-arm64.zip")
       expect(output).toContain("target=cz-cli-releases/dev-v1.0.7.20260616200210/darwin-arm64/cz-cli-dev-v1.0.7.20260616200210-darwin-arm64.zip")
-      expect(output).toContain("write channel cz-cli-releases/META-INF/nightly -> dev-v1.0.7.20260616200210")
+      expect(output).toContain("META-INF/channels/nightly/manifest.json")
       expect(output).toContain('"nightly": "dev-v1.0.7.20260616200210"')
+      expect(output).not.toContain("META-INF/channels/nightly/version")
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
@@ -91,7 +92,7 @@ describe("dev release version format", () => {
 
     expect(sh).toContain('VERSION="dev-v1.0.7.20260616200210"')
     expect(sh).toContain('CHANNEL="nightly"')
-    expect(sh).toContain("gsub(/^dev-v/, \"\", version)")
+    expect(sh).not.toContain("version_gt")
     expect(sh).toContain('CZ_VERSION="$VERSION"')
     expect(sh).toContain('CZ_CHANNEL="$CHANNEL"')
   })

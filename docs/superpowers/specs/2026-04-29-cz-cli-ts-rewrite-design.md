@@ -98,7 +98,7 @@ packages/cz-cli/src/
     profile.ts         — profile CRUD + discover + list-workspaces
     schema.ts          — schema list / describe / create / drop
     table.ts           — table list / describe / preview / stats / history / create / drop
-    workspace.ts       — workspace current / use
+    workspace.ts       — workspace list / use
     task.ts            — task CRUD + flow 子命令组
     runs.ts            — runs list / detail / wait / logs / deps / stop / stats / refill
     attempts.ts        — attempts list / log
