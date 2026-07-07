@@ -20,15 +20,28 @@ Options:
     -b, --binary <path>     Install from a local binary instead of downloading
         --no-modify-path    Don't modify shell config files (.zshrc, .bashrc, etc.)
 
+Environment:
+    CZ_LIBC=auto|musl|glibc  Linux libc selection (default: auto). Use
+                             CZ_LIBC=musl to force the statically-linked build
+                             on servers whose glibc is too old.
+
 Examples:
     curl -fsSL https://cz-cli.ai/install | bash
     curl -fsSL https://cz-cli.ai/install | bash -s -- --version 0.3.85
+    CZ_LIBC=musl curl -fsSL https://cz-cli.ai/install | bash
     ./install.sh --binary /path/to/cz-cli
 EOF
 }
 
 requested_version=${CZ_VERSION:-${VERSION:-}}
 CHANNEL="${CZ_CHANNEL:-stable}"
+# libc selection for Linux binaries: auto (default) | musl | glibc.
+#   musl  -> force the statically-linked build (no glibc dependency); use this
+#            on servers whose glibc is too old to run the default binary.
+#   glibc -> force the glibc-linked build.
+#   auto  -> detect musl distros, and fall back to musl when the host glibc is
+#            older than the minimum the glibc binary requires.
+CZ_LIBC="${CZ_LIBC:-auto}"
 no_modify_path=false
 binary_path=""
 
@@ -37,6 +50,15 @@ case "$CHANNEL" in
         ;;
     *)
         echo -e "${RED}Error: invalid CZ_CHANNEL '${CHANNEL}' (expected stable or nightly)${NC}" >&2
+        exit 1
+        ;;
+esac
+
+case "$CZ_LIBC" in
+    auto|musl|glibc)
+        ;;
+    *)
+        echo -e "${RED}Error: invalid CZ_LIBC '${CZ_LIBC}' (expected auto, musl, or glibc)${NC}" >&2
         exit 1
         ;;
 esac
@@ -127,12 +149,23 @@ else
 
     is_musl=false
     if [ "$os" = "linux" ]; then
-      if [ -f /etc/alpine-release ]; then
+      if [ "$CZ_LIBC" = "musl" ]; then
         is_musl=true
-      fi
-      if command -v ldd >/dev/null 2>&1; then
-        if ldd --version 2>&1 | grep -qi musl; then
+      elif [ "$CZ_LIBC" = "auto" ]; then
+        if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then
           is_musl=true
+        else
+          # The glibc binary links symbols up to GLIBC_2.25; hosts older than
+          # that (e.g. CentOS/RHEL 7 at 2.17) must use the static musl build.
+          # `|| true`: under `set -euo pipefail`, a failing pipeline (e.g. ldd
+          # absent, or no version match) would otherwise abort the installer;
+          # instead leave glibc empty and fall through to the glibc build.
+          glibc=$(ldd --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | tail -n1 || true)
+          gmaj=${glibc%%.*}; gmin=${glibc##*.}
+          if [ -n "$glibc" ] && { [ "$gmaj" -lt 2 ] || { [ "$gmaj" -eq 2 ] && [ "$gmin" -lt 25 ]; }; }; then
+            echo -e "${MUTED}Detected glibc ${glibc} < 2.25; using statically-linked musl build${NC}"
+            is_musl=true
+          fi
         fi
       fi
     fi
@@ -335,7 +368,7 @@ download_with_progress() {
     trap "trap - RETURN; rm -f \"$tracefile\"; printf '\033[?25h' >&4; exec 4>&-" RETURN
 
     (
-        curl --trace-ascii "$tracefile" -s -L -o "$output" "$url"
+        curl -f --trace-ascii "$tracefile" -s -L -o "$output" "$url"
     ) &
     local curl_pid=$!
 
@@ -378,7 +411,15 @@ download_and_install() {
     mkdir -p "$tmp_dir"
 
     if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
-        curl -# -L -o "$tmp_dir/$filename" "$url"
+        # -f: fail (non-zero exit) on HTTP errors instead of writing the error
+        # body to disk, which would later surface as a cryptic "tar: not in
+        # gzip format" during extraction.
+        if ! curl -fL -o "$tmp_dir/$filename" "$url"; then
+            print_message error "Download failed for ${target} (${url})."
+            print_message error "This build may be unavailable for your platform. Try CZ_LIBC=musl, or report the target above."
+            rm -rf "$tmp_dir"
+            exit 1
+        fi
     fi
 
     if [ "$os" = "linux" ]; then
