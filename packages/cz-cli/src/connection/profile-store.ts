@@ -29,6 +29,14 @@ function writeProfilesFile(content: string): void {
 
 export type ProfileEntry = Record<string, unknown>
 
+export interface AgentProfileEntry {
+  endpoint?: string
+  token?: string
+  userId?: number
+  tenantId?: number
+  instanceId?: number
+}
+
 export function loadProfiles(): Record<string, ProfileEntry> {
   try {
     const text = readFileSync(profilesFile(), "utf-8")
@@ -145,6 +153,39 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
     }
     const agent = profile.agent as Record<string, unknown> | undefined
     return (agent?.endpoint as string) || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function num(val: unknown): number | undefined {
+  if (typeof val === "number" && Number.isFinite(val)) return val
+  if (typeof val === "string" && val.trim() !== "") {
+    const parsed = Number(val)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+export function readAgentProfile(profileName?: string): AgentProfileEntry | undefined {
+  try {
+    const text = readFileSync(profilesFile(), "utf-8")
+    const data = parseTOML(text) as Record<string, unknown>
+    const name = profileName ?? (data.default_profile as string | undefined) ?? Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
+    if (!name) return undefined
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const profile = profiles[name]
+    if (!profile) return undefined
+    const agent = profile.agent as Record<string, unknown> | undefined
+    if (!agent || typeof agent !== "object" || Array.isArray(agent)) return undefined
+    const result: AgentProfileEntry = {
+      endpoint: typeof agent.endpoint === "string" ? agent.endpoint : undefined,
+      token: typeof agent.token === "string" ? agent.token : undefined,
+      userId: num(agent.user_id),
+      tenantId: num(agent.tenant_id),
+      instanceId: num(agent.instance_id),
+    }
+    return Object.values(result).some((value) => value !== undefined) ? result : undefined
   } catch {
     return undefined
   }

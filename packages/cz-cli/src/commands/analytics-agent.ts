@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises"
+import { basename, posix, resolve } from "node:path"
 import type { Argv } from "yargs"
 import { createTraceparent } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
@@ -5,7 +7,7 @@ import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
 import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
-import { getStudioContext, type StudioContext } from "./studio-context.js"
+import { getProfileAgentContext, getStudioContext, type StudioContext } from "./studio-context.js"
 import { logOperation } from "../logger.js"
 
 const ROUTES = {
@@ -41,12 +43,44 @@ const ROUTES = {
   domainCreate: { method: "POST", path: "/open/api/v1/analytics-agent/domains" },
   domainUpdate: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}` },
   domainDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}` },
+  domainPromptGet: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/prompt` },
+  domainPromptSet: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/prompt` },
+  domainPromptClear: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/prompt` },
   domainDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}` },
   domainTableAdd: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables` },
   domainTableRemove: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables/${encodePath(argv["table-id"])}` },
+  tableSemanticsList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics` },
+  tableSemanticsGet: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
+  tableSemanticsSet: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
+  tableSemanticsProp: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}/prop` },
   domainJoinDiscover: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/discover` },
   domainJoinResult: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/joins/tasks/${encodePath(argv["task-id"])}` },
   domainJoinApply: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/apply` },
+  columnVirtualCompile: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns/compile` },
+  columnVirtualSet: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
+  columnVirtualList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
+  columnVirtualDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns/${encodePath(argv["attr-id"])}` },
+  knowledgeEntryList: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/entries" },
+  knowledgeEntryDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
+  knowledgeEntryCreate: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/entries" },
+  knowledgeEntryUpdate: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
+  knowledgeEntryDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
+  knowledgeSpaceList: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/spaces" },
+  knowledgeSpaceCreate: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/spaces" },
+  knowledgeSpaceRename: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}` },
+  knowledgeSpaceDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}` },
+  knowledgeFolderCreate: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/folders` },
+  knowledgeNodeRename: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}` },
+  knowledgeNodeMove: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/move` },
+  knowledgeNodeCopy: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/copy` },
+  knowledgeNodeList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes` },
+  knowledgeNodeSearch: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/search` },
+  knowledgeNodeSort: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/sort` },
+  knowledgeNodeContent: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/content` },
+  knowledgeNodeDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}` },
+  knowledgeNodeByPath: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/by-path` },
+  knowledgeUploadUrl: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/upload-url` },
+  knowledgeUploadComplete: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/upload-complete` },
   sessionList: { method: "POST", path: "/open/session/list" },
   sessionCreate: { method: "POST", path: "/open/session/safe_new", openSessionAuth: true },
   sessionRun: { method: "POST", path: "/open/text2insight/query", openSessionAuth: true },
@@ -79,6 +113,15 @@ class AnalyticsHttpError extends Error {
   }
 }
 
+class AnalyticsBusinessError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
 function parseJsonObject(raw: string | undefined, fieldName: string): Record<string, unknown> {
   if (!raw) return {}
   try {
@@ -95,6 +138,26 @@ function parseJsonObject(raw: string | undefined, fieldName: string): Record<str
 function parseOptionalJsonObject(raw: string | undefined, fieldName: string): Record<string, unknown> | undefined {
   if (!raw) return undefined
   return parseJsonObject(raw, fieldName)
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return value === undefined ? undefined : [String(value)]
+  return value.map((item) => String(item))
+}
+
+function numberArray(value: unknown): number[] | undefined {
+  const values = stringArray(value)
+  if (!values) return undefined
+  return values.map((item) => Number(item))
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
 }
 
 function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
@@ -148,6 +211,55 @@ function encodePath(value: unknown): string {
   return encodeURIComponent(String(value ?? ""))
 }
 
+function parseLooseJsonValue(raw: string): unknown {
+  const value = raw.trim()
+  if (value === "true") return true
+  if (value === "false") return false
+  if (value === "null") return null
+  if (value.startsWith("{") || value.startsWith("[") || value.startsWith("\"")) {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return raw
+    }
+  }
+  return raw
+}
+
+function resolveTableSemanticsSetBody(argv: Record<string, unknown>): Record<string, unknown> {
+  return mergeBody(parseJsonObject(typeof argv.body === "string" ? argv.body : undefined, "--body"), {
+    alias: typeof argv.alias === "string" ? parseJsonArray(argv.alias, "--alias") : undefined,
+    description: argv.description,
+    semanticType: argv["semantic-type"],
+    semanticTypeProperties: typeof argv["semantic-type-properties"] === "string"
+      ? parseOptionalJsonObject(argv["semantic-type-properties"], "--semantic-type-properties")
+      : undefined,
+    intendedTypes: typeof argv["intended-types"] === "string" ? parseJsonArray(argv["intended-types"], "--intended-types") : undefined,
+    hidden: argv.hidden,
+    dimension: argv.dimension,
+    index: argv.index,
+    dictCode: argv["dict-code"],
+  })
+}
+
+function pickTableSemanticsFields(value: unknown): Record<string, unknown> {
+  const item = value && typeof value === "object" ? value as Record<string, unknown> : {}
+  return {
+    attrId: item.attrId,
+    datasetId: item.datasetId,
+    attrCode: item.attrCode,
+    alias: item.alias,
+    description: item.description,
+    semanticType: item.semanticType,
+    semanticTypeProperties: item.semanticTypeProperties,
+    intendedTypes: item.intendedTypes,
+    hidden: item.hidden,
+    dimension: item.dimension,
+    index: item.index,
+    dictCode: item.dictCode,
+  }
+}
+
 /**
  * Parses a --join flag value into a DatasetJoinDTO-shaped object.
  * Format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>
@@ -191,6 +303,27 @@ function parseJoinFlag(raw: string): Record<string, unknown> {
     joinTableName: r.tableName,
     joinAttrCode: r.attrCode,
     relation,
+  }
+}
+
+function resolveColumnVirtualBody(argv: Record<string, unknown>): Record<string, unknown> {
+  return mergeBody(parseJsonObject(typeof argv.body === "string" ? argv.body : undefined, "--body"), {
+    name: argv.name,
+    type: argv.type,
+    expression: argv.expression,
+    logicRule: argv["logic-rule"],
+  })
+}
+
+function resolveColumnVirtualDatasetId(argv: Record<string, unknown>): number | undefined {
+  return typeof argv["dataset-id"] === "number" ? argv["dataset-id"] : undefined
+}
+
+function pickDomainPromptFields(value: unknown): Record<string, unknown> {
+  const item = value && typeof value === "object" ? value as Record<string, unknown> : {}
+  return {
+    domainId: item.domainId,
+    prompt: item.prompt ?? null,
   }
 }
 
@@ -266,7 +399,7 @@ async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<R
       },
     )
   }
-  const studio = await getStudioContext(argv)
+  const studio = getProfileAgentContext(argv) ?? await getStudioContext(argv)
   return { endpoint: endpoint!, studio }
 }
 
@@ -319,6 +452,21 @@ async function requestAnalytics(
   }
 }
 
+async function requestAnalyticsData(
+  argv: Record<string, unknown>,
+  route: AnalyticsRoute,
+  body: Record<string, unknown>,
+  query: Record<string, unknown> = {},
+  ctx?: ResolvedContext,
+): Promise<unknown> {
+  const payload = await requestAnalytics(argv, route, body, query, ctx)
+  const bizErr = extractBusinessError(payload)
+  if (bizErr) {
+    throw new AnalyticsBusinessError(bizErr.code, bizErr.message)
+  }
+  return unwrapResponse(payload)
+}
+
 function unwrapResponse(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload
   const data = (payload as Record<string, unknown>).data
@@ -337,11 +485,14 @@ function unwrapResponse(payload: unknown): unknown {
 function extractBusinessError(payload: unknown): { code: string; message: string } | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null
   const p = payload as Record<string, unknown>
+  const isNoDataSuccess = (value: Record<string, unknown>) =>
+    value.success === false && (value.code === "204" || value.code === 204)
 
   // Case 1: top-level envelope — {data: {success: false, code, message}}
   const inner = p.data
   if (inner && typeof inner === "object" && !Array.isArray(inner)) {
     const d = inner as Record<string, unknown>
+    if (isNoDataSuccess(d)) return null
     if (d.success === false) {
       return {
         code: typeof d.code === "string" ? d.code : "ANALYTICS_AGENT_ERROR",
@@ -351,6 +502,7 @@ function extractBusinessError(payload: unknown): { code: string; message: string
   }
 
   // Case 2: already-unwrapped — {success: false, code, message}
+  if (isNoDataSuccess(p)) return null
   if (p.success === false) {
     return {
       code: typeof p.code === "string" ? p.code : "ANALYTICS_AGENT_ERROR",
@@ -576,6 +728,329 @@ async function executeAnalyticsCommand(
       format,
       ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
+  }
+}
+
+async function executeKnowledgeNodeListCommand(
+  name: string,
+  argv: Record<string, unknown>,
+  nodeTypeLabel: "file" | "folder" | undefined,
+): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const payload = await requestAnalytics(argv, ROUTES.knowledgeNodeList, {}, {
+      parentId: argv["parent-id"],
+      domainId: argv["domain-id"],
+    })
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(bizErr.code, bizErr.message, { format })
+      return
+    }
+    const data = unwrapResponse(payload)
+    const filtered = Array.isArray(data) && nodeTypeLabel
+      ? data.filter((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return false
+        return (item as Record<string, unknown>).nodeTypeLabel === nodeTypeLabel
+      })
+      : data
+    logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    success(filtered, { format, timeMs: Date.now() - t0 })
+  } catch (err) {
+    logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
+async function executeKnowledgeNodeByPathCommand(
+  name: string,
+  argv: Record<string, unknown>,
+  nodeTypeLabel: "file" | "folder" | undefined,
+): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const pathValue = normalizedRemotePath(typeof argv.path === "string" ? argv.path : undefined)
+    const payload = await requestAnalytics(argv, ROUTES.knowledgeNodeByPath, {}, {
+      path: pathValue,
+    })
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(bizErr.code, bizErr.message, { format })
+      return
+    }
+    const data = unwrapResponse(payload)
+    let normalized = data
+    if (nodeTypeLabel && data && typeof data === "object" && !Array.isArray(data)) {
+      const lookup = data as Record<string, unknown>
+      const found = lookup.found === true
+      const node = lookup.node
+      if (found && node && typeof node === "object" && !Array.isArray(node)) {
+        const nodeRecord = node as Record<string, unknown>
+        if (nodeRecord.nodeTypeLabel !== nodeTypeLabel) {
+          normalized = { found: false, node: null }
+        }
+      }
+    }
+    logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    success(normalized, { format, timeMs: Date.now() - t0 })
+  } catch (err) {
+    logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
+async function executeKnowledgeNodeSearchCommand(
+  name: string,
+  argv: Record<string, unknown>,
+  nodeTypeLabel: "file" | "folder",
+): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const payload = await requestAnalytics(argv, ROUTES.knowledgeNodeSearch, {}, {
+      keyword: argv.keyword,
+      nodeType: nodeTypeLabel,
+      pageNum: argv["page-num"],
+      pageSize: argv["page-size"],
+    })
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(bizErr.code, bizErr.message, { format })
+      return
+    }
+    const data = unwrapResponse(payload) as Record<string, unknown>
+    const list = Array.isArray(data?.list) ? data.list : []
+    logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    success(list, {
+      format,
+      timeMs: Date.now() - t0,
+      extra: { count: typeof data?.total === "number" ? data.total : list.length },
+    })
+  } catch (err) {
+    logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
+function knowledgeEntryBody(argv: Record<string, unknown>): Record<string, unknown> {
+  return mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+    aliases: stringArray(argv.alias),
+    content: argv.content,
+    dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
+    type: argv.type,
+    domainIds: numberArray(argv["domain-id"]),
+  })
+}
+
+async function knowledgeCreateBody(argv: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const content = typeof argv.content === "string"
+    ? argv.content
+    : typeof argv.file === "string"
+      ? await Bun.file((await collectKnowledgeLocalFile(argv.file)).absolutePath).text()
+      : undefined
+  return mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+    aliases: stringArray(argv.alias),
+    content,
+    dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
+    type: argv.type,
+    domainIds: numberArray(argv["domain-id"]),
+  })
+}
+
+function normalizedRemotePath(pathValue: string | undefined): string {
+  if (!pathValue) return ""
+  const normalized = pathValue.replaceAll("\\", "/").split("/").filter(Boolean).join("/")
+  return normalized === "." ? "" : normalized
+}
+
+function joinRemotePath(...parts: Array<string | undefined>): string {
+  return normalizedRemotePath(parts.filter(Boolean).join("/"))
+}
+
+async function collectKnowledgeLocalFile(localPath: string): Promise<{ absolutePath: string; filename: string }> {
+  const absolutePath = resolve(localPath)
+  let fileStat
+  try {
+    fileStat = await stat(absolutePath)
+  } catch {
+    throw new Error(`local path does not exist: ${localPath}`)
+  }
+  if (!fileStat.isFile()) {
+    throw new Error(`local path must be a file: ${localPath}`)
+  }
+  return { absolutePath, filename: basename(absolutePath) }
+}
+
+async function lookupKnowledgeNode(
+  argv: Record<string, unknown>,
+  ctx: ResolvedContext,
+  spaceId: number,
+  pathValue: string,
+): Promise<Record<string, unknown> | undefined> {
+  if (!pathValue) return undefined
+  const result = await requestAnalyticsData(
+    { ...argv, "space-id": spaceId },
+    ROUTES.knowledgeNodeByPath,
+    {},
+    { path: pathValue },
+    ctx,
+  ) as Record<string, unknown>
+  return result.found ? result.node as Record<string, unknown> : undefined
+}
+
+async function ensureKnowledgeFolder(
+  argv: Record<string, unknown>,
+  ctx: ResolvedContext,
+  spaceId: number,
+  folderCache: Map<string, Record<string, unknown>>,
+  createdFolders: string[],
+  pathValue: string,
+): Promise<number | undefined> {
+  const normalized = normalizedRemotePath(pathValue)
+  if (!normalized) return undefined
+  const cached = folderCache.get(normalized)
+  if (cached) return Number(cached.id)
+  const existing = await lookupKnowledgeNode(argv, ctx, spaceId, normalized)
+  if (existing) {
+    if (existing.nodeTypeLabel !== "folder") {
+      throw new Error(`target path is not a folder: ${normalized}`)
+    }
+    folderCache.set(normalized, existing)
+    return Number(existing.id)
+  }
+  const parentPath = posix.dirname(normalized)
+  const parentId = await ensureKnowledgeFolder(argv, ctx, spaceId, folderCache, createdFolders, parentPath === "." ? "" : parentPath)
+  const created = await requestAnalyticsData(
+    { ...argv, "space-id": spaceId },
+    ROUTES.knowledgeFolderCreate,
+    { parentId, name: basename(normalized) },
+    {},
+    ctx,
+  ) as Record<string, unknown>
+  folderCache.set(normalized, created)
+  createdFolders.push(normalized)
+  return Number(created.id)
+}
+
+async function uploadKnowledgeFile(
+  argv: Record<string, unknown>,
+  ctx: ResolvedContext,
+  spaceId: number,
+  folderCache: Map<string, Record<string, unknown>>,
+  createdFolders: string[],
+  absolutePath: string,
+  remoteDir: string,
+  remoteName: string,
+  domainIds: number[] | undefined,
+): Promise<{ remoteFilePath: string; overwritten: boolean; asyncTaskId?: number; nodeId: number }> {
+  const parentId = await ensureKnowledgeFolder(argv, ctx, spaceId, folderCache, createdFolders, remoteDir)
+  const remoteFilePath = joinRemotePath(remoteDir, remoteName)
+  const existing = await lookupKnowledgeNode(argv, ctx, spaceId, remoteFilePath)
+  if (existing && existing.nodeTypeLabel !== "file") {
+    throw new Error(`remote path already exists as a folder: ${remoteFilePath}`)
+  }
+
+  const uploadUrl = await requestAnalyticsData(
+    { ...argv, "space-id": spaceId },
+    ROUTES.knowledgeUploadUrl,
+    {
+      parentId,
+      filename: remoteName,
+      domainIds,
+      nodeId: existing?.id,
+    },
+    {},
+    ctx,
+  ) as Record<string, unknown>
+
+  const uploadResponse = await fetch(String(uploadUrl.uploadUrl), {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: await Bun.file(absolutePath).arrayBuffer(),
+  })
+  if (!uploadResponse.ok) {
+    throw new Error(`upload failed for ${remoteName}: HTTP ${uploadResponse.status}`)
+  }
+
+  const completed = await requestAnalyticsData(
+    { ...argv, "space-id": spaceId, "node-id": uploadUrl.nodeId },
+    ROUTES.knowledgeUploadComplete,
+    {},
+    {},
+    ctx,
+  ) as Record<string, unknown>
+
+  return {
+    remoteFilePath,
+    overwritten: Boolean(existing),
+    asyncTaskId: numberValue(completed.asyncTaskId),
+    nodeId: Number(uploadUrl.nodeId),
+  }
+}
+
+async function executeKnowledgeFileUploadCommand(argv: Record<string, unknown>): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const spaceId = Number(argv["space-id"])
+    if (!spaceId) {
+      throw new Error("--space-id is required")
+    }
+    const localFile = String(argv["local-file"] ?? "")
+    const file = await collectKnowledgeLocalFile(localFile)
+    const targetPath = normalizedRemotePath(typeof argv["target-path"] === "string" ? argv["target-path"] : undefined)
+    const remoteName = normalizedRemotePath(typeof argv.name === "string" ? argv.name : undefined) || file.filename
+    const domainIds = numberArray(argv["domain-id"])
+    const ctx = await resolveAnalyticsContext(argv)
+    const folderCache = new Map<string, Record<string, unknown>>()
+    const createdFolders: string[] = []
+
+    if (targetPath) {
+      const targetNode = await lookupKnowledgeNode(argv, ctx, spaceId, targetPath)
+      if (targetNode && targetNode.nodeTypeLabel !== "folder") {
+        throw new Error(`target path must be a folder path: ${targetPath}`)
+      }
+    }
+
+    const uploaded = await uploadKnowledgeFile(argv, ctx, spaceId, folderCache, createdFolders, file.absolutePath, targetPath, remoteName, domainIds)
+
+    logOperation("analytics-agent knowledge file upload", { ok: true, timeMs: Date.now() - t0 })
+    success({
+      local_path: file.absolutePath,
+      space_id: spaceId,
+      target_path: targetPath,
+      remote_name: remoteName,
+      remote_file_path: uploaded.remoteFilePath,
+      overwritten: uploaded.overwritten,
+      created_folders: createdFolders,
+      async_task_id: uploaded.asyncTaskId,
+      node_id: uploaded.nodeId,
+    }, { format, timeMs: Date.now() - t0 })
+  } catch (err) {
+    logOperation("analytics-agent knowledge file upload", { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    if (err instanceof AnalyticsBusinessError) {
+      error(err.code, err.message, { format })
+      return
+    }
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), { format })
   }
 }
 
@@ -875,6 +1350,82 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             },
           )
           .command(
+            "prompt",
+            "Manage domain custom prompt",
+            (prompt) => {
+              prompt.command(
+                "get <domain-id>",
+                "Get current domain prompt",
+                (y) => y.positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const t0 = Date.now()
+                  try {
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainPromptGet, {})
+                    const bizErr = extractBusinessError(payload)
+                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                    success(pickDomainPromptFields(unwrapResponse(payload)), { format, timeMs: Date.now() - t0 })
+                  } catch (err) {
+                    if (isHandledCliError(err)) return
+                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                    })
+                  }
+                },
+              )
+              prompt.command(
+                "set <domain-id>",
+                "Set domain custom prompt",
+                (y) =>
+                  y
+                    .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .option("prompt", { type: "string", describe: "Domain custom prompt" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  if (typeof argv.prompt !== "string" || argv.prompt.trim() === "") {
+                    error("USAGE_ERROR", "prompt is required", { format })
+                    return
+                  }
+                  const t0 = Date.now()
+                  try {
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainPromptSet, {
+                      prompt: argv.prompt.trim(),
+                    })
+                    const bizErr = extractBusinessError(payload)
+                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                    success(pickDomainPromptFields(unwrapResponse(payload)), { format, timeMs: Date.now() - t0 })
+                  } catch (err) {
+                    if (isHandledCliError(err)) return
+                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                    })
+                  }
+                },
+              )
+              prompt.command(
+                "clear <domain-id>",
+                "Clear domain custom prompt",
+                (y) => y.positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const t0 = Date.now()
+                  try {
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainPromptClear, {})
+                    const bizErr = extractBusinessError(payload)
+                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                    success(pickDomainPromptFields(unwrapResponse(payload)), { format, timeMs: Date.now() - t0 })
+                  } catch (err) {
+                    if (isHandledCliError(err)) return
+                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                    })
+                  }
+                },
+              )
+              return commandGroup(prompt, "analytics-agent domain prompt")
+            },
+          )
+          .command(
             "table",
             "Manage domain tables",
             (table) => {
@@ -1016,6 +1567,290 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             return commandGroup(joins, "analytics-agent domain joins")
           })
         return commandGroup(domain, "analytics-agent domain")
+      })
+      .command("table", "Manage Analytics Agent table semantics", (table) => {
+        table.command("semantics", "Manage dataset column semantics", (semantics) => {
+          semantics
+            .command(
+              "list <dataset-id>",
+              "List semantics for all columns in a dataset",
+              (y) => y.positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.tableSemanticsList, {})
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  const data = unwrapResponse(payload)
+                  const items = Array.isArray(data) ? data : []
+                  success(items.map((item) => pickTableSemanticsFields(item)), { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+            .command(
+              "get <dataset-id> <attr-id>",
+              "Show semantics detail of one dataset column",
+              (y) =>
+                y
+                  .positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
+                  .positional("attr-id", { type: "number", demandOption: true, describe: "Column attribute ID" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.tableSemanticsGet, {})
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  success(pickTableSemanticsFields(unwrapResponse(payload)), { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+            .command(
+              "set <dataset-id> <attr-id>",
+              "Update semantics of one dataset column",
+              (y) =>
+                y
+                  .positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
+                  .positional("attr-id", { type: "number", demandOption: true, describe: "Column attribute ID" })
+                  .option("alias", { type: "string", describe: "Alias JSON array" })
+                  .option("description", { type: "string", describe: "Column description" })
+                  .option("semantic-type", { type: "string", describe: "Semantic type" })
+                  .option("semantic-type-properties", { type: "string", describe: "Semantic type properties JSON object" })
+                  .option("intended-types", { type: "string", describe: "Intended types JSON array" })
+                  .option("hidden", { type: "boolean", describe: "Whether the column is hidden" })
+                  .option("dimension", { type: "boolean", describe: "Whether the column is a dimension" })
+                  .option("index", { type: "boolean", describe: "Whether the column is indexed" })
+                  .option("dict-code", { type: "string", describe: "Dictionary code" })
+                  .option("body", { type: "string", describe: "Full request body as JSON object" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                let body: Record<string, unknown>
+                try {
+                  body = resolveTableSemanticsSetBody(argv as Record<string, unknown>)
+                } catch (err) {
+                  error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+                  return
+                }
+                if (Object.keys(body).length === 0) {
+                  error("USAGE_ERROR", "At least one semantics field is required", { format })
+                  return
+                }
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.tableSemanticsSet, body)
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  success(pickTableSemanticsFields(unwrapResponse(payload)), { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+            .command(
+              "prop <dataset-id> <attr-id>",
+              "Update one semantics property of a dataset column",
+              (y) =>
+                y
+                  .positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
+                  .positional("attr-id", { type: "number", demandOption: true, describe: "Column attribute ID" })
+                  .option("property", { type: "string", demandOption: true, describe: "Property name" })
+                  .option("value", { type: "string", demandOption: true, describe: "Property value, JSON is accepted" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.tableSemanticsProp, {
+                    property: argv.property,
+                    value: parseLooseJsonValue(String(argv.value)),
+                  })
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  success(pickTableSemanticsFields(unwrapResponse(payload)), { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+          return commandGroup(semantics, "analytics-agent table semantics")
+        })
+        return commandGroup(table, "analytics-agent table")
+      })
+      .command("column", "Manage Analytics Agent columns", (column) => {
+        column.command("virtual", "Manage dataset virtual columns", (virtual) => {
+          virtual
+            .command(
+              "list [dataset-id]",
+              "List virtual columns of a dataset",
+              (y) =>
+                y
+                  .positional("dataset-id", { type: "number", describe: "Dataset ID" })
+                  .option("dataset-id", { type: "number", describe: "Dataset ID" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                const datasetId = resolveColumnVirtualDatasetId(argv as Record<string, unknown>)
+                if (datasetId === undefined) {
+                  error("USAGE_ERROR", "dataset-id is required", { format })
+                  return
+                }
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(
+                    { ...(argv as Record<string, unknown>), "dataset-id": datasetId },
+                    ROUTES.columnVirtualList,
+                    {},
+                  )
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  const data = unwrapResponse(payload)
+                  const items = Array.isArray(data) ? data as Record<string, unknown>[] : []
+                  success(items.map((item) => ({
+                    attrId: item.attrId,
+                    datasetId: item.datasetId,
+                    name: item.name,
+                    type: item.type,
+                    expression: item.expression,
+                  })), { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+            .command(
+              "compile",
+              "Compile a virtual column expression without persisting it",
+              (y) =>
+                y
+                  .option("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
+                  .option("name", { type: "string", demandOption: true, describe: "Virtual column name" })
+                  .option("type", { type: "string", demandOption: true, describe: "Virtual column type" })
+                  .option("expression", { type: "string", describe: "Virtual column expression" })
+                  .option("logic-rule", { type: "string", describe: "Raw logicRule JSON object" })
+                  .option("body", { type: "string", describe: "Full request body as JSON object" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                let body: Record<string, unknown>
+                try {
+                  body = resolveColumnVirtualBody(argv as Record<string, unknown>)
+                } catch (err) {
+                  error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+                  return
+                }
+                if (body.expression === undefined && body.logicRule === undefined) {
+                  error("USAGE_ERROR", "Either --expression or --logic-rule is required", { format })
+                  return
+                }
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.columnVirtualCompile, body)
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  const data = unwrapResponse(payload) as Record<string, unknown> | null
+                  success(data ? {
+                    datasetId: data.datasetId,
+                    name: data.name,
+                    type: data.type,
+                    expression: data.expression,
+                    sampleValues: data.sampleValues,
+                  } : {}, { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+            .command(
+              "set",
+              "Create and persist a virtual column",
+              (y) =>
+                y
+                  .option("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
+                  .option("name", { type: "string", demandOption: true, describe: "Virtual column name" })
+                  .option("type", { type: "string", demandOption: true, describe: "Virtual column type" })
+                  .option("expression", { type: "string", describe: "Virtual column expression" })
+                  .option("logic-rule", { type: "string", describe: "Raw logicRule JSON object" })
+                  .option("body", { type: "string", describe: "Full request body as JSON object" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                let body: Record<string, unknown>
+                try {
+                  body = resolveColumnVirtualBody(argv as Record<string, unknown>)
+                } catch (err) {
+                  error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+                  return
+                }
+                if (body.expression === undefined && body.logicRule === undefined) {
+                  error("USAGE_ERROR", "Either --expression or --logic-rule is required", { format })
+                  return
+                }
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.columnVirtualSet, body)
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  const data = unwrapResponse(payload) as Record<string, unknown> | null
+                  success(data ? {
+                    attrId: data.attrId,
+                    datasetId: data.datasetId,
+                    name: data.name,
+                    type: data.type,
+                    expression: data.expression,
+                  } : {}, { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+            .command(
+              "delete",
+              "Delete a persisted virtual column",
+              (y) =>
+                y
+                  .option("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
+                  .option("attr-id", { type: "number", demandOption: true, describe: "Virtual column attribute ID" }),
+              async (argv) => {
+                const format = typeof argv.format === "string" ? argv.format : "json"
+                const t0 = Date.now()
+                try {
+                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.columnVirtualDelete, {})
+                  const bizErr = extractBusinessError(payload)
+                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+                  success({}, { format, timeMs: Date.now() - t0 })
+                } catch (err) {
+                  if (isHandledCliError(err)) return
+                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+                  })
+                }
+              },
+            )
+          return commandGroup(virtual, "analytics-agent column virtual")
+        })
+        return commandGroup(column, "analytics-agent column")
       })
       .command("metric", "Manage Analytics Agent metrics", (metric) => {
         metric
@@ -1294,6 +2129,420 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             },
           )
         return commandGroup(answerBuilder, "analytics-agent answer-builder")
+      })
+      .command("knowledge", "Manage Analytics Agent knowledge", (knowledge) => {
+        knowledge
+          .command(
+            "list",
+            "List structured knowledge entries",
+            (y) =>
+              y
+                .option("keyword", { type: "string", describe: "Keyword for fuzzy search" })
+                .option("domain-id", { type: "number", describe: "Bound domain ID" })
+                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
+                .option("page-num", { type: "number", describe: "Page number" })
+                .option("page-size", { type: "number", describe: "Page size" }),
+            async (argv) => {
+              await executeAnalyticsCommand("analytics-agent knowledge list", argv as Record<string, unknown>, ROUTES.knowledgeEntryList, {}, {
+                keyword: argv.keyword,
+                domainId: argv["domain-id"],
+                type: argv.type,
+                pageNum: argv["page-num"],
+                pageSize: argv["page-size"],
+              })
+            },
+          )
+          .command(
+            "get <knowledge-id>",
+            "Show structured knowledge detail",
+            (y) => y.positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" }),
+            async (argv) => {
+              await executeAnalyticsCommand("analytics-agent knowledge get", argv as Record<string, unknown>, ROUTES.knowledgeEntryDetail, {})
+            },
+          )
+          .command(
+            "create",
+            "Create structured knowledge",
+            (y) =>
+              y
+                .option("alias", { type: "string", array: true, describe: "Knowledge alias, can be repeated" })
+                .option("content", { type: "string", describe: "Text knowledge content" })
+                .option("file", { type: "string", describe: "Local file path to load as text knowledge content" })
+                .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
+                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
+                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              const type = typeof argv.type === "string" ? argv.type : "text"
+              if (type === "dictionary" && !argv.dictionary) {
+                handledError("USAGE_ERROR", "dictionary knowledge requires --dictionary", { format: typeof argv.format === "string" ? argv.format : "json" })
+              }
+              if (type !== "dictionary" && !argv.content && !argv.file && !argv.dictionary) {
+                handledError("USAGE_ERROR", "text knowledge requires --content or --file", { format: typeof argv.format === "string" ? argv.format : "json" })
+              }
+              let body: Record<string, unknown>
+              try {
+                body = await knowledgeCreateBody(argv as Record<string, unknown>)
+              } catch (err) {
+                handledError("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+                  format: typeof argv.format === "string" ? argv.format : "json",
+                })
+              }
+              await executeAnalyticsCommand("analytics-agent knowledge create", argv as Record<string, unknown>, ROUTES.knowledgeEntryCreate, body)
+            },
+          )
+          .command(
+            "update <knowledge-id>",
+            "Update structured knowledge",
+            (y) =>
+              y
+                .positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" })
+                .option("alias", { type: "string", array: true, describe: "Knowledge alias, can be repeated" })
+                .option("content", { type: "string", describe: "Text knowledge content" })
+                .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
+                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
+                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+            async (argv) => {
+              await executeAnalyticsCommand("analytics-agent knowledge update", argv as Record<string, unknown>, ROUTES.knowledgeEntryUpdate, knowledgeEntryBody(argv as Record<string, unknown>))
+            },
+          )
+          .command(
+            "delete <knowledge-id>",
+            "Delete structured knowledge",
+            (y) => y.positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" }),
+            async (argv) => {
+              await executeAnalyticsCommand("analytics-agent knowledge delete", argv as Record<string, unknown>, ROUTES.knowledgeEntryDelete, {})
+            },
+          )
+          .command(
+            "space",
+            "Manage knowledge spaces",
+            (space) => {
+              space
+                .command(
+                  "list",
+                  "List knowledge spaces",
+                  (y) => y.option("domain-id", { type: "number", describe: "Bound domain ID" }),
+                  async (argv) => {
+                    await executeAnalyticsCommand("analytics-agent knowledge space list", argv as Record<string, unknown>, ROUTES.knowledgeSpaceList, {}, {
+                      domainId: argv["domain-id"],
+                    })
+                  },
+                )
+                .command(
+                  "create",
+                  "Create a knowledge space",
+                  (y) =>
+                    y
+                      .option("name", { type: "string", demandOption: true, describe: "Space name" })
+                      .option("description", { type: "string", describe: "Space description" })
+                      .option("ocr-model-identifier", { type: "string", describe: "OCR model identifier" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      name: argv.name,
+                      description: argv.description,
+                      ocrModelIdentifier: argv["ocr-model-identifier"],
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge space create", argv as Record<string, unknown>, ROUTES.knowledgeSpaceCreate, body)
+                  },
+                )
+                .command(
+                  "rename <space-id>",
+                  "Rename a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("name", { type: "string", demandOption: true, describe: "New space name" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      name: argv.name,
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge space rename", argv as Record<string, unknown>, ROUTES.knowledgeSpaceRename, body)
+                  },
+                )
+                .command(
+                  "delete <space-id>",
+                  "Delete a knowledge space",
+                  (y) => y.positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" }),
+                  async (argv) => {
+                    await executeAnalyticsCommand("analytics-agent knowledge space delete", argv as Record<string, unknown>, ROUTES.knowledgeSpaceDelete, {})
+                  },
+                )
+              return commandGroup(space, "analytics-agent knowledge space")
+            },
+          )
+          .command(
+            "folder",
+            "Manage knowledge folders",
+            (folder) => {
+              folder
+                .command(
+                  "list <space-id>",
+                  "List folder children in a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("parent-id", { type: "number", describe: "Parent folder node ID" })
+                      .option("domain-id", { type: "number", describe: "Bound domain ID filter" }),
+                  async (argv) => {
+                    await executeKnowledgeNodeListCommand("analytics-agent knowledge folder list", argv as Record<string, unknown>, undefined)
+                  },
+                )
+                .command(
+                  "create <space-id>",
+                  "Create a folder in a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("parent-id", { type: "number", describe: "Parent folder node ID" })
+                      .option("name", { type: "string", demandOption: true, describe: "Folder name" }),
+                  async (argv) => {
+                    await executeAnalyticsCommand("analytics-agent knowledge folder create", argv as Record<string, unknown>, ROUTES.knowledgeFolderCreate, {
+                      parentId: argv["parent-id"],
+                      name: argv.name,
+                    })
+                  },
+                )
+                .command(
+                  "by-path <space-id>",
+                  "Find a folder node by remote path",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("path", { type: "string", demandOption: true, describe: "Remote folder path" }),
+                  async (argv) => {
+                    await executeKnowledgeNodeByPathCommand("analytics-agent knowledge folder by-path", argv as Record<string, unknown>, "folder")
+                  },
+                )
+                .command(
+                  "search <space-id>",
+                  "Search folder nodes by name in a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("keyword", { type: "string", demandOption: true, describe: "Search keyword" })
+                      .option("page-num", { type: "number", describe: "Page number" })
+                      .option("page-size", { type: "number", describe: "Page size" }),
+                  async (argv) => {
+                    await executeKnowledgeNodeSearchCommand("analytics-agent knowledge folder search", argv as Record<string, unknown>, "folder")
+                  },
+                )
+                .command(
+                  "sort <space-id>",
+                  "Update folder child order in a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("node-id", { type: "number", array: true, demandOption: true, describe: "Ordered child node ID, repeat for each node" })
+                      .option("parent-id", { type: "number", describe: "Parent folder node ID, use 0 for root" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      parentId: argv["parent-id"],
+                      nodeIds: numberArray(argv["node-id"]),
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge folder sort", argv as Record<string, unknown>, ROUTES.knowledgeNodeSort, body)
+                  },
+                )
+                .command(
+                  "delete <space-id> <node-id>",
+                  "Delete one folder node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" }),
+                  async (argv) => {
+                    await executeAnalyticsCommand("analytics-agent knowledge folder delete", argv as Record<string, unknown>, ROUTES.knowledgeNodeDelete, {})
+                  },
+                )
+                .command(
+                  "rename <space-id> <node-id>",
+                  "Rename one folder node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
+                      .option("name", { type: "string", demandOption: true, describe: "New folder name" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      name: argv.name,
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge folder rename", argv as Record<string, unknown>, ROUTES.knowledgeNodeRename, body)
+                  },
+                )
+                .command(
+                  "move <space-id> <node-id>",
+                  "Move one folder node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      parentId: argv["parent-id"],
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge folder move", argv as Record<string, unknown>, ROUTES.knowledgeNodeMove, body)
+                  },
+                )
+                .command(
+                  "copy <space-id> <node-id>",
+                  "Copy one folder node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      parentId: argv["parent-id"],
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge folder copy", argv as Record<string, unknown>, ROUTES.knowledgeNodeCopy, body)
+                  },
+                )
+              return commandGroup(folder, "analytics-agent knowledge folder")
+            },
+          )
+          .command(
+            "file",
+            "Manage knowledge files",
+            (file) => {
+              file
+                .command(
+                  "list <space-id>",
+                  "List file nodes in a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("parent-id", { type: "number", describe: "Parent folder node ID" })
+                      .option("domain-id", { type: "number", describe: "Bound domain ID filter" }),
+                  async (argv) => {
+                    await executeKnowledgeNodeListCommand("analytics-agent knowledge file list", argv as Record<string, unknown>, "file")
+                  },
+                )
+                .command(
+                  "get <space-id> <node-id>",
+                  "Read one knowledge file",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
+                      .option("offset-line", { type: "number", describe: "Read from line offset" })
+                      .option("limit-line", { type: "number", describe: "Read max line count" }),
+                  async (argv) => {
+                    await executeAnalyticsCommand("analytics-agent knowledge file get", argv as Record<string, unknown>, ROUTES.knowledgeNodeContent, {}, {
+                      offsetLine: argv["offset-line"],
+                      limitLine: argv["limit-line"],
+                    })
+                  },
+                )
+                .command(
+                  "delete <space-id> <node-id>",
+                  "Delete one knowledge file node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" }),
+                  async (argv) => {
+                    await executeAnalyticsCommand("analytics-agent knowledge file delete", argv as Record<string, unknown>, ROUTES.knowledgeNodeDelete, {})
+                  },
+                )
+                .command(
+                  "rename <space-id> <node-id>",
+                  "Rename one knowledge file node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
+                      .option("name", { type: "string", demandOption: true, describe: "New file name" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      name: argv.name,
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge file rename", argv as Record<string, unknown>, ROUTES.knowledgeNodeRename, body)
+                  },
+                )
+                .command(
+                  "move <space-id> <node-id>",
+                  "Move one knowledge file node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      parentId: argv["parent-id"],
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge file move", argv as Record<string, unknown>, ROUTES.knowledgeNodeMove, body)
+                  },
+                )
+                .command(
+                  "copy <space-id> <node-id>",
+                  "Copy one knowledge file node",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
+                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  async (argv) => {
+                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                      parentId: argv["parent-id"],
+                    })
+                    await executeAnalyticsCommand("analytics-agent knowledge file copy", argv as Record<string, unknown>, ROUTES.knowledgeNodeCopy, body)
+                  },
+                )
+                .command(
+                  "upload <space-id> <local-file>",
+                  "Upload one local file into a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .positional("local-file", { type: "string", demandOption: true, describe: "Local file path" })
+                      .option("target-path", { type: "string", describe: "Remote target folder path" })
+                      .option("name", { type: "string", describe: "Remote file name override" })
+                      .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
+                  async (argv) => {
+                    await executeKnowledgeFileUploadCommand(argv as Record<string, unknown>)
+                  },
+                )
+                .command(
+                  "by-path <space-id>",
+                  "Find a file node by remote path",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("path", { type: "string", demandOption: true, describe: "Remote file path" }),
+                  async (argv) => {
+                    await executeKnowledgeNodeByPathCommand("analytics-agent knowledge file by-path", argv as Record<string, unknown>, "file")
+                  },
+                )
+                .command(
+                  "search <space-id>",
+                  "Search file nodes by name in a knowledge space",
+                  (y) =>
+                    y
+                      .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
+                      .option("keyword", { type: "string", demandOption: true, describe: "Search keyword" })
+                      .option("page-num", { type: "number", describe: "Page number" })
+                      .option("page-size", { type: "number", describe: "Page size" }),
+                  async (argv) => {
+                    await executeKnowledgeNodeSearchCommand("analytics-agent knowledge file search", argv as Record<string, unknown>, "file")
+                  },
+                )
+              return commandGroup(file, "analytics-agent knowledge file")
+            },
+          )
+        return commandGroup(knowledge, "analytics-agent knowledge")
       })
       .command("service", "Check Analytics Agent service capability", (service) => {
         service.command(

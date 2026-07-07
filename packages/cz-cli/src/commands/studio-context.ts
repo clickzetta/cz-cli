@@ -2,6 +2,7 @@ import type { StudioConfig } from "@clickzetta/sdk"
 import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv } from "@clickzetta/sdk"
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import { getCookieToken } from "../connection/cookie-token.js"
+import { readAgentProfile } from "../connection/profile-store.js"
 import { handledError } from "../output/index.js"
 
 async function resolveInstanceId(baseUrl: string, token: string, tenantId: number, instanceName: string, fallbackId: number, debug?: boolean): Promise<number> {
@@ -30,6 +31,28 @@ export interface GatewayContext extends StudioConfig {
 
 export interface StudioContext extends StudioConfig {
   userName: string
+}
+
+export function getProfileAgentContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): StudioContext | undefined {
+  const profileName = typeof args.profile === "string" ? args.profile : undefined
+  const agent = readAgentProfile(profileName)
+  if (!agent?.token || agent.tenantId === undefined || agent.userId === undefined) return undefined
+  const config = resolveConnectionConfig(args)
+  return {
+    token: agent.token,
+    instanceId: agent.instanceId ?? 0,
+    workspaceId: 0,
+    projectId: 0,
+    userId: agent.userId,
+    tenantId: agent.tenantId,
+    instanceName: config.instance,
+    workspaceName: config.workspace ?? "",
+    env: detectEnv(config.service),
+    baseUrl: toServiceUrl(config.service, config.protocol),
+    customHeaders: config.customHeaders,
+    debug: !!args.debug,
+    userName: "profile-agent",
+  }
 }
 
 export async function getGatewayContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<GatewayContext> {
