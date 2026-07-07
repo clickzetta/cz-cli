@@ -429,7 +429,34 @@ platform() {
     aarch64|arm64) ARCH="arm64" ;;
   esac
 
-  echo "$OS-$ARCH"
+  SUFFIX=""
+  if [ "$OS" = "linux" ]; then
+    # baseline: x64 CPUs without AVX2 need the non-AVX2 build.
+    if [ "$ARCH" = "x64" ] && ! grep -qwi avx2 /proc/cpuinfo 2>/dev/null; then
+      SUFFIX="-baseline"
+    fi
+    # libc: use the statically-linked musl build on musl distros, when forced
+    # via CZ_LIBC=musl, or when the host glibc is older than the glibc binary's
+    # minimum (GLIBC_2.25, e.g. CentOS/RHEL 7 at 2.17).
+    CZ_LIBC="\${CZ_LIBC:-auto}"
+    if [ "$CZ_LIBC" = "musl" ]; then
+      SUFFIX="$SUFFIX-musl"
+    elif [ "$CZ_LIBC" = "auto" ]; then
+      if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then
+        SUFFIX="$SUFFIX-musl"
+      else
+        # \`|| true\`: a failing pipeline (ldd absent / no match) must not abort
+        # under set -e; leave GLIBC empty and keep the glibc build.
+        GLIBC=$(ldd --version 2>&1 | grep -oE '[0-9]+\\.[0-9]+' | tail -n1 || true)
+        GMAJ=\${GLIBC%%.*}; GMIN=\${GLIBC##*.}
+        if [ -n "$GLIBC" ] && { [ "$GMAJ" -lt 2 ] || { [ "$GMAJ" -eq 2 ] && [ "$GMIN" -lt 25 ]; }; }; then
+          SUFFIX="$SUFFIX-musl"
+        fi
+      fi
+    fi
+  fi
+
+  echo "$OS-$ARCH$SUFFIX"
 }
 
 main() {
