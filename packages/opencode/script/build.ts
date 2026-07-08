@@ -316,6 +316,25 @@ if (fs.existsSync(allSkillsSrc)) {
   console.log(`Bundled ${skillEntries.length} skills into all platform dists`)
 }
 
+// Bundle the musl runtime (loader + libstdc++/libgcc_s) into x64 musl dists so
+// the archive can self-install on old-glibc Linux (e.g. CentOS/RHEL 7) with no
+// root and no network: setup.sh points the ELF interpreter at a per-user copy
+// of the loader and serves the rest via LD_LIBRARY_PATH. Only x64 musl targets
+// carry these libs; glibc/arm64/Alpine installs are untouched.
+const muslRuntimeSrc = path.join(__dirname, "musl-runtime", "x64")
+if (fs.existsSync(muslRuntimeSrc)) {
+  for (const key of Object.keys(binaries)) {
+    const target = findTarget(key)
+    if (!target || target.os !== "linux" || target.arch !== "x64" || target.abi !== "musl") continue
+    const destLib = path.join("dist", key, "bin", "lib")
+    fs.mkdirSync(destLib, { recursive: true })
+    for (const f of fs.readdirSync(muslRuntimeSrc)) {
+      fs.copyFileSync(path.join(muslRuntimeSrc, f), path.join(destLib, f))
+    }
+    console.log(`Bundled musl runtime into ${key}/bin/lib`)
+  }
+}
+
 if (Script.archive) {
   const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
   const keys = Object.keys(binaries)
