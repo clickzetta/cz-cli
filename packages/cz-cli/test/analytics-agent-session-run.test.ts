@@ -5,6 +5,7 @@ mock.module("../src/connection/profile-store.js", () => ({
 }))
 
 mock.module("../src/commands/studio-context.js", () => ({
+  getProfileAgentContext: () => undefined,
   getStudioContext: async () => ({
     token: "studio-token",
     instanceId: 11,
@@ -122,6 +123,8 @@ describe("analytics-agent session run", () => {
       "analytics-agent",
       "session",
       "run",
+      "--domain-id",
+      "195",
       "--session-id",
       "7",
       "--msg",
@@ -132,7 +135,7 @@ describe("analytics-agent session run", () => {
     expect(JSON.parse(result.output.trim())).toEqual(pollPayload)
   })
 
-  test("shows the final-summary output when --summary is set", async () => {
+  test("shows plain-text final summary when --summary and --format text are set", async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes("/open/text2insight/query")) {
@@ -165,14 +168,132 @@ describe("analytics-agent session run", () => {
       "analytics-agent",
       "session",
       "run",
+      "--domain-id",
+      "195",
       "--session-id",
       "7",
       "--msg",
       "hello",
       "--summary",
+      "--format",
+      "text",
     ])
 
     expect(result.exitCode).toBe(0)
     expect(result.output.trim()).toBe("final answer")
+  })
+
+  test("shows structured json when --summary and --format json are both set", async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes("/open/text2insight/query")) {
+        return jsonResponse({ data: { questionId: 123 } })
+      }
+      if (url.includes("/open/safe_question_poll")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            questionId: 123,
+            responses: [
+              {
+                resGroupId: 1,
+                dataType: "summary",
+                modelRes: { data: { message: "final answer" } },
+              },
+              {
+                resGroupId: 1,
+                dataType: "finish",
+                modelRes: { data: { message: "done" } },
+              },
+            ],
+          },
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--session-id",
+      "7",
+      "--msg",
+      "hello",
+      "--summary",
+      "--format",
+      "json",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, unknown>
+    expect(parsed.data).toBe("final answer")
+  })
+
+  test("rejects session-id only run before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--session-id",
+      "7",
+      "--msg",
+      "hello",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--domain-id is required")
+  })
+
+  test("auto-creates session with domain-id and reuses returned sessionId", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
+      calls.push({ url, body })
+      if (url.includes("/open/session/safe_new")) {
+        return jsonResponse({ success: true, data: "88" })
+      }
+      if (url.includes("/open/text2insight/query")) {
+        return jsonResponse({ data: { questionId: 123 } })
+      }
+      if (url.includes("/open/safe_question_poll")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            questionId: 123,
+            responses: [
+              { resGroupId: 1, dataType: "finish", modelRes: { data: { message: "done" } } },
+            ],
+          },
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--msg",
+      "hello",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(calls[0]?.url).toContain("/open/session/safe_new")
+    expect(calls[0]?.body).toMatchObject({ domainId: 195 })
+    expect(calls[1]?.url).toContain("/open/text2insight/query")
+    expect(calls[1]?.body).toMatchObject({ domainId: 195, sessionId: 88, msg: "hello" })
   })
 })

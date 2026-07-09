@@ -196,28 +196,32 @@ describe("analytics-agent table semantics", () => {
       "set",
       "195",
       "31",
+      "--alias",
+      "订单日期",
+      "--alias",
+      "下单日期",
       "--description",
       "订单日期",
       "--semantic-type",
       "DATE_AND_TIME",
-      "--semantic-type-properties",
-      "{\"dataFormat\":\"yyyy-MM-dd\"}",
-      "--intended-types",
-      "[\"DIM\",\"FILTER\"]",
+      "--intended-type",
+      "DIM",
+      "--intended-type",
+      "FILTER",
     ])
 
     expect(result.exitCode).toBe(0)
     const url = new URL(requestUrl)
     expect(url.pathname).toBe("/open/api/v1/analytics-agent/datasets/195/semantics/31")
     expect(requestBody).toEqual({
+      alias: ["订单日期", "下单日期"],
       description: "订单日期",
       semanticType: "DATE_AND_TIME",
-      semanticTypeProperties: { dataFormat: "yyyy-MM-dd" },
       intendedTypes: ["DIM", "FILTER"],
     })
   })
 
-  test("set rejects invalid semantic-type-properties JSON before sending request", async () => {
+  test("set rejects empty update body before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -229,58 +233,12 @@ describe("analytics-agent table semantics", () => {
       "set",
       "195",
       "31",
-      "--semantic-type-properties",
-      "{bad json}",
     ])
 
     expect(result.exitCode).toBe(1)
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Invalid --semantic-type-properties")
-  })
-
-  test("set rejects invalid alias JSON array before sending request", async () => {
-    globalThis.fetch = mock(async () => {
-      throw new Error("fetch should not be called")
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "table",
-      "semantics",
-      "set",
-      "195",
-      "31",
-      "--alias",
-      "{\"name\":\"订单日期\"}",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    const parsed = JSON.parse(result.output.trim())
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Invalid --alias")
-  })
-
-  test("set rejects invalid intended-types JSON array before sending request", async () => {
-    globalThis.fetch = mock(async () => {
-      throw new Error("fetch should not be called")
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "table",
-      "semantics",
-      "set",
-      "195",
-      "31",
-      "--intended-types",
-      "{\"type\":\"DIM\"}",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    const parsed = JSON.parse(result.output.trim())
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Invalid --intended-types")
+    expect(parsed.error.message).toContain("At least one semantics field is required")
   })
 
   test("prop parses boolean value before sending request", async () => {
@@ -307,9 +265,7 @@ describe("analytics-agent table semantics", () => {
       "prop",
       "195",
       "31",
-      "--property",
       "hidden",
-      "--value",
       "true",
     ])
 
@@ -344,9 +300,7 @@ describe("analytics-agent table semantics", () => {
       "prop",
       "195",
       "31",
-      "--property",
       "intendedTypes",
-      "--value",
       "[\"DIM\",\"FILTER\"]",
     ])
 
@@ -355,5 +309,49 @@ describe("analytics-agent table semantics", () => {
       property: "intendedTypes",
       value: ["DIM", "FILTER"],
     })
+  })
+
+  test("prop rejects invalid dataset-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "abc",
+      "31",
+      "hidden",
+      "true",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("--dataset-id must be a positive integer")
+  })
+
+  test("prop rejects invalid attr-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "195",
+      "abc",
+      "hidden",
+      "true",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("--attr-id must be a positive integer")
   })
 })
