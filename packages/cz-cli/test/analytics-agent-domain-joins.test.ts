@@ -156,12 +156,31 @@ describe("analytics-agent domain joins", () => {
     })
   })
 
-  test("apply parses --join into backend body and reports submittedCount", async () => {
-    let requestUrl = ""
-    let requestBody: unknown
+  test("apply loads task result then submits all selected joins", async () => {
+    const requestUrls: string[] = []
+    const requestBodies: unknown[] = []
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      requestUrl = String(input)
-      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      requestUrls.push(String(input))
+      requestBodies.push(init?.body ? JSON.parse(String(init.body)) : null)
+      if (requestUrls.length === 1) {
+        return jsonResponse({
+          success: true,
+          data: {
+            taskId: "task-1",
+            status: "SUCCESS",
+            joins: [{
+              datasetId: 101,
+              tableName: "orders",
+              attrCode: "user_id",
+              joinDatasetId: 202,
+              joinTableName: "users",
+              joinAttrCode: "id",
+              relation: "n:1",
+              ignored: "not returned",
+            }],
+          },
+        })
+      }
       return jsonResponse({ success: true, data: null })
     }) as typeof fetch
 
@@ -172,15 +191,19 @@ describe("analytics-agent domain joins", () => {
       "apply",
       "--domain-id",
       "195",
-      "--join",
-      "101:orders.user_id=202:users.id@n:1",
+      "--task-id",
+      "task-1",
+      "--all",
     ])
 
     expect(result.exitCode).toBe(0)
-    const url = new URL(requestUrl)
-    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/apply")
-    expect(url.searchParams.get("tenantId")).toBe("55")
-    expect(requestBody).toEqual({
+    const resultUrl = new URL(requestUrls[0] ?? "")
+    expect(resultUrl.pathname).toBe("/open/api/v1/analytics-agent/domains/joins/tasks/task-1")
+    expect(resultUrl.searchParams.get("tenantId")).toBe("55")
+    const applyUrl = new URL(requestUrls[1] ?? "")
+    expect(applyUrl.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/apply")
+    expect(applyUrl.searchParams.get("tenantId")).toBe("55")
+    expect(requestBodies[1]).toEqual({
       joins: [{
         datasetId: 101,
         tableName: "orders",
@@ -194,7 +217,7 @@ describe("analytics-agent domain joins", () => {
     expect(parseData(result.output)).toEqual({ submittedCount: 1, status: "ok" })
   })
 
-  test("apply rejects invalid relation before sending request", async () => {
+  test("apply rejects missing selector before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -206,13 +229,92 @@ describe("analytics-agent domain joins", () => {
       "apply",
       "--domain-id",
       "195",
-      "--join",
-      "101:orders.user_id=202:users.id@many:one",
+      "--task-id",
+      "task-1",
     ])
 
     expect(result.exitCode).toBe(1)
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("relation must be one of n:1, 1:1, 1:n")
+    expect(parsed.error.message).toContain("Either --all or at least one --index is required")
+  })
+
+  test("apply rejects out-of-range index before sending apply request", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({
+      success: true,
+      data: {
+        taskId: "task-1",
+        status: "SUCCESS",
+        joins: [{
+          datasetId: 101,
+          tableName: "orders",
+          attrCode: "user_id",
+          joinDatasetId: 202,
+          joinTableName: "users",
+          joinAttrCode: "id",
+          relation: "n:1",
+        }],
+      },
+    })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "joins",
+      "apply",
+      "--domain-id",
+      "195",
+      "--task-id",
+      "task-1",
+      "--index",
+      "2",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("only 1 discovered join candidates available")
+  })
+
+  test("apply rejects non-positive index before requesting task result", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const zeroIndex = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "joins",
+      "apply",
+      "--domain-id",
+      "195",
+      "--task-id",
+      "task-1",
+      "--index",
+      "0",
+    ])
+
+    expect(zeroIndex.exitCode).toBe(1)
+    const zeroParsed = JSON.parse(zeroIndex.output.trim())
+    expect(zeroParsed.error.code).toBe("USAGE_ERROR")
+    expect(zeroParsed.error.message).toContain("index must be a positive integer")
+
+    const negativeIndex = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "joins",
+      "apply",
+      "--domain-id",
+      "195",
+      "--task-id",
+      "task-1",
+      "--index",
+      "-1",
+    ])
+
+    expect(negativeIndex.exitCode).toBe(1)
+    const negativeParsed = JSON.parse(negativeIndex.output.trim())
+    expect(negativeParsed.error.code).toBe("USAGE_ERROR")
+    expect(negativeParsed.error.message).toContain("index must be a positive integer")
   })
 })

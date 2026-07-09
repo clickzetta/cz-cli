@@ -106,9 +106,53 @@ CLI MUST provide `analytics-agent knowledge space list/create/rename/delete` for
 - **THEN** CLI MUST call the open knowledge space delete endpoint
 - **AND** the command MUST succeed on the backend no-data success shape
 
+#### Scenario: 删除知识空间兼容 code 200 的 no-data success
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge space delete <space-id>`
+- **AND** 后端返回 `code=200`、`success=false`、`message=操作成功`、`data=null`
+- **THEN** CLI MUST 视该响应为成功
+- **AND** 退出码 MUST 为 0
+
+#### Scenario: 知识空间写操作 help 不暴露 body 参数
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge space create --help`
+- **THEN** help 中不包含 `--body`
+
+#### Scenario: 知识空间重命名 help 不暴露 body 参数
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge space rename --help`
+- **THEN** help 中不包含 `--body`
+
 ### Requirement: 文档知识基础命令面
 
 CLI MUST provide a first explicit command surface for document knowledge folders and files by calling open analytics-agent knowledge node endpoints.
+
+### Requirement: 文档知识节点 domain 绑定
+
+CLI MUST provide an explicit node-level domain binding surface for existing document knowledge nodes, and it MUST align with the backend node inheritance model instead of inventing a space-level binding concept.
+
+#### Scenario: 绑定节点到一个或多个 domain
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge node bind-domain <space-id> <node-id> --domain-id <id1> --domain-id <id2>`
+- **THEN** CLI MUST call the internal KB node-domain set endpoint for that node
+- **AND** the request body MUST send `node-id` together with the repeated `--domain-id` values as `domainIds`
+- **AND** CLI MUST use `space-id` and `node-id` to fetch the refreshed node detail after the write succeeds
+- **AND** the success output MUST include the node basic metadata together with the node's effective `domainIds`
+
+#### Scenario: 从节点解绑一个或多个 domain
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge node unbind-domain <space-id> <node-id> --domain-id <id>`
+- **THEN** CLI MUST call the internal KB node-domain remove endpoint for that node
+- **AND** the request body MUST send `node-id` together with the repeated `--domain-id` values as `domainIds`
+- **AND** CLI MUST use `space-id` and `node-id` to fetch the refreshed node detail after the write succeeds
+- **AND** the success output MUST include the node basic metadata together with the node's latest effective `domainIds`
+- **AND** when the node no longer has direct bindings but still inherits from an ancestor, the output MUST keep the inherited domain information instead of pretending the node is fully unbound
+
+#### Scenario: 绑定节点缺少 domain-id
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge node bind-domain <space-id> <node-id>` without any `--domain-id`
+- **THEN** CLI MUST reject the request before sending it
+- **AND** the error message MUST explain that at least one `--domain-id` is required
 
 #### Scenario: 列出某目录下的节点
 
@@ -183,11 +227,29 @@ CLI MUST provide a first explicit command surface for document knowledge folders
 - **AND** the request MUST send the ordered `nodeIds` array
 - **AND** the command MUST succeed on the backend no-data success shape
 
+#### Scenario: 更新目录排序兼容 code 200 的 no-data success
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder sort <space-id> --node-id <id1> --node-id <id2>`
+- **AND** 后端返回 `code=200`、`success=false`、`message=操作成功`、`data=null`
+- **THEN** CLI MUST 视该响应为成功
+- **AND** 退出码 MUST 为 0
+
 #### Scenario: 更新排序缺少 node-id
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder sort <space-id>` without any `--node-id`
 - **THEN** CLI MUST reject the request before sending it
 - **AND** the error message MUST explain that at least one `--node-id` is required
+
+#### Scenario: 文件夹写操作 help 不暴露 body 参数
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder rename --help`
+- **THEN** help 中不包含 `--body`
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder move --help`
+- **THEN** help 中不包含 `--body`
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder copy --help`
+- **THEN** help 中不包含 `--body`
 
 #### Scenario: 获取文件内容
 
@@ -221,6 +283,13 @@ CLI MUST provide a first explicit command surface for document knowledge folders
 - **THEN** CLI MUST call the open knowledge node delete endpoint
 - **AND** the command MUST succeed on the backend no-data success shape
 
+#### Scenario: 删除文件节点兼容 code 200 的 no-data success
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file delete <space-id> <node-id>`
+- **AND** 后端返回 `code=200`、`success=false`、`message=操作成功`、`data=null`
+- **THEN** CLI MUST 视该响应为成功
+- **AND** 退出码 MUST 为 0
+
 #### Scenario: 移动文件节点
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge file move <space-id> <node-id> --parent-id <target-parent-id>`
@@ -248,6 +317,17 @@ CLI MUST provide a first explicit command surface for document knowledge folders
 - **THEN** CLI MUST call the open knowledge node update endpoint for that node
 - **AND** the request MUST keep both `space-id` and `node-id` in the request path
 - **AND** the success output MUST include the renamed file node id, new name, and updated path when present
+
+#### Scenario: 文件写操作 help 不暴露 body 参数
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file rename --help`
+- **THEN** help 中不包含 `--body`
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file move --help`
+- **THEN** help 中不包含 `--body`
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file copy --help`
+- **THEN** help 中不包含 `--body`
 
 #### Scenario: 上传单个本地文件
 

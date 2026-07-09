@@ -114,7 +114,6 @@ describe("analytics-agent column virtual", () => {
       "column",
       "virtual",
       "compile",
-      "--dataset-id",
       "195",
       "--name",
       "profit_rate",
@@ -142,20 +141,18 @@ describe("analytics-agent column virtual", () => {
     })
   })
 
-  test("compile accepts logic-rule without expression", async () => {
-    let requestUrl = ""
+  test("compile auto-fills placeholder name and type when only expression is provided", async () => {
     let requestBody: unknown
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      requestUrl = String(input)
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
       requestBody = init?.body ? JSON.parse(String(init.body)) : null
       return jsonResponse({
         success: true,
         data: {
           datasetId: 195,
-          name: "profit_rate",
-          type: "double",
+          name: "__preview_virtual_column__",
+          type: "string",
           expression: "amount / qty",
-          sampleValues: [1.2, 1.5],
+          sampleValues: [1.2],
         },
       })
     }) as typeof fetch
@@ -165,23 +162,23 @@ describe("analytics-agent column virtual", () => {
       "column",
       "virtual",
       "compile",
-      "--dataset-id",
       "195",
-      "--name",
-      "profit_rate",
-      "--type",
-      "double",
-      "--logic-rule",
-      "{\"expression\":\"amount / qty\"}",
+      "--expression",
+      "amount / qty",
     ])
 
     expect(result.exitCode).toBe(0)
-    const url = new URL(requestUrl)
-    expect(url.pathname).toBe("/open/api/v1/analytics-agent/datasets/195/virtual-columns/compile")
     expect(requestBody).toEqual({
-      name: "profit_rate",
-      type: "double",
-      logicRule: "{\"expression\":\"amount / qty\"}",
+      name: "__preview_virtual_column__",
+      type: "string",
+      expression: "amount / qty",
+    })
+    expect(parseData(result.output)).toEqual({
+      datasetId: 195,
+      name: "__preview_virtual_column__",
+      type: "string",
+      expression: "amount / qty",
+      sampleValues: [1.2],
     })
   })
 
@@ -222,7 +219,6 @@ describe("analytics-agent column virtual", () => {
       "column",
       "virtual",
       "compile",
-      "--dataset-id",
       "195",
       "--name",
       "profit_rate",
@@ -261,7 +257,6 @@ describe("analytics-agent column virtual", () => {
       "column",
       "virtual",
       "set",
-      "--dataset-id",
       "195",
       "--name",
       "profit_rate",
@@ -339,9 +334,7 @@ describe("analytics-agent column virtual", () => {
       "column",
       "virtual",
       "delete",
-      "--dataset-id",
       "195",
-      "--attr-id",
       "31",
     ])
 
@@ -352,7 +345,7 @@ describe("analytics-agent column virtual", () => {
     expect(parseData(result.output)).toEqual({})
   })
 
-  test("compile rejects missing expression and logic-rule before sending request", async () => {
+  test("compile rejects missing expression before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -362,7 +355,6 @@ describe("analytics-agent column virtual", () => {
       "column",
       "virtual",
       "compile",
-      "--dataset-id",
       "195",
       "--name",
       "profit_rate",
@@ -373,58 +365,6 @@ describe("analytics-agent column virtual", () => {
     expect(result.exitCode).toBe(1)
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Either --expression or --logic-rule is required")
-  })
-
-  test("compile rejects invalid body JSON before sending request", async () => {
-    globalThis.fetch = mock(async () => {
-      throw new Error("fetch should not be called")
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "column",
-      "virtual",
-      "compile",
-      "--dataset-id",
-      "195",
-      "--name",
-      "profit_rate",
-      "--type",
-      "double",
-      "--body",
-      "{bad json}",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    const parsed = JSON.parse(result.output.trim())
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Invalid --body")
-  })
-
-  test("set rejects invalid body JSON before sending request", async () => {
-    globalThis.fetch = mock(async () => {
-      throw new Error("fetch should not be called")
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "column",
-      "virtual",
-      "set",
-      "--dataset-id",
-      "195",
-      "--name",
-      "profit_rate",
-      "--type",
-      "double",
-      "--body",
-      "{bad json}",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    const parsed = JSON.parse(result.output.trim())
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Invalid --body")
+    expect(parsed.error.message).toContain("--expression is required")
   })
 })

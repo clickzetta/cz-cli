@@ -5,30 +5,27 @@
 
 ## Requirements
 
-### Requirement: column virtual compile 走 dataset 维度 open API 并支持 expression 主路径
+### Requirement: column virtual compile 走 dataset 维度 open API 并以 expression 作为唯一用户主路径
 
-`cz-cli analytics-agent column virtual compile` MUST 调用 dataset 维度的 Analytics Agent open API。命令 MUST 支持 `--dataset-id`、`--name`、`--type`，并以 `--expression` 作为主输入；当用户未传 `--expression` 时，MUST 支持 `--logic-rule` 兼容输入。
+`cz-cli analytics-agent column virtual compile` MUST 调用 dataset 维度的 Analytics Agent open API。命令 MUST 使用 positional `dataset-id`，并以 `--expression` 作为用户主输入。`--name` 与 `--type` SHOULD 保持可选，以便做轻量预编译校验。CLI 不应把 `logicRule` 或内部 JSON body 直接暴露给普通用户。
 
 当 profile 中存在 Analytics Agent 专用 open token 上下文时，CLI MUST 优先使用该上下文里的 `token`、`tenant_id`、`user_id`，而不是回退到普通 studio 登录态推导出的 tenant。
 
 #### Scenario: 使用 expression 编译虚拟列
 
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile --dataset-id 195 --name profit_rate --type double --expression "amount / qty"`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile 195 --name profit_rate --type double --expression "amount / qty"`
 - **THEN** CLI 调用 `POST /open/api/v1/analytics-agent/datasets/195/virtual-columns/compile`
 - **且** 请求体包含 `name`、`type`、`expression`
 - **且** 命令输出包含 `datasetId`、`name`、`type` 和试运行样本值
 
-#### Scenario: 使用 logic-rule 兼容输入编译虚拟列
-
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile --dataset-id 195 --name profit_rate --type double --logic-rule "{\"expression\":\"amount / qty\"}"`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile 195 --expression "amount / qty"`
 - **THEN** CLI 仍然调用 `POST /open/api/v1/analytics-agent/datasets/195/virtual-columns/compile`
-- **且** 请求体包含 `logicRule`
-- **且** 不要求同时传 `--expression`
+- **且** CLI 会自动补齐仅用于预编译的占位 `name` 与 `type`
+- **且** 普通用户仍然只需要显式提供 `--expression`
 
-#### Scenario: compile 的 body 不是合法 JSON 时拒绝请求
-
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile --dataset-id 195 --name profit_rate --type double --body "{bad json}"`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile 195 --name profit_rate --type double`
 - **THEN** 命令返回参数错误
+- **且** 错误信息明确指出 `--expression` 是必填项
 - **且** 不发送后端请求
 
 #### Scenario: profile 中已有 open token 上下文时优先使用该 tenant
@@ -39,30 +36,24 @@
 
 ### Requirement: column virtual set 创建并持久化虚拟列
 
-`cz-cli analytics-agent column virtual set` MUST 调用 Analytics Agent open API 创建并持久化虚拟列。第一版 MUST 只支持新增，不应暗示更新已有虚拟列。
+`cz-cli analytics-agent column virtual set` MUST 调用 Analytics Agent open API 创建并持久化虚拟列。命令 MUST 使用 positional `dataset-id`，并通过扁平参数传入 `name`、`type`、`expression`。第一版 MUST 只支持新增，不应暗示更新已有虚拟列。
 
 #### Scenario: 创建虚拟列成功
 
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set --dataset-id 195 --name profit_rate --type double --expression "amount / qty"`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set 195 --name profit_rate --type double --expression "amount / qty"`
 - **THEN** CLI 调用 `POST /open/api/v1/analytics-agent/datasets/195/virtual-columns`
 - **且** 请求体包含 `name`、`type`、`expression`
 - **且** 命令输出包含已创建虚拟列的 `attrId`、`datasetId`、`name`、`type`
 
 #### Scenario: 缺少表达式输入时拒绝请求
 
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set --dataset-id 195 --name profit_rate --type double`
-- **THEN** 命令返回参数错误
-- **且** 不发送后端请求
-
-#### Scenario: set 的 body 不是合法 JSON 时拒绝请求
-
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set --dataset-id 195 --name profit_rate --type double --body "{bad json}"`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set 195 --name profit_rate --type double`
 - **THEN** 命令返回参数错误
 - **且** 不发送后端请求
 
 ### Requirement: column virtual list 只返回虚拟列
 
-`cz-cli analytics-agent column virtual list` MUST 只返回指定数据集中的虚拟列，而不是整张表的全部字段。命令 SHOULD 支持通过 positional 或 `--dataset-id` 指定数据集。
+`cz-cli analytics-agent column virtual list` MUST 只返回指定数据集中的虚拟列，而不是整张表的全部字段。命令 MUST 使用 positional `dataset-id` 指定数据集。
 
 #### Scenario: 列出虚拟列
 
@@ -78,17 +69,17 @@
 
 ### Requirement: column virtual delete 走 dataset 维度 open API
 
-`cz-cli analytics-agent column virtual delete` MUST 调用 dataset 维度的 Analytics Agent open API 删除虚拟列。后端 MUST 只允许删除带 `logicRule` 的虚拟列，不能因为知道 `attrId` 就删除普通字段。
+`cz-cli analytics-agent column virtual delete` MUST 调用 dataset 维度的 Analytics Agent open API 删除虚拟列。命令 MUST 使用 positional `dataset-id + attr-id`。后端 MUST 只允许删除带 `logicRule` 的虚拟列，不能因为知道 `attrId` 就删除普通字段。
 
 #### Scenario: 删除虚拟列
 
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual delete --dataset-id 195 --attr-id 31`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual delete 195 31`
 - **THEN** CLI 调用 `DELETE /open/api/v1/analytics-agent/datasets/195/virtual-columns/31`
 - **且** 请求包含 open token 鉴权和 `tenantId` query
 
 #### Scenario: 缺少 attr-id 时拒绝执行
 
-- **WHEN** 用户执行 `cz-cli analytics-agent column virtual delete --dataset-id 195`
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual delete 195`
 - **THEN** 命令返回参数错误
 - **且** 不发送后端请求
 

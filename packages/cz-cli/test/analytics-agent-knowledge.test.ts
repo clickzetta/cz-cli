@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { mkdtempSync } from "node:fs"
 import { writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -375,6 +376,24 @@ describe("analytics-agent knowledge", () => {
     expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/entries/301?tenantId=55")
   })
 
+  test("delete treats code 200 no-data success as success", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({
+      code: 200,
+      message: "操作成功",
+      success: false,
+      data: null,
+    })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "delete",
+      "301",
+    ])
+
+    expect(result.exitCode).toBe(0)
+  })
+
   test("space list calls the knowledge space endpoint", async () => {
     let capturedUrl = ""
 
@@ -500,6 +519,49 @@ describe("analytics-agent knowledge", () => {
     expect(parsed.data.name).toBe("投研空间-renamed")
   })
 
+  test("knowledge nested mutating command help no longer exposes body options", async () => {
+    const spaceCreate = spawnSync(process.execPath, [
+      "./src/main.ts",
+      "analytics-agent",
+      "knowledge",
+      "space",
+      "create",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+    const folderRename = spawnSync(process.execPath, [
+      "./src/main.ts",
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "rename",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+    const fileMove = spawnSync(process.execPath, [
+      "./src/main.ts",
+      "analytics-agent",
+      "knowledge",
+      "file",
+      "move",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+
+    expect(spaceCreate.status).toBe(0)
+    expect(spaceCreate.stdout).not.toContain("--body")
+    expect(folderRename.status).toBe(0)
+    expect(folderRename.stdout).not.toContain("--body")
+    expect(fileMove.status).toBe(0)
+    expect(fileMove.stdout).not.toContain("--body")
+  })
+
   test("space delete succeeds on no-data response", async () => {
     let capturedUrl = ""
 
@@ -523,6 +585,175 @@ describe("analytics-agent knowledge", () => {
 
     expect(result.exitCode).toBe(0)
     expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/spaces/7?tenantId=55")
+  })
+
+  test("space delete treats code 200 no-data success as success", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({
+      code: 200,
+      message: "操作成功",
+      success: false,
+      data: null,
+    })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "space",
+      "delete",
+      "7",
+    ])
+
+    expect(result.exitCode).toBe(0)
+  })
+
+  test("node bind-domain calls the knowledge node domain set endpoint", async () => {
+    const capturedUrls: string[] = []
+    let capturedBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrls.push(String(input))
+      if (capturedUrls.length === 1) {
+        capturedBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        return jsonResponse({
+          success: true,
+          data: {
+            code: 200,
+            success: false,
+            message: "操作成功",
+            data: null,
+          },
+        })
+      }
+      return jsonResponse({
+        success: true,
+        data: {
+          node: {
+            id: 11,
+            spaceId: 7,
+            parentId: 0,
+            nodeType: 2,
+            name: "report.md",
+            fileExt: "md",
+            path: [
+              { id: 9, name: "docs" },
+            ],
+            domainAssoc: {
+              domainIds: [195, 196],
+              inherited: false,
+              inheritedFromNodeId: null,
+              inheritedFromNodeName: null,
+            },
+          },
+        },
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "node",
+      "bind-domain",
+      "7",
+      "11",
+      "--domain-id",
+      "195",
+      "--domain-id",
+      "196",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(capturedUrls[0]).toContain("/api/v1/kb/nodes/domains/set?tenantId=55")
+    expect(capturedUrls[1]).toContain("/api/v1/kb/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
+    expect(capturedBody).toEqual({
+      nodeId: 11,
+      domainIds: [195, 196],
+    })
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.data.domainIds).toEqual([195, 196])
+    expect(parsed.data.inherited).toBe(false)
+    expect(parsed.data.path).toBe("docs/report.md")
+  })
+
+  test("node unbind-domain calls the knowledge node domain remove endpoint", async () => {
+    const capturedUrls: string[] = []
+    let capturedBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrls.push(String(input))
+      if (capturedUrls.length === 1) {
+        capturedBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        return jsonResponse({
+          success: true,
+          data: {
+            code: 200,
+            success: false,
+            message: "操作成功",
+            data: null,
+          },
+        })
+      }
+      return jsonResponse({
+        success: true,
+        data: {
+          node: {
+            id: 11,
+            spaceId: 7,
+            parentId: 0,
+            nodeType: 2,
+            name: "report.md",
+            fileExt: "md",
+            path: [
+              { id: 9, name: "docs" },
+            ],
+            domainAssoc: {
+              domainIds: [201],
+              inherited: true,
+              inheritedFromNodeId: 9,
+              inheritedFromNodeName: "reports",
+            },
+          },
+        },
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "node",
+      "unbind-domain",
+      "7",
+      "11",
+      "--domain-id",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(capturedUrls[0]).toContain("/api/v1/kb/nodes/domains/remove?tenantId=55")
+    expect(capturedUrls[1]).toContain("/api/v1/kb/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
+    expect(capturedBody).toEqual({
+      nodeId: 11,
+      domainIds: [195],
+    })
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.data.domainIds).toEqual([201])
+    expect(parsed.data.inherited).toBe(true)
+    expect(parsed.data.inheritedFromNodeId).toBe(9)
+  })
+
+  test("node bind-domain rejects missing domain ids", async () => {
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "node",
+      "bind-domain",
+      "7",
+      "11",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--domain-id is required")
   })
 
   test("folder list calls the knowledge node list endpoint", async () => {
@@ -821,6 +1052,27 @@ describe("analytics-agent knowledge", () => {
     })
   })
 
+  test("folder sort treats code 200 no-data success as success", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({
+      code: 200,
+      message: "操作成功",
+      success: false,
+      data: null,
+    })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "sort",
+      "7",
+      "--node-id",
+      "12",
+    ])
+
+    expect(result.exitCode).toBe(0)
+  })
+
   test("folder sort rejects missing node-id", async () => {
     const result = await runAnalyticsCli([
       "analytics-agent",
@@ -860,6 +1112,26 @@ describe("analytics-agent knowledge", () => {
 
     expect(result.exitCode).toBe(0)
     expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/spaces/7/nodes/12?tenantId=55")
+  })
+
+  test("folder delete treats code 200 no-data success as success", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({
+      code: 200,
+      message: "操作成功",
+      success: false,
+      data: null,
+    })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "delete",
+      "7",
+      "12",
+    ])
+
+    expect(result.exitCode).toBe(0)
   })
 
   test("folder rename calls the knowledge node update endpoint", async () => {
@@ -1265,6 +1537,26 @@ describe("analytics-agent knowledge", () => {
 
     expect(result.exitCode).toBe(0)
     expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/spaces/7/nodes/21?tenantId=55")
+  })
+
+  test("file delete treats code 200 no-data success as success", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({
+      code: 200,
+      message: "操作成功",
+      success: false,
+      data: null,
+    })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "file",
+      "delete",
+      "7",
+      "21",
+    ])
+
+    expect(result.exitCode).toBe(0)
   })
 
   test("file rename calls the knowledge node update endpoint", async () => {

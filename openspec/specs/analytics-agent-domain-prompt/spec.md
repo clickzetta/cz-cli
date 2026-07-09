@@ -22,6 +22,15 @@
 - **THEN** 返回仍然成功
 - **且** 输出中的 `prompt` 为 `null`
 
+#### Scenario: prompt 子路由异常时回退到 domain detail 解析 prompt
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain prompt get 195`
+- **AND** `GET /domains/195/prompt` 返回服务端异常
+- **AND** `GET /domains/195` 仍然可用
+- **THEN** CLI 回退到 `domain detail`
+- **且** 从 `domainConfigs.metricAnalysisCustomPrompt` 提取 prompt
+- **且** 仍然输出统一的 `domainId` 与 `prompt`
+
 ### Requirement: domain prompt set 只更新目标 prompt，不覆盖其他 domainConfigs
 
 `cz-cli analytics-agent domain prompt set` MUST 调用 domain 维度的 Analytics Agent open API 设置提示词。后端 MUST 基于现有业务域配置做 merge 更新，只新增或替换 `metricAnalysisCustomPrompt`，不能覆盖其他 `domainConfigs` 键。

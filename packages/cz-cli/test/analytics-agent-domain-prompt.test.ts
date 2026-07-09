@@ -174,6 +174,45 @@ describe("analytics-agent domain prompt", () => {
     })
   })
 
+  test("get falls back to domain detail when prompt route returns server error", async () => {
+    const requestUrls: string[] = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrls.push(String(input))
+      if (requestUrls.length === 1) {
+        return new Response(JSON.stringify({ code: "CZD-99999", message: "system error" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return jsonResponse({
+        success: true,
+        data: {
+          domainId: 195,
+          domainConfigs: {
+            metricAnalysisCustomPrompt: "请优先按业务口径回答",
+          },
+        },
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "prompt",
+      "get",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrls[0]).toContain("/open/api/v1/analytics-agent/domains/195/prompt?tenantId=55")
+    expect(requestUrls[1]).toContain("/open/api/v1/analytics-agent/domains/195?tenantId=55&withTables=false")
+    expect(parseData(result.output)).toEqual({
+      domainId: 195,
+      prompt: "请优先按业务口径回答",
+    })
+  })
+
   test("set rejects missing prompt before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
