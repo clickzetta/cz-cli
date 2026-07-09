@@ -97,6 +97,47 @@
 - **THEN** CLI MUST NOT silently apply a generic global row limit or field truncation through the shared output formatter
 - **且** 若该命令需要限制或截断行为，MUST 在该命令自身实现并在帮助信息中声明
 
+### Requirement: 分组命令缺子命令时返回帮助而非报错
+
+本需求 MUST 按以下场景执行。
+
+当用户调用一个"分组命令"（即本身没有可执行动作、只承载子命令的命令，如 `cz-cli ai-gateway`、`cz-cli ai-gateway key`、`cz-cli task`、`cz-cli task flow`、`cz-cli analytics-agent domain`、`cz-cli agent llm`）却未提供子命令时，CLI MUST 输出该分组的帮助信息（等同 `--help`）并以退出码 0 结束，而不是返回 `USAGE_ERROR`。此行为仅适用于缺少子命令的分组命令；不适用于叶子命令缺少必填位置参数或选项的情形。
+
+分组命令缺子命令 MUST NOT 要求已配置 ClickZetta profile 或 active LLM —— 帮助信息 MUST 在无任何 profile/LLM 的机器上照常输出，不得被 `NO_PROFILE` 或 `NO_ACTIVE_LLM` 掩盖。
+
+#### Scenario: 顶层分组命令缺子命令返回帮助
+
+- **WHEN** 用户执行 `cz-cli ai-gateway`（无子命令）
+- **THEN** CLI MUST 输出 `cz-cli ai-gateway` 的帮助信息，包含其子命令（`key`、`model`）
+- **且** 退出码 MUST 为 0
+- **且** 输出 MUST NOT 包含 `USAGE_ERROR`
+
+#### Scenario: 嵌套分组命令缺子命令返回帮助
+
+- **WHEN** 用户执行 `cz-cli ai-gateway key`（无子命令）
+- **THEN** CLI MUST 输出 `cz-cli ai-gateway key` 的帮助信息（而非父级 `ai-gateway` 的帮助）
+- **且** 退出码 MUST 为 0
+
+#### Scenario: profile-gated 分组命令缺子命令不要求 profile
+
+- **WHEN** 用户在未配置 profile 的机器上执行 `cz-cli task`（无子命令）
+- **THEN** CLI MUST 输出 `cz-cli task` 的帮助信息
+- **且** 退出码 MUST 为 0
+- **且** 输出 MUST NOT 包含 `NO_PROFILE`
+
+#### Scenario: 未知子命令仍然报错
+
+- **WHEN** 用户执行 `cz-cli ai-gateway bogus`（未知子命令）
+- **THEN** CLI MUST 返回 `USAGE_ERROR`
+- **且** 退出码 MUST 为 2
+- **且** 若存在相近子命令，SHOULD 在 `did_you_mean` 中给出建议
+
+#### Scenario: 叶子命令缺必填参数仍然报错
+
+- **WHEN** 用户执行 `cz-cli ai-gateway key get`（缺少必填位置参数 `<ref>`）
+- **THEN** CLI MUST 返回 `USAGE_ERROR`
+- **且** 退出码 MUST 为 2
+
 ### Requirement: task 依赖产出解析命令可发现
 
 本需求 MUST 按以下场景执行。

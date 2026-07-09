@@ -68,7 +68,10 @@ describe("#1 profile gate runs after yargs syntax validation", () => {
   })
 
   test("unknown subcommand surfaces USAGE_ERROR, not NO_PROFILE", () => {
-    const r = run(["task", "flow"])
+    // Note: a BARE group (`task flow`) now renders help, not an error — see the
+    // "bare command group renders help" suite below. An UNKNOWN subcommand is
+    // still a genuine syntax error and must surface USAGE_ERROR before the gate.
+    const r = run(["task", "bogus"])
     expect(errorOf(r.stdout).code).toBe("USAGE_ERROR")
   })
 
@@ -117,7 +120,9 @@ describe("#3 did-you-mean suggestions", () => {
 
 describe("#2 commandGroup errors honor --format / --field", () => {
   test("--format pretty produces multi-line JSON", () => {
-    const r = run(["task", "flow", "--format", "pretty"])
+    // Use an unknown subcommand (a genuine error) — a bare group now renders
+    // help instead of a structured error.
+    const r = run(["task", "bogus", "--format", "pretty"])
     expect(r.stdout.trimStart().startsWith("{\n")).toBe(true)
   })
 

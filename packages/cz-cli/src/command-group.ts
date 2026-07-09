@@ -2,8 +2,14 @@ import type { Argv } from "yargs"
 import { suggestClosest } from "./suggest.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { KNOWN_GLOBAL_FLAGS, INVOCATION_ARGS_KEY } from "./cli.js"
+import { SubcommandHelpShown } from "./subcommand-help.js"
 
-export function commandGroup(yargs: Argv, commandName: string): Argv {
+// Re-exported so the opencode agent runtime (which imports commandGroup from
+// this module) can catch the sentinel at its own parse boundaries. See
+// subcommand-help.ts.
+export { SubcommandHelpShown } from "./subcommand-help.js"
+
+export function commandGroup<T>(yargs: Argv<T>, commandName: string): Argv<T> {
   const commands = getRegisteredCommands(yargs)
   const localOptions = getRegisteredOptions(yargs)
   const available = commands.length > 0 ? commands.join(", ") : "see --help"
@@ -25,8 +31,26 @@ export function commandGroup(yargs: Argv, commandName: string): Argv {
   return yargs
     .strictCommands()
     .strictOptions()
-    .fail((msg, err) => {
+    .fail((msg, err, failYargs) => {
       if (err) throw err
+
+      // A bare group invocation (`cz-cli ai-gateway`, `cz-cli ai-gateway key`)
+      // is not a user error — the caller has not yet chosen a subcommand. Treat
+      // it like `--help`: render this group's help and throw the sentinel, so
+      // incomplete branch commands are self-documenting instead of returning
+      // USAGE_ERROR.
+      //
+      // yargs hands the failing instance to the fail handler as its 3rd arg, so
+      // failYargs.showHelp() renders THIS group's help (correct even for a
+      // nested group). Throwing (not returning) stops the failure from bubbling
+      // up to ancestor fail handlers — which would reset exitCode to 2 and
+      // re-emit USAGE_ERROR — and aborts the parse before the post-validation
+      // profile middleware runs, so a bare group prints help, never NO_PROFILE.
+      // The parse boundary catches SubcommandHelpShown and exits 0.
+      if (msg && msg.startsWith("Missing subcommand for '")) {
+        failYargs.showHelp((help: string) => process.stdout.write(help + "\n"))
+        throw new SubcommandHelpShown()
+      }
 
       // Distinguish the two yargs failure shapes so we suggest the right thing:
       //   "Unknown command: X"  -> X is a bad SUBCOMMAND  -> match subcommand names

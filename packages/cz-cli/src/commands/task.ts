@@ -420,7 +420,7 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
       .positional("task", { type: "string", demandOption: true, describe: "Multi-table CDC pipeline task name or ID (fileType 281)" })
       .option("table-ids", { type: "string", demandOption: true, describe: "Comma-separated pipeline table ids (from 'task cdc tables <task>')" })
 
-  return cdcYargs
+  const cdcGroup = cdcYargs
     .command(
       "list",
       "List multi-table CDC pipeline tasks (MULTI_REALTIME, fileType 281)",
@@ -502,7 +502,9 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
     .command("resync-table <task>", "Re-sync (re-snapshot) specific CDC pipeline tables", tableOpBuilder, tableOp(resyncCdcTables, "resync-table"))
     .command("pause-table <task>", "Pause incremental sync for specific CDC pipeline tables", tableOpBuilder, tableOp(pauseCdcTables, "pause-table"))
     .command("recover-table <task>", "Recover (resume) incremental sync for specific CDC pipeline tables", tableOpBuilder, tableOp(recoverCdcTables, "recover-table"))
-    .demandCommand(1, "Missing subcommand for 'task cdc'. Available: list, tables, offline, start-table, stop-table, resync-table, pause-table, recover-table")
+  // Wrap in commandGroup so a bare `cz-cli task cdc` renders help instead of
+  // USAGE_ERROR. See subcommand-help.ts.
+  return commandGroup(cdcGroup, "task cdc")
 }
 
 function parseDependencyTasks(raw: string, format: string | undefined, projectId: number): Record<string, unknown>[] {
@@ -3219,7 +3221,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command("flow", "Flow (composite) task operations. Workflow: task create --type FLOW → flow create-node (repeat) → flow node-save (each) → flow node-save-config (each) → flow bind → flow submit", (flowYargs) =>
-        flowYargs
+        // commandGroup registers this group so a bare `cz-cli task flow` renders
+        // help (via the parse boundary) instead of USAGE_ERROR.
+        commandGroup(flowYargs
           .command(
             "dag <task>",
             "Get flow DAG",
@@ -3880,9 +3884,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
             },
           )
-          .strictCommands()
-          .strictOptions()
-          .demandCommand(1, "Missing subcommand for 'task flow'. Available: dag, create-node, remove-node, bind, unbind, node-detail, node-save, node-save-config, submit, run, instances"),
+          , "task flow"),
       )
       .command(
         "delete-folder <folder>",
