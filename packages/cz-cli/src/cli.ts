@@ -3,6 +3,7 @@ import { VERSION } from "./version.js"
 import { defaultFormat, outputState, parseOutputArgs, renderOutput } from "./output/index.js"
 import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
 import { suggestClosest } from "./suggest.js"
+import { SubcommandHelpShown } from "./subcommand-help.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -156,8 +157,19 @@ export function createCli(args: string[]) {
       outputState.field = argv.field as string | undefined
     }, /* applyBeforeValidation */ true)
     .strict()
-    .fail((msg, err, yargs) => {
+    .fail((msg, err, failYargs) => {
       if (err) throw err
+      // Defensive net: a group built with raw `.demandCommand()` (no commandGroup
+      // fail handler of its own, e.g. some agent.ts subtrees) bubbles its
+      // "Missing subcommand for 'X'" failure straight up here. Resolve it like
+      // commandGroup does: render that group's help from the failing instance
+      // (yargs hands it in as the 3rd arg) and throw SubcommandHelpShown so the
+      // parse boundary exits 0. Groups built via commandGroup handle this in
+      // their own fail handler and never reach here. See subcommand-help.ts.
+      if (msg && msg.startsWith("Missing subcommand for '")) {
+        failYargs.showHelp((help: string) => process.stdout.write(help + "\n"))
+        throw new SubcommandHelpShown()
+      }
       const KNOWN_FLAGS = KNOWN_GLOBAL_FLAGS
       const KNOWN_COMMANDS = KNOWN_TOP_COMMANDS
       const knownFlagSet = new Set(KNOWN_FLAGS)

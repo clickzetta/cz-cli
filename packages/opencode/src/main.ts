@@ -251,7 +251,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   const { PluginCommand } = await import("./cli/cmd/plug")
   const { SetupCommand } = await import("./cli/cmd/setup")
   const { AgentLlmCommand } = await import("./cli/cmd/config-llm")
-  const { commandGroup } = await import("@clickzetta/cli/command-group")
+  const { commandGroup, SubcommandHelpShown } = await import("@clickzetta/cli/command-group")
 
   const agentArgs = isAgentSubcommand ? args.slice(1) : args
 
@@ -403,7 +403,12 @@ export async function main(args: string[], agentRuntime = false): Promise<number
       await cli.parse()
     }
   } catch (e) {
-    if (process.exitCode) {
+    if (e instanceof SubcommandHelpShown) {
+      // A bare agent command group (`cz-cli agent`, `cz-cli agent session`)
+      // already rendered its help in its commandGroup fail handler; the sentinel
+      // just unwinds the parse. Not an error — leave exitCode 0. See
+      // @clickzetta/cli subcommand-help.
+    } else if (process.exitCode) {
       // commandGroup already emitted structured output and set exitCode
     } else {
       let data: Record<string, any> = {}

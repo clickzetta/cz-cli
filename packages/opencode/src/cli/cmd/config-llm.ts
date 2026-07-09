@@ -4,7 +4,7 @@ import path from "path"
 import type { Argv } from "yargs"
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml"
 import { migrateLegacyClickzettaConfig, normalizeLlmBaseUrl, buildLlmProbeRequest } from "../../config/profiles-llm"
-import { commandGroup } from "@clickzetta/cli/command-group"
+import { commandGroup, SubcommandHelpShown } from "@clickzetta/cli/command-group"
 import { maybeRotateExhaustedClickzettaLlm } from "@clickzetta/cli/llm/clickzetta-rotation"
 import { cmd } from "./cmd"
 
@@ -785,14 +785,21 @@ export const AgentLlmCommand = cmd({
 
 export async function runLlm(args: readonly string[]): Promise<never> {
   const { default: yargs } = await import("yargs")
-  await yargs(args)
-    .scriptName("cz-cli agent")
-    .command(AgentLlmCommand)
-    .demandCommand(1, "")
-    .strictCommands()
-    .strict(false)
-    .help("help", "show help")
-    .alias("help", "h")
-    .parseAsync()
+  try {
+    await yargs(args)
+      .scriptName("cz-cli agent")
+      .command(AgentLlmCommand)
+      .demandCommand(1, "")
+      .strictCommands()
+      .strict(false)
+      .help("help", "show help")
+      .alias("help", "h")
+      .parseAsync()
+  } catch (err) {
+    // A bare `cz-cli agent llm` already rendered its help in its commandGroup
+    // fail handler and threw this sentinel; it just unwinds the parse. Not an
+    // error — exit 0. See @clickzetta/cli subcommand-help. Re-throw anything else.
+    if (!(err instanceof SubcommandHelpShown)) throw err
+  }
   process.exit(0)
 }
