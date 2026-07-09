@@ -21,6 +21,12 @@
 - **THEN** CLI 调用 domain update open API
 - **且** 请求体中的 `sampleQuestions` 为 `["本周销售额多少","华北地区销售额多少"]`
 
+#### Scenario: sample-question 误传 JSON 数组字符串时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain create --name 销售域 --datasource-id 11 --sample-question '["问题1","问题2"]'`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确提示改用重复 `--sample-question`
+
 #### Scenario: help 不再暴露 sample-questions 和 body
 
 - **WHEN** 用户执行 `cz-cli analytics-agent domain create --help`

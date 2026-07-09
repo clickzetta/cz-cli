@@ -206,6 +206,63 @@ describe("analytics-agent metric", () => {
     })
   })
 
+  test("create rejects legacy alias JSON array string before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "create",
+      "--domain-id",
+      "195",
+      "--datasource-id",
+      "11",
+      "--table-name",
+      "orders",
+      "--name",
+      "pay_amount",
+      "--expression",
+      "sum(amount)",
+      "--alias",
+      "[\"支付金额\",\"成交金额\"]",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("repeat --alias")
+  })
+
+  test("create rejects invalid domain-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "create",
+      "--domain-id",
+      "abc",
+      "--datasource-id",
+      "11",
+      "--table-name",
+      "orders",
+      "--name",
+      "pay_amount",
+      "--expression",
+      "sum(amount)",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("positive integer")
+  })
+
   test("create help no longer exposes body option", async () => {
     const result = spawnSync(process.execPath, [
       "./src/main.ts",

@@ -6,6 +6,7 @@ mock.module("../src/connection/profile-store.js", () => ({
 }))
 
 mock.module("../src/commands/studio-context.js", () => ({
+  getProfileAgentContext: () => undefined,
   getStudioContext: async () => ({
     token: "studio-token",
     instanceId: 11,
@@ -140,6 +141,27 @@ describe("analytics-agent session parameter simplification", () => {
       sourceType: "dashboard",
       sourceId: 7,
     })
+  })
+
+  test("session create rejects invalid domain-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "abc",
+      "--title",
+      "销售诊断",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("--domain-id must be a positive integer")
   })
 
   test("session result maps question id into request body", async () => {

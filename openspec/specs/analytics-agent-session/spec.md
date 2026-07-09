@@ -21,6 +21,12 @@
 - **THEN** CLI 调用 session create open API
 - **且** 请求体包含 `domainId`、`title`、`sourceType`、`sourceId`
 
+#### Scenario: session create 传入非法 domain-id 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session create --domain-id abc --title 销售诊断`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--domain-id` 必须是正整数
+
 #### Scenario: session result 用扁平字段构造请求体
 
 - **WHEN** 用户执行 `cz-cli analytics-agent session result 123`

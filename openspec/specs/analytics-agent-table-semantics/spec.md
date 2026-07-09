@@ -71,6 +71,18 @@
 - **THEN** CLI 调用 `POST /open/api/v1/analytics-agent/datasets/195/semantics/31/prop`
 - **且** 请求体中的 `value` 为数组
 
+#### Scenario: dataset-id 非法时本地拒绝 prop 请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics prop abc 31 hidden true`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--dataset-id` 必须是正整数
+
+#### Scenario: attr-id 非法时本地拒绝 prop 请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics prop 195 abc hidden true`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--attr-id` 必须是正整数
+
 #### Scenario: 不支持的 property 返回明确错误
 
 - **WHEN** 用户调用 `POST /open/api/v1/analytics-agent/datasets/195/semantics/31/prop`，请求体中 `property=unknownFlag`

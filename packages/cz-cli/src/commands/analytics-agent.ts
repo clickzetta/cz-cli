@@ -148,6 +148,33 @@ function stringArray(value: unknown): string[] | undefined {
   return value.map((item) => String(item))
 }
 
+function containsJsonArrayString(values: string[]): boolean {
+  return values.some((value) => {
+    try {
+      return Array.isArray(JSON.parse(value))
+    } catch {
+      return false
+    }
+  })
+}
+
+function repeatedCliStringArray(
+  value: unknown,
+  optionName: string,
+  format: string,
+): string[] | undefined {
+  const values = stringArray(value)
+  if (!values) return undefined
+  if (containsJsonArrayString(values)) {
+    handledError(
+      "USAGE_ERROR",
+      `${optionName} no longer accepts JSON array strings; repeat ${optionName} instead`,
+      { format },
+    )
+  }
+  return values
+}
+
 function numberArray(value: unknown): number[] | undefined {
   const values = stringArray(value)
   if (!values) return undefined
@@ -161,6 +188,31 @@ function numberValue(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+function positiveIntegerValue(
+  value: unknown,
+  optionName: string,
+  format: string,
+): number | undefined {
+  if (value === undefined) return undefined
+  const parsed = numberValue(value)
+  if (parsed !== undefined && Number.isInteger(parsed) && parsed > 0) return parsed
+  handledError("USAGE_ERROR", `${optionName} must be a positive integer`, { format })
+}
+
+function positiveIntegerArray(
+  value: unknown,
+  optionName: string,
+  format: string,
+): number[] | undefined {
+  const values = stringArray(value)
+  if (!values) return undefined
+  const parsed = values.map((item) => numberValue(item))
+  if (parsed.some((item) => item === undefined || !Number.isInteger(item) || item < 1)) {
+    handledError("USAGE_ERROR", `${optionName} must contain only positive integers`, { format })
+  }
+  return parsed as number[]
 }
 
 function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
@@ -1091,10 +1143,16 @@ async function executeKnowledgeNodeDomainCommand(
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
   try {
+    const spaceId = positiveIntegerValue(argv["space-id"], "--space-id", format)
+    const nodeId = positiveIntegerValue(argv["node-id"], "--node-id", format)
+    const domainIds = positiveIntegerArray(argv["domain-id"], "--domain-id", format)
+    if (!domainIds || domainIds.length === 0) {
+      handledError("USAGE_ERROR", "--domain-id is required", { format })
+    }
     const ctx = await resolveAnalyticsContext(argv)
     const payload = await requestAnalytics(argv, route, {
-      nodeId: argv["node-id"],
-      domainIds: numberArray(argv["domain-id"]),
+      nodeId,
+      domainIds,
     }, {}, ctx)
     const bizErr = extractBusinessError(payload)
     if (bizErr) {
@@ -1102,12 +1160,31 @@ async function executeKnowledgeNodeDomainCommand(
       error(bizErr.code, bizErr.message, { format })
       return
     }
-    const detail = await requestAnalyticsData(argv, ROUTES.knowledgeNodeDetailWithPath, {}, {
-      spaceId: argv["space-id"],
-      nodeId: argv["node-id"],
-    }, ctx)
-    logOperation(name, { ok: true, timeMs: Date.now() - t0 })
-    success(pickKnowledgeNodeDomainFields(detail), { format, timeMs: Date.now() - t0 })
+    try {
+      const detail = await requestAnalyticsData(argv, ROUTES.knowledgeNodeDetailWithPath, {}, {
+        spaceId,
+        nodeId,
+      }, ctx)
+      logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+      success(pickKnowledgeNodeDomainFields(detail), { format, timeMs: Date.now() - t0 })
+      return
+    } catch (err) {
+      logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+      success(
+        {
+          spaceId,
+          nodeId,
+          requestedDomainIds: domainIds,
+          detailRefreshFailed: true,
+        },
+        {
+          format,
+          timeMs: Date.now() - t0,
+          aiMessage: `Knowledge node domain update succeeded, but detail refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      )
+      return
+    }
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
@@ -1123,16 +1200,18 @@ async function executeKnowledgeNodeDomainCommand(
 }
 
 function knowledgeEntryBody(argv: Record<string, unknown>): Record<string, unknown> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
   return mergeBody({}, {
     aliases: stringArray(argv.alias),
     content: argv.content,
     dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
     type: argv.type,
-    domainIds: numberArray(argv["domain-id"]),
+    domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
   })
 }
 
 async function knowledgeCreateBody(argv: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
   const content = typeof argv.content === "string"
     ? argv.content
     : typeof argv.file === "string"
@@ -1143,7 +1222,7 @@ async function knowledgeCreateBody(argv: Record<string, unknown>): Promise<Recor
     content,
     dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
     type: argv.type,
-    domainIds: numberArray(argv["domain-id"]),
+    domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
   })
 }
 
@@ -1581,7 +1660,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 tableName,
                 displayName: argv["display-name"],
                 description: argv.description,
-                domainIds: numberArray(argv["domain-id"]),
+                domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
                 mode: argv.mode,
               })
               await executeAnalyticsCommand("analytics-agent datasource load", requestArgv, ROUTES.datasourceLoad, body)
@@ -1611,11 +1690,12 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("sample-question", { type: "string", array: true, describe: "Sample question, can be repeated" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
               const body = mergeBody({}, {
                 name: argv.name,
                 description: argv.description,
                 datasourceId: argv["datasource-id"],
-                sampleQuestions: stringArray(argv["sample-question"]),
+                sampleQuestions: repeatedCliStringArray(argv["sample-question"], "--sample-question", format),
               })
               await executeAnalyticsCommand("analytics-agent domain create", argv as Record<string, unknown>, ROUTES.domainCreate, body)
             },
@@ -1631,11 +1711,12 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("sample-question", { type: "string", array: true, describe: "Sample question, can be repeated" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
               const body = mergeBody({}, {
                 name: argv.name,
                 description: argv.description,
                 datasourceId: argv["datasource-id"],
-                sampleQuestions: stringArray(argv["sample-question"]),
+                sampleQuestions: repeatedCliStringArray(argv["sample-question"], "--sample-question", format),
               })
               await executeAnalyticsCommand("analytics-agent domain update", argv as Record<string, unknown>, ROUTES.domainUpdate, body)
             },
@@ -2076,9 +2157,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   .positional("value", { type: "string", demandOption: true, describe: "Property value, JSON is accepted" }),
               async (argv) => {
                 const format = typeof argv.format === "string" ? argv.format : "json"
+                const datasetId = positiveIntegerValue(argv["dataset-id"], "--dataset-id", format)
+                const attrId = positiveIntegerValue(argv["attr-id"], "--attr-id", format)
                 const t0 = Date.now()
                 try {
-                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.tableSemanticsProp, {
+                  const payload = await requestAnalytics({
+                    ...(argv as Record<string, unknown>),
+                    "dataset-id": datasetId,
+                    "attr-id": attrId,
+                  }, ROUTES.tableSemanticsProp, {
                     property: argv.property,
                     value: parseLooseJsonValue(String(argv.value)),
                   })
@@ -2266,14 +2353,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("alias", { type: "string", array: true, describe: "Metric alias, can be repeated" })
                 .option("description", { type: "string", describe: "Metric description" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
               const body = mergeBody({}, {
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
                 names: [argv.name],
                 aggExpr: argv.expression,
-                alias: stringArray(argv.alias),
+                alias: repeatedCliStringArray(argv.alias, "--alias", format),
                 description: argv.description,
-                domainIds: [argv["domain-id"]],
+                domainIds: domainId === undefined ? undefined : [domainId],
               })
               await executeAnalyticsCommand("analytics-agent metric create", argv as Record<string, unknown>, ROUTES.simpleMetricCreate, body)
             },
@@ -2292,15 +2381,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("alias", { type: "string", array: true, describe: "Metric alias, can be repeated" })
                 .option("description", { type: "string", describe: "Metric description" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
               const body = mergeBody({}, {
                 id: argv["metric-id"],
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
                 names: [argv.name],
                 aggExpr: argv.expression,
-                alias: stringArray(argv.alias),
+                alias: repeatedCliStringArray(argv.alias, "--alias", format),
                 description: argv.description,
-                domainIds: [argv["domain-id"]],
+                domainIds: domainId === undefined ? undefined : [domainId],
               })
               await executeAnalyticsCommand("analytics-agent metric update", argv as Record<string, unknown>, ROUTES.simpleMetricUpdate, body)
             },
@@ -2328,14 +2419,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("alias", { type: "string", array: true, describe: "Metric alias, can be repeated" })
                 .option("description", { type: "string", describe: "Metric description" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
               const body = mergeBody({}, {
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
                 names: [argv.name],
                 aggExpr: argv.expression,
-                alias: stringArray(argv.alias),
+                alias: repeatedCliStringArray(argv.alias, "--alias", format),
                 description: argv.description,
-                domainIds: [argv["domain-id"]],
+                domainIds: domainId === undefined ? undefined : [domainId],
               })
               await executeAnalyticsCommand("analytics-agent metric validate", argv as Record<string, unknown>, ROUTES.simpleMetricValidate, body)
             },
@@ -2672,10 +2765,6 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge node ID" })
                       .option("domain-id", { type: "number", array: true, describe: "Domain ID, can be repeated" }),
                   async (argv) => {
-                    const domainIds = numberArray(argv["domain-id"])
-                    if (!domainIds || domainIds.length === 0) {
-                      handledError("USAGE_ERROR", "--domain-id is required", { format: typeof argv.format === "string" ? argv.format : "json" })
-                    }
                     await executeKnowledgeNodeDomainCommand("analytics-agent knowledge node bind-domain", argv as Record<string, unknown>, ROUTES.knowledgeNodeDomainSet)
                   },
                 )
@@ -2688,10 +2777,6 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge node ID" })
                       .option("domain-id", { type: "number", array: true, describe: "Domain ID, can be repeated" }),
                   async (argv) => {
-                    const domainIds = numberArray(argv["domain-id"])
-                    if (!domainIds || domainIds.length === 0) {
-                      handledError("USAGE_ERROR", "--domain-id is required", { format: typeof argv.format === "string" ? argv.format : "json" })
-                    }
                     await executeKnowledgeNodeDomainCommand("analytics-agent knowledge node unbind-domain", argv as Record<string, unknown>, ROUTES.knowledgeNodeDomainRemove)
                   },
                 )
@@ -3001,8 +3086,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("source-type", { type: "string", describe: "Session sourceType" })
                 .option("source-id", { type: "number", describe: "Session sourceId" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
               const body = mergeBody({}, {
-                domainId: argv["domain-id"],
+                domainId,
                 title: argv.title,
                 sourceType: argv["source-type"],
                 sourceId: argv["source-id"],

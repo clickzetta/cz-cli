@@ -310,4 +310,48 @@ describe("analytics-agent table semantics", () => {
       value: ["DIM", "FILTER"],
     })
   })
+
+  test("prop rejects invalid dataset-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "abc",
+      "31",
+      "hidden",
+      "true",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("--dataset-id must be a positive integer")
+  })
+
+  test("prop rejects invalid attr-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "195",
+      "abc",
+      "hidden",
+      "true",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("--attr-id must be a positive integer")
+  })
 })

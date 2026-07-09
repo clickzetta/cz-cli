@@ -756,6 +756,79 @@ describe("analytics-agent knowledge", () => {
     expect(parsed.error.message).toContain("--domain-id is required")
   })
 
+  test("node bind-domain rejects invalid domain ids before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "node",
+      "bind-domain",
+      "7",
+      "11",
+      "--domain-id",
+      "195",
+      "--domain-id",
+      "abc",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("positive integers")
+  })
+
+  test("node bind-domain still succeeds when detail refresh fails after successful write", async () => {
+    const capturedUrls: string[] = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrls.push(String(input))
+      if (capturedUrls.length === 1) {
+        expect(JSON.parse(String(init?.body ?? "{}"))).toEqual({
+          nodeId: 11,
+          domainIds: [195],
+        })
+        return jsonResponse({
+          success: true,
+          data: {
+            code: 200,
+            success: false,
+            message: "操作成功",
+            data: null,
+          },
+        })
+      }
+      return new Response("boom", {
+        status: 500,
+        headers: { "content-type": "text/plain" },
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "node",
+      "bind-domain",
+      "7",
+      "11",
+      "--domain-id",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(capturedUrls[0]).toContain("/api/v1/kb/nodes/domains/set?tenantId=55")
+    expect(capturedUrls[1]).toContain("/api/v1/kb/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.data.spaceId).toBe(7)
+    expect(parsed.data.nodeId).toBe(11)
+    expect(parsed.data.requestedDomainIds).toEqual([195])
+    expect(parsed.data.detailRefreshFailed).toBe(true)
+    expect(parsed.ai_message).toContain("detail refresh failed")
+  })
+
   test("folder list calls the knowledge node list endpoint", async () => {
     let capturedUrl = ""
 

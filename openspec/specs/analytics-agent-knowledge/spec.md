@@ -154,6 +154,21 @@ CLI MUST provide an explicit node-level domain binding surface for existing docu
 - **THEN** CLI MUST reject the request before sending it
 - **AND** the error message MUST explain that at least one `--domain-id` is required
 
+#### Scenario: 绑定节点传入非法 domain-id
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge node bind-domain <space-id> <node-id> --domain-id abc`
+- **THEN** CLI MUST reject the request before sending it
+- **AND** the error message MUST explain that `--domain-id` must be a positive integer
+
+#### Scenario: 绑定写成功但回读 detail 失败时不误判整条命令失败
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge node bind-domain <space-id> <node-id> --domain-id 195`
+- **AND** internal KB node-domain set/remove write succeeds
+- **AND** the follow-up `detail/with-path` request returns `5xx`
+- **THEN** CLI MUST still treat the write command itself as success
+- **AND** the success output MUST preserve the requested `space-id`、`node-id`、`domainIds`
+- **AND** the output MUST clearly indicate that detail refresh failed and the user should re-check the node detail later
+
 #### Scenario: 列出某目录下的节点
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder list <space-id>`

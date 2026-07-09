@@ -31,6 +31,18 @@
 - **THEN** CLI 调用 metric validate open API
 - **且** 请求体中的 `alias` 为 `["支付金额","成交金额"]`
 
+#### Scenario: alias 误传 JSON 数组字符串时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-id 195 --datasource-id 11 --table-name orders --name pay_amount --expression "sum(amount)" --alias '["支付金额","成交金额"]'`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确提示改用重复 `--alias`
+
+#### Scenario: domain-id 不是合法正整数时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-id abc --datasource-id 11 --table-name orders --name pay_amount --expression "sum(amount)"`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--domain-id` 必须是正整数
+
 #### Scenario: help 不再暴露 body 参数
 
 - **WHEN** 用户执行 `cz-cli analytics-agent metric create --help`

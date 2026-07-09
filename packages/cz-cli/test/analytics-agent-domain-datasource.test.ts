@@ -136,6 +136,30 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(result.stdout).not.toContain("--body")
   })
 
+  test("domain create rejects legacy sample-question JSON array string before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "create",
+      "--name",
+      "销售域",
+      "--datasource-id",
+      "11",
+      "--sample-question",
+      "[\"问题1\",\"问题2\"]",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--sample-question no longer accepts JSON array strings; repeat --sample-question instead",
+    })
+  })
+
   test("domain delete treats code 200 no-data success as success", async () => {
     let requestUrl = ""
 
@@ -210,6 +234,31 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(result.stdout).toContain("--domain-id")
     expect(result.stdout).not.toContain("--domain-ids")
     expect(result.stdout).not.toContain("--body")
+  })
+
+  test("datasource load rejects invalid domain-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "load",
+      "11",
+      "--path",
+      "workspace:w/schema:s",
+      "--table-name",
+      "orders",
+      "--domain-id",
+      "abc",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--domain-id must contain only positive integers",
+    })
   })
 
   test("datasource show-table accepts browse path positional input", async () => {

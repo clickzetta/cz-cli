@@ -45,6 +45,12 @@
 - **THEN** CLI 调用 datasource load open API
 - **且** 请求体中的 `domainIds` 为 `[195,196]`
 
+#### Scenario: load 传入非法 domain-id 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource load 11 --table-name orders --path workspace:w/schema:s --domain-id abc`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--domain-id` 必须是正整数
+
 #### Scenario: help 不再暴露 domain-ids 和 body
 
 - **WHEN** 用户执行 `cz-cli analytics-agent datasource load --help`
