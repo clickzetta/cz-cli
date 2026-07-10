@@ -1,0 +1,60 @@
+{
+  "name": "@clickzetta/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./llm/clickzetta-rotation": "./src/llm/clickzetta-rotation.ts",
+    "./llm/gateway-error": "./src/llm/gateway-error.ts",
+    "./otel-defaults": "./src/otel-defaults.ts",
+    "./command-group": "./src/command-group.ts"
+  },
+  "bin": {
+    "cz-cli": "./src/main.ts"
+  },
+  "scripts": {
+    "dev": "bun --conditions=browser src/main.ts",
+    "build": "bun run script/build.ts",
+    "typecheck": "tsgo --noEmit",
+    "test:e2e": "bun test/e2e.ts",
+    "test:e2e:full": "bun test/e2e-full.ts",
+    "test:e2e:routing": "bun test/e2e-routing.ts",
+    "test:e2e:help": "bun test/e2e-help.ts",
+    "test:unit": "bun test test/classify-error.test.ts",
+    "test:all": "bun test test/classify-error.test.ts && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
+    "build:local": "bun run build --single && mkdir -p dist && cp ../opencode/dist/opencode-darwin-arm64/bin/opencode dist/cz-cli && cp ../opencode/dist/opencode-darwin-arm64/bin/clickzetta-* dist/ && codesign --sign - dist/cz-cli",
+    "test:ci": "bun run build:local && CZ_CLI_BIN=./dist/cz-cli bun run test:all"
+  },
+  "dependencies": {
+    "@opencode-ai/core": "workspace:*",
+    "@opencode-ai/plugin": "workspace:*",
+    "@clickzetta/ai-gateway": "workspace:*",
+    "@clickzetta/sdk": "workspace:*",
+    "@clack/prompts": "1.0.0-alpha.1",
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/api-logs": "0.214.0",
+    "@opentelemetry/exporter-logs-otlp-http": "0.214.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.214.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.214.0",
+    "@opentelemetry/resources": "2.6.1",
+    "@opentelemetry/sdk-logs": "0.214.0",
+    "@opentelemetry/sdk-metrics": "2.6.1",
+    "@opentelemetry/sdk-trace-base": "2.6.1",
+    "langfuse": "3.38.20",
+    "opencode": "workspace:*",
+    "smol-toml": "1.6.1",
+    "yargs": "18.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/script": "workspace:*",
+    "@opentui/solid": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/yargs": "17.0.33",
+    "solid-js": "catalog:",
+    "typescript": "catalog:"
+  }
+}

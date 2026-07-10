@@ -332,4 +332,10 @@ export interface Hooks {
    * Modify tool definitions (description and parameters) sent to LLM
    */
   "tool.definition"?: (input: { toolID: string }, output: { description: string; parameters: any }) => Promise<void>
+  /**
+   * Called for each discovered skill during load. Set `output.exclude = true` to
+   * skip loading that skill (e.g. a skill the agent invokes another way and must
+   * not load to avoid recursion).
+   */
+  "skill.filter"?: (input: { name: string }, output: { exclude: boolean }) => Promise<void>
 }

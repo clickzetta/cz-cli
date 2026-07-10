@@ -1,0 +1,8 @@
+# cz_change: the cz-cli dev entry (`bun run dev` → src/main.ts under --cwd
+# packages/cz-cli) enters the opentui/solid TUI for the bare `agent` command.
+# opentui/solid transforms JSX via a Bun preload plugin; without it the JSX
+# import resolves to jsx-runtime.d.ts (types only) and fails with
+# "Export named 'jsxDEV' not found". Mirror packages/opencode/bunfig.toml so
+# the TUI works in dev from this package's cwd. The compiled binary is
+# unaffected (the build bundles the solid plugin).
+preload = ["@opentui/solid/preload"]
