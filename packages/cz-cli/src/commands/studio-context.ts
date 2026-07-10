@@ -79,7 +79,20 @@ export async function getGatewayContext(args: Partial<CliArgs> & { format?: stri
   }
 }
 
-export async function getStudioContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<StudioContext> {
+export interface StudioContextOptions {
+  /**
+   * When true, a missing workspace (empty listUserWorkspaces / name not found)
+   * is non-fatal: workspaceId/projectId fall back to 0 instead of erroring.
+   * Used by tenant-scoped features (e.g. Analytics Agent) whose resources are
+   * not gated on Studio workspace membership.
+   */
+  allowMissingWorkspace?: boolean
+}
+
+export async function getStudioContext(
+  args: Partial<CliArgs> & { format?: string; debug?: boolean },
+  opts: StudioContextOptions = {},
+): Promise<StudioContext> {
   const format = args.format ?? "json"
   const debug = !!args.debug
   const config = resolveConnectionConfig(args)
@@ -93,38 +106,42 @@ export async function getStudioContext(args: Partial<CliArgs> & { format?: strin
 
   const instanceId = await resolveInstanceId(baseUrl, token.token, tenantId, config.instance, token.instanceId, debug)
 
-  if (!config.workspace) {
+  if (!config.workspace && !opts.allowMissingWorkspace) {
     handledError("NO_WORKSPACE", "Workspace is required for studio commands. Use --workspace or set it in your profile.", { format })
   }
 
-  const ws = await getWorkspaceByName(
-    baseUrl,
-    token.token,
-    token.userId,
-    tenantId,
-    instanceId,
-    config.instance,
-    config.workspace,
-    debug,
-  )
+  const ws = config.workspace
+    ? await getWorkspaceByName(
+        baseUrl,
+        token.token,
+        token.userId,
+        tenantId,
+        instanceId,
+        config.instance,
+        config.workspace,
+        debug,
+      )
+    : undefined
 
-  if (!ws) {
+  if (!ws && !opts.allowMissingWorkspace) {
     handledError("WORKSPACE_NOT_FOUND", `Workspace '${config.workspace}' not found.`, { format })
   }
 
-  if (!ws.projectId) {
+  if (ws && !ws.projectId && !opts.allowMissingWorkspace) {
     handledError("PROJECT_NOT_FOUND", `Workspace '${config.workspace}' has no associated project.`, { format })
   }
+
+  if (!ws && debug) process.stderr.write(`[debug] studio-context: workspace '${config.workspace}' unresolved, falling back to workspaceId=0 projectId=0 (allowMissingWorkspace)\n`)
 
   return {
     token: token.token,
     instanceId,
-    workspaceId: ws.workspaceId,
-    projectId: ws.projectId,
+    workspaceId: ws?.workspaceId ?? 0,
+    projectId: ws?.projectId ?? 0,
     userId: token.userId,
     tenantId,
     instanceName: config.instance,
-    workspaceName: config.workspace,
+    workspaceName: config.workspace ?? "",
     env: detectEnv(config.service),
     baseUrl,
     customHeaders: config.customHeaders,
