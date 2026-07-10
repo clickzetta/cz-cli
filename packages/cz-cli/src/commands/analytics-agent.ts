@@ -678,7 +678,7 @@ async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<R
       },
     )
   }
-  const studio = getProfileAgentContext(argv) ?? await getStudioContext(argv)
+  const studio = getProfileAgentContext(argv) ?? await getStudioContext(argv, { allowMissingWorkspace: true })
   return { endpoint: endpoint!, studio }
 }
 
