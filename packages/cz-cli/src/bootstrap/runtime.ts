@@ -7,6 +7,7 @@ import { flushOtel } from "../opencode-plugin/otel/index.js"
 import { flushLangfuse, initLangfuse } from "../langfuse.js"
 import { applyDefaultOtelEnv } from "../otel-defaults.js"
 import { CLICKZETTA_AGENT_SYSTEM_PROMPT } from "../agent-system-prompt.js"
+import { disableUpstreamAutoupdate } from "./upstream-autoupdate.js"
 import {
   injectClickzettaAgentConfig,
   injectClickzettaTuiConfig,
@@ -17,6 +18,16 @@ import {
 let globalHandlersRegistered = false
 
 export async function main(args: string[], agentRuntime = false): Promise<number> {
+  // cz_change: neutralize the upstream opencode auto-updater. Both entry flows
+  // (compiled boot.ts and dev main.ts → run-cli → delegateToAgentRuntime) converge
+  // here, and the TUI's server Worker — which triggers opencode's `upgrade()` — is
+  // only created further down in the agent-runtime branch, after
+  // installClickzettaWorkerEnvShim() snapshots process.env into the Worker. Setting
+  // the flag at the top of main() guarantees it is in process.env before that Worker
+  // is built. See disableUpstreamAutoupdate for the flag/timing rationale.
+  disableUpstreamAutoupdate()
+
+
   if (!globalHandlersRegistered) {
     globalHandlersRegistered = true
     process.on("unhandledRejection", (e) => {

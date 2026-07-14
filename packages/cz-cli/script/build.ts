@@ -284,6 +284,16 @@ for (const item of targets) {
     path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-brand.tsx"),
     `dist/${name}/bin/${CLICKZETTA_TUI_PLUGIN_ASSET}`,
   )
+  // cz_change: the brand plugin's terminal-title logic lives in a sibling .ts
+  // module (tui-title-brand.ts) so it's unit-testable without the @opentui/solid
+  // JSX runtime. tui-brand.tsx imports it via a bare relative "./tui-title-brand",
+  // which resolves next to the copied .tsx at runtime — so the sibling must ship
+  // alongside it. It's a type-only import of @opencode-ai/plugin/tui (erased at
+  // compile), so shipping it as raw source carries no second @opentui/core.
+  fs.copyFileSync(
+    path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-title-brand.ts"),
+    `dist/${name}/bin/tui-title-brand.ts`,
+  )
   binaries[name] = Script.version
 }
 

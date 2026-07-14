@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { For } from "solid-js"
+import { installTerminalTitleBrand } from "./tui-title-brand"
 
 // cz_change: restore the ClickZetta "CZ-CLI" home logo through opencode's PUBLIC
 // TUI plugin slot API (home_logo is a host slot declared mode:replace in
@@ -19,6 +20,7 @@ const LOGO = [
 ]
 
 const tui: TuiPlugin = async (api) => {
+  installTerminalTitleBrand(api)
   const theme = () => api.theme.current
   api.slots.register({
     order: 100,

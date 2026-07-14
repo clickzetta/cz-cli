@@ -7,7 +7,22 @@ import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
 import { LayerNode } from "./effect/layer-node"
 
-const app = "opencode"
+//======================== cz-cli change ========================
+// Product-identity isolation. cz-cli is a DISTINCT product from opencode and must
+// not share its global directories (~/.config/opencode, ~/.local/share/opencode,
+// ~/.cache/opencode, ~/.local/state/opencode) — otherwise editing opencode's own
+// config/auth/cache is seen by cz-agent and vice versa.
+//
+// Upstream value is `const app = "opencode"`. This rename was applied on the old
+// 1.4.7 base and was LOST during the 1.17.11 re-baseline onto pristine upstream;
+// we re-apply it here. The `app` constant is the on-disk product identity, so this
+// is the single, precise place to isolate — no XDG env redirection (which would
+// leak into every child process: LSP, git, user commands).
+//
+// NOTE: no data migration from the old opencode dirs is performed (the 1.4.7 base
+// didn't migrate either). Existing users re-authenticate under the clickzetta dirs.
+const app = "clickzetta"
+//====================== end cz-cli change ======================
 const data = path.join(xdgData!, app)
 const cache = path.join(xdgCache!, app)
 const config = path.join(xdgConfig!, app)
