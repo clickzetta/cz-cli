@@ -38,6 +38,12 @@ Use `cz-cli` proactively for ClickZetta operational requests. Do not ask for inf
 - For output table JSON flags such as `--output-tables`, pass the JSON array as one shell argument, usually with single quotes.
 - `cz-cli task cdc *` commands operate on multi-table CDC pipelines only (MULTI_REALTIME, fileType 281). Single-table Kafka streaming tasks (fileType 14) use `task start` / `task stop`, not `task cdc`.
 
+## Data Quality Rules
+
+- `cz-cli dqc *` manages data quality check rules: `list` / `create` / `update` / `stat` / `run` / `delete`. A rule is a custom SQL returning a single number compared to a threshold (`--operator` + `--value`); the canonical form is `--sql "select count(*) from db.t where <violation>" --operator EQUAL --value 0`.
+- `dqc create` requires a compute VC via `--vc` (GENERAL/ANALYTICS) — sync-only INTEGRATION VCs cannot run rule SQL. Omit `--vc` to have the CLI list available compute VCs. Confirm the VC with the user rather than defaulting.
+- `dqc run` is async: it returns a `task_id`, not the pass/fail result. `dqc delete` is destructive — confirm intent (or pass `-y`).
+
 ## Output Handling
 
 - `--format json`: best for parsing.

@@ -132,6 +132,22 @@ cz-cli task cdc recover-table <task> --table-ids <id,id>  # Resume incremental s
 
 Get table ids from `task cdc tables` first — the `*-table` ops require them. Every `task cdc` command validates fileType 281.
 
+## Data Quality (`cz-cli dqc`)
+
+Custom-SQL data quality check (DQC) rules. A rule runs a SQL that returns a single number (usually a violation count) and compares it against a threshold with an operator.
+
+```bash
+cz-cli dqc list [--object <schema.table>] [--page N] [--page-size N]   # List rules
+cz-cli dqc create --table <schema.table> --sql "<sql>" \
+                  --operator EQUAL --value 0 --vc <compute-vc>          # Create a SQL rule
+cz-cli dqc update <rule-id> [--sql] [--operator --value] [--vc] [--desc] [--condition]
+cz-cli dqc stat [--type rule_table|rule_task]   # Overview (default rule_task: pass rate)
+cz-cli dqc run <rule-id> [--rerun]              # Run now (async) → returns task_id
+cz-cli dqc delete <rule-id> [-y]                # 🔴 destructive, needs confirmation
+```
+
+`--vc` must be a compute VC (GENERAL/ANALYTICS) — sync-only INTEGRATION VCs cannot run rule SQL; omit `--vc` to list available ones. Typical rule: `--sql "select count(*) from db.t where <violation>" --operator EQUAL --value 0`. `--operator` is one of EQUAL/NOT_EQUAL/LESS_THAN/LESS_EQUAL/GREATER_THAN/GREATER_EQUAL. Scheduling: `--trigger-type PLAN --cron <expr>`, or `--trigger-type SCHEDULE_TASK --main-task <id> --level 0|1` (main-task must be a deployed periodic task). `run` is async — the pass/fail result is fetched later by querying the rule task, not returned inline.
+
 ## Runs and Attempts
 
 ```bash
