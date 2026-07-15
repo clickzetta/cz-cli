@@ -62,6 +62,25 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   re-authenticate under the clickzetta dirs (matches the 1.4.7 behavior).
 - **Verify:** run cz, confirm dirs resolve under `.../clickzetta`, not `.../opencode`.
 
+### 2. Home-level config dir — `~/.opencode` → `~/.clickzetta`
+
+- **File:** `packages/opencode/src/config/paths.ts`
+- **Marker:** `//===== cz-cli change =====` around `targets: [".clickzetta"]` in `directories()`.
+- **Upstream value:** `targets: [".opencode"]`
+- **What/why:** `directories()` reads a home-level config dir `~/.opencode`. This is
+  a hardcoded literal that patch #1's `app = "clickzetta"` rename does NOT reach
+  (that constant only governs the XDG config/data/cache/state roots). Left as
+  `".opencode"`, a machine that also has a real opencode install shares
+  `~/.opencode` with it — the user's opencode plugins/agents/commands leak into
+  cz-cli and vice versa. Renaming the literal to `".clickzetta"` closes the one gap
+  patch #1 can't.
+- **Why intrusive (no hook):** this read is unconditional — no flag gates it and no
+  env redirects its target (`OPENCODE_DISABLE_PROJECT_CONFIG` only gates the
+  project-level read above it; `OPENCODE_CONFIG_DIR` only appends). Editing the
+  literal is the only way.
+- **Verify:** with `~/.clickzetta/plugin/foo.ts` present, confirm cz loads it and
+  never reads `~/.opencode`.
+
 ---
 
 ## HOOK-based customizations (safe — live entirely in the cz layer)

@@ -29,3 +29,27 @@
 export function disableUpstreamAutoupdate(): void {
   process.env.OPENCODE_DISABLE_AUTOUPDATE = "1"
 }
+
+// cz_change: cz-cli is a single-user tool whose config lives under the user's
+// home (~/.config/clickzetta, ~/.clickzetta), NOT in whatever repo the user
+// happens to `cd` into. Upstream opencode, by default, also discovers
+// project-level config — <cwd>/opencode.json[c] and <cwd>/.opencode/ walked up to
+// the worktree root (packages/opencode/src/config/config.ts:405 and
+// config/paths.ts:27, both gated by Flag.OPENCODE_DISABLE_PROJECT_CONFIG). For cz
+// that is surprising: a stray .opencode in some cloned repo would silently alter
+// the agent's config/agents/plugins. We turn project discovery OFF by default.
+//
+// This is a pure env hook (no edit to packages/opencode|core|tui): the flag is
+// `truthy("OPENCODE_DISABLE_PROJECT_CONFIG")` in packages/core/src/flag/flag.ts.
+// Set in process.env before opencode reads it (and carried into the TUI Worker by
+// installClickzettaWorkerEnvShim), exactly like disableUpstreamAutoupdate.
+//
+// Unlike autoupdate, project config is not "always harmful" — a user or CI that
+// genuinely wants repo-local config can still re-enable it by exporting
+// OPENCODE_DISABLE_PROJECT_CONFIG=0 (or any non-truthy value). We only supply the
+// default when the user has expressed no preference.
+export function disableProjectConfigByDefault(): void {
+  if (process.env.OPENCODE_DISABLE_PROJECT_CONFIG === undefined) {
+    process.env.OPENCODE_DISABLE_PROJECT_CONFIG = "1"
+  }
+}

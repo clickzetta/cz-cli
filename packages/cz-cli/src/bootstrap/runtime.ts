@@ -7,7 +7,7 @@ import { flushOtel } from "../opencode-plugin/otel/index.js"
 import { flushLangfuse, initLangfuse } from "../langfuse.js"
 import { applyDefaultOtelEnv } from "../otel-defaults.js"
 import { CLICKZETTA_AGENT_SYSTEM_PROMPT } from "../agent-system-prompt.js"
-import { disableUpstreamAutoupdate } from "./upstream-autoupdate.js"
+import { disableProjectConfigByDefault, disableUpstreamAutoupdate } from "./upstream-autoupdate.js"
 import {
   injectClickzettaAgentConfig,
   injectClickzettaTuiConfig,
@@ -26,6 +26,12 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   // the flag at the top of main() guarantees it is in process.env before that Worker
   // is built. See disableUpstreamAutoupdate for the flag/timing rationale.
   disableUpstreamAutoupdate()
+
+  // cz_change: default project-level opencode config discovery to OFF, so a repo's
+  // stray opencode.json / .opencode never alters cz-cli. Same timing/Worker-propagation
+  // rationale as disableUpstreamAutoupdate; user can override with
+  // OPENCODE_DISABLE_PROJECT_CONFIG=0. See disableProjectConfigByDefault.
+  disableProjectConfigByDefault()
 
 
   if (!globalHandlersRegistered) {
