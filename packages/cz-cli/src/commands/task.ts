@@ -8,7 +8,7 @@ import {
   listFolders, createFolder,
   executeAdhoc, getRunDetail,
   getFlowDag, createFlowNode, bindFlowNode, unbindFlowNode,
-  removeFlowNode, executeFlow, getFlowParams, listFlowInstances,
+  removeFlowNode, executeFlow, getFlowParams, listFlowInstances, submitFlow, checkFlowSubmitStatus,
   saveFlowNodeContent, getFlowNodeDetail, saveFlowNodeConfig,
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
@@ -29,6 +29,7 @@ import {
   stopRealtimeTask,
   listPgSlots,
   listPgPublications,
+  taskPreCheck,
   resolveVclusterId,
   studioRequest,
   type StudioConfig,
@@ -358,6 +359,44 @@ async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
 function reportTaskError(err: unknown, format: string | undefined): void {
   if (isHandledCliError(err)) return
   error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+}
+
+function summarizeWorkspaceParamFailure(detail: Record<string, unknown>): string {
+  const label = String(detail.fileName ?? detail.fileId ?? "unknown task")
+  const invalidParams = getObjectList(detail.invalidParams)
+  if (!invalidParams.length) return label
+  return `${label}: ${invalidParams.map((item) => `${String(item.paramKey ?? "unknown")}(${String(item.reason ?? "invalid")})`).join(", ")}`
+}
+
+async function ensureTaskPreCheck(sc: StudioConfig, fileIds: number[], format: string | undefined): Promise<void> {
+  const resp = await taskPreCheck(sc, { projectId: sc.projectId, fileIds })
+  const data = isRecord(resp.data) ? resp.data : {}
+  const details = getObjectList(data.details)
+  const invalidDetails = details.filter((detail) => getObjectList(detail.invalidParams).length > 0)
+  if (data.pass === true && invalidDetails.length === 0) return
+  const message = invalidDetails.length > 0
+    ? `Workspace param pre-check failed: ${invalidDetails.map(summarizeWorkspaceParamFailure).join("; ")}`
+    : `Workspace param pre-check failed for task ${fileIds.join(", ")}.`
+  handledError("WORKSPACE_PARAM_PRECHECK_FAILED", message, {
+    format,
+    extra: { details: invalidDetails.length > 0 ? invalidDetails : details },
+  })
+}
+
+async function waitForFlowSubmit(sc: StudioConfig, submitTraceId: string, format: string | undefined): Promise<number | undefined> {
+  for (let i = 0; i < 20; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 1500))
+    const resp = await checkFlowSubmitStatus(sc, { submitTraceId })
+    const status = typeof resp.data === "number" ? resp.data : Number(resp.data)
+    if (status === 2) return status
+    if (status === 3) {
+      handledError("FLOW_SUBMIT_FAILED", `Flow submit failed (submitTraceId=${submitTraceId}).`, {
+        format,
+        extra: { submit_trace_id: submitTraceId, submit_status: status },
+      })
+    }
+  }
+  return undefined
 }
 
 // Multi-table CDC pipeline lifecycle subcommands (fileType 281 = MULTI_REALTIME).
@@ -2803,6 +2842,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 return
               }
             }
+            await ensureTaskPreCheck(sc, [fileId], format)
             const resp = await submitTask(sc, {
               commitMsg: "Published via cz-cli",
               dataFileId: fileId,
@@ -3757,12 +3797,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     ...(nodeParams !== undefined && { paramValueList: nodeParams }),
                   })
                 }))
-                await submitTask(sc, {
+                await ensureTaskPreCheck(sc, [fileId], format)
+                const submitResp = await submitFlow(sc, {
                   commitMsg: "Published flow via cz-cli",
-                  dataFileId: fileId,
+                  fileId,
                   projectId: sc.projectId,
-                  updatedBy: String(sc.userId),
+                  env: sc.env,
                 })
+                const submitTraceId = typeof submitResp.data === "string" ? submitResp.data : String(submitResp.data ?? "")
+                if (submitTraceId) await waitForFlowSubmit(sc, submitTraceId, format)
                 let published = false
                 for (let i = 0; i < 10; i++) {
                   if (i > 0) await new Promise((r) => setTimeout(r, 1500))

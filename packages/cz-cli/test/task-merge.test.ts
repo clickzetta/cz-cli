@@ -11,7 +11,9 @@ const createCalls: Array<Record<string, unknown>> = []
 const saveContentCalls: Array<Record<string, unknown>> = []
 const saveConfigCalls: Array<Record<string, unknown>> = []
 const submitTaskCalls: Array<Record<string, unknown>> = []
+const taskPreCheckCalls: Array<Record<string, unknown>> = []
 let mergeHasConfig = true
+let taskPreCheckPass = true
 
 const actualSdk = await import("@clickzetta/sdk")
 const actualResolver = await import("../src/resolver.ts")
@@ -75,6 +77,14 @@ mock.module("@clickzetta/sdk", () => ({
     submitTaskCalls.push(params)
     return { data: true }
   },
+  taskPreCheck: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    taskPreCheckCalls.push(params)
+    return {
+      data: taskPreCheckPass
+        ? { pass: true, details: [{ fileId: 13535004, fileName: "merge_task", invalidParams: [] }] }
+        : { pass: false, details: [{ fileId: 13535004, fileName: "merge_task", invalidParams: [{ paramKey: "tenant", reason: "参数不存在" }] }] },
+    }
+  },
 }))
 
 mock.module("../src/commands/studio-context.js", () => ({
@@ -86,6 +96,7 @@ mock.module("../src/commands/studio-context.js", () => ({
     workspaceName: "quick_start",
     baseUrl: "https://api.example.com",
   }),
+  getProfileAgentContext: () => undefined,
   getGatewayContext: async () => ({
     projectId: 1417759,
     workspaceId: 1,
@@ -131,7 +142,9 @@ beforeEach(() => {
   saveContentCalls.length = 0
   saveConfigCalls.length = 0
   submitTaskCalls.length = 0
+  taskPreCheckCalls.length = 0
   mergeHasConfig = true
+  taskPreCheckPass = true
   mkdirSync(profileDir, { recursive: true })
   writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'quick_start'\ninstance = 'tmwmzxzs'\n")
   process.env.CLICKZETTA_TEST_HOME = home
@@ -257,5 +270,24 @@ describe("task merge", () => {
         updatedBy: "studi_test_1",
       },
     ])
+    expect(taskPreCheckCalls).toEqual([
+      {
+        fileIds: [13535004],
+        projectId: 1417759,
+      },
+    ])
+  })
+
+  test("deploy blocks submit when workspace param pre-check fails", async () => {
+    taskPreCheckPass = false
+
+    const result = await execute("task deploy merge_task -y")
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json.error).toMatchObject({
+      code: "WORKSPACE_PARAM_PRECHECK_FAILED",
+    })
+    expect(submitTaskCalls).toHaveLength(0)
   })
 })

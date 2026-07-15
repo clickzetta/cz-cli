@@ -21,9 +21,13 @@ const conditionContent = JSON.stringify({
 const saveTaskConfigCalls: Array<Record<string, unknown>> = []
 const saveFlowNodeConfigCalls: Array<Record<string, unknown>> = []
 const saveFlowNodeContentCalls: Array<Record<string, unknown>> = []
-const submitTaskCalls: Array<Record<string, unknown>> = []
+const submitFlowCalls: Array<Record<string, unknown>> = []
+const taskPreCheckCalls: Array<Record<string, unknown>> = []
+const checkFlowSubmitStatusCalls: Array<Record<string, unknown>> = []
 const bindFlowNodeCalls: Array<Record<string, unknown>> = []
 let failNodeConfigDetail = false
+let flowPreCheckPass = true
+let flowSubmitStatus = 2
 
 const actualSdk = await import("@clickzetta/sdk")
 const actualResolver = await import("../src/resolver.ts")
@@ -82,9 +86,21 @@ mock.module("@clickzetta/sdk", () => ({
     saveTaskConfigCalls.push(params)
     return { data: { ok: true } }
   },
-  submitTask: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    submitTaskCalls.push(params)
-    return { data: { ok: true } }
+  submitFlow: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    submitFlowCalls.push(params)
+    return { data: "trace-flow-001" }
+  },
+  taskPreCheck: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    taskPreCheckCalls.push(params)
+    return {
+      data: flowPreCheckPass
+        ? { pass: true, details: [{ fileId: 13412004, fileName: "condition_flow", invalidParams: [] }] }
+        : { pass: false, details: [{ fileId: 13412004, fileName: "condition_flow", invalidParams: [{ paramKey: "tenant", reason: "参数未上线(当前状态:未发布)" }] }] },
+    }
+  },
+  checkFlowSubmitStatus: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    checkFlowSubmitStatusCalls.push(params)
+    return { data: flowSubmitStatus }
   },
   saveTaskContent: async () => ({ data: { ok: true } }),
   getFlowDag: async () => ({
@@ -171,6 +187,7 @@ mock.module("../src/commands/studio-context.js", () => ({
     env: "prod",
     userName: "studi_test_1",
   }),
+  getProfileAgentContext: () => undefined,
 }))
 
 mock.module("../src/resolver.js", () => ({
@@ -196,9 +213,13 @@ beforeEach(() => {
   saveTaskConfigCalls.length = 0
   saveFlowNodeConfigCalls.length = 0
   saveFlowNodeContentCalls.length = 0
-  submitTaskCalls.length = 0
+  submitFlowCalls.length = 0
+  taskPreCheckCalls.length = 0
+  checkFlowSubmitStatusCalls.length = 0
   bindFlowNodeCalls.length = 0
   failNodeConfigDetail = false
+  flowPreCheckPass = true
+  flowSubmitStatus = 2
   mkdirSync(profileDir, { recursive: true })
   writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n")
   process.env.CLICKZETTA_TEST_HOME = home
@@ -325,13 +346,22 @@ describe("condition task contracts", () => {
       vcCode: "NODE_SQL_VC",
       vcId: "node-sql-vc-id",
     })
-    expect(submitTaskCalls).toEqual([
+    expect(submitFlowCalls).toEqual([
       {
         commitMsg: "Published flow via cz-cli",
-        dataFileId: 13412004,
+        fileId: 13412004,
         projectId: 60001,
-        updatedBy: "12365",
+        env: "prod",
       },
+    ])
+    expect(taskPreCheckCalls).toEqual([
+      {
+        fileIds: [13412004],
+        projectId: 60001,
+      },
+    ])
+    expect(checkFlowSubmitStatusCalls).toEqual([
+      { submitTraceId: "trace-flow-001" },
     ])
   })
 
@@ -341,7 +371,29 @@ describe("condition task contracts", () => {
     const result = await execute("task flow submit 13412004 --vc AUTO_STOP_TEST_01")
 
     expect(result.exitCode).toBe(1)
-    expect(submitTaskCalls).toHaveLength(0)
+    expect(submitFlowCalls).toHaveLength(0)
     expect(saveFlowNodeContentCalls.some((call) => call.nodeId === 13412006)).toBe(false)
+  })
+
+  test("flow submit stops when workspace param pre-check fails", async () => {
+    flowPreCheckPass = false
+
+    const result = await execute("task flow submit 13412004 --vc AUTO_STOP_TEST_01")
+
+    expect(result.exitCode).toBe(1)
+    expect(submitFlowCalls).toHaveLength(0)
+    expect(checkFlowSubmitStatusCalls).toHaveLength(0)
+  })
+
+  test("flow submit returns error when async submit status becomes failed", async () => {
+    flowSubmitStatus = 3
+
+    const result = await execute("task flow submit 13412004 --vc AUTO_STOP_TEST_01")
+
+    expect(result.exitCode).toBe(1)
+    expect(submitFlowCalls).toHaveLength(1)
+    expect(checkFlowSubmitStatusCalls).toEqual([
+      { submitTraceId: "trace-flow-001" },
+    ])
   })
 })

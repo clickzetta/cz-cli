@@ -82,6 +82,24 @@ flow 节点内容、cron、VC、schema 与参数配置 MUST 以父 flow task 为
 - **THEN** 系统保存父 flow 调度配置并提交/发布 flow
 - **AND** 缺失或非法 cron 时返回可诊断错误
 
+#### Scenario: 提交 draft flow 时走 flow 发布接口
+
+- **WHEN** 用户执行 `cz-cli task flow submit FLOW_TASK` 且该任务是已配置节点的 draft flow
+- **THEN** CLI MUST 使用 flow 发布接口语义提交 `fileId`
+- **AND** MUST NOT 误走通用 task 发布接口导致 `文件参数不匹配`
+
+#### Scenario: 提交 flow 前先检查 workspace 参数
+
+- **WHEN** 用户执行 `cz-cli task flow submit FLOW_TASK`
+- **THEN** CLI MUST 在真正提交前调用 workspace 参数预检查
+- **AND** 若存在未发布、已停用或不存在的项目参数，CLI MUST 返回可诊断错误且不调用 flow 发布接口
+
+#### Scenario: flow 提交后轮询异步提交状态
+
+- **WHEN** flow 发布接口返回 `submitTraceId`
+- **THEN** CLI MUST 轮询 flow 提交状态直到成功、失败或超时
+- **AND** 当状态为失败时，CLI MUST 返回业务错误而不是误报提交成功
+
 #### Scenario: 手动执行流程
 
 - **WHEN** 用户执行 `cz-cli task flow run FLOW_TASK --vc DEFAULT --param ds=2026-01-01`
