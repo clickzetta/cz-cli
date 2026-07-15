@@ -183,15 +183,19 @@ const DIST_PREFIX = "cz-cli"
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
-  // cz_change: add --frozen-lockfile --ignore-scripts to upstream's bare all-platform
-  // installs. They only pull the prebuilt cross-platform napi binaries for opentui/
-  // watcher/fff-bun into node_modules. On the win32 CI runner upstream's bare re-resolve
-  // re-runs lifecycle scripts for trustedDependencies and tree-sitter-powershell then
-  // triggers a node-gyp source build that fails (no Node headers / common.gypi).
-  // --frozen-lockfile keeps the workspace graph the "Install dependencies" step already
-  // linked (so internal packages still resolve), and --ignore-scripts skips the native
-  // rebuild. Matches the flags release-cos.yml's "Install dependencies" step uses on Windows.
-  const napiFlags = ["--os=*", "--cpu=*", "--frozen-lockfile", "--ignore-scripts"]
+  // cz_change: add flags to upstream's bare all-platform installs so they don't break
+  // the win32 CI build. These installs only pull the prebuilt cross-platform napi
+  // binaries for opentui/watcher/fff-bun into node_modules. Three problems on win32:
+  //   --ignore-scripts   — upstream's bare re-resolve re-runs lifecycle scripts for
+  //                        trustedDependencies; tree-sitter-powershell then triggers a
+  //                        node-gyp source build that fails (no Node headers/common.gypi).
+  //   --linker hoisted   — the "Install dependencies" step linked the workspace with
+  //                        hoisted layout; without this flag bun re-links isolated and
+  //                        the flattened workspace/deps (opencode/*, yargs, @clickzetta/sdk)
+  //                        stop resolving during Bun.build.
+  //   --frozen-lockfile  — keep the exact dependency graph already installed.
+  // Matches the flags release-cos.yml's "Install dependencies" step uses on Windows.
+  const napiFlags = ["--os=*", "--cpu=*", "--frozen-lockfile", "--linker", "hoisted", "--ignore-scripts"]
   await $`bun install ${napiFlags} @opentui/core@${pkg.dependencies["@opentui/core"]}`
   await $`bun install ${napiFlags} @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
   await $`bun install ${napiFlags} @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
