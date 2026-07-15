@@ -1,43 +1,19 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { onStudio, stubStudioContext } from "./support/cz-fixtures.js"
 
-mock.module("../src/connection/profile-store.js", () => ({
-  readAgentEndpoint: () => "https://example.clickzetta.com",
-}))
-
-mock.module("../src/commands/studio-context.js", () => ({
-  getStudioContext: async () => ({
-    token: "studio-token",
-    instanceId: 11,
-    workspaceId: 22,
-    projectId: 33,
-    userId: 44,
-    tenantId: 55,
-    instanceName: "inst",
-    workspaceName: "ws",
-    env: "uat",
-    baseUrl: "https://example.clickzetta.com",
-    customHeaders: {},
-    userName: "tester",
-  }),
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
+// Network-boundary test: no mock.module of our own src. The real analytics-agent session run
+// command runs (registerAnalyticsAgentCommand → resolveAnalyticsContext →
+// getStudioContext → SDK), and only the network boundary (globalThis.fetch,
+// intercepted in preload) is stubbed. The analysis-agent endpoint comes from a
+// real profiles.toml and the studio auth/context plumbing from stubStudioContext().
 
 const { createCli } = await import("../src/cli.ts")
 const { registerAnalyticsAgentCommand } = await import("../src/commands/analytics-agent.ts")
 
-const originalFetch = globalThis.fetch
 const originalStdoutWrite = process.stdout.write.bind(process.stdout)
 const originalStderrWrite = process.stderr.write.bind(process.stderr)
-
-function jsonResponse(payload: unknown): Response {
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  })
-}
 
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
@@ -73,10 +49,22 @@ async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; outp
 describe("analytics-agent session run", () => {
   beforeEach(() => {
     process.exitCode = 0
+    writeFileSync(
+      join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+      [
+        "[profiles.test]",
+        "pat = 'pat'",
+        "workspace = 'wanxin_test_04'",
+        "instance = 'inst'",
+        "service = 'uat-api.clickzetta.com'",
+        "analysis_agent_endpoint = 'https://example.clickzetta.com'",
+        "",
+      ].join("\n"),
+    )
+    stubStudioContext()
   })
 
   afterEach(() => {
-    globalThis.fetch = originalFetch
     process.stdout.write = originalStdoutWrite
     process.stderr.write = originalStderrWrite
     process.exitCode = 0
@@ -107,16 +95,8 @@ describe("analytics-agent session run", () => {
       },
     }
 
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.includes("/open/text2insight/query")) {
-        return jsonResponse({ data: { questionId: 123 } })
-      }
-      if (url.includes("/open/safe_question_poll")) {
-        return jsonResponse(pollPayload)
-      }
-      throw new Error(`unexpected url: ${url}`)
-    }) as typeof fetch
+    onStudio("/open/text2insight/query", () => ({ data: { questionId: 123 } }))
+    onStudio("/open/safe_question_poll", () => pollPayload)
 
     const result = await runAnalyticsCli([
       "analytics-agent",
@@ -133,33 +113,25 @@ describe("analytics-agent session run", () => {
   })
 
   test("shows the final-summary output when --summary is set", async () => {
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.includes("/open/text2insight/query")) {
-        return jsonResponse({ data: { questionId: 123 } })
-      }
-      if (url.includes("/open/safe_question_poll")) {
-        return jsonResponse({
-          success: true,
-          data: {
-            questionId: 123,
-            responses: [
-              {
-                resGroupId: 1,
-                dataType: "summary",
-                modelRes: { data: { message: "final answer" } },
-              },
-              {
-                resGroupId: 1,
-                dataType: "finish",
-                modelRes: { data: { message: "done" } },
-              },
-            ],
+    onStudio("/open/text2insight/query", () => ({ data: { questionId: 123 } }))
+    onStudio("/open/safe_question_poll", () => ({
+      success: true,
+      data: {
+        questionId: 123,
+        responses: [
+          {
+            resGroupId: 1,
+            dataType: "summary",
+            modelRes: { data: { message: "final answer" } },
           },
-        })
-      }
-      throw new Error(`unexpected url: ${url}`)
-    }) as typeof fetch
+          {
+            resGroupId: 1,
+            dataType: "finish",
+            modelRes: { data: { message: "done" } },
+          },
+        ],
+      },
+    }))
 
     const result = await runAnalyticsCli([
       "analytics-agent",

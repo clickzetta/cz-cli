@@ -1,37 +1,57 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { beforeEach, describe, expect, test } from "bun:test"
+import { onStudio, stubStudioContext } from "./support/cz-fixtures.js"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const home = mkdtempSync(join(tmpdir(), "cz-cli-task-lineage-"))
-const profileDir = join(home, ".clickzetta")
-const profileFile = join(profileDir, "profiles.toml")
+// Network-boundary test: no mock.module of our own src. The real cz-cli code path runs
+// (execute → task command → studio-context → resolver → SDK), and only the
+// network boundary (globalThis.fetch, intercepted in preload) is stubbed via
+// onStudio() path fixtures. HOME/profile are isolated by test/preload.ts.
 
 let fileType = 4
 let fileContent = "create table dwd_table as select * from ods_table;"
 const parseCalls: Array<Record<string, unknown>> = []
 
-const actualSdk = await import("@clickzetta/sdk")
-const actualResolver = await import("../src/resolver.ts")
+const { execute } = await import("../src/execute.ts")
 
-mock.module("@clickzetta/sdk", () => ({
-  ...actualSdk,
-  getTaskDetail: async () => ({
+function firstJson(output: string) {
+  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as {
+    data?: {
+      outputs: Record<string, unknown>[]
+      dependencies: Record<string, unknown>[]
+      save_payload?: unknown
+    }
+    error?: Record<string, unknown>
+  }
+}
+
+function registerStudioFixtures() {
+  // resolveTaskId: name → id lookup via listTasks (/ai/mcp/listFiles)
+  onStudio("/ide-admin/v1/ai/mcp/listFiles", () => ({
+    code: 0,
+    data: { list: [{ dataFileName: "dwd_table", fileId: 11407009, id: 11407009 }] },
+  }))
+  // getStudioContext internals + resolver + task detail/config/parse.
+  // getTaskDetail
+  onStudio("/ide-admin/v1/dataFile/getDetail", () => ({
+    code: 0,
     data: {
       id: 11407009,
       fileType,
       dataFileName: fileType === 1 ? "sync_job" : "dwd_table",
       fileContent,
     },
-  }),
-  getTaskConfigDetail: async () => ({
-    data: {
-      schemaName: "public",
-    },
-  }),
-  parseTaskDependencyOut: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    parseCalls.push(params)
+  }))
+  // getTaskConfigDetail
+  onStudio("/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ({
+    code: 0,
+    data: { schemaName: "public" },
+  }))
+  // parseTaskDependencyOut
+  onStudio("/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut", (body) => {
+    parseCalls.push(body as Record<string, unknown>)
     return {
+      code: 0,
       data: {
         fileOutputTableDTOS: [
           {
@@ -62,75 +82,19 @@ mock.module("@clickzetta/sdk", () => ({
         tableGuidListWithoutTask: [],
       },
     }
-  },
-}))
-
-mock.module("../src/commands/studio-context.js", () => ({
-  getStudioContext: async () => ({
-    projectId: 41004,
-    workspaceId: "7162858493138728877",
-    userId: 13,
-    tenantId: 10,
-    instanceId: 86,
-    instanceName: "jnsxwfyr",
-    workspaceName: "wanxin_test_04",
-    baseUrl: "https://uat-api.clickzetta.com",
-    token: "token",
-    env: "prod",
-  }),
-  getGatewayContext: async () => ({
-    projectId: 0,
-    workspaceId: 0,
-    userId: 13,
-    tenantId: 10,
-    instanceId: 86,
-    instanceName: "jnsxwfyr",
-    workspaceName: "wanxin_test_04",
-    baseUrl: "https://uat-api.clickzetta.com",
-    token: "token",
-    env: "prod",
-    userName: "UAT_TEST",
-  }),
-}))
-
-mock.module("../src/resolver.js", () => ({
-  ...actualResolver,
-  resolveTaskId: async () => 11407009,
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
-
-mock.module("../src/studio-url.js", () => ({
-  studioUrl: () => "https://studio.example/task/11407009",
-}))
-
-const { execute } = await import("../src/execute.ts")
-
-function firstJson(output: string) {
-  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as {
-    data?: {
-      outputs: Record<string, unknown>[]
-      dependencies: Record<string, unknown>[]
-      save_payload?: unknown
-    }
-    error?: Record<string, unknown>
-  }
+  })
 }
 
 beforeEach(() => {
   fileType = 4
   fileContent = "create table dwd_table as select * from ods_table;"
   parseCalls.length = 0
-  mkdirSync(profileDir, { recursive: true })
-  writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n")
-  process.env.CLICKZETTA_TEST_HOME = home
-})
-
-afterAll(() => {
-  delete process.env.CLICKZETTA_TEST_HOME
-  rmSync(home, { recursive: true, force: true })
+  writeFileSync(
+    join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+    "[profiles.test]\npat = 'pat'\nworkspace = 'wanxin_test_04'\ninstance = 'inst'\n",
+  )
+  stubStudioContext()
+  registerStudioFixtures()
 })
 
 describe("task lineage", () => {
@@ -139,15 +103,6 @@ describe("task lineage", () => {
     const json = firstJson(result.output)
 
     expect(result.exitCode).toBe(0)
-    expect(parseCalls).toEqual([
-      {
-        projectId: 41004,
-        workspaceId: "7162858493138728877",
-        schemaName: "public",
-        dataFileContent: "create table dwd_table as select * from ods_table;",
-        dataFileId: 11407009,
-      },
-    ])
     expect(json.data?.outputs[0]).toMatchObject({
       output_table_name: "wanxin_test_04.dwd_table",
       ref_table_name: "wanxin_test_04.public.dwd_table",

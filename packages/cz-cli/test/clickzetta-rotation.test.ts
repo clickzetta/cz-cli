@@ -1,11 +1,14 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { onFetch } from "./support/cz-fixtures.js"
 
-const home = mkdtempSync(join(tmpdir(), "cz-cli-clickzetta-rotation-"))
-const profileDir = join(home, ".clickzetta")
-const profileFile = join(profileDir, "profiles.toml")
+// Network-boundary test: the real SDK + real getToken/getCurrentUser/studioRequest run; only the
+// network boundary (globalThis.fetch) is stubbed. studioCalls is reconstructed from
+// intercepted requests (baseUrl+path from the URL, instanceName from headers) so the
+// path/body/baseUrl/routing assertions are preserved.
+// @clack/prompts is a TRUE third-party interaction boundary — it stays mocked, but
+// leak-safe (captured + restored in afterAll) since mock.module is process-global.
 
 const studioCalls: Array<{ path: string; body: unknown; baseUrl?: string; instanceName?: string }> = []
 const gatewayState = {
@@ -14,44 +17,7 @@ const gatewayState = {
     99: "ck-new",
   } as Record<number, string>,
 }
-const actualSdk = await import("@clickzetta/sdk")
-
-mock.module("@clickzetta/sdk", () => ({
-  ...actualSdk,
-  getToken: async () => ({
-    token: "portal-token",
-    instanceId: 11,
-    userId: 22,
-    expireTimeMs: 60_000,
-    obtainedAt: Date.now(),
-  }),
-  getCurrentUser: async () => ({
-    id: 22,
-    accountId: 33,
-    name: "alice",
-    instanceId: 11,
-  }),
-  studioRequest: async (config: unknown, path: string, body: unknown) => {
-    studioCalls.push({
-      path,
-      body,
-      baseUrl: typeof config === "object" && config && "baseUrl" in config ? String(config.baseUrl) : undefined,
-      instanceName: typeof config === "object" && config && "instanceName" in config ? String(config.instanceName) : undefined,
-    })
-    if (path === "/llm-gateway-admin/v2/virtual-key/listWithAuth") {
-      return { code: 0, data: gatewayState.listData }
-    }
-    if (path === "/llm-gateway-admin/v2/virtual-key/save") {
-      return { code: 0, data: 99 }
-    }
-    if (path.startsWith("/llm-gateway-admin/v2/virtual-key/getApiKey?id=")) {
-      const id = Number(path.split("=").at(-1))
-      const key = gatewayState.getById[id]
-      if (key) return { code: 0, data: key }
-    }
-    throw new Error(`Unexpected studioRequest path: ${path}`)
-  },
-}))
+const __realClackPrompts = { ...(await import("@clack/prompts")) }
 
 mock.module("@clack/prompts", () => ({
   confirm: async () => true,
@@ -69,14 +35,58 @@ const {
 } = await import("../src/llm/clickzetta-rotation.ts")
 const { readLlmEntries, writeLlmEntries } = await import("../src/llm/native-config.ts")
 
+// Split an intercepted request into the {baseUrl, path} the old studioRequest stub saw.
+function recordStudioCall(url: string, body: unknown, headers: Record<string, string>) {
+  const u = new URL(url)
+  const baseUrl = `${u.protocol}//${u.host}`
+  const path = u.pathname + u.search
+  studioCalls.push({ path, body, baseUrl, instanceName: headers.instancename })
+}
+
+function installGatewayFetch() {
+  // portal login + current user (rotation resolves a token/user first)
+  onFetch({
+    match: (url) => url.includes("/clickzetta-portal/user/loginSingle"),
+    respond: () => ({ code: 0, data: { token: "portal-token", instanceId: 11, userId: 22, expireTime: 60_000 } }),
+  })
+  onFetch({
+    match: (url) => url.includes("/clickzetta-portal/user/getCurrentUser"),
+    respond: () => ({ code: 0, data: { id: 22, accountId: 33, name: "alice", instanceId: 11 } }),
+  })
+  // gateway admin calls — capture like the old studioRequest stub did
+  onFetch({
+    match: (url) => url.includes("/llm-gateway-admin/v2/virtual-key/listWithAuth"),
+    respond: (url, _m, body, headers) => {
+      recordStudioCall(url, body, headers)
+      return { code: 0, data: gatewayState.listData }
+    },
+  })
+  onFetch({
+    match: (url) => url.includes("/llm-gateway-admin/v2/virtual-key/save"),
+    respond: (url, _m, body, headers) => {
+      recordStudioCall(url, body, headers)
+      return { code: 0, data: 99 }
+    },
+  })
+  onFetch({
+    match: (url) => url.includes("/llm-gateway-admin/v2/virtual-key/getApiKey"),
+    respond: (url, _m, body, headers) => {
+      recordStudioCall(url, body, headers)
+      const id = Number(new URL(url).searchParams.get("id"))
+      return { code: 0, data: gatewayState.getById[id] }
+    },
+  })
+}
+
+
+const profileFile = join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml")
+
 beforeEach(() => {
   studioCalls.length = 0
   gatewayState.listData = []
   gatewayState.getById = { 99: "ck-new" }
   delete process.env.CZ_PROFILE
-  process.env.CLICKZETTA_TEST_HOME = home
-  process.env.HOME = home
-  mkdirSync(profileDir, { recursive: true })
+  installGatewayFetch()
   writeFileSync(
     profileFile,
     [
@@ -112,9 +122,8 @@ beforeEach(() => {
 })
 
 afterAll(() => {
-  delete process.env.CLICKZETTA_TEST_HOME
+  mock.module("@clack/prompts", () => __realClackPrompts)
   delete process.env.CZ_PROFILE
-  rmSync(home, { recursive: true, force: true })
 })
 
 describe("clickzetta key rotation", () => {

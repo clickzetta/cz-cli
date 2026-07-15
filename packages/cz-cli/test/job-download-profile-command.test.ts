@@ -1,45 +1,73 @@
-import { afterEach, describe, expect, mock, test } from "bun:test"
-import { existsSync, readFileSync, rmSync } from "node:fs"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { onFetch, stubStudioContext } from "./support/cz-fixtures.js"
 
-const actualSdk = await import("@clickzetta/sdk")
-const actualProfileStore = await import("../src/connection/profile-store.js")
+// Network-boundary test: no mock.module of our own src or of @clickzetta/sdk. The real job
+// profile command runs (execute → job profile → getStudioContext → SDK →
+// fetch), and only the network boundary (globalThis.fetch, intercepted in
+// preload) is stubbed. The studio auth/context plumbing (login, getCurrentUser,
+// serviceInstanceList, listUserWorkspaces) is registered by stubStudioContext();
+// the getJobProfile call is stubbed per-test with onFetch so each body varies.
+//
+// NOTE: the old test mocked getToken/getCurrentUser/getWorkspaceByName, so the
+// only fetch calls it saw were serviceInstanceList + getJobProfile, and it
+// asserted an EXACT request list. Running the real auth path now makes those
+// calls hit the boundary too, so the exact-list assertions are replaced with
+// assertions on the getJobProfile request specifically (its presence, brief
+// query param, and pathname) — the actual intent of the original checks.
 
-const requests: Array<{ url: string; method?: string; headers?: Record<string, string>; body?: string }> = []
+// Captures the getJobProfile requests so tests can assert on the URL/params.
+const profileRequests: Array<{ url: string; method?: string; body?: unknown }> = []
 
-mock.module("@clickzetta/sdk", () => ({
-  ...actualSdk,
-  getToken: async () => ({ token: "token", instanceId: 86, userId: 7, expireTimeMs: 0, obtainedAt: Date.now() }),
-  getCurrentUser: async () => ({ id: 7, name: "UAT_TEST", accountId: 100 }),
-  getWorkspaceByName: async () => ({ workspaceId: 200, workspaceName: "wanxin_test_04", projectId: 300 }),
-}))
-
-mock.module("../src/connection/profile-store.js", () => ({
-  ...actualProfileStore,
-  getProfileConfig: () => undefined,
-  patchProfileUserId: () => {},
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
+function registerJobProfile(payload: unknown) {
+  onFetch({
+    match: (url) => url.includes("/api/v1/vcluster/job/getJobProfile"),
+    respond: (url, method, body) => {
+      profileRequests.push({ url, method, body })
+      return payload
+    },
+  })
+}
 
 const { execute } = await import("../src/execute.ts")
 
-globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-  const requestUrl = String(url)
-  requests.push({
-    url: requestUrl,
-    method: init?.method,
-    headers: init?.headers as Record<string, string> | undefined,
-    body: init?.body as string | undefined,
+function firstJson(output: string) {
+  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
+}
+
+function prettyJson(output: string) {
+  const lines = output.split("\n")
+  return JSON.parse(lines.slice(lines.findIndex((line) => line === "{")).join("\n")) as Record<string, unknown>
+}
+
+beforeEach(() => {
+  profileRequests.length = 0
+  // A real profiles.toml satisfies the profile gate; the command still passes
+  // every connection field explicitly on the CLI, which takes priority.
+  writeFileSync(
+    join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+    [
+      "[profiles.test]",
+      "pat = 'token'",
+      "workspace = 'wanxin_test_04'",
+      "instance = 'jnsxwfyr'",
+      "service = 'uat-api.clickzetta.com'",
+      "",
+    ].join("\n"),
+  )
+  stubStudioContext()
+})
+
+describe("job profile", () => {
+  afterEach(() => {
+    rmSync(join(tmpdir(), "cz-cli", "job-profile", "202606081115127730367220"), { recursive: true, force: true })
+    rmSync(join(tmpdir(), "job-profile.raw.json"), { force: true })
   })
-  if (requestUrl.includes("/clickzetta-portal/service/serviceInstanceList")) {
-    return Response.json({ data: [{ id: 86, name: "jnsxwfyr", serviceId: 1 }] })
-  }
-  if (requestUrl.includes("/api/v1/vcluster/job/getJobProfile")) {
-    return Response.json({
+
+  test("returns only flattened profile rows", async () => {
+    registerJobProfile({
       data: {
         jobDesc: {
           virtualCluster: "CXX_TEST_1",
@@ -102,27 +130,7 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
       },
       respStatus: {},
     })
-  }
-  return Response.json({ respStatus: { errorCode: "UNKNOWN", errorMsg: `Unhandled ${requestUrl}` } })
-}) as typeof fetch
 
-function firstJson(output: string) {
-  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
-}
-
-function prettyJson(output: string) {
-  const lines = output.split("\n")
-  return JSON.parse(lines.slice(lines.findIndex((line) => line === "{")).join("\n")) as Record<string, unknown>
-}
-
-describe("job profile", () => {
-  afterEach(() => {
-    requests.length = 0
-    rmSync(join(tmpdir(), "cz-cli", "job-profile", "202606081115127730367220"), { recursive: true, force: true })
-    rmSync(join(tmpdir(), "job-profile.raw.json"), { force: true })
-  })
-
-  test("returns only flattened profile rows", async () => {
     const result = await execute(
       "job profile 202606081115127730367220 --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com",
     )
@@ -130,11 +138,13 @@ describe("job profile", () => {
     const data = json.data as Array<Record<string, string>>
 
     expect(result.exitCode).toBe(0)
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-      "/clickzetta-portal/service/serviceInstanceList",
+    // The real auth path also calls login/getCurrentUser/serviceInstanceList/
+    // listUserWorkspaces; assert on the profile request specifically.
+    expect(profileRequests).toHaveLength(1)
+    expect(new URL(profileRequests[0].url).pathname).toBe(
       "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
-    ])
-    expect(new URL(requests[1].url).searchParams.get("brief")).toBe("true")
+    )
+    expect(new URL(profileRequests[0].url).searchParams.get("brief")).toBe("true")
     expect(data).toEqual([
       { key: "job_id", value: "202606081115127730367220" },
       { key: "workspace_name", value: "wanxin_test_04" },
@@ -168,153 +178,109 @@ describe("job profile", () => {
   })
 
   test("returns truncated raw profile content without writing a file by default", async () => {
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-      const requestUrl = String(url)
-      requests.push({
-        url: requestUrl,
-        method: init?.method,
-        headers: init?.headers as Record<string, string> | undefined,
-        body: init?.body as string | undefined,
-      })
-      if (requestUrl.includes("/clickzetta-portal/service/serviceInstanceList")) {
-        return Response.json({ data: [{ id: 86, name: "jnsxwfyr", serviceId: 1 }] })
-      }
-      if (requestUrl.includes("/api/v1/vcluster/job/getJobProfile")) {
-        return Response.json({
-          data: {
-            huge: "x".repeat(5000),
-            jobDesc: {
-              account: { userName: "UAT_TEST" },
-              sqlJob: { sqlConfig: { hint: {} } },
-            },
-            jobStatus: { state: "SUCCEED" },
-          },
-          respStatus: {},
-        })
-      }
-      return Response.json({ respStatus: { errorCode: "UNKNOWN", errorMsg: `Unhandled ${requestUrl}` } })
-    }) as typeof fetch
+    registerJobProfile({
+      data: {
+        huge: "x".repeat(5000),
+        jobDesc: {
+          account: { userName: "UAT_TEST" },
+          sqlJob: { sqlConfig: { hint: {} } },
+        },
+        jobStatus: { state: "SUCCEED" },
+      },
+      respStatus: {},
+    })
 
-    try {
-      const result = await execute(
-        "job profile 202606081115127730367220 --raw --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty",
-      )
-      const json = prettyJson(result.output)
-      const data = json.data as Record<string, string | boolean | number>
+    const result = await execute(
+      "job profile 202606081115127730367220 --raw --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty",
+    )
+    const json = prettyJson(result.output)
+    const data = json.data as Record<string, string | boolean | number>
 
-      expect(result.exitCode).toBe(0)
-      expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-        "/clickzetta-portal/service/serviceInstanceList",
-        "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
-      ])
-      expect(json.ai_message).toBe(
-        "Raw profile truncated to 4000 chars from 5268 chars. Use --no-limit to print the full payload, e.g. cz-cli job profile 202606081115127730367220 --raw --no-limit > job_profile.raw.json",
-      )
-      expect(data.truncated).toBe(true)
-      expect(typeof data.raw).toBe("string")
-      expect(String(data.raw)).toContain("...(truncated")
-      expect(data.limit_chars).toBe(4000)
-      expect(data.shown_chars).toBe(4026)
-      expect(data.total_chars).toBe(5268)
-      expect(data.path).toBeUndefined()
-    } finally {
-      globalThis.fetch = originalFetch
-    }
+    expect(result.exitCode).toBe(0)
+    expect(profileRequests).toHaveLength(1)
+    expect(new URL(profileRequests[0].url).pathname).toBe(
+      "/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile",
+    )
+    expect(json.ai_message).toBe(
+      "Raw profile truncated to 4000 chars from 5268 chars. Use --no-limit to print the full payload, e.g. cz-cli job profile 202606081115127730367220 --raw --no-limit > job_profile.raw.json",
+    )
+    expect(data.truncated).toBe(true)
+    expect(typeof data.raw).toBe("string")
+    expect(String(data.raw)).toContain("...(truncated")
+    expect(data.limit_chars).toBe(4000)
+    expect(data.shown_chars).toBe(4026)
+    expect(data.total_chars).toBe(5268)
+    expect(data.path).toBeUndefined()
   })
 
   test("writes the full raw profile content only when --path is provided", async () => {
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-      const requestUrl = String(url)
-      requests.push({
-        url: requestUrl,
-        method: init?.method,
-        headers: init?.headers as Record<string, string> | undefined,
-        body: init?.body as string | undefined,
-      })
-      if (requestUrl.includes("/clickzetta-portal/service/serviceInstanceList")) {
-        return Response.json({ data: [{ id: 86, name: "jnsxwfyr", serviceId: 1 }] })
-      }
-      if (requestUrl.includes("/api/v1/vcluster/job/getJobProfile")) {
-        return Response.json({
-          data: {
-            huge: "x".repeat(5000),
-            jobDesc: {
-              account: { userName: "UAT_TEST" },
-              sqlJob: { sqlConfig: { hint: {} } },
-            },
-            jobStatus: { state: "SUCCEED" },
-          },
-          respStatus: {},
-        })
-      }
-      return Response.json({ respStatus: { errorCode: "UNKNOWN", errorMsg: `Unhandled ${requestUrl}` } })
-    }) as typeof fetch
+    registerJobProfile({
+      data: {
+        huge: "x".repeat(5000),
+        jobDesc: {
+          account: { userName: "UAT_TEST" },
+          sqlJob: { sqlConfig: { hint: {} } },
+        },
+        jobStatus: { state: "SUCCEED" },
+      },
+      respStatus: {},
+    })
 
-    try {
-      const path = join(tmpdir(), "job-profile.raw.json")
-      const result = await execute(
-        `job profile 202606081115127730367220 --raw --path ${path} --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty`,
-      )
-      const json = prettyJson(result.output)
-      const data = json.data as Record<string, string | boolean | number>
+    const path = join(tmpdir(), "job-profile.raw.json")
+    const result = await execute(
+      `job profile 202606081115127730367220 --raw --path ${path} --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty`,
+    )
+    const json = prettyJson(result.output)
+    const data = json.data as Record<string, string | boolean | number>
 
-      expect(result.exitCode).toBe(0)
-      expect(data.path).toBe(path)
-      expect(existsSync(path)).toBe(true)
-      expect(readFileSync(path, "utf-8")).toContain("\"huge\"")
-    } finally {
-      globalThis.fetch = originalFetch
-    }
+    expect(result.exitCode).toBe(0)
+    expect(data.path).toBe(path)
+    expect(existsSync(path)).toBe(true)
+    expect(readFileSync(path, "utf-8")).toContain("\"huge\"")
   })
 
   test("surfaces api errors with debug logs", async () => {
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-      const requestUrl = String(url)
-      requests.push({ url: requestUrl, method: init?.method })
-      if (requestUrl.includes("/clickzetta-portal/service/serviceInstanceList")) {
-        return Response.json({ data: [{ id: 86, name: "jnsxwfyr", serviceId: 1 }] })
-      }
-      return Response.json({
-        code: "200",
-        success: true,
-        data: {
-          respStatus: {
-            requestId: "request-1",
-            errorCode: "CZLH-60005",
-            errorMsg: "NotFound: ACTION: getModel, MODEL cz::meta::persistent::model::Job NotFound",
-          },
+    registerJobProfile({
+      code: "200",
+      success: true,
+      data: {
+        respStatus: {
+          requestId: "request-1",
+          errorCode: "CZLH-60005",
+          errorMsg: "NotFound: ACTION: getModel, MODEL cz::meta::persistent::model::Job NotFound",
         },
-      })
-    }) as typeof fetch
+      },
+    })
 
-    try {
-      const result = await execute(
-        "job profile 202606081115127730367220 --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty --debug",
-      )
+    const result = await execute(
+      "job profile 202606081115127730367220 --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service uat-api.clickzetta.com --format pretty --debug",
+    )
 
-      expect(result.exitCode).toBe(1)
-      expect(result.output).toContain("\"code\": \"JOB_PROFILE_ERROR\"")
-      expect(result.output).toContain("CZLH-60005")
-      expect(result.output).toContain("[debug] job profile: context")
-      expect(result.output).toContain("[debug] job profile: GET")
-      expect(result.output).toContain("[debug] job profile: response")
-      expect(result.output).toContain("[debug] job profile: api_error")
-      expect(result.output).toContain("/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile")
-    } finally {
-      globalThis.fetch = originalFetch
-    }
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain("\"code\": \"JOB_PROFILE_ERROR\"")
+    expect(result.output).toContain("CZLH-60005")
+    expect(result.output).toContain("[debug] job profile: context")
+    expect(result.output).toContain("[debug] job profile: GET")
+    expect(result.output).toContain("[debug] job profile: response")
+    expect(result.output).toContain("[debug] job profile: api_error")
+    expect(result.output).toContain("/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile")
   })
 
   test("preserves base path in service URL (e.g. host/api)", async () => {
     // Regression: new URL(path, base) drops base's path when path starts with "/"
+    registerJobProfile({
+      data: {
+        jobDesc: { account: { userName: "UAT_TEST" }, sqlJob: { sqlConfig: { hint: {} } } },
+        jobStatus: { state: "SUCCEED" },
+      },
+      respStatus: {},
+    })
+
     const result = await execute(
       "job profile 202606081115127730367220 --workspace wanxin_test_04 --instance jnsxwfyr --pat token --service czstudio.example.com/api",
     )
     expect(result.exitCode).toBe(0)
-    const profileUrl = requests.find((r) => r.url.includes("getJobProfile"))?.url
+    const profileUrl = profileRequests.find((r) => r.url.includes("getJobProfile"))?.url
     expect(profileUrl).toBeDefined()
     expect(new URL(profileUrl!).pathname).toBe("/api/clickzetta-lakeconsole/api/v1/vcluster/job/getJobProfile")
   })

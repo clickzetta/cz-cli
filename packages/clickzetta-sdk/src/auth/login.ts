@@ -2,12 +2,17 @@ import { type ClientOptions } from "../client.js"
 import { ClickZettaApiError, type ApiResponse } from "../types/api.js"
 import { InterfaceError } from "../types/errors.js"
 import type { AuthToken } from "../types/index.js"
+import { generatePkce } from "./pkce.js"
+import { exchangeAuthorizationCode } from "./oauth.js"
+import { OAUTH_REDIRECT_URI } from "./oauth-constants.js"
+import { buildOauthLoginParam } from "./oauth-login-param.js"
 
 interface LoginResponse {
   token: string
   instanceId: number
   userId: number
   expireTime: number
+  authorizationCode?: string
 }
 
 // Mirrors Python connector login loop at client.py:296-392:
@@ -57,23 +62,17 @@ async function postLogin(
   requestId: string,
 ): Promise<ApiResponse<LoginResponse>> {
   const url = `${baseUrl}/clickzetta-portal/user/loginSingle`
-  let resp: Response
-  try {
-    resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/plain, */*",
-        "requestId": requestId,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
-    })
-  } catch (e) {
-    console.error("DEBUG fetch error:", url, e)
-    throw e
-  }  
-  const text = await resp.text()  
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/plain, */*",
+      "requestId": requestId,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
+  })
+  const text = await resp.text()
   if (!resp.ok) {
     // Throw something the outer retry loop can inspect for instance errors.
     throw new ClickZettaApiError(
@@ -94,16 +93,28 @@ async function postLogin(
 
 async function loginWithRetry(
   baseUrl: string,
-  body: unknown,
+  body: Record<string, unknown>,
   instance: string,
 ): Promise<AuthToken> {
   let lastError: Error | undefined
   // client.py:305 — one request id for the entire login attempt sequence
   const requestId = generateRequestId()
 
+  // PKCE is generated once per login sequence; codeVerifier stays in memory
+  // only and is never logged. codeChallenge is sent to the portal so the
+  // gateway can later validate the matching verifier at /oauth2/token.
+  const pkce = generatePkce()
+  const loginBody = {
+    ...body,
+    oauthLoginParam: buildOauthLoginParam({
+      redirectUri: OAUTH_REDIRECT_URI,
+      codeChallenge: pkce.codeChallenge,
+    }),
+  }
+
   for (let attempt = 0; attempt <= LOGIN_MAX_RETRIES; attempt++) {
     try {
-      const resp = await postLogin(baseUrl, body, requestId)
+      const resp = await postLogin(baseUrl, loginBody, requestId)
       if (resp.code !== 0 && resp.code !== "0" && resp.code !== 200 && resp.code !== "200") {
         const serverMsg = resp.message ?? ""
         const instErr = instanceConfigError(serverMsg, instance)
@@ -115,11 +126,27 @@ async function loginWithRetry(
       } else if (!resp.data?.token) {
         lastError = new ClickZettaApiError("AUTH_FAILED", "Login succeeded but no token returned")
       } else {
+        const data = resp.data
+        // OAuth path: a non-empty authorizationCode means the portal opted
+        // into the code exchange. Swap the legacy token for the OAuth tokens
+        // while keeping the portal-issued instanceId/userId.
+        if (data.authorizationCode) {
+          const oauth = await exchangeAuthorizationCode(baseUrl, data.authorizationCode, pkce.codeVerifier, OAUTH_REDIRECT_URI)
+          return {
+            token: oauth.accessToken,
+            refreshToken: oauth.refreshToken,
+            instanceId: data.instanceId,
+            userId: data.userId,
+            expireTimeMs: oauth.expiresInMs,
+            obtainedAt: Date.now(),
+          }
+        }
+        // Legacy path: no authorization code, keep the portal token as-is.
         return {
-          token: resp.data.token,
-          instanceId: resp.data.instanceId,
-          userId: resp.data.userId,
-          expireTimeMs: resp.data.expireTime,
+          token: data.token,
+          instanceId: data.instanceId,
+          userId: data.userId,
+          expireTimeMs: data.expireTime,
           obtainedAt: Date.now(),
         }
       }

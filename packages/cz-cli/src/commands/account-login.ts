@@ -15,7 +15,7 @@ interface AccountSiteLoginResult {
   token: string
 }
 
-function splitEndpoint(value: string): { host: string; protocol: string } {
+export function splitEndpoint(value: string): { host: string; protocol: string } {
   const raw = value.trim()
   if (!raw) return { host: "", protocol: "https" }
   if (raw.startsWith("http://") || raw.startsWith("https://")) {
@@ -29,7 +29,7 @@ export function stripProtocol(value: string): string {
   return splitEndpoint(value).host
 }
 
-function extractRootDomain(host: string): string {
+export function extractRootDomain(host: string): string {
   for (const suffix of [".clickzetta.com", ".singdata.com", ".clickzetta-inc.com"]) {
     if (host.endsWith(suffix)) return suffix.slice(1)
   }
@@ -75,7 +75,7 @@ function serviceHostFromInput(host: string): string {
   return host
 }
 
-function serviceEnvFromApiHost(host: string): string {
+export function serviceEnvFromApiHost(host: string): string {
   const hyphenEnv = host.match(/^([^.]+)-api\./)
   if (hyphenEnv?.[1]) return hyphenEnv[1]
   const dottedEnv = host.match(/^([^.]+)\.api\./)

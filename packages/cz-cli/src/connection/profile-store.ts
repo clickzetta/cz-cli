@@ -2,7 +2,7 @@ import { readFileSync, mkdirSync, writeFileSync, renameSync, chmodSync } from "n
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
-import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
+import { DEFAULT_CONNECTION, type ConnectionConfig, type TokenStore, type AuthToken } from "@clickzetta/sdk"
 
 function profilesFile() {
   return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
@@ -217,8 +217,7 @@ export function setTelemetry(enabled: boolean): void {
  * Write userId into the active profile entry so it can be used as enduser.id
  * in telemetry. No-op if the profile already has user_id — never throws.
  */
-export function patchProfileUserId(profileName: string | undefined, userId: number): void {
-  try {
+export function patchProfileUserId(profileName: string | undefined, userId: number): void {  try {
     const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text) as Record<string, unknown>
     const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
@@ -236,5 +235,205 @@ export function patchProfileUserId(profileName: string | undefined, userId: numb
     writeProfilesFile(stringifyTOML(data))
   } catch {
     // best-effort: never block the CLI
+  }
+}
+
+/**
+ * Merge logged-in connection context into the active profile entry so a later
+ * `resolveConnectionConfig` picks up the instance/workspace/schema/etc. the
+ * user actually authenticated against (requirement 11.6/11.7). Resolves the
+ * target profile the same way other helpers do (explicit → default_profile →
+ * first profile); no-op when none resolvable. Only defined, non-empty fields
+ * are written (userId → `user_id`). Best-effort: never throws, and never
+ * touches the profile's `oauth` subtable or unrelated fields.
+ */
+export function patchProfileConnection(
+  profileName: string | undefined,
+  fields: {
+    service?: string
+    protocol?: string
+    instance?: string
+    workspace?: string
+    schema?: string
+    vcluster?: string
+    userId?: number
+    accountId?: number
+    accountName?: string
+  },
+): void {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+
+    const name = resolveProfileName(data, profileName)
+    if (!name || !profiles[name]) return
+
+    const profile = profiles[name]
+    const assign = (key: string, value: string | undefined) => {
+      if (value !== undefined && value.length > 0) profile[key] = value
+    }
+    assign("service", fields.service)
+    assign("protocol", fields.protocol)
+    assign("instance", fields.instance)
+    assign("workspace", fields.workspace)
+    assign("schema", fields.schema)
+    assign("vcluster", fields.vcluster)
+    assign("account_name", fields.accountName)
+    if (typeof fields.userId === "number" && fields.userId > 0) profile["user_id"] = fields.userId
+    if (typeof fields.accountId === "number" && fields.accountId > 0) profile["account_id"] = fields.accountId
+
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block the CLI
+  }
+}
+
+/**
+ * Archive the FULL `/oauth2/userinfo` body verbatim into the active profile
+ * under `[profiles.<name>.userinfo]` so nothing is discarded (requirement
+ * 11.9). The userinfo carries nested values (`instanceList` is an array of
+ * objects, `gatewayMapping` is a JSON string); smol-toml `stringify` round-
+ * trips these losslessly (verified: write → re-parse → deep-equal), so we
+ * persist as a native nested TOML subtable rather than a JSON blob. Resolves
+ * the target profile like the other helpers do; no-ops when none resolvable or
+ * the body is empty. Best-effort: never throws, and never touches the profile's
+ * `oauth` subtable or unrelated fields. Sensitive values (e.g. `apiKey`) are
+ * stored under the same `0o600` file and are never printed.
+ */
+export function patchProfileUserInfo(profileName: string | undefined, userInfo: Record<string, unknown>): void {
+  if (!userInfo || Object.keys(userInfo).length === 0) return
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+
+    const name = resolveProfileName(data, profileName)
+    if (!name || !profiles[name]) return
+
+    profiles[name]["userinfo"] = userInfo
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block the CLI
+  }
+}
+
+/**
+ * Deterministically map a cacheKey (e.g. "instance:pat-or-username") to a TOML
+ * bare-key-safe string. The raw cacheKey may contain ':' and other characters
+ * that complicate quoting, so we collapse anything outside [A-Za-z0-9_] to '_'.
+ * The mapping is stable, so save/load/clear stay consistent for the same key.
+ */
+function sanitizeCacheKey(cacheKey: string): string {
+  return cacheKey.replace(/[^A-Za-z0-9_]/g, "_")
+}
+
+/**
+ * Resolve the profile entry name the same way the other helpers do:
+ * explicit name → default_profile → first profile. Returns undefined when no
+ * profile can be resolved (e.g. empty/missing profiles.toml).
+ */
+function resolveProfileName(data: Record<string, unknown>, profileName: string | undefined): string | undefined {
+  const profiles = (data.profiles ?? {}) as Record<string, unknown>
+  if (profileName) return profileName
+  if (typeof data.default_profile === "string") return data.default_profile
+  return Object.keys(profiles)[0]
+}
+
+// cz-cli merge: the PR shipped its own simplified `num()` here; the target branch
+// already has a fuller `num()` (string-parsing, used by readAgentProfile) above.
+// Kept the fuller one and dropped the duplicate — both callers are number-safe.
+
+/**
+ * Build a profile-backed {@link TokenStore} that persists OAuth tokens under
+ * `[profiles.<name>.oauth.<sanitizedCacheKey>]` in `~/.clickzetta/profiles.toml`.
+ *
+ * All operations are best-effort and never throw: the CLI must keep working
+ * even when the profile file is missing, corrupt, or unwritable (requirement
+ * 9.2). Token values are never logged. Writes reuse {@link writeProfilesFile}
+ * for atomic replace + `0o600` permissions.
+ */
+export function makeProfileTokenStore(profileName: string | undefined, cacheKey: string): TokenStore {
+  const key = sanitizeCacheKey(cacheKey)
+
+  return {
+    load(): AuthToken | undefined {
+      try {
+        const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+        const name = resolveProfileName(data, profileName)
+        if (!name) return undefined
+        const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+        const oauth = profiles[name]?.oauth as Record<string, unknown> | undefined
+        const entry = oauth?.[key] as Record<string, unknown> | undefined
+        if (!entry) return undefined
+
+        const token = str(entry.access_token, undefined)
+        const expireTimeMs = num(entry.expire_time_ms)
+        const obtainedAt = num(entry.obtained_at)
+        const instanceId = num(entry.instance_id)
+        const userId = num(entry.user_id)
+        if (token === undefined || expireTimeMs === undefined || obtainedAt === undefined) return undefined
+        if (instanceId === undefined || userId === undefined) return undefined
+
+        const refreshToken = str(entry.refresh_token, undefined)
+        const result: AuthToken = { token, instanceId, userId, expireTimeMs, obtainedAt }
+        if (refreshToken !== undefined) result.refreshToken = refreshToken
+        return result
+      } catch {
+        // best-effort: missing/corrupt file → behave as no cached token
+        return undefined
+      }
+    },
+
+    save(token: AuthToken): void {
+      try {
+        let data: Record<string, unknown> = {}
+        try {
+          data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+        } catch {
+          // file doesn't exist or is invalid — start fresh
+        }
+        const name = resolveProfileName(data, profileName)
+        if (!name) return
+
+        const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+        const profile = profiles[name] ?? {}
+        const oauth = (profile.oauth ?? {}) as Record<string, unknown>
+
+        const entry: Record<string, unknown> = {
+          access_token: token.token,
+          expire_time_ms: token.expireTimeMs,
+          obtained_at: token.obtainedAt,
+          instance_id: token.instanceId,
+          user_id: token.userId,
+        }
+        if (token.refreshToken !== undefined) entry.refresh_token = token.refreshToken
+
+        oauth[key] = entry
+        profile.oauth = oauth
+        profiles[name] = profile
+        data.profiles = profiles
+        writeProfilesFile(stringifyTOML(data))
+      } catch {
+        // best-effort: never block the CLI on persistence failure
+      }
+    },
+
+    clear(): void {
+      try {
+        const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+        const name = resolveProfileName(data, profileName)
+        if (!name) return
+        const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+        const oauth = profiles[name]?.oauth as Record<string, unknown> | undefined
+        if (!oauth || !(key in oauth)) return
+
+        delete oauth[key]
+        data.profiles = profiles
+        writeProfilesFile(stringifyTOML(data))
+      } catch {
+        // best-effort: missing/corrupt file → nothing to clear
+      }
+    },
   }
 }

@@ -1,84 +1,40 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { beforeEach, describe, expect, test } from "bun:test"
+import { onStudio, stubStudioContext } from "./support/cz-fixtures.js"
+import { clearTokenCache } from "@clickzetta/sdk"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const home = mkdtempSync(join(tmpdir(), "cz-cli-task-create-condition-"))
-const profileDir = join(home, ".clickzetta")
-const profileFile = join(profileDir, "profiles.toml")
+// Network-boundary test: no mock.module of our own src or of @clickzetta/sdk. The real cz-cli
+// path runs (execute → task command → studio-context → resolver → SDK) and only
+// the network boundary (globalThis.fetch, intercepted in preload) is stubbed via
+// onStudio() path fixtures. HOME/profile are isolated by test/preload.ts.
+
 const createCalls: Array<Record<string, unknown>> = []
-
-const actualSdk = await import("@clickzetta/sdk")
-const actualResolver = await import("../src/resolver.ts")
-
-mock.module("@clickzetta/sdk", () => ({
-  ...actualSdk,
-  listTasks: async () => ({ data: { list: [], total: 0, totalPages: 0 } }),
-  createTask: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    createCalls.push(params)
-    return { data: 12345 }
-  },
-}))
-
-mock.module("../src/commands/studio-context.js", () => ({
-  getStudioContext: async () => ({
-    projectId: 60001,
-    workspaceId: "workspace-1",
-    userId: 12365,
-    tenantId: 1223,
-    instanceId: 32,
-    instanceName: "tmwmzxzs",
-    workspaceName: "wanxin-test-ws-03",
-    baseUrl: "https://dev-api.clickzetta.com",
-    token: "token",
-    env: "prod",
-  }),
-  getGatewayContext: async () => ({
-    projectId: 0,
-    workspaceId: 0,
-    userId: 12365,
-    tenantId: 1223,
-    instanceId: 32,
-    instanceName: "tmwmzxzs",
-    workspaceName: "wanxin-test-ws-03",
-    baseUrl: "https://dev-api.clickzetta.com",
-    token: "token",
-    env: "prod",
-    userName: "studi_test_1",
-  }),
-}))
-
-mock.module("../src/resolver.js", () => ({
-  ...actualResolver,
-  resolveFolderIdByName: async () => 389001,
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
-
-mock.module("../src/studio-url.js", () => ({
-  studioUrl: () => "https://studio.example/task/12345",
-}))
 
 const { execute } = await import("../src/execute.ts")
 
 beforeEach(() => {
+  clearTokenCache()
   createCalls.length = 0
-  mkdirSync(profileDir, { recursive: true })
-  writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n")
-  process.env.CLICKZETTA_TEST_HOME = home
-})
-
-afterAll(() => {
-  delete process.env.CLICKZETTA_TEST_HOME
-  rmSync(home, { recursive: true, force: true })
+  writeFileSync(
+    join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+    "[profiles.test]\npat = 'pat'\nworkspace = 'wanxin-test-ws-03'\ninstance = 'tmwmzxzs'\n",
+  )
+  stubStudioContext({ userId: 12365, projectId: 60001, workspaceName: "wanxin-test-ws-03" })
+  // Duplicate-name check (listTasks) → no existing tasks
+  onStudio("/ide-admin/v1/ai/mcp/listFiles", () => ({ code: 0, data: { list: [], total: 0, totalPages: 0 } }))
+  // createTask (addAndReturnId) → capture body, return new file id
+  onStudio("/ide-admin/v1/dataFile/addAndReturnId", (body) => {
+    createCalls.push(body as Record<string, unknown>)
+    return { code: 0, data: 12345 }
+  })
 })
 
 describe("task create condition", () => {
   test("maps CONDITION to Studio fileType 19", async () => {
     const result = await execute("task create studi_test_1testif_20260628011624 --type CONDITION --folder 389001")
 
+    if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
     expect(createCalls).toEqual([
       {
@@ -86,9 +42,7 @@ describe("task create condition", () => {
         createdBy: "12365",
         projectId: 60001,
         dataFileName: "studi_test_1testif_20260628011624",
-        fileDescription: undefined,
         dataFolderId: 389001,
-        workspaceName: "wanxin-test-ws-03",
       },
     ])
   })

@@ -6,6 +6,18 @@ import { spawnSync } from "node:child_process"
 import { parse as parseToml } from "smol-toml"
 import { readLlmEntries } from "../src/llm/native-config.js"
 
+/**
+ * Env for a spawned `setup` subprocess. Pins HOME to the test's temp dir and
+ * drops CLICKZETTA_TEST_HOME — the test preload sets that globally, and
+ * profile-store prefers it over HOME, so leaving it set would make the child
+ * write its profile into the preload's temp dir instead of this test's `home`.
+ */
+function subprocessEnv(home: string): NodeJS.ProcessEnv {
+  const env = { ...process.env, HOME: home, CLICKZETTA_SKIP_TELEMETRY_PROMPT: "1" }
+  delete env.CLICKZETTA_TEST_HOME
+  return env
+}
+
 function runSetupWithCredential(credential: Record<string, unknown>) {
   const home = mkdtempSync(join(tmpdir(), "cz-cli-setup-credential-"))
   mkdirSync(join(home, ".clickzetta"), { recursive: true })
@@ -16,11 +28,7 @@ function runSetupWithCredential(credential: Record<string, unknown>) {
     {
       cwd: import.meta.dir + "/..",
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: home,
-        CLICKZETTA_SKIP_TELEMETRY_PROMPT: "1",
-      },
+      env: subprocessEnv(home),
       stdio: ["ignore", "pipe", "pipe"],
     },
   )
@@ -45,11 +53,7 @@ function runSetup(args: string[]) {
     {
       cwd: import.meta.dir + "/..",
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: home,
-        CLICKZETTA_SKIP_TELEMETRY_PROMPT: "1",
-      },
+      env: subprocessEnv(home),
       stdio: ["ignore", "pipe", "pipe"],
     },
   )

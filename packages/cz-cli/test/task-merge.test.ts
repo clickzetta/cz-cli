@@ -1,11 +1,12 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { beforeEach, describe, expect, test } from "bun:test"
+import { onStudio, onFetch, stubStudioContext } from "./support/cz-fixtures.js"
+import { clearTokenCache } from "@clickzetta/sdk"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const home = mkdtempSync(join(tmpdir(), "cz-cli-task-merge-"))
-const profileDir = join(home, ".clickzetta")
-const profileFile = join(profileDir, "profiles.toml")
+// Network-boundary test: no mock.module of our own src or of @clickzetta/sdk. The real cz-cli
+// path runs and only the network boundary (globalThis.fetch) is stubbed via
+// path/body fixtures. HOME/profile are isolated by test/preload.ts.
 
 const createCalls: Array<Record<string, unknown>> = []
 const saveContentCalls: Array<Record<string, unknown>> = []
@@ -13,28 +14,59 @@ const saveConfigCalls: Array<Record<string, unknown>> = []
 const submitTaskCalls: Array<Record<string, unknown>> = []
 let mergeHasConfig = true
 
-const actualSdk = await import("@clickzetta/sdk")
-const actualResolver = await import("../src/resolver.ts")
+const { execute } = await import("../src/execute.ts")
 
-mock.module("@clickzetta/sdk", () => ({
-  ...actualSdk,
-  listTasks: async () => ({ data: { list: [] } }),
-  createTask: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    createCalls.push(params)
-    return { data: 13535004 }
-  },
-  getTaskDetail: async (_config: Record<string, unknown>, fileId: number) => ({
-    data: fileId === 13533003
-      ? {
-        id: 13533003,
-        projectId: 128008,
-        dataFileName: "select_3",
-        fileType: 19,
-        ownerCnName: "owner-cn",
-        ownerEnName: "owner-en",
+function firstJson(output: string) {
+  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
+}
+
+// Name → id map used by resolveTaskId (listFiles) and getTaskDetail.
+const TASK_IDS: Record<string, number> = { select_3: 13533003, merge_task: 13535004 }
+
+beforeEach(() => {
+  clearTokenCache()
+  createCalls.length = 0
+  saveContentCalls.length = 0
+  saveConfigCalls.length = 0
+  submitTaskCalls.length = 0
+  mergeHasConfig = true
+  writeFileSync(
+    join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+    "[profiles.test]\npat = 'pat'\nworkspace = 'quick_start'\ninstance = 'tmwmzxzs'\n",
+  )
+  // userId is a string identity in this fixture — Studio returns it from login.
+  stubStudioContext({ userId: "studi_test_1" as unknown as number, projectId: 1417759, workspaceName: "quick_start" })
+
+  // listFiles: duplicate-name check (body carries folderId) → no existing task;
+  // resolveTaskId lookup (no folderId) → the matching task by name.
+  onFetch({
+    match: (url) => url.includes("/ide-admin/v1/ai/mcp/listFiles"),
+    respond: (_url, _method, body) => {
+      const b = (body ?? {}) as Record<string, unknown>
+      if (b.folderId !== undefined) return { code: 0, data: { list: [], total: 0, totalPages: 0 } }
+      const name = String(b.fileName ?? "")
+      const id = TASK_IDS[name]
+      return { code: 0, data: { list: id ? [{ dataFileName: name, id }] : [] } }
+    },
+  })
+  // createTask (addAndReturnId) → capture, return new merge task id
+  onStudio("/ide-admin/v1/dataFile/addAndReturnId", (body) => {
+    createCalls.push(body as Record<string, unknown>)
+    return { code: 0, data: 13535004 }
+  })
+  // getTaskDetail (getDetail) — keyed by body.id
+  onStudio("/ide-admin/v1/dataFile/getDetail", (body) => {
+    const id = Number((body as Record<string, unknown>).id)
+    if (id === 13533003) {
+      return {
+        code: 0,
+        data: { id: 13533003, projectId: 128008, dataFileName: "select_3", fileType: 19, ownerCnName: "owner-cn", ownerEnName: "owner-en" },
       }
-      : {
-        id: fileId,
+    }
+    return {
+      code: 0,
+      data: {
+        id,
         projectId: 1417759,
         dataFileName: "merge_task",
         fileType: 20,
@@ -42,8 +74,11 @@ mock.module("@clickzetta/sdk", () => ({
         ownerCnName: "owner-cn",
         ownerEnName: "owner-en",
       },
-  }),
-  getTaskConfigDetail: async () => ({
+    }
+  })
+  // getTaskConfigDetail
+  onStudio("/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ({
+    code: 0,
     data: {
       cronExpress: "0 00 00 * * ? *",
       activeStartTime: "2026-06-29T00:00:00.000Z",
@@ -61,85 +96,27 @@ mock.module("@clickzetta/sdk", () => ({
       dataFileName: "merge_task",
       fileDescription: "",
     },
-  }),
-  resolveVclusterId: async () => "vc-default-id",
-  saveTaskContent: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    saveContentCalls.push(params)
-    return { data: true }
-  },
-  saveTaskConfig: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    saveConfigCalls.push(params)
-    return { data: true }
-  },
-  submitTask: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    submitTaskCalls.push(params)
-    return { data: true }
-  },
-}))
-
-mock.module("../src/commands/studio-context.js", () => ({
-  getStudioContext: async () => ({
-    projectId: 1417759,
-    workspaceId: 1,
-    userId: "studi_test_1",
-    instanceName: "tmwmzxzs",
-    workspaceName: "quick_start",
-    baseUrl: "https://api.example.com",
-  }),
-  getGatewayContext: async () => ({
-    projectId: 1417759,
-    workspaceId: 1,
-    userId: "studi_test_1",
-    tenantId: 1223,
-    instanceId: 32,
-    instanceName: "tmwmzxzs",
-    workspaceName: "quick_start",
-    baseUrl: "https://api.example.com",
-  }),
-}))
-
-mock.module("../src/resolver.js", () => ({
-  ...actualResolver,
-  resolveTaskId: async (_config: Record<string, unknown>, nameOrId: string) => {
-    if (nameOrId === "select_3") return 13533003
-    if (nameOrId === "merge_task" || nameOrId === "13535004") return 13535004
-    return Number(nameOrId)
-  },
-  resolveFolderIdByName: async () => 454001,
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
-
-mock.module("../src/studio-url.js", () => ({
-  studioUrl: (_config: Record<string, unknown>, fileId: number) => `https://studio.example/task/${fileId}`,
-}))
-
-mock.module("../src/locale.js", () => ({
-  t: () => "",
-}))
-
-const { execute } = await import("../src/execute.ts")
-
-function firstJson(output: string) {
-  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
-}
-
-beforeEach(() => {
-  createCalls.length = 0
-  saveContentCalls.length = 0
-  saveConfigCalls.length = 0
-  submitTaskCalls.length = 0
-  mergeHasConfig = true
-  mkdirSync(profileDir, { recursive: true })
-  writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'quick_start'\ninstance = 'tmwmzxzs'\n")
-  process.env.CLICKZETTA_TEST_HOME = home
-})
-
-afterAll(() => {
-  delete process.env.CLICKZETTA_TEST_HOME
-  rmSync(home, { recursive: true, force: true })
+  }))
+  // resolveVclusterId → listVclusters
+  onStudio("/clickzetta-lakeconsole/api/v1/vcluster/list", () => ({
+    code: 0,
+    data: [{ id: "vc-default-id", name: "DEFAULT", type: "GENERAL" }],
+  }))
+  // saveDataFileConfiguration: saveTaskContent (onlySaveContent=1) vs saveTaskConfig (onlySaveContent=0)
+  onFetch({
+    match: (url) => url.includes("/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"),
+    respond: (_url, _method, body) => {
+      const b = (body ?? {}) as Record<string, unknown>
+      if (Number(b.onlySaveContent) === 1) saveContentCalls.push(b)
+      else saveConfigCalls.push(b)
+      return { code: 0, data: true }
+    },
+  })
+  // submitTask
+  onStudio("/ide-admin/v1/dataFile/submit", (body) => {
+    submitTaskCalls.push(body as Record<string, unknown>)
+    return { code: 0, data: true }
+  })
 })
 
 describe("task merge", () => {
@@ -162,7 +139,7 @@ describe("task merge", () => {
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
     expect(saveContentCalls).toHaveLength(1)
-    expect(saveContentCalls[0]?.dataFileContent).toEqual({
+    expect(saveContentCalls[0]?.dataFileContent).toEqual(JSON.stringify({
       mergeRule: {
         logic: "AND",
         conditions: [
@@ -173,7 +150,7 @@ describe("task merge", () => {
         ],
       },
       finalStatus: "SUCCESS",
-    })
+    }))
     expect(saveContentCalls[0]).toMatchObject({
       dataFileId: 13535004,
       paramValueList: [],

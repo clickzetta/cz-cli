@@ -1,43 +1,19 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { onFetch, stubStudioContext } from "./support/cz-fixtures.js"
 
-mock.module("../src/connection/profile-store.js", () => ({
-  readAgentEndpoint: () => "https://example.clickzetta.com",
-}))
-
-mock.module("../src/commands/studio-context.js", () => ({
-  getStudioContext: async () => ({
-    token: "studio-token",
-    instanceId: 11,
-    workspaceId: 22,
-    projectId: 33,
-    userId: 11_000_000_657,
-    tenantId: 55,
-    instanceName: "inst",
-    workspaceName: "ws",
-    env: "uat",
-    baseUrl: "https://example.clickzetta.com",
-    customHeaders: {},
-    userName: "tester",
-  }),
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
+// Network-boundary test: no mock.module of our own src. The real analytics-agent command runs
+// (registerAnalyticsAgentCommand → resolveAnalyticsContext → getStudioContext →
+// SDK), and only the network boundary (globalThis.fetch, intercepted in preload)
+// is stubbed. The analysis-agent endpoint comes from a real profiles.toml and
+// the studio auth/context plumbing from stubStudioContext().
 
 const { createCli } = await import("../src/cli.ts")
 const { registerAnalyticsAgentCommand } = await import("../src/commands/analytics-agent.ts")
 
-const originalFetch = globalThis.fetch
 const originalStdoutWrite = process.stdout.write.bind(process.stdout)
 const originalStderrWrite = process.stderr.write.bind(process.stderr)
-
-function jsonResponse(payload: unknown): Response {
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  })
-}
 
 function parseData(output: string): unknown {
   return JSON.parse(output.trim()).data
@@ -77,10 +53,22 @@ async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; outp
 describe("analytics-agent domain joins", () => {
   beforeEach(() => {
     process.exitCode = 0
+    writeFileSync(
+      join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+      [
+        "[profiles.test]",
+        "pat = 'pat'",
+        "workspace = 'wanxin_test_04'",
+        "instance = 'inst'",
+        "service = 'uat-api.clickzetta.com'",
+        "analysis_agent_endpoint = 'https://example.clickzetta.com'",
+        "",
+      ].join("\n"),
+    )
+    stubStudioContext({ tenantId: 55 })
   })
 
   afterEach(() => {
-    globalThis.fetch = originalFetch
     process.stdout.write = originalStdoutWrite
     process.stderr.write = originalStderrWrite
     process.exitCode = 0
@@ -88,10 +76,13 @@ describe("analytics-agent domain joins", () => {
 
   test("discover calls the open API with tenantId query and domainId path", async () => {
     let requestUrl = ""
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrl = String(input)
-      return jsonResponse({ success: true, data: { taskId: "task-1", status: "RUNNING", joinCount: 0, joins: [] } })
-    }) as typeof fetch
+    onFetch({
+      match: (url) => url.includes("/joins/discover"),
+      respond: (url) => {
+        requestUrl = url
+        return { success: true, data: { taskId: "task-1", status: "RUNNING", joinCount: 0, joins: [] } }
+      },
+    })
 
     const result = await runAnalyticsCli([
       "analytics-agent",
@@ -110,24 +101,27 @@ describe("analytics-agent domain joins", () => {
   })
 
   test("result outputs join details needed by apply", async () => {
-    globalThis.fetch = mock(async () => jsonResponse({
-      success: true,
-      data: {
-        taskId: "task-1",
-        status: "SUCCESS",
-        joinCount: 1,
-        joins: [{
-          datasetId: 101,
-          tableName: "orders",
-          attrCode: "user_id",
-          joinDatasetId: 202,
-          joinTableName: "users",
-          joinAttrCode: "id",
-          relation: "n:1",
-          ignored: "not returned",
-        }],
-      },
-    })) as typeof fetch
+    onFetch({
+      match: (url) => url.includes("/joins/tasks/"),
+      respond: () => ({
+        success: true,
+        data: {
+          taskId: "task-1",
+          status: "SUCCESS",
+          joinCount: 1,
+          joins: [{
+            datasetId: 101,
+            tableName: "orders",
+            attrCode: "user_id",
+            joinDatasetId: 202,
+            joinTableName: "users",
+            joinAttrCode: "id",
+            relation: "n:1",
+            ignored: "not returned",
+          }],
+        },
+      }),
+    })
 
     const result = await runAnalyticsCli([
       "analytics-agent",
@@ -158,11 +152,14 @@ describe("analytics-agent domain joins", () => {
   test("apply parses --join into backend body and reports submittedCount", async () => {
     let requestUrl = ""
     let requestBody: unknown
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      requestUrl = String(input)
-      requestBody = init?.body ? JSON.parse(String(init.body)) : null
-      return jsonResponse({ success: true, data: null })
-    }) as typeof fetch
+    onFetch({
+      match: (url) => url.includes("/joins/apply"),
+      respond: (url, _method, body) => {
+        requestUrl = url
+        requestBody = body ?? null
+        return { success: true, data: null }
+      },
+    })
 
     const result = await runAnalyticsCli([
       "analytics-agent",
@@ -194,9 +191,12 @@ describe("analytics-agent domain joins", () => {
   })
 
   test("apply rejects invalid relation before sending request", async () => {
-    globalThis.fetch = mock(async () => {
-      throw new Error("fetch should not be called")
-    }) as typeof fetch
+    onFetch({
+      match: () => true,
+      respond: () => {
+        throw new Error("fetch should not be called")
+      },
+    })
 
     const result = await runAnalyticsCli([
       "analytics-agent",

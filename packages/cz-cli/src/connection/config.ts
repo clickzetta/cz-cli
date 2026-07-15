@@ -1,5 +1,5 @@
 import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
-import { getProfileConfig } from "./profile-store.js"
+import { getProfileConfig, makeProfileTokenStore } from "./profile-store.js"
 import { parseJdbcUrl } from "./jdbc.js"
 
 export interface CliArgs {
@@ -83,6 +83,26 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // Propagate customHeaders from profile (highest priority: env headers could override if needed)
   if (profileCfg?.customHeaders && Object.keys(profileCfg.customHeaders).length > 0) {
     cfg.customHeaders = { ...profileCfg.customHeaders, ...cfg.customHeaders }
+  }
+
+  // Attach a profile-backed OAuth token store so callers routing through this
+  // function (exec.ts, studio-context.ts) get cross-process persistence
+  // (requirement 9.3, 9.7). The OAuth token represents the user's own login,
+  // so the slot is keyed by INSTANCE ONLY (not pat/username): removing or
+  // rotating a pat must not orphan the persisted token (requirement 9.6/11.6).
+  // The store is self-keyed — the SDK calls load/save/clear on it without
+  // re-deriving a key — so this key need not mirror token.ts's in-memory key.
+  //
+  // BUT never attach it when the caller supplied an EXPLICIT per-invocation
+  // credential (--pat / CZ_PAT, or --username+--password). getToken() consults
+  // the store before fetchToken(), so an attached store would return a cached
+  // OAuth token and silently shadow the credential the user just passed —
+  // violating the documented auth priority (--pat > CZ_PAT > …) and defeating
+  // PAT rotation. Skipping the store also stops the PAT-exchanged token from
+  // being persisted. Profile-level and pure-OAuth flows still attach it.
+  const explicitCredential = Boolean(cliPat) || Boolean(envPat) || Boolean(cliUsername && cliPassword)
+  if (cfg.instance && !explicitCredential) {
+    cfg.tokenStore = makeProfileTokenStore(profileName, cfg.instance)
   }
 
   return cfg

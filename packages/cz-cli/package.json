@@ -17,10 +17,12 @@
     "dev": "bun --conditions=browser src/main.ts",
     "build": "bun run script/build.ts",
     "typecheck": "tsgo --noEmit",
+    "test": "bun test --timeout 30000",
     "test:e2e": "bun test/e2e.ts",
     "test:e2e:full": "bun test/e2e-full.ts",
     "test:e2e:routing": "bun test/e2e-routing.ts",
     "test:e2e:help": "bun test/e2e-help.ts",
+    "test:mcp": "bun test/mcp-serve-smoke.ts",
     "test:unit": "bun test test/classify-error.test.ts",
     "test:all": "bun test test/classify-error.test.ts && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
     "build:local": "bun run build --single && mkdir -p dist && cp ../opencode/dist/opencode-darwin-arm64/bin/opencode dist/cz-cli && cp ../opencode/dist/opencode-darwin-arm64/bin/clickzetta-* dist/ && codesign --sign - dist/cz-cli",
@@ -46,8 +48,10 @@
     "@opentelemetry/sdk-trace-base": "2.6.1",
     "langfuse": "3.38.20",
     "opencode": "workspace:*",
+    "@opencode-ai/sdk": "workspace:*",
     "smol-toml": "1.6.1",
-    "yargs": "18.0.0"
+    "yargs": "18.0.0",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@opencode-ai/script": "workspace:*",

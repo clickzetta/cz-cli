@@ -13,6 +13,17 @@ function cookieValue(cookie: string, name: string): string | undefined {
   return match?.slice(match.indexOf("=") + 1)
 }
 
+/**
+ * Cheap, synchronous check for whether a profile carries a cookie token, used by
+ * credential guards that must not trigger the network instance-id resolution
+ * that {@link getCookieToken} may perform. Mirrors the header/cookie parsing
+ * getCookieToken uses so the two never disagree about "has a cookie token".
+ */
+export function hasCookieToken(config: ConnectionConfig): boolean {
+  const cookie = getHeader(config.customHeaders, "Cookie") ?? ""
+  return cookieValue(cookie, "X-ClickZetta-Token") !== undefined
+}
+
 function parseJwtPayload(token: string): Record<string, unknown> {
   const payload = token.split(".")[1]
   if (!payload) return {}

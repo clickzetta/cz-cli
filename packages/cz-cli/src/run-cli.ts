@@ -8,6 +8,7 @@ import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
+import { SubcommandHelpShown } from "./subcommand-help.js"
 import { trackCommand, parseTrackingArgs } from "./telemetry.js"
 
 interface CliRuntime {
@@ -281,7 +282,14 @@ async function parseRegisteredCommands(args: string[], onValidated?: () => void)
   // This way a mistyped command or unknown option surfaces a USAGE_ERROR instead
   // of being masked by NO_PROFILE on a machine without a configured profile.
   if (onValidated) cli.middleware(() => onValidated(), false)
-  await cli.parseAsync()
+  try {
+    await cli.parseAsync()
+  } catch (err) {
+    // A bare command group already rendered its help in its fail handler and
+    // threw this sentinel (before the profile middleware ran). Not an error —
+    // exit stays 0. See subcommand-help.ts.
+    if (!(err instanceof SubcommandHelpShown)) throw err
+  }
 }
 
 function agentSubcommand(args: string[], commandIndex: number) {

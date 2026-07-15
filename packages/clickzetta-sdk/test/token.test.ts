@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 
 import type { AuthToken, ConnectionConfig } from "../src/types/index.js"
 
@@ -6,7 +6,15 @@ import type { AuthToken, ConnectionConfig } from "../src/types/index.js"
  * We mock the login + region modules BEFORE importing token.ts so
  * the module picks up our stubs. This verifies that N concurrent
  * `getToken` callers coalesce onto a single login call.
+ *
+ * `mock.module` registrations persist for the rest of the process and would
+ * otherwise leak into later test files (e.g. login-oauth.test.ts would import
+ * the never-resolving `loginWithPassword` stub below and time out). We capture
+ * the real modules first and re-register them in `afterAll` to isolate the leak.
  */
+
+const realLogin = { ...(await import("../src/auth/login.js")) }
+const realRegion = { ...(await import("../src/config/region.js")) }
 
 let loginCalls = 0
 let loginResolver: ((t: AuthToken) => void) | undefined
@@ -34,6 +42,12 @@ mock.module("../src/config/region.js", () => ({
 const { getToken, clearTokenCache, forceRefreshToken } = await import(
   "../src/auth/token.js"
 )
+
+// Restore the real modules so the leak does not break later test files.
+afterAll(() => {
+  mock.module("../src/auth/login.js", () => realLogin)
+  mock.module("../src/config/region.js", () => realRegion)
+})
 
 function freshConfig(seed: number): ConnectionConfig {
   return {

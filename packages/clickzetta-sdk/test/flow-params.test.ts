@@ -1,11 +1,21 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import type { StudioConfig } from "../src/types/index.js"
+
+// mock.module registrations persist for the rest of the process; without
+// restoring, this studioRequest stub leaks into later files (e.g.
+// traceparent.test.ts sees the stub instead of the real studioRequest).
+// Capture the real module first and re-register it in afterAll to isolate the leak.
+const realStudioClient = { ...(await import("../src/studio/client.js")) }
 
 const studioRequestMock = mock(async () => ({ code: "200", data: null }))
 
 mock.module("../src/studio/client.js", () => ({
   studioRequest: studioRequestMock,
 }))
+
+afterAll(() => {
+  mock.module("../src/studio/client.js", () => realStudioClient)
+})
 
 import { saveFlowNodeContent } from "../src/studio/flow.js"
 

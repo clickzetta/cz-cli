@@ -391,6 +391,7 @@
         "@modelcontextprotocol/sdk": "1.27.1",
         "@opencode-ai/core": "workspace:*",
         "@opencode-ai/plugin": "workspace:*",
+        "@opencode-ai/sdk": "workspace:*",
         "@opentelemetry/api": "1.9.0",
         "@opentelemetry/api-logs": "0.214.0",
         "@opentelemetry/exporter-logs-otlp-http": "0.214.0",
@@ -406,6 +407,7 @@
         "opencode": "workspace:*",
         "smol-toml": "1.6.1",
         "yargs": "18.0.0",
+        "zod": "catalog:",
       },
       "devDependencies": {
         "@opencode-ai/script": "workspace:*",

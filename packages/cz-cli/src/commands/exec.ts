@@ -19,7 +19,7 @@ import {
 } from "@clickzetta/sdk"
 import { currentTraceContext, defaultQueryTag } from "../trace.js"
 import { patchProfileUserId } from "../connection/profile-store.js"
-import { getCookieToken } from "../connection/cookie-token.js"
+import { getCookieToken, hasCookieToken } from "../connection/cookie-token.js"
 
 export interface ExecContext {
   config: ConnectionConfig
@@ -27,20 +27,37 @@ export interface ExecContext {
   clientOpts: ClientOptions
 }
 
+/**
+ * Single source of truth for "does this profile carry enough to authenticate":
+ * a profile cookie, an explicit pat, a username/password pair, OR a persisted
+ * (cross-process) OAuth token loadable from the profile-backed tokenStore.
+ * A pure-OAuth profile (no pat/username, but a valid login token) is therefore
+ * usable for SQL (requirement 11.8).
+ *
+ * cz-cli merge note: replaces the pre-OAuth inline guard. The token acquisition
+ * below routes through getCookieToken / getToken (getToken itself consults
+ * config.tokenStore for OAuth), so this guard and the acquisition agree on what
+ * counts as a credential — no second, divergent check.
+ */
+export function hasUsableCredentials(config: ConnectionConfig): boolean {
+  if (hasCookieToken(config)) return true
+  if (config.pat) return true
+  if (config.username && config.password) return true
+  return config.tokenStore?.load() !== undefined
+}
+
 export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContext> {
   const config = resolveConnectionConfig(args)
+  if (!hasUsableCredentials(config)) {
+    throw new Error("Authentication required. Provide --pat or --username/--password, run `cz-cli login --browser` for OAuth, or configure a profile (header.Cookie / setup).")
+  }
   if (!config.instance) {
     throw new Error("Instance is required. Provide --instance or configure it in your profile.")
   }
   if (!config.workspace) {
     throw new Error("Workspace is required. Provide --workspace or configure it in your profile.")
   }
-  const token = await getCookieToken(config) ?? await (async () => {
-    if (!config.pat && !(config.username && config.password)) {
-      throw new Error("Authentication required. Provide --pat, --username/--password, or profile header.Cookie.")
-    }
-    return getToken(config)
-  })()
+  const token = await getCookieToken(config) ?? await getToken(config)
   // Persist userId to profile for telemetry (enduser.id). Fire-and-forget.
   if (token.userId) patchProfileUserId(args.profile, token.userId)
   const clientOpts: ClientOptions = {

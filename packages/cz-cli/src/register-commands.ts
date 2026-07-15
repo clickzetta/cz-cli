@@ -18,8 +18,11 @@ import { registerDatasourceCommand } from "./commands/datasource.js"
 import { registerGatewayCommand } from "./commands/ai-gateway.js"
 import { registerAnalyticsAgentCommand } from "./commands/analytics-agent.js"
 import { registerAutoupdateCommand } from "./commands/autoupdate.js"
+import { registerMcpCommand } from "./commands/mcp.js"
+import { registerLoginCommand } from "./commands/login.js"
 
 export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
+  registerLoginCommand(cli)
   registerSqlCommand(cli)
   registerSchemaCommand(cli)
   registerTableCommand(cli)
@@ -38,5 +41,6 @@ export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerDatasourceCommand(cli)
   registerGatewayCommand(cli)
   registerAnalyticsAgentCommand(cli)
+  registerMcpCommand(cli)
   return cli
 }

@@ -1,4 +1,5 @@
-import { describe, test, expect, setDefaultTimeout } from "bun:test"
+import { test, expect, setDefaultTimeout } from "bun:test"
+import { liveDescribe as describe } from "./support/live.js"
 import { execute } from "../src/execute.ts"
 
 setDefaultTimeout(30_000)

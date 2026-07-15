@@ -6,6 +6,7 @@ import { defaultFormat, outputState } from "./output/index.js"
 import { createCli } from "./cli.js"
 import { registerCommands } from "./register-commands.js"
 import { classifyCliArgs, emitNoProfile } from "./run-cli.js"
+import { SubcommandHelpShown } from "./subcommand-help.js"
 import { trackCommand } from "./telemetry.js"
 
 export interface ExecuteResult {
@@ -82,6 +83,12 @@ async function executeInternal(command: string, extraArgs?: string[]): Promise<E
   } catch (e) {
     if (e instanceof ControlledExit) {
       process.exitCode = e.code
+    } else if (e instanceof SubcommandHelpShown) {
+      // A bare command group already rendered its help via its fail handler,
+      // which wrote into the hijacked stdout (captured in chunks) during
+      // parseAsync. Treat it as a successful help request (exit 0), not an
+      // error. See subcommand-help.ts.
+      process.exitCode = 0
     } else {
       if (!process.exitCode) process.exitCode = 1
       if (!chunks.length) {

@@ -1,11 +1,12 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { beforeEach, describe, expect, test } from "bun:test"
+import { onStudio, onFetch, stubStudioContext } from "./support/cz-fixtures.js"
+import { clearTokenCache } from "@clickzetta/sdk"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const home = mkdtempSync(join(tmpdir(), "cz-cli-task-save-config-"))
-const profileDir = join(home, ".clickzetta")
-const profileFile = join(profileDir, "profiles.toml")
+// Network-boundary test: no mock.module of our own src or of @clickzetta/sdk. The real cz-cli
+// path runs and only the network boundary (globalThis.fetch) is stubbed via
+// path/body fixtures. HOME/profile are isolated by test/preload.ts.
 
 const saveCalls: Array<Record<string, unknown>> = []
 const parseCalls: Array<Record<string, unknown>> = []
@@ -33,13 +34,26 @@ const manualOutputDtos = [
     parseType: 1,
   },
 ]
-const actualSdk = await import("@clickzetta/sdk")
-const actualResolver = await import("../src/resolver.ts")
-const actualDatasource = await import("../src/commands/datasource.ts")
 
-mock.module("@clickzetta/sdk", () => ({
-  ...actualSdk,
-  getTaskDetail: async () => ({
+const { execute } = await import("../src/execute.ts")
+
+function firstJson(output: string) {
+  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
+}
+
+beforeEach(() => {
+  clearTokenCache()
+  saveCalls.length = 0
+  parseCalls.length = 0
+  writeFileSync(
+    join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+    "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n",
+  )
+  stubStudioContext({ userId: 7, projectId: 9, workspaceId: "wid-1" as unknown as number, workspaceName: "ws" })
+
+  // getTaskDetail
+  onStudio("/ide-admin/v1/dataFile/getDetail", () => ({
+    code: 0,
     data: {
       id: 123,
       fileType: 4,
@@ -48,8 +62,10 @@ mock.module("@clickzetta/sdk", () => ({
       ownerCnName: "owner-cn",
       ownerEnName: "owner-en",
     },
-  }),
-  getTaskConfigDetail: async () => ({
+  }))
+  // getTaskConfigDetail
+  onStudio("/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ({
+    code: 0,
     data: {
       cronExpress: "0 00 00 * * ? *",
       activeStartTime: "2026-01-01T00:00:00.000Z",
@@ -72,10 +88,12 @@ mock.module("@clickzetta/sdk", () => ({
       fileOutputTableDTOS: outputDtos,
       configProperties: "{}",
     },
-  }),
-  parseTaskDependencyOut: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    parseCalls.push(params)
+  }))
+  // parseTaskDependencyOut
+  onStudio("/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut", (body) => {
+    parseCalls.push(body as Record<string, unknown>)
     return {
+      code: 0,
       data: {
         dataFileDependencyDTOS: [
           {
@@ -91,74 +109,21 @@ mock.module("@clickzetta/sdk", () => ({
         fileOutputTableDTOS: outputDtos,
       },
     }
-  },
-  resolveVclusterId: async (_config: Record<string, unknown>, vcName: string) => vcName === "DEFAULT" ? "vc-default-id" : undefined,
-  saveTaskConfig: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
-    saveCalls.push(params)
-    return { data: { ok: true } }
-  },
-}))
-
-mock.module("../src/commands/studio-context.js", () => ({
-  getStudioContext: async () => ({
-    projectId: 9,
-    workspaceId: "wid-1",
-    userId: 7,
-    instanceName: "inst",
-    workspaceName: "ws",
-    baseUrl: "https://api.example.com",
-  }),
-}))
-
-mock.module("../src/resolver.js", () => ({
-  ...actualResolver,
-  resolveTaskId: async () => 123,
-  resolveNodeId: async () => 456,
-  resolveFolderIdByName: async () => 789,
-}))
-
-mock.module("../src/confirm.js", () => ({
-  confirm: async () => true,
-}))
-
-mock.module("../src/logger.js", () => ({
-  logOperation: () => {},
-}))
-
-mock.module("../src/studio-url.js", () => ({
-  studioUrl: () => "https://studio.example/task/123",
-}))
-
-mock.module("../src/locale.js", () => ({
-  t: () => "",
-}))
-
-mock.module("../src/connection/config.js", () => ({
-  resolveConnectionConfig: async () => ({}),
-}))
-
-mock.module("../src/commands/datasource.js", () => ({
-  ...actualDatasource,
-  resolveDatasource: async () => ({ id: 1, dsType: 15 }),
-}))
-
-const { execute } = await import("../src/execute.ts")
-
-function firstJson(output: string) {
-  return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
-}
-
-beforeEach(() => {
-  saveCalls.length = 0
-  parseCalls.length = 0
-  mkdirSync(profileDir, { recursive: true })
-  writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n")
-  process.env.CLICKZETTA_TEST_HOME = home
-})
-
-afterAll(() => {
-  delete process.env.CLICKZETTA_TEST_HOME
-  rmSync(home, { recursive: true, force: true })
+  })
+  // resolveVclusterId → listVclusters (DEFAULT → vc-default-id)
+  onStudio("/clickzetta-lakeconsole/api/v1/vcluster/list", () => ({
+    code: 0,
+    data: [{ id: "vc-default-id", name: "DEFAULT", type: "GENERAL" }],
+  }))
+  // saveDataFileConfiguration — capture only config saves (onlySaveContent=0)
+  onFetch({
+    match: (url) => url.includes("/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"),
+    respond: (_url, _method, body) => {
+      const b = (body ?? {}) as Record<string, unknown>
+      if (Number(b.onlySaveContent) === 0) saveCalls.push(b)
+      return { code: 0, data: { ok: true } }
+    },
+  })
 })
 
 describe("task save-config dependency validation", () => {

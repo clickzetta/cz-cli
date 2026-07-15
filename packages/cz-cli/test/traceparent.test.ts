@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test"
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 const mainCalls: Array<{ args: string[]; agentRuntime: boolean; traceparent?: string; configContent?: string }> = []
+
+const __realRuntime = { ...(await import("../src/bootstrap/runtime.ts")) }
 
 mock.module("../src/bootstrap/runtime.ts", () => ({
   main: async (args: string[], agentRuntime = false) => {
@@ -62,6 +64,10 @@ afterEach(() => {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
   }
+})
+
+afterAll(() => {
+  mock.module("../src/bootstrap/runtime.ts", () => __realRuntime)
 })
 
 describe("agent runtime traceparent handoff", () => {

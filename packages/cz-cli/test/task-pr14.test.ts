@@ -5,7 +5,8 @@
  * Requires a default profile + compute-capable environment (datasources, tasks).
  * Automatically skips tests when prerequisite data is absent.
  */
-import { describe, test, expect, beforeAll } from "bun:test"
+import { test, expect, beforeAll } from "bun:test"
+import { liveDescribe as describe, IS_LIVE } from "./support/live.js"
 import { execute, type ExecuteResult } from "../src/execute.ts"
 import { spawnSync } from "child_process"
 import { resolve } from "path"
@@ -28,6 +29,7 @@ let _dsId: number | undefined
 let _dsName: string | undefined
 
 beforeAll(async () => {
+  if (!IS_LIVE) return // live-only file; skip network probe when gated off
   const r = await execute("datasource list --page-size 1")
   if (r.exitCode === 0) {
     const j = json(r)

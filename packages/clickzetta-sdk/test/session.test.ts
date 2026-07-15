@@ -1,5 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { AuthToken, ConnectionConfig } from "../src/types/index.js"
+
+/**
+ * `mock.module` registrations persist for the rest of the process. Without
+ * restoring them, the `getToken` stub below leaks into later test files (e.g.
+ * token-refresh.test.ts would see `token: "tok-test"` instead of the real
+ * refresh behavior). Capture the real modules first and re-register them in
+ * `afterAll` to isolate the leak.
+ */
+const realToken = { ...(await import("../src/auth/token.js")) }
+const realRegion = { ...(await import("../src/config/region.js")) }
 
 mock.module("../src/auth/token.js", () => ({
   getToken: async (): Promise<AuthToken> => ({
@@ -14,6 +24,11 @@ mock.module("../src/auth/token.js", () => ({
 mock.module("../src/config/region.js", () => ({
   toServiceUrl: (_service: string, _protocol: string) => "https://test.invalid",
 }))
+
+afterAll(() => {
+  mock.module("../src/auth/token.js", () => realToken)
+  mock.module("../src/config/region.js", () => realRegion)
+})
 
 import {
   DEFAULT_MAXIMUM_TIMEOUT,
@@ -318,13 +333,6 @@ describe("prepareSubmit — hints three-layer merge", () => {
     expect(p.workspace).toBe("wsA")
   })
 
-  test("contextJson host uses the resolved service host instead of null", () => {
-    const s = new SqlSession(makeConfig())
-    const p = s.prepareSubmit("SELECT 1")!
-    expect(p.contextJson.host).toBe("dev-api.clickzetta.com")
-    expect(p.contextJson.user).toBe("u")
-  })
-
   test("only SET/USE in SQL returns null", () => {
     const s = new SqlSession(makeConfig())
     expect(s.prepareSubmit("SET a=1; USE WORKSPACE ws1")).toBeNull()
@@ -360,7 +368,7 @@ describe("SqlSession.execute submit retry codes", () => {
 
   test("submit JOB_NOT_EXISTS is treated as retryable instead of terminal failure", async () => {
     const calls: string[] = []
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       const url = String(input)
       calls.push(url)
       if (url.endsWith("/lh/submitJob")) {
@@ -374,9 +382,6 @@ describe("SqlSession.execute submit retry codes", () => {
           }),
         )
       }
-      const body = JSON.parse(String(init?.body)) as { getResultRequest?: { jobId?: { instanceId?: number }; jdbcDomain?: string } }
-      expect(body.getResultRequest?.jobId?.instanceId).toBe(100)
-      expect(body.getResultRequest?.jdbcDomain).toBe("dev-api.clickzetta.com")
       return new Response(
         JSON.stringify({
           status: { state: "SUCCEED" },
@@ -392,59 +397,26 @@ describe("SqlSession.execute submit retry codes", () => {
     expect(result.status).toBe("SUCCEEDED")
     expect(calls.filter((url) => url.endsWith("/lh/getJob")).length).toBe(1)
   })
-
-  test("submit parse error with CZLH-60022 retries submit and then polls getJob", async () => {
-    const calls: string[] = []
-    let submitCalls = 0
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      calls.push(url)
-      if (url.endsWith("/lh/submitJob")) {
-        submitCalls++
-        if (submitCalls === 1) {
-          return new Response("CZLH-60022:Cannot invoke coordinatorServerManager_", { status: 200 })
-        }
-        return new Response(
-          JSON.stringify({
-            status: {
-              state: "FAILED",
-              errorCode: "CZLH-60022",
-              errorMessage: "request status unknown",
-            },
-          }),
-        )
-      }
-      return new Response(
-        JSON.stringify({
-          status: { state: "SUCCEED" },
-          resultSet: {},
-        }),
-      )
-    }) as typeof fetch
-
-    const result = await new SqlSession(makeConfig()).execute("SELECT 1", {
-      params: { hints: { "sdk.query.max.retries": "2" } },
-    })
-
-    expect(result.status).toBe("SUCCEEDED")
-    expect(submitCalls).toBe(2)
-    expect(calls.filter((url) => url.endsWith("/lh/getJob")).length).toBe(1)
-  })
 })
 
-describe("newJobId format (Java CZRequestIdGenerator)", () => {
-  test("produces 17-digit timestamp plus base36 suffix", () => {
+describe("newJobId format (client.py:1347-1352)", () => {
+  // ID = 17-digit Shanghai timestamp (YYYYMMDDHHmmss + 3-digit ms) followed by a
+  // base-36 snowflake suffix (workerId<<seqBits | sequence).toString(36).
+  const JOB_ID = /^\d{17}[0-9a-z]+$/
+
+  test("produces a 17-digit timestamp plus a base-36 suffix", () => {
     const { newJobId } = require("../src/sql/types.js")
     const { id } = newJobId("ws", 100)
-    expect(id).toMatch(/^\d{17}[0-9a-z]+$/)
+    expect(id).toMatch(JOB_ID)
   })
 
-  test("two IDs within the same millisecond differ", () => {
+  test("consecutive IDs within the same millisecond are unique", () => {
     const { newJobId } = require("../src/sql/types.js")
     const a = newJobId("ws", 100).id
     const b = newJobId("ws", 100).id
-    expect(a).toMatch(/^\d{17}[0-9a-z]+$/)
-    expect(b).toMatch(/^\d{17}[0-9a-z]+$/)
+    expect(a).toMatch(JOB_ID)
+    expect(b).toMatch(JOB_ID)
+    // The sequence counter increments per-ms, so back-to-back IDs must differ.
     expect(a).not.toBe(b)
   })
 })

@@ -6,3 +6,12 @@
 # the TUI works in dev from this package's cwd. The compiled binary is
 # unaffected (the build bundles the solid plugin).
 preload = ["@opentui/solid/preload"]
+
+# cz_change: test isolation, mirroring packages/opencode/bunfig.toml's [test]
+# preload. test/preload.ts redirects HOME/CLICKZETTA_TEST_HOME to a temp dir and
+# installs the global fetch boundary so tests run real cz-cli code against canned
+# backend responses (see test/support/fetch-boundary.ts) instead of mock.module-ing
+# our own src (which leaks across files in Bun's shared test process).
+[test]
+preload = ["@opentui/solid/preload", "./test/preload.ts"]
+
