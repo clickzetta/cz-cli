@@ -207,6 +207,12 @@ CLI task 类型、状态、调度频率等 Studio 后端契约 MUST 通过集中
 - **THEN** 系统发布任务
 - **AND** 返回发布版本或状态信息
 
+#### Scenario: deploy 前先检查 workspace 参数
+
+- **WHEN** 用户执行 `cz-cli task deploy TASK -y`
+- **THEN** CLI MUST 在调用发布接口前执行 workspace 参数预检查
+- **AND** 若任务引用了未发布、已停用或不存在的项目参数，CLI MUST 返回可诊断错误且不调用发布接口
+
 #### Scenario: undeploy 需要确认
 
 - **WHEN** 用户执行 `cz-cli task undeploy TASK` 且未提供 `-y`
