@@ -1,0 +1,380 @@
+name: release-cos
+run-name: Release ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.3.78 or dev-v0.3.79.20260616200210)"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+      - "dev-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      build_date: ${{ steps.release.outputs.build_date }}
+      is_dev: ${{ steps.release.outputs.is_dev }}
+      is_stable: ${{ steps.release.outputs.is_stable }}
+    steps:
+      - name: Classify release
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RAW_VERSION="${GITHUB_REF_NAME}"
+          else
+            RAW_VERSION="${{ inputs.version }}"
+          fi
+
+          if printf '%s' "$RAW_VERSION" | grep -Eq '^dev-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9A-Za-z.-]+$'; then
+            TAG="$RAW_VERSION"
+            VERSION="$RAW_VERSION"
+          elif printf '%s' "$RAW_VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VERSION="${RAW_VERSION#v}"
+            TAG="v${VERSION}"
+          else
+            VERSION="$RAW_VERSION"
+            TAG="$RAW_VERSION"
+          fi
+
+          if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "is_stable=true" >> "$GITHUB_OUTPUT"
+            echo "is_dev=false" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$VERSION" | grep -Eq '^dev-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9A-Za-z.-]+$'; then
+            echo "is_stable=false" >> "$GITHUB_OUTPUT"
+            echo "is_dev=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Invalid version: $VERSION" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  create-release:
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ needs.resolve-release.outputs.tag }}"
+          # Find previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+          fi
+          echo "Previous tag: $PREV_TAG"
+
+          # Collect commit messages
+          COMMITS=$(git log --pretty=format:"- %s" "${PREV_TAG}..HEAD" --no-merges)
+
+          # Build release body
+          BODY="## What's Changed
+
+          ${COMMITS}
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+
+          # Write to file (multi-line safe)
+          printf '%s' "$BODY" > /tmp/release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "${{ needs.resolve-release.outputs.tag }}" \
+            --yes --cleanup-tag=false \
+            --repo "${{ github.repository }}" 2>/dev/null || true
+          PRERELEASE_ARGS=()
+          if [ "${{ needs.resolve-release.outputs.is_dev }}" = "true" ]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
+          gh release create "${{ needs.resolve-release.outputs.tag }}" \
+            --title "${{ needs.resolve-release.outputs.tag }}" \
+            --notes-file /tmp/release-notes.md \
+            "${PRERELEASE_ARGS[@]}" \
+            --repo "${{ github.repository }}"
+
+  build:
+    needs: [resolve-release, create-release]
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: linux
+            runner: ubuntu-24.04-arm
+          - os: darwin
+            runner: macos-latest
+          - os: darwin
+            runner: macos-15-intel
+          - os: win32
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync clickzetta-skills
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK_DIR="$(pwd)"
+          TMP_DIR="$(mktemp -d)"
+          SKILLS_SRC="$TMP_DIR/clickzetta-skills"
+          for attempt in 1 2 3; do
+            echo "Cloning clickzetta-skills attempt $attempt"
+            rm -rf "$SKILLS_SRC"
+            if git clone --depth 1 https://github.com/clickzetta/clickzetta-skills.git "$SKILLS_SRC"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Failed to clone clickzetta-skills" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          mkdir -p "$WORK_DIR/skills/external"
+          count=0
+          for name in $(ls "$SKILLS_SRC" | grep -E '^(clickzetta-|lakehouse-doc)'); do
+            if [ -f "$SKILLS_SRC/$name/SKILL.md" ]; then
+              cp -r "$SKILLS_SRC/$name" "$WORK_DIR/skills/external/$name"
+              count=$((count + 1))
+            fi
+          done
+          echo "Synced $count skills from clickzetta-skills repo"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure local Node headers for node-gyp
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(process.execPath)")" >> "$GITHUB_ENV"
+          else
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        shell: bash
+        env:
+          HUSKY: "0"
+        run: |
+          set -euo pipefail
+
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            echo "bun install attempt $attempt on $RUNNER_OS"
+            if [ "$attempt" -gt 1 ]; then
+              echo "Clearing partial install state before retry..."
+              rm -rf node_modules "$HOME/.bun/install/cache"
+            fi
+
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              if [ "$attempt" -gt 1 ]; then
+                if bun install --frozen-lockfile --no-progress --network-concurrency 16 --linker hoisted --ignore-scripts --force --no-cache; then
+                  exit 0
+                fi
+              elif bun install --frozen-lockfile --no-progress --network-concurrency 16 --linker hoisted --ignore-scripts; then
+                exit 0
+              fi
+            else
+              if [ "$attempt" -gt 1 ]; then
+                if bun install --frozen-lockfile --no-progress --network-concurrency 16 --force --no-cache; then
+                  exit 0
+                fi
+              elif bun install --frozen-lockfile --no-progress --network-concurrency 16; then
+                exit 0
+              fi
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "bun install failed after $attempt attempts" >&2
+              exit 1
+            fi
+
+            attempt=$((attempt + 1))
+            sleep 1
+          done
+
+      - name: Build and upload ${{ matrix.os }} targets
+        env:
+          OPENCODE_VERSION: ${{ needs.resolve-release.outputs.version }}
+          OPENCODE_ARCHIVE: "1"
+          OPENCODE_HOST_ONLY: "1"
+          OPENCODE_RELEASE: "1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLICKZETTA_OTEL_ENDPOINT: ${{ secrets.CLICKZETTA_OTEL_ENDPOINT }}
+          CLICKZETTA_OTEL_HEADERS: ${{ secrets.CLICKZETTA_OTEL_HEADERS }}
+        # cz-1.17.11: the cz-cli release builder lives in packages/cz-cli/script/build.ts
+        # (packages/opencode/script/build.ts is pristine upstream — no skills/setup.sh/archive).
+        # It chdir's into packages/opencode and writes dist there, so the downstream
+        # packages/opencode/dist paths below stay correct.
+        run: cd packages/cz-cli && bun run script/build.ts
+
+  upload-installer:
+    needs: [resolve-release, build]
+    if: needs.resolve-release.outputs.is_stable == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+
+  publish-npm:
+    needs: [resolve-release, build]
+    if: |
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.resolve-release.outputs.is_stable == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets artifacts
+          gh release download "${{ needs.resolve-release.outputs.tag }}" \
+            --pattern "cz-cli-*" \
+            --dir release-assets \
+            --repo "${{ github.repository }}"
+          node scripts/prepare-release-assets.mjs release-assets artifacts
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          scripts/npm-publish.sh "${{ needs.resolve-release.outputs.version }}" artifacts
+
+  publish-cos:
+    needs: [resolve-release, build]
+    if: |
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure local Node headers for node-gyp
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(process.execPath)")" >> "$GITHUB_ENV"
+          else
+            echo "npm_config_nodedir=$(node -p "require('path').dirname(require('path').dirname(process.execPath))")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        env:
+          HUSKY: "0"
+        run: bun install --frozen-lockfile
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${{ needs.resolve-release.outputs.tag }}" \
+            --pattern "cz-cli-*" \
+            --dir release-assets \
+            --repo "${{ github.repository }}"
+          node scripts/prepare-release-assets.mjs release-assets packages/opencode/dist
+
+      - name: Publish to COS
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION }}
+        run: |
+          ARGS=(
+            --version "${{ needs.resolve-release.outputs.version }}"
+            --dist packages/opencode/dist
+            --git-sha "${{ github.sha }}"
+            --build-date "${{ needs.resolve-release.outputs.build_date }}"
+          )
+          if [ "${{ needs.resolve-release.outputs.is_stable }}" = "true" ]; then
+            ARGS+=(--no-promote-nightly --promote-stable)
+          fi
+          bun run scripts/cos-release.mjs "${ARGS[@]}"
+
+  finalize-release:
+    needs: [resolve-release, build, publish-npm, publish-cos]
+    if: |
+      always() &&
+      needs.resolve-release.outputs.is_stable == 'true' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark release as latest (non-draft)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ needs.resolve-release.outputs.tag }}" \
+            --draft=false \
+            --latest \
+            --repo "${{ github.repository }}"
+
+      - name: Notify Feishu group
+        if: success()
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.resolve-release.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          URL="https://github.com/${REPO}/releases/tag/${VERSION}"
+          NOTES=$(gh release view "${VERSION}" --repo "${REPO}" --json body -q .body 2>/dev/null || echo "")
+          TEXT="cz-cli ${VERSION} 已发布 🚀
+          安装/更新: curl -fsSL https://cz-cli.ai/install.sh | sh
+          ${NOTES}
+          详情: ${URL}"
+          curl -sSf -X POST "$FEISHU_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg text "$TEXT" '{msg_type:"text",content:{text:$text}}')"

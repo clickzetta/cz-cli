@@ -145,8 +145,16 @@ const allTargets: {
   },
 ]
 
+// cz_change: honor Script.hostOnly (OPENCODE_HOST_ONLY / OPENCODE_RELEASE) so each
+// CI matrix runner builds ONLY its own platform target. Without this every runner
+// builds all targets and races on `gh release upload --clobber`. Vendored from
+// upstream opencode build.ts (lost when this file was split off).
+const platformTargets = Script.hostOnly
+  ? allTargets.filter((item) => item.os === process.platform && item.arch === process.arch)
+  : allTargets
+
 const targets = singleFlag
-  ? allTargets.filter((item) => {
+  ? platformTargets.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
         return false
       }
@@ -164,9 +172,14 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : platformTargets
 
 await $`rm -rf dist`
+
+// cz_change: dist dir + binary are named "cz-cli" (not upstream "opencode"), so
+// the release scripts (scripts/*, packages/npm/*, generated bootstrap.sh) find the
+// expected `cz-cli-<os>-<arch>/bin/cz-cli` layout.
+const DIST_PREFIX = "cz-cli"
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
@@ -176,7 +189,7 @@ if (!skipInstall) {
 }
 for (const item of targets) {
   const name = [
-    pkg.name,
+    DIST_PREFIX,
     // changing to win32 flags npm for some reason
     item.os === "win32" ? "windows" : item.os,
     item.arch,
@@ -211,9 +224,9 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(pkg.name, "bun") as any,
-      outfile: `dist/${name}/bin/opencode`,
-      execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
+      target: name.replace(DIST_PREFIX, "bun") as any,
+      outfile: `dist/${name}/bin/cz-cli`,
+      execArgv: [`--user-agent=cz-cli/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
@@ -244,7 +257,7 @@ for (const item of targets) {
 
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
-    const binaryPath = `dist/${name}/bin/opencode`
+    const binaryPath = `dist/${name}/bin/cz-cli`
     console.log(`Running smoke test: ${binaryPath} --version`)
     try {
       const versionOutput = await $`${binaryPath} --version`.text()
@@ -297,15 +310,90 @@ for (const item of targets) {
   binaries[name] = Script.version
 }
 
-if (Script.release) {
-  for (const key of Object.keys(binaries)) {
-    if (key.includes("linux")) {
-      await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
-    } else {
-      await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
+// cz_change: reconstruct a target from its dist key (needed by the archive block).
+function findTarget(key: string) {
+  return targets.find(
+    (t) =>
+      key ===
+      [
+        DIST_PREFIX,
+        t.os === "win32" ? "windows" : t.os,
+        t.arch,
+        t.avx2 === false ? "baseline" : undefined,
+        t.abi === undefined ? undefined : t.abi,
+      ]
+        .filter(Boolean)
+        .join("-"),
+  )
+}
+
+// cz_change: bundle skills from repo-root skills/ (+ skills/external/) into each
+// platform dist so setup.sh can install them. `dir` is packages/opencode, so
+// ../../ is the repo root.
+const allSkillsSrc = path.join(dir, "..", "..", "skills")
+if (fs.existsSync(allSkillsSrc)) {
+  const scanDirs = [allSkillsSrc]
+  const externalDir = path.join(allSkillsSrc, "external")
+  if (fs.existsSync(externalDir)) scanDirs.push(externalDir)
+
+  const skillEntries: { name: string; src: string }[] = []
+  for (const base of scanDirs) {
+    for (const name of fs.readdirSync(base)) {
+      const full = path.join(base, name)
+      if (name === "external") continue
+      if (fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, "SKILL.md"))) {
+        skillEntries.push({ name, src: full })
+      }
     }
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+
+  for (const key of Object.keys(binaries)) {
+    for (const { name, src } of skillEntries) {
+      const dest = path.join("dist", key, "bin", "skills", name)
+      fs.cpSync(src, dest, { recursive: true })
+    }
+  }
+  console.log(`Bundled ${skillEntries.length} skills into all platform dists`)
+}
+
+// cz_change: archive path (setup.sh copy + per-platform archives + optional
+// gh upload), gated by Script.archive (OPENCODE_ARCHIVE || OPENCODE_RELEASE).
+if (Script.archive) {
+  const setupSh = path.join(dir, "..", "..", "scripts", "setup.sh")
+  const keys = Object.keys(binaries)
+  for (const key of keys) {
+    if (fs.existsSync(setupSh)) {
+      fs.copyFileSync(setupSh, path.join("dist", key, "bin", "setup.sh"))
+    }
+  }
+  console.log(`Archiving ${keys.length} targets in parallel...`)
+  const archives = await Promise.all(
+    keys.map(async (key) => {
+      const target = findTarget(key)!
+      const binDir = path.resolve("dist", key, "bin")
+      if (target.os === "linux") {
+        const archive = `dist/${key}.tar.gz`
+        await $`tar -czf ../../${key}.tar.gz *`.cwd(binDir)
+        return archive
+      }
+      if (target.os === "win32") {
+        const archive = `dist/${key}.zip`
+        const absArchive = path.resolve(archive)
+        await $`7z a -tzip ${absArchive} *`.cwd(binDir)
+        return archive
+      }
+      const archive = `dist/${key}.zip`
+      await $`zip -r ../../${key}.zip *`.cwd(binDir)
+      return archive
+    }),
+  )
+  console.log(`Archived ${archives.length} targets`)
+  if (Script.release) {
+    const releaseTag = Script.version.startsWith("dev-v") ? Script.version : `v${Script.version}`
+    console.log(`Uploading ${archives.length} archives to ${releaseTag}...`)
+    await $`gh release upload ${releaseTag} ${archives} --clobber --repo ${process.env.GH_REPO}`
+    console.log("Upload complete")
+  }
 }
 
 export { binaries }

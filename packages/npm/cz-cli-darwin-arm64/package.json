@@ -1,0 +1,23 @@
+{
+  "name": "@clickzetta/cz-cli-darwin-arm64",
+  "version": "0.1.0",
+  "description": "cz-cli binary for macOS ARM64 (Apple Silicon)",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clickzetta/cz-cli.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

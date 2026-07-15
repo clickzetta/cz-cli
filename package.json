@@ -112,6 +112,7 @@
     "@opencode-ai/plugin": "workspace:*",
     "@opencode-ai/script": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",
+    "cos-nodejs-sdk-v5": "^2.14.6",
     "heap-snapshot-toolkit": "1.1.3",
     "typescript": "catalog:"
   },

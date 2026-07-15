@@ -1,0 +1,23 @@
+{
+  "name": "@clickzetta/cz-cli-linux-x64",
+  "version": "0.1.0",
+  "description": "cz-cli binary for Linux x64",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clickzetta/cz-cli.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

@@ -8,6 +8,9 @@ import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "opencode/cli/
 import { ServerAuth } from "opencode/server/auth"
 import { parseModelSelection, type ConfigOptionProvider } from "opencode/acp/config-option"
 import { applyClickZettaProfile } from "../bootstrap/profile-env.js"
+import { runMcpInit, type McpInitArgs } from "./mcp-init.js"
+import { loadProfiles } from "../connection/profile-store.js"
+import { readLlmEntries } from "../llm/native-config.js"
 import { VERSION } from "../version.js"
 import type { GlobalArgs } from "../cli.js"
 
@@ -47,6 +50,37 @@ function extractText(parts: unknown): string {
 function errorResult(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err)
   return { isError: true, content: [{ type: "text" as const, text: msg }] }
+}
+
+// A structured, agent-actionable error for the calling client (Claude Code etc.)
+// so it can guide the user through setup/login instead of surfacing an opaque
+// 503 from the in-process agent server.
+function notConfiguredResult(reason: "no_profile" | "no_llm") {
+  const text =
+    reason === "no_profile"
+      ? "cz-cli is not configured: no ClickZetta profile found. Ask the user to run `cz-cli setup` (or `cz-cli login` for browser OAuth) to create one, then retry."
+      : "cz-cli has no agent LLM configured. Ask the user to run `cz-cli agent llm add` (or `cz-cli setup`) to configure one, then retry."
+  return { isError: true, content: [{ type: "text" as const, text: `NOT_CONFIGURED (${reason}): ${text}` }] }
+}
+
+// Preflight both required pieces before creating a session: a ClickZetta profile
+// (which instance/credentials to use) and an agent LLM (the model the agent runs
+// on). Returns a NOT_CONFIGURED result to surface, or undefined when ready.
+// The profile arg (per-call or server default) is applied by the caller first.
+function checkConfigured(): ReturnType<typeof notConfiguredResult> | undefined {
+  try {
+    if (Object.keys(loadProfiles()).length === 0) return notConfiguredResult("no_profile")
+  } catch {
+    return notConfiguredResult("no_profile")
+  }
+  try {
+    const { llm, default_llm } = readLlmEntries()
+    const active = default_llm && llm[default_llm]
+    if (!active || !active.provider || !active.api_key) return notConfiguredResult("no_llm")
+  } catch {
+    return notConfiguredResult("no_llm")
+  }
+  return undefined
 }
 
 interface McpServeArgs extends GlobalArgs {
@@ -132,6 +166,8 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
       return serialize(async () => {
         try {
           if (args.profile) applyClickZettaProfile(args.profile)
+          const preflight = checkConfigured()
+          if (preflight) return preflight
           const directory = args.cwd ?? defaults.cwd
           const agent = args.agent ?? defaults.agent
           const created = await client.session.create({ directory, agent, title: "mcp" }, { throwOnError: true })
@@ -174,6 +210,8 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
       return serialize(async () => {
         try {
           if (args.profile) applyClickZettaProfile(args.profile)
+          const preflight = checkConfigured()
+          if (preflight) return preflight
           const directory = defaults.cwd
           const agent = defaults.agent
           const modelArg = await resolveModel(args.model)
@@ -229,6 +267,30 @@ export function registerMcpCommand(cli: Argv<GlobalArgs>): void {
               .example("cz-cli mcp serve --profile staging", "Serve with the staging ClickZetta profile as default")
               .example("cz-cli mcp serve --model clickzetta/deepseek/deepseek-3.2", "Serve with a default model"),
           (argv) => runMcpServe(argv as unknown as McpServeArgs),
+        )
+        .command(
+          "init",
+          "Register cz-cli as an MCP server in external AI clients (Claude Code, Cursor, Codex)",
+          (y) =>
+            y
+              .option("client", {
+                alias: "a",
+                type: "string",
+                array: true,
+                describe: "Target client(s): claude, cursor, codex (repeatable). Omit to auto-detect.",
+              })
+              .option("all", { type: "boolean", describe: "Configure all supported clients", default: false })
+              .option("global", {
+                alias: "g",
+                type: "boolean",
+                describe: "Write to the user-level (global) config instead of the project config",
+                default: true,
+              })
+              .option("yes", { alias: "y", type: "boolean", describe: "Skip interactive selection", default: false })
+              .example("cz-cli mcp init", "Auto-detect installed clients and configure them")
+              .example("cz-cli mcp init -a claude -a codex", "Configure Claude Code and Codex")
+              .example("cz-cli mcp init --all --profile staging", "Configure all clients with the staging profile"),
+          (argv) => runMcpInit(argv as unknown as McpInitArgs),
         )
       // Wrap so a bare `cz-cli mcp` renders help and a typo'd subcommand
       // (`cz-cli mcp serv`) returns USAGE_ERROR with a suggestion, instead of
