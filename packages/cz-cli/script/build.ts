@@ -182,23 +182,26 @@ await $`rm -rf dist`
 const DIST_PREFIX = "cz-cli"
 
 const binaries: Record<string, string> = {}
-if (!skipInstall) {
-  // cz_change: add flags to upstream's bare all-platform installs so they don't break
-  // the win32 CI build. These installs only pull the prebuilt cross-platform napi
-  // binaries for opentui/watcher/fff-bun into node_modules. Three problems on win32:
-  //   --ignore-scripts   — upstream's bare re-resolve re-runs lifecycle scripts for
-  //                        trustedDependencies; tree-sitter-powershell then triggers a
-  //                        node-gyp source build that fails (no Node headers/common.gypi).
-  //   --linker hoisted   — the "Install dependencies" step linked the workspace with
-  //                        hoisted layout; without this flag bun re-links isolated and
-  //                        the flattened workspace/deps (opencode/*, yargs, @clickzetta/sdk)
-  //                        stop resolving during Bun.build.
-  //   --frozen-lockfile  — keep the exact dependency graph already installed.
-  // Matches the flags release-cos.yml's "Install dependencies" step uses on Windows.
-  const napiFlags = ["--os=*", "--cpu=*", "--frozen-lockfile", "--linker", "hoisted", "--ignore-scripts"]
-  await $`bun install ${napiFlags} @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`bun install ${napiFlags} @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
-  await $`bun install ${napiFlags} @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
+// cz_change: these all-platform installs pull EVERY platform's prebuilt napi variant
+// (opentui/watcher/fff-bun) so one runner can cross-compile ALL targets. They are only
+// needed for multi-target builds. Under Script.hostOnly (release CI sets
+// OPENCODE_HOST_ONLY=1 on every matrix runner) only the host os+arch is compiled, and
+// Bun folds process.platform/process.arch per --target and dead-code-eliminates every
+// foreign napi branch — so a single-target build references ONLY the host napi, which
+// the workflow's prior "Install dependencies" step already installed. Skipping the
+// installs on hostOnly fixes the win32 CI build: bare, the re-resolve re-runs the
+// tree-sitter-powershell node-gyp lifecycle (fails: no Node headers/common.gypi); with
+// --ignore-scripts it instead disturbs the hoisted workspace layout so Bun.build can no
+// longer resolve opencode/util/error, yargs, @clickzetta/sdk. Both modes vanish when the
+// install doesn't run. hostOnly=false keeps the full multi-target cross-compile path
+// (local `build.ts` with no flags) working exactly as upstream, where bare installs run
+// on Linux and succeed. NOTE: the guard is hostOnly-only, NOT singleFlag — local
+// `build:local` uses --single but has no prior workspace install, so it must still run
+// these to populate node_modules.
+if (!skipInstall && !Script.hostOnly) {
+  await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
+  await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  await $`bun install --os="*" --cpu="*" @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
 }
 for (const item of targets) {
   const name = [
