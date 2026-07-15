@@ -3,6 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { readLlmConfig } from "../llm/native-config.js"
+import { CLICKZETTA_AGENT_IDENTITY_PROMPT } from "../agent-identity-prompt.js"
 import { CLICKZETTA_PROVIDER_NPM, isClickzettaGatewayUrl } from "../llm/clickzetta-provider.js"
 import {
   resolveClickzettaPluginSpecifier,
@@ -220,6 +221,51 @@ export function parseAgentTimeoutMs(argv: string[]): number | null | undefined {
   return Math.round(seconds * 1000)
 }
 
+// cz_change: restore origin/main's cz-cli identity. On main, agent.ts:152 defined a
+// native `data_engineer` primary agent and made it the default (agent.ts:311 fallback),
+// and it inherited the cz-branded system prompt from session/prompt/default.txt. The
+// a2 re-baseline keeps opencode pristine (upstream `build`/`plan`/`general` agents,
+// upstream "You are opencode..." default.txt), so none of that identity survives.
+//
+// We re-home it here without touching opencode: opencode merges OPENCODE_CONFIG_CONTENT's
+// `agent` map + `default_agent` field into its config (config.ts:467 → ConfigV1.Info
+// supports both, core/v1/config/config.ts:80,93). Registering `data_engineer` with the
+// branded prompt makes opencode's request builder use it verbatim as the system prompt
+// (session/llm/request.ts:60 — `agent.prompt` replaces the pristine provider base prompt),
+// which is exactly what main's promptless data_engineer achieved via the branded
+// default.txt. Setting `default_agent` reproduces main's default-agent selection.
+//
+// User overrides win: we only set our agent/default_agent when the user hasn't already
+// configured them (existing config is merged in first, and a user default_agent is kept).
+// The operational cz-cli command reference is layered separately via
+// CLICKZETTA_AGENT_SYSTEM_PROMPT (runtime.ts → opencode-plugin/system-prompt.ts), so it
+// still appends on top of this identity for every agent.
+function clickzettaDefaultAgent(existing: Record<string, unknown>): {
+  agent?: Record<string, unknown>
+  default_agent?: string
+} {
+  const existingAgent = isRecord(existing.agent) ? existing.agent : {}
+  const userDataEngineer = isRecord(existingAgent.data_engineer) ? existingAgent.data_engineer : undefined
+
+  // Register data_engineer only when the user hasn't defined it. Merge our defaults under
+  // any user-provided fields so an explicit prompt/model/permission override still wins.
+  const dataEngineer = {
+    name: "data_engineer",
+    description: "Data Engineer mode. Full tool access for ClickZetta Lakehouse data engineering tasks.",
+    mode: "primary" as const,
+    prompt: CLICKZETTA_AGENT_IDENTITY_PROMPT,
+    ...(userDataEngineer ?? {}),
+  }
+
+  const agent = { ...existingAgent, data_engineer: dataEngineer }
+  const existingDefault = typeof existing.default_agent === "string" ? existing.default_agent : undefined
+
+  return {
+    agent,
+    default_agent: existingDefault ?? "data_engineer",
+  }
+}
+
 export function injectClickzettaAgentConfig(agentTimeoutMs?: number) {
   const providerSpecifier = resolveClickzettaProviderSpecifier()
   const pluginSpecifier = resolveClickzettaPluginSpecifier()
@@ -276,11 +322,16 @@ export function injectClickzettaAgentConfig(agentTimeoutMs?: number) {
     ? existingDisabled
     : [...existingDisabled, "opencode"]
 
+  // cz_change: register the data_engineer default agent + its cz identity prompt.
+  const { agent, default_agent } = clickzettaDefaultAgent(existing)
+
   process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     ...existing,
     ...(Object.keys(provider).length > 0 ? { provider } : {}),
     ...(plugin ? { plugin } : {}),
     ...(skills ? { skills } : {}),
+    ...(agent ? { agent } : {}),
+    ...(default_agent ? { default_agent } : {}),
     disabled_providers: disabledProviders,
   })
 }

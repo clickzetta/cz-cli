@@ -5,34 +5,18 @@ import path from "path"
 import { errorMessage } from "opencode/util/error"
 import { flushOtel } from "../opencode-plugin/otel/index.js"
 import { flushLangfuse, initLangfuse } from "../langfuse.js"
-import { applyDefaultOtelEnv } from "../otel-defaults.js"
 import { CLICKZETTA_AGENT_SYSTEM_PROMPT } from "../agent-system-prompt.js"
-import { disableProjectConfigByDefault, disableUpstreamAutoupdate } from "./upstream-autoupdate.js"
-import {
-  injectClickzettaAgentConfig,
-  injectClickzettaTuiConfig,
-  installClickzettaWorkerEnvShim,
-  parseAgentTimeoutMs,
-} from "./runtime-config.js"
+import { parseAgentTimeoutMs } from "./runtime-config.js"
+import { applyBaseOpencodeEnv, applyAgentRuntimeInjection } from "./opencode-injection.js"
 
 let globalHandlersRegistered = false
 
 export async function main(args: string[], agentRuntime = false): Promise<number> {
-  // cz_change: neutralize the upstream opencode auto-updater. Both entry flows
-  // (compiled boot.ts and dev main.ts → run-cli → delegateToAgentRuntime) converge
-  // here, and the TUI's server Worker — which triggers opencode's `upgrade()` — is
-  // only created further down in the agent-runtime branch, after
-  // installClickzettaWorkerEnvShim() snapshots process.env into the Worker. Setting
-  // the flag at the top of main() guarantees it is in process.env before that Worker
-  // is built. See disableUpstreamAutoupdate for the flag/timing rationale.
-  disableUpstreamAutoupdate()
-
-  // cz_change: default project-level opencode config discovery to OFF, so a repo's
-  // stray opencode.json / .opencode never alters cz-cli. Same timing/Worker-propagation
-  // rationale as disableUpstreamAutoupdate; user can override with
-  // OPENCODE_DISABLE_PROJECT_CONFIG=0. See disableProjectConfigByDefault.
-  disableProjectConfigByDefault()
-
+  // cz_change: apply the base opencode env injection (kill upstream auto-updater,
+  // disable repo-local project config, telemetry defaults) at the very top of main()
+  // — before opencode or the TUI server Worker reads any flag. All injection is
+  // centralized in opencode-injection.ts; see its REGISTRY comment for the full list.
+  applyBaseOpencodeEnv()
 
   if (!globalHandlersRegistered) {
     globalHandlersRegistered = true
@@ -46,7 +30,6 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   }
 
   const clickzettaHome = process.env.CLICKZETTA_TEST_HOME || os.homedir()
-  applyDefaultOtelEnv()
 
   if (!agentRuntime) {
     const { createTraceparent } = await import("@clickzetta/sdk")
@@ -58,50 +41,35 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     return (process.exitCode as number) ?? 0
   }
 
-  // cz_change: ClickZetta LLM config lives in ~/.clickzetta/llm.json (opencode
-  // native format). If that file exists, point OPENCODE_CONFIG at it so
-  // opencode loads providers/model through its built-in mechanism.
+  // cz_change: one-time llm.json migrations must run BEFORE the agent-runtime
+  // injection reads llm.json. migrateProfilesLlmToJson pulls origin/main's
+  // `[llm.*]` tables from profiles.toml (the `update` command runs in the OLD
+  // binary and can't do this, so trigger on first agent run); normalizeLlmProviderNames
+  // heals older llm.json where every provider collapsed to name="ClickZetta".
   try {
-    const { migrateProfilesLlmToJson, llmConfigPath } = await import("../llm/native-config.js")
-    // cz_change: one-time migration from origin/main's `[llm.*]` tables in
-    // profiles.toml into llm.json (idempotent no-op once done). The `update`
-    // command runs in the OLD binary and can't execute this, so trigger it here
-    // on the first agent run of the new binary. See migrateProfilesLlmToJson.
+    const { migrateProfilesLlmToJson, normalizeLlmProviderNames } = await import("../llm/native-config.js")
     try {
       migrateProfilesLlmToJson()
     } catch {}
-    // cz_change: heal older llm.json where every provider name="ClickZetta"
-    // (collapsed the /model picker into one duplicated group). name = key.
     try {
-      const { normalizeLlmProviderNames } = await import("../llm/native-config.js")
       normalizeLlmProviderNames()
     } catch {}
-    const llmPath = llmConfigPath()
-    if (fs.existsSync(llmPath) && !process.env.OPENCODE_CONFIG) {
-      process.env.OPENCODE_CONFIG = llmPath
-    }
   } catch {}
 
   // cz_change: re-home origin's `agent run --timeout <seconds>` first-byte timeout.
-  // Parse it here (same process, args carry it) and inject it into the provider config;
-  // opencode's provider.ts consumes options.headerTimeout. null = flag present but invalid.
+  // Parse it here (same process, args carry it); opencode's provider.ts consumes
+  // options.headerTimeout. null = flag present but invalid.
   const agentTimeoutMs = parseAgentTimeoutMs(args)
   if (agentTimeoutMs === null) {
     process.stderr.write("--timeout must be a positive number of seconds\n")
     return 1
   }
-  injectClickzettaAgentConfig(agentTimeoutMs)
 
-  // cz_change: restore ClickZetta home logo in the TUI via OPENCODE_TUI_CONFIG
-  // (opencode/tui stay pristine — see injectClickzettaTuiConfig). Best-effort.
-  injectClickzettaTuiConfig()
-
-  // cz_change: make the runtime env we just injected (OPENCODE_CONFIG=llm.json,
-  // OPENCODE_CONFIG_CONTENT) reach the bare-agent TUI's server Worker. Bun snapshots
-  // Worker env at process start, so our runtime mutations wouldn't otherwise be seen
-  // inside the Worker (opencode cli/cmd/tui.ts `new Worker(file)`). See
-  // installClickzettaWorkerEnvShim. Must run before the TUI handler creates the Worker.
-  installClickzettaWorkerEnvShim()
+  // cz_change: agent-runtime-only injection — OPENCODE_CONFIG (llm.json),
+  // OPENCODE_CONFIG_CONTENT (providers/skills/plugins + data_engineer default agent),
+  // OPENCODE_TUI_CONFIG (brand), the operational system prompt, and the TUI Worker
+  // env shim. All centralized in opencode-injection.ts; see its REGISTRY comment.
+  applyAgentRuntimeInjection(agentTimeoutMs)
 
   // --version fast path
   if (["--version", "-v"].includes(args[0])) {

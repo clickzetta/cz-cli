@@ -183,9 +183,15 @@ const DIST_PREFIX = "cz-cli"
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
-  await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
-  await $`bun install --os="*" --cpu="*" @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
+  // cz_change: --ignore-scripts is required on Windows CI. These installs re-resolve
+  // the dep tree to pull all-platform prebuilt napi binaries; without --ignore-scripts
+  // bun also re-runs install scripts for trustedDependencies, and tree-sitter-powershell
+  // then triggers a node-gyp source build that fails on the win32 runner (missing Node
+  // headers / common.gypi). These three packages ship prebuilt binaries, so skipping
+  // lifecycle scripts is safe and still lands the cross-platform artifacts we need.
+  await $`bun install --os="*" --cpu="*" --ignore-scripts @opentui/core@${pkg.dependencies["@opentui/core"]}`
+  await $`bun install --os="*" --cpu="*" --ignore-scripts @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  await $`bun install --os="*" --cpu="*" --ignore-scripts @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
 }
 for (const item of targets) {
   const name = [
