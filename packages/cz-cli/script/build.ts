@@ -183,15 +183,18 @@ const DIST_PREFIX = "cz-cli"
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
-  // cz_change: --ignore-scripts is required on Windows CI. These installs re-resolve
-  // the dep tree to pull all-platform prebuilt napi binaries; without --ignore-scripts
-  // bun also re-runs install scripts for trustedDependencies, and tree-sitter-powershell
-  // then triggers a node-gyp source build that fails on the win32 runner (missing Node
-  // headers / common.gypi). These three packages ship prebuilt binaries, so skipping
-  // lifecycle scripts is safe and still lands the cross-platform artifacts we need.
-  await $`bun install --os="*" --cpu="*" --ignore-scripts @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`bun install --os="*" --cpu="*" --ignore-scripts @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
-  await $`bun install --os="*" --cpu="*" --ignore-scripts @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
+  // cz_change: add --frozen-lockfile --ignore-scripts to upstream's bare all-platform
+  // installs. They only pull the prebuilt cross-platform napi binaries for opentui/
+  // watcher/fff-bun into node_modules. On the win32 CI runner upstream's bare re-resolve
+  // re-runs lifecycle scripts for trustedDependencies and tree-sitter-powershell then
+  // triggers a node-gyp source build that fails (no Node headers / common.gypi).
+  // --frozen-lockfile keeps the workspace graph the "Install dependencies" step already
+  // linked (so internal packages still resolve), and --ignore-scripts skips the native
+  // rebuild. Matches the flags release-cos.yml's "Install dependencies" step uses on Windows.
+  const napiFlags = ["--os=*", "--cpu=*", "--frozen-lockfile", "--ignore-scripts"]
+  await $`bun install ${napiFlags} @opentui/core@${pkg.dependencies["@opentui/core"]}`
+  await $`bun install ${napiFlags} @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  await $`bun install ${napiFlags} @ff-labs/fff-bun@${pkg.dependencies["@ff-labs/fff-bun"]}`
 }
 for (const item of targets) {
   const name = [
