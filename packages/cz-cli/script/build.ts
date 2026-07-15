@@ -148,10 +148,14 @@ const allTargets: {
 // cz_change: honor Script.hostOnly (OPENCODE_HOST_ONLY / OPENCODE_RELEASE) so each
 // CI matrix runner builds ONLY its own platform target. Without this every runner
 // builds all targets and races on `gh release upload --clobber`. Vendored from
-// upstream opencode build.ts (lost when this file was split off).
-const platformTargets = Script.hostOnly
-  ? allTargets.filter((item) => item.os === process.platform && item.arch === process.arch)
-  : allTargets
+// upstream opencode build.ts (lost when this file was split off). MUST also drop the
+// baseline (avx2:false) and abi (musl) variants: the host os+arch can match several
+// entries (e.g. win32-x64 AND win32-x64-baseline), and the baseline/abi variants need
+// extra Bun runtime artifacts (bun-<os>-<arch>-baseline) whose download is flaky and was
+// failing the win32 build. Single-target release CI wants exactly one native binary.
+const hostAvx2Only = (item: (typeof allTargets)[number]) =>
+  item.os === process.platform && item.arch === process.arch && item.avx2 !== false && item.abi === undefined
+const platformTargets = Script.hostOnly ? allTargets.filter(hostAvx2Only) : allTargets
 
 const targets = singleFlag
   ? platformTargets.filter((item) => {
