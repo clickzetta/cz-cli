@@ -80,18 +80,29 @@ jobs:
           fi
           echo "Previous tag: $PREV_TAG"
 
-          # Collect commit messages
-          COMMITS=$(git log --pretty=format:"- %s" "${PREV_TAG}..HEAD" --no-merges)
+          # Collect commit messages. Cap the count: on a re-baselined branch the
+          # nearest v* tag can be thousands of commits away, and GitHub rejects a
+          # release body over 125000 chars (HTTP 422). Keep the newest 200 and note
+          # the remainder.
+          MAX=200
+          TOTAL=$(git rev-list --no-merges --count "${PREV_TAG}..HEAD")
+          COMMITS=$(git log --pretty=format:"- %s" "${PREV_TAG}..HEAD" --no-merges | head -n "$MAX")
+          MORE=""
+          if [ "$TOTAL" -gt "$MAX" ]; then
+            MORE="
+
+          …and $((TOTAL - MAX)) more commits. See the full changelog below."
+          fi
 
           # Build release body
           BODY="## What's Changed
 
-          ${COMMITS}
+          ${COMMITS}${MORE}
 
           **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
 
-          # Write to file (multi-line safe)
-          printf '%s' "$BODY" > /tmp/release-notes.md
+          # Hard cap as a safety net (GitHub limit is 125000 chars).
+          printf '%s' "$BODY" | head -c 120000 > /tmp/release-notes.md
 
       - name: Create GitHub release
         env:
