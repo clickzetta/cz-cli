@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "opencode/cli/network"
 import { ServerAuth } from "opencode/server/auth"
-import { parseModelSelection, type ConfigOptionProvider } from "opencode/acp/config-option"
+import { parseModelSelection, type ConfigOptionProvider, type ModelSelection } from "opencode/acp/config-option"
 import { applyClickZettaProfile } from "../bootstrap/profile-env.js"
 import { runMcpInit, type McpInitArgs } from "./mcp-init.js"
 import { loadProfiles } from "../connection/profile-store.js"
@@ -45,6 +45,143 @@ function extractText(parts: unknown): string {
     })
     .map((p) => p.text)
     .join("")
+}
+
+// Safety-net timeout after prompt() resolves: the session's `idle` status event
+// normally lands right after the final part, but if the stream stalls we must
+// not hang the tool result. prompt() already returned the authoritative answer,
+// so timing out here only means we stop draining progress a little early.
+const IDLE_TIMEOUT_MS = 5000
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+// Run one agent turn (create-then-prompt or reply) and return the final answer
+// text. When `progressToken` is set, also mirror the agent's intermediate
+// reasoning / tool activity to the client as `notifications/progress` while the
+// turn runs — matching codex's dual-channel MCP behavior. The final tool result
+// still comes from prompt()'s own parts (authoritative, no stream race).
+//
+// Without a progressToken this is byte-identical to the old blocking path: no
+// subscription, no loop, just prompt() + extractText(). Fully backward compatible.
+async function runAgentTurn(params: {
+  client: ReturnType<typeof createOpencodeClient>
+  sessionID: string
+  directory?: string
+  agent?: string
+  model?: ModelSelection
+  prompt: string
+  progressToken?: string | number
+  sendNotification: (n: unknown) => Promise<void>
+}): Promise<string> {
+  const { client, sessionID, directory, agent, model, progressToken } = params
+  const streaming = progressToken !== undefined
+
+  const promptArgs = {
+    sessionID,
+    directory,
+    agent,
+    model: model?.model,
+    variant: model?.variant,
+    parts: [{ type: "text" as const, text: params.prompt }],
+  }
+
+  if (!streaming) {
+    const res = await client.session.prompt(promptArgs, { throwOnError: true })
+    return extractText(res.data.parts)
+  }
+
+  // Subscribe BEFORE prompting so no early events are missed. The event stream
+  // is workspace-global, so every branch filters by this session's ID.
+  const controller = new AbortController()
+  const events = await client.event.subscribe({ directory }, { signal: controller.signal })
+
+  let progress = 0
+  // A dead notification channel must not stall the turn — swallow send errors.
+  const notify = (message: string) =>
+    params
+      .sendNotification({
+        method: "notifications/progress",
+        params: { progressToken, progress: ++progress, message },
+      })
+      .catch(() => {})
+
+  // Dedup key for `task` tool "running" notices (part.id fires repeatedly).
+  const startedTools = new Set<string>()
+
+  async function loop() {
+    for await (const event of events.stream) {
+      if (event.type === "message.part.updated") {
+        const part = event.properties.part
+        if (part.sessionID !== sessionID) continue
+
+        // Finalized reasoning only (time.end set) — mirror run.ts's filter.
+        if (part.type === "reasoning" && part.time?.end) {
+          const text = part.text.trim()
+          if (text) await notify("🧠 " + text)
+          continue
+        }
+
+        if (part.type === "tool") {
+          const state = part.state
+          if (state.status === "running" && part.tool === "task") {
+            if (startedTools.has(part.id)) continue
+            startedTools.add(part.id)
+            await notify("🔧 " + part.tool + ": " + (state.title ?? "running"))
+          } else if (state.status === "completed") {
+            await notify("✓ " + part.tool + ": " + (state.title ?? "done"))
+          } else if (state.status === "error") {
+            await notify("✗ " + part.tool + ": " + (state.error ?? "error"))
+          }
+          continue
+        }
+        // text parts: final answer comes from extractText — skip to avoid dup.
+        // step-start / step-finish: skip to keep the progress stream simple.
+      }
+
+      if (event.type === "session.error") {
+        const props = event.properties
+        if (props.sessionID !== sessionID || !props.error) continue
+        let err = String(props.error.name)
+        if ("data" in props.error && props.error.data && "message" in props.error.data) {
+          err = String(props.error.data.message)
+        }
+        await notify("⚠️ " + err)
+        // Accumulate but do not break — the turn ends on `idle`.
+        continue
+      }
+
+      if (
+        event.type === "session.status" &&
+        event.properties.sessionID === sessionID &&
+        event.properties.status.type === "idle"
+      ) {
+        return
+      }
+    }
+  }
+
+  // Fire-and-forget: the loop drains progress in the background. The final
+  // answer and turn completion are governed by prompt() below, not the loop.
+  const loopPromise = loop().catch(() => {})
+
+  let res
+  try {
+    res = await client.session.prompt(promptArgs, { throwOnError: true })
+  } catch (err) {
+    // prompt() failed: tear down the stream so the loop unwinds, then rethrow
+    // for the caller's errorResult().
+    controller.abort()
+    await loopPromise
+    throw err
+  }
+
+  // prompt() resolved with the authoritative answer. Give the loop a brief
+  // window to drain the trailing `idle` event, then force it closed.
+  await Promise.race([loopPromise, sleep(IDLE_TIMEOUT_MS)])
+  controller.abort()
+  await loopPromise
+
+  return extractText(res.data.parts)
 }
 
 function errorResult(err: unknown) {
@@ -162,7 +299,10 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
         "Start a new ClickZetta agent session with a natural-language prompt. Returns the sessionID (for follow-ups via cz-reply) and the agent's reply.",
       inputSchema: czInputSchema as any,
     },
-    (async (args: { prompt: string; model?: string; agent?: string; cwd?: string; profile?: string }) => {
+    (async (
+      args: { prompt: string; model?: string; agent?: string; cwd?: string; profile?: string },
+      extra: { _meta?: { progressToken?: string | number }; sendNotification: (n: unknown) => Promise<void> },
+    ) => {
       return serialize(async () => {
         try {
           if (args.profile) applyClickZettaProfile(args.profile)
@@ -173,18 +313,16 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
           const created = await client.session.create({ directory, agent, title: "mcp" }, { throwOnError: true })
           const sessionID = created.data.id
           const modelArg = await resolveModel(args.model)
-          const res = await client.session.prompt(
-            {
-              sessionID,
-              directory,
-              agent,
-              model: modelArg?.model,
-              variant: modelArg?.variant,
-              parts: [{ type: "text", text: args.prompt }],
-            },
-            { throwOnError: true },
-          )
-          const text = extractText(res.data.parts)
+          const text = await runAgentTurn({
+            client,
+            sessionID,
+            directory,
+            agent,
+            model: modelArg,
+            prompt: args.prompt,
+            progressToken: extra?._meta?.progressToken,
+            sendNotification: extra.sendNotification,
+          })
           return { content: [{ type: "text" as const, text: `sessionID: ${sessionID}\n\n${text}` }] }
         } catch (err) {
           return errorResult(err)
@@ -206,7 +344,10 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
       description: "Continue an existing ClickZetta agent session. Requires a sessionID from a prior cz call.",
       inputSchema: czReplyInputSchema as any,
     },
-    (async (args: { sessionID: string; prompt: string; model?: string; profile?: string }) => {
+    (async (
+      args: { sessionID: string; prompt: string; model?: string; profile?: string },
+      extra: { _meta?: { progressToken?: string | number }; sendNotification: (n: unknown) => Promise<void> },
+    ) => {
       return serialize(async () => {
         try {
           if (args.profile) applyClickZettaProfile(args.profile)
@@ -215,18 +356,16 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
           const directory = defaults.cwd
           const agent = defaults.agent
           const modelArg = await resolveModel(args.model)
-          const res = await client.session.prompt(
-            {
-              sessionID: args.sessionID,
-              directory,
-              agent,
-              model: modelArg?.model,
-              variant: modelArg?.variant,
-              parts: [{ type: "text", text: args.prompt }],
-            },
-            { throwOnError: true },
-          )
-          const text = extractText(res.data.parts)
+          const text = await runAgentTurn({
+            client,
+            sessionID: args.sessionID,
+            directory,
+            agent,
+            model: modelArg,
+            prompt: args.prompt,
+            progressToken: extra?._meta?.progressToken,
+            sendNotification: extra.sendNotification,
+          })
           return { content: [{ type: "text" as const, text }] }
         } catch (err) {
           return errorResult(err)
