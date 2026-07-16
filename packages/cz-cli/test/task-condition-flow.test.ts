@@ -25,9 +25,12 @@ const submitFlowCalls: Array<Record<string, unknown>> = []
 const taskPreCheckCalls: Array<Record<string, unknown>> = []
 const checkFlowSubmitStatusCalls: Array<Record<string, unknown>> = []
 const bindFlowNodeCalls: Array<Record<string, unknown>> = []
+const getPublishedVersionDetailCalls: Array<Record<string, unknown>> = []
 let failNodeConfigDetail = false
 let flowPreCheckPass = true
 let flowSubmitStatus = 2
+let flowCurrentVersion = 5
+let flowEditState = 100
 
 const actualSdk = await import("@clickzetta/sdk")
 const actualResolver = await import("../src/resolver.ts")
@@ -36,7 +39,7 @@ mock.module("@clickzetta/sdk", () => ({
   ...actualSdk,
   getTaskDetail: async (_config: Record<string, unknown>, fileId: number) => ({
     data: fileId === 13412004
-      ? { id: 13412004, dataFileName: "condition_flow", fileType: 500, fileFlowStatus: 100, deployStatus: 1 }
+      ? { id: 13412004, dataFileName: "condition_flow", fileType: 500, fileFlowStatus: flowEditState, deployStatus: 1, currentVersion: flowCurrentVersion }
       : {
         id: fileId,
         dataFileName: "test_condition",
@@ -82,6 +85,34 @@ mock.module("@clickzetta/sdk", () => ({
       }
     })(),
   }),
+  getTaskPublishedVersionDetail: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
+    getPublishedVersionDetailCalls.push(params)
+    return {
+      data: {
+        projectId: 60001,
+        dataFileId: params.dataFileId,
+        dataFileVersion: params.dataFileVersion,
+        dataFileName: "condition_flow",
+        fileType: 500,
+        schemaName: "public",
+        cronExpress: "0 00 00 * * ? *",
+        retryCount: 1,
+        retryIntervalTime: 1,
+        retryIntervalTimeUnit: "m",
+        rerunProperty: 1,
+        selfDependsJob: 0,
+        activeStartTime: "2026-05-01",
+        activeEndTime: "2026-05-09",
+        etlVcCode: "AUTO_STOP_TEST_01",
+        etlVcId: "1664618098965906057",
+        dependencyTimeout: 3,
+        dependencyTimeoutUnit: "d",
+        scheduleRateType: 3,
+        triggerType: 1,
+        configProperties: "{}",
+      },
+    }
+  },
   saveTaskConfig: async (_config: Record<string, unknown>, params: Record<string, unknown>) => {
     saveTaskConfigCalls.push(params)
     return { data: { ok: true } }
@@ -217,9 +248,12 @@ beforeEach(() => {
   taskPreCheckCalls.length = 0
   checkFlowSubmitStatusCalls.length = 0
   bindFlowNodeCalls.length = 0
+  getPublishedVersionDetailCalls.length = 0
   failNodeConfigDetail = false
   flowPreCheckPass = true
   flowSubmitStatus = 2
+  flowCurrentVersion = 5
+  flowEditState = 100
   mkdirSync(profileDir, { recursive: true })
   writeFileSync(profileFile, "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n")
   process.env.CLICKZETTA_TEST_HOME = home
@@ -395,5 +429,39 @@ describe("condition task contracts", () => {
     expect(checkFlowSubmitStatusCalls).toEqual([
       { submitTraceId: "trace-flow-001" },
     ])
+  })
+
+  test("task status highlights draft schedule drift from published flow config", async () => {
+    flowEditState = 80
+    const result = await execute("task status 13412004")
+
+    expect(result.exitCode).toBe(0)
+    const parsed = JSON.parse(result.output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
+    const data = parsed.data as Record<string, unknown>
+    expect(data.needs_publish).toBe(true)
+    expect(data.edit_state).toBe("modified_after_publish")
+    expect((data.draft_schedule as Record<string, unknown>).cron_express).toBe("0 */5 * * * ? *")
+    expect((data.published_schedule as Record<string, unknown>).cron_express).toBe("0 00 00 * * ? *")
+    expect(getPublishedVersionDetailCalls).toEqual([
+      {
+        dataFileId: 13412004,
+        dataFileVersion: 5,
+        projectId: 60001,
+      },
+    ])
+  })
+
+  test("task status marks unpublished flow draft when no published version exists", async () => {
+    flowCurrentVersion = 0
+    flowEditState = 80
+
+    const result = await execute("task status 13412004")
+
+    expect(result.exitCode).toBe(0)
+    const parsed = JSON.parse(result.output.trim().split("\n")[0] ?? "{}") as Record<string, unknown>
+    const data = parsed.data as Record<string, unknown>
+    expect(data.needs_publish).toBe(true)
+    expect(data.published_schedule).toBe("not deployed")
+    expect(getPublishedVersionDetailCalls).toHaveLength(0)
   })
 })

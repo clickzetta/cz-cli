@@ -438,6 +438,13 @@ describe("help texts", () => {
     const out = help(["task", "flow", "--help"])
     expect(out).toMatch(/create-node/)
     expect(out).toMatch(/node-save/)
+    expect(out).toMatch(/temp-run/)
+  })
+
+  test("task flow temp-run --help explains temporary semantics", () => {
+    const out = help(["task", "flow", "temp-run", "--help"])
+    expect(out).toMatch(/temporary|TEMP|ad-hoc/i)
+    expect(out).toMatch(/SCHEDULE|scheduled/i)
   })
 
   test("task deploy --help mentions prerequisites", () => {

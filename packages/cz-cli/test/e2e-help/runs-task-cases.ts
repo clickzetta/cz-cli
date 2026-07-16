@@ -148,7 +148,7 @@ export const runsTaskHelpCases: HelpCase[] = [
   {
     args: ["task", "flow", "--help"],
     expectHeader: "cz-cli task flow",
-    expectCommands: ["dag", "create-node", "remove-node", "bind", "unbind", "node-detail", "node-save", "submit", "instances"],
+    expectCommands: ["dag", "create-node", "remove-node", "bind", "unbind", "node-detail", "node-save", "submit", "temp-run", "instances"],
   },
   {
     args: ["task", "flow", "dag", "--help"],
@@ -194,6 +194,11 @@ export const runsTaskHelpCases: HelpCase[] = [
     args: ["task", "flow", "submit", "--help"],
     expectHeader: "cz-cli task flow submit",
     expectOptions: ["task"],
+  },
+  {
+    args: ["task", "flow", "temp-run", "--help"],
+    expectHeader: "cz-cli task flow temp-run",
+    expectOptions: ["task", "--vc", "--param"],
   },
   {
     args: ["task", "flow", "instances", "--help"],

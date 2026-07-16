@@ -111,3 +111,24 @@
 - **WHEN** 用户执行 `cz-cli runs refill TASK --from 2026-01-01 --to 2026-01-02` 且未确认
 - **THEN** CLI 在 TTY 中确认，非 TTY 要求 `--yes`
 - **AND** help 说明 refill 是不可逆/高风险操作
+- **AND** help 说明该接口依赖当前登录用户名作为后端 `createBy`
+
+#### Scenario: 补数请求使用后端兼容字段
+
+- **WHEN** 用户执行 `cz-cli runs refill TASK --from 2026-01-01 --to 2026-01-02 --yes`
+- **THEN** CLI 提交的补数请求包含 `createBy`、`userId`、`dateList` 与 `complementBizDateBeanList`
+- **AND** `createBy` 使用当前登录用户名，`userId` 使用当前登录用户 ID
+- **AND** `dateList` 与 `complementBizDateBeanList` 使用 `bizStartDate`/`bizEndDate` 表达补数时间窗口
+
+#### Scenario: 补数时间边界参数不完整
+
+- **WHEN** 用户执行 `cz-cli runs refill TASK --from 2026-01-01 --yes` 或仅传 `--to`
+- **THEN** CLI 返回 `INVALID_ARGUMENTS`
+- **AND** 不调用补数创建 API
+
+#### Scenario: 当前登录上下文缺少用户名
+
+- **WHEN** 用户执行 `cz-cli runs refill TASK --yes`，但当前登录上下文没有可用的用户名
+- **THEN** CLI 返回 `INVALID_ARGUMENTS`
+- **AND** 错误提示需要重新登录或刷新 profile
+- **AND** 不调用补数创建 API

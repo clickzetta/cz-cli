@@ -28,6 +28,12 @@ export interface GetTaskConfigDetailParams {
   collectType?: number
 }
 
+export interface GetTaskPublishedVersionDetailParams {
+  projectId: number
+  dataFileId: number
+  dataFileVersion: number
+}
+
 export interface ParseTaskDependencyOutParams {
   projectId: number
   workspaceId: number | string
@@ -170,6 +176,18 @@ export function getTaskConfigDetail(config: StudioConfig, params: GetTaskConfigD
       dataFileId: params.dataFileId,
       ...(params.nodeId !== undefined && { nodeId: params.nodeId }),
       ...(params.collectType !== undefined && { collectType: params.collectType }),
+    },
+  )
+}
+
+export function getTaskPublishedVersionDetail(config: StudioConfig, params: GetTaskPublishedVersionDetailParams) {
+  return studioRequest(
+    config,
+    "/ide-admin/v1/fileVersion/getFileDetailByVersion",
+    {
+      projectId: params.projectId,
+      dataFileId: params.dataFileId,
+      dataFileVersion: params.dataFileVersion,
     },
   )
 }

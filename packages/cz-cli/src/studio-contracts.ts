@@ -301,12 +301,14 @@ export const TASK_RUN_TYPE_NAMES: Record<number, string> = {
 export const TASK_EDIT_STATE_CLI_NAMES: Record<number, string> = {
   [StudioTaskEditState.WaitForSave]: "draft",
   [StudioTaskEditState.WaitForPublish]: "published",
+  [StudioTaskEditState.ModifiedAfterPublish]: "modified_after_publish",
   [StudioTaskEditState.Published]: "offline",
 }
 
 export const TASK_EDIT_STATE_STAT_NAMES: Record<number, string> = {
   [StudioTaskEditState.WaitForSave]: "DRAFT",
   [StudioTaskEditState.WaitForPublish]: "PUBLISHED",
+  [StudioTaskEditState.ModifiedAfterPublish]: "MODIFIED_AFTER_PUBLISH",
   [StudioTaskEditState.Published]: "OFFLINE",
 }
 

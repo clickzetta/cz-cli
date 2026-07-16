@@ -31,6 +31,7 @@ cz-cli task integration setup <task>          Configure OFFLINE data-integration
 cz-cli task integration show <task>           Show an existing integration task's current field/table mapping and sync params (read before edit)
 cz-cli task integration edit <task>           Edit an EXISTING integration task (applied+saved immediately). single: --column-mapping '[{"source","sink"}]' (full replace) / --split-pk / --where / --write-mode / --partitions 'dt=${bizdate}' (static) / --dynamic-partition 'dt:source_col' (dynamic, mutually exclusive with --partitions; empty string clears) / --param-value-list / --parallelism / --error-limit / --m-bytes. multi/whole_db: --table-mapping / --pk-write-mode / --non-pk-write-mode / --schema-rule / --table-rule / --batch-size / --connections
 cz-cli task content <task>                    Get task script, config, params, input_params, and output_params (draft)
+cz-cli task status <task>                     Get combined draft + published/deployed state; check this before validating schedule/retry behavior
 cz-cli task save-content <task> --file <f>    Save task script; use --params '{"key":"val","dt":"bizdate","yd":"$[yyyy-MM-dd,-1d]"}' to set runtime params while saving content (system params like bizdate/sys_plan_day/sys_biz_datetime etc. auto-detected)
 cz-cli task save-config <task>                Save task non-cron config, like retry, dependency; use --param KEY=VAL (repeatable) to merge/update task params without changing content
 cz-cli task save-merge <task>                 Save MERGE task rule content and upstream schedule dependencies: --dependency <upstream> (repeatable), --status SUCCESS|FAILED|SKIPPED (repeatable/comma-separated), --logic AND|OR, --final-status SUCCESS|FAILED|SKIPPED. SKIPPED only applies to if/condition upstream tasks.
@@ -42,6 +43,9 @@ cz-cli task undeploy <task>                   Undeploy a task, irreversible (ali
 cz-cli task execute <task>                    Execute ad-hoc; auto-uses saved manual params as defaults (--param KEY=VAL overrides); warns if unresolved ${placeholders} remain (SQL will fail, Python/Shell silently keeps literal string)
 cz-cli task delete <task>                     Delete draft/offline task
 cz-cli task flow dag <task>                   Get flow DAG
+cz-cli task flow submit <task>                Publish flow. After publish, validate formal scheduled behavior with `cz-cli runs list --task <task> --run-type SCHEDULE`
+cz-cli task flow temp-run <task>              Start a TEMP/ad-hoc flow run for debugging only; does NOT create a formal scheduled run
+cz-cli task flow instances <task> --run_id R  Inspect a TEMP or published flow instance and node-instance state
 cz-cli task flow node-save <flow> --name N    Save flow node content and params. Params: --param key=value (manual default), --flow-param key (inherit parent flow param/ref=2), --output-param key (declare $[output]), --input-param key=upstreamNodeName (consume upstream output; bind/create nodes first so upstream resolves from DAG)
 
 # Realtime CDC pipeline lifecycle (fileType 281 = MULTI_REALTIME, multi-table CDC created via create-realtime-sync). NOT for single-table Kafka streaming (fileType 14) — those use task start/stop.
@@ -137,7 +141,11 @@ Run `cz-cli <command> --help` for detailed options on any command.
 **SQL is async by default**. Use `--sync` for SELECT when you need data immediately.
 **Write operations ALWAYS require `--write` flag** — this includes ALL DDL (CREATE, ALTER, DROP, CREATE DYNAMIC TABLE, CREATE MATERIALIZED VIEW) and ALL DML (INSERT, UPDATE, DELETE, MERGE INTO, COPY INTO). Without `--write`, the command will be rejected. Always add it proactively.
 **Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE).
+**Draft vs published matters**: `cz-cli task content <task>` shows draft only. Before validating cron/retry/readiness/scheduled behavior, run `cz-cli task status <task>` first. If draft changes are not published yet, publish them before drawing conclusions.
 **Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.
+**Flow publish is explicit**: after editing a flow draft, run `cz-cli task flow submit <task>` so formal scheduled runs use the latest config.
+**Flow validation path matters**: use `cz-cli task flow temp-run <task>` only for TEMP/ad-hoc debugging. To validate formal scheduled behavior after publish, use `cz-cli runs list --task <task> --run-type SCHEDULE`, then inspect retries with `cz-cli attempts list --run-id <schedule_run_id>`.
+**Flow run history**: FLOW tasks do not have standalone schedule entries; inspect flow execution state with `cz-cli task flow instances <task> --run_id <flow_instance_id>`.
 **Merge tasks**: create with `task create --type MERGE`, then configure with `task save-merge <task> --dependency <upstream> --status SUCCESS --status FAILED`. Add `--status SKIPPED` only when the upstream is an if/condition task.
 **Task params**: for standalone tasks, use `task save-content --params '{"k":"v"}'` when saving content, or `task save-config --param k=v` to merge/update params while preserving content. For flow nodes, use `task flow node-save --param`, `--flow-param`, `--output-param`, and `--input-param`.
 **Flow node input/output params**: declare upstream outputs with `--output-param key`, bind upstream/downstream, then consume them with downstream `--input-param key=upstreamNodeName`. `--input-param` resolves the upstream node ID from the flow DAG.
