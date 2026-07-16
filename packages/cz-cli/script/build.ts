@@ -261,6 +261,11 @@ for (const item of targets) {
     define: {
       FFF_LIBC: JSON.stringify(item.abi === "musl" ? "musl" : "gnu"),
       OPENCODE_VERSION: `'${Script.version}'`,
+      // cz_change: stamp the real release version into version.ts's CLICKZETTA_VERSION.
+      // The re-baseline renamed globals to OPENCODE_* but dropped this key, so
+      // `cz-cli --version` (which reads VERSION ← CLICKZETTA_VERSION) always fell back
+      // to 0.0.0-dev+<ts>. Script.version is fed by OPENCODE_VERSION in release CI.
+      CLICKZETTA_VERSION: `'${Script.version}'`,
       OPENCODE_MODELS_DEV: generated.modelsData,
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
       OPENCODE_WORKER_PATH: workerPath,
