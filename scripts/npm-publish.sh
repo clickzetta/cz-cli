@@ -106,6 +106,16 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r "$artifact_dir/bin/skills" "$pkg_dir/bin/skills"
   fi
 
+  # Ship ClickZetta runtime assets next to the binary. platform.js runs the binary
+  # in-place from this package's bin/, so dirname(process.execPath) must contain these
+  # or runtime-assets.ts resolveRuntimeModulePath throws "Missing ClickZetta runtime
+  # asset" and agent/llm features crash. build.ts emits them into artifact bin/.
+  for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts; do
+    if [ -f "$artifact_dir/bin/$asset" ]; then
+      cp "$artifact_dir/bin/$asset" "$pkg_dir/bin/$asset"
+    fi
+  done
+
   # Publish (tolerate "already published" from partial prior runs)
   if [ -n "$DRY_RUN" ]; then
     echo "  [dry-run] npm publish ${PUBLISH_ARGS[*]}"

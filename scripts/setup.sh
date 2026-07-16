@@ -24,6 +24,16 @@ mkdir -p "$INSTALL_DIR" "$METADATA_DIR"
 cp "$SOURCE_BINARY" "$TARGET_BINARY"
 chmod +x "$TARGET_BINARY"
 
+# Ship ClickZetta runtime assets beside the installed binary. The compiled cz-cli
+# resolves these from dirname(process.execPath) at runtime (see runtime-assets.ts
+# resolveRuntimeModulePath); without them `cz-cli agent`/`agent llm` crash with
+# "Missing ClickZetta runtime asset". build.ts emits them into the archive's bin/
+# next to the binary, so they sit in $SCRIPT_DIR here. The .tsx/.ts are shipped as
+# raw source on purpose (pre-bundling would embed a second @opentui/core).
+for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts; do
+  [ -f "${SCRIPT_DIR}/${asset}" ] && cp "${SCRIPT_DIR}/${asset}" "${INSTALL_DIR}/${asset}"
+done
+
 case "$(uname -s)" in
   Darwin)
     xattr -dr com.apple.quarantine "$TARGET_BINARY" 2>/dev/null || true
