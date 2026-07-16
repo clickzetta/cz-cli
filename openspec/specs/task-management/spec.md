@@ -153,6 +153,29 @@ CLI task 类型、状态、调度频率等 Studio 后端契约 MUST 通过集中
 - **THEN** 系统执行与 `task content` 等价的逻辑
 - **AND** MAY 输出迁移提示，建议改用 `task content`
 
+### Requirement: task status 必须显式区分草稿态与已发布态
+
+本需求 MUST 按以下场景执行。
+
+`task status <task>` MUST 帮用户直接看出“当前草稿”和“当前线上已发布配置”是否一致，避免把草稿误当成正式调度配置。
+
+#### Scenario: 任务存在未发布草稿
+
+- **WHEN** 用户执行 `cz-cli task status TASK`
+- **AND** 该任务的草稿调度配置与当前已发布版本不同
+- **THEN** 输出 MUST 包含 `needs_publish=true` 或等价字段
+- **AND** 输出 MUST 同时包含 `draft_schedule` 与 `published_schedule`/等价结构
+- **AND** flow 任务的提示 MUST 指导用户执行 `cz-cli task flow submit <task>`
+- **AND** 非 flow 任务的提示 MUST 指导用户执行 `cz-cli task deploy <task>`
+
+#### Scenario: 任务没有已发布版本
+
+- **WHEN** 用户执行 `cz-cli task status TASK`
+- **AND** 该任务仍是纯草稿，尚无任何发布版本
+- **THEN** 输出 MUST 返回草稿配置
+- **AND** `published_schedule` MUST 明确为空、`not_deployed` 或等价语义
+- **AND** `needs_publish` MUST 为 `true`
+
 ### Requirement: task save-content 是保存脚本内容的规范命令
 
 本需求 MUST 按以下场景执行。

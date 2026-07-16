@@ -10,7 +10,7 @@ import {
 import type { GlobalArgs } from "../cli.js"
 import { success, error, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getStudioContext } from "./studio-context.js"
+import { getStudioContext, type StudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
 import { resolveTaskId, resolveRunIdOrTaskName } from "../resolver.js"
 import { opsUrl } from "./studio-url.js"
@@ -125,7 +125,7 @@ function parseWindowBoundary(value: string, endOfDay: boolean): number {
   return ms
 }
 
-async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
+async function ctx(argv: Record<string, unknown>): Promise<StudioContext> {
   return getStudioContext(argv)
 }
 
@@ -384,14 +384,14 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "refill <task>",
-        "Submit a backfill job to re-run scheduled instances for a date range. Irreversible — requires confirmation.",
+        "Submit a backfill job to re-run scheduled instances for a date range. Requires the current logged-in user name for backend createBy. Irreversible — requires confirmation.",
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
-            .option("from", { type: "string", describe: "Backfill start. Accepts YYYY-MM-DD (start of day) or ISO datetime YYYY-MM-DDTHH:MM:SS for sub-day schedules (hourly/minutely)." })
-            .option("to", { type: "string", describe: "Backfill end. Accepts YYYY-MM-DD (end of day, 23:59:59) or ISO datetime YYYY-MM-DDTHH:MM:SS. For hourly/minutely tasks use exact datetime to avoid missing instances." })
+            .option("from", { type: "string", describe: "Backfill start. Accepts YYYY-MM-DD (start of day) or ISO datetime YYYY-MM-DDTHH:MM:SS for sub-day schedules (hourly/minutely). Must be used together with --to." })
+            .option("to", { type: "string", describe: "Backfill end. Accepts YYYY-MM-DD (end of day, 23:59:59) or ISO datetime YYYY-MM-DDTHH:MM:SS. For hourly/minutely tasks use exact datetime to avoid missing instances. Must be used together with --from." })
             .option("vc", { type: "string", default: "DEFAULT", describe: "VC code" })
-            .option("name", { type: "string", describe: "Backfill job name" })
+            .option("name", { type: "string", describe: "Backfill job name. The backend operator/createBy comes from the current logged-in user and cannot be overridden here." })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
         async (argv) => {
           const format = argv.format
@@ -410,19 +410,26 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
               error("INVALID_ARGUMENTS", "--from and --to must be provided together, or omit both.", { format, exitCode: 2 })
               return
             }
+            const createBy = sc.userName.trim()
+            if (!createBy) {
+              error("INVALID_ARGUMENTS", "Current login does not expose a user name required by Studio refill API. Re-authenticate or refresh your profile, then retry.", { format, exitCode: 2 })
+              return
+            }
+            const nowMs = Date.now()
+            const bizStartDate = argv.from ? parseWindowBoundary(argv.from as string, false) : nowMs
+            const bizEndDate = argv.to ? parseWindowBoundary(argv.to as string, true) : nowMs
             const params: Record<string, unknown> = {
               scheduleTaskId: taskId,
               sqlVcCode: argv.vc,
               projectId: sc.projectId,
-              operate_user: String(sc.userId),
-            }
-            if (argv.from && argv.to) {
-              params.bizStartTime = parseWindowBoundary(argv.from as string, false)
-              params.bizEndTime = parseWindowBoundary(argv.to as string, true)
-            } else {
-              const nowMs = Date.now()
-              params.bizStartTime = nowMs
-              params.bizEndTime = nowMs
+              userId: sc.userId,
+              createBy,
+              nextType: 0,
+              complementType: 1,
+              isConcurrence: 2,
+              concurrenceNumber: 1,
+              dateList: [{ bizStartDate, bizEndDate }],
+              complementBizDateBeanList: [{ bizStartDate, bizEndDate }],
             }
             if (argv.name) params.complementJobName = argv.name
             const resp = await createBackfill(sc, params)

@@ -3,6 +3,7 @@ import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
 import {
   listTasks, createTask, getTaskDetail, getTaskConfigDetail,
+  getTaskPublishedVersionDetail,
   saveTaskContent, saveTaskConfig, submitTask, onlineTask, offlineTask,
   offlineTaskWithDownstream, deleteTask, deleteFolder,
   listFolders, createFolder,
@@ -702,6 +703,90 @@ function normalizeDependencyStrategy(dep: Record<string, unknown>): Record<strin
   }
 }
 
+function flowTempRunBuilder(y: Argv<GlobalArgs>) {
+  return y
+    .positional("task", { type: "string", demandOption: true })
+    .option("vc", { type: "string", describe: "Virtual cluster code (default: DEFAULT)" })
+    .option("param", {
+      type: "array",
+      string: true,
+      describe: "Override temporary param value: key=value. This command starts a TEMP/ad-hoc flow instance only.",
+    })
+}
+
+async function executeFlowTempRun(argv: Record<string, unknown>): Promise<void> {
+  const format = String(argv.format ?? "table")
+  try {
+    const sc = await ctx(argv)
+    const taskArg = String(argv.task ?? "")
+    const fileId = await resolveTaskId(sc, taskArg, format)
+    const vcCode = (argv.vc as string | undefined) ?? "DEFAULT"
+    const vcId = await resolveVclusterId(sc, vcCode)
+    const overrides: Record<string, string> = {}
+    for (const p of (argv.param as string[] | undefined) ?? []) {
+      const eq = p.indexOf("=")
+      if (eq > 0) overrides[p.slice(0, eq)] = p.slice(eq + 1)
+    }
+    const paramsResp = await getFlowParams(sc, fileId)
+    const paramsData = (paramsResp.data ?? {}) as Record<string, unknown>
+    const taskDetailResp = await getTaskDetail(sc, fileId)
+    const taskDetailParams = ((taskDetailResp.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
+    const flowParams = taskDetailParams.map((p) => {
+      const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
+      return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
+    })
+    const existingKeys = new Set(taskDetailParams.map((p) => String(p.paramKey ?? p.paramName ?? p.name ?? "")))
+    for (const [k, v] of Object.entries(overrides)) {
+      if (!existingKeys.has(k)) {
+        flowParams.push({ paramKey: k, paramValue: v, paramType: inferParamType(v), encrypt: false, ignore: false, ref: 0 })
+      }
+    }
+    const children = await Promise.all(
+      ((paramsData.children ?? []) as Record<string, unknown>[]).map(async (c) => {
+        const nodeId = Number(c.id)
+        let nodeParamList: Record<string, unknown>[] = []
+        try {
+          const nd = await getFlowNodeDetail(sc, fileId, nodeId)
+          nodeParamList = ((nd.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
+        } catch {}
+        const merged = nodeParamList.map((p) => {
+          const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
+          return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
+        })
+        return { id: nodeId, name: String(c.name), paramValueList: merged.length ? merged : undefined }
+      }),
+    )
+    const resp = await executeFlow(sc, {
+      dataFileId: fileId,
+      instanceName: sc.instanceName,
+      updateBy: String(sc.userId),
+      vcCode,
+      vcId: String(vcId),
+      paramValueList: flowParams,
+      nodeParams: children,
+    })
+    logOperation("task flow temp-run", { ok: true })
+    const d = (resp.data ?? {}) as Record<string, unknown>
+    success({
+      schedule_instance_id: d.scheduleInstanceId,
+      session_id: d.sessionId,
+      run_type: StudioTaskRunType.Temp,
+      run_type_name: taskRunTypeName(StudioTaskRunType.Temp),
+    }, {
+      format,
+      aiMessage: [
+        `Temporary flow run started (TEMP instance ${d.scheduleInstanceId}).`,
+        `This is an ad-hoc execution only; it does not create a formal SCHEDULE run and cannot validate schedule retry semantics.`,
+        `Inspect this temporary instance with: cz-cli task flow instances ${taskArg} --run_id ${d.scheduleInstanceId}`,
+        `To validate scheduled retry/share-gate behavior, inspect real schedule runs with: cz-cli runs list --task ${taskArg} --run-type SCHEDULE`,
+        `Then inspect retry attempts on a selected schedule run with: cz-cli attempts list --run-id <schedule_run_id>`,
+      ].filter(Boolean).join(" "),
+    })
+  } catch (err) {
+    reportTaskError(err, format)
+  }
+}
+
 function configList(value: unknown): Record<string, unknown>[] {
   return getObjectList(value).map((item) => ({ ...item }))
 }
@@ -1037,7 +1122,16 @@ const CONFIG_DETAIL_FIELDS: Record<string, string> = {
   executeTimeout: "execute_timeout", executeTimeoutUnit: "execute_timeout_unit",
   taskPriority: "task_priority", triggerType: "trigger_type",
   scheduleRateType: "schedule_rate_type", scheduleConfigType: "schedule_config_type",
+  dependencyTimeout: "dependency_timeout", dependencyTimeoutUnit: "dependency_timeout_unit",
   configProperties: "config_properties",
+}
+
+function extractTaskConfigDetail(data: Record<string, unknown>): Record<string, unknown> {
+  return (data.taskConfigurationDetail ??
+    data.task_configuration_detail ??
+    data.scheduleConfig ??
+    data.schedule_config ??
+    data) as Record<string, unknown>
 }
 
 function convertConfigFields(data: Record<string, unknown>): Record<string, unknown> {
@@ -1067,6 +1161,33 @@ function convertConfigFields(data: Record<string, unknown>): Record<string, unkn
     })
   }
   return out
+}
+
+function normalizePublishComparableSchedule(data: Record<string, unknown>) {
+  return {
+    cron_express: data.cron_express ?? "",
+    retry_count: data.retry_count ?? "",
+    retry_interval_time: data.retry_interval_time ?? "",
+    retry_interval_time_unit: data.retry_interval_time_unit ?? "",
+    rerun_property: data.rerun_property ?? "",
+    active_start_time: data.active_start_time ?? "",
+    active_end_time: data.active_end_time ?? "",
+    schema_name: data.schema_name ?? "",
+    etl_vc_code: data.etl_vc_code ?? "",
+    dependency_timeout: data.dependency_timeout ?? "",
+    dependency_timeout_unit: data.dependency_timeout_unit ?? "",
+    trigger_type: data.trigger_type ?? "",
+    schedule_rate_type: data.schedule_rate_type ?? "",
+  }
+}
+
+function schedulesNeedPublish(
+  draftSchedule: Record<string, unknown>,
+  publishedSchedule: Record<string, unknown> | undefined,
+) {
+  if (!publishedSchedule) return true
+  return JSON.stringify(normalizePublishComparableSchedule(draftSchedule))
+    !== JSON.stringify(normalizePublishComparableSchedule(publishedSchedule))
 }
 
 export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
@@ -1997,7 +2118,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "status <task>",
-        "Get combined draft + deployed status in one call",
+        "Get combined draft + published/deployed status in one call. Highlights when draft changes are not published yet.",
         (y) => y.positional("task", { type: "string", demandOption: true }),
         async (argv) => {
           const format = argv.format
@@ -2014,8 +2135,16 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileType = Number(detailObj.fileType ?? 0)
             const isCdcType = CDC_FILE_TYPES.has(fileType)
 
-            const [config, scheduleResp, cdcRunResp] = await Promise.all([
+            const currentVersion = Number(detailObj.currentVersion ?? detailData.currentVersion ?? 0)
+            const [config, publishedVersionResp, scheduleResp, cdcRunResp] = await Promise.all([
               getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }),
+              currentVersion > 0
+                ? getTaskPublishedVersionDetail(sc, {
+                  projectId: sc.projectId,
+                  dataFileId: fileId,
+                  dataFileVersion: currentVersion,
+                }).catch(() => null)
+                : Promise.resolve(null),
               studioRequest(sc, "/ide-admin/v1/scheduleTask/getDetail",
                 { scheduleTaskId: fileId, projectId: sc.projectId },
                 { env: "prod" },
@@ -2030,8 +2159,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             ])
 
             const configData = (config.data && typeof config.data === "object" ? config.data : {}) as Record<string, unknown>
-            const scheduleConfig = convertConfigFields((configData.taskConfigurationDetail ??
-              configData.task_configuration_detail ?? configData) as Record<string, unknown>)
+            const scheduleConfig = convertConfigFields(extractTaskConfigDetail(configData))
+            const publishedVersionData = (publishedVersionResp?.data && typeof publishedVersionResp.data === "object"
+              ? publishedVersionResp.data
+              : null) as Record<string, unknown> | null
+            const publishedSchedule = publishedVersionData ? convertConfigFields(extractTaskConfigDetail(publishedVersionData)) : undefined
+            const needsPublish = schedulesNeedPublish(scheduleConfig, publishedSchedule)
 
             const editState = Number(detailObj.fileFlowStatus ?? detailObj.fileStatus ?? 0)
 
@@ -2068,10 +2201,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               : undefined
 
             logOperation("task status", { ok: true })
+            const publishHint = fileType === StudioFileType.Flow
+              ? `Draft differs from published config. Run: cz-cli task flow submit ${argv.task}`
+              : `Draft differs from published config. Run: cz-cli task deploy ${argv.task}`
             success({
               task_id: fileId,
               task_name: detailObj.dataFileName ?? detailObj.task_name,
               edit_state: taskEditStateCliName(editState),
+              current_published_version: currentVersion > 0 ? currentVersion : undefined,
+              needs_publish: needsPublish,
               studio_url: studioUrl(sc, fileId),
               ...(isCdcType && {
                 cdc_status: cdcRunStatus ?? cdcDeployStatus,
@@ -2084,8 +2222,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 vc: scheduleConfig.etl_vc_code,
                 schema: scheduleConfig.schema_name,
               },
+              draft_schedule: scheduleConfig,
+              published_schedule: publishedSchedule ?? "not deployed",
               deployed: isCdcType ? (detailObj.deployStatus != null ? { cdc_deploy_status: cdcDeployStatus, cdc_task_id: detailObj.cdcTaskId } : "not deployed") : (scheduleData ?? "not deployed or not accessible"),
-            }, { format })
+            }, {
+              format,
+              aiMessage: needsPublish ? publishHint : "Draft config matches current published config.",
+            })
           } catch (err) {
             reportTaskError(err, format)
           }
@@ -2118,11 +2261,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               string,
               unknown
             >
-            const scheduleConfig = convertConfigFields((configData.taskConfigurationDetail ??
-              configData.task_configuration_detail ??
-              configData.scheduleConfig ??
-              configData.schedule_config ??
-              configData) as Record<string, unknown>)
+            const scheduleConfig = convertConfigFields(extractTaskConfigDetail(configData))
             const rawParams = (detailObj.paramValueList ?? detailData.paramValueList) as unknown[] | undefined
             const rawInputParams = (detailObj.inputParamValueList ?? detailData.inputParamValueList) as unknown[] | undefined
             const rawOutputParams = (detailObj.outputParamValueList ?? detailData.outputParamValueList) as unknown[] | undefined
@@ -3260,7 +3399,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           }
         },
       )
-      .command("flow", "Flow (composite) task operations. Workflow: task create --type FLOW → flow create-node (repeat) → flow node-save (each) → flow node-save-config (each) → flow bind → flow submit", (flowYargs) =>
+      .command("flow", "Flow (composite) task operations. Workflow: task create --type FLOW → flow create-node (repeat) → flow node-save (each) → flow node-save-config (each) → flow bind (wire causality) → flow submit → runs list --run-type SCHEDULE (validate formal scheduled runs). Use flow temp-run only for temporary ad-hoc debugging.", (flowYargs) =>
         // commandGroup registers this group so a bare `cz-cli task flow` renders
         // help (via the parse boundary) instead of USAGE_ERROR.
         commandGroup(flowYargs
@@ -3313,7 +3452,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 })
                 logOperation("task flow create-node", { ok: true })
                 const createdNodeId = (resp.data as Record<string, unknown>)?.id
-                success(resp.data, { format, aiMessage: `Node created (id=${createdNodeId}). Next steps:\n1. Save content: cz-cli task flow node-save ${argv.task} --node-id ${createdNodeId} --content '<sql/python/shell>'\n2. Set VC/schema: cz-cli task flow node-save-config ${argv.task} --node-id ${createdNodeId} --vc <vc>\n3. Bind dependencies if needed: cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>\n4. Publish: cz-cli task flow submit ${argv.task}` })
+                success(resp.data, { format, aiMessage: `Node created (id=${createdNodeId}). Nodes are isolated by default. Next steps:\n1. Save content: cz-cli task flow node-save ${argv.task} --node-id ${createdNodeId} --content '<sql/python/shell>'\n2. Set VC/schema: cz-cli task flow node-save-config ${argv.task} --node-id ${createdNodeId} --vc <vc>\n3. If node_b must wait for node_a, bind causality explicitly: cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>\n4. Publish: cz-cli task flow submit ${argv.task}` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3347,12 +3486,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "bind <task>",
-            "Create dependency between flow nodes",
+            "Create causal dependency between flow nodes: downstream starts only after upstream succeeds",
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("upstream", { type: "string", demandOption: true, describe: "Upstream node name" })
-                .option("downstream", { type: "string", demandOption: true, describe: "Downstream node name" })
+                .option("upstream", { type: "string", demandOption: true, describe: "Upstream node name (must finish first)" })
+                .option("downstream", { type: "string", demandOption: true, describe: "Downstream node name (waits for upstream)" })
                 .option("branch", { type: "string", describe: "Condition branch output name to bind from the upstream condition node" }),
             async (argv) => {
               const format = argv.format
@@ -3479,7 +3618,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   })
                 }
                 logOperation("task flow bind", { ok: true })
-                success(resp.data, { format, aiMessage: `Dependency bound. Add more bindings as needed, then publish: 'cz-cli task flow submit ${argv.task}'.` })
+                success(resp.data, { format, aiMessage: `Dependency bound: '${argv.downstream}' now waits for '${argv.upstream}'. Add more bindings if needed, then publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3632,7 +3771,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   ...(outputParamList.length > 0 && { outputParamValueList: outputParamList }),
                 })
                 logOperation("task flow node-save", { ok: true })
-                success(resp.data, { format, aiMessage: `Node content saved. Next: set VC/schema with 'cz-cli task flow node-save-config ${argv.task} --name ${argv.name ?? argv["node-id"]} --vc <vc>', then bind dependencies with 'flow bind' if needed, then publish with 'cz-cli task flow submit ${argv.task}'.` })
+                success(resp.data, { format, aiMessage: `Node content saved. Next: set VC/schema with 'cz-cli task flow node-save-config ${argv.task} --name ${argv.name ?? argv["node-id"]} --vc <vc>'. If another node must wait for this node, add an explicit causal edge with 'flow bind', then publish with 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3697,7 +3836,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   ...(dataFileOutputListReqs !== undefined && { dataFileOutputListReqs }),
                 })
                 logOperation("task flow node-save-config", { ok: true })
-                success(resp.data, { format, aiMessage: `Node config saved. Repeat node-save/node-save-config for other nodes. Then bind dependencies: 'cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>'. When all nodes are ready, publish: 'cz-cli task flow submit ${argv.task}'.` })
+                success(resp.data, { format, aiMessage: `Node config saved. Repeat node-save/node-save-config for other nodes. Remember: creating nodes does not connect them. If node_b should run after node_a, bind it explicitly: 'cz-cli task flow bind ${argv.task} --upstream <node_a> --downstream <node_b>'. When all nodes are ready, publish: 'cz-cli task flow submit ${argv.task}'.` })
               } catch (err) {
                 reportTaskError(err, format)
               }
@@ -3705,7 +3844,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "submit <task>",
-            "Submit/publish flow (saves schedule config and persists all node params). Run with 'cz-cli task flow run <task> --param key=value' to pass flow params to child nodes at runtime.",
+            "Submit/publish flow (saves schedule config and persists all node params). After publishing, validate formal scheduled behavior with 'cz-cli runs list --task <task> --run-type SCHEDULE'. Use 'cz-cli task flow temp-run <task>' only for temporary ad-hoc debugging.",
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
@@ -3820,85 +3959,22 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   task_id: fileId,
                   published,
                   studio_url: studioUrl(sc, fileId),
-                }, { format, aiMessage: published ? "Flow submitted successfully. Run with: 'cz-cli task flow run <task>'." : "Flow saved but publish status not confirmed within timeout. Check Studio or retry 'cz-cli task flow submit <task>'." })
+                }, {
+                  format,
+                  aiMessage: published
+                    ? `Flow submitted successfully. Validate formal scheduled runs with: 'cz-cli runs list --task ${argv.task} --run-type SCHEDULE'. Check retry attempts with: 'cz-cli attempts list --run-id <schedule_run_id>'. Use 'cz-cli task flow temp-run ${argv.task}' only for temporary ad-hoc debugging.`
+                    : "Flow saved but publish status not confirmed within timeout. Check Studio or retry 'cz-cli task flow submit <task>'.",
+                })
               } catch (err) {
                 reportTaskError(err, format)
               }
             },
           )
           .command(
-            "run <task>",
-            "Execute flow ad-hoc",
-            (y) =>
-              y
-                .positional("task", { type: "string", demandOption: true })
-                .option("vc", { type: "string", describe: "Virtual cluster code (default: DEFAULT)" })
-                .option("param", { type: "array", string: true, describe: "Override manual param value (ref=0): key=value. Flow-shared params (ref=2) receive the flow execution param value." }),
-            async (argv) => {
-              const format = argv.format
-              try {
-                const sc = await ctx(argv)
-                const fileId = await resolveTaskId(sc, argv.task as string, format)
-                const vcCode = (argv.vc as string | undefined) ?? "DEFAULT"
-                const vcId = await resolveVclusterId(sc, vcCode)
-                // Parse --param key=value overrides
-                const overrides: Record<string, string> = {}
-                for (const p of (argv.param as string[] | undefined) ?? []) {
-                  const eq = p.indexOf("=")
-                  if (eq > 0) overrides[p.slice(0, eq)] = p.slice(eq + 1)
-                }
-                // Get node list from params API, flow-level params from getTaskDetail
-                const paramsResp = await getFlowParams(sc, fileId)
-                const paramsData = (paramsResp.data ?? {}) as Record<string, unknown>
-                // getFlowParams returns empty paramValueList; actual params are in getTaskDetail
-                const taskDetailResp = await getTaskDetail(sc, fileId)
-                const taskDetailParams = ((taskDetailResp.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
-                // Merge overrides into flow-level paramValueList
-                const flowParams = taskDetailParams.map((p) => {
-                  const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
-                  return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
-                })
-                // Add new override keys not in existing params
-                const existingKeys = new Set(taskDetailParams.map((p) => String(p.paramKey ?? p.paramName ?? p.name ?? "")))
-                for (const [k, v] of Object.entries(overrides)) {
-                  if (!existingKeys.has(k)) {
-                    flowParams.push({ paramKey: k, paramValue: v, paramType: inferParamType(v), encrypt: false, ignore: false, ref: 0 })
-                  }
-                }
-                const children = await Promise.all(
-                  ((paramsData.children ?? []) as Record<string, unknown>[]).map(async (c) => {
-                    const nodeId = Number(c.id)
-                    let nodeParamList: Record<string, unknown>[] = []
-                    try {
-                      const nd = await getFlowNodeDetail(sc, fileId, nodeId)
-                      nodeParamList = ((nd.data as Record<string, unknown>)?.paramValueList ?? []) as Record<string, unknown>[]
-                    } catch { /* ignore */ }
-                    const merged = nodeParamList.map((p) => {
-                      const key = String(p.paramKey ?? p.paramName ?? p.name ?? "")
-                      return key in overrides ? { ...p, paramValue: overrides[key], value: overrides[key] } : p
-                    })
-                    return { id: nodeId, name: String(c.name), paramValueList: merged.length ? merged : undefined }
-                  }),
-                )
-                const resp = await executeFlow(sc, {
-                  dataFileId: fileId,
-                  instanceName: sc.instanceName,
-                  updateBy: String(sc.userId),
-                  vcCode,
-                  vcId: String(vcId),
-                  paramValueList: flowParams,
-                  nodeParams: children,
-                })
-                logOperation("task flow run", { ok: true })
-                const d = (resp.data ?? {}) as Record<string, unknown>
-                success({
-                  schedule_instance_id: d.scheduleInstanceId,
-                  session_id: d.sessionId,
-                }, { format, aiMessage: `Flow started (instance ${d.scheduleInstanceId}). Check status with: cz-cli task flow instances ${argv.task} --instance ${d.scheduleInstanceId}` })
-              } catch (err) {
-                reportTaskError(err, format)
-              }
-            },
+            "temp-run <task>",
+            "Start a temporary ad-hoc TEMP flow instance. This is not a formal scheduled run and does not validate schedule retry semantics.",
+            flowTempRunBuilder,
+            async (argv) => executeFlowTempRun(argv),
           )
           .command(
             "instances <task>",

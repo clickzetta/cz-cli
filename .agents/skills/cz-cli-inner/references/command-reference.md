@@ -44,6 +44,7 @@ cz-cli profile list
 cz-cli task list
 cz-cli task create <name> --type <TYPE>       # SQL/PYTHON/SHELL/SPARK/FLOW/MERGE
 cz-cli task content <task>                    # Draft script, config, params, input_params, output_params
+cz-cli task status <task>                     # Draft + published/deployed summary; check this before validating schedule/retry behavior
 cz-cli task save-content <task> --file <f>    # Save task script; --params JSON sets runtime params
 cz-cli task save-config <task>                # Save non-cron config: retry, deps, VC, schema, timeout; --param key=value merges params
 cz-cli task save-merge <task>                 # Save MERGE rule content and upstream schedule dependencies
@@ -56,6 +57,8 @@ cz-cli task execute <task>                    # Ad-hoc execution
 cz-cli task delete <task>                     # Delete draft/offline task
 cz-cli task flow dag <task>                   # Get flow DAG
 cz-cli task flow node-save <task> --name N    # Save node script/params; supports --param, --flow-param, --output-param, --input-param
+cz-cli task flow submit <task>                # Publish flow draft so formal scheduled runs use the latest config
+cz-cli task flow temp-run <task>              # TEMP/ad-hoc debug only; not a formal SCHEDULE run
 ```
 
 For standalone task params:
@@ -66,6 +69,16 @@ cz-cli task save-config <task> --param city=shanghai --param tenant=acme
 ```
 
 `save-content --params` stores params while saving content. `save-config --param key=value` merges overrides with existing task params and preserves script content. System params such as `bizdate`, `sys_plan_day`, and `sys_biz_datetime` are auto-detected for JSON `--params` values.
+
+Before validating schedule behavior, check whether draft changes are already published:
+
+```bash
+cz-cli task status <task>
+```
+
+- `task content` shows the current draft only.
+- `task status` is the safest preflight check because it shows both draft and published/deployed state.
+- For flow tasks, `task flow submit` is required after editing draft config; `task flow temp-run` does not publish anything.
 
 For flow node params:
 
@@ -164,6 +177,12 @@ cz-cli runs stats
 cz-cli attempts list [id]
 cz-cli attempts log [id]
 ```
+
+For formal schedule validation:
+
+- Use `cz-cli runs list --task <task> --run-type SCHEDULE` to inspect real scheduled runs.
+- Then use `cz-cli attempts list --run-id <schedule_run_id>` to inspect retries within the same scheduled run.
+- Do not substitute `task flow temp-run` for formal schedule validation.
 
 ## Datasources
 

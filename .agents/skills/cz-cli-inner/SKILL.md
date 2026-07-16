@@ -28,11 +28,15 @@ Use `cz-cli` proactively for ClickZetta operational requests. Do not ask for inf
 ## Studio Task Rules
 
 - Always pass `--type` when creating tasks.
+- `cz-cli task content <task>` is draft-only. Use `cz-cli task status <task>` before validating cron, retry, readiness, or formal scheduled behavior so you can see whether the latest draft has actually been published.
 - Flow tasks use `cz-cli task flow *` commands for nodes; do not use normal task content/deploy commands on flow nodes.
+- Flow draft changes do not affect formal schedule runs until you publish them with `cz-cli task flow submit <task>`.
+- `cz-cli task flow temp-run <task>` is TEMP/ad-hoc debugging only. Do not use it to conclude formal `SCHEDULE` retry semantics or published schedule behavior.
 - Merge tasks use `cz-cli task create <name> --type MERGE` and `cz-cli task save-merge <task> --dependency <upstream> --status SUCCESS --status FAILED`; use `--status SKIPPED` only for upstream if/condition tasks.
 - For standalone task runtime params, use `cz-cli task save-content <task> --params '{"key":"value"}'` while saving script content, or `cz-cli task save-config <task> --param key=value` to merge/update params without changing script content.
 - `cz-cli task content <task>` returns saved `params`, and may also return `input_params` / `output_params` when the backend has those lists.
 - For flow node params, use `cz-cli task flow node-save`: `--param key=value` for manual defaults, `--flow-param key` for values inherited from parent flow execution params, `--output-param key` to declare `$[output]`, and `--input-param key=upstreamNodeName` to consume an upstream node output. Bind the upstream dependency first so the upstream node can resolve from the DAG.
+- For flow schedule validation, prefer this path: `cz-cli task status <task>` → `cz-cli task flow submit <task>` if needed → `cz-cli runs list --task <task> --run-type SCHEDULE` → `cz-cli attempts list --run-id <schedule_run_id>`.
 - Confirm intent before destructive or state-changing operations: deploy, undeploy, execute, delete, refill/backfill, stop, rerun, and similar actions.
 - For historical reruns or backfills, use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`; this is under `runs`, not `task`.
 - For output table JSON flags such as `--output-tables`, pass the JSON array as one shell argument, usually with single quotes.
