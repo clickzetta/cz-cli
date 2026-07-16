@@ -142,7 +142,7 @@ function normalizeGatewayUrl(url: string): string {
 }
 
 function resolveAiGatewayUrl(profileEntry: Dict | undefined): string | undefined {
-  if (profileEntry && typeof profileEntry.ai_gateway_url === "string") return normalizeGatewayUrl(profileEntry.ai_gateway_url)
+  if (profileEntry && typeof profileEntry.aimeshEndpointBaseUrl === "string") return normalizeGatewayUrl(profileEntry.aimeshEndpointBaseUrl)
   if (!profileEntry) return undefined
   const inferred = inferAiGatewayUrl({
     service: typeof profileEntry.service === "string" ? profileEntry.service : undefined,
@@ -242,7 +242,7 @@ export async function rotateClickzettaLlm(input: {
   const current = currentClickzettaEntry()
   const profile = input.profile ?? current.profile
   const baseUrl = input.baseUrl ?? current.baseUrl
-  if (!baseUrl) return { failed: true, reason: "no ai_gateway_url configured in profile and could not infer from service URL" }
+  if (!baseUrl) return { failed: true, reason: "no aimeshEndpointBaseUrl configured in profile and could not infer from service URL" }
   try {
     return await rotateEntry({
       baseUrl,

@@ -2,13 +2,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, statSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { isDeepStrictEqual } from "node:util"
-import { parse as parseTOML } from "smol-toml"
 import type { AuthToken } from "@clickzetta/sdk"
 import {
   makeProfileTokenStore,
   patchProfileConnection,
-  patchProfileUserInfo,
   saveProfiles,
 } from "../src/connection/profile-store.ts"
 
@@ -178,65 +175,7 @@ test("patchProfileConnection ignores empty/undefined fields and no-ops without p
   expect(() => patchProfileConnection("does-not-exist", { instance: "x" })).not.toThrow()
 })
 
-// The full `/oauth2/userinfo` body (dev shape), used to prove lossless archival.
-const SAMPLE_USERINFO: Record<string, unknown> = {
-  userId: 110000011361,
-  accountName: "wynptmks",
-  gatewayMapping: '{"1-1":"https://dev-api.clickzetta.com","1-2":"https://dev-api.clickzetta.com"}',
-  instanceList: [{ cspId: 1, regionId: 1, serviceId: 1, id: 159973, name: "89b94150" }],
-  instanceName: "89b94150",
-  workspaceName: "quick_start",
-  schema: "public",
-  virtualCluster: "DEFAULT_AP",
-  aimeshEndpointBaseUrl: "https://dev-aimesh.clickzetta.com/",
-  apiKey: "secret-api-key",
-  sub: "110000011361",
-  preferred_username: "weiliu",
-  name: "weiliu",
-  account_id: 112407,
-}
-
-// Requirement 11.9: patchProfileUserInfo archives the FULL userinfo verbatim
-// under [profiles.<name>.userinfo] — lossless including the instanceList array
-// of objects, the gatewayMapping JSON string, and the apiKey.
-test("patchProfileUserInfo round-trips the full userinfo losslessly", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
-  // Seed an oauth slot to prove it stays untouched.
-  makeProfileTokenStore("czcli", cacheKey).save(sampleToken)
-
-  patchProfileUserInfo("czcli", SAMPLE_USERINFO)
-
-  const data = parseTOML(readFileSync(profilesPath(), "utf-8")) as Record<string, unknown>
-  const profiles = data.profiles as Record<string, Record<string, unknown>>
-  const stored = profiles.czcli.userinfo as Record<string, unknown>
-
-  // Deep-equal proves nothing was discarded or mangled across write+reparse.
-  expect(isDeepStrictEqual(stored, SAMPLE_USERINFO)).toBe(true)
-  // Spot-check the trickier nested + sensitive shapes explicitly.
-  expect(stored.instanceList).toEqual(SAMPLE_USERINFO.instanceList)
-  expect(stored.gatewayMapping).toBe(SAMPLE_USERINFO.gatewayMapping)
-  expect(stored.apiKey).toBe("secret-api-key")
-
-  // 0o600 preserved.
-  if (process.platform !== "win32") {
-    expect(statSync(profilesPath()).mode & 0o777).toBe(0o600)
-  }
-
-  // oauth subtable untouched: the persisted token still loads.
-  expect(makeProfileTokenStore("czcli", cacheKey).load()).toEqual(sampleToken)
-})
-
-test("patchProfileUserInfo preserves unrelated fields and no-ops on empty/unresolvable", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance", region: "cn" } })
-
-  patchProfileUserInfo("czcli", SAMPLE_USERINFO)
-
-  const text = readFileSync(profilesPath(), "utf-8")
-  expect(text).toContain('region = "cn"')
-  expect(text).toContain("[profiles.czcli.userinfo]")
-
-  // Empty body is a safe no-op.
-  expect(() => patchProfileUserInfo("czcli", {})).not.toThrow()
-  // Unresolvable profile name is a safe no-op (does not throw).
-  expect(() => patchProfileUserInfo("does-not-exist", SAMPLE_USERINFO)).not.toThrow()
-})
+// NOTE: the former [profiles.<name>.userinfo] archival (patchProfileUserInfo) was
+// removed — OAuth userinfo now flattens onto top-level profile fields
+// (see provisionProfileFromOAuth + provision.test.ts), so there is no verbatim
+// subtable to round-trip here.

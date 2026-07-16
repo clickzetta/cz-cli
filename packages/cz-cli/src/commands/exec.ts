@@ -49,7 +49,7 @@ export function hasUsableCredentials(config: ConnectionConfig): boolean {
 export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContext> {
   const config = resolveConnectionConfig(args)
   if (!hasUsableCredentials(config)) {
-    throw new Error("Authentication required. Provide --pat or --username/--password, run `cz-cli login --browser` for OAuth, or configure a profile (header.Cookie / setup).")
+    throw new Error("Authentication required. Provide --pat or --username/--password, or run `cz-cli login` (browser OAuth, or --credential <b64>) to configure a profile.")
   }
   if (!config.instance) {
     throw new Error("Instance is required. Provide --instance or configure it in your profile.")

@@ -102,6 +102,24 @@ export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
   writeProfilesFile(content)
 }
 
+/**
+ * Set `default_profile` to `name`, preserving every other top-level key and the
+ * profiles table. Uses the same CLICKZETTA_TEST_HOME-aware, atomic, 0600 write
+ * as the rest of this module. Mirrors {@link saveProfiles}/{@link setTelemetry}:
+ * a missing/corrupt file starts fresh, but a failed write propagates so the
+ * caller's error handler can report it.
+ */
+export function setDefaultProfile(name: string): void {
+  let existing: Record<string, unknown> = {}
+  try {
+    existing = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+  } catch {
+    // file doesn't exist or is invalid — start fresh
+  }
+  existing.default_profile = name
+  writeProfilesFile(stringifyTOML(existing))
+}
+
 export function getDefaultProfileName(): string | undefined {
   try {
     const text = readFileSync(profilesFile(), "utf-8")
@@ -244,8 +262,9 @@ export function patchProfileUserId(profileName: string | undefined, userId: numb
  * user actually authenticated against (requirement 11.6/11.7). Resolves the
  * target profile the same way other helpers do (explicit → default_profile →
  * first profile); no-op when none resolvable. Only defined, non-empty fields
- * are written (userId → `user_id`). Best-effort: never throws, and never
- * touches the profile's `oauth` subtable or unrelated fields.
+ * are written (userId → `user_id`, aimeshEndpointBaseUrl → same key). Best-effort:
+ * never throws, and never touches the profile's `oauth` subtable or unrelated
+ * fields.
  */
 export function patchProfileConnection(
   profileName: string | undefined,
@@ -259,6 +278,7 @@ export function patchProfileConnection(
     userId?: number
     accountId?: number
     accountName?: string
+    aimeshEndpointBaseUrl?: string
   },
 ): void {
   try {
@@ -279,38 +299,10 @@ export function patchProfileConnection(
     assign("schema", fields.schema)
     assign("vcluster", fields.vcluster)
     assign("account_name", fields.accountName)
+    assign("aimeshEndpointBaseUrl", fields.aimeshEndpointBaseUrl)
     if (typeof fields.userId === "number" && fields.userId > 0) profile["user_id"] = fields.userId
     if (typeof fields.accountId === "number" && fields.accountId > 0) profile["account_id"] = fields.accountId
 
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
-  } catch {
-    // best-effort: never block the CLI
-  }
-}
-
-/**
- * Archive the FULL `/oauth2/userinfo` body verbatim into the active profile
- * under `[profiles.<name>.userinfo]` so nothing is discarded (requirement
- * 11.9). The userinfo carries nested values (`instanceList` is an array of
- * objects, `gatewayMapping` is a JSON string); smol-toml `stringify` round-
- * trips these losslessly (verified: write → re-parse → deep-equal), so we
- * persist as a native nested TOML subtable rather than a JSON blob. Resolves
- * the target profile like the other helpers do; no-ops when none resolvable or
- * the body is empty. Best-effort: never throws, and never touches the profile's
- * `oauth` subtable or unrelated fields. Sensitive values (e.g. `apiKey`) are
- * stored under the same `0o600` file and are never printed.
- */
-export function patchProfileUserInfo(profileName: string | undefined, userInfo: Record<string, unknown>): void {
-  if (!userInfo || Object.keys(userInfo).length === 0) return
-  try {
-    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-
-    const name = resolveProfileName(data, profileName)
-    if (!name || !profiles[name]) return
-
-    profiles[name]["userinfo"] = userInfo
     data.profiles = profiles
     writeProfilesFile(stringifyTOML(data))
   } catch {

@@ -59,6 +59,11 @@ export interface BrowserLoginResult {
     accountId?: number
     userId?: number
     instanceId?: number
+    // Surfaced for LLM provisioning: the gateway API key + its base URL. These
+    // also live on `raw`, but exposing them here keeps provisioning off the
+    // untyped body.
+    apiKey?: string
+    aimeshEndpointBaseUrl?: string
   }
   // The unmodified `/oauth2/userinfo` body, present only when userinfo
   // succeeded. Archived verbatim into the profile so nothing is discarded.
@@ -95,6 +100,8 @@ function parseUserInfo(body: Record<string, unknown>): BrowserLoginResult["userI
     accountId: typeof body.account_id === "number" ? body.account_id : undefined,
     userId: Number.isNaN(userId) ? undefined : userId,
     instanceId,
+    apiKey: str(body.apiKey),
+    aimeshEndpointBaseUrl: str(body.aimeshEndpointBaseUrl),
   }
 }
 

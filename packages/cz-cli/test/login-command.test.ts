@@ -6,6 +6,7 @@ import type { AuthToken, ConnectionConfig } from "@clickzetta/sdk"
 import { runLogin } from "../src/commands/login"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
 import { makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
+import { readLlmEntries } from "../src/llm/native-config"
 import { GlobalArgs } from "../src/cli"
 
 const PAT = "pat-secret-123"
@@ -33,6 +34,8 @@ const KNOWN_RESULT: BrowserLoginResult = {
     accountId: 112407,
     userId: 110000011361,
     instanceId: 159973,
+    apiKey: "secret-api-key",
+    aimeshEndpointBaseUrl: "https://dev-aimesh.clickzetta.com/",
   },
   raw: {
     userId: 110000011361,
@@ -127,19 +130,28 @@ describe("runLogin", () => {
     expect(browserCalls).toBe(1)
 
     const text = readFileSync(profilesPath(), "utf-8")
-    // Connection context backfilled from userinfo.
+    // Connection context flattened onto the top-level profile entry.
     expect(text).toContain('instance = "89b94150"')
     expect(text).toContain('workspace = "quick_start"')
     expect(text).toContain('vcluster = "DEFAULT_AP"')
-    // Requirement 11.9: account identity mapped + full userinfo archived.
     expect(text).toContain("account_id = 112407")
     expect(text).toContain('account_name = "wynptmks"')
-    expect(text).toContain("[profiles.czcli.userinfo]")
+    // aimeshEndpointBaseUrl flattens to the top-level profile field of the same
+    // name (also what the credential path writes), NOT a separate userinfo subtable.
     expect(text).toContain('aimeshEndpointBaseUrl = "https://dev-aimesh.clickzetta.com/"')
+    expect(text).not.toContain("[profiles.czcli.userinfo]")
 
     // Token persisted under the instance-only slot `89b94150` and loadable.
     const loaded = makeProfileTokenStore(PROFILE, "89b94150").load()
     expect(loaded).toEqual(KNOWN_TOKEN)
+
+    // LLM provisioned from userinfo apiKey/aimeshEndpointBaseUrl under the profile name.
+    const llm = readLlmEntries()
+    expect(llm.llm[PROFILE]).toEqual({
+      provider: "clickzetta",
+      api_key: "secret-api-key",
+      base_url: "https://dev-aimesh.clickzetta.com/",
+    })
 
     // Requirement 11.3: success output MUST NOT include token/refresh values.
     expect(out.text()).not.toContain("access-secret-xyz")
@@ -148,9 +160,10 @@ describe("runLogin", () => {
     expect(process.exitCode).toBe(0)
   })
 
-  // Requirement 11.5: without --browser and with the switch unset, no browser
-  // flow runs and nothing is persisted — only guidance + non-zero exit.
-  test("gating: no --browser and switch unset does not run browser login", async () => {
+  // Browser OAuth is now the DEFAULT entry point: running `login` with no
+  // credential flag drives the browser flow and provisions the profile, even
+  // without --browser (the old LOGIN_MODE_REQUIRED gate is gone).
+  test("default (no flags): runs browser login and provisions the profile", async () => {
     saveProfiles({ [PROFILE]: { pat: PAT, instance: "old-instance", service: "https://api.example.com" } })
 
     let browserCalls = 0
@@ -168,12 +181,12 @@ describe("runLogin", () => {
       out.restore()
     }
 
-    expect(browserCalls).toBe(0)
-    // No token persisted under the instance-only slot.
-    expect(makeProfileTokenStore(PROFILE, "89b94150").load()).toBeUndefined()
-    // Profile instance unchanged.
-    expect(readFileSync(profilesPath(), "utf-8")).toContain('instance = "old-instance"')
-    expect(process.exitCode).toBe(2)
+    expect(browserCalls).toBe(1)
+    // Token persisted under the instance-only slot and connection context backfilled.
+    expect(makeProfileTokenStore(PROFILE, "89b94150").load()).toEqual(KNOWN_TOKEN)
+    expect(readFileSync(profilesPath(), "utf-8")).toContain('instance = "89b94150"')
+    expect(out.text()).toContain("logged_in")
+    expect(process.exitCode).toBe(0)
   })
 
   // Requirement 11.4: a failed login persists nothing and surfaces an error.
@@ -198,5 +211,59 @@ describe("runLogin", () => {
     expect(readFileSync(profilesPath(), "utf-8")).toContain('instance = "old-instance"')
     expect(out.text()).toContain("LOGIN_FAILED")
     expect(process.exitCode).not.toBe(0)
+  })
+
+  // Adaptive dispatch: --credential provisions a profile via the shared
+  // credential path and never touches the browser flow.
+  test("--credential: provisions from credential without browser login", async () => {
+    const cred = Buffer.from(
+      JSON.stringify({
+        instanceName: "credinst",
+        workspaceName: "credws",
+        accessToken: "czt_cred",
+        apiKey: "ck_cred",
+        aimeshEndpointBaseUrl: "https://gw.example.com/",
+      }),
+      "utf-8",
+    ).toString("base64")
+
+    let browserCalls = 0
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs({ credential: cred, name: "credprofile" }), {
+        loginWithBrowser: async () => {
+          browserCalls++
+          return KNOWN_RESULT
+        },
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(browserCalls).toBe(0)
+    const text = readFileSync(profilesPath(), "utf-8")
+    expect(text).toContain('instance = "credinst"')
+    expect(text).toContain("[profiles.credprofile]")
+    expect(out.text()).toContain("logged_in")
+    expect(process.exitCode).toBe(0)
+  })
+
+  // Adaptive dispatch: explicit --pat delegates to the shared setup flow rather
+  // than running browser OAuth.
+  test("--pat: delegates to runAuthConfigure and skips the browser flow", async () => {
+    let browserCalls = 0
+    let authConfigureArgs: unknown
+    await runLogin(makeArgs({ pat: "czt_explicit" }), {
+      loginWithBrowser: async () => {
+        browserCalls++
+        return KNOWN_RESULT
+      },
+      runAuthConfigure: async (argv) => {
+        authConfigureArgs = argv
+      },
+    })
+
+    expect(browserCalls).toBe(0)
+    expect((authConfigureArgs as { pat?: string }).pat).toBe("czt_explicit")
   })
 })

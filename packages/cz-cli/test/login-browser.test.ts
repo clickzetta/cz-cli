@@ -120,6 +120,9 @@ describe("loginWithBrowser", () => {
     // ...account identity mapped from userinfo.
     expect(result.userInfo?.accountName).toBe("wynptmks")
     expect(result.userInfo?.accountId).toBe(112407)
+    // ...and the LLM fields surfaced for provisioning.
+    expect(result.userInfo?.apiKey).toBe("secret-api-key")
+    expect(result.userInfo?.aimeshEndpointBaseUrl).toBe("https://dev-aimesh.clickzetta.com/")
     // Requirement 11.9: the FULL userinfo body is carried verbatim on `raw`,
     // including fields we never map to dedicated columns.
     expect(result.raw).toBeDefined()

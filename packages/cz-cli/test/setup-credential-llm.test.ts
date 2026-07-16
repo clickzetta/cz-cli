@@ -105,7 +105,7 @@ describe("setup --credential", () => {
         service: "https://uat-api.clickzetta.com",
         protocol: "https",
         analysis_agent_endpoint: "https://analysis-agent.clickzetta.com",
-        ai_gateway_url: "https://uat-aimesh.clickzetta.com/",
+        aimeshEndpointBaseUrl: "https://uat-aimesh.clickzetta.com/",
       },
     })
   })

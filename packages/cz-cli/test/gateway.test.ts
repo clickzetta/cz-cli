@@ -156,7 +156,7 @@ describe("ai-gateway key add-to-llm", () => {
         "workspace = 'wanxin_test_04'",
         "instance = 'inst'",
         "service = 'uat-api.clickzetta.com'",
-        'ai_gateway_url = "https://profile-gateway.example/gateway/v1"',
+        'aimeshEndpointBaseUrl = "https://profile-gateway.example/gateway/v1"',
         "",
       ].join("\n"),
     )

@@ -12,6 +12,7 @@ import { logOperation } from "../logger.js"
 import { setTelemetry, getTelemetry, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
+import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
 import { trackCommand, isSensitiveKey } from "../telemetry.js"
@@ -173,11 +174,6 @@ async function promptSelect(question: string, options: NamedOption[], _footer?: 
   return result as string
 }
 
-function decodeCredential(credential: string): Record<string, unknown> {
-  const decoded = Buffer.from(credential, "base64").toString("utf-8")
-  return JSON.parse(decoded) as Record<string, unknown>
-}
-
 function saveProfile(profileName: string, profile: ProfileEntry): void {
   const data = loadFullFile()
   const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
@@ -211,54 +207,6 @@ function saveFullFile(data: Record<string, unknown>): void {
   try {
     chmodSync(PROFILES_FILE, 0o600)
   } catch {}
-}
-
-function applyCredentialToProfiles(
-  existing: Record<string, unknown>,
-  cred: Record<string, unknown>,
-  profileName: string,
-): Record<string, unknown> {
-  const profiles = (existing.profiles ?? {}) as Record<string, ProfileEntry>
-  const currentProfile = (profiles[profileName] ?? {}) as ProfileEntry
-  const next = {
-    ...existing,
-    default_profile: profileName,
-    profiles: {
-      ...profiles,
-      [profileName]: {
-        ...currentProfile,
-        ...(cred.username ? { username: String(cred.username) } : {}),
-        ...(cred.userId != null ? { user_id: Number(cred.userId) } : {}),
-        instance: String(cred.instanceName),
-        workspace: String(cred.workspaceName ?? "default"),
-        schema: String(cred.schema ?? "public"),
-        vcluster: String(cred.virtualCluster ?? "default"),
-        pat: String(cred.accessToken),
-        service: String(cred.service ?? "dev-api.clickzetta.com"),
-        protocol: String(cred.protocol ?? "https"),
-        ...(typeof cred.analysisAgentEndpoint === "string" ? { analysis_agent_endpoint: cred.analysisAgentEndpoint } : {}),
-        ...(typeof cred.aimeshEndpointBaseUrl === "string" && { ai_gateway_url: String(cred.aimeshEndpointBaseUrl) }),
-      },
-    },
-  }
-  return next
-}
-
-function syncCredentialLlm(profileName: string, cred: Record<string, unknown>) {
-  const apiKey = typeof cred.apiKey === "string" ? cred.apiKey : undefined
-  if (!apiKey) return
-  const baseUrl = typeof cred.aimeshEndpointBaseUrl === "string" ? cred.aimeshEndpointBaseUrl : undefined
-  const config = readLlmEntries()
-  config.llm[profileName] = {
-    ...config.llm[profileName],
-    provider: "clickzetta",
-    api_key: apiKey,
-    ...(baseUrl && { base_url: baseUrl }),
-  }
-  writeLlmEntries({
-    llm: config.llm,
-    ...(config.default_llm ? { default_llm: config.default_llm } : { default_llm: profileName }),
-  })
 }
 
 function quoteShell(value: string): string {
@@ -1036,16 +984,10 @@ async function runLoginUrlFlowTTY(
     return
   }
   try {
-    const data = loadFullFile()
-    const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
-    if (profiles[profileName]) {
-      error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use --name <other> or delete it first.`, { format })
-      return
-    }
-    saveFullFile(applyCredentialToProfiles(data, cred, profileName))
-    syncCredentialLlm(profileName, cred)
+    provisionProfileFromCredential(profileName, cred)
   } catch (e) {
-    error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
+    const code = e instanceof ProvisionError ? e.code : "PROFILE_EXISTS"
+    error(code, e instanceof Error ? e.message : String(e), { format })
     return
   }
   // Fetch userId from token for telemetry enduser.id
@@ -1661,46 +1603,26 @@ async function runExistingAccountFlowNonTTY(
   }, { format })
 }
 
+/** Argv accepted by {@link runAuthConfigure} — the global connection flags plus
+ *  the setup-specific options. Shared by the `setup` alias and `cz-cli login`'s
+ *  non-interactive credential paths. */
+export interface AuthConfigureArgs extends GlobalArgs {
+  credential?: string
+  name?: string
+  "login-method"?: string
+  login?: string
+  "account-name"?: string
+  "skip-verify"?: boolean
+}
+
 /**
- * Top-level `setup` command — entry point for first-time configuration.
+ * The auth-configuration flow behind BOTH `cz-cli setup` (deprecated alias) and
+ * `cz-cli login`'s non-interactive credential paths. Dispatches by argv:
+ * `--credential` → new-user credential provisioning; otherwise the TTY/non-TTY
+ * portal-discovery flow. Extracted verbatim from the former setup handler so
+ * the two entry points share one implementation.
  */
-export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
-  cli.command(
-    "setup",
-    "Configure a ClickZetta or Singdata profile from a login page or JDBC connection string",
-    (yargs) =>
-      yargs
-        .option("credential", { type: "string", describe: "Base64-encoded registration credential" })
-        .option("name", { type: "string", default: "default", describe: "Profile name to create" })
-        .option("login-method", {
-          type: "string",
-          choices: SETUP_LOGIN_METHODS.map((option) => option.value),
-          describe: "Choose ClickZetta, Singdata, or a custom setup flow",
-        })
-        .option("login", { type: "string", describe: "Custom login page URL or JDBC connection string" })
-        .option("account-name", { type: "string", describe: "Account name for existing ClickZetta users" })
-        .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" })
-        .example(
-          "$0 setup --login-method clickzetta",
-          "Start the ClickZetta login flow",
-        )
-        .example(
-          "$0 setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
-          "Use a custom login page URL or JDBC connection string",
-        )
-        .epilogue(
-          "Choose a login method:\n" +
-          "1. ClickZetta - https://accounts.clickzetta.com/login\n" +
-          "2. Singdata  - https://accounts.singdata.com/login\n" +
-          "3. Custom URL - Enter a login page URL or paste a JDBC connection string\n\n" +
-          "JDBC example:\n" +
-          `${JDBC_EXAMPLE}\n\n` +
-          "Compatibility:\n" +
-          "  `cz-cli setup --credential <BASE64_CREDENTIAL>` still works if you already have a registration credential.\n\n" +
-          "Non-TTY / agent mode:\n" +
-          "  Re-run `cz-cli setup` with the fields requested in the JSON response until step=complete.",
-        ),
-    async (argv) => {
+export async function runAuthConfigure(argv: AuthConfigureArgs): Promise<void> {
       const format = argv.format
       const profileName = argv.name as string
       if (argv.credential) {
@@ -1711,35 +1633,20 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           error("INVALID_CREDENTIAL", `Invalid base64 or JSON: ${e instanceof Error ? e.message : String(e)}`, { format })
           return
         }
-        const instanceName = cred.instanceName as string | undefined
-        const accessToken = cred.accessToken as string | undefined
-        if (!instanceName || !accessToken) {
-          error("INVALID_CREDENTIAL", "Missing required fields: instanceName, accessToken", { format })
-          return
-        }
-        const profile: ProfileEntry = {
-          instance: instanceName,
-          workspace: (cred.workspaceName as string) ?? "default",
-          schema: (cred.schema as string) ?? "public",
-          vcluster: (cred.virtualCluster as string) ?? "default",
-          pat: accessToken,
-          service: (cred.service as string) ?? "dev-api.clickzetta.com",
-          protocol: (cred.protocol as string) ?? "https",
-          ...(typeof cred.analysisAgentEndpoint === "string" ? { analysis_agent_endpoint: cred.analysisAgentEndpoint } : {}),
-        }
         try {
-          const data = loadFullFile()
-          const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
-          if (profiles[profileName]) {
-            error("PROFILE_EXISTS", `Profile '${profileName}' already exists. Use a different name or delete it first.`, { format })
-            return
-          }
-          saveFullFile(applyCredentialToProfiles(data, cred, profileName))
-          syncCredentialLlm(profileName, cred)
+          provisionProfileFromCredential(profileName, cred)
         } catch (e) {
-          error("PROFILE_EXISTS", e instanceof Error ? e.message : String(e), { format })
+          const code = e instanceof ProvisionError ? e.code : "PROFILE_EXISTS"
+          error(code, e instanceof Error ? e.message : String(e), { format })
           return
         }
+
+        // Display/telemetry values mirror the on-disk defaults applied by
+        // provisionProfileFromCredential.
+        const instanceName = String(cred.instanceName)
+        const workspace = String(cred.workspaceName ?? "default")
+        const schema = String(cred.schema ?? "public")
+        const service = String(cred.service ?? "dev-api.clickzetta.com")
 
         const telemetryEnabled = await resolveTelemetry()
         const userIdValue = typeof cred.userId === "number" || typeof cred.userId === "string"
@@ -1751,7 +1658,7 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           success: true,
           telemetry: telemetryEnabled,
           userId,
-          collected: { instance: instanceName, workspace: String(profile.workspace ?? ""), service: String(profile.service ?? ""), username: String(cred.username ?? "") },
+          collected: { instance: instanceName, workspace, service, username: String(cred.username ?? "") },
           argv: argv as unknown as Record<string, unknown>,
         })
         logOperation("setup", { ok: true })
@@ -1759,8 +1666,8 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
           message: `Profile '${profileName}' created successfully.`,
           profile_name: profileName,
           instance: instanceName,
-          workspace: profile.workspace,
-          schema: profile.schema,
+          workspace,
+          schema,
         }, { format })
         return
       }
@@ -1825,6 +1732,55 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         })
         error("SETUP_FAILED", msg, { format })
       }
+}
+
+/**
+ * Top-level `setup` command — now a deprecated alias for `cz-cli login`. It
+ * prints a deprecation notice to stderr (so JSON stdout stays clean for
+ * existing scripts) and then runs the identical flow via {@link runAuthConfigure},
+ * preserving zero-breakage behavior for existing callers.
+ */
+export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
+  cli.command(
+    "setup",
+    "[deprecated: use 'cz-cli login'] Configure a ClickZetta or Singdata profile from a login page or JDBC connection string",
+    (yargs) =>
+      yargs
+        .option("credential", { type: "string", describe: "Base64-encoded registration credential" })
+        .option("name", { type: "string", default: "default", describe: "Profile name to create" })
+        .option("login-method", {
+          type: "string",
+          choices: SETUP_LOGIN_METHODS.map((option) => option.value),
+          describe: "Choose ClickZetta, Singdata, or a custom setup flow",
+        })
+        .option("login", { type: "string", describe: "Custom login page URL or JDBC connection string" })
+        .option("account-name", { type: "string", describe: "Account name for existing ClickZetta users" })
+        .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" })
+        .example(
+          "$0 setup --login-method clickzetta",
+          "Start the ClickZetta login flow",
+        )
+        .example(
+          "$0 setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
+          "Use a custom login page URL or JDBC connection string",
+        )
+        .epilogue(
+          "Choose a login method:\n" +
+          "1. ClickZetta - https://accounts.clickzetta.com/login\n" +
+          "2. Singdata  - https://accounts.singdata.com/login\n" +
+          "3. Custom URL - Enter a login page URL or paste a JDBC connection string\n\n" +
+          "JDBC example:\n" +
+          `${JDBC_EXAMPLE}\n\n` +
+          "Compatibility:\n" +
+          "  `cz-cli setup --credential <BASE64_CREDENTIAL>` still works if you already have a registration credential.\n\n" +
+          "Non-TTY / agent mode:\n" +
+          "  Re-run `cz-cli setup` with the fields requested in the JSON response until step=complete.",
+        ),
+    async (argv) => {
+      // Deprecation notice goes to stderr so it never pollutes the JSON payload
+      // on stdout that existing scripts parse.
+      process.stderr.write("⚠ 'setup' is deprecated, use 'cz-cli login' instead.\n")
+      await runAuthConfigure(argv as AuthConfigureArgs)
     },
   )
 }

@@ -157,7 +157,7 @@ function aimeshEndpoint(base: string): string {
 
 function configuredAiGatewayUrl() {
   const profile = readProfileEntry(process.env.CZ_PROFILE)
-  return typeof profile?.ai_gateway_url === "string" ? profile.ai_gateway_url : undefined
+  return typeof profile?.aimeshEndpointBaseUrl === "string" ? profile.aimeshEndpointBaseUrl : undefined
 }
 
 function addToLlm(

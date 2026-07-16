@@ -105,7 +105,7 @@ beforeEach(() => {
       'username = "UAT_TEST"',
       'service = "uat-service.example"',
       'protocol = "https"',
-      'ai_gateway_url = "https://mock-aimesh.example/gateway/v1"',
+      'aimeshEndpointBaseUrl = "https://mock-aimesh.example/gateway/v1"',
       "",
     ].join("\n"),
   )
@@ -203,7 +203,7 @@ describe("clickzetta key rotation", () => {
         'workspace = "ws"',
         'service = "mock-service.example"',
         'protocol = "https"',
-        'ai_gateway_url = "https://mock-aimesh.example/gateway/v1"',
+        'aimeshEndpointBaseUrl = "https://mock-aimesh.example/gateway/v1"',
         "",
         "[profiles.uat]",
         'pat = "pat-uat"',
@@ -252,7 +252,7 @@ describe("clickzetta key rotation", () => {
         'username = "EXISTING_TEST"',
         'service = "uat-service.example"',
         'protocol = "https"',
-        'ai_gateway_url = "https://mock-aimesh.example/gateway/v1"',
+        'aimeshEndpointBaseUrl = "https://mock-aimesh.example/gateway/v1"',
         "",
       ].join("\n"),
     )
@@ -324,7 +324,7 @@ describe("clickzetta key rotation", () => {
         'username = "BJ_TEST"',
         'service = "cn-beijing-alicloud.api.clickzetta.com"',
         'protocol = "https"',
-        'ai_gateway_url = "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1"',
+        'aimeshEndpointBaseUrl = "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1"',
         "",
       ].join("\n"),
     )
