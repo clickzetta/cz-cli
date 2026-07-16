@@ -60,11 +60,6 @@ const ROUTES = {
   columnVirtualSet: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
   columnVirtualList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
   columnVirtualDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns/${encodePath(argv["attr-id"])}` },
-  knowledgeEntryList: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/entries" },
-  knowledgeEntryDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
-  knowledgeEntryCreate: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/entries" },
-  knowledgeEntryUpdate: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
-  knowledgeEntryDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
   knowledgeSpaceList: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/spaces" },
   knowledgeSpaceCreate: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/spaces" },
   knowledgeSpaceRename: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}` },
@@ -1197,33 +1192,6 @@ async function executeKnowledgeNodeDomainCommand(
       ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
   }
-}
-
-function knowledgeEntryBody(argv: Record<string, unknown>): Record<string, unknown> {
-  const format = typeof argv.format === "string" ? argv.format : "json"
-  return mergeBody({}, {
-    aliases: stringArray(argv.alias),
-    content: argv.content,
-    dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
-    type: argv.type,
-    domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
-  })
-}
-
-async function knowledgeCreateBody(argv: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const format = typeof argv.format === "string" ? argv.format : "json"
-  const content = typeof argv.content === "string"
-    ? argv.content
-    : typeof argv.file === "string"
-      ? await Bun.file((await collectKnowledgeLocalFile(argv.file)).absolutePath).text()
-      : undefined
-  return mergeBody({}, {
-    aliases: stringArray(argv.alias),
-    content,
-    dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
-    type: argv.type,
-    domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
-  })
 }
 
 function normalizedRemotePath(pathValue: string | undefined): string {
@@ -2613,87 +2581,6 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
       })
       .command("knowledge", "Manage Analytics Agent knowledge", (knowledge) => {
         knowledge
-          .command(
-            "list",
-            "List structured knowledge entries",
-            (y) =>
-              y
-                .option("keyword", { type: "string", describe: "Keyword for fuzzy search" })
-                .option("domain-id", { type: "number", describe: "Bound domain ID" })
-                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("page-num", { type: "number", describe: "Page number" })
-                .option("page-size", { type: "number", describe: "Page size" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge list", argv as Record<string, unknown>, ROUTES.knowledgeEntryList, {}, {
-                keyword: argv.keyword,
-                domainId: argv["domain-id"],
-                type: argv.type,
-                pageNum: argv["page-num"],
-                pageSize: argv["page-size"],
-              })
-            },
-          )
-          .command(
-            "get <knowledge-id>",
-            "Show structured knowledge detail",
-            (y) => y.positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge get", argv as Record<string, unknown>, ROUTES.knowledgeEntryDetail, {})
-            },
-          )
-          .command(
-            "create",
-            "Create structured knowledge",
-            (y) =>
-              y
-                .option("alias", { type: "string", array: true, describe: "Knowledge alias, can be repeated" })
-                .option("content", { type: "string", describe: "Text knowledge content" })
-                .option("file", { type: "string", describe: "Local file path to load as text knowledge content" })
-                .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
-                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
-            async (argv) => {
-              const type = typeof argv.type === "string" ? argv.type : "text"
-              if (type === "dictionary" && !argv.dictionary) {
-                handledError("USAGE_ERROR", "dictionary knowledge requires --dictionary", { format: typeof argv.format === "string" ? argv.format : "json" })
-              }
-              if (type !== "dictionary" && !argv.content && !argv.file && !argv.dictionary) {
-                handledError("USAGE_ERROR", "text knowledge requires --content or --file", { format: typeof argv.format === "string" ? argv.format : "json" })
-              }
-              let body: Record<string, unknown>
-              try {
-                body = await knowledgeCreateBody(argv as Record<string, unknown>)
-              } catch (err) {
-                handledError("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                  format: typeof argv.format === "string" ? argv.format : "json",
-                })
-              }
-              await executeAnalyticsCommand("analytics-agent knowledge create", argv as Record<string, unknown>, ROUTES.knowledgeEntryCreate, body)
-            },
-          )
-          .command(
-            "update <knowledge-id>",
-            "Update structured knowledge",
-            (y) =>
-              y
-                .positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" })
-                .option("alias", { type: "string", array: true, describe: "Knowledge alias, can be repeated" })
-                .option("content", { type: "string", describe: "Text knowledge content" })
-                .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
-                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge update", argv as Record<string, unknown>, ROUTES.knowledgeEntryUpdate, knowledgeEntryBody(argv as Record<string, unknown>))
-            },
-          )
-          .command(
-            "delete <knowledge-id>",
-            "Delete structured knowledge",
-            (y) => y.positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge delete", argv as Record<string, unknown>, ROUTES.knowledgeEntryDelete, {})
-            },
-          )
           .command(
             "space",
             "Manage knowledge spaces",

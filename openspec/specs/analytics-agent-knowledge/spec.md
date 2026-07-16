@@ -1,7 +1,7 @@
 # analytics-agent-knowledge 规格说明
 
 ## Purpose
-定义 `analytics-agent knowledge` 命令组的第一批能力，包括结构化知识 CRUD、知识空间查询/创建，以及文档知识的 folder/file 基础命令面。
+定义 `analytics-agent knowledge` 命令组的能力，包括知识空间查询/创建，以及文档知识的 folder/file 基础命令面。
 
 ## Requirements
 
@@ -22,60 +22,6 @@ When the active profile already provides Analytics Agent specific `agent` contex
 - **WHEN** 当前 profile 未提供完整的 `agent.token`、`agent.tenant_id`、`agent.user_id`
 - **THEN** CLI MUST fall back to the existing Studio context resolution path
 - **AND** the existing non-agent command behavior MUST remain unchanged
-
-### Requirement: 结构化知识 CRUD
-
-CLI MUST provide `analytics-agent knowledge list/create/update/delete` for structured knowledge entries by calling open analytics-agent knowledge endpoints.
-
-#### Scenario: 列出结构化知识
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge list`
-- **THEN** CLI MUST call the open knowledge list endpoint
-- **AND** the primary output MUST expose user-facing fields including knowledge id, aliases, type, status, and bound domain ids when present
-
-#### Scenario: 创建文本知识
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --alias <alias> --content <text>`
-- **THEN** CLI MUST call the open knowledge create endpoint with a text-knowledge payload
-- **AND** the request MUST map `--content` to the stored text content field
-- **AND** the success output MUST include the created knowledge id and aliases
-
-#### Scenario: 从本地文件创建文本知识
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --alias <alias> --file <local-path>`
-- **THEN** CLI MUST read the local file content before sending the request
-- **AND** CLI MUST call the open knowledge create endpoint with the loaded text content
-- **AND** the success output MUST include the created knowledge id and aliases
-
-#### Scenario: 更新文本知识
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge update <knowledge-id> --alias <alias> --content <text>`
-- **THEN** CLI MUST call the open knowledge update endpoint for that id
-- **AND** the request MUST preserve the knowledge id in the path rather than the JSON body only
-
-#### Scenario: 获取结构化知识详情
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge get <knowledge-id>`
-- **THEN** CLI MUST call the open knowledge detail endpoint for that id
-- **AND** the primary output MUST include the knowledge id, aliases, type, and content or dictionary payload
-
-#### Scenario: 删除结构化知识
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge delete <knowledge-id>`
-- **THEN** CLI MUST call the open knowledge delete endpoint for that id
-- **AND** the command MUST succeed on the backend no-data success shape
-
-#### Scenario: 创建知识缺少内容
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --alias <alias>` without `--content` and without `--dictionary`
-- **THEN** CLI MUST reject the request before sending it
-- **AND** the error message MUST explain that text knowledge requires content
-
-#### Scenario: 从本地文件创建知识时文件不存在
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --alias <alias> --file <missing-path>`
-- **THEN** CLI MUST reject the request before sending it
-- **AND** the error message MUST explain that the local path does not exist
 
 ### Requirement: 知识空间查询与维护
 
