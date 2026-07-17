@@ -75,7 +75,7 @@ async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; outp
   return { exitCode, output: chunks.join("") }
 }
 
-describe("analytics-agent domain joins", () => {
+describe("analytics-agent domain join", () => {
   beforeEach(() => {
     process.exitCode = 0
   })
@@ -87,137 +87,172 @@ describe("analytics-agent domain joins", () => {
     process.exitCode = 0
   })
 
-  test("discover calls the open API with tenantId query and domainId path", async () => {
+  test("list calls the join list endpoint with filters", async () => {
     let requestUrl = ""
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       requestUrl = String(input)
-      return jsonResponse({ success: true, data: { taskId: "task-1", status: "RUNNING", joinCount: 0, joins: [] } })
+      return jsonResponse({
+        success: true,
+        data: [{
+          joinId: 301,
+          domainId: 195,
+          datasetId: 1773,
+          attrCode: "customer_id",
+          joinDatasetId: 1774,
+          joinAttrCode: "id",
+          relation: "n:1",
+        }],
+      })
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
       "analytics-agent",
       "domain",
-      "joins",
-      "discover",
-      "--domain-id",
+      "join",
+      "list",
       "195",
+      "--dataset-id",
+      "1773",
+      "--join-dataset-id",
+      "1774",
+      "--keyword",
+      "customer",
     ])
 
     expect(result.exitCode).toBe(0)
     const url = new URL(requestUrl)
-    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/discover")
+    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins")
     expect(url.searchParams.get("tenantId")).toBe("55")
-    expect(parseData(result.output)).toEqual({ taskId: "task-1", status: "RUNNING" })
+    expect(url.searchParams.get("datasetId")).toBe("1773")
+    expect(url.searchParams.get("joinDatasetId")).toBe("1774")
+    expect(url.searchParams.get("keyword")).toBe("customer")
+    expect(parseData(result.output)).toEqual([{
+      joinId: 301,
+      domainId: 195,
+      datasetId: 1773,
+      attrCode: "customer_id",
+      joinDatasetId: 1774,
+      joinAttrCode: "id",
+      relation: "n:1",
+    }])
   })
 
-  test("result outputs join details needed by apply", async () => {
-    globalThis.fetch = mock(async () => jsonResponse({
-      success: true,
-      data: {
-        taskId: "task-1",
-        status: "SUCCESS",
-        joinCount: 1,
-        joins: [{
-          datasetId: 101,
-          tableName: "orders",
-          attrCode: "user_id",
-          joinDatasetId: 202,
-          joinTableName: "users",
-          joinAttrCode: "id",
-          relation: "n:1",
-          ignored: "not returned",
-        }],
-      },
-    })) as typeof fetch
+  test("get calls the join detail endpoint", async () => {
+    let requestUrl = ""
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: { joinId: 301, domainId: 195, relation: "1:1" } })
+    }) as typeof fetch
 
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "joins",
-      "result",
-      "--task-id",
-      "task-1",
-    ])
+    const result = await runAnalyticsCli(["analytics-agent", "domain", "join", "get", "195", "301"])
 
     expect(result.exitCode).toBe(0)
-    expect(parseData(result.output)).toEqual({
-      taskId: "task-1",
-      status: "SUCCESS",
-      joinCount: 1,
-      joins: [{
-        datasetId: 101,
-        tableName: "orders",
-        attrCode: "user_id",
-        joinDatasetId: 202,
-        joinTableName: "users",
-        joinAttrCode: "id",
-        relation: "n:1",
-      }],
-    })
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/301")
+    expect(url.searchParams.get("tenantId")).toBe("55")
+    expect(parseData(result.output)).toEqual({ joinId: 301, domainId: 195, relation: "1:1" })
   })
 
-  test("apply loads task result then submits all selected joins", async () => {
-    const requestUrls: string[] = []
-    const requestBodies: unknown[] = []
+  test("create sends only manual join fields", async () => {
+    let requestUrl = ""
+    let requestBody: unknown
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      requestUrls.push(String(input))
-      requestBodies.push(init?.body ? JSON.parse(String(init.body)) : null)
-      if (requestUrls.length === 1) {
-        return jsonResponse({
-          success: true,
-          data: {
-            taskId: "task-1",
-            status: "SUCCESS",
-            joins: [{
-              datasetId: 101,
-              tableName: "orders",
-              attrCode: "user_id",
-              joinDatasetId: 202,
-              joinTableName: "users",
-              joinAttrCode: "id",
-              relation: "n:1",
-              ignored: "not returned",
-            }],
-          },
-        })
-      }
-      return jsonResponse({ success: true, data: null })
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { joinId: 301, domainId: 195 } })
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
       "analytics-agent",
       "domain",
-      "joins",
-      "apply",
-      "--domain-id",
+      "join",
+      "create",
       "195",
-      "--task-id",
-      "task-1",
-      "--all",
+      "--dataset-id",
+      "1773",
+      "--attr-code",
+      "customer_id",
+      "--join-dataset-id",
+      "1774",
+      "--join-attr-code",
+      "id",
+      "--relation",
+      "n:1",
     ])
 
     expect(result.exitCode).toBe(0)
-    const resultUrl = new URL(requestUrls[0] ?? "")
-    expect(resultUrl.pathname).toBe("/open/api/v1/analytics-agent/domains/joins/tasks/task-1")
-    expect(resultUrl.searchParams.get("tenantId")).toBe("55")
-    const applyUrl = new URL(requestUrls[1] ?? "")
-    expect(applyUrl.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/apply")
-    expect(applyUrl.searchParams.get("tenantId")).toBe("55")
-    expect(requestBodies[1]).toEqual({
-      joins: [{
-        datasetId: 101,
-        tableName: "orders",
-        attrCode: "user_id",
-        joinDatasetId: 202,
-        joinTableName: "users",
-        joinAttrCode: "id",
-        relation: "n:1",
-      }],
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins")
+    expect(url.searchParams.get("tenantId")).toBe("55")
+    expect(requestBody).toEqual({
+      datasetId: 1773,
+      attrCode: "customer_id",
+      joinDatasetId: 1774,
+      joinAttrCode: "id",
+      relation: "n:1",
     })
-    expect(parseData(result.output)).toEqual({ submittedCount: 1, status: "ok" })
+    expect(parseData(result.output)).toEqual({ joinId: 301, domainId: 195 })
   })
 
-  test("apply rejects missing selector before sending request", async () => {
+  test("update sends manual join fields to the join detail endpoint", async () => {
+    let requestUrl = ""
+    let requestBody: unknown
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { joinId: 301, domainId: 195, relation: "MANY_TO_ONE" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "join",
+      "update",
+      "195",
+      "301",
+      "--dataset-id",
+      "1773",
+      "--attr-code",
+      "buyer_id",
+      "--join-dataset-id",
+      "1774",
+      "--join-attr-code",
+      "id",
+      "--relation",
+      "MANY_TO_ONE",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/301")
+    expect(url.searchParams.get("tenantId")).toBe("55")
+    expect(requestBody).toEqual({
+      datasetId: 1773,
+      attrCode: "buyer_id",
+      joinDatasetId: 1774,
+      joinAttrCode: "id",
+      relation: "MANY_TO_ONE",
+    })
+    expect(parseData(result.output)).toEqual({ joinId: 301, domainId: 195, relation: "MANY_TO_ONE" })
+  })
+
+  test("delete calls the join delete endpoint", async () => {
+    let requestUrl = ""
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: { domainId: 195, joinId: 301, deleted: true } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "domain", "join", "delete", "195", "301"])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/301")
+    expect(url.searchParams.get("tenantId")).toBe("55")
+    expect(parseData(result.output)).toEqual({ domainId: 195, joinId: 301, deleted: true })
+  })
+
+  test("create rejects missing required manual fields before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -225,96 +260,29 @@ describe("analytics-agent domain joins", () => {
     const result = await runAnalyticsCli([
       "analytics-agent",
       "domain",
-      "joins",
-      "apply",
-      "--domain-id",
+      "join",
+      "create",
       "195",
-      "--task-id",
-      "task-1",
+      "--dataset-id",
+      "1773",
     ])
 
     expect(result.exitCode).toBe(1)
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("Either --all or at least one --index is required")
+    expect(parsed.error.message).toContain("--attr-code is required")
   })
 
-  test("apply rejects out-of-range index before sending apply request", async () => {
-    globalThis.fetch = mock(async () => jsonResponse({
-      success: true,
-      data: {
-        taskId: "task-1",
-        status: "SUCCESS",
-        joins: [{
-          datasetId: 101,
-          tableName: "orders",
-          attrCode: "user_id",
-          joinDatasetId: 202,
-          joinTableName: "users",
-          joinAttrCode: "id",
-          relation: "n:1",
-        }],
-      },
-    })) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "joins",
-      "apply",
-      "--domain-id",
-      "195",
-      "--task-id",
-      "task-1",
-      "--index",
-      "2",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    const parsed = JSON.parse(result.output.trim())
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("only 1 discovered join candidates available")
-  })
-
-  test("apply rejects non-positive index before requesting task result", async () => {
+  test("delete rejects invalid IDs before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
 
-    const zeroIndex = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "joins",
-      "apply",
-      "--domain-id",
-      "195",
-      "--task-id",
-      "task-1",
-      "--index",
-      "0",
-    ])
+    const result = await runAnalyticsCli(["analytics-agent", "domain", "join", "delete", "0", "301"])
 
-    expect(zeroIndex.exitCode).toBe(1)
-    const zeroParsed = JSON.parse(zeroIndex.output.trim())
-    expect(zeroParsed.error.code).toBe("USAGE_ERROR")
-    expect(zeroParsed.error.message).toContain("index must be a positive integer")
-
-    const negativeIndex = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "joins",
-      "apply",
-      "--domain-id",
-      "195",
-      "--task-id",
-      "task-1",
-      "--index",
-      "-1",
-    ])
-
-    expect(negativeIndex.exitCode).toBe(1)
-    const negativeParsed = JSON.parse(negativeIndex.output.trim())
-    expect(negativeParsed.error.code).toBe("USAGE_ERROR")
-    expect(negativeParsed.error.message).toContain("index must be a positive integer")
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("domain-id must be a positive integer")
   })
 })
