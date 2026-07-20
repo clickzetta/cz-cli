@@ -184,7 +184,138 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(requestUrl).toContain("/open/api/v1/analytics-agent/domains/195?tenantId=55")
   })
 
-  test("datasource load collects repeated domain-id flags into domainIds array", async () => {
+  test("datasource list defaults withDetail to false", async () => {
+    let requestUrl = ""
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: [] })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "list",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/datasources")
+    expect(url.searchParams.get("tenantId")).toBe("55")
+    expect(url.searchParams.get("withDetail")).toBe("false")
+  })
+
+  test("datasource browse composes path from workspace and schema", async () => {
+    let requestUrl = ""
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: [] })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "browse",
+      "288",
+      "--workspace",
+      "ai_workspace",
+      "--schema",
+      "hll_dws",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/datasources/288/browse")
+    expect(url.searchParams.get("path")).toBe("workspace:ai_workspace/schema:hll_dws")
+  })
+
+  test("datasource table search uses positional keyword and scoped path", async () => {
+    let requestUrl = ""
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: [] })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "table",
+      "search",
+      "288",
+      "driver",
+      "--workspace",
+      "ai_workspace",
+      "--schema",
+      "hll_dws",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/datasources/288/tables/search")
+    expect(url.searchParams.get("keyword")).toBe("driver")
+    expect(url.searchParams.get("path")).toBe("workspace:ai_workspace/schema:hll_dws")
+  })
+
+  test("datasource table show requests columns and disables preview by default", async () => {
+    let requestUrl = ""
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: { tableName: "orders" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "table",
+      "show",
+      "288",
+      "--workspace",
+      "ai_workspace",
+      "--schema",
+      "hll_dws",
+      "--table",
+      "dws_info_driver_daily_1d_tm",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/datasources/288/tables/dws_info_driver_daily_1d_tm")
+    expect(url.searchParams.get("path")).toBe("workspace:ai_workspace/schema:hll_dws")
+    expect(url.searchParams.get("includeColumns")).toBe("true")
+    expect(url.searchParams.get("includePreview")).toBe("false")
+  })
+
+  test("datasource table show enables preview when requested", async () => {
+    let requestUrl = ""
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({ success: true, data: { tableName: "orders" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "table",
+      "show",
+      "288",
+      "--workspace",
+      "ai_workspace",
+      "--schema",
+      "hll_dws",
+      "--table",
+      "dws_info_driver_daily_1d_tm",
+      "--preview",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(new URL(requestUrl).searchParams.get("includePreview")).toBe("true")
+  })
+
+  test("datasource table load collects repeated domain-id flags into domainIds array", async () => {
     let requestBody: unknown
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -195,14 +326,15 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     const result = await runAnalyticsCli([
       "analytics-agent",
       "datasource",
+      "table",
       "load",
-      "11",
-      "--path",
-      "workspace:w/schema:s",
-      "--table-name",
+      "288",
+      "--workspace",
+      "w",
+      "--schema",
+      "s",
+      "--table",
       "orders",
-      "--display-name",
-      "订单表",
       "--domain-id",
       "195",
       "--domain-id",
@@ -213,16 +345,16 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(requestBody).toEqual({
       path: "workspace:w/schema:s",
       tableName: "orders",
-      displayName: "订单表",
       domainIds: [195, 196],
     })
   })
 
-  test("datasource load help no longer exposes domain-ids or body", () => {
+  test("datasource table load help does not expose old body or table-name flags", () => {
     const result = spawnSync(process.execPath, [
       "./src/main.ts",
       "analytics-agent",
       "datasource",
+      "table",
       "load",
       "--help",
     ], {
@@ -231,12 +363,14 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     })
 
     expect(result.status).toBe(0)
+    expect(result.stdout).toContain("--table")
     expect(result.stdout).toContain("--domain-id")
     expect(result.stdout).not.toContain("--domain-ids")
+    expect(result.stdout).not.toContain("--table-name")
     expect(result.stdout).not.toContain("--body")
   })
 
-  test("datasource load rejects invalid domain-id before sending request", async () => {
+  test("datasource table load rejects invalid domain-id before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -244,11 +378,10 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     const result = await runAnalyticsCli([
       "analytics-agent",
       "datasource",
+      "table",
       "load",
       "11",
-      "--path",
-      "workspace:w/schema:s",
-      "--table-name",
+      "--table",
       "orders",
       "--domain-id",
       "abc",
@@ -261,258 +394,37 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     })
   })
 
-  test("datasource show-table accepts browse path positional input", async () => {
-    let requestUrl = ""
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrl = String(input)
-      return jsonResponse({ success: true, data: { tableName: "orders" } })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
+  test("old datasource table commands are not exposed", () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts",
       "analytics-agent",
       "datasource",
-      "show-table",
-      "11",
-      "workspace:ws/schema:ods/table:orders",
-    ])
-
-    expect(result.exitCode).toBe(0)
-    const url = new URL(requestUrl)
-    expect(url.pathname).toBe("/open/api/v1/datasources/11/tables/orders")
-    expect(url.searchParams.get("path")).toBe("workspace:ws/schema:ods")
-  })
-
-  test("datasource show-table rejects missing path for hierarchical datasource", async () => {
-    const requestUrls: string[] = []
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrls.push(String(input))
-      return jsonResponse({
-        success: true,
-        data: {
-          datasourceId: 11,
-          browseModel: {
-            levels: ["workspace", "schema", "table"],
-          },
-        },
-      })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "datasource",
-      "show-table",
-      "11",
-      "orders",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    expect(requestUrls).toHaveLength(1)
-    expect(requestUrls[0]).toContain("/open/api/v1/datasources/11/meta?tenantId=55")
-    expect(parseError(result.output)).toEqual({
-      code: "USAGE_ERROR",
-      message: "show-table requires --path for hierarchical datasources, or pass a browse path like workspace:.../schema:.../table:...",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
     })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("list")
+    expect(result.stdout).toContain("browse")
+    expect(result.stdout).toContain("table")
+    expect(result.stdout).not.toContain("search-tables")
+    expect(result.stdout).not.toContain("show-table")
+    expect(result.stdout).not.toContain("load <datasource-id>")
+    expect(result.stdout).not.toContain("create")
+    expect(result.stdout).not.toContain("update")
+    expect(result.stdout).not.toContain("delete")
+    expect(result.stdout).not.toContain("types")
+    expect(result.stdout).not.toContain("meta")
   })
 
-  test("datasource search-tables rejects missing path for hierarchical datasource", async () => {
-    const requestUrls: string[] = []
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrls.push(String(input))
-      return jsonResponse({
-        success: true,
-        data: {
-          datasourceId: 11,
-          browseModel: {
-            levels: ["workspace", "schema", "table"],
-          },
-        },
-      })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "datasource",
-      "search-tables",
-      "11",
-      "--keyword",
-      "orders",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    expect(requestUrls).toHaveLength(1)
-    expect(parseError(result.output)).toEqual({
-      code: "USAGE_ERROR",
-      message: "search-tables requires --path for hierarchical datasources to avoid wide scans",
-    })
-  })
-
-  test("datasource load rejects missing path for hierarchical datasource", async () => {
-    const requestUrls: string[] = []
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrls.push(String(input))
-      return jsonResponse({
-        success: true,
-        data: {
-          datasourceId: 11,
-          browseModel: {
-            levels: ["workspace", "schema", "table"],
-          },
-        },
-      })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "datasource",
-      "load",
-      "11",
-      "--table-name",
-      "orders",
-      "--domain-id",
-      "195",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    expect(requestUrls).toHaveLength(1)
-    expect(parseError(result.output)).toEqual({
-      code: "USAGE_ERROR",
-      message: "load requires --path for hierarchical datasources, or pass a browse path in --table-name",
-    })
-  })
-
-  test("domain table add rejects short table-name and suggests the datasource full name", async () => {
-    const requestUrls: string[] = []
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrls.push(String(input))
-      return jsonResponse({
-        success: true,
-        data: {
-          datasourceId: 4164,
-          workspace: "quick_start",
-          schema: "rpt",
-          tableName: "rpt_transaction_lazada",
-          fullName: "quick_start.rpt.rpt_transaction_lazada",
-        },
-      })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "table",
-      "add",
-      "19",
-      "--datasource-id",
-      "4164",
-      "--path",
-      "workspace:quick_start/schema:rpt",
-      "--table-name",
-      "rpt_transaction_lazada",
-      "--display-name",
-      "Transaction - Lazada",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    expect(requestUrls).toHaveLength(1)
-    expect(requestUrls[0]).toContain("/open/api/v1/datasources/4164/tables/rpt_transaction_lazada")
-    expect(parseError(result.output)).toEqual({
-      code: "USAGE_ERROR",
-      message: "domain table add requires the full table name in --table-name. You passed \"rpt_transaction_lazada\", but the datasource resolved it to \"quick_start.rpt.rpt_transaction_lazada\". Please rerun with --table-name \"quick_start.rpt.rpt_transaction_lazada\".",
-    })
-  })
-
-  test("domain table add rejects duplicate table already present in domain", async () => {
-    const requestUrls: string[] = []
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
-      requestUrls.push(String(input))
-      if (requestUrls.length === 1) {
-        return jsonResponse({
-          success: true,
-          data: {
-            datasourceId: 4164,
-            workspace: "quick_start",
-            schema: "rpt",
-            tableName: "quick_start.rpt.rpt_transaction_lazada",
-            fullName: "quick_start.rpt.rpt_transaction_lazada",
-          },
-        })
-      }
-
-      return jsonResponse({
-        success: true,
-        data: {
-          domainId: 19,
-          tables: [
-            {
-              datasetId: 987,
-              datasourceId: 4164,
-              workspace: "quick_start",
-              schema: "rpt",
-              tableName: "quick_start.rpt.rpt_transaction_lazada",
-              displayName: "Transaction - Lazada",
-            },
-          ],
-        },
-      })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "table",
-      "add",
-      "19",
-      "--datasource-id",
-      "4164",
-      "--path",
-      "workspace:quick_start/schema:rpt",
-      "--table-name",
-      "quick_start.rpt.rpt_transaction_lazada",
-    ])
-
-    expect(result.exitCode).toBe(1)
-    expect(requestUrls).toHaveLength(2)
-    expect(requestUrls[1]).toContain("/open/api/v1/analytics-agent/domains/19?tenantId=55&withTables=true")
-    expect(parseError(result.output)).toEqual({
-      code: "USAGE_ERROR",
-      message: "domain 19 already contains table \"quick_start.rpt.rpt_transaction_lazada\" (datasetId: 987). Remove the existing table first or choose a different table.",
-    })
-  })
-
-  test("domain table add runs prechecks then posts when full name and domain are clean", async () => {
+  test("domain table add directly posts datasource table binding", async () => {
     const requestUrls: string[] = []
     let requestBody: unknown
 
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       requestUrls.push(String(input))
-      if (requestUrls.length === 1) {
-        return jsonResponse({
-          success: true,
-          data: {
-            datasourceId: 4164,
-            workspace: "quick_start",
-            schema: "rpt",
-            tableName: "quick_start.rpt.rpt_transaction_lazada",
-            fullName: "quick_start.rpt.rpt_transaction_lazada",
-          },
-        })
-      }
-      if (requestUrls.length === 2) {
-        return jsonResponse({
-          success: true,
-          data: {
-            domainId: 19,
-            tables: [],
-          },
-        })
-      }
-
       requestBody = init?.body ? JSON.parse(String(init.body)) : null
       return jsonResponse({
         success: true,
@@ -531,25 +443,67 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
       "19",
       "--datasource-id",
       "4164",
-      "--path",
-      "workspace:quick_start/schema:rpt",
-      "--table-name",
-      "quick_start.rpt.rpt_transaction_lazada",
-      "--display-name",
-      "Transaction - Lazada",
-      "--description",
-      "Lazada payout/transaction report",
+      "--workspace",
+      "quick_start",
+      "--schema",
+      "rpt",
+      "--table",
+      "rpt_transaction_lazada",
     ])
 
     expect(result.exitCode).toBe(0)
-    expect(requestUrls).toHaveLength(3)
-    expect(requestUrls[2]).toContain("/open/api/v1/analytics-agent/domains/19/tables?tenantId=55")
+    expect(requestUrls).toHaveLength(1)
+    expect(requestUrls[0]).toContain("/open/api/v1/analytics-agent/domains/19/tables?tenantId=55")
     expect(requestBody).toEqual({
       datasourceId: 4164,
-      path: "workspace:quick_start/schema:rpt",
-      tableName: "quick_start.rpt.rpt_transaction_lazada",
-      displayName: "Transaction - Lazada",
-      description: "Lazada payout/transaction report",
+      workspace: "quick_start",
+      schema: "rpt",
+      tableName: "rpt_transaction_lazada",
     })
+  })
+
+  test("domain table add help does not expose old path or table-name flags", () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts",
+      "analytics-agent",
+      "domain",
+      "table",
+      "add",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("--table")
+    expect(result.stdout).not.toContain("--table-name")
+    expect(result.stdout).not.toContain("--path")
+    expect(result.stdout).not.toContain("--body")
+    expect(result.stdout).not.toContain("--display-name")
+    expect(result.stdout).not.toContain("--description")
+  })
+
+  test("domain table add rejects missing table before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "table",
+      "add",
+      "19",
+      "--datasource-id",
+      "4164",
+      "--workspace",
+      "manual",
+      "--schema",
+      "ods",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(parseError(result.output).code).toBe("USAGE_ERROR")
   })
 })

@@ -53,9 +53,11 @@ const ROUTES = {
   tableSemanticsGet: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
   tableSemanticsSet: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
   tableSemanticsProp: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}/prop` },
-  domainJoinDiscover: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/discover` },
-  domainJoinResult: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/joins/tasks/${encodePath(argv["task-id"])}` },
-  domainJoinApply: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/apply` },
+  domainJoinList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
+  domainJoinDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/${encodePath(argv["join-id"])}` },
+  domainJoinCreate: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
+  domainJoinUpdate: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/${encodePath(argv["join-id"])}` },
+  domainJoinDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/${encodePath(argv["join-id"])}` },
   columnVirtualCompile: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns/compile` },
   columnVirtualSet: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
   columnVirtualList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
@@ -196,6 +198,11 @@ function positiveIntegerValue(
   handledError("USAGE_ERROR", `${optionName} must be a positive integer`, { format })
 }
 
+function requiredPositiveIntegerValue(value: unknown, optionName: string, format: string): number {
+  if (value === undefined) handledError("USAGE_ERROR", `${optionName} is required`, { format })
+  return positiveIntegerValue(value, optionName, format) as number
+}
+
 function positiveIntegerArray(
   value: unknown,
   optionName: string,
@@ -208,6 +215,11 @@ function positiveIntegerArray(
     handledError("USAGE_ERROR", `${optionName} must contain only positive integers`, { format })
   }
   return parsed as number[]
+}
+
+function requiredStringValue(value: unknown, optionName: string, format: string): string {
+  if (typeof value === "string" && value.trim() !== "") return value.trim()
+  handledError("USAGE_ERROR", `${optionName} is required`, { format })
 }
 
 function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
@@ -287,16 +299,38 @@ function pickTableSemanticsFields(value: unknown): Record<string, unknown> {
   }
 }
 
-function pickDomainJoinFields(value: unknown): Record<string, unknown> {
-  const item = value && typeof value === "object" ? value as Record<string, unknown> : {}
+const DOMAIN_JOIN_RELATIONS = new Set(["n:1", "1:n", "1:1", "MANY_TO_ONE", "ONE_TO_MANY", "ONE_TO_ONE"])
+
+function resolveDomainJoinPathArgv(argv: Record<string, unknown>, format: string): Record<string, unknown> {
+  return mergeBody(argv, {
+    "domain-id": positiveIntegerValue(argv["domain-id"], "domain-id", format),
+    "join-id": argv["join-id"] === undefined ? undefined : positiveIntegerValue(argv["join-id"], "join-id", format),
+  })
+}
+
+function resolveDomainJoinListQuery(argv: Record<string, unknown>, format: string): Record<string, unknown> {
+  return mergeBody({}, {
+    datasetId: positiveIntegerValue(argv["dataset-id"], "--dataset-id", format),
+    joinDatasetId: positiveIntegerValue(argv["join-dataset-id"], "--join-dataset-id", format),
+    keyword: typeof argv.keyword === "string" && argv.keyword.trim() !== "" ? argv.keyword.trim() : undefined,
+  })
+}
+
+function resolveDomainJoinBody(argv: Record<string, unknown>, format: string): Record<string, unknown> {
+  const datasetId = requiredPositiveIntegerValue(argv["dataset-id"], "--dataset-id", format)
+  const attrCode = requiredStringValue(argv["attr-code"], "--attr-code", format)
+  const joinDatasetId = requiredPositiveIntegerValue(argv["join-dataset-id"], "--join-dataset-id", format)
+  const joinAttrCode = requiredStringValue(argv["join-attr-code"], "--join-attr-code", format)
+  const relation = requiredStringValue(argv.relation, "--relation", format)
+  if (!DOMAIN_JOIN_RELATIONS.has(relation)) {
+    handledError("USAGE_ERROR", "--relation must be one of n:1, 1:n, 1:1, MANY_TO_ONE, ONE_TO_MANY, ONE_TO_ONE", { format })
+  }
   return {
-    datasetId: item.datasetId,
-    tableName: item.tableName,
-    attrCode: item.attrCode,
-    joinDatasetId: item.joinDatasetId,
-    joinTableName: item.joinTableName,
-    joinAttrCode: item.joinAttrCode,
-    relation: item.relation,
+    datasetId,
+    attrCode,
+    joinDatasetId,
+    joinAttrCode,
+    relation,
   }
 }
 
@@ -333,36 +367,12 @@ function pickDomainPromptFieldsFromDetail(value: unknown): Record<string, unknow
   }
 }
 
-function parseDatasourceBrowsePath(value: unknown): { path?: string; tableName: string } | null {
-  if (typeof value !== "string" || !value.includes(":")) return null
-  const segments = value
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment !== "")
-
-  let workspace: string | undefined
-  let schema: string | undefined
-  let tableName: string | undefined
-
-  for (const segment of segments) {
-    const [key, rawValue] = segment.split(":", 2)
-    if (!rawValue) continue
-    if (key === "workspace") workspace = rawValue
-    if (key === "schema") schema = rawValue
-    if (key === "table") tableName = rawValue
-  }
-
-  if (!tableName) return null
-
-  const pathSegments = [
-    workspace ? `workspace:${workspace}` : undefined,
-    schema ? `schema:${schema}` : undefined,
-  ].filter((segment): segment is string => typeof segment === "string")
-
-  return {
-    ...(pathSegments.length > 0 ? { path: pathSegments.join("/") } : {}),
-    tableName,
-  }
+function buildBrowsePathFromScope(argv: Record<string, unknown>): string | undefined {
+  const segments = [
+    typeof argv.workspace === "string" && argv.workspace.trim() !== "" ? `workspace:${argv.workspace.trim()}` : undefined,
+    typeof argv.schema === "string" && argv.schema.trim() !== "" ? `schema:${argv.schema.trim()}` : undefined,
+  ].filter((segment): segment is string => Boolean(segment))
+  return segments.length > 0 ? segments.join("/") : undefined
 }
 
 function knowledgeNodeTypeLabel(value: unknown): "folder" | "file" | undefined {
@@ -409,49 +419,6 @@ function pickKnowledgeNodeDomainFields(value: unknown): Record<string, unknown> 
     inheritedFromNodeId: domainAssoc.inheritedFromNodeId,
     inheritedFromNodeName: domainAssoc.inheritedFromNodeName,
   })
-}
-
-function normalizeTableName(value: unknown): string {
-  if (typeof value !== "string") return ""
-  return value
-    .trim()
-    .replace(/`/g, "")
-    .split(".")
-    .map((segment) => segment.trim())
-    .join(".")
-    .toLowerCase()
-}
-
-function resolvedDatasourceTableName(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  const item = value as Record<string, unknown>
-  if (typeof item.fullName === "string" && item.fullName.trim() !== "") return item.fullName.trim()
-  if (typeof item.tableName === "string" && item.tableName.trim() !== "") return item.tableName.trim()
-  return undefined
-}
-
-function findDuplicateDomainTable(value: unknown, tableName: string): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  const tables = (value as Record<string, unknown>).tables
-  if (!Array.isArray(tables)) return undefined
-  const normalizedTarget = normalizeTableName(tableName)
-  return tables.find((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false
-    const table = item as Record<string, unknown>
-    return normalizeTableName(table.tableName ?? table.fullName) === normalizedTarget
-  }) as Record<string, unknown> | undefined
-}
-
-function datasourceBrowseLevels(value: unknown): string[] | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null
-  const browseModel = (value as Record<string, unknown>).browseModel
-  if (!browseModel || typeof browseModel !== "object" || Array.isArray(browseModel)) return null
-  const levels = stringArray((browseModel as Record<string, unknown>).levels)
-  return levels && levels.length > 0 ? levels : null
-}
-
-function isHierarchicalDatasource(levels: string[] | null): boolean {
-  return Array.isArray(levels) && levels.length >= 2
 }
 
 function domainIdsFromObject(value: unknown): number[] | undefined {
@@ -576,18 +543,6 @@ async function executeStatusCommandWithUpdateFallback(
       format,
       ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
-  }
-}
-
-async function readDatasourceBrowseLevels(
-  argv: Record<string, unknown>,
-  ctx: ResolvedContext,
-): Promise<string[] | null> {
-  try {
-    const data = await requestAnalyticsData(argv, ROUTES.datasourceMeta, {}, {}, ctx)
-    return datasourceBrowseLevels(data)
-  } catch {
-    return null
   }
 }
 
@@ -1421,25 +1376,6 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
       .command("datasource", "Manage Analytics Agent datasources", (datasource) => {
         datasource
           .command(
-            "types",
-            "List supported datasource types",
-            (y) => y,
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent datasource types", argv as Record<string, unknown>, ROUTES.datasourceTypes, {})
-            },
-          )
-          .command(
-            "schema",
-            "Show datasource connection schema",
-            (y) =>
-              y.option("type", { type: "string", demandOption: true, describe: "Datasource type" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent datasource schema", argv as Record<string, unknown>, ROUTES.datasourceSchema, {}, {
-                type: argv.type,
-              })
-            },
-          )
-          .command(
             "list",
             "List datasources",
             (y) =>
@@ -1449,16 +1385,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               await executeAnalyticsCommand("analytics-agent datasource list", argv as Record<string, unknown>, ROUTES.datasourceList, {}, {
                 name: argv.name,
-                withDetail: argv["with-detail"],
+                withDetail: argv["with-detail"] ?? false,
               })
-            },
-          )
-          .command(
-            "meta <datasource-id>",
-            "Show datasource browse metadata",
-            (y) => y.positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent datasource meta", argv as Record<string, unknown>, ROUTES.datasourceMeta, {})
             },
           )
           .command(
@@ -1467,171 +1395,93 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("path", { type: "string", describe: "Browse path, for example workspace:w/schema:s" })
+                .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
+                .option("schema", { type: "string", describe: "Schema name" })
                 .option("name", { type: "string", describe: "Filter child names" })
                 .option("page-num", { type: "number", describe: "Page number" })
                 .option("page-size", { type: "number", describe: "Page size" }),
             async (argv) => {
-              await executeAnalyticsCommand("analytics-agent datasource browse", argv as Record<string, unknown>, ROUTES.datasourceBrowse, {}, {
-                path: argv.path,
-                name: argv.name,
-                pageNum: argv["page-num"],
-                pageSize: argv["page-size"],
-              })
-            },
-          )
-          .command(
-            "search-tables <datasource-id>",
-            "Search tables in a datasource",
-            (y) =>
-              y
-                .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("keyword", { type: "string", demandOption: true, describe: "Table search keyword" })
-                .option("path", { type: "string", describe: "Search path" })
-                .option("page-num", { type: "number", describe: "Page number" })
-                .option("page-size", { type: "number", describe: "Page size" }),
-            async (argv) => {
-              const format = typeof argv.format === "string" ? argv.format : "json"
               const requestArgv = argv as Record<string, unknown>
-              if (typeof argv.path !== "string" || argv.path.trim() === "") {
-                const ctx = await resolveAnalyticsContext(requestArgv)
-                const levels = await readDatasourceBrowseLevels(requestArgv, ctx)
-                if (isHierarchicalDatasource(levels)) {
-                  error("USAGE_ERROR", "search-tables requires --path for hierarchical datasources to avoid wide scans", { format })
-                  return
-                }
-              }
-              await executeAnalyticsCommand("analytics-agent datasource search-tables", requestArgv, ROUTES.datasourceSearchTables, {}, {
-                keyword: argv.keyword,
-                path: argv.path,
+              await executeAnalyticsCommand("analytics-agent datasource browse", requestArgv, ROUTES.datasourceBrowse, {}, {
+                path: buildBrowsePathFromScope(requestArgv),
+                name: argv.name,
                 pageNum: argv["page-num"],
                 pageSize: argv["page-size"],
               })
             },
           )
           .command(
-            "show-table <datasource-id> <table-name>",
-            "Show datasource table metadata",
-            (y) =>
-              y
-                .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .positional("table-name", { type: "string", demandOption: true, describe: "Table name" })
-                .option("path", { type: "string", describe: "Table path" })
-                .option("include-columns", { type: "boolean", describe: "Include column metadata" })
-                .option("include-preview", { type: "boolean", describe: "Include preview rows" })
-                .option("preview-size", { type: "number", describe: "Preview row count" }),
-            async (argv) => {
-              const format = typeof argv.format === "string" ? argv.format : "json"
-              const parsedBrowsePath = parseDatasourceBrowsePath(argv["table-name"])
-              const requestArgv = {
-                ...(argv as Record<string, unknown>),
-                "table-name": parsedBrowsePath?.tableName ?? argv["table-name"],
-                path: argv.path ?? parsedBrowsePath?.path,
-              }
-              if (typeof requestArgv.path !== "string" || requestArgv.path.trim() === "") {
-                const ctx = await resolveAnalyticsContext(requestArgv)
-                const levels = await readDatasourceBrowseLevels(requestArgv, ctx)
-                if (isHierarchicalDatasource(levels)) {
-                  error("USAGE_ERROR", "show-table requires --path for hierarchical datasources, or pass a browse path like workspace:.../schema:.../table:...", { format })
-                  return
-                }
-              }
-              await executeAnalyticsCommand("analytics-agent datasource show-table", requestArgv, ROUTES.datasourceShowTable, {}, {
-                path: requestArgv.path,
-                includeColumns: argv["include-columns"],
-                includePreview: argv["include-preview"],
-                previewSize: argv["preview-size"],
-              })
-            },
-          )
-          .command(
-            "create",
-            "Create datasource",
-            (y) =>
-              y
-                .option("name", { type: "string", describe: "Datasource name" })
-                .option("type", { type: "string", describe: "Datasource type" })
-                .option("connection", { type: "string", describe: "Datasource connection JSON object" })
-                .option("validate-only", { type: "boolean", describe: "Validate connection without creating datasource" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
-            async (argv) => {
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
-                name: argv.name,
-                type: argv.type,
-                connection: parseOptionalJsonObject(argv.connection, "--connection"),
-                validateOnly: argv["validate-only"],
-              })
-              await executeAnalyticsCommand("analytics-agent datasource create", argv as Record<string, unknown>, ROUTES.datasourceCreate, body)
-            },
-          )
-          .command(
-            "update <datasource-id>",
-            "Update datasource",
-            (y) =>
-              y
-                .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("name", { type: "string", describe: "Datasource name" })
-                .option("type", { type: "string", describe: "Datasource type" })
-                .option("connection", { type: "string", describe: "Datasource connection JSON object" })
-                .option("validate-only", { type: "boolean", describe: "Validate connection without updating datasource" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
-            async (argv) => {
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
-                name: argv.name,
-                type: argv.type,
-                connection: parseOptionalJsonObject(argv.connection, "--connection"),
-                validateOnly: argv["validate-only"],
-              })
-              await executeAnalyticsCommand("analytics-agent datasource update", argv as Record<string, unknown>, ROUTES.datasourceUpdate, body)
-            },
-          )
-          .command(
-            "delete <datasource-id>",
-            "Delete datasource",
-            (y) => y.positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent datasource delete", argv as Record<string, unknown>, ROUTES.datasourceDelete, {})
-            },
-          )
-          .command(
-            "load <datasource-id>",
-            "Load datasource table into Analytics Agent",
-            (y) =>
-              y
-                .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("path", { type: "string", describe: "Table path" })
-                .option("table-name", { type: "string", describe: "Table name" })
-                .option("display-name", { type: "string", describe: "Dataset display name" })
-                .option("description", { type: "string", describe: "Dataset description" })
-                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" })
-                .option("mode", { type: "number", describe: "Dataset mode" }),
-            async (argv) => {
-              const format = typeof argv.format === "string" ? argv.format : "json"
-              const parsedBrowsePath = parseDatasourceBrowsePath(argv["table-name"])
-              const path = argv.path ?? parsedBrowsePath?.path
-              const tableName = parsedBrowsePath?.tableName ?? argv["table-name"]
-              const requestArgv = {
-                ...(argv as Record<string, unknown>),
-                path,
-                "table-name": tableName,
-              }
-              if (typeof path !== "string" || path.trim() === "") {
-                const ctx = await resolveAnalyticsContext(requestArgv)
-                const levels = await readDatasourceBrowseLevels(requestArgv, ctx)
-                if (isHierarchicalDatasource(levels)) {
-                  error("USAGE_ERROR", "load requires --path for hierarchical datasources, or pass a browse path in --table-name", { format })
-                  return
-                }
-              }
-              const body = mergeBody({}, {
-                path,
-                tableName,
-                displayName: argv["display-name"],
-                description: argv.description,
-                domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
-                mode: argv.mode,
-              })
-              await executeAnalyticsCommand("analytics-agent datasource load", requestArgv, ROUTES.datasourceLoad, body)
+            "table",
+            "Browse and load datasource tables",
+            (table) => {
+              table
+                .command(
+                  "search <datasource-id> <keyword>",
+                  "Search tables in a datasource",
+                  (y) =>
+                    y
+                      .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                      .positional("keyword", { type: "string", demandOption: true, describe: "Table search keyword" })
+                      .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
+                      .option("schema", { type: "string", describe: "Schema name" })
+                      .option("page-num", { type: "number", describe: "Page number" })
+                      .option("page-size", { type: "number", describe: "Page size" }),
+                  async (argv) => {
+                    const requestArgv = argv as Record<string, unknown>
+                    await executeAnalyticsCommand("analytics-agent datasource table search", requestArgv, ROUTES.datasourceSearchTables, {}, {
+                      keyword: argv.keyword,
+                      path: buildBrowsePathFromScope(requestArgv),
+                      pageNum: argv["page-num"],
+                      pageSize: argv["page-size"],
+                    })
+                  },
+                )
+                .command(
+                  "show <datasource-id>",
+                  "Show datasource table metadata",
+                  (y) =>
+                    y
+                      .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                      .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
+                      .option("schema", { type: "string", describe: "Schema name" })
+                      .option("table", { type: "string", demandOption: true, describe: "Table name" })
+                      .option("preview", { type: "boolean", describe: "Include preview rows" })
+                      .option("preview-size", { type: "number", describe: "Preview row count" }),
+                  async (argv) => {
+                    const requestArgv = {
+                      ...(argv as Record<string, unknown>),
+                      "table-name": argv.table,
+                    }
+                    await executeAnalyticsCommand("analytics-agent datasource table show", requestArgv, ROUTES.datasourceShowTable, {}, {
+                      path: buildBrowsePathFromScope(requestArgv),
+                      includeColumns: true,
+                      includePreview: argv.preview ?? false,
+                      previewSize: argv["preview-size"],
+                    })
+                  },
+                )
+                .command(
+                  "load <datasource-id>",
+                  "Load datasource table into Analytics Agent",
+                  (y) =>
+                    y
+                      .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                      .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
+                      .option("schema", { type: "string", describe: "Schema name" })
+                      .option("table", { type: "string", demandOption: true, describe: "Table name" })
+                      .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
+                  async (argv) => {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
+                    const requestArgv = argv as Record<string, unknown>
+                    const body = mergeBody({}, {
+                      path: buildBrowsePathFromScope(requestArgv),
+                      tableName: argv.table,
+                      domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
+                    })
+                    await executeAnalyticsCommand("analytics-agent datasource table load", requestArgv, ROUTES.datasourceLoad, body)
+                  },
+                )
+              return commandGroup(table, "analytics-agent datasource table")
             },
           )
         return commandGroup(datasource, "analytics-agent datasource")
@@ -1810,62 +1660,23 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 (y) =>
                   y
                     .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                    .option("datasource-id", { type: "number", describe: "Datasource ID" })
-                    .option("path", { type: "string", describe: "Table path" })
-                    .option("table-name", { type: "string", describe: "Table name" })
-                    .option("display-name", { type: "string", describe: "Dataset display name" })
-                    .option("description", { type: "string", describe: "Dataset description" })
-                    .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                    .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                    .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
+                    .option("schema", { type: "string", describe: "Schema name" })
+                    .option("table", { type: "string", demandOption: true, describe: "Table name" }),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const t0 = Date.now()
                   const requestArgv = argv as Record<string, unknown>
-                  const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                  const body = mergeBody({}, {
                     datasourceId: argv["datasource-id"],
-                    path: argv.path,
-                    tableName: argv["table-name"],
-                    displayName: argv["display-name"],
-                    description: argv.description,
+                    workspace: argv.workspace,
+                    schema: argv.schema,
+                    tableName: argv.table,
                   })
 
                   try {
-                    const ctx = await resolveAnalyticsContext(requestArgv)
-                    const inputTableName = typeof body.tableName === "string" ? body.tableName.trim() : ""
-                    const showTableArgv = {
-                      ...requestArgv,
-                      "datasource-id": body.datasourceId,
-                      "table-name": inputTableName,
-                    }
-                    const tableData = inputTableName
-                      ? await requestAnalyticsData(showTableArgv, ROUTES.datasourceShowTable, {}, {
-                        path: body.path,
-                        includeColumns: false,
-                        includePreview: false,
-                      }, ctx)
-                      : null
-                    const fullTableName = resolvedDatasourceTableName(tableData)
-
-                    if (inputTableName && fullTableName && normalizeTableName(inputTableName) !== normalizeTableName(fullTableName)) {
-                      logOperation("analytics-agent domain table add", { ok: false, timeMs: Date.now() - t0 })
-                      error("USAGE_ERROR", `domain table add requires the full table name in --table-name. You passed "${inputTableName}", but the datasource resolved it to "${fullTableName}". Please rerun with --table-name "${fullTableName}".`, { format })
-                      return
-                    }
-
-                    const canonicalTableName = fullTableName ?? inputTableName
-                    const domainData = canonicalTableName
-                      ? await requestAnalyticsData(requestArgv, ROUTES.domainDetail, {}, { withTables: true }, ctx)
-                      : null
-                    const duplicate = canonicalTableName ? findDuplicateDomainTable(domainData, canonicalTableName) : undefined
-
-                    if (duplicate) {
-                      logOperation("analytics-agent domain table add", { ok: false, timeMs: Date.now() - t0 })
-                      error("USAGE_ERROR", `domain ${argv["domain-id"]} already contains table "${canonicalTableName}" (datasetId: ${String(duplicate.datasetId ?? "unknown")}). Remove the existing table first or choose a different table.`, { format })
-                      return
-                    }
-
-                    const payload = await requestAnalytics(requestArgv, ROUTES.domainTableAdd, mergeBody(body, {
-                      tableName: canonicalTableName || undefined,
-                    }), {}, ctx)
+                    const payload = await requestAnalytics(requestArgv, ROUTES.domainTableAdd, body)
                     const bizErr = extractBusinessError(payload)
                     if (bizErr) {
                       logOperation("analytics-agent domain table add", { ok: false, timeMs: Date.now() - t0 })
@@ -1902,125 +1713,81 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               return commandGroup(table, "analytics-agent domain table")
             },
           )
-          .command("joins", "Discover and apply domain join relations", (joins) => {
-            joins
+          .command("join", "Manage domain join relations", (join) => {
+            const joinBodyOptions = (y: Argv) =>
+              y
+                .option("dataset-id", { type: "number", describe: "Left dataset ID" })
+                .option("attr-code", { type: "string", describe: "Left column code" })
+                .option("join-dataset-id", { type: "number", describe: "Right dataset ID" })
+                .option("join-attr-code", { type: "string", describe: "Right column code" })
+                .option("relation", { type: "string", describe: "Join relation: n:1, 1:n, 1:1, MANY_TO_ONE, ONE_TO_MANY, or ONE_TO_ONE" })
+            join
               .command(
-                "discover",
-                "Start async join discovery for a domain",
-                (y) =>
-                  y.option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
-                async (argv) => {
-                  const format = typeof argv.format === "string" ? argv.format : "json"
-                  const t0 = Date.now()
-                  try {
-                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
-                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinDiscover, {}, {}, ctx)
-                    const bizErr = extractBusinessError(payload)
-                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    const data = unwrapResponse(payload) as Record<string, unknown> | null
-                    success(data ? { taskId: data.taskId, status: data.status } : {}, { format, timeMs: Date.now() - t0 })
-                  } catch (err) {
-                    if (isHandledCliError(err)) return
-                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
-                    })
-                  }
-                },
-              )
-              .command(
-                "result",
-                "Poll the result of a join discovery task",
-                (y) =>
-                  y.option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by discover" }),
-                async (argv) => {
-                  const format = typeof argv.format === "string" ? argv.format : "json"
-                  const t0 = Date.now()
-                  try {
-                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
-                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinResult, {}, {}, ctx)
-                    const bizErr = extractBusinessError(payload)
-                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    const data = unwrapResponse(payload) as Record<string, unknown> | null
-                    if (!data) { success({}, { format, timeMs: Date.now() - t0 }); return }
-                    const resultJoins = (data.joins as Record<string, unknown>[] | null) ?? []
-                    success({
-                      taskId: data.taskId,
-                      status: data.status,
-                      joinCount: data.joinCount ?? resultJoins.length,
-                      joins: resultJoins.map((j) => ({
-                        datasetId: j.datasetId,
-                        tableName: j.tableName,
-                        attrCode: j.attrCode,
-                        joinDatasetId: j.joinDatasetId,
-                        joinTableName: j.joinTableName,
-                        joinAttrCode: j.joinAttrCode,
-                        relation: j.relation,
-                      })),
-                    }, { format, timeMs: Date.now() - t0 })
-                  } catch (err) {
-                    if (isHandledCliError(err)) return
-                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
-                    })
-                  }
-                },
-              )
-              .command(
-                "apply",
-                "Apply discovered join relations",
+                "list <domain-id>",
+                "List domain join relations",
                 (y) =>
                   y
-                    .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                    .option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by discover" })
-                    .option("all", { type: "boolean", describe: "Apply all discovered join candidates" })
-                    .option("index", { type: "number", array: true, describe: "1-based join candidate index, can be repeated" }),
+                    .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .option("dataset-id", { type: "number", describe: "Filter by left dataset ID" })
+                    .option("join-dataset-id", { type: "number", describe: "Filter by right dataset ID" })
+                    .option("keyword", { type: "string", describe: "Filter by keyword" }),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
-                  const t0 = Date.now()
-                  const indexes = numberArray(argv.index)
-                  if (argv.all !== true && (!indexes || indexes.length === 0)) {
-                    error("USAGE_ERROR", "Either --all or at least one --index is required", { format })
-                    return
-                  }
-                  if (argv.all === true && indexes && indexes.length > 0) {
-                    error("USAGE_ERROR", "--all cannot be used together with --index", { format })
-                    return
-                  }
-                  if (indexes?.some((index) => !Number.isInteger(index) || index < 1)) {
-                    const invalid = indexes.find((index) => !Number.isInteger(index) || index < 1)
-                    error("USAGE_ERROR", `Invalid --index value: ${invalid}; index must be a positive integer`, { format })
-                    return
-                  }
-                  try {
-                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
-                    const resultData = await requestAnalyticsData(argv as Record<string, unknown>, ROUTES.domainJoinResult, {}, {}, ctx)
-                    const candidates = Array.isArray((resultData as Record<string, unknown> | null)?.joins)
-                      ? ((resultData as Record<string, unknown>).joins as unknown[])
-                      : []
-                    const joins = argv.all === true
-                      ? candidates.map((item) => pickDomainJoinFields(item))
-                      : (indexes ?? []).map((index) => {
-                        const candidate = candidates[index - 1]
-                        if (!candidate) {
-                          throw new Error(`Invalid --index value: ${index}; only ${candidates.length} discovered join candidates available`)
-                        }
-                        return pickDomainJoinFields(candidate)
-                      })
-                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinApply, { joins }, {}, ctx)
-                    const bizErr = extractBusinessError(payload)
-                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    success({ submittedCount: joins.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
-                  } catch (err) {
-                    if (isHandledCliError(err)) return
-                    error(err instanceof Error && err.message.startsWith("Invalid --index value")
-                      ? "USAGE_ERROR"
-                      : "ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
-                    })
-                  }
+                  const requestArgv = resolveDomainJoinPathArgv(argv as Record<string, unknown>, format)
+                  await executeAnalyticsCommand("analytics-agent domain join list", requestArgv, ROUTES.domainJoinList, {}, resolveDomainJoinListQuery(requestArgv, format))
                 },
               )
-            return commandGroup(joins, "analytics-agent domain joins")
+              .command(
+                "get <domain-id> <join-id>",
+                "Get a domain join relation",
+                (y) =>
+                  y
+                    .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .positional("join-id", { type: "number", demandOption: true, describe: "Join ID" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  await executeAnalyticsCommand("analytics-agent domain join get", resolveDomainJoinPathArgv(argv as Record<string, unknown>, format), ROUTES.domainJoinDetail, {})
+                },
+              )
+              .command(
+                "create <domain-id>",
+                "Create a domain join relation",
+                (y) =>
+                  joinBodyOptions(y.positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const requestArgv = resolveDomainJoinPathArgv(argv as Record<string, unknown>, format)
+                  await executeAnalyticsCommand("analytics-agent domain join create", requestArgv, ROUTES.domainJoinCreate, resolveDomainJoinBody(requestArgv, format))
+                },
+              )
+              .command(
+                "update <domain-id> <join-id>",
+                "Update a domain join relation",
+                (y) =>
+                  joinBodyOptions(
+                    y
+                      .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                      .positional("join-id", { type: "number", demandOption: true, describe: "Join ID" }),
+                  ),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  const requestArgv = resolveDomainJoinPathArgv(argv as Record<string, unknown>, format)
+                  await executeAnalyticsCommand("analytics-agent domain join update", requestArgv, ROUTES.domainJoinUpdate, resolveDomainJoinBody(requestArgv, format))
+                },
+              )
+              .command(
+                "delete <domain-id> <join-id>",
+                "Delete a domain join relation",
+                (y) =>
+                  y
+                    .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .positional("join-id", { type: "number", demandOption: true, describe: "Join ID" }),
+                async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
+                  await executeAnalyticsCommand("analytics-agent domain join delete", resolveDomainJoinPathArgv(argv as Record<string, unknown>, format), ROUTES.domainJoinDelete, {})
+                },
+              )
+            return commandGroup(join, "analytics-agent domain join")
           })
         return commandGroup(domain, "analytics-agent domain")
       })

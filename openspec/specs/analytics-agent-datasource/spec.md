@@ -1,70 +1,103 @@
 # analytics-agent datasource 规格说明
 
 ## Purpose
-定义 `cz-cli analytics-agent datasource load` 的用户可见参数面，确保多 domain 绑定使用重复 `--domain-id` 输入，而不是要求用户手写 JSON 数组或内部 body。
+
+定义 Analytics Agent datasource 到 domain table 的主链路。CLI 只保留“找到 datasource / 浏览或搜索表 / 查看表 / 加载为 dataset / 绑定到 domain”这条确定性路径；旧的 `search-tables`、`show-table`、顶层 `datasource load` 等易混入口不再作为命令暴露。
 
 ## Requirements
 
-### Requirement: datasource show-table 兼容 browse path 输入并在层级数据源上要求明确 path
+### Requirement: datasource list 列出可用数据源
 
-`cz-cli analytics-agent datasource show-table` MUST 兼容直接复用 `browse` 输出的 `workspace:.../schema:.../table:...` 路径字符串。当目标数据源是多层级 browse 模型时，CLI MUST 在缺少 scope 的情况下拒绝直接发起重请求，提示用户补 `--path` 或直接传 browse path。
+`cz-cli analytics-agent datasource list` MUST 调用 open datasource list API，并默认不请求详细连接信息。
 
-#### Scenario: show-table 接受 browse path 位置参数
+#### Scenario: 列出 datasource
 
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource show-table 11 workspace:ws/schema:ods/table:orders`
-- **THEN** CLI 调用 `GET /open/api/v1/datasources/11/tables/orders`
-- **且** query 中自动带上 `path=workspace:ws/schema:ods`
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource list`
+- **THEN** CLI 调用 `GET /open/api/v1/datasources`
+- **且** query 中包含 `tenantId` 与 `withDetail=false`
 
-#### Scenario: 多层级数据源缺少 path 时本地拦截
+#### Scenario: 按名称过滤 datasource
 
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource show-table 11 orders`
-- **AND** `datasource meta` 返回 browse levels 为 `workspace/schema/table`
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource list --name lake`
+- **THEN** CLI 调用 datasource list API
+- **且** query 中包含 `name=lake`
+
+### Requirement: datasource browse 由 workspace/schema 合成 path
+
+`cz-cli analytics-agent datasource browse <datasource-id>` MUST 使用用户传入的 `--workspace`、`--schema` 合成 browse path，而不是要求用户手写内部 path 字符串。
+
+#### Scenario: Lakehouse 层级浏览 schema
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource browse 288 --workspace ai_workspace --schema hll_dws`
+- **THEN** CLI 调用 `GET /open/api/v1/datasources/288/browse`
+- **且** query 中包含 `path=workspace:ai_workspace/schema:hll_dws`
+
+#### Scenario: 仅传 schema 时浏览 schema scope
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource browse 288 --schema public`
+- **THEN** query 中包含 `path=schema:public`
+
+### Requirement: datasource table search 按 scope 搜索表
+
+`cz-cli analytics-agent datasource table search <datasource-id> <keyword>` MUST 在显式 workspace/schema scope 中搜索表。
+
+#### Scenario: 搜索 Lakehouse 表
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table search 288 driver --workspace ai_workspace --schema hll_dws`
+- **THEN** CLI 调用 `GET /open/api/v1/datasources/288/tables/search`
+- **且** query 中包含 `keyword=driver`
+- **且** query 中包含 `path=workspace:ai_workspace/schema:hll_dws`
+
+#### Scenario: 未传 workspace 时只按 schema 搜索
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table search 288 orders --schema public`
+- **THEN** query 中包含 `path=schema:public`
+
+### Requirement: datasource table show 查看字段与预览
+
+`cz-cli analytics-agent datasource table show <datasource-id>` MUST 使用 `--table` 指定表名，并用 workspace/schema 合成 path。CLI MUST 默认请求 columns，只有用户传入 `--preview` 时才请求 preview。
+
+#### Scenario: 查看表结构
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table show 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm`
+- **THEN** CLI 调用 `GET /open/api/v1/datasources/288/tables/dws_info_driver_daily_1d_tm`
+- **且** query 中包含 `path=workspace:ai_workspace/schema:hll_dws`
+- **且** query 中包含 `includeColumns=true`
+- **且** query 中包含 `includePreview=false`
+
+#### Scenario: 查看表结构和预览
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table show 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm --preview`
+- **THEN** query 中包含 `includePreview=true`
+
+### Requirement: datasource table load 加载表为 dataset
+
+`cz-cli analytics-agent datasource table load <datasource-id>` MUST 使用 `--table` 指定表名，并把重复 `--domain-id` 组装为请求体中的 `domainIds` 数组。
+
+#### Scenario: 加载表并绑定 domain
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table load 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm --domain-id 195`
+- **THEN** CLI 调用 `POST /open/api/v1/datasources/288/load`
+- **且** 请求体为 `{"path":"workspace:ai_workspace/schema:hll_dws","tableName":"dws_info_driver_daily_1d_tm","domainIds":[195]}`
+
+#### Scenario: 非法 domain-id 时拒绝请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table load 288 --table orders --domain-id abc`
 - **THEN** CLI 返回参数错误
-- **且** 错误信息要求用户补 `--path` 或直接复用 browse path
-- **且** 不发送真正的 `show-table` 请求
+- **且** 不发送 HTTP 请求
 
-### Requirement: datasource search-tables 在多层级数据源上要求显式搜索 scope
+### Requirement: domain table add 直接绑定 datasource 表到 domain
 
-`cz-cli analytics-agent datasource search-tables` 在多层级 browse 数据源上 MUST 要求用户显式提供 `--path`，避免直接扫全量 workspace/schema 造成超时。
+`cz-cli analytics-agent domain table add <domain-id>` MUST 使用 `--table` 指定 datasource 内的表名，并直接调用 domain table add open API。CLI 不应把表名改写为 `v_gpt_*` 或 fullName；服务端负责查找已有 dataset、必要时加载 dataset，并绑定到 domain。
 
-#### Scenario: 多层级数据源未传 path 时拒绝全局搜索
+#### Scenario: 绑定 Lakehouse 表到 domain
 
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource search-tables 11 --keyword orders`
-- **AND** `datasource meta` 返回 browse levels 为 `workspace/schema/table`
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 195 --datasource-id 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm`
+- **THEN** CLI 调用 `POST /open/api/v1/analytics-agent/domains/195/tables`
+- **且** 请求体为 `{"datasourceId":288,"workspace":"ai_workspace","schema":"hll_dws","tableName":"dws_info_driver_daily_1d_tm"}`
+
+#### Scenario: 缺少 table 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 195 --datasource-id 288 --workspace ai_workspace --schema hll_dws`
 - **THEN** CLI 返回参数错误
-- **且** 错误信息要求补 `--path`
-- **且** 不发送真正的 `search-tables` 请求
-
-### Requirement: datasource load 使用重复 domain-id 参数
-
-`cz-cli analytics-agent datasource load` MUST 支持重复 `--domain-id` 输入，并将其组装为请求体中的 `domainIds` 数组。普通用户主路径不应再暴露 `--domain-ids` 或 `--body`。
-
-#### Scenario: load 用重复 domain-id 组装数组
-
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource load 11 --table-name orders --path workspace:w/schema:s --domain-id 195 --domain-id 196`
-- **THEN** CLI 调用 datasource load open API
-- **且** 请求体中的 `domainIds` 为 `[195,196]`
-
-#### Scenario: load 传入非法 domain-id 时本地拒绝
-
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource load 11 --table-name orders --path workspace:w/schema:s --domain-id abc`
-- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
-- **且** 错误信息 MUST 明确说明 `--domain-id` 必须是正整数
-
-#### Scenario: help 不再暴露 domain-ids 和 body
-
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource load --help`
-- **THEN** help 中不包含 `--domain-ids`
-- **且** help 中不包含 `--body`
-
-### Requirement: datasource load 在多层级数据源上要求明确 path
-
-当目标数据源是多层级 browse 模型时，`cz-cli analytics-agent datasource load` MUST 在缺少 scope 的情况下拒绝直接发起加载请求，提示用户补 `--path` 或把 browse path 直接写进 `--table-name`。
-
-#### Scenario: load 缺少 path 时本地拦截
-
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource load 11 --table-name orders --domain-id 195`
-- **AND** `datasource meta` 返回 browse levels 为 `workspace/schema/table`
-- **THEN** CLI 返回参数错误
-- **且** 错误信息要求补 `--path` 或把 browse path 直接写进 `--table-name`
-- **且** 不发送真正的 `load` 请求
+- **且** 不发送 HTTP 请求
