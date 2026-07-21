@@ -35,6 +35,27 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
+// A completed assistant turn can fail WITHOUT session.prompt() rejecting: the
+// error is delivered as `data.info.error` (e.g. an upstream provider 400 "Invalid
+// API key") and `data.parts` comes back empty. If we only ran extractText() we'd
+// return an empty reply and the caller would see `sessionID:\n\n` with no clue
+// why. Surface that embedded error as a thrown Error so the tool handler's
+// catch → errorResult() reports a precise, actionable message instead.
+export function assertNoTurnError(data: unknown): void {
+  if (!data || typeof data !== "object") return
+  const info = (data as { info?: unknown }).info
+  if (!info || typeof info !== "object") return
+  const error = (info as { error?: unknown }).error
+  if (!error || typeof error !== "object") return
+  const name = String((error as { name?: unknown }).name ?? "AgentError")
+  const errData = (error as { data?: unknown }).data
+  const message =
+    errData && typeof errData === "object" && typeof (errData as { message?: unknown }).message === "string"
+      ? (errData as { message: string }).message
+      : name
+  throw new Error(`${name}: ${message}`)
+}
+
 // A prompt response is `{ data: { parts: [...] } }`; the assistant's reply text
 // is the concatenation of every text part.
 function extractText(parts: unknown): string {
@@ -87,6 +108,7 @@ async function runAgentTurn(params: {
 
   if (!streaming) {
     const res = await client.session.prompt(promptArgs, { throwOnError: true })
+    assertNoTurnError(res.data)
     return extractText(res.data.parts)
   }
 
@@ -181,6 +203,7 @@ async function runAgentTurn(params: {
   controller.abort()
   await loopPromise
 
+  assertNoTurnError(res.data)
   return extractText(res.data.parts)
 }
 
@@ -231,7 +254,41 @@ interface McpServeArgs extends GlobalArgs {
   model?: string
 }
 
+// Read the default agent name back out of the injected OPENCODE_CONFIG_CONTENT so
+// the MCP server defaults to the cz agent (data_engineer) that opencode-injection
+// registered. Returns undefined only if injection didn't set one, in which case
+// opencode's own default applies (matching pre-fix behavior as a safe fallback).
+// Exported for mcp-serve-injection.test.ts, which locks the cz-agent invariant.
+export function injectedDefaultAgent(): string | undefined {
+  try {
+    const raw = process.env.OPENCODE_CONFIG_CONTENT
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as { default_agent?: unknown }
+    return typeof parsed.default_agent === "string" ? parsed.default_agent : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function runMcpServe(argv: McpServeArgs): Promise<void> {
+  // cz_change (root-cause fix): `cz-cli mcp serve` is a plain CLI command
+  // (registered in register-commands.ts, run via run-cli.ts → runCliWithTracking
+  // with agentRuntime=false), so runtime.main()'s agent-runtime branch — the ONLY
+  // caller of applyAgentRuntimeInjection() — never runs for us. Without it the
+  // in-process opencode Server below reads NONE of the cz injection: no
+  // OPENCODE_CONFIG_CONTENT (data_engineer default agent, cz skills, cz plugin, cz
+  // providers) and no CLICKZETTA_AGENT_SYSTEM_PROMPT. The MCP session then boots as
+  // bare upstream opencode — wrong agent, no cz-cli knowledge.
+  //
+  // This function is the SINGLE place in the whole codebase that calls
+  // Server.listen(), so injecting here (before the server starts) guarantees every
+  // in-process agent session is a real cz session. applyAgentRuntimeInjection() is
+  // idempotent (it merges into any existing OPENCODE_CONFIG_CONTENT), so this is
+  // safe even if a future caller already injected. The companion test
+  // mcp-serve-injection.test.ts locks this invariant so it can't silently regress.
+  const { applyAgentRuntimeInjection } = await import("../bootstrap/opencode-injection.js")
+  applyAgentRuntimeInjection()
+
   // Start an in-process loopback opencode server (port 0 -> auto), exactly like
   // acp.ts does, but from a plain async handler (no Effect runtime): both
   // Server.listen and resolveNetworkOptionsNoConfig have non-Effect entry points.
@@ -259,9 +316,15 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
   // Startup `--profile` (already applied to CZ_* by run-cli.ts before we get
   // here) plus --cwd/--agent/--model are the per-server defaults; a tool call
   // may override profile/model per invocation.
+  //
+  // The default agent falls back to the injected `default_agent` (data_engineer)
+  // rather than undefined: session.create({ agent: undefined }) would let opencode
+  // pick ITS own built-in default agent, bypassing the cz identity/system-prompt we
+  // just injected. Reading it back from OPENCODE_CONFIG_CONTENT keeps a single
+  // source of truth (opencode-injection.ts owns the name) instead of hardcoding it.
   const defaults = {
     cwd: argv.cwd,
-    agent: argv.agent,
+    agent: argv.agent ?? injectedDefaultAgent(),
     model: argv.model,
   }
 
