@@ -282,7 +282,7 @@ const tests: TestCase[] = [
     run() {
       const { home, cleanup } = withFakeHome()
       try {
-        const profileList = run(["profile", "list"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const profileList = run(["profile", "list", "--format", "json"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const profileStatus = run(["profile", "status"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const setup = run(["setup"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const update = run(["update"], { HOME: home, CLICKZETTA_TEST_HOME: home })
