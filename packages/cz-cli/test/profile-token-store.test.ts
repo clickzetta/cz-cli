@@ -4,6 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AuthToken } from "@clickzetta/sdk"
 import {
+  clearOAuthLoginResidue,
+  getProfileConfig,
   makeProfileTokenStore,
   patchProfileConnection,
   saveProfiles,
@@ -44,6 +46,21 @@ test("save then load returns an equal AuthToken including refreshToken", () => {
   makeProfileTokenStore("czcli").save(sampleToken)
 
   expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
+})
+
+test("OAuth issuer round-trips and persists as `issuer` in [oauth.<id>]", () => {
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
+
+  // The issuer host is required for refresh to hit the central /oauth2/token;
+  // it must survive save→load and be stored under the `issuer` key.
+  const withIssuer: AuthToken = { ...sampleToken, issuer: "api.clickzetta.com" }
+  makeProfileTokenStore("czcli").save(withIssuer)
+
+  const loaded = makeProfileTokenStore("czcli").load()
+  expect(loaded).toEqual(withIssuer)
+  expect(loaded?.issuer).toBe("api.clickzetta.com")
+  // Persisted key is exactly `issuer` (OIDC-standard name), not oauth_host etc.
+  expect(readFileSync(profilesPath(), "utf-8")).toContain('issuer = "api.clickzetta.com"')
 })
 
 test("legacy token without refreshToken round-trips without the field", () => {
@@ -178,3 +195,40 @@ test("patchProfileConnection ignores empty/undefined fields and no-ops without p
 // removed — OAuth userinfo now flattens onto top-level profile fields
 // (see provisionProfileFromOAuth + provision.test.ts), so there is no verbatim
 // subtable to round-trip here.
+
+test("clearOAuthLoginResidue removes header.Cookie (sub-table + flattened) and stale instance", () => {
+  // A profile with a leftover cookie header (both storage shapes) and a stale
+  // placeholder instance the next login won't provide.
+  saveProfiles({
+    czcli: {
+      instance: "default", // stale placeholder
+      workspace: "old_ws",
+      header: { Cookie: "X-ClickZetta-Token=stale" },
+      "header.Cookie": "X-ClickZetta-Token=stale2",
+      oauth: "czcli",
+    },
+  })
+
+  // New login provides neither instance nor workspace (trial account) but does
+  // set a service. keep=false → strip; keep=true → retain.
+  clearOAuthLoginResidue("czcli", { instance: false, workspace: false, service: true })
+
+  const cfg = getProfileConfig("czcli")
+  // Cookie residue gone in both shapes → no customHeaders.Cookie.
+  expect(cfg?.customHeaders?.Cookie).toBeUndefined()
+  // Stale placeholder instance/workspace stripped (read back as "" default).
+  expect(cfg?.instance).toBe("")
+  expect(cfg?.workspace).toBe("")
+
+  const text = readFileSync(profilesPath(), "utf-8")
+  expect(text).not.toContain("Cookie")
+  expect(text).not.toContain('instance = "default"')
+})
+
+test("clearOAuthLoginResidue keeps instance/workspace when the new login supplies them", () => {
+  saveProfiles({ czcli: { instance: "0e824e33", workspace: "quick_start", oauth: "czcli" } })
+  clearOAuthLoginResidue("czcli", { instance: true, workspace: true, service: true })
+  const cfg = getProfileConfig("czcli")
+  expect(cfg?.instance).toBe("0e824e33")
+  expect(cfg?.workspace).toBe("quick_start")
+})

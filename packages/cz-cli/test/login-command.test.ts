@@ -24,6 +24,11 @@ const KNOWN_TOKEN: AuthToken = {
   userId: 110000011361,
 }
 
+// After login, provisioning stamps the OAuth issuer (the login entry host,
+// api.example.com per makeTarget) onto the persisted token so refresh can
+// target /oauth2/token there. That's what load() returns.
+const PERSISTED_TOKEN: AuthToken = { ...KNOWN_TOKEN, issuer: "api.example.com" }
+
 const KNOWN_RESULT: BrowserLoginResult = {
   token: KNOWN_TOKEN,
   userInfo: {
@@ -146,7 +151,7 @@ describe("runLogin", () => {
     // Token persisted in the shared [oauth.<id>] section; loadable via the
     // profile's oauth pointer (no explicit id).
     const loaded = makeProfileTokenStore(PROFILE).load()
-    expect(loaded).toEqual(KNOWN_TOKEN)
+    expect(loaded).toEqual(PERSISTED_TOKEN)
 
     // LLM provisioned from userinfo apiKey/aimeshEndpointBaseUrl under the profile name.
     const llm = readLlmEntries()
@@ -186,7 +191,7 @@ describe("runLogin", () => {
 
     expect(browserCalls).toBe(1)
     // Token persisted in the shared section; loadable via the profile pointer.
-    expect(makeProfileTokenStore(PROFILE).load()).toEqual(KNOWN_TOKEN)
+    expect(makeProfileTokenStore(PROFILE).load()).toEqual(PERSISTED_TOKEN)
     expect(readFileSync(profilesPath(), "utf-8")).toContain('instance = "89b94150"')
     expect(out.text()).toContain("logged_in")
     expect(process.exitCode).toBe(0)
@@ -235,9 +240,9 @@ describe("runLogin", () => {
     expect(new Set(pointers)).toEqual(new Set([`oauth = "${PROFILE}"`])) // all point at [oauth.czcli]
 
     // Default profile is the first combo; token loadable via its pointer.
-    expect(makeProfileTokenStore(`${PROFILE}_0`).load()).toEqual(KNOWN_TOKEN)
+    expect(makeProfileTokenStore(`${PROFILE}_0`).load()).toEqual(PERSISTED_TOKEN)
     // Sibling profile shares the same token.
-    expect(makeProfileTokenStore(`${PROFILE}_2`).load()).toEqual(KNOWN_TOKEN)
+    expect(makeProfileTokenStore(`${PROFILE}_2`).load()).toEqual(PERSISTED_TOKEN)
 
     expect(out.text()).toContain("logged_in")
     expect(out.text()).toContain(`${PROFILE}_0`)

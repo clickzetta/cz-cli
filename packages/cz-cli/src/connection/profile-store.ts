@@ -311,6 +311,54 @@ export function patchProfileConnection(
 }
 
 /**
+ * Clear residue that would shadow or contradict a fresh OAuth login on `name`:
+ *   - `header.Cookie` (both the `[profiles.<name>.header]` sub-table entry and
+ *     any flattened `header.Cookie` key). A stale cookie token is consulted
+ *     BEFORE the OAuth token at runtime (getCookieToken ?? getToken), so leaving
+ *     it makes a freshly re-provisioned profile keep using the old cookie.
+ *   - stale connection identity keys (`instance`, `workspace`, `service`) when
+ *     the new login does NOT supply them. patchProfileConnection only writes
+ *     non-empty values, so without this a weaker re-login (e.g. a trial account
+ *     with no instance) would retain a previous `instance="default"` placeholder
+ *     that the backend rejects. `keep` lists the keys the new login WILL set, so
+ *     we only strip the ones it won't.
+ * Best-effort; never throws. Call BEFORE patchProfileConnection writes the new
+ * values so the subsequent patch re-populates whatever the login does provide.
+ */
+export function clearOAuthLoginResidue(profileName: string | undefined, keep: { instance?: boolean; workspace?: boolean; service?: boolean }): void {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const name = resolveProfileName(data, profileName)
+    if (!name || !profiles[name]) return
+    const profile = profiles[name]
+
+    // Drop the cookie header in both storage shapes.
+    const header = profile.header
+    if (header && typeof header === "object" && !Array.isArray(header)) {
+      for (const k of Object.keys(header as Record<string, unknown>)) {
+        if (k.toLowerCase() === "cookie") delete (header as Record<string, unknown>)[k]
+      }
+      if (Object.keys(header as Record<string, unknown>).length === 0) delete profile.header
+    }
+    for (const k of Object.keys(profile)) {
+      if (k.toLowerCase() === "header.cookie") delete profile[k]
+    }
+
+    // Strip stale connection identity the new login won't overwrite.
+    if (!keep.instance) delete profile.instance
+    if (!keep.workspace) delete profile.workspace
+    if (!keep.service) delete profile.service
+
+    profiles[name] = profile
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block login on cleanup
+  }
+}
+
+/**
  * Point a profile at a shared `[oauth.<id>]` token section by writing its
  * `oauth = "<id>"` field. Best-effort; never throws. The profile row must
  * already exist (materialize it first).
@@ -373,8 +421,12 @@ function parseOAuthEntry(entry: Record<string, unknown> | undefined): AuthToken 
   if (token === undefined || expireTimeMs === undefined || obtainedAt === undefined) return undefined
   if (instanceId === undefined || userId === undefined) return undefined
   const refreshToken = str(entry.refresh_token, undefined)
+  // OAuth issuer host — required to target `/oauth2/token` on refresh (the
+  // region business host in the profile's `service` returns invalid_grant).
+  const issuer = str(entry.issuer, undefined)
   const result: AuthToken = { token, instanceId, userId, expireTimeMs, obtainedAt }
   if (refreshToken !== undefined) result.refreshToken = refreshToken
+  if (issuer !== undefined) result.issuer = issuer
   return result
 }
 
@@ -387,6 +439,7 @@ function tokenToEntry(token: AuthToken): Record<string, unknown> {
     user_id: token.userId,
   }
   if (token.refreshToken !== undefined) entry.refresh_token = token.refreshToken
+  if (token.issuer !== undefined) entry.issuer = token.issuer
   return entry
 }
 

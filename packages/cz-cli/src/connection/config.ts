@@ -108,11 +108,17 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // empty) — the token was persisted but unreadable, so a genuinely logged-in
   // user was reported as "no credentials". The OAuth token is keyed by the
   // profile pointer, not by instance, so instance must not gate it.
-  const hasOAuthPointer = typeof readProfileEntry(profileName)?.oauth === "string"
+  const oauthPointer = readProfileEntry(profileName)?.oauth
+  const hasOAuthPointer = typeof oauthPointer === "string"
   if ((cfg.instance || hasOAuthPointer) && !explicitCredential) {
     // No oauthId passed: the store resolves the shared-token id from this
     // profile's `oauth = "<id>"` pointer (or a legacy inline subtable).
     cfg.tokenStore = makeProfileTokenStore(profileName)
+    // Disambiguate the in-memory token cache per OAuth login. Without this the
+    // SDK cache key collapses to `instance:` for OAuth profiles (no pat/user)
+    // and collides across distinct logins on the same instance. The shared
+    // [oauth.<id>] pointer is that stable identity.
+    if (hasOAuthPointer) cfg.cacheKey = oauthPointer
   }
 
   return cfg

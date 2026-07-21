@@ -162,10 +162,15 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
       accountsBaseUrl: toAccountsBaseUrl(target.entryHost),
     })
 
-    // Prefer the region-specific service userinfo reports (via gatewayMapping);
-    // fall back to the login entry host when the mapping is absent. Never read a
-    // prior profile's service here.
-    const finalService = userInfo?.service ?? target.entryHost
+    // Prefer the region-specific business service userinfo reports (via
+    // gatewayMapping). Fall back to the login entry host ONLY so a profile is
+    // still written — but that central host does NOT serve SQL (/lh/submitJob),
+    // so flag it: a profile with service=central host can authenticate yet fail
+    // every query with a confusing 404. We surface this at login rather than let
+    // it manifest as an opaque runtime error.
+    const regionService = userInfo?.service
+    const finalService = regionService ?? target.entryHost
+    const serviceIsCentralFallback = !regionService
 
     // Enumerate every (instance × workspace) combination so each becomes its own
     // profile, all sharing one OAuth token. userinfo alone only knows the
@@ -194,8 +199,25 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         service: finalService,
         protocol: target.protocol,
         instance: userInfo?.instanceName,
+        // The login entry host IS the OAuth issuer — persist it so the refresh
+        // path targets `/oauth2/token` there, not the region service.
+        issuer: target.entryHost,
       },
     )
+
+    // Warn when the provisioned profile may not be able to run SQL, so success
+    // isn't silently misleading (login reported OK but the profile is unusable).
+    const warnings: string[] = []
+    if (serviceIsCentralFallback) {
+      warnings.push(
+        `Could not resolve a region service host from your account (no gatewayMapping); the profile's service falls back to the central login host '${finalService}', which does not serve SQL. Queries will fail until an instance/region is available. Re-run login after your account has a provisioned instance.`,
+      )
+    }
+    if (!userInfo?.instanceName && combos.length === 0) {
+      warnings.push(
+        "Your account has no accessible instance yet, so the profile has no instance set. Provision an instance, then re-run `cz-cli auth login`.",
+      )
+    }
 
     success(
       {
@@ -206,6 +228,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         user_id: token.userId || null,
         llm_configured: llmConfigured,
         expires_in_ms: token.expireTimeMs,
+        ...(warnings.length ? { warnings } : {}),
       },
       { format: argv.format },
     )

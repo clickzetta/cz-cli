@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import { clearTokenCache, getToken } from "../src/auth/token.js"
+import { clearTokenCache, forceRefreshToken, getToken } from "../src/auth/token.js"
 import type { AuthToken, ConnectionConfig, TokenStore } from "../src/types/index.js"
 
 /**
@@ -92,13 +92,14 @@ interface StubCalls {
   login: number
   tokenGrants: string[]
   refreshTokensSent: Array<string | null>
+  tokenHosts: string[]
 }
 
 function buildFetch(handlers: {
   login: () => Record<string, unknown>
   token: (params: URLSearchParams) => TokenResult
 }): StubCalls {
-  const calls: StubCalls = { login: 0, tokenGrants: [], refreshTokensSent: [] }
+  const calls: StubCalls = { login: 0, tokenGrants: [], refreshTokensSent: [], tokenHosts: [] }
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     if (url.pathname === "/clickzetta-portal/user/loginSingle" && init?.method === "POST") {
@@ -112,6 +113,7 @@ function buildFetch(handlers: {
       const params = new URLSearchParams(String(init.body))
       const grant = params.get("grant_type") ?? ""
       calls.tokenGrants.push(grant)
+      calls.tokenHosts.push(url.host)
       if (grant === "refresh_token") calls.refreshTokensSent.push(params.get("refresh_token"))
       const result = handlers.token(params)
       return new Response(JSON.stringify(result.body), {
@@ -296,5 +298,120 @@ describe("token store persistence (getToken)", () => {
     const second = await getToken(cfg)
     expect(second.token).toBe("access-1")
     expect(calls.login).toBe(1)
+  })
+
+  // Regression: OAuth `/oauth2/token` is served ONLY by the issuer host recorded
+  // on the token (issuer), NOT the region business host in config.service.
+  // Sending the refresh to config.service returns invalid_grant and silently
+  // drops the user to a broken "logged out" state every hour.
+  test("refresh targets the token's issuer, not config.service", async () => {
+    const persisted: AuthToken = {
+      token: "old-access",
+      refreshToken: "r1",
+      instanceId: 9,
+      userId: 7,
+      expireTimeMs: 900_000,
+      obtainedAt: 0, // expired
+      issuer: "api.clickzetta.com", // OAuth issuer host
+    }
+    const store = makeStore(persisted)
+    const calls = buildFetch({
+      login: () => ({ token: "should-not-login", authorizationCode: "x", userId: 7, instanceId: 9, expireTime: 999 }),
+      token: () => ({
+        body: { access_token: "new-access", refresh_token: "r2", token_type: "Bearer", expires_in: 900 },
+      }),
+    })
+
+    // config.service is the REGION host — must NOT be where refresh is sent.
+    const cfg = { ...config(store), service: "ap-shanghai-tencentcloud.api.clickzetta.com" }
+    const token = await getToken(cfg)
+
+    expect(token.token).toBe("new-access")
+    expect(calls.tokenGrants).toContain("refresh_token")
+    expect(calls.tokenHosts).toContain("api.clickzetta.com")
+    expect(calls.tokenHosts).not.toContain("ap-shanghai-tencentcloud.api.clickzetta.com")
+    expect(calls.login).toBe(0) // refreshed, never fell back to full login
+    // The rotated token carries the issuer forward for the next refresh.
+    expect(token.issuer).toBe("api.clickzetta.com")
+    expect(store.saved.at(-1)?.issuer).toBe("api.clickzetta.com")
+  })
+
+  // D — cacheKey collision: two OAuth profiles on the SAME instance (both with
+  // empty pat/username) must NOT share the in-memory cache. Distinct config
+  // .cacheKey values keep them independent; without it both key to `instance:`.
+  test("two OAuth configs on the same instance don't share the cache when cacheKey differs", async () => {
+    const tokenA: AuthToken = { token: "A", refreshToken: "ra", instanceId: 1, userId: 1, expireTimeMs: 900_000, obtainedAt: now }
+    const tokenB: AuthToken = { token: "B", refreshToken: "rb", instanceId: 1, userId: 2, expireTimeMs: 900_000, obtainedAt: now }
+    globalThis.fetch = (async () => new Response("not found", { status: 404 })) as typeof fetch
+
+    const cfgA: ConnectionConfig = { ...config(makeStore(tokenA)), instance: "shared", cacheKey: "oauth-a" }
+    const cfgB: ConnectionConfig = { ...config(makeStore(tokenB)), instance: "shared", cacheKey: "oauth-b" }
+
+    expect((await getToken(cfgA)).token).toBe("A")
+    // Without per-cacheKey isolation this would wrongly return "A".
+    expect((await getToken(cfgB)).token).toBe("B")
+  })
+
+  // F — forceRefreshToken must bypass the "unexpired persisted token" shortcut:
+  // the server rejected a token the client still thinks is valid (early
+  // revocation / skew), so returning the persisted value again would loop.
+  test("forceRefreshToken rotates even when the persisted token isn't expired yet", async () => {
+    const persisted: AuthToken = {
+      token: "still-valid-but-rejected",
+      refreshToken: "r1",
+      instanceId: 9,
+      userId: 7,
+      expireTimeMs: 900_000,
+      obtainedAt: now, // NOT expired
+      issuer: "api.clickzetta.com",
+    }
+    const store = makeStore(persisted)
+    const calls = buildFetch({
+      login: () => ({ token: "x", authorizationCode: "x", userId: 7, instanceId: 9, expireTime: 999 }),
+      token: () => ({ body: { access_token: "rotated", refresh_token: "r2", token_type: "Bearer", expires_in: 900 } }),
+    })
+
+    const cfg = { ...config(store), cacheKey: "oauth-force" }
+    const token = await forceRefreshToken(cfg)
+
+    expect(token.token).toBe("rotated") // did NOT return the unexpired persisted token
+    expect(calls.tokenGrants).toContain("refresh_token")
+  })
+
+  // C — a pure OAuth profile (no pat/username/password) whose refresh token is
+  // dead must throw an actionable SESSION_EXPIRED, NOT attempt a password login.
+  test("dead refresh token on a credential-less OAuth profile throws SESSION_EXPIRED (no password login)", async () => {
+    const persisted: AuthToken = {
+      token: "old", refreshToken: "dead", instanceId: 9, userId: 7,
+      expireTimeMs: 900_000, obtainedAt: 0, issuer: "api.clickzetta.com",
+    }
+    const store = makeStore(persisted)
+    const calls = buildFetch({
+      login: () => ({ token: "should-not-be-called", authorizationCode: "x", userId: 7, instanceId: 9, expireTime: 999 }),
+      token: () => ({ status: 400, body: { error: "invalid_grant", error_description: "expired" } }),
+    })
+
+    // Pure OAuth: no pat/username/password.
+    const cfg: ConnectionConfig = { ...config(store), username: "", password: "", pat: "", cacheKey: "oauth-dead" }
+    await expect(getToken(cfg)).rejects.toThrow(/SESSION_EXPIRED|session expired|auth login/i)
+    expect(calls.login).toBe(0) // never attempted a portal password login
+  })
+
+  // C — a TRANSIENT refresh failure (network/5xx) on a credential-less profile
+  // must rethrow the original error (retryable), not dead-end in a login.
+  test("transient refresh failure on OAuth profile rethrows, doesn't dead-end in login", async () => {
+    const persisted: AuthToken = {
+      token: "old", refreshToken: "r1", instanceId: 9, userId: 7,
+      expireTimeMs: 900_000, obtainedAt: 0, issuer: "api.clickzetta.com",
+    }
+    const store = makeStore(persisted)
+    const calls = buildFetch({
+      login: () => ({ token: "x", authorizationCode: "x", userId: 7, instanceId: 9, expireTime: 999 }),
+      token: () => ({ status: 503, body: { error: "server_error", error_description: "upstream" } }),
+    })
+
+    const cfg: ConnectionConfig = { ...config(store), username: "", password: "", pat: "", cacheKey: "oauth-transient" }
+    await expect(getToken(cfg)).rejects.toThrow()
+    expect(calls.login).toBe(0) // did not attempt a password login on a transient error
   })
 })

@@ -3,6 +3,7 @@ import type { BrowserLoginResult } from "../commands/login-browser.js"
 import type { OAuthConnCombo } from "./oauth-enumerate.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import {
+  clearOAuthLoginResidue,
   loadProfiles,
   makeProfileTokenStore,
   patchProfileConnection,
@@ -128,6 +129,13 @@ export interface OAuthProvisionInput {
   protocol: string
   /** Fallback instance when userinfo carries none (normally userinfo wins). */
   instance?: string
+  /**
+   * OAuth issuer host (no protocol, e.g. "api.clickzetta.com") — the login
+   * entry host that served `/oauth2/token`. Persisted on the token so the
+   * refresh path targets the issuer, NOT the region business `service` (which
+   * returns invalid_grant for OAuth grants). Distinct from `service` on purpose.
+   */
+  issuer?: string
 }
 
 /**
@@ -145,7 +153,10 @@ export interface OAuthProvisionInput {
  * (saveProfiles) propagates to the caller.
  */
 export function provisionProfileFromOAuth(name: string | undefined, input: OAuthProvisionInput): { instance: string; llmConfigured: boolean } {
-  const { token, userInfo, service, protocol } = input
+  const { userInfo, service, protocol } = input
+  // Stamp the OAuth issuer host onto the token so it persists in [oauth.<id>]
+  // and the refresh path can target it (see OAuthProvisionInput).
+  const token = input.issuer ? { ...input.token, issuer: input.issuer } : input.token
   // Prefer the instance userinfo reports over the one used to resolve config so
   // persistence (and the token slot key) line up with what was authenticated.
   const finalInstance = userInfo?.instanceName || input.instance || ""
@@ -160,6 +171,16 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
       saveProfiles(profiles)
     }
   }
+
+  // Clear residue that would shadow/contradict this fresh login: a stale
+  // header.Cookie (consulted before the OAuth token at runtime) and any stale
+  // instance/workspace/service the new login won't overwrite (patch only writes
+  // non-empty values, so an old `instance="default"` would otherwise survive).
+  clearOAuthLoginResidue(name, {
+    instance: finalInstance.length > 0,
+    workspace: Boolean(userInfo?.workspace),
+    service: service.length > 0,
+  })
 
   // Flatten the useful userinfo onto the top-level entry. `aimeshEndpointBaseUrl`
   // is stored under its own name — the same field the credential path writes and
@@ -214,7 +235,10 @@ export function provisionProfilesFromOAuthCombos(
   combos: OAuthConnCombo[],
   input: OAuthProvisionInput,
 ): { profiles: string[]; defaultProfile: string; llmConfigured: boolean } {
-  const { token, userInfo, protocol } = input
+  const { userInfo, protocol } = input
+  // Stamp the OAuth issuer host onto the token before it's shared across every
+  // <base>_N profile, so each one's refresh targets the issuer.
+  const token = input.issuer ? { ...input.token, issuer: input.issuer } : input.token
   const base = baseName ?? "default"
 
   if (combos.length === 0) {
@@ -237,6 +261,11 @@ export function provisionProfilesFromOAuthCombos(
     const profiles = loadProfiles()
     profiles[name] = profiles[name] ?? {}
     saveProfiles(profiles)
+
+    // Drop any stale header.Cookie residue that would shadow the OAuth token at
+    // runtime. service/instance/workspace are all provided below (combo always
+    // carries them), so they're kept.
+    clearOAuthLoginResidue(name, { instance: true, workspace: true, service: true })
 
     // Only connection essentials at login: service/instance/workspace. schema
     // and vcluster are intentionally omitted (runtime defaults + --schema/
