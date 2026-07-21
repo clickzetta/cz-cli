@@ -3,7 +3,6 @@ import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import * as p from "@clack/prompts"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
-import { getDefaultProfileName } from "../connection/profile-store.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 
@@ -61,19 +60,24 @@ export const CLIENTS: Record<ClientId, ClientTarget> = {
   },
 }
 
-// Build the args array for `cz-cli mcp serve`, baking in the resolved profile
-// so the server connects to the same ClickZetta profile the user installed.
-function serveArgs(profile?: string): string[] {
-  const args = ["mcp", "serve"]
-  if (profile) args.push("--profile", profile)
-  return args
+// The args every client gets: a STATIC `mcp serve`, never a profile. Profile
+// selection is a runtime concern, not an install-time one — the served process
+// follows `default_profile` at run time (resolveConnectionConfig →
+// getProfileConfig(undefined)), and any single call can override it via the
+// `profile` argument on the `cz`/`cz-reply` tools. Baking a profile NAME into
+// these args (as this once did via getDefaultProfileName()) froze a name that
+// went stale the moment `auth login` changed or renamed the default profile
+// (e.g. OAuth's `<base>_N` scheme) — the server then loaded a nonexistent
+// profile and looked "logged out". So there is deliberately no profile knob here.
+function serveArgs(): string[] {
+  return ["mcp", "serve"]
 }
 
 // The server entry every client gets. `command` is the running binary's real
 // path (process.execPath); under Bun single-file builds argv[1] is a virtual
 // /$bunfs path, so execPath is the only reliable value.
-function serverEntry(profile?: string): { command: string; args: string[] } {
-  return { command: process.execPath, args: serveArgs(profile) }
+function serverEntry(): { command: string; args: string[] } {
+  return { command: process.execPath, args: serveArgs() }
 }
 
 // Atomically write text via tmp+rename so a crash never leaves a half-written
@@ -87,7 +91,7 @@ function atomicWrite(file: string, content: string): void {
 
 // Merge the cz-cli server entry into a JSON client config, preserving every
 // other server and top-level field. Returns the serialized document.
-function mergeJson(existing: string | undefined, key: string, profile?: string): string {
+function mergeJson(existing: string | undefined, key: string): string {
   let doc: Record<string, unknown> = {}
   if (existing && existing.trim()) {
     try {
@@ -98,13 +102,13 @@ function mergeJson(existing: string | undefined, key: string, profile?: string):
     }
   }
   const servers = (doc[key] && typeof doc[key] === "object" ? doc[key] : {}) as Record<string, unknown>
-  servers[SERVER_NAME] = serverEntry(profile)
+  servers[SERVER_NAME] = serverEntry()
   doc[key] = servers
   return JSON.stringify(doc, null, 2) + "\n"
 }
 
 // Merge into a Codex TOML config; upsert [mcp_servers.cz-cli].
-function mergeToml(existing: string | undefined, key: string, profile?: string): string {
+function mergeToml(existing: string | undefined, key: string): string {
   let doc: Record<string, unknown> = {}
   if (existing && existing.trim()) {
     try {
@@ -114,17 +118,17 @@ function mergeToml(existing: string | undefined, key: string, profile?: string):
     }
   }
   const servers = (doc[key] && typeof doc[key] === "object" ? doc[key] : {}) as Record<string, unknown>
-  servers[SERVER_NAME] = serverEntry(profile)
+  servers[SERVER_NAME] = serverEntry()
   doc[key] = servers
   return stringifyTOML(doc) + "\n"
 }
 
 // Write cz-cli into one client's config. Throws on failure so the caller can
 // record a per-client result without aborting the others.
-export function writeClient(target: ClientTarget, global: boolean, cwd: string, profile?: string): string {
+export function writeClient(target: ClientTarget, global: boolean, cwd: string): string {
   const file = target.path(global, cwd)
   const existing = existsSync(file) ? readFileSync(file, "utf-8") : undefined
-  const merged = target.format === "json" ? mergeJson(existing, target.key, profile) : mergeToml(existing, target.key, profile)
+  const merged = target.format === "json" ? mergeJson(existing, target.key) : mergeToml(existing, target.key)
   atomicWrite(file, merged)
   return file
 }
@@ -155,7 +159,6 @@ export interface McpInitArgs {
   all?: boolean
   global?: boolean
   yes?: boolean
-  profile?: string
   format: string
   cwd?: string
 }
@@ -164,7 +167,6 @@ export async function runMcpInit(argv: McpInitArgs): Promise<void> {
   const format = argv.format
   const global = argv.global ?? true
   const cwd = argv.cwd ?? process.cwd()
-  const profile = argv.profile ?? getDefaultProfileName()
 
   try {
     // Resolve which clients to configure.
@@ -203,7 +205,7 @@ export async function runMcpInit(argv: McpInitArgs): Promise<void> {
     // Write each; a per-client failure must not abort the rest.
     const results = selected.map((id) => {
       try {
-        const path = writeClient(CLIENTS[id], global, cwd, profile)
+        const path = writeClient(CLIENTS[id], global, cwd)
         return { client: id, ok: true, path }
       } catch (err) {
         return { client: id, ok: false, error: err instanceof Error ? err.message : String(err) }

@@ -465,8 +465,8 @@ export function registerMcpCommand(cli: Argv<GlobalArgs>): void {
               .option("cwd", { type: "string", describe: "Default working directory for sessions", default: process.cwd() })
               .option("agent", { type: "string", describe: "Default agent to use" })
               .option("model", { type: "string", describe: "Default model as provider/model or provider/model/variant" })
-              .example("cz-cli mcp serve", "Serve on stdio with default profile")
-              .example("cz-cli mcp serve --profile staging", "Serve with the staging ClickZetta profile as default")
+              .example("cz-cli mcp serve", "Serve on stdio; follows default_profile at runtime")
+              .example("cz-cli mcp serve --profile staging", "Serve pinned to the staging ClickZetta profile")
               .example("cz-cli mcp serve --model clickzetta/deepseek/deepseek-3.2", "Serve with a default model"),
           (argv) => runMcpServe(argv as unknown as McpServeArgs),
         )
@@ -489,9 +489,9 @@ export function registerMcpCommand(cli: Argv<GlobalArgs>): void {
                 default: true,
               })
               .option("yes", { alias: "y", type: "boolean", describe: "Skip interactive selection", default: false })
-              .example("cz-cli mcp init", "Auto-detect installed clients and configure them")
+              .example("cz-cli mcp init", "Auto-detect clients; server follows default_profile at runtime")
               .example("cz-cli mcp init -a claude -a codex", "Configure Claude Code and Codex")
-              .example("cz-cli mcp init --all --profile staging", "Configure all clients with the staging profile"),
+              .example("cz-cli mcp init --all", "Configure all supported clients"),
           (argv) => runMcpInit(argv as unknown as McpInitArgs),
         )
       // Wrap so a bare `cz-cli mcp` renders help and a typo'd subcommand
