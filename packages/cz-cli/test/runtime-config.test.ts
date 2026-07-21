@@ -54,6 +54,39 @@ describe("injectClickzettaAgentConfig", () => {
     expect(clickzettaPlugin).toMatch(/^file:\/\//)
   })
 
+  test("carries llm.json's active default model into config so sessions don't pick a stale provider", () => {
+    // Two providers + an active default_llm expressed as llm.json's top-level
+    // `model`. Without propagating it, a no-model session lets opencode pick a
+    // provider on its own (often the wrong/stale one) → "Invalid API key".
+    writeLlmConfig({
+      model: "claude-code/claude-sonnet-5",
+      provider: {
+        stale: { npm: "@clickzetta/ai-gateway", options: { apiKey: "old", baseURL: "https://uat/gateway/v1" } },
+        "claude-code": { npm: "@clickzetta/ai-gateway", options: { apiKey: "good", baseURL: "https://cn/gateway/v1" } },
+      },
+    })
+
+    injectClickzettaAgentConfig()
+
+    const injected = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as { model?: string }
+    expect(injected.model).toBe("claude-code/claude-sonnet-5")
+  })
+
+  test("a user/upstream-set model in existing config wins over llm.json's default", () => {
+    process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: "user/override-model" })
+    writeLlmConfig({
+      model: "claude-code/claude-sonnet-5",
+      provider: {
+        "claude-code": { npm: "@clickzetta/ai-gateway", options: { apiKey: "good", baseURL: "https://cn/gateway/v1" } },
+      },
+    })
+
+    injectClickzettaAgentConfig()
+
+    const injected = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as { model?: string }
+    expect(injected.model).toBe("user/override-model")
+  })
+
   test("preserves existing injected config and rewrites inline openai-compatible ClickZetta entries too", () => {
     process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
       mcp: { builtin: { type: "local", command: ["echo", "ok"] } },
