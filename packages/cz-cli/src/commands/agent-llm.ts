@@ -62,7 +62,7 @@ function mask(value: string | undefined): string | null {
 function onboarding() {
   return {
     clickzetta_builtin: [
-      "cz-cli setup --credential <base64_string>",
+      "cz-cli auth login <name> --credential <base64_string>",
     ],
     external_llm: [
       "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
@@ -73,8 +73,8 @@ function onboarding() {
       "cz-cli agent llm test <NAME>",
     ],
     lakehouse_setup: [
-      "cz-cli setup",
-      "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+      "cz-cli auth login <name>",
+      "cz-cli auth login --help",
     ],
   }
 }

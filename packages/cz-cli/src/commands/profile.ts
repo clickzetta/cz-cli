@@ -17,8 +17,17 @@ import { accountLoginUrlForService } from "./account-login.js"
 import { browserOpenCommandForPlatform } from "./setup.js"
 import { VERSION } from "../version.js"
 
-const PROFILES_DIR = join(homedir(), ".clickzetta")
-const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
+// Resolve at call time (not module load) and honor CLICKZETTA_TEST_HOME, so
+// `profile` operates on the SAME file as `auth` / the connection layer
+// (profile-store.ts:7). A module-level homedir() constant would (a) ignore
+// test-home isolation — writing to the user's real ~/.clickzetta during tests —
+// and (b) diverge from where `auth login` writes. Both are bugs.
+function profilesDir(): string {
+  return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta")
+}
+function profilesFilePath(): string {
+  return join(profilesDir(), "profiles.toml")
+}
 
 const VALID_UPDATE_KEYS = [
   "pat", "username", "password", "service", "protocol",
@@ -28,7 +37,7 @@ const VALID_UPDATE_KEYS = [
 
 function loadFullFile(): Record<string, unknown> {
   try {
-    const text = readFileSync(PROFILES_FILE, "utf-8")
+    const text = readFileSync(profilesFilePath(), "utf-8")
     return parseTOML(text) as Record<string, unknown>
   } catch {
     return {}
@@ -36,11 +45,12 @@ function loadFullFile(): Record<string, unknown> {
 }
 
 function saveFullFile(data: Record<string, unknown>): void {
-  mkdirSync(PROFILES_DIR, { recursive: true })
+  mkdirSync(profilesDir(), { recursive: true })
   const content = stringifyTOML(data)
-  const tmp = PROFILES_FILE + ".tmp." + Date.now()
+  const file = profilesFilePath()
+  const tmp = file + ".tmp." + Date.now()
   writeFileSync(tmp, content, "utf-8")
-  renameSync(tmp, PROFILES_FILE)
+  renameSync(tmp, file)
 }
 
 function maskSecret(val: string, prefixLen = 8): string {

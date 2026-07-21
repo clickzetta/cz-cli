@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AuthToken, ConnectionConfig } from "@clickzetta/sdk"
+import type { AuthToken } from "@clickzetta/sdk"
 import { runLogin } from "../src/commands/login"
+import type { LoginTarget } from "../src/connection/login-target"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
 import { makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
 import { readLlmEntries } from "../src/llm/native-config"
@@ -32,10 +33,13 @@ const KNOWN_RESULT: BrowserLoginResult = {
     vcluster: "DEFAULT_AP",
     accountName: "wynptmks",
     accountId: 112407,
+    tenantId: 112407,
     userId: 110000011361,
     instanceId: 159973,
     apiKey: "secret-api-key",
     aimeshEndpointBaseUrl: "https://dev-aimesh.clickzetta.com/",
+    // Region service the real parseUserInfo derives from gatewayMapping["1-1"].
+    service: "dev-api.clickzetta.com",
   },
   raw: {
     userId: 110000011361,
@@ -70,19 +74,17 @@ function captureStdout(): { restore: () => void; text: () => string } {
   return { restore: () => (process.stdout.write = original), text: () => buffer }
 }
 
-function makeArgs(overrides: Partial<GlobalArgs> & { browser?: boolean } = {}) {
-  return { format: "json", debug: false, profile: PROFILE, ...overrides } as GlobalArgs & { browser?: boolean }
+// login writes the profile named by --name (not the global --profile, which
+// only selects which profile to READ). So the target profile is set via `name`.
+function makeArgs(overrides: Partial<GlobalArgs> & { browser?: boolean; name?: string } = {}) {
+  return { format: "json", debug: false, name: PROFILE, ...overrides } as GlobalArgs & { browser?: boolean }
 }
 
-// Config resolved from the seeded profile: pat + instance + service. finalInstance
-// will become the userinfo instanceName so the cacheKey is `89b94150:<pat>`.
-function makeConfig(): ConnectionConfig {
-  return {
-    service: "https://api.example.com",
-    protocol: "https",
-    instance: "old-instance",
-    pat: PAT,
-  } as ConnectionConfig
+// Login target the resolver would produce — deliberately profile-free. The
+// central host is only where OAuth runs; the persisted service comes from
+// userinfo (gatewayMapping), not from here.
+function makeTarget(): LoginTarget {
+  return { entryHost: "api.example.com", protocol: "https" }
 }
 
 function profilesPath() {
@@ -120,7 +122,7 @@ describe("runLogin", () => {
           browserCalls++
           return KNOWN_RESULT
         },
-        resolveConnectionConfig: () => makeConfig(),
+        resolveLoginTarget: async () => makeTarget(),
         accountsBaseUrl: () => "https://accounts.example.com",
       })
     } finally {
@@ -141,8 +143,9 @@ describe("runLogin", () => {
     expect(text).toContain('aimeshEndpointBaseUrl = "https://dev-aimesh.clickzetta.com/"')
     expect(text).not.toContain("[profiles.czcli.userinfo]")
 
-    // Token persisted under the instance-only slot `89b94150` and loadable.
-    const loaded = makeProfileTokenStore(PROFILE, "89b94150").load()
+    // Token persisted in the shared [oauth.<id>] section; loadable via the
+    // profile's oauth pointer (no explicit id).
+    const loaded = makeProfileTokenStore(PROFILE).load()
     expect(loaded).toEqual(KNOWN_TOKEN)
 
     // LLM provisioned from userinfo apiKey/aimeshEndpointBaseUrl under the profile name.
@@ -174,7 +177,7 @@ describe("runLogin", () => {
           browserCalls++
           return KNOWN_RESULT
         },
-        resolveConnectionConfig: () => makeConfig(),
+        resolveLoginTarget: async () => makeTarget(),
         accountsBaseUrl: () => "https://accounts.example.com",
       })
     } finally {
@@ -182,9 +185,106 @@ describe("runLogin", () => {
     }
 
     expect(browserCalls).toBe(1)
-    // Token persisted under the instance-only slot and connection context backfilled.
-    expect(makeProfileTokenStore(PROFILE, "89b94150").load()).toEqual(KNOWN_TOKEN)
+    // Token persisted in the shared section; loadable via the profile pointer.
+    expect(makeProfileTokenStore(PROFILE).load()).toEqual(KNOWN_TOKEN)
     expect(readFileSync(profilesPath(), "utf-8")).toContain('instance = "89b94150"')
+    expect(out.text()).toContain("logged_in")
+    expect(process.exitCode).toBe(0)
+  })
+
+  // Multi-profile: enumeration yields several (instance × workspace) combos →
+  // one profile per combo (_0/_1…), all sharing ONE [oauth.<id>] token section.
+  test("enumeration: writes one profile per combo sharing a single oauth token", async () => {
+    const resultWithInstances: BrowserLoginResult = {
+      ...KNOWN_RESULT,
+      instances: [
+        { instanceId: 159973, instanceName: "89b94150", service: "cn-shanghai-alicloud.api.clickzetta.com" },
+        { instanceId: 271876, instanceName: "453c81e6", service: "cn-shanghai-alicloud.api.clickzetta.com" },
+      ],
+    }
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => resultWithInstances,
+        resolveLoginTarget: async () => makeTarget(),
+        accountsBaseUrl: () => "https://accounts.example.com",
+        // Fake enumerator: 2 instances × workspaces → 3 combos.
+        enumerateOAuthCombos: async () => [
+          { service: "cn-shanghai-alicloud.api.clickzetta.com", instance: "89b94150", instanceId: 159973, workspace: "quick_start" },
+          { service: "cn-shanghai-alicloud.api.clickzetta.com", instance: "89b94150", instanceId: 159973, workspace: "analytics" },
+          { service: "cn-shanghai-alicloud.api.clickzetta.com", instance: "453c81e6", instanceId: 271876, workspace: "quick_start" },
+        ],
+      })
+    } finally {
+      out.restore()
+    }
+
+    const text = readFileSync(profilesPath(), "utf-8")
+    // Three profiles named with _0/_1/_2 suffixes.
+    expect(text).toContain(`[profiles.${PROFILE}_0]`)
+    expect(text).toContain(`[profiles.${PROFILE}_1]`)
+    expect(text).toContain(`[profiles.${PROFILE}_2]`)
+    // Each combo's workspace landed on its profile.
+    expect(text).toContain('workspace = "analytics"')
+    // A single shared section named after the session, and every profile points at it.
+    expect(text).toContain(`[oauth.${PROFILE}]`)
+    const oauthSections = text.match(/\[oauth\.[^\]]+\]/g) ?? []
+    expect(oauthSections.length).toBe(1)
+    const pointers = text.match(/^oauth = "[^"]+"$/gm) ?? []
+    expect(pointers.length).toBe(3)
+    expect(new Set(pointers)).toEqual(new Set([`oauth = "${PROFILE}"`])) // all point at [oauth.czcli]
+
+    // Default profile is the first combo; token loadable via its pointer.
+    expect(makeProfileTokenStore(`${PROFILE}_0`).load()).toEqual(KNOWN_TOKEN)
+    // Sibling profile shares the same token.
+    expect(makeProfileTokenStore(`${PROFILE}_2`).load()).toEqual(KNOWN_TOKEN)
+
+    expect(out.text()).toContain("logged_in")
+    expect(out.text()).toContain(`${PROFILE}_0`)
+    expect(process.exitCode).toBe(0)
+  })
+
+  // Session name is required: no --name and the prompt yields nothing
+  // (non-interactive / cancelled) → SESSION_NAME_REQUIRED, browser never runs.
+  test("requires a session name → SESSION_NAME_REQUIRED when none provided or prompted", async () => {
+    let browserCalls = 0
+    const out = captureStdout()
+    try {
+      await runLogin({ format: "json", debug: false } as GlobalArgs & { browser?: boolean }, {
+        loginWithBrowser: async () => {
+          browserCalls++
+          return KNOWN_RESULT
+        },
+        resolveLoginTarget: async () => makeTarget(),
+        accountsBaseUrl: () => "https://accounts.example.com",
+        promptSessionName: async () => undefined, // non-TTY / cancelled
+      })
+    } finally {
+      out.restore()
+    }
+    expect(browserCalls).toBe(0)
+    expect(out.text()).toContain("SESSION_NAME_REQUIRED")
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  // TTY: no --name → prompt supplies the session name, and login proceeds using it.
+  test("prompts for the session name interactively when omitted", async () => {
+    const out = captureStdout()
+    try {
+      await runLogin({ format: "json", debug: false } as GlobalArgs & { browser?: boolean }, {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+        accountsBaseUrl: () => "https://accounts.example.com",
+        promptSessionName: async () => "prompted-sess",
+      })
+    } finally {
+      out.restore()
+    }
+    // The prompted name became the oauth session id (single-profile fallback,
+    // since KNOWN_RESULT has no instances to enumerate).
+    const text = readFileSync(profilesPath(), "utf-8")
+    expect(text).toContain("[oauth.prompted-sess]")
+    expect(text).toContain('oauth = "prompted-sess"')
     expect(out.text()).toContain("logged_in")
     expect(process.exitCode).toBe(0)
   })
@@ -199,7 +299,7 @@ describe("runLogin", () => {
         loginWithBrowser: async () => {
           throw new Error("state mismatch")
         },
-        resolveConnectionConfig: () => makeConfig(),
+        resolveLoginTarget: async () => makeTarget(),
         accountsBaseUrl: () => "https://accounts.example.com",
       })
     } finally {

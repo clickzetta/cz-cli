@@ -36,15 +36,14 @@ const sampleToken: AuthToken = {
   userId: 7,
 }
 
-const cacheKey = "myinstance:czcli-user"
-
 test("save then load returns an equal AuthToken including refreshToken", () => {
   saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
 
-  const store = makeProfileTokenStore("czcli", cacheKey)
-  store.save(sampleToken)
+  // save writes a shared [oauth.<id>] section and points the profile at it;
+  // a fresh store with no explicit id resolves the token via that pointer.
+  makeProfileTokenStore("czcli").save(sampleToken)
 
-  expect(store.load()).toEqual(sampleToken)
+  expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
 })
 
 test("legacy token without refreshToken round-trips without the field", () => {
@@ -57,10 +56,9 @@ test("legacy token without refreshToken round-trips without the field", () => {
     instanceId: 1,
     userId: 2,
   }
-  const store = makeProfileTokenStore("czcli", cacheKey)
-  store.save(legacy)
+  makeProfileTokenStore("czcli").save(legacy)
 
-  const loaded = store.load()
+  const loaded = makeProfileTokenStore("czcli").load()
   expect(loaded).toEqual(legacy)
   expect(loaded?.refreshToken).toBeUndefined()
 })
@@ -68,64 +66,65 @@ test("legacy token without refreshToken round-trips without the field", () => {
 test("profiles.toml stays mode 0o600 after save", () => {
   saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
 
-  makeProfileTokenStore("czcli", cacheKey).save(sampleToken)
+  makeProfileTokenStore("czcli").save(sampleToken)
 
   if (process.platform !== "win32") {
     expect(statSync(profilesPath()).mode & 0o777).toBe(0o600)
   }
 })
 
-test("clear removes the entry so load returns undefined", () => {
+test("clear is a no-op: shared token survives (only explicit logout removes it)", () => {
   saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
 
-  const store = makeProfileTokenStore("czcli", cacheKey)
+  const store = makeProfileTokenStore("czcli")
   store.save(sampleToken)
   expect(store.load()).toBeDefined()
 
+  // A single profile's refresh failure must NOT wipe the shared token
+  // (would sign out every sibling profile). clear() intentionally does nothing.
   store.clear()
-  expect(store.load()).toBeUndefined()
+  expect(store.load()).toEqual(sampleToken)
 })
 
-test("tokens are isolated across profiles", () => {
+test("profiles sharing an oauth id share the token; unrelated profiles do not", () => {
   saveProfiles({
     a: { pat: "pa", instance: "myinstance" },
     b: { pat: "pb", instance: "myinstance" },
   })
 
-  makeProfileTokenStore("a", cacheKey).save(sampleToken)
+  // Provision both a and b against the SAME shared oauth id.
+  makeProfileTokenStore("a", "sharedid").save(sampleToken)
+  makeProfileTokenStore("b", "sharedid").save(sampleToken)
 
-  expect(makeProfileTokenStore("a", cacheKey).load()).toEqual(sampleToken)
-  expect(makeProfileTokenStore("b", cacheKey).load()).toBeUndefined()
-})
+  expect(makeProfileTokenStore("a").load()).toEqual(sampleToken)
+  expect(makeProfileTokenStore("b").load()).toEqual(sampleToken)
 
-test("tokens are isolated across cache keys within the same profile", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
-
-  const tokenA: AuthToken = { ...sampleToken, token: "access-A", refreshToken: "refresh-A" }
-  const tokenB: AuthToken = { ...sampleToken, token: "access-B", refreshToken: "refresh-B" }
-
-  makeProfileTokenStore("czcli", "instance:userA").save(tokenA)
-  makeProfileTokenStore("czcli", "instance:userB").save(tokenB)
-
-  expect(makeProfileTokenStore("czcli", "instance:userA").load()).toEqual(tokenA)
-  expect(makeProfileTokenStore("czcli", "instance:userB").load()).toEqual(tokenB)
+  // A third profile with no oauth pointer sees nothing.
+  saveProfiles({
+    a: { pat: "pa", instance: "myinstance", oauth: "sharedid" },
+    b: { pat: "pb", instance: "myinstance", oauth: "sharedid" },
+    c: { pat: "pc", instance: "myinstance" },
+  })
+  expect(makeProfileTokenStore("c").load()).toBeUndefined()
 })
 
 test("save does not clobber the profile's existing fields", () => {
   saveProfiles({ czcli: { pat: "p", instance: "myinstance", workspace: "ws" } })
 
-  makeProfileTokenStore("czcli", cacheKey).save(sampleToken)
+  makeProfileTokenStore("czcli").save(sampleToken)
 
-  const reloaded = makeProfileTokenStore("czcli", cacheKey).load()
+  const reloaded = makeProfileTokenStore("czcli").load()
   expect(reloaded).toEqual(sampleToken)
+  // Existing field preserved.
+  expect(readFileSync(profilesPath(), "utf-8")).toContain('workspace = "ws"')
 })
 
 // Requirement 11.6/11.7: patchProfileConnection merges the logged-in context
 // into the profile entry without touching oauth or unrelated fields.
 test("patchProfileConnection merges connection context into the profile", () => {
   saveProfiles({ czcli: { pat: "p", instance: "old-instance", region: "cn" } })
-  // Seed an oauth slot to prove it stays untouched.
-  makeProfileTokenStore("czcli", cacheKey).save(sampleToken)
+  // Seed an oauth token to prove patchProfileConnection leaves it loadable.
+  makeProfileTokenStore("czcli").save(sampleToken)
 
   patchProfileConnection("czcli", {
     service: "api.clickzetta.com",
@@ -156,8 +155,8 @@ test("patchProfileConnection merges connection context into the profile", () => 
   if (process.platform !== "win32") {
     expect(statSync(profilesPath()).mode & 0o777).toBe(0o600)
   }
-  // oauth subtable untouched: the persisted token still loads.
-  expect(makeProfileTokenStore("czcli", cacheKey).load()).toEqual(sampleToken)
+  // oauth pointer untouched: the persisted token still loads.
+  expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
 })
 
 test("patchProfileConnection ignores empty/undefined fields and no-ops without profile", () => {

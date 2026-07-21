@@ -17,7 +17,7 @@ describe("execute() routing", () => {
       const json = firstJson(result.output)
       expect(result.exitCode).toBe(1)
       expect(json.error.code).toBe("NO_PROFILE")
-      expect(json.error.next_step).toBe("cz-cli setup")
+      expect(json.error.next_step).toBe("cz-cli auth login <name>")
       expect(Array.isArray(json.error.next_steps)).toBe(true)
     } finally {
       if (previousHome === undefined) delete process.env.HOME

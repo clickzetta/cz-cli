@@ -123,6 +123,9 @@ describe("loginWithBrowser", () => {
     // ...and the LLM fields surfaced for provisioning.
     expect(result.userInfo?.apiKey).toBe("secret-api-key")
     expect(result.userInfo?.aimeshEndpointBaseUrl).toBe("https://dev-aimesh.clickzetta.com/")
+    // ...and the region service derived from gatewayMapping[cspId-regionId] for
+    // the default instance (1-1 → dev-api.clickzetta.com), stored bare (no scheme).
+    expect(result.userInfo?.service).toBe("dev-api.clickzetta.com")
     // Requirement 11.9: the FULL userinfo body is carried verbatim on `raw`,
     // including fields we never map to dedicated columns.
     expect(result.raw).toBeDefined()

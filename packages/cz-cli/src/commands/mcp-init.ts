@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
-import { createInterface } from "node:readline"
+import * as p from "@clack/prompts"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import { getDefaultProfileName } from "../connection/profile-store.js"
 import { success, error } from "../output/index.js"
@@ -129,27 +129,25 @@ export function writeClient(target: ClientTarget, global: boolean, cwd: string, 
   return file
 }
 
+// Interactive client picker. Uses @clack/prompts (same TUI as `cz-cli login` /
+// `setup`) so the whole CLI shares one interaction style. Detected clients are
+// pre-checked; a cancel (Esc/Ctrl-C) exits cleanly with a "cancelled" notice.
 async function promptSelection(detected: ClientId[]): Promise<ClientId[]> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  const list = ALL_CLIENTS.map((id, i) => {
-    const mark = detected.includes(id) ? "*" : " "
-    return `  [${i + 1}] ${mark} ${CLIENTS[id].label}`
-  }).join("\n")
-  const def = (detected.length ? detected : ALL_CLIENTS).map((id) => ALL_CLIENTS.indexOf(id) + 1).join(",")
-  const answer = await new Promise<string>((resolve) => {
-    rl.question(
-      `Configure which clients? (* = detected)\n${list}\nEnter numbers comma-separated [${def}]: `,
-      (a) => resolve(a),
-    )
+  const result = await p.multiselect({
+    message: "Configure which clients? (detected clients are pre-selected)",
+    options: ALL_CLIENTS.map((id) => ({
+      value: id,
+      label: CLIENTS[id].label,
+      ...(detected.includes(id) ? { hint: "detected" } : {}),
+    })),
+    initialValues: detected.length ? detected : [...ALL_CLIENTS],
+    required: false,
   })
-  rl.close()
-  const raw = answer.trim() || def
-  const picked = raw
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isInteger(n) && n >= 1 && n <= ALL_CLIENTS.length)
-    .map((n) => ALL_CLIENTS[n - 1])
-  return [...new Set(picked)]
+  if (p.isCancel(result)) {
+    p.cancel("mcp init cancelled.")
+    process.exit(0)
+  }
+  return result as ClientId[]
 }
 
 export interface McpInitArgs {

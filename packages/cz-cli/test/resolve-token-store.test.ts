@@ -46,7 +46,7 @@ const sampleToken: AuthToken = {
   userId: 7,
 }
 
-test("resolveConnectionConfig attaches a token store that round-trips under the instance-only cacheKey", () => {
+test("resolveConnectionConfig attaches a token store that round-trips via the shared oauth pointer", () => {
   saveProfiles({ czcli: { pat: "the-pat", instance: "myinstance", service: "api.example.com" } })
 
   const cfg = resolveConnectionConfig({ profile: "czcli" })
@@ -59,8 +59,10 @@ test("resolveConnectionConfig attaches a token store that round-trips under the 
 
   expect(cfg.instance).toBe("myinstance")
 
+  // save wrote a shared [oauth.<id>] section and set the profile's `oauth`
+  // pointer; a fresh store (no explicit id) resolves the token via that pointer.
   const { makeProfileTokenStore } = require("../src/connection/profile-store.ts")
-  const independent = makeProfileTokenStore("czcli", cfg.instance)
+  const independent = makeProfileTokenStore("czcli")
   expect(independent.load()).toEqual(sampleToken)
 })
 
@@ -77,7 +79,7 @@ test("resolveConnectionConfig keys the store by instance even with username auth
   expect(cfg.instance).toBe("inst2")
 
   const { makeProfileTokenStore } = require("../src/connection/profile-store.ts")
-  expect(makeProfileTokenStore("czcli", cfg.instance).load()).toEqual(sampleToken)
+  expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
 })
 
 test("resolveConnectionConfig attaches a token store when only an instance is known (no pat/username)", () => {
@@ -93,7 +95,7 @@ test("resolveConnectionConfig attaches a token store when only an instance is kn
 
   cfg.tokenStore!.save(sampleToken)
   const { makeProfileTokenStore } = require("../src/connection/profile-store.ts")
-  expect(makeProfileTokenStore("czcli", "oauthonly").load()).toEqual(sampleToken)
+  expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
 })
 
 test("resolveConnectionConfig leaves tokenStore undefined when no auth identity resolves", () => {

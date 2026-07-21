@@ -195,8 +195,8 @@ function errorResult(err: unknown) {
 function notConfiguredResult(reason: "no_profile" | "no_llm") {
   const text =
     reason === "no_profile"
-      ? "cz-cli is not configured: no ClickZetta profile found. Ask the user to run `cz-cli setup` (or `cz-cli login` for browser OAuth) to create one, then retry."
-      : "cz-cli has no agent LLM configured. Ask the user to run `cz-cli agent llm add` (or `cz-cli setup`) to configure one, then retry."
+      ? "cz-cli is not configured: no ClickZetta profile found. Ask the user to run `cz-cli auth login <name>` (browser OAuth) to create one, then retry."
+      : "cz-cli has no agent LLM configured. Ask the user to run `cz-cli agent llm add` (or `cz-cli auth login <name> --credential <base64>` for the built-in LLM) to configure one, then retry."
   return { isError: true, content: [{ type: "text" as const, text: `NOT_CONFIGURED (${reason}): ${text}` }] }
 }
 

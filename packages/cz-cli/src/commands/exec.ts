@@ -49,7 +49,7 @@ export function hasUsableCredentials(config: ConnectionConfig): boolean {
 export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContext> {
   const config = resolveConnectionConfig(args)
   if (!hasUsableCredentials(config)) {
-    throw new Error("Authentication required. Provide --pat or --username/--password, or run `cz-cli login` (browser OAuth, or --credential <b64>) to configure a profile.")
+    throw new Error("Authentication required. Run `cz-cli auth login <name>` to sign in (browser OAuth by default; see `cz-cli auth login --help` for credential/PAT/password methods).")
   }
   if (!config.instance) {
     throw new Error("Instance is required. Provide --instance or configure it in your profile.")
@@ -190,7 +190,7 @@ export function classifyExecError(err: unknown): { code: string; message: string
     return {
       code: "AUTH_ERROR",
       message,
-      aiMessage: "Authentication failed. The API key may be invalid or expired. Ask the user to run: cz-cli setup --credential <base64_string>",
+      aiMessage: "Authentication failed. The token may be invalid or expired. Ask the user to re-run: cz-cli auth login <name> (see `cz-cli auth login --help` for all sign-in methods).",
       jobId,
     }
   }
@@ -198,7 +198,7 @@ export function classifyExecError(err: unknown): { code: string; message: string
     return {
       code: "NO_CREDENTIALS",
       message,
-      aiMessage: "No credentials configured. Ask the user to run: cz-cli setup --credential <base64_string>",
+      aiMessage: "No credentials configured. Ask the user to run: cz-cli auth login <name> (see `cz-cli auth login --help` for all sign-in methods).",
       jobId,
     }
   }

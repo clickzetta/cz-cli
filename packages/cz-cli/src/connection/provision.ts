@@ -1,12 +1,16 @@
 import type { AuthToken } from "@clickzetta/sdk"
 import type { BrowserLoginResult } from "../commands/login-browser.js"
+import type { OAuthConnCombo } from "./oauth-enumerate.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import {
   loadProfiles,
   makeProfileTokenStore,
   patchProfileConnection,
+  sanitizeOAuthId,
   saveProfiles,
+  saveSharedOAuthToken,
   setDefaultProfile,
+  setProfileOAuthPointer,
   type ProfileEntry,
 } from "./profile-store.js"
 
@@ -115,10 +119,14 @@ export interface OAuthProvisionInput {
   token: AuthToken
   /** Parsed userinfo connection context (undefined when userinfo failed). */
   userInfo?: BrowserLoginResult["userInfo"]
-  /** Service/protocol the login ran against, written into the profile. */
+  /**
+   * Region-specific business service host to persist. Derived from userinfo's
+   * gatewayMapping (falling back to the central login host), NOT from any prior
+   * profile — login must not depend on a profile it may later overwrite.
+   */
   service: string
   protocol: string
-  /** Fallback instance from the resolved config when userinfo carries none. */
+  /** Fallback instance when userinfo carries none (normally userinfo wins). */
   instance?: string
 }
 
@@ -170,9 +178,11 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
     aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
   })
 
-  // Persist the token under the instance-only slot so a later
-  // resolveConnectionConfig (keyed on instance) finds it.
-  makeProfileTokenStore(name, finalInstance).save(token)
+  // Persist the token in a shared [oauth.<id>] section named after the profile
+  // and point this profile at it. Passing an explicit id makes save write the
+  // top-level section + the profile's `oauth = "<id>"` pointer.
+  const oauthId = sanitizeOAuthId(name ?? (finalInstance || "default"))
+  makeProfileTokenStore(name, oauthId).save(token)
 
   if (name) setDefaultProfile(name)
 
@@ -182,4 +192,76 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   })
 
   return { instance: finalInstance, llmConfigured }
+}
+
+/**
+ * Provision MANY profiles from a single OAuth login — one per (instance ×
+ * workspace) combination — all sharing ONE `[oauth.<id>]` token section.
+ *
+ * Profiles are named `<base>_0`, `<base>_1`, … in enumeration order (base
+ * defaults to "default"). The first profile is set as the default. The shared
+ * token is written once; each profile only carries an `oauth = "<id>"` pointer,
+ * so a later `getToken` resolves the same token regardless of which profile is
+ * active. LLM is configured once from userinfo (apiKey + aimesh), keyed on the
+ * default profile name.
+ *
+ * Falls back to the single-profile path when `combos` is empty (e.g. every
+ * instance's workspace listing failed) so a login still yields a usable profile
+ * from userinfo alone.
+ */
+export function provisionProfilesFromOAuthCombos(
+  baseName: string | undefined,
+  combos: OAuthConnCombo[],
+  input: OAuthProvisionInput,
+): { profiles: string[]; defaultProfile: string; llmConfigured: boolean } {
+  const { token, userInfo, protocol } = input
+  const base = baseName ?? "default"
+
+  if (combos.length === 0) {
+    // Nothing enumerated — keep a working profile from userinfo alone.
+    const single = provisionProfileFromOAuth(base, input)
+    return { profiles: [base], defaultProfile: base, llmConfigured: single.llmConfigured }
+  }
+
+  // One shared token section named after the session: [oauth.<base>]. Reusing
+  // the session name (not a random id) means re-logging in under the same name
+  // refreshes the same section instead of accumulating orphans, and the profile
+  // prefix (<base>_N) visibly ties each profile to its login session.
+  const oauthId = sanitizeOAuthId(base)
+  saveSharedOAuthToken(oauthId, token)
+
+  const created: string[] = []
+  combos.forEach((combo, i) => {
+    const name = `${base}_${i}`
+    // Materialize the row so patchProfileConnection has somewhere to write.
+    const profiles = loadProfiles()
+    profiles[name] = profiles[name] ?? {}
+    saveProfiles(profiles)
+
+    // Only connection essentials at login: service/instance/workspace. schema
+    // and vcluster are intentionally omitted (runtime defaults + --schema/
+    // --vcluster overrides).
+    patchProfileConnection(name, {
+      service: combo.service,
+      protocol,
+      instance: combo.instance,
+      workspace: combo.workspace,
+      userId: token.userId || undefined,
+      accountId: userInfo?.accountId,
+      accountName: userInfo?.accountName,
+      aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
+    })
+    setProfileOAuthPointer(name, oauthId)
+    created.push(name)
+  })
+
+  const defaultProfile = created[0]!
+  setDefaultProfile(defaultProfile)
+
+  const llmConfigured = configureClickzettaLlm(defaultProfile, {
+    apiKey: userInfo?.apiKey,
+    baseURL: userInfo?.aimeshEndpointBaseUrl,
+  })
+
+  return { profiles: created, defaultProfile, llmConfigured }
 }

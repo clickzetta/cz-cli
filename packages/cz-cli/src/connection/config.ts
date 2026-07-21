@@ -102,7 +102,9 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // being persisted. Profile-level and pure-OAuth flows still attach it.
   const explicitCredential = Boolean(cliPat) || Boolean(envPat) || Boolean(cliUsername && cliPassword)
   if (cfg.instance && !explicitCredential) {
-    cfg.tokenStore = makeProfileTokenStore(profileName, cfg.instance)
+    // No oauthId passed: the store resolves the shared-token id from this
+    // profile's `oauth = "<id>"` pointer (or a legacy inline subtable).
+    cfg.tokenStore = makeProfileTokenStore(profileName)
   }
 
   return cfg

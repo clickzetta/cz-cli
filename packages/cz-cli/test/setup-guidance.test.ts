@@ -10,7 +10,10 @@ function run(args: string[], home = mkdtempSync(join(tmpdir(), "cz-setup-guidanc
   const result = spawnSync("bun", ["./src/main.ts", ...args], {
     cwd: import.meta.dir + "/..",
     encoding: "utf-8",
-    env: { ...process.env, HOME: home },
+    // Isolate BOTH HOME and CLICKZETTA_TEST_HOME to this test's temp dir. The
+    // global test preload sets CLICKZETTA_TEST_HOME; if we only override HOME it
+    // leaks in via {...process.env} and the CLI writes there instead of `home`.
+    env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home },
     stdio: ["ignore", "pipe", "pipe"],
   })
   return {
@@ -24,7 +27,8 @@ function runAsync(args: string[], home = mkdtempSync(join(tmpdir(), "cz-setup-gu
   return new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve, reject) => {
     const child = spawn("bun", ["./src/main.ts", ...args], {
       cwd: import.meta.dir + "/..",
-      env: { ...process.env, HOME: home },
+      // See run(): isolate CLICKZETTA_TEST_HOME too, not just HOME.
+      env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home },
       stdio: ["ignore", "pipe", "pipe"],
     })
     let stdout = ""
@@ -130,9 +134,9 @@ describe("setup guidance", () => {
     expect(json.flow).toEqual(["login_method", "credentials", "instance", "workspace", "schema", "vcluster", "complete"])
     expect(json.options).toEqual(SETUP_LOGIN_METHODS)
     expect(json.next_steps).toEqual([
-      "cz-cli setup --login-method clickzetta",
-      "cz-cli setup --login-method singdata",
-      "cz-cli setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
+      "cz-cli auth login <name> --login-method clickzetta",
+      "cz-cli auth login <name> --login-method singdata",
+      "cz-cli auth login <name> --login-method custom --login <LOGIN_URL_OR_JDBC>",
     ])
   })
 
@@ -146,8 +150,8 @@ describe("setup guidance", () => {
     expect(json.jdbc_example).toBe(JDBC_EXAMPLE)
     expect(json.collected).toEqual({ login_method: "custom" })
     expect(json.next_steps).toEqual([
-      `cz-cli setup --login-method custom --login ${JSON.stringify(JDBC_EXAMPLE)}`,
-      "cz-cli setup --login-method custom --login <LOGIN_PAGE_URL>",
+      `cz-cli auth login <name> --login-method custom --login ${JSON.stringify(JDBC_EXAMPLE)}`,
+      "cz-cli auth login <name> --login-method custom --login <LOGIN_PAGE_URL>",
     ])
   })
 
@@ -170,7 +174,7 @@ describe("setup guidance", () => {
       schema: "public",
     })
     expect(json.next_steps).toEqual([
-      'cz-cli setup --login-method custom --login "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?schema=public" --workspace "workspace" --username <USERNAME> --password <PASSWORD> --vcluster <VCLUSTER>',
+      'cz-cli auth login <name> --login-method custom --login "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?schema=public" --workspace "workspace" --username <USERNAME> --password <PASSWORD> --vcluster <VCLUSTER>',
     ])
   })
 
@@ -196,7 +200,7 @@ describe("setup guidance", () => {
     expect(json.login_url).toBe("https://accounts.clickzetta.com/login?ref=cz-cli")
     expect(json.register_url).toBe("https://accounts.clickzetta.com/register?ref=cz-cli")
     expect(json.required).toEqual(["credential"])
-    expect(json.next_steps).toEqual(["cz-cli setup --credential <BASE64_CREDENTIAL>"])
+    expect(json.next_steps).toEqual(["cz-cli auth login <name> --credential <BASE64_CREDENTIAL>"])
   })
 
   test("non-TTY singdata setup returns login_url without register_url", () => {

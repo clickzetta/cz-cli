@@ -191,7 +191,7 @@ describe("provisionProfileFromOAuth", () => {
     expect(profile.userinfo).toBeUndefined()
 
     // Token under the instance-only slot.
-    expect(makeProfileTokenStore("czcli", "89b94150").load()).toEqual(TOKEN)
+    expect(makeProfileTokenStore("czcli").load()).toEqual(TOKEN)
 
     // LLM configured from userinfo.
     expect(readLlmEntries().llm.czcli).toEqual({
@@ -215,7 +215,7 @@ describe("provisionProfileFromOAuth", () => {
     const profiles = loadProfiles()
     expect(Object.keys(profiles)).toEqual(["czcli"])
     // Token refreshed in the same slot.
-    expect(makeProfileTokenStore("czcli", "89b94150").load()?.token).toBe("access-2")
+    expect(makeProfileTokenStore("czcli").load()?.token).toBe("access-2")
   })
 
   test("falls back to config instance when userinfo carries none", () => {

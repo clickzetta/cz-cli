@@ -311,13 +311,21 @@ export function patchProfileConnection(
 }
 
 /**
- * Deterministically map a cacheKey (e.g. "instance:pat-or-username") to a TOML
- * bare-key-safe string. The raw cacheKey may contain ':' and other characters
- * that complicate quoting, so we collapse anything outside [A-Za-z0-9_] to '_'.
- * The mapping is stable, so save/load/clear stay consistent for the same key.
+ * Point a profile at a shared `[oauth.<id>]` token section by writing its
+ * `oauth = "<id>"` field. Best-effort; never throws. The profile row must
+ * already exist (materialize it first).
  */
-function sanitizeCacheKey(cacheKey: string): string {
-  return cacheKey.replace(/[^A-Za-z0-9_]/g, "_")
+export function setProfileOAuthPointer(profileName: string, oauthId: string): void {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    if (!profiles[profileName]) return
+    profiles[profileName].oauth = oauthId
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block the CLI
+  }
 }
 
 /**
@@ -336,18 +344,82 @@ function resolveProfileName(data: Record<string, unknown>, profileName: string |
 // already has a fuller `num()` (string-parsing, used by readAgentProfile) above.
 // Kept the fuller one and dropped the duplicate — both callers are number-safe.
 
-/**
- * Build a profile-backed {@link TokenStore} that persists OAuth tokens under
- * `[profiles.<name>.oauth.<sanitizedCacheKey>]` in `~/.clickzetta/profiles.toml`.
- *
- * All operations are best-effort and never throw: the CLI must keep working
- * even when the profile file is missing, corrupt, or unwritable (requirement
- * 9.2). Token values are never logged. Writes reuse {@link writeProfilesFile}
- * for atomic replace + `0o600` permissions.
- */
-export function makeProfileTokenStore(profileName: string | undefined, cacheKey: string): TokenStore {
-  const key = sanitizeCacheKey(cacheKey)
+/** Generate a short random id naming a shared top-level `[oauth.<id>]` section. */
+export function generateOAuthId(): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+  return `cz${hex}`
+}
 
+/**
+ * Make a user-supplied session name safe as a TOML bare key for `[oauth.<id>]`
+ * and as a profile-name prefix: collapse anything outside [A-Za-z0-9_-] to '_'.
+ * Empty input falls back to "default".
+ */
+export function sanitizeOAuthId(name: string): string {
+  const cleaned = name.trim().replace(/[^A-Za-z0-9_-]/g, "_")
+  return cleaned.length > 0 ? cleaned : "default"
+}
+
+/** Parse a raw `[oauth.<id>]` entry into an AuthToken, or undefined if invalid. */
+function parseOAuthEntry(entry: Record<string, unknown> | undefined): AuthToken | undefined {
+  if (!entry) return undefined
+  const token = str(entry.access_token, undefined)
+  const expireTimeMs = num(entry.expire_time_ms)
+  const obtainedAt = num(entry.obtained_at)
+  const instanceId = num(entry.instance_id)
+  const userId = num(entry.user_id)
+  if (token === undefined || expireTimeMs === undefined || obtainedAt === undefined) return undefined
+  if (instanceId === undefined || userId === undefined) return undefined
+  const refreshToken = str(entry.refresh_token, undefined)
+  const result: AuthToken = { token, instanceId, userId, expireTimeMs, obtainedAt }
+  if (refreshToken !== undefined) result.refreshToken = refreshToken
+  return result
+}
+
+function tokenToEntry(token: AuthToken): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    access_token: token.token,
+    expire_time_ms: token.expireTimeMs,
+    obtained_at: token.obtainedAt,
+    instance_id: token.instanceId,
+    user_id: token.userId,
+  }
+  if (token.refreshToken !== undefined) entry.refresh_token = token.refreshToken
+  return entry
+}
+
+/**
+ * Resolve the shared-oauth id a profile points at. New layout stores a string
+ * pointer (`oauth = "<id>"`); returns undefined when absent or (legacy) an
+ * inline object — the caller falls back to the legacy inline read.
+ */
+function profileOAuthPointer(profile: Record<string, unknown> | undefined): string | undefined {
+  const p = profile?.oauth
+  return typeof p === "string" && p.length > 0 ? p : undefined
+}
+
+/**
+ * Build a profile-backed {@link TokenStore} for the SHARED-oauth layout: the
+ * token lives once in a top-level `[oauth.<id>]` section, and each profile that
+ * uses it carries an `oauth = "<id>"` pointer. Many profiles (one per
+ * instance×workspace) can share a single login this way.
+ *
+ * - `oauthId` (optional): the shared section id. Provisioning passes it so all
+ *   the profiles it writes point at the same token. When omitted (the runtime
+ *   SQL path), the id is resolved from the profile's own `oauth` pointer.
+ * - Backward compatibility: if a profile still has an inline
+ *   `[profiles.<name>.oauth.<key>]` object (pre-migration), `load` reads the
+ *   first entry from it so existing logins keep working until migrated.
+ * - `clear` is intentionally a NO-OP: a shared token must not be deleted on one
+ *   profile's refresh failure (that would sign out every sibling profile).
+ *   Matching gh/aws/gcloud/kubectl, a failed refresh surfaces an error telling
+ *   the user to re-run `cz-cli login`; only an explicit logout removes tokens.
+ *
+ * All operations are best-effort and never throw. Token values are never logged.
+ */
+export function makeProfileTokenStore(profileName: string | undefined, oauthId?: string): TokenStore {
   return {
     load(): AuthToken | undefined {
       try {
@@ -355,22 +427,26 @@ export function makeProfileTokenStore(profileName: string | undefined, cacheKey:
         const name = resolveProfileName(data, profileName)
         if (!name) return undefined
         const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-        const oauth = profiles[name]?.oauth as Record<string, unknown> | undefined
-        const entry = oauth?.[key] as Record<string, unknown> | undefined
-        if (!entry) return undefined
+        const profile = profiles[name]
 
-        const token = str(entry.access_token, undefined)
-        const expireTimeMs = num(entry.expire_time_ms)
-        const obtainedAt = num(entry.obtained_at)
-        const instanceId = num(entry.instance_id)
-        const userId = num(entry.user_id)
-        if (token === undefined || expireTimeMs === undefined || obtainedAt === undefined) return undefined
-        if (instanceId === undefined || userId === undefined) return undefined
+        // New shared layout: profile.oauth is a string id → top-level [oauth.<id>].
+        const id = oauthId ?? profileOAuthPointer(profile)
+        if (id) {
+          const shared = (data.oauth ?? {}) as Record<string, unknown>
+          const entry = shared[id] as Record<string, unknown> | undefined
+          const parsed = parseOAuthEntry(entry)
+          if (parsed) return parsed
+        }
 
-        const refreshToken = str(entry.refresh_token, undefined)
-        const result: AuthToken = { token, instanceId, userId, expireTimeMs, obtainedAt }
-        if (refreshToken !== undefined) result.refreshToken = refreshToken
-        return result
+        // Legacy fallback: inline [profiles.<name>.oauth.<key>] object.
+        const inline = profile?.oauth
+        if (inline && typeof inline === "object" && !Array.isArray(inline)) {
+          for (const value of Object.values(inline as Record<string, unknown>)) {
+            const parsed = parseOAuthEntry(value as Record<string, unknown>)
+            if (parsed) return parsed
+          }
+        }
+        return undefined
       } catch {
         // best-effort: missing/corrupt file → behave as no cached token
         return undefined
@@ -390,19 +466,16 @@ export function makeProfileTokenStore(profileName: string | undefined, cacheKey:
 
         const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
         const profile = profiles[name] ?? {}
-        const oauth = (profile.oauth ?? {}) as Record<string, unknown>
 
-        const entry: Record<string, unknown> = {
-          access_token: token.token,
-          expire_time_ms: token.expireTimeMs,
-          obtained_at: token.obtainedAt,
-          instance_id: token.instanceId,
-          user_id: token.userId,
-        }
-        if (token.refreshToken !== undefined) entry.refresh_token = token.refreshToken
+        // Resolve the shared id: explicit > existing pointer > freshly generated.
+        const id = oauthId ?? profileOAuthPointer(profile) ?? generateOAuthId()
 
-        oauth[key] = entry
-        profile.oauth = oauth
+        const shared = (data.oauth ?? {}) as Record<string, unknown>
+        shared[id] = tokenToEntry(token)
+        data.oauth = shared
+
+        // Point this profile at the shared section.
+        profile.oauth = id
         profiles[name] = profile
         data.profiles = profiles
         writeProfilesFile(stringifyTOML(data))
@@ -412,20 +485,79 @@ export function makeProfileTokenStore(profileName: string | undefined, cacheKey:
     },
 
     clear(): void {
-      try {
-        const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-        const name = resolveProfileName(data, profileName)
-        if (!name) return
-        const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-        const oauth = profiles[name]?.oauth as Record<string, unknown> | undefined
-        if (!oauth || !(key in oauth)) return
-
-        delete oauth[key]
-        data.profiles = profiles
-        writeProfilesFile(stringifyTOML(data))
-      } catch {
-        // best-effort: missing/corrupt file → nothing to clear
-      }
+      // Intentional no-op — see the docblock. A shared token is never deleted on
+      // a single profile's refresh failure; the error surface prompts re-login.
     },
+  }
+}
+
+/**
+ * Write a shared OAuth token section `[oauth.<id>]` once. Used by provisioning
+ * when it creates several profiles from a single login that all point at the
+ * same token. Best-effort; never throws.
+ */
+export function saveSharedOAuthToken(id: string, token: AuthToken): void {
+  try {
+    let data: Record<string, unknown> = {}
+    try {
+      data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    } catch {
+      // start fresh
+    }
+    const shared = (data.oauth ?? {}) as Record<string, unknown>
+    shared[id] = tokenToEntry(token)
+    data.oauth = shared
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * One-time startup migration: convert legacy inline
+ * `[profiles.<name>.oauth.<key>]` token objects to the shared layout —
+ * a top-level `[oauth.<id>]` section plus an `oauth = "<id>"` pointer on the
+ * profile. Idempotent: profiles already using a string pointer are left alone.
+ * Best-effort; never throws and never blocks the CLI.
+ */
+export function migrateInlineOAuthTokens(): void {
+  try {
+    const raw = readFileSync(profilesFile(), "utf-8")
+    const data = parseTOML(raw) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const shared = (data.oauth ?? {}) as Record<string, unknown>
+    let changed = false
+
+    for (const [name, profile] of Object.entries(profiles)) {
+      const inline = profile?.oauth
+      // Only migrate inline objects; string pointers are already migrated.
+      if (!inline || typeof inline !== "object" || Array.isArray(inline)) continue
+
+      // Take the first valid token entry from the inline object.
+      let token: AuthToken | undefined
+      for (const value of Object.values(inline as Record<string, unknown>)) {
+        token = parseOAuthEntry(value as Record<string, unknown>)
+        if (token) break
+      }
+      if (!token) {
+        // Inline object with no usable token — drop the dangling subtable.
+        delete profile.oauth
+        changed = true
+        continue
+      }
+      const id = generateOAuthId()
+      shared[id] = tokenToEntry(token)
+      profile.oauth = id
+      changed = true
+      void name
+    }
+
+    if (changed) {
+      data.oauth = shared
+      data.profiles = profiles
+      writeProfilesFile(stringifyTOML(data))
+    }
+  } catch {
+    // best-effort: missing/corrupt file → nothing to migrate
   }
 }

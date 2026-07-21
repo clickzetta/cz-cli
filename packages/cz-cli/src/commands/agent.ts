@@ -147,7 +147,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
           .command("purge-legacy", "Remove deprecated llm_* fields from [profiles.*]", (llm) => llm, () => {})
           .strict(false)
           .demandCommand(1, "Run `cz-cli agent llm --help` to see available subcommands")
-          .example("cz-cli setup --credential <base64_string>", "New environment: configure ClickZetta built-in LLM from registration credential")
+          .example("cz-cli auth login <name> --credential <base64_string>", "New environment: sign in and configure ClickZetta built-in LLM from registration credential")
           .example("cz-cli agent llm add my-openai --provider openai --api-key $OPENAI_API_KEY --use", "Add OpenAI and select it")
           .example("cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use", "Add an OpenAI-compatible relay")
           .example("cz-cli agent llm test my-openai", "Verify GPT / OpenAI-style API connectivity")
@@ -155,15 +155,14 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
           .epilogue(
             "LLM setup paths:\n" +
             "  ClickZetta built-in LLM:\n" +
-            "    `cz-cli setup --credential <base64_string>`\n\n" +
+            "    `cz-cli auth login <name> --credential <base64_string>`\n\n" +
             "  External LLMs:\n" +
             "    `cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use`\n" +
             "    `cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use`\n\n" +
             "  Verify:\n" +
             "    `cz-cli agent llm test [name]`\n\n" +
-            "  ClickZetta Lakehouse login / workspace / schema / vcluster setup is separate:\n" +
-            "    `cz-cli setup`\n" +
-            "    `cz-cli setup --username <username> --password <password> --account-name <account_name>`",
+            "  ClickZetta Lakehouse sign-in is separate:\n" +
+            "    `cz-cli auth login <name>`  (see `cz-cli auth login --help` for all methods)",
           ),
         () => {},
       )

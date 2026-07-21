@@ -149,14 +149,12 @@ export async function main(args: string[], agentRuntime = false): Promise<number
       process.stderr.write(
         "\n  No ClickZetta profile configured.\n" +
         "  Run one of the following:\n\n" +
-        "    cz-cli setup\n" +
-        "      Interactive setup. Choose either:\n" +
-        "      - New user: paste the registration credential\n" +
-        "      - Already have ClickZetta account: enter username/password/account name,\n" +
-        "        then choose service -> instance -> workspace -> schema -> vcluster\n\n" +
-        "    cz-cli setup --credential <base64_string>\n" +
-        "      New-user fast path from registration token\n\n" +
-        "    cz-cli setup --username <username> --password <password> --account-name <account_name>\n" +
+        "    cz-cli auth login <name>\n" +
+        "      Recommended. Browser sign-in; <name> labels this login (e.g. company-prod).\n" +
+        "      Discovers your instances/workspaces and creates a profile for each.\n\n" +
+        "    cz-cli auth login <name> --credential <base64_string>\n" +
+        "      New-user fast path from a registration token\n\n" +
+        "    cz-cli auth login <name> --username <username> --password <password> --account-name <account_name>\n" +
         "      Existing-account non-TTY flow; cz-cli will tell you the next required step\n\n" +
         "  Register at:\n" +
         "    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n" +
@@ -169,10 +167,11 @@ export async function main(args: string[], agentRuntime = false): Promise<number
         error: {
           code: "NO_PROFILE",
           message: "No ClickZetta profile configured.",
-          next_step: "cz-cli setup",
+          next_step: "cz-cli auth login <name>",
           next_steps: [
-            "cz-cli setup --credential <base64_string>",
-            "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+            "cz-cli auth login <name>",
+            "cz-cli auth login <name> --credential <base64_string>",
+            "cz-cli auth login <name> --username <username> --password <password> --account-name <account_name>",
           ],
           register_urls: [
             "https://accounts.clickzetta.com/register?ref=cz-cli",
@@ -290,7 +289,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     .alias("version", "v")
     .epilogue(
       "LLM configuration:\n" +
-      "  `cz-cli setup --credential <base64>` writes ~/.clickzetta/llm.json and selects it by default.\n" +
+      "  `cz-cli auth login <name> --credential <base64>` writes ~/.clickzetta/llm.json and selects it by default.\n" +
       "  Add Claude/OpenAI/etc: `cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use`\n" +
       "           supports clickzetta, anthropic, openai, bedrock, google, azure, openai-compatible, openrouter.\n" +
       "  Inspect: `cz-cli agent llm show`\n" +

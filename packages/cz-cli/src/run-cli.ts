@@ -6,6 +6,7 @@ import { injectAgentMcp } from "./agent-mcp.js"
 import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
+import { migrateInlineOAuthTokens } from "./connection/profile-store.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
@@ -40,7 +41,7 @@ const PROFILE_REQUIRED_COMMANDS = new Set([
 
 const LLM_ONBOARDING = {
   clickzetta_builtin: [
-    "cz-cli setup --credential <base64_string>",
+    "cz-cli auth login <name> --credential <base64_string>",
   ],
   external_llm: [
     "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
@@ -52,8 +53,8 @@ const LLM_ONBOARDING = {
     "cz-cli agent llm test <NAME>",
   ],
   lakehouse_setup: [
-    "cz-cli setup",
-    "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+    "cz-cli auth login <name>",
+    "cz-cli auth login <name> --username <username> --password <password> --account-name <account_name>",
   ],
 } as const
 
@@ -158,10 +159,11 @@ function noProfilePayload() {
     error: {
       code: "NO_PROFILE",
       message: "No ClickZetta profile configured.",
-      next_step: "cz-cli setup",
+      next_step: "cz-cli auth login <name>",
       next_steps: [
-        "cz-cli setup --credential <base64_string>",
-        "cz-cli setup --username <username> --password <password> --account-name <account_name>",
+        "cz-cli auth login <name>",
+        "cz-cli auth login <name> --credential <base64_string>",
+        "cz-cli auth login <name> --username <username> --password <password> --account-name <account_name>",
       ],
       register_urls: [
         "https://accounts.clickzetta.com/register?ref=cz-cli",
@@ -186,14 +188,12 @@ function noProfileTtyMessage() {
   return (
     "\n  No ClickZetta profile configured.\n" +
     "  Run one of the following:\n\n" +
-    "    cz-cli setup\n" +
-    "      Interactive setup. Choose either:\n" +
-    "      - New user: paste the registration credential\n" +
-    "      - Already have ClickZetta account: enter username/password/account name,\n" +
-    "        then choose service -> instance -> workspace -> schema -> vcluster\n\n" +
-    "    cz-cli setup --credential <base64_string>\n" +
-    "      New-user fast path from registration token\n\n" +
-    "    cz-cli setup --username <username> --password <password> --account-name <account_name>\n" +
+    "    cz-cli auth login <name>\n" +
+    "      Recommended. Browser sign-in; <name> labels this login (e.g. company-prod).\n" +
+    "      Discovers your instances/workspaces and creates a profile for each.\n\n" +
+    "    cz-cli auth login <name> --credential <base64_string>\n" +
+    "      New-user fast path from a registration token\n\n" +
+    "    cz-cli auth login <name> --username <username> --password <password> --account-name <account_name>\n" +
     "      Existing-account non-TTY flow; cz-cli will tell you the next required step\n\n" +
     "  Register at:\n" +
     "    https://accounts.clickzetta.com/register?ref=cz-cli (China)\n" +
@@ -208,7 +208,7 @@ function noActiveLlmTtyMessage() {
     "\n  No active LLM is configured.\n" +
     "  Run `cz-cli agent llm show` to inspect the current state, or set one up with:\n\n" +
     "  ClickZetta built-in LLM:\n" +
-    "    cz-cli setup --credential <base64_string>\n\n" +
+    "    cz-cli auth login <name> --credential <base64_string>\n\n" +
     "  External LLMs:\n" +
     "    cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use\n" +
     "    cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use\n\n" +
@@ -216,9 +216,8 @@ function noActiveLlmTtyMessage() {
     "    cz-cli agent llm show\n" +
     "    cz-cli agent llm test\n" +
     "    cz-cli agent llm test <NAME>\n\n" +
-    "  Lakehouse connection setup is separate:\n" +
-    "    cz-cli setup\n" +
-    "    cz-cli setup --username <username> --password <password> --account-name <account_name>\n\n"
+    "  Lakehouse sign-in is separate:\n" +
+    "    cz-cli auth login <name>   (see `cz-cli auth login --help` for all methods)\n\n"
   )
 }
 
@@ -435,6 +434,9 @@ export function classifyCliArgs(rawArgs: string[]) {
 }
 
 export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRuntime): Promise<void> {
+  // One-time, idempotent migration of legacy inline [profiles.x.oauth.y] tokens
+  // to the shared [oauth.<id>] layout. Best-effort; never throws.
+  migrateInlineOAuthTokens()
   const normalized = normalizeCliArgs(rawArgs)
   const agentConnectionOverrides = applyAgentConnectionEnv(connectionOverridesFromArgs(normalized.args))
   const profileOverride = agentConnectionOverrides.profile ?? profileOverrideFromArgs(normalized.args)

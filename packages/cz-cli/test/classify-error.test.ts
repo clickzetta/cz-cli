@@ -49,10 +49,10 @@ describe("classifyExecError", () => {
   })
 
   test("Authentication required message → NO_CREDENTIALS", () => {
-    const err = new Error("Authentication required. Provide --pat or --username/--password, or run `cz-cli setup` to configure a connection profile.")
+    const err = new Error("Authentication required. Run `cz-cli auth login <name>` to sign in.")
     const r = classifyExecError(err)
     expect(r.code).toBe("NO_CREDENTIALS")
-    expect(r.aiMessage).toContain("cz-cli setup")
+    expect(r.aiMessage).toContain("cz-cli auth login")
   })
 
   test("generic error → EXEC_ERROR with no aiMessage", () => {

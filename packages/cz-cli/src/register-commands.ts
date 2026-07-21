@@ -19,10 +19,10 @@ import { registerGatewayCommand } from "./commands/ai-gateway.js"
 import { registerAnalyticsAgentCommand } from "./commands/analytics-agent.js"
 import { registerAutoupdateCommand } from "./commands/autoupdate.js"
 import { registerMcpCommand } from "./commands/mcp.js"
-import { registerLoginCommand } from "./commands/login.js"
+import { registerAuthCommand } from "./commands/auth.js"
 
 export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
-  registerLoginCommand(cli)
+  registerAuthCommand(cli)
   registerSqlCommand(cli)
   registerSchemaCommand(cli)
   registerTableCommand(cli)

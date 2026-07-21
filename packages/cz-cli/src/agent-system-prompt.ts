@@ -143,7 +143,7 @@ export const CLICKZETTA_AGENT_SYSTEM_PROMPT = [
   "**Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.",
   "**State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.",
   "**Multi-environment**: use `--profile <name>` to target a specific environment.",
-  "**On `NO_PROFILE` error**: guide user to run `cz-cli setup`.",
+  "**On `NO_PROFILE` error**: guide user to run `cz-cli auth login <name>`.",
   "**补数/回填/重跑历史数据 → `runs refill`**: when user says \"补数\", \"回填\", \"重跑历史\", \"backfill\", \"re-run historical data\", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.",
   "**Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql \"...\"` (the shell corrupts inline SQL).",
   "**Lakehouse SQL dialect ONLY**: cz-cli connects to ClickZetta Lakehouse, NOT Snowflake or Databricks. Do NOT use Snowflake syntax (e.g. `SHOW STAGES IN SCHEMA xxx`). Lakehouse uses `SHOW VOLUMES IN xxx` (no `SCHEMA` keyword). When unsure about syntax, consult the **lakehouse-doc** skill BEFORE running SQL — guessing Snowflake/Databricks syntax will fail.",

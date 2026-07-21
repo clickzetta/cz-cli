@@ -93,8 +93,16 @@ const SERVICE_ENDPOINTS = [
 
 const OTHER_SERVICE = "__custom__"
 const SETUP_FLOW = ["login_method", "credentials", "instance", "workspace", "schema", "vcluster", "complete"] as const
-const PROFILES_DIR = join(homedir(), ".clickzetta")
-const PROFILES_FILE = join(PROFILES_DIR, "profiles.toml")
+// Resolve at call time and honor CLICKZETTA_TEST_HOME so setup writes the SAME
+// file as auth / the connection layer (profile-store.ts:7). A module-level
+// homedir() constant would ignore test-home isolation and diverge from where
+// `auth login` writes.
+function profilesDir(): string {
+  return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta")
+}
+function profilesFilePath(): string {
+  return join(profilesDir(), "profiles.toml")
+}
 
 type SetupLoginMethod = (typeof SETUP_LOGIN_METHODS)[number]["value"]
 
@@ -192,20 +200,21 @@ function saveProfile(profileName: string, profile: ProfileEntry): void {
 
 function loadFullFile(): Record<string, unknown> {
   try {
-    return parseTOML(readFileSync(PROFILES_FILE, "utf-8")) as Record<string, unknown>
+    return parseTOML(readFileSync(profilesFilePath(), "utf-8")) as Record<string, unknown>
   } catch {
     return {}
   }
 }
 
 function saveFullFile(data: Record<string, unknown>): void {
-  mkdirSync(PROFILES_DIR, { recursive: true })
+  mkdirSync(profilesDir(), { recursive: true })
   const content = stringifyTOML(data)
-  const tmp = PROFILES_FILE + ".tmp." + Date.now()
+  const file = profilesFilePath()
+  const tmp = file + ".tmp." + Date.now()
   writeFileSync(tmp, content, { encoding: "utf-8", mode: 0o600 })
-  renameSync(tmp, PROFILES_FILE)
+  renameSync(tmp, file)
   try {
-    chmodSync(PROFILES_FILE, 0o600)
+    chmodSync(file, 0o600)
   } catch {}
 }
 
@@ -218,7 +227,10 @@ function buildSetupCommand(
   missingFlag?: string,
   placeholder?: string,
 ): string {
-  const parts = ["cz-cli setup"]
+  // Emit the recommended `auth login` command (this flow is shared by the
+  // deprecated `setup` alias and `cz-cli auth login`; guidance must point users
+  // at the current entry point, never the deprecated one).
+  const parts = ["cz-cli auth login <name>"]
   for (const [key, value] of Object.entries(args)) {
     if (!value) continue
     if (key === "password") {
@@ -244,7 +256,7 @@ function buildSetupCommandWithRequired(
     vcluster: "<VCLUSTER>",
     "account-name": "<ACCOUNT_NAME>",
   }
-  const parts = ["cz-cli setup"]
+  const parts = ["cz-cli auth login <name>"]
   for (const [key, value] of Object.entries(args)) {
     if (!value) continue
     if (required.includes(key)) continue
@@ -1147,9 +1159,9 @@ async function runModernSetupFlowNonTTY(
       SETUP_LOGIN_METHODS.map((option) => ({ ...option })),
       {
         next_steps: [
-          "cz-cli setup --login-method clickzetta",
-          "cz-cli setup --login-method singdata",
-          "cz-cli setup --login-method custom --login <LOGIN_URL_OR_JDBC>",
+          "cz-cli auth login <name> --login-method clickzetta",
+          "cz-cli auth login <name> --login-method singdata",
+          "cz-cli auth login <name> --login-method custom --login <LOGIN_URL_OR_JDBC>",
         ],
       },
     )
@@ -1175,7 +1187,7 @@ async function runModernSetupFlowNonTTY(
               },
               [],
             ),
-            "cz-cli setup --login-method custom --login <LOGIN_PAGE_URL>",
+            "cz-cli auth login <name> --login-method custom --login <LOGIN_PAGE_URL>",
           ],
         },
       )
@@ -1228,7 +1240,7 @@ async function runModernSetupFlowNonTTY(
       {
         login_url: appendRef(loginUrl),
         collected: { login_method: "custom" },
-        next_steps: ["cz-cli setup --credential <BASE64_CREDENTIAL>"],
+        next_steps: ["cz-cli auth login <name> --credential <BASE64_CREDENTIAL>"],
       },
     )
     return
@@ -1238,7 +1250,7 @@ async function runModernSetupFlowNonTTY(
   const extra: Record<string, unknown> = {
     login_url: appendRef(loginUrl),
     collected: { login_method: method },
-    next_steps: ["cz-cli setup --credential <BASE64_CREDENTIAL>"],
+    next_steps: ["cz-cli auth login <name> --credential <BASE64_CREDENTIAL>"],
   }
   if (method === "clickzetta") {
     extra.register_url = REGISTER_URL_CLICKZETTA
@@ -1390,7 +1402,7 @@ async function runExistingAccountFlowNonTTY(
       {
         register_url: REGISTER_URL_CLICKZETTA,
         next_steps: [
-          "cz-cli setup --credential <BASE64_CREDENTIAL>",
+          "cz-cli auth login <name> --credential <BASE64_CREDENTIAL>",
           buildSetupCommand(
             {
               username: context.username,

@@ -64,10 +64,31 @@ export interface BrowserLoginResult {
     // untyped body.
     apiKey?: string
     aimeshEndpointBaseUrl?: string
+    // Region-specific business service host (no protocol) derived from the
+    // userinfo `gatewayMapping` for the default instance's `cspId-regionId`.
+    // This is the address SQL/business calls must use — the region-independent
+    // OAuth central host is only for login itself. Undefined when the mapping
+    // is absent or has no entry for the instance's region.
+    service?: string
+    // Account/tenant id used as tenantId for portal calls (listUserWorkspaces).
+    // Same value as accountId; surfaced explicitly for the enumeration step.
+    tenantId?: number
   }
+  // Every instance the account can access, each resolved to its own region
+  // service via gatewayMapping[cspId-regionId]. Used to enumerate all
+  // (instance × workspace) combinations after login. Empty when userinfo failed.
+  instances?: OAuthInstance[]
   // The unmodified `/oauth2/userinfo` body, present only when userinfo
   // succeeded. Archived verbatim into the profile so nothing is discarded.
   raw?: Record<string, unknown>
+}
+
+/** One accessible instance with its resolved region service (no protocol). */
+export interface OAuthInstance {
+  instanceId: number
+  instanceName: string
+  /** Region business service host (no protocol) from gatewayMapping, or undefined if unresolved. */
+  service?: string
 }
 
 function isOauthDebug(): boolean {
@@ -77,6 +98,46 @@ function isOauthDebug(): boolean {
 
 function str(val: unknown): string | undefined {
   return typeof val === "string" && val.length > 0 ? val : undefined
+}
+
+/**
+ * Resolve the region-specific business service host for the default instance.
+ *
+ * The backend does NOT return a `service` field in userinfo. Instead it returns
+ * `gatewayMapping`, a per-account JSON string keyed by `"<cspId>-<regionId>"`
+ * whose values are the real region API bases, e.g.
+ *   { "1-1": "https://cn-shanghai-alicloud.api.clickzetta.com", ... }
+ * Each entry in `instanceList` carries its own `cspId`/`regionId`. We look up
+ * the default instance's key to get the exact host to run business calls
+ * against. Confirmed against live userinfo for both prod and uat accounts; the
+ * same `"1-1"` key maps to different hosts per environment, which is precisely
+ * why this must be read from userinfo rather than derived from a static table.
+ *
+ * Returns the host WITHOUT protocol (to match how profiles store `service`),
+ * or undefined when the mapping or the instance's region entry is missing.
+ */
+function serviceFromGatewayMapping(
+  body: Record<string, unknown>,
+  instance: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!instance) return undefined
+  const cspId = typeof instance.cspId === "number" ? instance.cspId : undefined
+  const regionId = typeof instance.regionId === "number" ? instance.regionId : undefined
+  if (cspId === undefined || regionId === undefined) return undefined
+
+  let mapping: Record<string, unknown>
+  try {
+    const rawMapping = body.gatewayMapping
+    if (typeof rawMapping !== "string" || !rawMapping.trim()) return undefined
+    mapping = JSON.parse(rawMapping) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+
+  const url = mapping[`${cspId}-${regionId}`]
+  if (typeof url !== "string" || !url.trim()) return undefined
+  // Store as a bare host to match profile `service` semantics.
+  return url.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")
 }
 
 /**
@@ -102,7 +163,28 @@ function parseUserInfo(body: Record<string, unknown>): BrowserLoginResult["userI
     instanceId,
     apiKey: str(body.apiKey),
     aimeshEndpointBaseUrl: str(body.aimeshEndpointBaseUrl),
+    service: serviceFromGatewayMapping(body, firstInstance),
+    tenantId: typeof body.account_id === "number" ? body.account_id : undefined,
   }
+}
+
+/**
+ * Build the full list of accessible instances, each resolved to its own region
+ * service via gatewayMapping[cspId-regionId]. Feeds the (instance × workspace)
+ * enumeration that generates one profile per combination. An instance whose
+ * region has no gatewayMapping entry gets `service: undefined` — the caller
+ * skips it (a workspace listing there would hit the wrong gateway).
+ */
+function parseInstances(body: Record<string, unknown>): OAuthInstance[] {
+  const list = Array.isArray(body.instanceList) ? (body.instanceList as Array<Record<string, unknown>>) : []
+  return list
+    .map((inst): OAuthInstance | undefined => {
+      const instanceId = typeof inst.id === "number" ? inst.id : 0
+      const instanceName = str(inst.name) ?? ""
+      if (!instanceId || !instanceName) return undefined
+      return { instanceId, instanceName, service: serviceFromGatewayMapping(body, inst) }
+    })
+    .filter((x): x is OAuthInstance => x !== undefined)
 }
 
 export interface LoginWithBrowserOptions {
@@ -168,6 +250,7 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<B
     // Best-effort userinfo backfill (requirement 11.6/11.7). A userinfo failure
     // must NOT fail the login: keep the token, leave userId/instanceId at 0.
     let userInfo: BrowserLoginResult["userInfo"]
+    let instances: OAuthInstance[] | undefined
     let raw: Record<string, unknown> | undefined
     try {
       const body = await fetchUserInfo(opts.baseUrl, result.accessToken)
@@ -175,6 +258,7 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<B
       const parsed = parseUserInfo(body)
       if (isOauthDebug()) console.error(`[oauth-userinfo] keys=[${Object.keys(parsed ?? {}).join(",")}]`)
       userInfo = parsed
+      instances = parseInstances(body)
       // Only override when the parsed identity is a real, positive value.
       if (parsed?.userId !== undefined && parsed.userId > 0) token.userId = parsed.userId
       if (parsed?.instanceId !== undefined && parsed.instanceId > 0) token.instanceId = parsed.instanceId
@@ -182,7 +266,7 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<B
       if (isOauthDebug()) console.error(`[oauth-userinfo] failed: ${err instanceof Error ? err.message : String(err)}`)
     }
 
-    return { token, userInfo, raw }
+    return { token, userInfo, instances, raw }
   } catch (err) {
     // Ensure the listener never leaks if we fail before/after waitForCode
     // settles. close() is a no-op once the core already settled.
