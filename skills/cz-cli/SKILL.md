@@ -383,7 +383,7 @@ If it fails, report the error and ask the user to double-check credentials or se
 All errors in non-TTY mode output JSON to stdout:
 
 ```json
-{"ok": false, "error": "NO_PROFILE", "next_steps": ["cz-cli setup --credential <base64>"]}
+{"ok": false, "error": "NO_PROFILE", "next_steps": ["cz-cli auth login <name>"]}
 ```
 
-On `NO_PROFILE` error: check if a profile can be configured via username/password (see "Adding a new profile" above). If the user has a base64 credential instead, guide them to run `cz-cli setup --credential <base64>`. See `references/profile-setup.md`.
+On `NO_PROFILE` error: guide the user to run `cz-cli auth login <name>`. Run `cz-cli auth login --help` for all sign-in methods (OAuth / credential / username-password).

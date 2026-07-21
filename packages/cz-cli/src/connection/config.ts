@@ -1,5 +1,5 @@
 import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
-import { getProfileConfig, makeProfileTokenStore } from "./profile-store.js"
+import { getProfileConfig, makeProfileTokenStore, readProfileEntry } from "./profile-store.js"
 import { parseJdbcUrl } from "./jdbc.js"
 
 export interface CliArgs {
@@ -101,7 +101,15 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // PAT rotation. Skipping the store also stops the PAT-exchanged token from
   // being persisted. Profile-level and pure-OAuth flows still attach it.
   const explicitCredential = Boolean(cliPat) || Boolean(envPat) || Boolean(cliUsername && cliPassword)
-  if (cfg.instance && !explicitCredential) {
+  // Attach the OAuth token store when the profile can carry an OAuth login:
+  // either it has an instance (the common case) OR it has an `oauth = "<id>"`
+  // pointer to a shared [oauth.<id>] token. The old `cfg.instance`-only gate
+  // dropped the store for accounts with NO instance (userinfo instanceList
+  // empty) — the token was persisted but unreadable, so a genuinely logged-in
+  // user was reported as "no credentials". The OAuth token is keyed by the
+  // profile pointer, not by instance, so instance must not gate it.
+  const hasOAuthPointer = typeof readProfileEntry(profileName)?.oauth === "string"
+  if ((cfg.instance || hasOAuthPointer) && !explicitCredential) {
     // No oauthId passed: the store resolves the shared-token id from this
     // profile's `oauth = "<id>"` pointer (or a legacy inline subtable).
     cfg.tokenStore = makeProfileTokenStore(profileName)
