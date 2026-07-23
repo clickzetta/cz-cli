@@ -53,6 +53,8 @@ const ROUTES = {
   tableSemanticsGet: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
   tableSemanticsSet: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
   tableSemanticsProp: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}/prop` },
+  datasetDetail: { method: "GET", path: "/api/v1/dataset/detail" },
+  datasetUpdate: { method: "POST", path: "/api/v1/dataset/update" },
   domainJoinList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
   domainJoinDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/${encodePath(argv["join-id"])}` },
   domainJoinCreate: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
@@ -337,6 +339,43 @@ async function runTableSemanticsList(argv: Record<string, unknown>): Promise<voi
   } catch (err) {
     if (isHandledCliError(err)) return
     error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
+// Update a dataset's display name via read-modify-write: the backend
+// `dataset/update` endpoint expects the FULL dataset object, so we fetch the
+// current detail, change only displayName, and post the whole object back.
+// Sending a partial body would blank out the other fields.
+async function runTableSetDisplayName(argv: Record<string, unknown>): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  const datasetId = positiveIntegerValue(argv["dataset-id"], "--dataset-id", format)
+  const displayName = typeof argv.name === "string" ? argv.name.trim() : ""
+  if (displayName === "") {
+    error("USAGE_ERROR", "--name is required and must be non-empty", { format })
+    return
+  }
+  try {
+    const ctx = await resolveAnalyticsContext(argv)
+    const detail = await requestAnalyticsData(argv, ROUTES.datasetDetail, {}, { datasetId }, ctx)
+    if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+      error("ANALYTICS_AGENT_ERROR", `dataset ${datasetId} detail not found`, { format })
+      return
+    }
+    const updated = await requestAnalyticsData(
+      argv, ROUTES.datasetUpdate,
+      { ...(detail as Record<string, unknown>), displayName },
+      {}, ctx,
+    )
+    logOperation("analytics-agent table set-display-name", { ok: true, timeMs: Date.now() - t0 })
+    success(updated, { format, timeMs: Date.now() - t0 })
+  } catch (err) {
+    logOperation("analytics-agent table set-display-name", { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    const code = err instanceof AnalyticsBusinessError ? err.code : "ANALYTICS_AGENT_ERROR"
+    error(code, err instanceof Error ? err.message : String(err), {
       format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
   }
@@ -2124,6 +2163,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "List column semantics of a dataset (alias for `table semantics list`)",
             (y) => y.positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" }),
             (argv) => runTableSemanticsList(argv as Record<string, unknown>),
+          )
+          .command(
+            "set-display-name <dataset-id>",
+            "Set the display name of a table already added to a domain",
+            (y) =>
+              y
+                .positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID (from `domain detail --with-tables`)" })
+                .option("name", { type: "string", demandOption: true, describe: "New display name" })
+                .example('cz-cli analytics-agent table set-display-name 82 --name "投标事实表"', "Rename an existing table's display name shown in the UI"),
+            (argv) => runTableSetDisplayName(argv as Record<string, unknown>),
           )
         table.command("semantics", "Manage dataset column semantics", (semantics) => {
           semantics

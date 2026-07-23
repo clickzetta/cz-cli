@@ -391,4 +391,56 @@ describe("analytics-agent table semantics", () => {
     expect(parsed.error.code).toBe("USAGE_ERROR")
     expect(parsed.error.message).toBe("--attr-id must be a positive integer")
   })
+
+  test("set-display-name does a read-modify-write: fetches detail then posts full object with new displayName", async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null })
+      if (url.includes("/dataset/detail")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            id: "82", datasetId: "82", sourceId: "8448", mode: 1,
+            displayName: "old_name", tableName: "quick_start.construction_dw.v_gpt_fact_bid",
+            description: "keep me", completeSchema: [{ name: "c1" }], joins: [],
+            workspace: "quick_start", namespace: "construction_dw",
+          },
+        })
+      }
+      // dataset/update
+      return jsonResponse({ success: true, data: { datasetId: "82", displayName: "投标事实表" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "set-display-name", "82", "--name", "投标事实表",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const detailCall = calls.find((c) => c.url.includes("/dataset/detail"))
+    const updateCall = calls.find((c) => c.url.includes("/dataset/update"))
+    expect(detailCall).toBeDefined()
+    expect(new URL(detailCall!.url).searchParams.get("datasetId")).toBe("82")
+    expect(updateCall).toBeDefined()
+    // The update body must carry the full object with only displayName changed.
+    const body = updateCall!.body as Record<string, unknown>
+    expect(body.displayName).toBe("投标事实表")
+    expect(body.description).toBe("keep me")
+    expect(body.tableName).toBe("quick_start.construction_dw.v_gpt_fact_bid")
+    expect(body.completeSchema).toEqual([{ name: "c1" }])
+  })
+
+  test("set-display-name rejects an empty --name before any request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "set-display-name", "82", "--name", "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
 })

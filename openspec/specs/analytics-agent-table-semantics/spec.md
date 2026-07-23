@@ -27,6 +27,24 @@
 - **且** 输出包含每个字段的 `attrId`、`attrCode`、`semanticType`、`description`、`hidden`
 - **且** 输出与 `cz-cli analytics-agent table semantics list 195` 一致
 
+### Requirement: table set-display-name 修改已加入域的表的显示名
+
+`cz-cli analytics-agent table set-display-name <dataset-id> --name <name>` MUST 支持修改一个已加入域的 dataset 的 display name。由于后端 `dataset/update` 接口需要**完整的 dataset 对象**，CLI MUST 采用 read-modify-write：先 `GET /api/v1/dataset/detail?datasetId=<id>` 取回完整对象，仅改写 `displayName`，再 `POST /api/v1/dataset/update` 把整个对象提交回去，不得只发部分字段（否则会清空其它字段）。`--name` MUST 非空。
+
+> 说明：`table add --display-name` 只在**新建** dataset 时设置显示名；对**已存在**的 dataset 后端会忽略。要改已有表的显示名必须用本命令。
+
+#### Scenario: read-modify-write 更新 displayName
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table set-display-name 82 --name "投标事实表"`
+- **THEN** CLI MUST 先调用 `GET /api/v1/dataset/detail?datasetId=82`
+- **且** 再调用 `POST /api/v1/dataset/update`，请求体为该 detail 完整对象且 `displayName` 改为 `投标事实表`
+- **且** 请求体保留 detail 中的其它字段（如 `description`、`tableName`、`completeSchema`）
+
+#### Scenario: 空 --name 本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table set-display-name 82 --name "   "`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+
 ### Requirement: table semantics get 查看单个字段语义详情
 
 `cz-cli analytics-agent table semantics get` MUST 支持按 `datasetId + attrId` 查看单个字段的语义详情。
