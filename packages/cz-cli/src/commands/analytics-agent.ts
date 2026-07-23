@@ -344,17 +344,22 @@ async function runTableSemanticsList(argv: Record<string, unknown>): Promise<voi
   }
 }
 
-// Update a dataset's display name via read-modify-write: the backend
-// `dataset/update` endpoint expects the FULL dataset object, so we fetch the
-// current detail, change only displayName, and post the whole object back.
-// Sending a partial body would blank out the other fields.
-async function runTableSetDisplayName(argv: Record<string, unknown>): Promise<void> {
+// Update a dataset's display name and/or description via read-modify-write: the
+// backend `dataset/update` endpoint expects the FULL dataset object, so we fetch
+// the current detail, change only the requested fields, and post the whole
+// object back. Sending a partial body would blank out the other fields.
+async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
   const datasetId = positiveIntegerValue(argv["dataset-id"], "--dataset-id", format)
-  const displayName = typeof argv.name === "string" ? argv.name.trim() : ""
-  if (displayName === "") {
-    error("USAGE_ERROR", "--name is required and must be non-empty", { format })
+  const hasName = typeof argv.name === "string"
+  const hasDesc = typeof argv.description === "string"
+  if (!hasName && !hasDesc) {
+    error("USAGE_ERROR", "Provide at least one of --name or --description", { format })
+    return
+  }
+  if (hasName && (argv.name as string).trim() === "") {
+    error("USAGE_ERROR", "--name must be non-empty", { format })
     return
   }
   try {
@@ -364,15 +369,14 @@ async function runTableSetDisplayName(argv: Record<string, unknown>): Promise<vo
       error("ANALYTICS_AGENT_ERROR", `dataset ${datasetId} detail not found`, { format })
       return
     }
-    const updated = await requestAnalyticsData(
-      argv, ROUTES.datasetUpdate,
-      { ...(detail as Record<string, unknown>), displayName },
-      {}, ctx,
-    )
-    logOperation("analytics-agent table set-display-name", { ok: true, timeMs: Date.now() - t0 })
+    const body: Record<string, unknown> = { ...(detail as Record<string, unknown>) }
+    if (hasName) body.displayName = (argv.name as string).trim()
+    if (hasDesc) body.description = argv.description
+    const updated = await requestAnalyticsData(argv, ROUTES.datasetUpdate, body, {}, ctx)
+    logOperation("analytics-agent table update", { ok: true, timeMs: Date.now() - t0 })
     success(updated, { format, timeMs: Date.now() - t0 })
   } catch (err) {
-    logOperation("analytics-agent table set-display-name", { ok: false, timeMs: Date.now() - t0 })
+    logOperation("analytics-agent table update", { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
     const code = err instanceof AnalyticsBusinessError ? err.code : "ANALYTICS_AGENT_ERROR"
     error(code, err instanceof Error ? err.message : String(err), {
@@ -2165,14 +2169,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (argv) => runTableSemanticsList(argv as Record<string, unknown>),
           )
           .command(
-            "set-display-name <dataset-id>",
-            "Set the display name of a table already added to a domain",
+            "update <dataset-id>",
+            "Update a table's display name and/or description (for a table already added to a domain)",
             (y) =>
               y
                 .positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID (from `domain detail --with-tables`)" })
-                .option("name", { type: "string", demandOption: true, describe: "New display name" })
-                .example('cz-cli analytics-agent table set-display-name 82 --name "投标事实表"', "Rename an existing table's display name shown in the UI"),
-            (argv) => runTableSetDisplayName(argv as Record<string, unknown>),
+                .option("name", { type: "string", describe: "New display name shown in the UI" })
+                .option("description", { type: "string", describe: "New table description" })
+                .example('cz-cli analytics-agent table update 82 --name "投标事实表"', "Rename an existing table's display name")
+                .example('cz-cli analytics-agent table update 82 --name "投标事实表" --description "招投标明细"', "Set display name and description together"),
+            (argv) => runTableUpdate(argv as Record<string, unknown>),
           )
         table.command("semantics", "Manage dataset column semantics", (semantics) => {
           semantics

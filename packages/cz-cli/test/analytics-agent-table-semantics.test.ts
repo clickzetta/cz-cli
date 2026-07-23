@@ -392,7 +392,7 @@ describe("analytics-agent table semantics", () => {
     expect(parsed.error.message).toBe("--attr-id must be a positive integer")
   })
 
-  test("set-display-name does a read-modify-write: fetches detail then posts full object with new displayName", async () => {
+  test("update does a read-modify-write: fetches detail then posts full object with new displayName", async () => {
     const calls: Array<{ url: string; method: string; body: unknown }> = []
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -408,12 +408,11 @@ describe("analytics-agent table semantics", () => {
           },
         })
       }
-      // dataset/update
       return jsonResponse({ success: true, data: { datasetId: "82", displayName: "投标事实表" } })
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "set-display-name", "82", "--name", "投标事实表",
+      "analytics-agent", "table", "update", "82", "--name", "投标事实表",
     ])
 
     expect(result.exitCode).toBe(0)
@@ -430,13 +429,67 @@ describe("analytics-agent table semantics", () => {
     expect(body.completeSchema).toEqual([{ name: "c1" }])
   })
 
-  test("set-display-name rejects an empty --name before any request", async () => {
+  test("update can set displayName and description together", async () => {
+    let updateBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/dataset/detail")) {
+        return jsonResponse({ success: true, data: { id: "82", datasetId: "82", displayName: "old", description: "olddesc", tableName: "t" } })
+      }
+      updateBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: "82" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "update", "82", "--name", "新名", "--description", "新描述",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect((updateBody as Record<string, unknown>).displayName).toBe("新名")
+    expect((updateBody as Record<string, unknown>).description).toBe("新描述")
+  })
+
+  test("update with only --description leaves displayName untouched", async () => {
+    let updateBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/dataset/detail")) {
+        return jsonResponse({ success: true, data: { id: "82", datasetId: "82", displayName: "keepname", description: "olddesc", tableName: "t" } })
+      }
+      updateBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: "82" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "update", "82", "--description", "只改描述",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect((updateBody as Record<string, unknown>).displayName).toBe("keepname")
+    expect((updateBody as Record<string, unknown>).description).toBe("只改描述")
+  })
+
+  test("update rejects when neither --name nor --description is given", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "set-display-name", "82", "--name", "   ",
+      "analytics-agent", "table", "update", "82",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("update rejects an empty --name before any request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "update", "82", "--name", "   ",
     ])
 
     expect(result.exitCode).toBe(1)
