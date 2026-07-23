@@ -377,11 +377,23 @@ function resolveDomainTableAddBody(argv: Record<string, unknown>): Record<string
     }
   }
 
+  // A dataset created without a display name renders as blank in the UI, which
+  // breaks page-level operations. Default it (matching the UI's convention) to
+  // the fully-qualified physical table name — the view name with the `v_gpt_`
+  // prefix stripped — unless the caller passes an explicit --display-name.
+  const explicit = typeof argv["display-name"] === "string" && argv["display-name"].trim() !== ""
+    ? (argv["display-name"] as string).trim()
+    : undefined
+  const physicalTable = tableName.replace(/^v_gpt_/, "")
+  const displayName = explicit
+    ?? (workspace && schema ? `${workspace}.${schema}.${physicalTable}` : physicalTable)
+
   return mergeBody({}, {
     datasourceId: argv["datasource-id"],
     workspace,
     schema,
     tableName,
+    displayName,
   })
 }
 
@@ -1970,6 +1982,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     .option("workspace", { type: "string", describe: "Lakehouse workspace name (or embed it in --table as workspace.schema.table)" })
                     .option("schema", { type: "string", describe: "Schema name (or embed it in --table as workspace.schema.table)" })
                     .option("table", { type: "string", demandOption: true, describe: "Table name; a fully-qualified workspace.schema.table is auto-split" })
+                    .option("display-name", { type: "string", describe: "Display name shown in the UI; defaults to the physical table name" })
                     .example('cz-cli analytics-agent domain table add 27 --datasource-id 8448 --table "quick_start.construction_dw.v_gpt_fact_bid"', "Fully-qualified name is split into workspace/schema/table")
                     .epilogue("After adding, run `cz-cli analytics-agent domain detail <domain-id> --with-tables` to see each table's dataset ID (needed for join/metric/semantics commands)."),
                 async (argv) => {
