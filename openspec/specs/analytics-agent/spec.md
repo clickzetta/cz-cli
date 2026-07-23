@@ -22,6 +22,34 @@
 - **THEN** CLI 返回 usage error
 - **AND** 不调用远端服务
 
+### Requirement: id 参数本地校验为正整数
+
+`analytics-agent` 命令族的资源 id 参数（如 `domain-id`、`dataset-id`、`attr-id`、`metric-id`、`analysis-id`、`node-id`、`space-id`、`join-id`、`table-id`、`datasource-id`、`question-id`、`session-id` 等）MUST 在发请求前本地校验为正整数（安全整数范围内、> 0）。非数字、小数、0、负数、超出安全整数范围的输入 MUST 直接返回 `USAGE_ERROR`，不得把非法值发给后端而暴露为 HTTP 500 或后端 NPE。表示根节点的 `parent-id`（允许为 0）不受此约束。
+
+#### Scenario: 非数字 id 本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain detail abc`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 说明该 id 必须是正整数
+- **AND** 不调用远端服务
+
+#### Scenario: 小数 / 0 / 负数 / 溢出 id 本地拒绝
+
+- **WHEN** 用户对任一资源 id 传入 `27.5`、`0`、`-1` 或超出安全整数范围的值（如 `99999999999999999999`）
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **AND** 不调用远端服务
+
+#### Scenario: 合法 id 正常放行
+
+- **WHEN** 用户传入正整数 id
+- **THEN** 校验通过并正常调用远端服务
+
+#### Scenario: parent-id 允许为 0（根节点）
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file list <space-id> --parent-id 0`
+- **THEN** CLI MUST NOT 因 `parent-id=0` 报 `USAGE_ERROR`
+- **且** 正常按根节点查询
+
 ### Requirement: 输出字段面向用户和 agent
 
 本需求 MUST 按以下场景执行。

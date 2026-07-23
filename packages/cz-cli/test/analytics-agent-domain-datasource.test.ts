@@ -390,7 +390,7 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(result.exitCode).toBe(1)
     expect(parseError(result.output)).toEqual({
       code: "USAGE_ERROR",
-      message: "--domain-id must contain only positive integers",
+      message: "--domain-id must be a positive integer",
     })
   })
 

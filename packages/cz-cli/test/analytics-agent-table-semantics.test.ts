@@ -126,6 +126,43 @@ describe("analytics-agent table semantics", () => {
     }])
   })
 
+  test("columns alias hits the same semantics endpoint as semantics list", async () => {
+    let requestUrl = ""
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      requestUrl = String(input)
+      return jsonResponse({
+        success: true,
+        data: [{
+          attrId: 31,
+          datasetId: 195,
+          attrCode: "order_date",
+          description: "订单日期",
+          semanticType: "DATE_AND_TIME",
+          hidden: false,
+        }],
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "columns",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe("/open/api/v1/analytics-agent/datasets/195/semantics")
+    expect(parseData(result.output)).toEqual([{
+      attrId: 31,
+      datasetId: 195,
+      attrCode: "order_date",
+      description: "订单日期",
+      semanticType: "DATE_AND_TIME",
+      hidden: false,
+    }])
+  })
+
   test("get calls dataset semantics detail endpoint", async () => {
     let requestUrl = ""
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {

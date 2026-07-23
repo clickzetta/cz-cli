@@ -5,7 +5,7 @@ import { createTraceparent } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
-import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput } from "../output/index.js"
+import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
 import { getProfileAgentContext, getStudioContext, type StudioContext } from "./studio-context.js"
 import { logOperation } from "../logger.js"
@@ -299,6 +299,24 @@ function pickTableSemanticsFields(value: unknown): Record<string, unknown> {
   }
 }
 
+async function runTableSemanticsList(argv: Record<string, unknown>): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const payload = await requestAnalytics(argv, ROUTES.tableSemanticsList, {})
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
+    const data = unwrapResponse(payload)
+    const items = Array.isArray(data) ? data : []
+    success(items.map((item) => pickTableSemanticsFields(item)), { format, timeMs: Date.now() - t0 })
+  } catch (err) {
+    if (isHandledCliError(err)) return
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
 const DOMAIN_JOIN_RELATIONS = new Set(["n:1", "1:n", "1:1", "MANY_TO_ONE", "ONE_TO_MANY", "ONE_TO_ONE"])
 
 function resolveDomainJoinPathArgv(argv: Record<string, unknown>, format: string): Record<string, unknown> {
@@ -540,6 +558,186 @@ async function executeStatusCommandWithUpdateFallback(
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
     error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
+type StatusChangeMode =
+  | { mode: "single"; id: number }
+  | { mode: "batch"; domainId: number; datasourceId: number | undefined }
+
+// Decide whether an enable/disable invocation targets one id (positional) or a
+// whole domain (--all --domain-id). The two are mutually exclusive; one is
+// required. Prints USAGE_ERROR and throws the handled sentinel on misuse.
+function resolveStatusChangeMode(
+  argv: Record<string, unknown>,
+  positionalKey: string,
+  format: string,
+): StatusChangeMode {
+  const rawId = argv[positionalKey]
+  const hasId = rawId !== undefined
+  const all = argv.all === true
+  const domainIdRaw = argv["domain-id"]
+
+  if (hasId && all) {
+    handledError("USAGE_ERROR", `Pass either a single <${positionalKey}> or --all, not both.`, { format })
+  }
+  if (hasId) {
+    return { mode: "single", id: positiveIntegerValue(rawId, `--${positionalKey}`, format) as number }
+  }
+  if (all) {
+    if (domainIdRaw === undefined) {
+      handledError("USAGE_ERROR", "--all requires --domain-id to scope the batch.", { format })
+    }
+    return {
+      mode: "batch",
+      domainId: requiredPositiveIntegerValue(domainIdRaw, "--domain-id", format),
+      datasourceId: positiveIntegerValue(argv["datasource-id"], "--datasource-id", format),
+    }
+  }
+  return handledError("USAGE_ERROR", `Provide a <${positionalKey}> or use --all --domain-id <id> for a batch.`, { format })
+}
+
+interface BatchTargetItem {
+  id: number
+  name: string
+  status: string
+}
+
+function extractBatchTargets(data: unknown, nameKey: string): BatchTargetItem[] {
+  if (!Array.isArray(data)) return []
+  const targets: BatchTargetItem[] = []
+  for (const item of data) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const record = item as Record<string, unknown>
+    const id = numberValue(record.id)
+    if (id === undefined) continue
+    const rawName = record[nameKey]
+    const name = typeof rawName === "string"
+      ? rawName
+      : Array.isArray(rawName) && typeof rawName[0] === "string"
+        ? rawName[0]
+        : String(id)
+    const status = typeof record.status === "string" ? record.status : ""
+    targets.push({ id, name, status })
+  }
+  return targets
+}
+
+// Per-item status change that throws on failure (for batch use), mirroring the
+// single-item disable's primary→detail→update fallback: some ids reject the
+// direct enable/disable endpoint and must be flipped via a full update payload.
+async function applyStatusChangeWithFallback(
+  argv: Record<string, unknown>,
+  id: number,
+  status: "ENABLE" | "DISABLE",
+  ctx: ResolvedContext,
+  primaryRoute: AnalyticsRoute,
+  detailRoute: AnalyticsRoute,
+  updateRoute: AnalyticsRoute,
+  buildUpdateBody: (detail: unknown, status: "ENABLE" | "DISABLE") => Record<string, unknown> | null,
+): Promise<void> {
+  const body = { id }
+  try {
+    await requestAnalyticsData(argv, primaryRoute, body, {}, ctx)
+    return
+  } catch (err) {
+    const isNotFound = err instanceof AnalyticsBusinessError && shouldFallbackStatusCommand(err)
+    const isServerErr = err instanceof AnalyticsHttpError && (err.request.status ?? 0) >= 500
+    if (!isNotFound && !isServerErr) throw err
+  }
+  const detail = await requestAnalyticsData(argv, detailRoute, body, {}, ctx)
+  const updateBody = buildUpdateBody(detail, status)
+  if (!updateBody) {
+    throw new AnalyticsBusinessError("ANALYTICS_AGENT_ERROR", `could not build update payload for id ${id}`)
+  }
+  await requestAnalyticsData(argv, updateRoute, updateBody, {}, ctx)
+}
+
+async function runBatchStatusChange(
+  name: string,
+  argv: Record<string, unknown>,
+  targetStatus: "ENABLE" | "DISABLE",
+  listRoute: AnalyticsRoute,
+  listBody: Record<string, unknown>,
+  nameKey: string,
+  applyOne: (id: number, ctx: ResolvedContext) => Promise<void>,
+): Promise<void> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const ctx = await resolveAnalyticsContext(argv)
+
+    // Paginate the list so `--all` covers every item, not just the API's
+    // default first page. Loop until a page returns fewer than pageSize rows.
+    // Dedup by id and cap the page count so a backend that ignores pageNum
+    // (returning the same page forever) can't cause an infinite loop.
+    const pageSize = 200
+    const maxPages = 1000
+    const targets: BatchTargetItem[] = []
+    const seen = new Set<number>()
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const pageData = await requestAnalyticsData(
+        argv,
+        listRoute,
+        mergeBody({ ...listBody }, { pageNum, pageSize }),
+        {},
+        ctx,
+      )
+      const pageItems = extractBatchTargets(pageData, nameKey)
+      let added = 0
+      for (const item of pageItems) {
+        if (seen.has(item.id)) continue
+        seen.add(item.id)
+        targets.push(item)
+        added++
+      }
+      const pageLen = Array.isArray(pageData) ? pageData.length : pageItems.length
+      // Stop on a short page (last page) or when a full page contributed no new
+      // ids (backend ignored pageNum and returned a duplicate page).
+      if (pageLen < pageSize || added === 0) break
+    }
+
+    const results: Array<Record<string, unknown>> = []
+    let succeeded = 0
+    let failed = 0
+    let skipped = 0
+
+    for (const target of targets) {
+      if (target.status === targetStatus) {
+        skipped++
+        results.push({ id: target.id, name: target.name, result: "skipped", reason: `already ${targetStatus}` })
+        continue
+      }
+      try {
+        await applyOne(target.id, ctx)
+        succeeded++
+        results.push({ id: target.id, name: target.name, result: "succeeded" })
+      } catch (err) {
+        failed++
+        const message = err instanceof AnalyticsBusinessError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error ? err.message : String(err)
+        results.push({ id: target.id, name: target.name, result: "failed", error: message })
+      }
+    }
+
+    logOperation(name, { ok: failed === 0, timeMs: Date.now() - t0 })
+    success(
+      { total: targets.length, succeeded, failed, skipped, results },
+      { format, timeMs: Date.now() - t0 },
+    )
+    // success() resets exitCode to EXIT_OK; override AFTER it so a partial
+    // failure surfaces as a non-zero exit for scripts.
+    if (failed > 0) process.exitCode = EXIT_BIZ_ERROR
+  } catch (err) {
+    logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    const message = err instanceof AnalyticsBusinessError ? err.message : err instanceof Error ? err.message : String(err)
+    const code = err instanceof AnalyticsBusinessError ? err.code : "ANALYTICS_AGENT_ERROR"
+    error(code, message, {
       format,
       ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
@@ -1370,9 +1568,36 @@ async function executeAnalyticsPollCommand(
   }
 }
 
+// Positional/option id args that MUST be positive integers when present.
+// Excludes `parent-id` (0 = root folder is valid) and non-id args. yargs
+// coerces a non-numeric value like "abc" to NaN and a float like "27.5" stays
+// fractional; without this guard those reach the backend and surface as an
+// opaque HTTP 500 instead of a friendly usage error.
+const POSITIVE_INTEGER_ID_KEYS = [
+  "domain-id", "dataset-id", "attr-id", "metric-id", "analysis-id",
+  "node-id", "space-id", "join-id", "table-id", "datasource-id",
+  "question-id", "session-id", "source-id", "join-dataset-id",
+]
+
+function validatePositiveIntegerIds(argv: Record<string, unknown>): void {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  for (const key of POSITIVE_INTEGER_ID_KEYS) {
+    const value = argv[key]
+    if (value === undefined) continue
+    const values = Array.isArray(value) ? value : [value]
+    for (const v of values) {
+      if (typeof v !== "number") continue
+      if (!Number.isSafeInteger(v) || v <= 0) {
+        handledError("USAGE_ERROR", `--${key} must be a positive integer`, { format })
+      }
+    }
+  }
+}
+
 export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
   cli.command("analytics-agent", "Analytics Agent APIs", (yargs) => {
     yargs
+      .middleware((argv) => validatePositiveIntegerIds(argv as Record<string, unknown>))
       .command("datasource", "Manage Analytics Agent datasources", (datasource) => {
         datasource
           .command(
@@ -1792,29 +2017,20 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
         return commandGroup(domain, "analytics-agent domain")
       })
       .command("table", "Manage Analytics Agent table semantics", (table) => {
+        table
+          .command(
+            "columns <dataset-id>",
+            "List column semantics of a dataset (alias for `table semantics list`)",
+            (y) => y.positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" }),
+            (argv) => runTableSemanticsList(argv as Record<string, unknown>),
+          )
         table.command("semantics", "Manage dataset column semantics", (semantics) => {
           semantics
             .command(
               "list <dataset-id>",
               "List semantics for all columns in a dataset",
               (y) => y.positional("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" }),
-              async (argv) => {
-                const format = typeof argv.format === "string" ? argv.format : "json"
-                const t0 = Date.now()
-                try {
-                  const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.tableSemanticsList, {})
-                  const bizErr = extractBusinessError(payload)
-                  if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                  const data = unwrapResponse(payload)
-                  const items = Array.isArray(data) ? data : []
-                  success(items.map((item) => pickTableSemanticsFields(item)), { format, timeMs: Date.now() - t0 })
-                } catch (err) {
-                  if (isHandledCliError(err)) return
-                  error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                    format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
-                  })
-                }
-              },
+              (argv) => runTableSemanticsList(argv as Record<string, unknown>),
             )
             .command(
               "get <dataset-id> <attr-id>",
@@ -2086,7 +2302,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", array: true, describe: "Metric alias, can be repeated" })
-                .option("description", { type: "string", describe: "Metric description" }),
+                .option("description", { type: "string", describe: "Metric description" })
+                .example(
+                  'cz-cli analytics-agent metric create --domain-id 27 --datasource-id 8448 --table-name "quick_start.construction_dw.v_gpt_fact_bid" --name "总投标次数" --expression "COUNT(*)" --description "投标记录总数"',
+                  "Simple aggregate. --table-name must be fully qualified: catalog.schema.table",
+                )
+                .example(
+                  'cz-cli analytics-agent metric create --domain-id 27 --datasource-id 8448 --table-name "quick_start.construction_dw.v_gpt_fact_bid" --name "中标率" --expression "ROUND(SUM(win_flag)*100.0/COUNT(*),2)"',
+                  "Conditional metric. Wrap string comparisons in a virtual column (e.g. win_flag) instead of a SQL literal",
+                ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
@@ -2152,7 +2376,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", array: true, describe: "Metric alias, can be repeated" })
-                .option("description", { type: "string", describe: "Metric description" }),
+                .option("description", { type: "string", describe: "Metric description" })
+                .example(
+                  'cz-cli analytics-agent metric validate --domain-id 27 --datasource-id 8448 --table-name "quick_start.construction_dw.v_gpt_fact_bid" --name "总投标次数" --expression "COUNT(*)"',
+                  "Dry-run a metric definition before create/update",
+                ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
@@ -2169,31 +2397,87 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             },
           )
           .command(
-            "enable <metric-id>",
-            "Enable a metric",
+            "enable [metric-id]",
+            "Enable one metric, or all metrics in a domain with --all --domain-id",
             (y) =>
-              y.positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" }),
+              y
+                .positional("metric-id", { type: "number", describe: "Metric ID (omit and use --all --domain-id for a batch)" })
+                .option("all", { type: "boolean", describe: "Enable every metric in --domain-id" })
+                .option("domain-id", { type: "number", describe: "Domain ID (required with --all)" })
+                .option("datasource-id", { type: "number", describe: "Filter the batch to one datasource" })
+                .example("cz-cli analytics-agent metric enable 197", "Enable a single metric")
+                .example("cz-cli analytics-agent metric enable --all --domain-id 27", "Enable all metrics in a domain"),
             async (argv) => {
-              const body = mergeBody({}, { id: argv["metric-id"] })
-              await executeAnalyticsCommand("analytics-agent metric enable", argv as Record<string, unknown>, ROUTES.simpleMetricEnable, body)
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              let target: StatusChangeMode
+              try {
+                target = resolveStatusChangeMode(argv as Record<string, unknown>, "metric-id", format)
+              } catch (err) {
+                if (isHandledCliError(err)) return
+                throw err
+              }
+              if (target.mode === "single") {
+                const body = mergeBody({}, { id: target.id })
+                await executeAnalyticsCommand("analytics-agent metric enable", argv as Record<string, unknown>, ROUTES.simpleMetricEnable, body)
+                return
+              }
+              await runBatchStatusChange(
+                "analytics-agent metric enable --all",
+                argv as Record<string, unknown>,
+                "ENABLE",
+                ROUTES.simpleMetricList,
+                mergeBody({}, { domainIds: [target.domainId], datasourceId: target.datasourceId }),
+                "names",
+                (id, ctx) => requestAnalyticsData(argv as Record<string, unknown>, ROUTES.simpleMetricEnable, { id }, {}, ctx).then(() => {}),
+              )
             },
           )
           .command(
-            "disable <metric-id>",
-            "Disable a metric",
+            "disable [metric-id]",
+            "Disable one metric, or all metrics in a domain with --all --domain-id",
             (y) =>
-              y.positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" }),
+              y
+                .positional("metric-id", { type: "number", describe: "Metric ID (omit and use --all --domain-id for a batch)" })
+                .option("all", { type: "boolean", describe: "Disable every metric in --domain-id" })
+                .option("domain-id", { type: "number", describe: "Domain ID (required with --all)" })
+                .option("datasource-id", { type: "number", describe: "Filter the batch to one datasource" })
+                .example("cz-cli analytics-agent metric disable 197", "Disable a single metric")
+                .example("cz-cli analytics-agent metric disable --all --domain-id 27", "Disable all metrics in a domain"),
             async (argv) => {
-              const body = mergeBody({}, { id: argv["metric-id"] })
-              await executeStatusCommandWithUpdateFallback(
-                "analytics-agent metric disable",
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              let target: StatusChangeMode
+              try {
+                target = resolveStatusChangeMode(argv as Record<string, unknown>, "metric-id", format)
+              } catch (err) {
+                if (isHandledCliError(err)) return
+                throw err
+              }
+              if (target.mode === "single") {
+                const body = mergeBody({}, { id: target.id })
+                await executeStatusCommandWithUpdateFallback(
+                  "analytics-agent metric disable",
+                  argv as Record<string, unknown>,
+                  ROUTES.simpleMetricDisable,
+                  body,
+                  ROUTES.simpleMetricDetail,
+                  body,
+                  ROUTES.simpleMetricUpdate,
+                  (detail) => buildMetricUpdateBodyFromDetail(detail, "DISABLE"),
+                )
+                return
+              }
+              await runBatchStatusChange(
+                "analytics-agent metric disable --all",
                 argv as Record<string, unknown>,
-                ROUTES.simpleMetricDisable,
-                body,
-                ROUTES.simpleMetricDetail,
-                body,
-                ROUTES.simpleMetricUpdate,
-                (detail) => buildMetricUpdateBodyFromDetail(detail, "DISABLE"),
+                "DISABLE",
+                ROUTES.simpleMetricList,
+                mergeBody({}, { domainIds: [target.domainId], datasourceId: target.datasourceId }),
+                "names",
+                (id, ctx) => applyStatusChangeWithFallback(
+                  argv as Record<string, unknown>, id, "DISABLE", ctx,
+                  ROUTES.simpleMetricDisable, ROUTES.simpleMetricDetail, ROUTES.simpleMetricUpdate,
+                  buildMetricUpdateBodyFromDetail,
+                ),
               )
             },
           )
@@ -2206,6 +2490,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const body = mergeBody({}, { id: argv["metric-id"] })
               await executeAnalyticsCommand("analytics-agent metric delete", argv as Record<string, unknown>, ROUTES.simpleMetricDelete, body)
             },
+          )
+          .epilogue(
+            "A metric here is a simple_metric (single aggregate expression over one table). " +
+            "For multi-step / multi-table analysis use `answer-builder` (complex_metric). " +
+            "Both count toward a domain's targetCounts shown by `domain detail`.",
           )
         return commandGroup(metric, "analytics-agent metric")
       })
@@ -2220,7 +2509,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" }),
+                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" })
+                .example(
+                  'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "各省份中标金额排名" --content \'{"...DSL..."}\'',
+                  "Create a complex metric (answer builder). Run `answer-builder validate` first to check the --content DSL",
+                ),
             async (argv) => {
               const body = mergeBody({}, {
                 analysisName: argv["analysis-name"],
@@ -2256,31 +2549,87 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             },
           )
           .command(
-            "enable <analysis-id>",
-            "Enable an answer builder",
+            "enable [analysis-id]",
+            "Enable one answer builder, or all in a domain with --all --domain-id",
             (y) =>
-              y.positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" }),
+              y
+                .positional("analysis-id", { type: "number", describe: "Answer builder ID (omit and use --all --domain-id for a batch)" })
+                .option("all", { type: "boolean", describe: "Enable every answer builder in --domain-id" })
+                .option("domain-id", { type: "number", describe: "Domain ID (required with --all)" })
+                .option("datasource-id", { type: "number", describe: "Filter the batch to one datasource" })
+                .example("cz-cli analytics-agent answer-builder enable 9", "Enable a single answer builder")
+                .example("cz-cli analytics-agent answer-builder enable --all --domain-id 27", "Enable all answer builders in a domain"),
             async (argv) => {
-              const body = mergeBody({}, { id: argv["analysis-id"] })
-              await executeAnalyticsCommand("analytics-agent answer-builder enable", argv as Record<string, unknown>, ROUTES.answerBuilderEnable, body)
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              let target: StatusChangeMode
+              try {
+                target = resolveStatusChangeMode(argv as Record<string, unknown>, "analysis-id", format)
+              } catch (err) {
+                if (isHandledCliError(err)) return
+                throw err
+              }
+              if (target.mode === "single") {
+                const body = mergeBody({}, { id: target.id })
+                await executeAnalyticsCommand("analytics-agent answer-builder enable", argv as Record<string, unknown>, ROUTES.answerBuilderEnable, body)
+                return
+              }
+              await runBatchStatusChange(
+                "analytics-agent answer-builder enable --all",
+                argv as Record<string, unknown>,
+                "ENABLE",
+                ROUTES.answerBuilderList,
+                mergeBody({}, { domainIds: [target.domainId], datasourceId: target.datasourceId }),
+                "analysisName",
+                (id, ctx) => requestAnalyticsData(argv as Record<string, unknown>, ROUTES.answerBuilderEnable, { id }, {}, ctx).then(() => {}),
+              )
             },
           )
           .command(
-            "disable <analysis-id>",
-            "Disable an answer builder",
+            "disable [analysis-id]",
+            "Disable one answer builder, or all in a domain with --all --domain-id",
             (y) =>
-              y.positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" }),
+              y
+                .positional("analysis-id", { type: "number", describe: "Answer builder ID (omit and use --all --domain-id for a batch)" })
+                .option("all", { type: "boolean", describe: "Disable every answer builder in --domain-id" })
+                .option("domain-id", { type: "number", describe: "Domain ID (required with --all)" })
+                .option("datasource-id", { type: "number", describe: "Filter the batch to one datasource" })
+                .example("cz-cli analytics-agent answer-builder disable 9", "Disable a single answer builder")
+                .example("cz-cli analytics-agent answer-builder disable --all --domain-id 27", "Disable all answer builders in a domain"),
             async (argv) => {
-              const body = mergeBody({}, { id: argv["analysis-id"] })
-              await executeStatusCommandWithUpdateFallback(
-                "analytics-agent answer-builder disable",
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              let target: StatusChangeMode
+              try {
+                target = resolveStatusChangeMode(argv as Record<string, unknown>, "analysis-id", format)
+              } catch (err) {
+                if (isHandledCliError(err)) return
+                throw err
+              }
+              if (target.mode === "single") {
+                const body = mergeBody({}, { id: target.id })
+                await executeStatusCommandWithUpdateFallback(
+                  "analytics-agent answer-builder disable",
+                  argv as Record<string, unknown>,
+                  ROUTES.answerBuilderDisable,
+                  body,
+                  ROUTES.answerBuilderDetail,
+                  body,
+                  ROUTES.answerBuilderUpdate,
+                  (detail) => buildAnswerBuilderUpdateBodyFromDetail(detail, "DISABLE"),
+                )
+                return
+              }
+              await runBatchStatusChange(
+                "analytics-agent answer-builder disable --all",
                 argv as Record<string, unknown>,
-                ROUTES.answerBuilderDisable,
-                body,
-                ROUTES.answerBuilderDetail,
-                body,
-                ROUTES.answerBuilderUpdate,
-                (detail) => buildAnswerBuilderUpdateBodyFromDetail(detail, "DISABLE"),
+                "DISABLE",
+                ROUTES.answerBuilderList,
+                mergeBody({}, { domainIds: [target.domainId], datasourceId: target.datasourceId }),
+                "analysisName",
+                (id, ctx) => applyStatusChangeWithFallback(
+                  argv as Record<string, unknown>, id, "DISABLE", ctx,
+                  ROUTES.answerBuilderDisable, ROUTES.answerBuilderDetail, ROUTES.answerBuilderUpdate,
+                  buildAnswerBuilderUpdateBodyFromDetail,
+                ),
               )
             },
           )
@@ -2343,6 +2692,12 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               })
               await executeAnalyticsCommand("analytics-agent answer-builder validate", argv as Record<string, unknown>, ROUTES.answerBuilderValidate, body)
             },
+          )
+          .epilogue(
+            "An answer builder is a complex_metric (multi-step / multi-table analysis via a DSL --content). " +
+            "For a single aggregate over one table use `metric` (simple_metric) instead. " +
+            "Both count toward a domain's targetCounts shown by `domain detail`. " +
+            "Pass --domain-id to `answer-builder list` to scope results to one domain.",
           )
         return commandGroup(answerBuilder, "analytics-agent answer-builder")
       })

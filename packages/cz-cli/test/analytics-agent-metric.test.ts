@@ -342,4 +342,298 @@ describe("analytics-agent metric", () => {
     })
     expect(parseData(result.output)).toBe(301)
   })
+
+  test("batch enable lists domain, skips already-enabled, enables the rest", async () => {
+    const requestUrls: string[] = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requestUrls.push(url)
+      if (url.includes("/metrics/list")) {
+        return jsonResponse({
+          success: true,
+          data: [
+            { id: 197, names: ["平均预算总额"], status: "ENABLE" },
+            { id: 196, names: ["企业总数"], status: "DISABLE" },
+            { id: 195, names: ["中标率"], status: "DISABLE" },
+          ],
+        })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const enableCalls = requestUrls.filter((u) => u.includes("/metrics/enable"))
+    expect(enableCalls.length).toBe(2)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(3)
+    expect(data.succeeded).toBe(2)
+    expect(data.skipped).toBe(1)
+    expect(data.failed).toBe(0)
+  })
+
+  test("batch enable paginates the list so it covers items past the first page", async () => {
+    let listCalls = 0
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/metrics/list")) {
+        listCalls++
+        const body = init?.body ? JSON.parse(String(init.body)) : {}
+        // Page 1 is full (200 rows) -> forces a second page; page 2 has 5 rows.
+        if (body.pageNum === 1) {
+          const page = Array.from({ length: 200 }, (_, i) => ({ id: i + 1, names: [`m${i + 1}`], status: "DISABLE" }))
+          return jsonResponse({ success: true, data: page })
+        }
+        const page = Array.from({ length: 5 }, (_, i) => ({ id: 200 + i + 1, names: [`m${200 + i + 1}`], status: "DISABLE" }))
+        return jsonResponse({ success: true, data: page })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(listCalls).toBe(2)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(205)
+    expect(data.succeeded).toBe(205)
+  })
+
+  test("batch enable stops (no infinite loop) when the backend ignores pageNum", async () => {
+    // Simulate a broken backend that returns the SAME full page regardless of
+    // pageNum. Dedup-by-id + no-new-items guard must terminate after 2 calls.
+    let listCalls = 0
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes("/metrics/list")) {
+        listCalls++
+        const page = Array.from({ length: 200 }, (_, i) => ({ id: i + 1, names: [`m${i + 1}`], status: "DISABLE" }))
+        return jsonResponse({ success: true, data: page })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    // Page 1 adds 200 new ids; page 2 is identical -> 0 new -> stop.
+    expect(listCalls).toBe(2)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(200)
+  })
+
+  test("batch enable sets non-zero exit code when an item fails", async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/metrics/list")) {
+        return jsonResponse({
+          success: true,
+          data: [
+            { id: 196, names: ["企业总数"], status: "DISABLE" },
+            { id: 195, names: ["中标率"], status: "DISABLE" },
+          ],
+        })
+      }
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      if (body.id === 195) {
+        return jsonResponse({ success: false, code: "CZLH-42000", message: "invalid metric" })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.succeeded).toBe(1)
+    expect(data.failed).toBe(1)
+  })
+
+  test("batch disable reuses the detail+update fallback per item on not-found", async () => {
+    const requestUrls: string[] = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requestUrls.push(url)
+      if (url.includes("/metrics/list")) {
+        return jsonResponse({
+          success: true,
+          data: [{ id: 196, names: ["企业总数"], status: "ENABLE" }],
+        })
+      }
+      if (url.includes("/metrics/disable")) {
+        return jsonResponse({ success: false, code: "CZD-404", message: "metric not found: 196" })
+      }
+      if (url.includes("/metrics/detail")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            id: 196,
+            datasourceId: 11,
+            tableName: "orders",
+            names: ["企业总数"],
+            aggExpr: "count(*)",
+            domainIds: [27],
+          },
+        })
+      }
+      return jsonResponse({ success: true, data: 196 })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "disable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrls.some((u) => u.includes("/metrics/detail"))).toBe(true)
+    expect(requestUrls.some((u) => u.includes("/metrics/update"))).toBe(true)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.succeeded).toBe(1)
+    expect(data.failed).toBe(0)
+  })
+
+  test("enable rejects passing both an id and --all", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "197",
+      "--all",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("enable --all without --domain-id is a usage error", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--domain-id")
+  })
+
+  test("enable with no id and no --all is a usage error", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("non-numeric positional id is rejected locally, not sent to backend", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "abc"])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--metric-id must be a positive integer")
+  })
+
+  test("fractional positional id is rejected locally", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "27.5"])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("overflow positional id (beyond safe integer) is rejected locally", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "99999999999999999999"])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("zero and negative positional id are rejected locally", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const zero = await runAnalyticsCli(["analytics-agent", "metric", "detail", "0"])
+    expect(zero.exitCode).toBe(1)
+    expect(JSON.parse(zero.output.trim()).error.code).toBe("USAGE_ERROR")
+  })
+
+  test("valid positional id passes validation and reaches the backend", async () => {
+    let called = false
+    globalThis.fetch = mock(async () => {
+      called = true
+      return jsonResponse({ success: true, data: { id: 301, names: ["m"] } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "301"])
+
+    expect(called).toBe(true)
+    expect(result.exitCode).toBe(0)
+  })
 })

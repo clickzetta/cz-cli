@@ -16,6 +16,17 @@
 - **且** 请求包含 open token 鉴权和 `tenantId` query
 - **且** 输出包含每个字段的 `attrId`、`attrCode`、`semanticType`、`description`、`hidden`
 
+### Requirement: table columns 作为 semantics list 的扁平别名
+
+`cz-cli analytics-agent table columns <dataset-id>` MUST 作为 `table semantics list <dataset-id>` 的扁平别名，调用同一个 dataset 语义 open API 并返回相同结果，用于缩短查看数据集列语义的命令层级。
+
+#### Scenario: columns 别名命中与 semantics list 相同的端点
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table columns 195`
+- **THEN** CLI 调用 `GET /open/api/v1/analytics-agent/datasets/195/semantics`
+- **且** 输出包含每个字段的 `attrId`、`attrCode`、`semanticType`、`description`、`hidden`
+- **且** 输出与 `cz-cli analytics-agent table semantics list 195` 一致
+
 ### Requirement: table semantics get 查看单个字段语义详情
 
 `cz-cli analytics-agent table semantics get` MUST 支持按 `datasetId + attrId` 查看单个字段的语义详情。

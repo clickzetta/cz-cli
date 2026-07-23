@@ -26,6 +26,42 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --help`
 - **THEN** help 中不包含 `--body`
 
+#### Scenario: create help 提供可复制的使用示例
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --help`
+- **THEN** help 输出包含 `Examples:` 段
+- **且** 示例提示先用 `validate` 校验 `--content` DSL
+
+### Requirement: answer-builder 命令组帮助说明与 metric 的关系
+
+`cz-cli analytics-agent answer-builder --help` MUST 在 epilogue 中说明 answer-builder 是 complex_metric（多步/多表 DSL 分析），单表单聚合应使用 `metric`（simple_metric），且两者都计入 `domain detail` 的 targetCounts，并提示可用 `--domain-id` 把 `answer-builder list` 限定到单个 domain。
+
+#### Scenario: answer-builder 组帮助解释 complex/simple metric 关系
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder`（缺子命令，渲染组帮助）
+- **THEN** 帮助输出包含 `complex_metric`
+- **且** 帮助输出包含 `simple_metric`
+- **且** 帮助输出提到 `targetCounts`
+
+### Requirement: answer-builder enable/disable 支持按 domain 批量操作
+
+`cz-cli analytics-agent answer-builder enable` 与 `disable` MUST 同时支持单条模式（positional `analysis-id`）与批量模式（`--all --domain-id <id>`）。两种模式互斥且至少提供其一。批量模式 MUST 先列出该 domain 下的 answer-builder，跳过已处于目标状态的项，对其余逐个调用单条 enable/disable，并汇总 `total`、`succeeded`、`failed`、`skipped` 与逐项 `results`。批量 disable MUST 复用单条 disable 的 detail+update 回退逻辑。
+
+#### Scenario: 批量 disable 跳过已禁用项并禁用其余
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder disable --all --domain-id 27`
+- **AND** 该 domain 下有 2 个 answer-builder，其中 1 个已是 `DISABLE`
+- **THEN** CLI 先调用 answer-builder list
+- **且** 对已 `DISABLE` 的项标记为 `skipped`，不再调用 disable
+- **且** 对其余 1 项执行禁用
+- **且** 输出包含 `total=2`、`succeeded=1`、`skipped=1`、`failed=0`
+
+#### Scenario: 同时传 id 与 --all 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder enable 9 --all`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 说明二者互斥
+
 ### Requirement: answer-builder list 使用扁平过滤参数
 
 `cz-cli analytics-agent answer-builder list` MUST 使用显式过滤参数构造请求体，不把 `--body` 暴露为普通用户主路径。
