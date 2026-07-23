@@ -167,7 +167,11 @@ describe("ai-gateway key add-to-llm", () => {
 
     expect(result.exitCode).toBe(0)
     expect(json.ai_message).toBe("Virtual key created and registered as agent LLM 'demo-key' (now active).")
-    expect(entries.default_llm).toBe("demo-key")
+    // cz_change: no default_llm. --use makes the new entry active; when a model is
+    // already active its id is carried onto the new entry (config.model =
+    // demo-key/<modelId>), otherwise config.model stays unset and opencode
+    // auto-selects the sole entry. Either way the active entry prefix is demo-key.
+    if (typeof entries.model === "string") expect(entries.model.split("/")[0]).toBe("demo-key")
     expect(entries.llm["demo-key"]).toEqual({
       provider: "clickzetta",
       api_key: "ck-demo-key-plaintext",

@@ -234,9 +234,11 @@ function checkConfigured(): ReturnType<typeof notConfiguredResult> | undefined {
     return notConfiguredResult("no_profile")
   }
   try {
-    const { llm, default_llm } = readLlmEntries()
-    const active = default_llm && llm[default_llm]
-    if (!active || !active.provider || !active.api_key) return notConfiguredResult("no_llm")
+    // cz_change: no default_llm concept — a usable LLM just means at least one
+    // provider entry has both provider + api_key. opencode selects the model.
+    const { llm } = readLlmEntries()
+    const hasUsable = Object.values(llm).some((e) => e.provider && e.api_key)
+    if (!hasUsable) return notConfiguredResult("no_llm")
   } catch {
     return notConfiguredResult("no_llm")
   }

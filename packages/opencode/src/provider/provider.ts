@@ -1574,6 +1574,63 @@ export const layer = Layer.effect(
           })
         }
 
+        // cz_change: ClickZetta is a private gateway, so its models aren't in the
+        // models.dev catalog — the gateway is the only source of truth for which
+        // models exist. Discover them at runtime from its OpenAI-compatible
+        // `GET {baseURL}/v1/models` endpoint instead of hardcoding a catalog. This
+        // mirrors the built-in gitlab discoverModels pattern (the only native
+        // precedent for a private provider) but is keyed on the provider's npm —
+        // NOT its URL. The cz layer rewrites every genuine ClickZetta gateway
+        // provider's npm to a file:// specifier for the @clickzetta/ai-gateway
+        // package (see rewriteProviders/shouldRewriteProvider); matching on that
+        // reuses that authoritative decision, covers every entry regardless of
+        // name, and — unlike a domain check — correctly EXCLUDES misconfigured
+        // entries (e.g. a gateway URL wired to @ai-sdk/anthropic), letting the
+        // misconfig surface instead of being papered over. On any failure the
+        // model table is left as-is (no fallback), like gitlab.
+        yield* Effect.promise(async () => {
+          const isClickzettaProvider = (id: string): boolean => {
+            const npm = cfg.provider?.[id]?.npm
+            // file:// specifier (…/clickzetta-ai-gateway.js or …/clickzetta-ai-gateway/src/index.ts)
+            // or the bare package name when running un-rewritten (tests/dev).
+            return typeof npm === "string" && (npm.includes("clickzetta-ai-gateway") || npm === "@clickzetta/ai-gateway")
+          }
+          await Promise.all(
+            Object.entries(providers).map(async ([id, provider]) => {
+              const providerID = ProviderV2.ID.make(id)
+              if (!isProviderAllowed(providerID)) return
+              if (!isClickzettaProvider(id)) return
+              const baseURL =
+                typeof provider.options?.["baseURL"] === "string" ? (provider.options["baseURL"] as string) : undefined
+              if (!baseURL) return
+              const apiKey =
+                typeof provider.key === "string"
+                  ? provider.key
+                  : typeof provider.options?.["apiKey"] === "string"
+                    ? (provider.options["apiKey"] as string)
+                    : undefined
+              if (!apiKey) return
+              // Discovered models reuse the provider's (already clickzetta) npm —
+              // the file:// specifier for the private, unpublished package. A bare
+              // package name would hit the Npm.add() registry path and fail.
+              const npm = cfg.provider![id]!.npm as string
+              try {
+                const response = await fetch(clickzettaModelsUrl(baseURL), {
+                  method: "GET",
+                  headers: { Authorization: `Bearer ${apiKey}` },
+                })
+                if (!response.ok) return
+                const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
+                for (const entry of body.data ?? []) {
+                  const modelID = typeof entry?.id === "string" ? entry.id : undefined
+                  if (!modelID || provider.models[modelID]) continue
+                  provider.models[modelID] = buildClickzettaModel(providerID, modelID, baseURL, npm)
+                }
+              } catch (e) {}
+            }),
+          )
+        })
+
         for (const [id, provider] of Object.entries(providers)) {
           const providerID = ProviderV2.ID.make(id)
           if (!isProviderAllowed(providerID)) {
@@ -1976,6 +2033,50 @@ export function parseModel(model: string) {
   return {
     providerID: ProviderV2.ID.make(providerID),
     modelID: ModelV2.ID.make(rest.join("/")),
+  }
+}
+
+// cz_change: ClickZetta dynamic-discovery helpers, extracted from the loader loop
+// above so the mapping logic is unit-testable. The gateway base may or may not
+// already carry "/v1"; normalize to exactly one "/v1/models".
+export function clickzettaModelsUrl(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, "")
+  return `${/\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`}/models`
+}
+
+// Build a Model from a gateway model id. Gateway ids look like
+// "deepseek/deepseek-v4-pro" — the WHOLE string is the modelID (parseModel splits
+// on the first "/", so the full ref stays <entry>/<vendor>/<model> with no double
+// prefix). family is the vendor segment; cost/limit/capabilities get conservative
+// defaults since /v1/models returns only ids.
+export function buildClickzettaModel(
+  providerID: ProviderV2.ID,
+  modelID: string,
+  baseURL: string,
+  npm: string,
+): Model {
+  return {
+    id: ModelV2.ID.make(modelID),
+    providerID,
+    name: modelID,
+    family: modelID.includes("/") ? modelID.slice(0, modelID.indexOf("/")) : "",
+    api: { id: modelID, url: baseURL, npm },
+    status: "active",
+    headers: {},
+    options: {},
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 128000, output: 16384 },
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: false,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    release_date: "",
+    variants: {},
   }
 }
 

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { parse as parseToml } from "smol-toml"
 import { studioRequest } from "@clickzetta/sdk"
 import { getGatewayContext } from "../commands/studio-context.js"
-import { readLlmEntries, writeLlmEntries } from "./native-config.js"
+import { readLlmConfig, readLlmEntries, setActiveModel, writeLlmEntries } from "./native-config.js"
 
 const DEFAULT_QUOTA_TOTAL = 10000000
 const API = {
@@ -176,7 +176,19 @@ function writeRotatedKey(input: {
     api_key: input.apiKey,
     base_url: input.baseUrl,
   }
-  writeLlmEntries({ llm, default_llm: entryName })
+  writeLlmEntries({ llm })
+  // cz_change: rotation replaces an exhausted key with a fresh entry and MUST make
+  // the new entry active, otherwise requests keep hitting the drained key. Unlike
+  // first-login (where opencode's auto-select suffices), here several clickzetta
+  // entries coexist, so we pin config.model explicitly. The new entry points at
+  // the same gateway with the same models, so carry the currently-selected model
+  // id onto the new entry (swap only the provider prefix). If nothing is selected
+  // yet, leave config.model unset and let opencode auto-select.
+  const active = readLlmConfig().model
+  if (typeof active === "string" && active.includes("/")) {
+    const modelId = active.slice(active.indexOf("/") + 1)
+    if (modelId) setActiveModel(`${entryName}/${modelId}`)
+  }
   return entryName
 }
 

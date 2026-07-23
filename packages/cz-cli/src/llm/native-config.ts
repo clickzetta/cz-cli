@@ -4,7 +4,6 @@ import path from "path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
 import {
   CLICKZETTA_DEFAULT_GATEWAY_URL,
-  CLICKZETTA_MODELS,
   CLICKZETTA_PROVIDER_NAME,
   CLICKZETTA_PROVIDER_NPM,
   isClickzettaGatewayUrl,
@@ -81,13 +80,17 @@ export function providerFromInput(input: {
   entryName?: string
 }): NativeProvider {
   if (input.provider === "clickzetta") {
+    // cz_change: no `models` here. ClickZetta's catalog is discovered at runtime
+    // from the gateway's `GET /v1/models` endpoint (see the clickzetta custom
+    // loader in opencode's provider.ts). llm.json holds connection info only —
+    // matching opencode's native model where `auth login` never writes a model
+    // list. This kills the per-provider CLICKZETTA_MODELS duplication + drift.
     return {
       name: input.entryName ?? CLICKZETTA_PROVIDER_NAME,
       npm: CLICKZETTA_PROVIDER_NPM,
       api: "",
       env: [],
       options: { apiKey: input.apiKey, baseURL: input.baseURL ?? CLICKZETTA_DEFAULT_GATEWAY_URL },
-      models: CLICKZETTA_MODELS,
     }
   }
   const provider: NativeProvider = {
@@ -124,7 +127,9 @@ export function upsertProvider(input: {
   config.provider = config.provider ?? {}
   // cz_change: entryName = the provider key so name groups the /model picker per entry.
   config.provider[input.name] = providerFromInput({ ...input, entryName: input.name })
-  if (input.setDefault) config.model = input.model ? `${input.name}/${input.model}` : input.name
+  // cz_change: only pin config.model when a concrete model is given — a bare
+  // `<name>` breaks opencode's parseModel. Without a model, opencode auto-selects.
+  if (input.setDefault && input.model) config.model = `${input.name}/${input.model}`
   writeLlmConfig(config)
 }
 
@@ -164,23 +169,30 @@ function entryFromProvider(provider: NativeProvider): LlmEntryView {
   }
 }
 
-export function readLlmEntries(): { llm: Record<string, LlmEntryView>; default_llm?: string } {
+// cz_change: aligned with opencode — there is no cz-specific "default_llm"
+// concept anymore. opencode's single source of truth for the active model is the
+// top-level `config.model` string (`provider/model`, e.g. anthropic/claude-2, or
+// clickzetta/deepseek/deepseek-v4-pro). We surface it raw as `model` for display;
+// callers set it explicitly via setActiveModel (the `agent llm use` command).
+export function readLlmEntries(): { llm: Record<string, LlmEntryView>; model?: string } {
   const config = readLlmConfig()
   const llm = Object.fromEntries(
     Object.entries(config.provider ?? {}).map(([name, provider]) => [name, entryFromProvider(provider)]),
   )
-  const default_llm = typeof config.model === "string" ? config.model.split("/")[0] : undefined
-  return { llm, ...(default_llm && { default_llm }) }
+  return { llm, ...(typeof config.model === "string" && config.model ? { model: config.model } : {}) }
 }
 
 function viewsEqual(a: LlmEntryView, b: LlmEntryView): boolean {
   return a.provider === b.provider && a.api_key === b.api_key && a.base_url === b.base_url && a.model === b.model
 }
 
-export function writeLlmEntries(input: { llm: Record<string, LlmEntryView>; default_llm?: string }) {
+// cz_change: writes only the provider map. The active model (config.model) is
+// opencode-native and managed separately via setActiveModel / clearActiveModel —
+// writing providers must never touch it (adding/removing an entry shouldn't
+// silently change which model is active). config.model is left untouched here.
+export function writeLlmEntries(input: { llm: Record<string, LlmEntryView> }) {
   const config = readLlmConfig()
   const prevProviders = config.provider ?? {}
-  const prevModel = typeof config.model === "string" ? config.model : undefined
 
   config.provider = Object.fromEntries(
     Object.entries(input.llm).map(([name, entry]) => {
@@ -209,23 +221,44 @@ export function writeLlmEntries(input: { llm: Record<string, LlmEntryView>; defa
     }),
   )
 
-  if (input.default_llm && input.llm[input.default_llm]) {
-    const view = input.llm[input.default_llm]
-    const prevDefault = prevModel?.split("/")[0]
-    if (view.model) {
-      config.model = `${input.default_llm}/${view.model}`
-    } else if (prevDefault === input.default_llm && prevModel && prevModel.includes("/")) {
-      // Default provider unchanged and the reduced view carries no model — keep
-      // the full selected model id (e.g. clickzetta/deepseek/deepseek-v4-pro).
-      // Deriving default_llm from config.model.split("/")[0] drops that suffix,
-      // so reconstructing `${default_llm}` alone would silently reset the model.
-      config.model = prevModel
-    } else {
-      config.model = input.default_llm
-    }
-  } else {
-    delete config.model
+  // If the active model points at an entry that no longer exists, drop it so a
+  // stale selection can't linger (opencode then auto-selects). Keeps config.model
+  // honest without inventing a replacement.
+  if (typeof config.model === "string") {
+    const entry = config.model.split("/")[0]
+    if (entry && !config.provider[entry]) delete config.model
   }
+  writeLlmConfig(config)
+}
+
+// cz_change: set opencode's active model (config.model). `providerModel` is a full
+// `provider/model` reference (e.g. anthropic/claude-2 or clickzetta/deepseek/…).
+// This is the one explicit way to pin the active model — the `agent llm use`
+// command. Absence of config.model means opencode auto-selects (recent → first).
+export function setActiveModel(providerModel: string) {
+  const config = readLlmConfig()
+  config.model = providerModel
+  writeLlmConfig(config)
+}
+
+// cz_change: validate a `use <model>` argument before pinning it. A model ref
+// must be `<entry>/<modelId>` where <entry> is a defined provider (opencode's
+// parseModel splits on the first "/", so a bare entry name yields an empty
+// modelID and breaks selection). Pure so the command layer and tests share it.
+export type ModelRefValidation =
+  | { ok: true; entry: string }
+  | { ok: false; code: "INVALID_MODEL_REF" | "NOT_FOUND"; entry?: string }
+
+export function validateModelRef(model: string, entries: Record<string, unknown>): ModelRefValidation {
+  if (!model.includes("/")) return { ok: false, code: "INVALID_MODEL_REF" }
+  const entry = model.split("/")[0]
+  if (!entry || !entries[entry]) return { ok: false, code: "NOT_FOUND", entry }
+  return { ok: true, entry }
+}
+
+export function clearActiveModel() {
+  const config = readLlmConfig()
+  delete config.model
   writeLlmConfig(config)
 }
 
@@ -301,11 +334,14 @@ export function migrateProfilesLlmToJson(): string[] {
     return []
   }
 
-  // Carry over default selection if llm.json has none yet.
+  // Carry over legacy default selection into opencode's config.model, but ONLY
+  // when a concrete model is known — a bare `<entry>` (no model) would break
+  // opencode's parseModel (empty modelID). Without a model we leave config.model
+  // unset and let opencode auto-select (recent → first available).
   if (config.model === undefined && typeof root.default_llm === "string" && llm[root.default_llm]) {
     const raw = llm[root.default_llm]
     const model = isRecord(raw) && typeof raw.model === "string" ? raw.model : undefined
-    config.model = model ? `${root.default_llm}/${model}` : root.default_llm
+    if (model) config.model = `${root.default_llm}/${model}`
   }
 
   writeLlmConfig(config)

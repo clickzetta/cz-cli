@@ -7,6 +7,7 @@ import {
   readLlmConfig,
   readLlmEntries,
   writeLlmEntries,
+  setActiveModel,
   upsertProvider,
   removeProvider,
   migrateProfilesLlmToJson,
@@ -40,9 +41,10 @@ describe("native-config llm.json", () => {
       "my-claude": { provider: "anthropic", api_key: "sk-ant", model: "claude-sonnet-4-6" },
       clickzetta: { provider: "clickzetta", api_key: "cz-key", base_url: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1" },
     }
-    writeLlmEntries({ llm: entries, default_llm: "my-relay" })
+    writeLlmEntries({ llm: entries })
+    setActiveModel("my-relay/qwen-max")
     const got = readLlmEntries()
-    expect(got.default_llm).toBe("my-relay")
+    expect(got.model).toBe("my-relay/qwen-max")
     expect(got.llm["my-relay"]).toEqual(entries["my-relay"])
     expect(got.llm["my-claude"]).toEqual(entries["my-claude"])
     expect(got.llm["clickzetta"].provider).toBe("clickzetta")
@@ -53,8 +55,8 @@ describe("native-config llm.json", () => {
   test("stored file is opencode-native (provider/options/model), not TOML shape", () => {
     writeLlmEntries({
       llm: { "my-relay": { provider: "openai-compatible", api_key: "sk-x", base_url: "https://x/v1", model: "qwen-max" } },
-      default_llm: "my-relay",
     })
+    setActiveModel("my-relay/qwen-max")
     const raw = JSON.parse(readFileSync(llmConfigPath(), "utf-8"))
     expect(raw.$schema).toBe("https://opencode.ai/config.json")
     expect(raw.provider["my-relay"].npm).toBe("@ai-sdk/openai-compatible")
@@ -84,7 +86,6 @@ describe("native-config llm.json", () => {
         alpha: { provider: "clickzetta", api_key: "k1", base_url: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1" },
         beta: { provider: "clickzetta", api_key: "k2", base_url: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1" },
       },
-      default_llm: "alpha",
     })
     const raw = JSON.parse(readFileSync(llmConfigPath(), "utf-8"))
     expect(raw.provider.alpha.name).toBe("alpha")
@@ -158,7 +159,9 @@ describe("migrateProfilesLlmToJson", () => {
     expect(raw.provider.demo.name).toBe("demo")
     expect(raw.provider.demo_1.name).toBe("demo_1")
     expect(raw.provider.demo.options.apiKey).toBe("sk-demo")
-    expect(raw.model).toBe("demo")
+    // cz_change: legacy default_llm="demo" had no model, so config.model is left
+    // unset (a bare "demo" would break opencode's parseModel); opencode auto-selects.
+    expect(raw.model).toBeUndefined()
 
     // profiles.toml: [llm.*]/default_llm stripped, connection profile + OAuth intact
     const toml = readFileSync(profilesPath(), "utf-8")

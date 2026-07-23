@@ -7,7 +7,7 @@ import { logOperation } from "../logger.js"
 import { getGatewayContext, type GatewayContext } from "./studio-context.js"
 import { pinAlicloudAdminHost } from "../llm/clickzetta-rotation.js"
 import { readProfileEntry } from "../connection/profile-store.js"
-import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
+import { readLlmConfig, readLlmEntries, setActiveModel, writeLlmEntries } from "../llm/native-config.js"
 
 // ── AIGW admin API paths ────────────────────────────────────────────────────
 // Portal-proxied endpoints (standard portal token auth):
@@ -55,13 +55,18 @@ async function gwRequest<T>(sc: StudioConfig, path: string, body: unknown): Prom
   return resp
 }
 
-/** Try to resolve a virtual key from the active ClickZetta LLM in ~/.clickzetta/llm.json. */
+/** Try to resolve a virtual key from a ClickZetta LLM in ~/.clickzetta/llm.json.
+ *  Prefers the entry opencode has active (config.model's provider prefix); falls
+ *  back to the first clickzetta entry. cz_change: no default_llm concept anymore. */
 function resolveDefaultKey(): string | undefined {
-  const { llm, default_llm: name } = readLlmEntries()
-  if (!name) return undefined
-  const entry = llm[name]
-  if (!entry || entry.provider !== "clickzetta") return undefined
-  return entry.api_key
+  const { llm, model } = readLlmEntries()
+  const activeEntry = typeof model === "string" && model.includes("/") ? model.split("/")[0] : undefined
+  if (activeEntry) {
+    const entry = llm[activeEntry]
+    if (entry?.provider === "clickzetta" && entry.api_key) return entry.api_key
+  }
+  const firstClickzetta = Object.values(llm).find((e) => e.provider === "clickzetta" && e.api_key)
+  return firstClickzetta?.api_key
 }
 
 function reportError(err: unknown, format: string | undefined): void {
@@ -168,11 +173,16 @@ function addToLlm(
 ): Dict {
   const config = readLlmEntries()
   const entries = Object.values(config.llm)
-  const defaultEntry = config.default_llm ? config.llm[config.default_llm] : undefined
+  // cz_change: no default_llm. Infer base_url from the active entry (config.model's
+  // provider prefix) if it's clickzetta, else the first clickzetta entry.
+  const activeEntry =
+    typeof config.model === "string" && config.model.includes("/") ? config.model.split("/")[0] : undefined
+  const activeClickzetta =
+    activeEntry && config.llm[activeEntry]?.provider === "clickzetta" ? config.llm[activeEntry] : undefined
   const existing = config.llm[name] ?? {}
   const baseUrl =
     configuredAiGatewayUrl()
-    ?? (defaultEntry?.provider === "clickzetta" ? defaultEntry.base_url : undefined)
+    ?? activeClickzetta?.base_url
     ?? entries.find((entry) => entry.provider === "clickzetta" && entry.base_url)?.base_url
     ?? aimeshEndpoint(serviceBaseUrl)
   const hadLlm = entries.length > 0
@@ -182,12 +192,18 @@ function addToLlm(
     api_key: apiKey,
     base_url: baseUrl,
   }
+  writeLlmEntries({ llm: config.llm })
+  // cz_change: --use (or first-ever entry) makes this the active LLM. With no
+  // stored model, carry the currently-active model id onto the new entry (same
+  // gateway, same models); if none is active yet, leave config.model unset and
+  // let opencode auto-select the first available model.
   const makeDefault = use || !hadLlm
-  writeLlmEntries({
-    llm: config.llm,
-    ...(makeDefault ? { default_llm: name } : config.default_llm ? { default_llm: config.default_llm } : {}),
-  })
-  return { name, base_url: baseUrl, default_llm: makeDefault }
+  if (makeDefault) {
+    const active = readLlmConfig().model
+    const modelId = typeof active === "string" && active.includes("/") ? active.slice(active.indexOf("/") + 1) : undefined
+    if (modelId) setActiveModel(`${name}/${modelId}`)
+  }
+  return { name, base_url: baseUrl, active: makeDefault }
 }
 
 function removeFromLlm(apiKey: string): string | undefined {
@@ -196,10 +212,8 @@ function removeFromLlm(apiKey: string): string | undefined {
   if (!match) return undefined
   const [name] = match
   delete config.llm[name]
-  writeLlmEntries({
-    llm: config.llm,
-    ...(config.default_llm && config.default_llm !== name ? { default_llm: config.default_llm } : {}),
-  })
+  // writeLlmEntries drops config.model automatically if it pointed at this entry.
+  writeLlmEntries({ llm: config.llm })
   return name
 }
 
@@ -372,7 +386,7 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
 
                 const aiMessage = registered
-                  ? `Virtual key created and registered as agent LLM '${registered.name}'${registered.default_llm ? " (now active)" : ""}.`
+                  ? `Virtual key created and registered as agent LLM '${registered.name}'${registered.active ? " (now active)" : ""}.`
                   : `Virtual key created. To use it with the agent run: cz-cli agent llm add ${argv.alias} --provider clickzetta --api-key <vApiKey> --base-url ${aimeshEndpoint(sc.baseUrl)} --use`
                 logOperation("gateway key create", { ok: true, timeMs: Date.now() - t0 })
                 success(

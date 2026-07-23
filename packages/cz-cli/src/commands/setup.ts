@@ -785,10 +785,9 @@ async function tryFetchAndSaveClickzettaApiKey(
       provider: "clickzetta",
       api_key: apiKey,
     }
-    writeLlmEntries({
-      llm: config.llm,
-      ...(config.default_llm ? { default_llm: config.default_llm } : { default_llm: profileName }),
-    })
+    // cz_change: no default_llm — opencode picks the active model (config.model
+    // → recent → first). A fresh setup has just this provider, so it's selected.
+    writeLlmEntries({ llm: config.llm })
   } catch {
     // best-effort: never block setup
   }

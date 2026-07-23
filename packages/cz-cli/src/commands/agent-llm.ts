@@ -1,7 +1,14 @@
 import type { Argv, CommandModule } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { maybeRotateExhaustedClickzettaLlm } from "../llm/clickzetta-rotation.js"
-import { readLlmEntries, writeLlmEntries, type LlmEntryView } from "../llm/native-config.js"
+import {
+  clearActiveModel,
+  readLlmEntries,
+  setActiveModel,
+  validateModelRef,
+  writeLlmEntries,
+  type LlmEntryView,
+} from "../llm/native-config.js"
 import { buildLlmProbeRequest, normalizeLlmBaseUrl } from "../llm/probe.js"
 
 const VALID_PROVIDERS = [
@@ -20,9 +27,12 @@ const DEFAULT_BASE_URLS = {
   openrouter: "https://openrouter.ai/api",
 } as const
 
+// cz_change: no default_llm. `model` is opencode's active model ref (config.model,
+// e.g. "clickzetta/deepseek/deepseek-v4-pro"); the active *entry* is its provider
+// prefix (first "/"-segment). Absent → opencode auto-selects (recent → first).
 type LlmState = {
   llm: Record<string, LlmEntryView>
-  default_llm?: string
+  model?: string
 }
 
 type LlmTarget = {
@@ -39,18 +49,25 @@ function cmd<T, U>(input: CommandModule<T, U>) {
 }
 
 function readState(): LlmState {
-  const { llm, default_llm } = readLlmEntries()
+  const { llm, model } = readLlmEntries()
   return {
     llm: Object.fromEntries(Object.entries(llm).map(([name, entry]) => [name, { ...entry }])),
-    ...(default_llm ? { default_llm } : {}),
+    ...(model ? { model } : {}),
   }
 }
 
+// Persists only the provider map. The active model (config.model) is managed
+// explicitly via setActiveModel/clearActiveModel, never as a side effect of
+// writing entries.
 function writeState(state: LlmState) {
-  writeLlmEntries({
-    llm: state.llm,
-    ...(state.default_llm ? { default_llm: state.default_llm } : {}),
-  })
+  writeLlmEntries({ llm: state.llm })
+}
+
+// The active entry name = provider prefix of config.model (first "/"-segment).
+function activeEntryName(state: LlmState): string | undefined {
+  if (typeof state.model !== "string" || !state.model.includes("/")) return undefined
+  const name = state.model.split("/")[0]
+  return name && state.llm[name] ? name : undefined
 }
 
 function mask(value: string | undefined): string | null {
@@ -158,8 +175,13 @@ function resolveBaseUrl(provider: string, baseUrl: string | undefined): string |
   return normalizeLlmBaseUrl(provider, baseUrl)
 }
 
+// The entry to act on when the user names none: the active entry (config.model's
+// prefix), else — to keep `test` useful — the sole entry if there's exactly one.
 function resolveEntryName(state: LlmState): string | undefined {
-  return typeof state.default_llm === "string" ? state.default_llm : undefined
+  const active = activeEntryName(state)
+  if (active) return active
+  const names = Object.keys(state.llm)
+  return names.length === 1 ? names[0] : undefined
 }
 
 function resolveLlmTarget(state: LlmState, name?: string): LlmTarget | undefined {
@@ -167,12 +189,17 @@ function resolveLlmTarget(state: LlmState, name?: string): LlmTarget | undefined
   if (!targetName) return undefined
   const entry = state.llm[targetName]
   if (!entry) return undefined
+  // The selected model id for this entry, if it's the active one.
+  const model =
+    activeEntryName(state) === targetName && typeof state.model === "string" && state.model.includes("/")
+      ? state.model.slice(state.model.indexOf("/") + 1)
+      : entry.model
   return {
     name: targetName,
     provider: entry.provider,
     apiKey: entry.api_key,
     baseUrl: entry.base_url,
-    model: entry.model,
+    model,
     source: "llm",
   }
 }
@@ -195,13 +222,18 @@ function ok(isTTY: boolean, ttyMessage: string, jsonData: Record<string, unknown
   process.exit(0)
 }
 
+// Describes the active model. "Active" = config.model (opencode's selection). If
+// config.model is unset, opencode auto-selects at runtime, so we report that.
 function describeActive(state: LlmState): { kind: "llm" | "none"; name: string; detail: string } {
-  const name = resolveEntryName(state)
-  if (!name) return { kind: "none", name: "", detail: "none configured" }
+  const name = activeEntryName(state)
+  if (!name || typeof state.model !== "string") {
+    return { kind: "none", name: "", detail: "auto (opencode selects at runtime)" }
+  }
   const entry = state.llm[name]
-  if (!entry?.provider || !entry.api_key) return { kind: "none", name: "", detail: "none configured" }
-  const detail = entry.model ? `${entry.provider}/${entry.model} (via default_llm)` : `${entry.provider} (via default_llm)`
-  return { kind: "llm", name, detail }
+  if (!entry?.provider || !entry.api_key) {
+    return { kind: "none", name: "", detail: "auto (opencode selects at runtime)" }
+  }
+  return { kind: "llm", name, detail: `${state.model} (config.model)` }
 }
 
 const LlmListCommand = cmd({
@@ -212,18 +244,22 @@ const LlmListCommand = cmd({
     const isTTY = process.stderr.isTTY
     const state = readState()
     const names = Object.keys(state.llm)
-    const defaultLlm = resolveEntryName(state) ?? null
+    // cz_change: `*` marks the active entry (config.model's provider prefix), not
+    // a cz "default_llm". JSON exposes `active` (entry name) + `model` (full ref).
+    const active = activeEntryName(state) ?? null
     if (isTTY) {
       if (names.length === 0) {
         process.stderr.write("  (no agent LLM entries configured)\n")
       } else {
         for (const name of names) {
-          const marker = name === defaultLlm ? "* " : "  "
+          const marker = name === active ? "* " : "  "
           process.stdout.write(`${marker}${name}\n`)
         }
       }
     } else {
-      process.stdout.write(JSON.stringify({ data: { llms: names, default_llm: defaultLlm } }) + "\n")
+      process.stdout.write(
+        JSON.stringify({ data: { llms: names, active, model: state.model ?? null } }) + "\n",
+      )
     }
     process.exit(0)
   },
@@ -295,7 +331,7 @@ const LlmAddCommand = cmd({
       .option("model", {
         type: "string",
         alias: ["llm-model"],
-        describe: "model ID to use by default when this entry is selected via default_llm and config.model is unset",
+        describe: "model ID for this entry; with --use it becomes the active model (config.model)",
       })
       .option("api-key", { type: "string", alias: ["llm-api-key"], describe: "API key for the provider" })
       .option("base-url", {
@@ -306,11 +342,11 @@ const LlmAddCommand = cmd({
       .option("use", {
         type: "boolean",
         alias: ["set-default"],
-        describe: "after writing, set default_llm to this entry",
+        describe: "after writing, make this entry the active model (sets config.model)",
       })
       .example(
         "$0 llm add my-claude --provider anthropic --api-key sk-ant-... --use",
-        "add Claude and make it the default (model auto-selected)",
+        "add Claude and make it active (model auto-selected if not given)",
       )
       .example("$0 llm add my-openai --provider openai --api-key sk-...", "add OpenAI (not default)")
       .example("$0 llm add my-claude --provider anthropic --api-key sk-ant-... --model claude-opus-4-1 --use", "add Claude with specific model"),
@@ -371,10 +407,28 @@ const LlmAddCommand = cmd({
     }
 
     llms[name] = entry
-    writeState({
-      llm: llms,
-      ...(opts.use ? { default_llm: name } : state.default_llm ? { default_llm: state.default_llm } : {}),
-    })
+    writeState({ llm: llms })
+
+    // cz_change: --use sets opencode's active model (config.model) to this entry.
+    // Need a concrete model id: prefer --model; else carry the currently-active
+    // model id (same-gateway switch); else leave config.model unset and let
+    // opencode auto-select. A bare `<name>` (no model) would break parseModel.
+    let activated: string | undefined
+    if (opts.use) {
+      const carried =
+        typeof state.model === "string" && state.model.includes("/")
+          ? state.model.slice(state.model.indexOf("/") + 1)
+          : undefined
+      const modelId = entry.model ?? carried
+      if (modelId) {
+        activated = `${name}/${modelId}`
+        setActiveModel(activated)
+      } else {
+        // No model to pin — clear any stale selection so opencode auto-selects
+        // (the freshly added entry participates in that choice).
+        clearActiveModel()
+      }
+    }
 
     const action = isNew ? "added" : "updated"
     const ttyOut = [
@@ -383,7 +437,7 @@ const LlmAddCommand = cmd({
       entry.model && `    model:    ${entry.model}`,
       entry.api_key && `    api_key:  ${mask(entry.api_key)}`,
       entry.base_url && `    base_url: ${entry.base_url}`,
-      opts.use && `    default_llm = "${name}"`,
+      opts.use && (activated ? `    config.model = "${activated}"` : `    active (opencode auto-selects model)`),
       "",
       "",
     ]
@@ -397,6 +451,7 @@ const LlmAddCommand = cmd({
       model: entry.model,
       base_url: entry.base_url,
       used: !!opts.use,
+      active_model: activated ?? null,
     })
   },
 })
@@ -405,7 +460,7 @@ const LlmTestCommand = cmd({
   command: "test [name]",
   describe: "test the active or named LLM entry with a lightweight connectivity probe",
   builder: (yargs: Argv) =>
-    yargs.positional("name", { type: "string", describe: "entry name; defaults to default_llm" }),
+    yargs.positional("name", { type: "string", describe: "entry name; defaults to the active entry (or the only one)" }),
   async handler(args) {
     const isTTY = process.stderr.isTTY
     const name = typeof args.name === "string" ? args.name : undefined
@@ -529,20 +584,38 @@ const LlmTestCommand = cmd({
   },
 })
 
+// cz_change: `use` now sets opencode's active model (config.model) directly,
+// aligned with opencode's provider/model format. The argument is a full model
+// reference `<entry>/<modelId>` (e.g. clickzetta/deepseek/deepseek-v4-pro or
+// my-openai/gpt-4o), where <entry> is a defined LLM entry name. There is no
+// separate default_llm concept anymore — config.model is the single source of
+// truth, and opencode's parseModel splits it on the first "/".
 const LlmUseCommand = cmd({
-  command: "use <name>",
-  describe: "select which agent LLM entry to use (sets top-level default_llm)",
+  command: "use <model>",
+  describe: "set the active model (writes config.model), format <entry>/<modelId>",
   builder: (yargs: Argv) =>
-    yargs.positional("name", { type: "string", describe: "entry name", demandOption: true }),
+    yargs.positional("model", {
+      type: "string",
+      describe: "full model ref, e.g. my-openai/gpt-4o or clickzetta/deepseek/deepseek-v4-pro",
+      demandOption: true,
+    }),
   async handler(args) {
     const isTTY = process.stderr.isTTY
-    const name = (args as { name: string }).name
+    const model = (args as { model: string }).model
     const state = readState()
-    if (!state.llm[name]) {
-      fail(isTTY, "NOT_FOUND", `Agent LLM '${name}' is not defined. Run \`cz-cli agent llm list\` to see available entries.`)
+    const check = validateModelRef(model, state.llm)
+    if (!check.ok) {
+      if (check.code === "INVALID_MODEL_REF") {
+        fail(isTTY, "INVALID_MODEL_REF", `Model must be in <entry>/<modelId> form (e.g. my-openai/gpt-4o). Got: "${model}".`)
+      }
+      fail(
+        isTTY,
+        "NOT_FOUND",
+        `Agent LLM entry '${check.entry}' is not defined. Run \`cz-cli agent llm list\` to see available entries.`,
+      )
     }
-    writeState({ llm: state.llm, default_llm: name })
-    ok(isTTY, `\n  default_llm = "${name}"\n\n`, { message: `default_llm set to ${name}.`, default_llm: name })
+    setActiveModel(model)
+    ok(isTTY, `\n  config.model = "${model}"\n\n`, { message: `Active model set to ${model}.`, model })
   },
 })
 
@@ -564,30 +637,31 @@ const LlmRemoveCommand = cmd({
     }
     const llm = { ...state.llm }
     delete llm[name]
-    const clearedDefault = state.default_llm === name
-    writeState({
-      llm,
-      ...(!clearedDefault && state.default_llm ? { default_llm: state.default_llm } : {}),
-    })
-    const note = clearedDefault ? " (also cleared default_llm)" : ""
+    // If the removed entry was the active one, config.model becomes stale;
+    // writeState (via writeLlmEntries) drops it automatically. Report that.
+    const clearedActive = activeEntryName(state) === name
+    writeState({ llm })
+    const note = clearedActive ? " (also cleared the active model)" : ""
     ok(isTTY, `\n  Agent LLM '${name}' removed.${note}\n\n`, {
       message: `Agent LLM '${name}' removed.`,
       removed: true,
-      cleared_default: clearedDefault,
+      cleared_active: clearedActive,
     })
   },
 })
 
+// cz_change: clears opencode's active model (config.model) so opencode
+// auto-selects (recent → first). Replaces the old "clear default_llm".
 const LlmResetCommand = cmd({
   command: "reset",
-  describe: "clear top-level default_llm",
+  describe: "clear the active model (unsets config.model; opencode auto-selects)",
   async handler() {
     const isTTY = process.stderr.isTTY
     const state = readState()
-    const had = typeof state.default_llm === "string"
-    writeState({ llm: state.llm })
-    const message = had ? "default_llm cleared." : "default_llm was not set."
-    ok(isTTY, `\n  ${message}\n\n`, { message, had_default: had })
+    const had = typeof state.model === "string"
+    clearActiveModel()
+    const message = had ? "Active model cleared." : "No active model was set."
+    ok(isTTY, `\n  ${message}\n\n`, { message, had_active: had })
   },
 })
 

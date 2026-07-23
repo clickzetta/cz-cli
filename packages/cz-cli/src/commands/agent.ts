@@ -132,18 +132,18 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("api-key", { type: "string", describe: "API key for the provider" })
                 .option("base-url", { type: "string", describe: "Base URL for openai-compatible relays and custom gateways" })
                 .option("model", { type: "string", describe: "Optional model ID override" })
-                .option("use", { type: "boolean", describe: "Set this entry as default_llm after writing" }),
+                .option("use", { type: "boolean", describe: "Make this entry the active model (sets config.model) after writing" }),
             () => {},
           )
           .command(
             "test [name]",
             "Test the active or named LLM entry with a lightweight connectivity probe",
-            (llm) => llm.positional("name", { type: "string", describe: "entry name; defaults to default_llm" }),
+            (llm) => llm.positional("name", { type: "string", describe: "entry name; defaults to the active entry (or the only one)" }),
             () => {},
           )
-          .command("use <name>", "Select which agent LLM entry to use", (llm) => llm.positional("name", { type: "string", demandOption: true }), () => {})
+          .command("use <model>", "Set the active model (writes config.model), format <entry>/<modelId>", (llm) => llm.positional("model", { type: "string", demandOption: true }), () => {})
           .command("remove <name>", "Remove an agent LLM entry", (llm) => llm.positional("name", { type: "string", demandOption: true }), () => {})
-          .command("reset", "Clear default_llm", (llm) => llm, () => {})
+          .command("reset", "Clear the active model (unsets config.model)", (llm) => llm, () => {})
           .command("purge-legacy", "Remove deprecated llm_* fields from [profiles.*]", (llm) => llm, () => {})
           .strict(false)
           .demandCommand(1, "Run `cz-cli agent llm --help` to see available subcommands")

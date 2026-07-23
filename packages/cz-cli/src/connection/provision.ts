@@ -61,10 +61,10 @@ export function configureClickzettaLlm(name: string, opts: { apiKey?: string; ba
     api_key: opts.apiKey,
     ...(opts.baseURL && { base_url: opts.baseURL }),
   }
-  writeLlmEntries({
-    llm: config.llm,
-    ...(config.default_llm ? { default_llm: config.default_llm } : { default_llm: name }),
-  })
+  // cz_change: no default_llm anymore. The entry is written as a provider; which
+  // model is active is opencode's call (config.model → recent → first available).
+  // On a fresh login this is the only provider, so opencode auto-selects it.
+  writeLlmEntries({ llm: config.llm })
   return true
 }
 

@@ -1,112 +1,12 @@
-type ClickZettaModel = {
-  [key: string]: unknown
-  name?: string
-  tool_call: boolean
-  reasoning: boolean
-  attachment: boolean
-  temperature: boolean
-  limit: { context: number; output: number }
-  modalities: { input: string[]; output: string[] }
-}
-
 export const CLICKZETTA_PROVIDER_ID = "clickzetta"
 export const CLICKZETTA_PROVIDER_NAME = "ClickZetta"
 export const CLICKZETTA_PROVIDER_NPM = "@clickzetta/ai-gateway"
 export const CLICKZETTA_DEFAULT_GATEWAY_URL = "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1"
 
-export const CLICKZETTA_MODELS = {
-  "deepseek/deepseek-v4-pro": {
-    id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "deepseek",
-    release_date: "2025-05-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 1, output: 4, cache_read: 0.1, cache_write: 1 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "deepseek/deepseek-v4-flash": {
-    id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", family: "deepseek",
-    release_date: "2025-05-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.5, output: 1.5, cache_read: 0.05, cache_write: 0.5 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "deepseek/deepseek-v3.2": {
-    id: "deepseek/deepseek-v3.2", name: "DeepSeek V3.2", family: "deepseek",
-    release_date: "2025-03-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.5, output: 1.5, cache_read: 0.05, cache_write: 0.5 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "deepseek/deepseek-r1": {
-    id: "deepseek/deepseek-r1", name: "DeepSeek R1", family: "deepseek",
-    release_date: "2025-01-01", attachment: false, reasoning: true, tool_call: false, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 1, output: 4, cache_read: 0.1, cache_write: 1 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3.6-plus": {
-    id: "qwen/qwen3.6-plus", name: "Qwen3.6 Plus", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.8, output: 3.2, cache_read: 0.08, cache_write: 0.8 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3.6-max-preview": {
-    id: "qwen/qwen3.6-max-preview", name: "Qwen3.6 Max Preview", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 1.6, output: 6.4, cache_read: 0.16, cache_write: 1.6 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3.6-flash": {
-    id: "qwen/qwen3.6-flash", name: "Qwen3.6 Flash", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.2, output: 0.6, cache_read: 0.02, cache_write: 0.2 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3.5-plus": {
-    id: "qwen/qwen3.5-plus", name: "Qwen3.5 Plus", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.8, output: 3.2, cache_read: 0.08, cache_write: 0.8 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3.5-flash": {
-    id: "qwen/qwen3.5-flash", name: "Qwen3.5 Flash", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.2, output: 0.6, cache_read: 0.02, cache_write: 0.2 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3-max": {
-    id: "qwen/qwen3-max", name: "Qwen3 Max", family: "qwen",
-    release_date: "2025-05-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 1.6, output: 6.4, cache_read: 0.16, cache_write: 1.6 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3-max-preview": {
-    id: "qwen/qwen3-max-preview", name: "Qwen3 Max Preview", family: "qwen",
-    release_date: "2025-05-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 1.6, output: 6.4, cache_read: 0.16, cache_write: 1.6 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3-coder-plus": {
-    id: "qwen/qwen3-coder-plus", name: "Qwen3 Coder Plus", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: true, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 1.2, output: 4.8, cache_read: 0.12, cache_write: 1.2 },
-    limit: { context: 128000, output: 16384 },
-  },
-  "qwen/qwen3-coder-flash": {
-    id: "qwen/qwen3-coder-flash", name: "Qwen3 Coder Flash", family: "qwen",
-    release_date: "2025-07-01", attachment: false, reasoning: false, tool_call: true, temperature: true,
-    modalities: { input: ["text"], output: ["text"] }, open_weights: false,
-    cost: { input: 0.3, output: 0.9, cache_read: 0.03, cache_write: 0.3 },
-    limit: { context: 128000, output: 16384 },
-  },
-} satisfies Record<string, ClickZettaModel>
+// cz_change: the model catalog is no longer hardcoded here. ClickZetta models are
+// discovered at runtime from the gateway's OpenAI-compatible `GET /v1/models`
+// endpoint (see the `clickzetta` custom loader in opencode's provider.ts). The
+// gateway is the single source of truth; llm.json stores connection info only.
 
 export function isClickzettaGatewayUrl(url: string | undefined) {
   if (typeof url !== "string" || url === "") return false

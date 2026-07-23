@@ -33,7 +33,7 @@ const {
   maybeRotateExhaustedClickzettaLlm,
   pinAlicloudAdminHost,
 } = await import("../src/llm/clickzetta-rotation.ts")
-const { readLlmEntries, writeLlmEntries } = await import("../src/llm/native-config.ts")
+const { readLlmEntries, writeLlmEntries, setActiveModel } = await import("../src/llm/native-config.ts")
 
 // Split an intercepted request into the {baseUrl, path} the old studioRequest stub saw.
 function recordStudioCall(url: string, body: unknown, headers: Record<string, string>) {
@@ -117,8 +117,10 @@ beforeEach(() => {
         base_url: "https://mock-aimesh.example/gateway/v1",
       },
     },
-    default_llm: "clickzetta",
   })
+  // Active model on the exhausted entry — rotation carries this model id onto the
+  // fresh entry (same gateway, same models), pinning config.model to the new key.
+  setActiveModel("clickzetta/deepseek/deepseek-v4-pro")
 })
 
 afterAll(() => {
@@ -170,7 +172,7 @@ describe("clickzetta key rotation", () => {
       rateLimitConfigs: { quota_total: 10000000 },
     })
     const llm = readLlmEntries()
-    expect(llm.default_llm).toBe("uat")
+    expect(llm.model).toBe("uat/deepseek/deepseek-v4-pro")
     expect(llm.llm.uat?.api_key).toBe("ck-new")
   })
 
@@ -186,7 +188,7 @@ describe("clickzetta key rotation", () => {
     expect(result?.rotated).toBe(true)
     expect(result?.entryName).toBe("uat")
     const llm = readLlmEntries()
-    expect(llm.default_llm).toBe("uat")
+    expect(llm.model).toBe("uat/deepseek/deepseek-v4-pro")
     expect(llm.llm.uat?.api_key).toBe("ck-new")
   })
 
@@ -235,7 +237,7 @@ describe("clickzetta key rotation", () => {
       rateLimitConfigs: { quota_total: 10000000 },
     })
     const llm = readLlmEntries()
-    expect(llm.default_llm).toBe("default")
+    expect(llm.model).toBe("default/deepseek/deepseek-v4-pro")
     expect(llm.llm.default?.api_key).toBe("ck-new")
   })
 
@@ -274,7 +276,7 @@ describe("clickzetta key rotation", () => {
       "/llm-gateway-admin/v2/virtual-key/getApiKey?id=77",
     ])
     const llm = readLlmEntries()
-    expect(llm.default_llm).toBe("uat")
+    expect(llm.model).toBe("uat/deepseek/deepseek-v4-pro")
     expect(llm.llm.uat?.api_key).toBe("ck-existing")
   })
 

@@ -325,14 +325,13 @@ export function injectClickzettaAgentConfig(agentTimeoutMs?: number) {
   // cz_change: register the data_engineer default agent + its cz identity prompt.
   const { agent, default_agent } = clickzettaDefaultAgent(existing)
 
-  // cz_change: carry llm.json's active default model (`default_llm/<model>`, e.g.
-  // "claude-code/claude-sonnet-5") into OPENCODE_CONFIG_CONTENT as the top-level
-  // `model`. Without it, a session started with no explicit model (agent run's TUI
-  // default, and every `cz`/`cz-reply` MCP call) lets opencode pick a default from
-  // the provider map on its own — which lands on whichever provider sorts first
-  // (often a stale one), NOT the user's chosen default_llm. That surfaced as
-  // "Invalid API key" from an unselected provider even though `agent llm test`
-  // passed on the active entry. A user/upstream-set model in `existing` still wins.
+  // cz_change: carry llm.json's active model (config.model, format
+  // `<entry>/<modelId>`, e.g. "claude-code/claude-sonnet-5") into
+  // OPENCODE_CONFIG_CONTENT as the top-level `model`. When config.model is set
+  // (user pinned it via `agent llm use`), this makes opencode honor that exact
+  // selection. When it's unset, we inject nothing and opencode auto-selects
+  // (recent → first available) — the intended behavior now that there's no
+  // default_llm. A user/upstream-set model in `existing` still wins.
   const existingModel = typeof existing.model === "string" ? existing.model : undefined
   const defaultModel = existingModel ?? (typeof llmConfig.model === "string" ? llmConfig.model : undefined)
 

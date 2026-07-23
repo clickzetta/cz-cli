@@ -54,8 +54,9 @@ describe("configureClickzettaLlm", () => {
     expect(configured).toBe(true)
     const llm = readLlmEntries()
     expect(llm.llm.p1).toEqual({ provider: "clickzetta", api_key: "ck_key", base_url: "https://gw.example.com/" })
-    // First entry becomes the default.
-    expect(llm.default_llm).toBe("p1")
+    // cz_change: no default_llm. config.model is left unset — opencode auto-selects
+    // (this is the only provider, so it's chosen). The entry just needs to exist.
+    expect(llm.model).toBeUndefined()
   })
 
   test("no-ops and returns false when apiKey absent", () => {
@@ -97,7 +98,8 @@ describe("provisionProfileFromCredential", () => {
     })
 
     const llm = readLlmEntries()
-    expect(llm.default_llm).toBe("uat")
+    // cz_change: no default_llm; opencode auto-selects the sole provisioned entry.
+    expect(llm.model).toBeUndefined()
     expect(llm.llm.uat).toEqual({
       provider: "clickzetta",
       api_key: "ck_test_api_key",

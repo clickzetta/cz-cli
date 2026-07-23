@@ -86,7 +86,8 @@ describe("setup --credential", () => {
 
     expect(result.status).toBe(0)
     expect(profiles.default_profile).toBe("uat")
-    expect(llm.default_llm).toBe("uat")
+    // cz_change: no default_llm; opencode auto-selects the sole provisioned entry.
+    expect(llm.model).toBeUndefined()
     expect(llm.llm).toEqual({
       uat: {
         provider: "clickzetta",
