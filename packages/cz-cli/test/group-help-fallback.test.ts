@@ -104,6 +104,44 @@ describe("bare command group renders help (exit 0), not USAGE_ERROR", () => {
     expect(r.stdout).toContain("key")
     expect(r.stdout).toContain("model")
   })
+
+  test("cz-cli analytics-agent metric help explains simple vs complex metric", () => {
+    const r = run(["analytics-agent", "metric"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("simple_metric")
+    expect(r.stdout).toContain("answer-builder")
+    expect(r.stdout).toContain("targetCounts")
+  })
+
+  test("cz-cli analytics-agent answer-builder help explains complex vs simple metric", () => {
+    const r = run(["analytics-agent", "answer-builder"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("complex_metric")
+    expect(r.stdout).toContain("simple_metric")
+    expect(r.stdout).toContain("targetCounts")
+  })
+
+  test("cz-cli analytics-agent table help lists the columns alias", () => {
+    const r = run(["analytics-agent", "table"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("columns")
+    expect(r.stdout).toContain("semantics")
+  })
+
+  test("cz-cli analytics-agent metric create --help shows usage examples", () => {
+    const r = run(["analytics-agent", "metric", "create", "--help"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("Examples:")
+    expect(r.stdout).toContain("catalog.schema.table")
+    expect(r.stdout).toContain("virtual column")
+  })
+
+  test("cz-cli analytics-agent answer-builder create --help shows a usage example", () => {
+    const r = run(["analytics-agent", "answer-builder", "create", "--help"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("Examples:")
+    expect(r.stdout).toContain("validate")
+  })
 })
 
 describe("nested bare group shows its OWN help, not the parent's", () => {

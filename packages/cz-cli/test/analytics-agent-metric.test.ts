@@ -342,4 +342,174 @@ describe("analytics-agent metric", () => {
     })
     expect(parseData(result.output)).toBe(301)
   })
+
+  test("batch enable lists domain, skips already-enabled, enables the rest", async () => {
+    const requestUrls: string[] = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requestUrls.push(url)
+      if (url.includes("/metrics/list")) {
+        return jsonResponse({
+          success: true,
+          data: [
+            { id: 197, names: ["平均预算总额"], status: "ENABLE" },
+            { id: 196, names: ["企业总数"], status: "DISABLE" },
+            { id: 195, names: ["中标率"], status: "DISABLE" },
+          ],
+        })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const enableCalls = requestUrls.filter((u) => u.includes("/metrics/enable"))
+    expect(enableCalls.length).toBe(2)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(3)
+    expect(data.succeeded).toBe(2)
+    expect(data.skipped).toBe(1)
+    expect(data.failed).toBe(0)
+  })
+
+  test("batch enable sets non-zero exit code when an item fails", async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/metrics/list")) {
+        return jsonResponse({
+          success: true,
+          data: [
+            { id: 196, names: ["企业总数"], status: "DISABLE" },
+            { id: 195, names: ["中标率"], status: "DISABLE" },
+          ],
+        })
+      }
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      if (body.id === 195) {
+        return jsonResponse({ success: false, code: "CZLH-42000", message: "invalid metric" })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.succeeded).toBe(1)
+    expect(data.failed).toBe(1)
+  })
+
+  test("batch disable reuses the detail+update fallback per item on not-found", async () => {
+    const requestUrls: string[] = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requestUrls.push(url)
+      if (url.includes("/metrics/list")) {
+        return jsonResponse({
+          success: true,
+          data: [{ id: 196, names: ["企业总数"], status: "ENABLE" }],
+        })
+      }
+      if (url.includes("/metrics/disable")) {
+        return jsonResponse({ success: false, code: "CZD-404", message: "metric not found: 196" })
+      }
+      if (url.includes("/metrics/detail")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            id: 196,
+            datasourceId: 11,
+            tableName: "orders",
+            names: ["企业总数"],
+            aggExpr: "count(*)",
+            domainIds: [27],
+          },
+        })
+      }
+      return jsonResponse({ success: true, data: 196 })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "disable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrls.some((u) => u.includes("/metrics/detail"))).toBe(true)
+    expect(requestUrls.some((u) => u.includes("/metrics/update"))).toBe(true)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.succeeded).toBe(1)
+    expect(data.failed).toBe(0)
+  })
+
+  test("enable rejects passing both an id and --all", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "197",
+      "--all",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("enable --all without --domain-id is a usage error", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--domain-id")
+  })
+
+  test("enable with no id and no --all is a usage error", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
 })

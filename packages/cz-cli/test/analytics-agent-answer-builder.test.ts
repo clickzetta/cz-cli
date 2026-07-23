@@ -265,4 +265,58 @@ describe("analytics-agent answer-builder", () => {
     })
     expect(parseData(result.output)).toBe(401)
   })
+
+  test("batch disable lists domain, skips already-disabled, disables the rest", async () => {
+    const requestUrls: string[] = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requestUrls.push(url)
+      if (url.includes("/answer-builders/list")) {
+        return jsonResponse({
+          success: true,
+          data: [
+            { id: 9, analysisName: "中标率概览", status: "ENABLE" },
+            { id: 8, analysisName: "企业投标能力分析", status: "DISABLE" },
+          ],
+        })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "answer-builder",
+      "disable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const disableCalls = requestUrls.filter((u) => u.includes("/answer-builders/disable"))
+    expect(disableCalls.length).toBe(1)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(2)
+    expect(data.succeeded).toBe(1)
+    expect(data.skipped).toBe(1)
+    expect(data.failed).toBe(0)
+  })
+
+  test("enable rejects both an id and --all", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "answer-builder",
+      "enable",
+      "9",
+      "--all",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
 })
