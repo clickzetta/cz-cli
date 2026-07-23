@@ -669,8 +669,24 @@ async function runBatchStatusChange(
   const t0 = Date.now()
   try {
     const ctx = await resolveAnalyticsContext(argv)
-    const listData = await requestAnalyticsData(argv, listRoute, listBody, {}, ctx)
-    const targets = extractBatchTargets(listData, nameKey)
+
+    // Paginate the list so `--all` covers every item, not just the API's
+    // default first page. Loop until a page returns fewer than pageSize rows.
+    const pageSize = 200
+    const targets: BatchTargetItem[] = []
+    for (let pageNum = 1; ; pageNum++) {
+      const pageData = await requestAnalyticsData(
+        argv,
+        listRoute,
+        mergeBody({ ...listBody }, { pageNum, pageSize }),
+        {},
+        ctx,
+      )
+      const pageItems = extractBatchTargets(pageData, nameKey)
+      targets.push(...pageItems)
+      const pageLen = Array.isArray(pageData) ? pageData.length : pageItems.length
+      if (pageLen < pageSize) break
+    }
 
     const results: Array<Record<string, unknown>> = []
     let succeeded = 0

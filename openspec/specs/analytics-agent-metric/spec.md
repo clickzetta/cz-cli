@@ -73,7 +73,7 @@
 
 ### Requirement: metric enable/disable 支持按 domain 批量操作
 
-`cz-cli analytics-agent metric enable` 与 `disable` MUST 同时支持单条模式（positional `metric-id`）与批量模式（`--all --domain-id <id>`）。两种模式互斥且至少提供其一。批量模式 MUST 先列出该 domain 下的 metric，跳过已处于目标状态的项，对其余逐个调用单条 enable/disable，并汇总 `total`、`succeeded`、`failed`、`skipped` 与逐项 `results`。批量 disable MUST 复用单条 disable 的 detail+update 回退逻辑。
+`cz-cli analytics-agent metric enable` 与 `disable` MUST 同时支持单条模式（positional `metric-id`）与批量模式（`--all --domain-id <id>`）。两种模式互斥且至少提供其一。批量模式 MUST 先列出该 domain 下的 metric，跳过已处于目标状态的项，对其余逐个调用单条 enable/disable，并汇总 `total`、`succeeded`、`failed`、`skipped` 与逐项 `results`。批量列表 MUST 翻页覆盖 domain 下的全部 metric，不得只处理服务端默认第一页。批量 disable MUST 复用单条 disable 的 detail+update 回退逻辑。
 
 #### Scenario: 批量 enable 跳过已启用项并启用其余
 
@@ -83,6 +83,13 @@
 - **且** 对已 `ENABLE` 的项标记为 `skipped`，不再调用 enable
 - **且** 对其余 2 项调用 `/metrics/enable`
 - **且** 输出包含 `total=3`、`succeeded=2`、`skipped=1`、`failed=0`
+
+#### Scenario: 批量操作翻页覆盖首页之外的项
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric enable --all --domain-id 27`
+- **AND** 该 domain 下的 metric 数量超过服务端单页默认条数
+- **THEN** CLI MUST 按页请求 metric list 直到取回全部项
+- **且** 汇总的 `total` 等于 domain 下 metric 的真实总数，而非单页条数
 
 #### Scenario: 批量操作部分失败时返回非零退出码
 

@@ -380,6 +380,40 @@ describe("analytics-agent metric", () => {
     expect(data.failed).toBe(0)
   })
 
+  test("batch enable paginates the list so it covers items past the first page", async () => {
+    let listCalls = 0
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/metrics/list")) {
+        listCalls++
+        const body = init?.body ? JSON.parse(String(init.body)) : {}
+        // Page 1 is full (200 rows) -> forces a second page; page 2 has 5 rows.
+        if (body.pageNum === 1) {
+          const page = Array.from({ length: 200 }, (_, i) => ({ id: i + 1, names: [`m${i + 1}`], status: "DISABLE" }))
+          return jsonResponse({ success: true, data: page })
+        }
+        const page = Array.from({ length: 5 }, (_, i) => ({ id: 200 + i + 1, names: [`m${200 + i + 1}`], status: "DISABLE" }))
+        return jsonResponse({ success: true, data: page })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(listCalls).toBe(2)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(205)
+    expect(data.succeeded).toBe(205)
+  })
+
   test("batch enable sets non-zero exit code when an item fails", async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
