@@ -78,3 +78,42 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent domain table add 19 --datasource-id 4164 --path "workspace:quick_start/schema:rpt" --table-name "quick_start.rpt.rpt_transaction_lazada"`
 - **AND** domain detail 返回的 `tables` 中没有该表
 - **THEN** CLI MUST 调用 domain table add 接口
+
+### Requirement: domain table add 支持全限定 --table 自动拆分并回显 dataset ID
+
+`cz-cli analytics-agent domain table add` MUST 支持把三段式全限定 `--table`（`workspace.schema.table`）自动拆分为 `workspace`/`schema`/`table`，避免 lakehouse 数据源逐个试错补 `--workspace`/`--schema`。当用户已显式提供 `--workspace` 或 `--schema` 时不拆分；非三段式（如单段或四段）保持原样。添加成功后 CLI MUST 在输出中显著回显分配到的 dataset ID，供后续 join/metric/semantics 命令使用。
+
+#### Scenario: 三段式 --table 自动拆分
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 19 --datasource-id 4164 --table "quick_start.rpt.orders"`
+- **THEN** 请求体包含 `workspace=quick_start`、`schema=rpt`、`tableName=orders`
+
+#### Scenario: 单段 --table 保持原样
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 19 --datasource-id 4164 --table "orders"`
+- **THEN** 请求体只含 `tableName=orders`，不含 workspace/schema
+
+#### Scenario: 显式 workspace/schema 时不拆分
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 19 --datasource-id 4164 --workspace ws --schema sc --table "a.b.c"`
+- **THEN** 请求体 `tableName` 仍为 `a.b.c`，workspace/schema 用显式值
+
+#### Scenario: 添加成功回显 dataset ID
+
+- **WHEN** `domain table add` 成功且响应含 `datasetId`
+- **THEN** CLI MUST 在 `ai_message` 中标注分配的 dataset ID
+
+### Requirement: domain join 创建/更新提示关系方向被后端归一化
+
+当后端根据数据基数把用户请求的 `--relation`（如 `n:1`）归一化为不同值（如 `1:n`）时，`cz-cli analytics-agent domain join create/update` MUST 在输出中提示该自动归一化，避免用户把输入与输出不一致误判为错误。
+
+#### Scenario: 请求与存储的 relation 不一致时提示
+
+- **WHEN** 用户执行 `domain join create` 传入 `--relation n:1`
+- **AND** 后端返回的 `relation` 为 `1:n`
+- **THEN** CLI MUST 在 `ai_message` 中说明 relation 被自动归一化（requested n:1 → stored 1:n）
+
+#### Scenario: 请求与存储一致时不提示
+
+- **WHEN** 后端返回的 `relation` 与请求一致
+- **THEN** CLI MUST NOT 输出归一化提示

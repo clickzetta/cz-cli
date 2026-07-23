@@ -140,6 +140,31 @@ function parseOptionalJsonObject(raw: string | undefined, fieldName: string): Re
   return parseJsonObject(raw, fieldName)
 }
 
+// Resolve the answer-builder `content` DSL string. `--content` carries the DSL
+// JSON (chartParams/outputColumns/relatedTables/…). `--sql`, when given, is
+// injected as the top-level `sql` field so the caller does not have to escape
+// SQL quotes inside the JSON string. Returns the final JSON string to POST.
+function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: string): string {
+  const rawContent = typeof argv.content === "string" ? argv.content : undefined
+  const sql = typeof argv.sql === "string" ? argv.sql : undefined
+
+  if (sql === undefined) {
+    if (rawContent === undefined) {
+      handledError("USAGE_ERROR", "Provide --content (DSL JSON) or --sql.", { format })
+    }
+    return rawContent as string
+  }
+
+  let dsl: Record<string, unknown>
+  try {
+    dsl = rawContent ? parseJsonObject(rawContent, "--content") : {}
+  } catch (err) {
+    return handledError("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+  }
+  dsl.sql = sql
+  return JSON.stringify(dsl)
+}
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return value === undefined ? undefined : [String(value)]
   return value.map((item) => String(item))
@@ -317,7 +342,63 @@ async function runTableSemanticsList(argv: Record<string, unknown>): Promise<voi
   }
 }
 
+// Summarize a domain-table-add response so the caller sees the assigned dataset
+// ID (needed for later join/metric/semantics commands) without hunting through
+// `domain detail`. Also flags the soft-failure case where the backend returned
+// success but did not actually attach the table to the domain.
+function tableAddAiMessage(data: unknown): string | undefined {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined
+  const item = data as Record<string, unknown>
+  const datasetId = item.datasetId
+  const tableName = item.tableName ?? item.physicalTable
+  if (datasetId === undefined) return undefined
+  if (item.addedToDomain === false) {
+    return `Warning: dataset ${datasetId} (${String(tableName)}) was NOT attached to the domain. Verify the table exists and retry.`
+  }
+  return `Added dataset ID ${datasetId} (${String(tableName)}). Use this dataset ID for join/metric/semantics commands.`
+}
+
+// Build the domain-table-add request body. When `--table` is a fully-qualified
+// three-part name (catalog/workspace.schema.table) and workspace/schema are not
+// given explicitly, split it so lakehouse datasources don't force the caller to
+// re-supply --workspace and --schema separately.
+function resolveDomainTableAddBody(argv: Record<string, unknown>): Record<string, unknown> {
+  const rawTable = typeof argv.table === "string" ? argv.table.trim() : ""
+  let workspace = typeof argv.workspace === "string" ? argv.workspace : undefined
+  let schema = typeof argv.schema === "string" ? argv.schema : undefined
+  let tableName = rawTable
+
+  if (workspace === undefined && schema === undefined) {
+    const parts = rawTable.split(".")
+    if (parts.length === 3 && parts.every((p) => p.trim() !== "")) {
+      workspace = parts[0]
+      schema = parts[1]
+      tableName = parts[2]
+    }
+  }
+
+  return mergeBody({}, {
+    datasourceId: argv["datasource-id"],
+    workspace,
+    schema,
+    tableName,
+  })
+}
+
 const DOMAIN_JOIN_RELATIONS = new Set(["n:1", "1:n", "1:1", "MANY_TO_ONE", "ONE_TO_MANY", "ONE_TO_ONE"])
+
+// The backend normalizes a join relation based on the actual data cardinality,
+// so a requested `n:1` may come back as `1:n`. Surface that as guidance so the
+// caller doesn't mistake the mismatch for an error.
+function joinRelationAiMessage(requested: unknown, data: unknown): string | undefined {
+  if (typeof requested !== "string" || requested.trim() === "") return undefined
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined
+  const stored = (data as Record<string, unknown>).relation
+  if (typeof stored !== "string" || stored === "") return undefined
+  const req = requested.trim()
+  if (req === stored) return undefined
+  return `Relation auto-normalized by cardinality analysis: requested ${req} -> stored ${stored}.`
+}
 
 function resolveDomainJoinPathArgv(argv: Record<string, unknown>, format: string): Record<string, unknown> {
   return mergeBody(argv, {
@@ -1886,19 +1967,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   y
                     .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                     .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                    .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
-                    .option("schema", { type: "string", describe: "Schema name" })
-                    .option("table", { type: "string", demandOption: true, describe: "Table name" }),
+                    .option("workspace", { type: "string", describe: "Lakehouse workspace name (or embed it in --table as workspace.schema.table)" })
+                    .option("schema", { type: "string", describe: "Schema name (or embed it in --table as workspace.schema.table)" })
+                    .option("table", { type: "string", demandOption: true, describe: "Table name; a fully-qualified workspace.schema.table is auto-split" })
+                    .example('cz-cli analytics-agent domain table add 27 --datasource-id 8448 --table "quick_start.construction_dw.v_gpt_fact_bid"', "Fully-qualified name is split into workspace/schema/table")
+                    .epilogue("After adding, run `cz-cli analytics-agent domain detail <domain-id> --with-tables` to see each table's dataset ID (needed for join/metric/semantics commands)."),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const t0 = Date.now()
                   const requestArgv = argv as Record<string, unknown>
-                  const body = mergeBody({}, {
-                    datasourceId: argv["datasource-id"],
-                    workspace: argv.workspace,
-                    schema: argv.schema,
-                    tableName: argv.table,
-                  })
+                  const body = resolveDomainTableAddBody(argv as Record<string, unknown>)
 
                   try {
                     const payload = await requestAnalytics(requestArgv, ROUTES.domainTableAdd, body)
@@ -1909,7 +1987,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       return
                     }
                     logOperation("analytics-agent domain table add", { ok: true, timeMs: Date.now() - t0 })
-                    success(unwrapResponse(payload), { format, timeMs: Date.now() - t0 })
+                    const data = unwrapResponse(payload)
+                    const aiMessage = tableAddAiMessage(data)
+                    success(data, { format, timeMs: Date.now() - t0, ...(aiMessage ? { aiMessage } : {}) })
                   } catch (err) {
                     logOperation("analytics-agent domain table add", { ok: false, timeMs: Date.now() - t0 })
                     if (isHandledCliError(err)) return
@@ -1982,7 +2062,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const requestArgv = resolveDomainJoinPathArgv(argv as Record<string, unknown>, format)
-                  await executeAnalyticsCommand("analytics-agent domain join create", requestArgv, ROUTES.domainJoinCreate, resolveDomainJoinBody(requestArgv, format))
+                  await executeAnalyticsCommand(
+                    "analytics-agent domain join create", requestArgv, ROUTES.domainJoinCreate,
+                    resolveDomainJoinBody(requestArgv, format), {},
+                    (data) => joinRelationAiMessage(argv.relation, data),
+                  )
                 },
               )
               .command(
@@ -1997,7 +2081,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const requestArgv = resolveDomainJoinPathArgv(argv as Record<string, unknown>, format)
-                  await executeAnalyticsCommand("analytics-agent domain join update", requestArgv, ROUTES.domainJoinUpdate, resolveDomainJoinBody(requestArgv, format))
+                  await executeAnalyticsCommand(
+                    "analytics-agent domain join update", requestArgv, ROUTES.domainJoinUpdate,
+                    resolveDomainJoinBody(requestArgv, format), {},
+                    (data) => joinRelationAiMessage(argv.relation, data),
+                  )
                 },
               )
               .command(
@@ -2509,18 +2597,25 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" })
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" })
                 .example(
                   'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "各省份中标金额排名" --content \'{"...DSL..."}\'',
                   "Create a complex metric (answer builder). Run `answer-builder validate` first to check the --content DSL",
+                )
+                .example(
+                  'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "中标率" --content \'{"chartParams":[...],"outputColumns":[...]}\' --sql "SELECT ... WHERE bid_result=\'中标\'"',
+                  "Pass SQL via --sql so single quotes don't collide with the --content JSON",
                 ),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody({}, {
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds: [argv["domain-id"]],
-                content: argv.content,
+                content,
               })
               await executeAnalyticsCommand("analytics-agent answer-builder create", argv as Record<string, unknown>, ROUTES.answerBuilderCreate, body)
             },
@@ -2535,15 +2630,18 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" }),
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody({}, {
                 id: argv["analysis-id"],
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds: [argv["domain-id"]],
-                content: argv.content,
+                content,
               })
               await executeAnalyticsCommand("analytics-agent answer-builder update", argv as Record<string, unknown>, ROUTES.answerBuilderUpdate, body)
             },
@@ -2681,14 +2779,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", demandOption: true, describe: "Analysis DSL JSON string" }),
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" }),
             async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody({}, {
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds: [argv["domain-id"]],
-                content: argv.content,
+                content,
               })
               await executeAnalyticsCommand("analytics-agent answer-builder validate", argv as Record<string, unknown>, ROUTES.answerBuilderValidate, body)
             },
@@ -3014,14 +3115,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 )
                 .command(
                   "upload <space-id> <local-file>",
-                  "Upload one local file into a knowledge space",
+                  "Upload a local file, create its folder path, and bind domains — in one step",
                   (y) =>
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("local-file", { type: "string", demandOption: true, describe: "Local file path" })
-                      .option("target-path", { type: "string", describe: "Remote target folder path" })
+                      .option("target-path", { type: "string", describe: "Remote folder path; intermediate folders are auto-created" })
                       .option("name", { type: "string", describe: "Remote file name override" })
-                      .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
+                      .option("domain-id", { type: "number", array: true, describe: "Bind to this domain at upload, can be repeated" })
+                      .example('cz-cli analytics-agent knowledge file upload 1 ./guide.md --domain-id 28', "Upload and bind to a domain in one step")
+                      .example('cz-cli analytics-agent knowledge file upload 1 ./guide.md --target-path "docs/onboarding" --domain-id 28', "Auto-create the folder path, upload, and bind — no separate folder create/move/bind needed")
+                      .epilogue("This single command replaces the old create → folder create → move → bind-domain sequence: --target-path auto-creates folders and --domain-id binds at upload."),
                   async (argv) => {
                     await executeKnowledgeFileUploadCommand(argv as Record<string, unknown>)
                   },

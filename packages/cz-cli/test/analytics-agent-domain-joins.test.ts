@@ -194,6 +194,41 @@ describe("analytics-agent domain join", () => {
     expect(parseData(result.output)).toEqual({ joinId: 301, domainId: 195 })
   })
 
+  test("create notes when the backend auto-normalizes the relation direction", async () => {
+    globalThis.fetch = mock(async () => {
+      // Requested n:1 but backend stores 1:n after cardinality analysis.
+      return jsonResponse({ success: true, data: { joinId: 301, domainId: 195, relation: "1:n" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "join", "create", "195",
+      "--dataset-id", "1773", "--attr-code", "customer_id",
+      "--join-dataset-id", "1774", "--join-attr-code", "id",
+      "--relation", "n:1",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.output).toContain("auto-normalized")
+    expect(result.output).toContain("n:1")
+    expect(result.output).toContain("1:n")
+  })
+
+  test("create does not note when the stored relation matches the request", async () => {
+    globalThis.fetch = mock(async () => {
+      return jsonResponse({ success: true, data: { joinId: 301, domainId: 195, relation: "n:1" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "join", "create", "195",
+      "--dataset-id", "1773", "--attr-code", "customer_id",
+      "--join-dataset-id", "1774", "--join-attr-code", "id",
+      "--relation", "n:1",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.output).not.toContain("auto-normalized")
+  })
+
   test("update sends manual join fields to the join detail endpoint", async () => {
     let requestUrl = ""
     let requestBody: unknown

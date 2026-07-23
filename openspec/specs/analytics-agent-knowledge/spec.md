@@ -319,6 +319,14 @@ CLI MUST provide an explicit node-level domain binding surface for existing docu
 - **THEN** CLI MUST fail before uploading file bytes
 - **AND** the error message MUST explain that the target path must be a folder path
 
+#### Scenario: 一步完成上传 + 建目录 + 绑定 domain
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file upload <space-id> <local-file> --target-path <remote-path> --domain-id <id>`
+- **THEN** CLI MUST 自动创建 `<remote-path>` 上缺失的中间文件夹
+- **AND** CLI MUST 在上传请求中携带 `domainIds`，使文件上传即完成 domain 绑定
+- **AND** 用户无需再单独调用 folder create / file move / node bind-domain
+- **AND** upload 命令 help MUST 提供展示该一步用法的示例
+
 #### Scenario: 文件内容读取必须绑定 space
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge file get <space-id> <node-id>`
