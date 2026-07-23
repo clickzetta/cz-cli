@@ -392,37 +392,42 @@ describe("analytics-agent table semantics", () => {
     expect(parsed.error.message).toBe("--attr-id must be a positive integer")
   })
 
-  test("update does a read-modify-write: fetches detail then posts full object with new displayName", async () => {
+  test("update reads via dataset/list (domainIds) then posts full object with new displayName", async () => {
     const calls: Array<{ url: string; method: string; body: unknown }> = []
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null })
-      if (url.includes("/dataset/detail")) {
+      const body = init?.body ? JSON.parse(String(init.body)) : null
+      calls.push({ url, method: init?.method ?? "GET", body })
+      if (url.includes("/dataset/list")) {
         return jsonResponse({
           success: true,
-          data: {
-            id: "82", datasetId: "82", sourceId: "8448", mode: 1,
-            displayName: "old_name", tableName: "quick_start.construction_dw.v_gpt_fact_bid",
-            description: "keep me", completeSchema: [{ name: "c1" }], joins: [],
-            workspace: "quick_start", namespace: "construction_dw",
-          },
+          data: [
+            { id: "99", datasetId: "99", displayName: "other", tableName: "t99" },
+            {
+              id: "82", datasetId: "82", sourceId: "8448", mode: 1,
+              displayName: "old_name", tableName: "quick_start.construction_dw.v_gpt_fact_bid",
+              description: "keep me", completeSchema: [{ name: "c1" }], joins: [],
+              workspace: "quick_start", namespace: "construction_dw",
+            },
+          ],
         })
       }
       return jsonResponse({ success: true, data: { datasetId: "82", displayName: "投标事实表" } })
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "update", "82", "--name", "投标事实表",
+      "analytics-agent", "table", "update", "82", "--domain-id", "27", "--name", "投标事实表",
     ])
 
     expect(result.exitCode).toBe(0)
-    const detailCall = calls.find((c) => c.url.includes("/dataset/detail"))
+    const listCall = calls.find((c) => c.url.includes("/dataset/list"))
     const updateCall = calls.find((c) => c.url.includes("/dataset/update"))
-    expect(detailCall).toBeDefined()
-    expect(new URL(detailCall!.url).searchParams.get("datasetId")).toBe("82")
+    expect(listCall).toBeDefined()
+    expect((listCall!.body as Record<string, unknown>).domainIds).toEqual([27])
     expect(updateCall).toBeDefined()
-    // The update body must carry the full object with only displayName changed.
+    // The update body must carry the FULL object (of dataset 82, not 99) with only displayName changed.
     const body = updateCall!.body as Record<string, unknown>
+    expect(body.datasetId).toBe("82")
     expect(body.displayName).toBe("投标事实表")
     expect(body.description).toBe("keep me")
     expect(body.tableName).toBe("quick_start.construction_dw.v_gpt_fact_bid")
@@ -433,15 +438,15 @@ describe("analytics-agent table semantics", () => {
     let updateBody: Record<string, unknown> | null = null
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes("/dataset/detail")) {
-        return jsonResponse({ success: true, data: { id: "82", datasetId: "82", displayName: "old", description: "olddesc", tableName: "t" } })
+      if (url.includes("/dataset/list")) {
+        return jsonResponse({ success: true, data: [{ id: "82", datasetId: "82", displayName: "old", description: "olddesc", tableName: "t" }] })
       }
       updateBody = init?.body ? JSON.parse(String(init.body)) : null
       return jsonResponse({ success: true, data: { datasetId: "82" } })
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "update", "82", "--name", "新名", "--description", "新描述",
+      "analytics-agent", "table", "update", "82", "--domain-id", "27", "--name", "新名", "--description", "新描述",
     ])
 
     expect(result.exitCode).toBe(0)
@@ -453,20 +458,52 @@ describe("analytics-agent table semantics", () => {
     let updateBody: Record<string, unknown> | null = null
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes("/dataset/detail")) {
-        return jsonResponse({ success: true, data: { id: "82", datasetId: "82", displayName: "keepname", description: "olddesc", tableName: "t" } })
+      if (url.includes("/dataset/list")) {
+        return jsonResponse({ success: true, data: [{ id: "82", datasetId: "82", displayName: "keepname", description: "olddesc", tableName: "t" }] })
       }
       updateBody = init?.body ? JSON.parse(String(init.body)) : null
       return jsonResponse({ success: true, data: { datasetId: "82" } })
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "update", "82", "--description", "只改描述",
+      "analytics-agent", "table", "update", "82", "--domain-id", "27", "--description", "只改描述",
     ])
 
     expect(result.exitCode).toBe(0)
     expect((updateBody as Record<string, unknown>).displayName).toBe("keepname")
     expect((updateBody as Record<string, unknown>).description).toBe("只改描述")
+  })
+
+  test("update fails clearly when the dataset is not in the given domain", async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes("/dataset/list")) {
+        return jsonResponse({ success: true, data: [{ id: "99", datasetId: "99", displayName: "x", tableName: "t" }] })
+      }
+      throw new Error("update should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "update", "82", "--domain-id", "27", "--name", "X",
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.message).toContain("not found in domain 27")
+  })
+
+  test("update requires --domain-id", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "update", "82", "--name", "X",
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
   })
 
   test("update rejects when neither --name nor --description is given", async () => {
@@ -475,7 +512,7 @@ describe("analytics-agent table semantics", () => {
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "update", "82",
+      "analytics-agent", "table", "update", "82", "--domain-id", "27",
     ])
 
     expect(result.exitCode).toBe(1)
@@ -489,7 +526,7 @@ describe("analytics-agent table semantics", () => {
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
-      "analytics-agent", "table", "update", "82", "--name", "   ",
+      "analytics-agent", "table", "update", "82", "--domain-id", "27", "--name", "   ",
     ])
 
     expect(result.exitCode).toBe(1)

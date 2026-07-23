@@ -29,35 +29,48 @@
 
 ### Requirement: table update 修改已加入域的表的显示名与描述
 
-`cz-cli analytics-agent table update <dataset-id>` MUST 支持修改一个已加入域的 dataset 的 `displayName` 与/或 `description`。由于后端 `dataset/update` 接口需要**完整的 dataset 对象**，CLI MUST 采用 read-modify-write：先 `GET /api/v1/dataset/detail?datasetId=<id>` 取回完整对象，仅改写用户提供的字段（`--name` → `displayName`、`--description` → `description`），再 `POST /api/v1/dataset/update` 把整个对象提交回去，不得只发部分字段（否则会清空其它字段）。`--name` 与 `--description` MUST 至少提供其一；提供 `--name` 时其值 MUST 非空。
+`cz-cli analytics-agent table update <dataset-id> --domain-id <id>` MUST 支持修改一个已加入域的 dataset 的 `displayName` 与/或 `description`。由于后端 `dataset/update` 接口需要**完整的 dataset 对象**，CLI MUST 采用 read-modify-write。read 源 MUST 使用 `POST /api/v1/dataset/list`（请求体 `{domainIds:[<domain-id>]}`）而**不是** `dataset/detail`——后者对部分域的 dataset 会返回 `CZD-20009`「数据集不存在」。CLI MUST 在 list 结果中按 `datasetId` 定位完整对象，仅改写用户提供的字段（`--name` → `displayName`、`--description` → `description`），再 `POST /api/v1/dataset/update` 把整个对象提交回去，不得只发部分字段（否则会清空其它字段）。`--domain-id` MUST 提供；`--name` 与 `--description` MUST 至少提供其一；提供 `--name` 时其值 MUST 非空。
 
 > 说明：`table add --display-name` 只在**新建** dataset 时设置显示名；对**已存在**的 dataset 后端会忽略。要改已有表的显示名或描述必须用本命令。
+> 已知后端限制：`dataset/detail?datasetId=<id>` 对某些域的 dataset 返回 `CZD-20009`（列表能查到、详情查不到），因此本命令改用按域过滤的 `dataset/list` 作为 read 源。
 
-#### Scenario: read-modify-write 更新 displayName
+#### Scenario: 经 dataset/list 读取后更新 displayName
 
-- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --name "投标事实表"`
-- **THEN** CLI MUST 先调用 `GET /api/v1/dataset/detail?datasetId=82`
-- **且** 再调用 `POST /api/v1/dataset/update`，请求体为该 detail 完整对象且 `displayName` 改为 `投标事实表`
-- **且** 请求体保留 detail 中的其它字段（如 `description`、`tableName`、`completeSchema`）
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name "投标事实表"`
+- **THEN** CLI MUST 先调用 `POST /api/v1/dataset/list`，请求体含 `domainIds=[27]`
+- **且** 在结果中按 `datasetId=82` 定位完整对象
+- **且** 再调用 `POST /api/v1/dataset/update`，请求体为该完整对象且 `displayName` 改为 `投标事实表`
+- **且** 请求体保留其它字段（如 `description`、`tableName`、`completeSchema`）
 
 #### Scenario: 同时更新 displayName 与 description
 
-- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --name "投标事实表" --description "招投标明细"`
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name "投标事实表" --description "招投标明细"`
 - **THEN** 提交的对象中 `displayName` 为 `投标事实表`，`description` 为 `招投标明细`
 
 #### Scenario: 只更新 description 时保留原 displayName
 
-- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --description "只改描述"`
-- **THEN** 提交的对象中 `description` 为 `只改描述`，`displayName` 保持 detail 中的原值
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --description "只改描述"`
+- **THEN** 提交的对象中 `description` 为 `只改描述`，`displayName` 保持列表中的原值
+
+#### Scenario: dataset 不在指定 domain 中时报错
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name X`
+- **AND** domain 27 的 dataset 列表中没有 datasetId=82
+- **THEN** CLI MUST 报错说明该 dataset 不在此 domain 中，且不调用 update
+
+#### Scenario: 缺少 --domain-id 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --name X`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
 
 #### Scenario: 既不给 --name 也不给 --description 时本地拒绝
 
-- **WHEN** 用户执行 `cz-cli analytics-agent table update 82`
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27`
 - **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
 
 #### Scenario: 空 --name 本地拒绝
 
-- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --name "   "`
+- **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name "   "`
 - **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
 
 ### Requirement: table semantics get 查看单个字段语义详情
