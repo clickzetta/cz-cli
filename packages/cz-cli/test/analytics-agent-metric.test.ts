@@ -414,6 +414,36 @@ describe("analytics-agent metric", () => {
     expect(data.succeeded).toBe(205)
   })
 
+  test("batch enable stops (no infinite loop) when the backend ignores pageNum", async () => {
+    // Simulate a broken backend that returns the SAME full page regardless of
+    // pageNum. Dedup-by-id + no-new-items guard must terminate after 2 calls.
+    let listCalls = 0
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes("/metrics/list")) {
+        listCalls++
+        const page = Array.from({ length: 200 }, (_, i) => ({ id: i + 1, names: [`m${i + 1}`], status: "DISABLE" }))
+        return jsonResponse({ success: true, data: page })
+      }
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "enable",
+      "--all",
+      "--domain-id",
+      "27",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    // Page 1 adds 200 new ids; page 2 is identical -> 0 new -> stop.
+    expect(listCalls).toBe(2)
+    const data = parseData(result.output) as Record<string, unknown>
+    expect(data.total).toBe(200)
+  })
+
   test("batch enable sets non-zero exit code when an item fails", async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

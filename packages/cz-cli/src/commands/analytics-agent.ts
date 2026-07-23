@@ -672,9 +672,13 @@ async function runBatchStatusChange(
 
     // Paginate the list so `--all` covers every item, not just the API's
     // default first page. Loop until a page returns fewer than pageSize rows.
+    // Dedup by id and cap the page count so a backend that ignores pageNum
+    // (returning the same page forever) can't cause an infinite loop.
     const pageSize = 200
+    const maxPages = 1000
     const targets: BatchTargetItem[] = []
-    for (let pageNum = 1; ; pageNum++) {
+    const seen = new Set<number>()
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       const pageData = await requestAnalyticsData(
         argv,
         listRoute,
@@ -683,9 +687,17 @@ async function runBatchStatusChange(
         ctx,
       )
       const pageItems = extractBatchTargets(pageData, nameKey)
-      targets.push(...pageItems)
+      let added = 0
+      for (const item of pageItems) {
+        if (seen.has(item.id)) continue
+        seen.add(item.id)
+        targets.push(item)
+        added++
+      }
       const pageLen = Array.isArray(pageData) ? pageData.length : pageItems.length
-      if (pageLen < pageSize) break
+      // Stop on a short page (last page) or when a full page contributed no new
+      // ids (backend ignored pageNum and returned a duplicate page).
+      if (pageLen < pageSize || added === 0) break
     }
 
     const results: Array<Record<string, unknown>> = []
