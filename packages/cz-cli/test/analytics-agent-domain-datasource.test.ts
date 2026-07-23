@@ -459,6 +459,7 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
       workspace: "quick_start",
       schema: "rpt",
       tableName: "rpt_transaction_lazada",
+      displayName: "quick_start.rpt.rpt_transaction_lazada",
     })
   })
 
@@ -480,8 +481,8 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(result.stdout).not.toContain("--table-name")
     expect(result.stdout).not.toContain("--path")
     expect(result.stdout).not.toContain("--body")
-    expect(result.stdout).not.toContain("--display-name")
-    expect(result.stdout).not.toContain("--description")
+    // --display-name is now intentionally exposed to fix blank UI display names.
+    expect(result.stdout).toContain("--display-name")
   })
 
   test("domain table add rejects missing table before sending request", async () => {
@@ -505,5 +506,113 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
 
     expect(result.exitCode).toBe(2)
     expect(parseError(result.output).code).toBe("USAGE_ERROR")
+  })
+
+  test("domain table add splits a fully-qualified --table into workspace/schema/table", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: 321, tableName: "quick_start.rpt.orders" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "19",
+      "--datasource-id", "4164",
+      "--table", "quick_start.rpt.orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({
+      datasourceId: 4164,
+      workspace: "quick_start",
+      schema: "rpt",
+      tableName: "orders",
+      displayName: "quick_start.rpt.orders",
+    })
+  })
+
+  test("domain table add leaves a single-segment --table untouched", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: 1, tableName: "orders" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "19",
+      "--datasource-id", "4164",
+      "--table", "orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({ datasourceId: 4164, tableName: "orders", displayName: "orders" })
+  })
+
+  test("domain table add does not split when workspace/schema are explicit", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: 1, tableName: "a.b.c" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "19",
+      "--datasource-id", "4164",
+      "--workspace", "ws", "--schema", "sc",
+      "--table", "a.b.c",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({ datasourceId: 4164, workspace: "ws", schema: "sc", tableName: "a.b.c", displayName: "ws.sc.a.b.c" })
+  })
+
+  test("domain table add defaults displayName to the physical table name (v_gpt_ stripped)", async () => {
+    let requestBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: 1, tableName: "x", displayName: "quick_start.construction_dw.fact_bid" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "27",
+      "--datasource-id", "8448",
+      "--table", "quick_start.construction_dw.v_gpt_fact_bid",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect((requestBody as Record<string, unknown>).displayName).toBe("quick_start.construction_dw.fact_bid")
+  })
+
+  test("domain table add honors an explicit --display-name", async () => {
+    let requestBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: 1, tableName: "x" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "27",
+      "--datasource-id", "8448",
+      "--table", "quick_start.construction_dw.v_gpt_fact_bid",
+      "--display-name", "投标事实表",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect((requestBody as Record<string, unknown>).displayName).toBe("投标事实表")
+  })
+
+  test("domain table add surfaces the assigned dataset id via ai_message", async () => {
+    globalThis.fetch = mock(async () => {
+      return jsonResponse({ success: true, data: { datasetId: 133, tableName: "quick_start.rpt.orders", addedToDomain: true } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "19",
+      "--datasource-id", "4164",
+      "--table", "quick_start.rpt.orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.output).toContain("dataset ID 133")
   })
 })

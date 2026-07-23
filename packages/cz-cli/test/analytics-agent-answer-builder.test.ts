@@ -125,6 +125,62 @@ describe("analytics-agent answer-builder", () => {
     })
   })
 
+  test("create injects --sql into content.sql so quotes need no escaping", async () => {
+    let requestBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { id: 401 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "create",
+      "--analysis-name", "中标率",
+      "--datasource-id", "11",
+      "--domain-id", "195",
+      "--content", "{\"chartParams\":[],\"outputColumns\":[]}",
+      "--sql", "SELECT COUNT(*) FROM t WHERE bid_result='中标'",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const content = JSON.parse(String((requestBody as Record<string, unknown>).content))
+    expect(content.sql).toBe("SELECT COUNT(*) FROM t WHERE bid_result='中标'")
+    expect(content.chartParams).toEqual([])
+    expect(content.outputColumns).toEqual([])
+  })
+
+  test("create with --sql but no --content builds a content object with just sql", async () => {
+    let requestBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { id: 401 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "create",
+      "--analysis-name", "x", "--datasource-id", "11", "--domain-id", "195",
+      "--sql", "SELECT 1",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const content = JSON.parse(String((requestBody as Record<string, unknown>).content))
+    expect(content).toEqual({ sql: "SELECT 1" })
+  })
+
+  test("create with neither --content nor --sql is a local usage error", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "create",
+      "--analysis-name", "x", "--datasource-id", "11", "--domain-id", "195",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
   test("list maps flat filter fields into request body", async () => {
     let requestBody: unknown
 

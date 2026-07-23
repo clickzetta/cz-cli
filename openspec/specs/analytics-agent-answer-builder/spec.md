@@ -32,6 +32,26 @@
 - **THEN** help 输出包含 `Examples:` 段
 - **且** 示例提示先用 `validate` 校验 `--content` DSL
 
+### Requirement: answer-builder 支持 --sql 与 --content 分离
+
+`cz-cli analytics-agent answer-builder create`、`update`、`validate` MUST 支持用 `--sql` 单独传入 SQL 主体，注入到 content DSL 的顶层 `sql` 字段，使用户无需在 `--content` JSON 内转义 SQL 中的单/双引号。`--content` 承载 DSL 其余部分（chartParams/outputColumns/relatedTables 等）。`--content` 与 `--sql` MUST 至少提供其一。
+
+#### Scenario: --sql 注入 content.sql
+
+- **WHEN** 用户执行 `answer-builder create --content '{"chartParams":[],"outputColumns":[]}' --sql "SELECT COUNT(*) FROM t WHERE bid_result='中标'"`（并带必填的 name/datasource/domain）
+- **THEN** 请求体 `content` 解析后 `sql` 等于该 SQL 原文
+- **且** `chartParams`、`outputColumns` 保留自 `--content`
+
+#### Scenario: 只给 --sql 不给 --content
+
+- **WHEN** 用户只提供 `--sql` 而不提供 `--content`
+- **THEN** CLI MUST 构造仅含 `sql` 字段的 content 对象
+
+#### Scenario: --content 与 --sql 都缺失时本地拒绝
+
+- **WHEN** 用户既不提供 `--content` 也不提供 `--sql`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+
 ### Requirement: answer-builder 命令组帮助说明与 metric 的关系
 
 `cz-cli analytics-agent answer-builder --help` MUST 在 epilogue 中说明 answer-builder 是 complex_metric（多步/多表 DSL 分析），单表单聚合应使用 `metric`（simple_metric），且两者都计入 `domain detail` 的 targetCounts，并提示可用 `--domain-id` 把 `answer-builder list` 限定到单个 domain。
