@@ -576,4 +576,64 @@ describe("analytics-agent metric", () => {
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
   })
+
+  test("non-numeric positional id is rejected locally, not sent to backend", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "abc"])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("--metric-id must be a positive integer")
+  })
+
+  test("fractional positional id is rejected locally", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "27.5"])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("overflow positional id (beyond safe integer) is rejected locally", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "99999999999999999999"])
+
+    expect(result.exitCode).toBe(1)
+    const parsed = JSON.parse(result.output.trim())
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+  })
+
+  test("zero and negative positional id are rejected locally", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const zero = await runAnalyticsCli(["analytics-agent", "metric", "detail", "0"])
+    expect(zero.exitCode).toBe(1)
+    expect(JSON.parse(zero.output.trim()).error.code).toBe("USAGE_ERROR")
+  })
+
+  test("valid positional id passes validation and reaches the backend", async () => {
+    let called = false
+    globalThis.fetch = mock(async () => {
+      called = true
+      return jsonResponse({ success: true, data: { id: 301, names: ["m"] } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(["analytics-agent", "metric", "detail", "301"])
+
+    expect(called).toBe(true)
+    expect(result.exitCode).toBe(0)
+  })
 })

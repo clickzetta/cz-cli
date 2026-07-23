@@ -475,7 +475,7 @@ describe("analytics-agent knowledge", () => {
     const parsed = JSON.parse(result.output.trim()) as Record<string, any>
     expect(parsed.error.code).toBe("USAGE_ERROR")
     expect(parsed.error.message).toContain("--domain-id")
-    expect(parsed.error.message).toContain("positive integers")
+    expect(parsed.error.message).toContain("positive integer")
   })
 
   test("node bind-domain still succeeds when detail refresh fails after successful write", async () => {

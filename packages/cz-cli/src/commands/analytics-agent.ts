@@ -1568,9 +1568,36 @@ async function executeAnalyticsPollCommand(
   }
 }
 
+// Positional/option id args that MUST be positive integers when present.
+// Excludes `parent-id` (0 = root folder is valid) and non-id args. yargs
+// coerces a non-numeric value like "abc" to NaN and a float like "27.5" stays
+// fractional; without this guard those reach the backend and surface as an
+// opaque HTTP 500 instead of a friendly usage error.
+const POSITIVE_INTEGER_ID_KEYS = [
+  "domain-id", "dataset-id", "attr-id", "metric-id", "analysis-id",
+  "node-id", "space-id", "join-id", "table-id", "datasource-id",
+  "question-id", "session-id", "source-id", "join-dataset-id",
+]
+
+function validatePositiveIntegerIds(argv: Record<string, unknown>): void {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  for (const key of POSITIVE_INTEGER_ID_KEYS) {
+    const value = argv[key]
+    if (value === undefined) continue
+    const values = Array.isArray(value) ? value : [value]
+    for (const v of values) {
+      if (typeof v !== "number") continue
+      if (!Number.isSafeInteger(v) || v <= 0) {
+        handledError("USAGE_ERROR", `--${key} must be a positive integer`, { format })
+      }
+    }
+  }
+}
+
 export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
   cli.command("analytics-agent", "Analytics Agent APIs", (yargs) => {
     yargs
+      .middleware((argv) => validatePositiveIntegerIds(argv as Record<string, unknown>))
       .command("datasource", "Manage Analytics Agent datasources", (datasource) => {
         datasource
           .command(
