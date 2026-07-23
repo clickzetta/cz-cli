@@ -53,7 +53,7 @@ export interface AuthToken {
   userId: number
   expireTimeMs: number
   obtainedAt: number
-  refreshToken?: string // OAuth refresh token；传统登录模式下为 undefined
+  refreshToken?: string // OAuth refresh token; undefined for legacy (PAT/password) logins
   // OAuth issuer host (no protocol, e.g. "api.clickzetta.com") — the OIDC
   // authorization server that issued this token. OAuth `/oauth2/token` is ONLY
   // served by the issuer, NOT the region business host in `config.service`

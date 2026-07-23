@@ -95,22 +95,32 @@ async function loginWithRetry(
   baseUrl: string,
   body: Record<string, unknown>,
   instance: string,
+  oauth: boolean,
 ): Promise<AuthToken> {
   let lastError: Error | undefined
   // client.py:305 — one request id for the entire login attempt sequence
   const requestId = generateRequestId()
 
+  // The three login methods (PAT, password, browser OAuth) are independent.
+  // PAT and password logins are plain credential exchanges and must NOT carry
+  // `oauthLoginParam` — portals that don't implement OAuth authorization-code
+  // login reject the whole request (business code 5014, "missing required
+  // parameter or otherwise malformed"). `oauthLoginParam` is attached ONLY when
+  // the caller explicitly opts into the OAuth upgrade (`oauth === true`).
+  //
   // PKCE is generated once per login sequence; codeVerifier stays in memory
   // only and is never logged. codeChallenge is sent to the portal so the
   // gateway can later validate the matching verifier at /oauth2/token.
-  const pkce = generatePkce()
-  const loginBody = {
-    ...body,
-    oauthLoginParam: buildOauthLoginParam({
-      redirectUri: OAUTH_REDIRECT_URI,
-      codeChallenge: pkce.codeChallenge,
-    }),
-  }
+  const pkce = oauth ? generatePkce() : undefined
+  const loginBody = pkce
+    ? {
+        ...body,
+        oauthLoginParam: buildOauthLoginParam({
+          redirectUri: OAUTH_REDIRECT_URI,
+          codeChallenge: pkce.codeChallenge,
+        }),
+      }
+    : body
 
   for (let attempt = 0; attempt <= LOGIN_MAX_RETRIES; attempt++) {
     try {
@@ -128,9 +138,11 @@ async function loginWithRetry(
       } else {
         const data = resp.data
         // OAuth path: a non-empty authorizationCode means the portal opted
-        // into the code exchange. Swap the legacy token for the OAuth tokens
-        // while keeping the portal-issued instanceId/userId.
-        if (data.authorizationCode) {
+        // into the code exchange. Only reachable when we sent PKCE (oauth ===
+        // true); the guard keeps this correct even if a portal echoes a code
+        // for a plain credential login. Swap the legacy token for the OAuth
+        // tokens while keeping the portal-issued instanceId/userId.
+        if (pkce && data.authorizationCode) {
           const oauth = await exchangeAuthorizationCode(baseUrl, data.authorizationCode, pkce.codeVerifier, OAUTH_REDIRECT_URI)
           return {
             token: oauth.accessToken,
@@ -174,8 +186,9 @@ export async function loginWithPat(
   baseUrl: string,
   pat: string,
   instanceName: string,
+  oauth = false,
 ): Promise<AuthToken> {
-  return loginWithRetry(baseUrl, { accessToken: pat, instanceName }, instanceName)
+  return loginWithRetry(baseUrl, { accessToken: pat, instanceName }, instanceName, oauth)
 }
 
 export async function loginWithPassword(
@@ -183,11 +196,13 @@ export async function loginWithPassword(
   username: string,
   password: string,
   instanceName: string,
+  oauth = false,
 ): Promise<AuthToken> {
   return loginWithRetry(
     baseUrl,
     { username, password, instanceName },
     instanceName,
+    oauth,
   )
 }
 

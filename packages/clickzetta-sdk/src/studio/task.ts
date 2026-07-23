@@ -319,7 +319,7 @@ export interface SaveCdcTaskParams {
 
 export interface CdcStartupPositionConfig {
   datasourceId: number | string
-  startupMode: number   // 2=指定时间, 3=指定文件
+  startupMode: number   // 2=specific time, 3=specific file
   startTimestamp?: string   // unix ms string, for startupMode=2
   file?: string             // binlog file, for startupMode=3
   pos?: string              // binlog offset, for startupMode=3
@@ -329,7 +329,7 @@ export interface CdcTaskStartParams {
   fileId: number
   updateBy: string
   workspace: string
-  startupMode?: number          // 0=无状态启动, 1=从上次保存状态恢复, 4=自定义起始位置
+  startupMode?: number          // 0=stateless start, 1=resume from last saved state, 4=custom start position
   engineType?: number           // 5=default
   snapshotTaskSwitch?: number   // 0=off, 1=on
   snapshotTaskPoolSize?: number // snapshot concurrency (default 1, only when snapshotTaskSwitch=1)

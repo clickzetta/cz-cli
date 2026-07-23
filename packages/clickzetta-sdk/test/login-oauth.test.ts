@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 
-import { loginWithPassword } from "../src/auth/login.js"
+import { loginWithPassword, loginWithPat } from "../src/auth/login.js"
 
 function base64Url(input: Buffer): string {
   return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
@@ -13,8 +13,58 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-describe("OAuth login", () => {
-  test("loginWithPassword sends oauthLoginParam and exchanges authorizationCode", async () => {
+describe("login OAuth opt-in", () => {
+  test("password login stays a plain credential exchange by default (no oauthLoginParam)", async () => {
+    let loginPayload: Record<string, unknown> | undefined
+    let tokenExchangeCalls = 0
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (url.pathname === "/clickzetta-portal/user/loginSingle" && init?.method === "POST") {
+        loginPayload = JSON.parse(String(init.body)) as Record<string, unknown>
+        return new Response(JSON.stringify({
+          code: 0,
+          data: { token: "legacy-token", userId: 7, instanceId: 9, expireTime: 123 },
+        }), { status: 200, headers: { "content-type": "application/json" } })
+      }
+      if (url.pathname === "/clickzetta-hornhub/oauth2/token") tokenExchangeCalls += 1
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch
+
+    const token = await loginWithPassword("https://service.example.com", "user", "pass", "inst")
+
+    // The whole payload is just credentials — no OAuth upgrade fields leak in.
+    expect(loginPayload?.username).toBe("user")
+    expect(loginPayload?.password).toBe("pass")
+    expect(loginPayload?.instanceName).toBe("inst")
+    expect(loginPayload?.oauthLoginParam).toBeUndefined()
+    expect(token.token).toBe("legacy-token")
+    expect(token.refreshToken).toBeUndefined()
+    expect(tokenExchangeCalls).toBe(0)
+  })
+
+  test("PAT login stays a plain credential exchange by default (no oauthLoginParam)", async () => {
+    let loginPayload: Record<string, unknown> | undefined
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (url.pathname === "/clickzetta-portal/user/loginSingle" && init?.method === "POST") {
+        loginPayload = JSON.parse(String(init.body)) as Record<string, unknown>
+        return new Response(JSON.stringify({
+          code: 0,
+          data: { token: "legacy-token", userId: 7, instanceId: 9, expireTime: 123 },
+        }), { status: 200, headers: { "content-type": "application/json" } })
+      }
+      return new Response("not found", { status: 404 })
+    }) as typeof fetch
+
+    const token = await loginWithPat("https://service.example.com", "my-pat", "inst")
+
+    expect(loginPayload?.accessToken).toBe("my-pat")
+    expect(loginPayload?.instanceName).toBe("inst")
+    expect(loginPayload?.oauthLoginParam).toBeUndefined()
+    expect(token.token).toBe("legacy-token")
+  })
+
+  test("explicit oauth opt-in sends oauthLoginParam and exchanges authorizationCode", async () => {
     let loginPayload: Record<string, unknown> | undefined
     let tokenPayload: URLSearchParams | undefined
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -44,12 +94,9 @@ describe("OAuth login", () => {
       return new Response("not found", { status: 404 })
     }) as typeof fetch
 
-    const token = await loginWithPassword("https://service.example.com", "user", "pass", "inst")
+    const token = await loginWithPassword("https://service.example.com", "user", "pass", "inst", true)
 
     const oauthLoginParam = loginPayload?.oauthLoginParam as Record<string, unknown>
-    expect(loginPayload?.username).toBe("user")
-    expect(loginPayload?.password).toBe("pass")
-    expect(loginPayload?.instanceName).toBe("inst")
     expect(oauthLoginParam.oauthLogin).toBe(true)
     expect(oauthLoginParam.clientId).toBe("official-cli")
     expect(oauthLoginParam.redirectUri).toBe("http://127.0.0.1/callback")
@@ -67,28 +114,21 @@ describe("OAuth login", () => {
     expect(token.expireTimeMs).toBe(900_000)
   })
 
-  test("loginWithPassword keeps legacy token when authorizationCode is absent", async () => {
+  test("oauth opt-in without a returned authorizationCode keeps the legacy token", async () => {
     let tokenExchangeCalls = 0
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
       if (url.pathname === "/clickzetta-portal/user/loginSingle" && init?.method === "POST") {
         return new Response(JSON.stringify({
           code: 0,
-          data: {
-            token: "legacy-token",
-            userId: 7,
-            instanceId: 9,
-            expireTime: 123,
-          },
+          data: { token: "legacy-token", userId: 7, instanceId: 9, expireTime: 123 },
         }), { status: 200, headers: { "content-type": "application/json" } })
       }
-      if (url.pathname === "/clickzetta-hornhub/oauth2/token") {
-        tokenExchangeCalls += 1
-      }
+      if (url.pathname === "/clickzetta-hornhub/oauth2/token") tokenExchangeCalls += 1
       return new Response("not found", { status: 404 })
     }) as typeof fetch
 
-    const token = await loginWithPassword("https://service.example.com", "user", "pass", "inst")
+    const token = await loginWithPassword("https://service.example.com", "user", "pass", "inst", true)
 
     expect(token.token).toBe("legacy-token")
     expect(tokenExchangeCalls).toBe(0)

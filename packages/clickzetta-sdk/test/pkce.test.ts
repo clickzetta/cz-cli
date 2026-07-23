@@ -11,8 +11,8 @@ function base64Url(input: Buffer): string {
 const UNRESERVED = /^[A-Za-z0-9\-._~]+$/
 
 describe("generatePkce", () => {
-  // Property 1: PKCE 一致性 — codeChallenge == base64url(sha256(codeVerifier)),
-  // codeVerifier 长度 ∈ [43,128] 且仅含 unreserved 字符。
+  // Property 1: PKCE consistency — codeChallenge == base64url(sha256(codeVerifier)),
+  // codeVerifier length ∈ [43,128] and uses only unreserved characters.
   // Validates: Requirements 2.1, 2.2
   test("codeChallenge equals base64url(sha256(codeVerifier)) with no padding", () => {
     for (let i = 0; i < 100; i++) {
@@ -25,7 +25,7 @@ describe("generatePkce", () => {
     }
   })
 
-  // Property 1: codeVerifier 长度 ∈ [43,128] 且仅含 RFC 7636 unreserved 字符。
+  // Property 1: codeVerifier length ∈ [43,128] and uses only RFC 7636 unreserved characters.
   // Validates: Requirements 2.1
   test("codeVerifier length is within [43,128] and uses only unreserved characters", () => {
     for (let i = 0; i < 100; i++) {
@@ -36,7 +36,7 @@ describe("generatePkce", () => {
     }
   })
 
-  // Property 2: PKCE 唯一性 — 连续多次生成的 codeVerifier 互不相同。
+  // Property 2: PKCE uniqueness — consecutive generations produce distinct codeVerifier values.
   // Validates: Requirements 2.3
   test("multiple calls produce distinct codeVerifier values", () => {
     const verifiers = Array.from({ length: 100 }, () => generatePkce().codeVerifier)

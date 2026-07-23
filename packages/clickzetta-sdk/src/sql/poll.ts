@@ -260,7 +260,7 @@ export function coerceValue(value: string | null, typeCategory: string, timezone
     return value.toLowerCase() === "true"
   }
 
-  // 时间类型
+  // Temporal types
   // DATE: TEXT format is already "YYYY-MM-DD", return as ISO string.
   if (upper === "DATE") {
     return value.trim()
@@ -275,7 +275,7 @@ export function coerceValue(value: string | null, typeCategory: string, timezone
     return normaliseTimestampText(value, upper)
   }
 
-  // 二进制
+  // Binary types
   if (upper === "BINARY" || upper === "VARBINARY") {
     return hexToBytes(value)
   }

@@ -206,97 +206,84 @@ describe("token store persistence (getToken)", () => {
       obtainedAt: 0, // expired
     }
     const store = makeStore(persisted)
+    // Dead refresh token → the fallback is a plain credential login (config has
+    // username/password), which returns the portal's legacy token directly. No
+    // authorizationCode exchange happens on the fallback path.
     const calls = buildFetch({
       login: () => ({
-        token: "legacy",
-        authorizationCode: "auth-code",
+        token: "login-access",
         userId: 7,
         instanceId: 9,
-        expireTime: 999,
+        expireTime: 900_000,
       }),
       token: (params) => {
-        if (params.get("grant_type") === "refresh_token") {
-          return { body: { error: "invalid_grant" }, status: 400 }
-        }
-        return {
-          body: {
-            access_token: "login-access",
-            refresh_token: "login-refresh",
-            token_type: "Bearer",
-            expires_in: 900,
-          },
-        }
+        // Only the (dead) refresh grant reaches /oauth2/token.
+        expect(params.get("grant_type")).toBe("refresh_token")
+        return { body: { error: "invalid_grant" }, status: 400 }
       },
     })
 
     clearTokenCache()
     const token = await getToken(config(store))
 
-    expect(calls.tokenGrants).toContain("refresh_token")
+    expect(calls.tokenGrants).toEqual(["refresh_token"])
     expect(store.clearCount).toBeGreaterThanOrEqual(1)
     expect(calls.login).toBe(1) // fell back to full login
     expect(token.token).toBe("login-access")
+    expect(token.refreshToken).toBeUndefined()
     // store ends cleared-or-overwritten by the new login token.
     expect(store.current?.token).toBe("login-access")
   })
 
-  test("save after fresh login: empty store gets save called with the OAuth token [Req 9.1]", async () => {
+  test("save after fresh login: empty store gets save called with the login token [Req 9.1]", async () => {
     const store = makeStore(undefined)
+    // A fresh PAT/password login is a plain credential exchange — it yields a
+    // legacy token (no authorizationCode, no refreshToken). Only the browser
+    // OAuth flow mints refresh tokens. So an empty store + credentials persists
+    // exactly the portal login token; /oauth2/token is never touched.
     const calls = buildFetch({
       login: () => ({
-        token: "legacy",
-        authorizationCode: "auth-code",
+        token: "fresh-login-token",
         userId: 7,
         instanceId: 9,
-        expireTime: 999,
+        expireTime: 900_000,
       }),
-      token: () => ({
-        body: {
-          access_token: "fresh-access",
-          refresh_token: "fresh-refresh",
-          token_type: "Bearer",
-          expires_in: 900,
-        },
-      }),
+      token: () => ({ body: { error: "should_not_be_called" }, status: 400 }),
     })
 
     clearTokenCache()
     const token = await getToken(config(store))
 
     expect(calls.login).toBe(1)
-    expect(token.token).toBe("fresh-access")
+    expect(calls.tokenGrants.length).toBe(0) // no OAuth exchange on a plain login
+    expect(token.token).toBe("fresh-login-token")
+    expect(token.refreshToken).toBeUndefined()
     expect(store.saveCount).toBeGreaterThanOrEqual(1)
-    expect(store.current?.token).toBe("fresh-access")
-    expect(store.current?.refreshToken).toBe("fresh-refresh")
+    expect(store.current?.token).toBe("fresh-login-token")
+    expect(store.current?.refreshToken).toBeUndefined()
   })
 
   test("backward compat: no tokenStore behaves as before, in-memory cache only [Property 10 / Req 9.7]", async () => {
+    // No store, plain credential login → the legacy portal token is cached in
+    // memory only. /oauth2/token is never involved.
     const calls = buildFetch({
       login: () => ({
-        token: "legacy",
-        authorizationCode: "auth-code",
+        token: "login-token",
         userId: 7,
         instanceId: 9,
-        expireTime: 999,
+        expireTime: 900_000,
       }),
-      token: () => ({
-        body: {
-          access_token: "access-1",
-          refresh_token: "refresh-1",
-          token_type: "Bearer",
-          expires_in: 900,
-        },
-      }),
+      token: () => ({ body: { error: "should_not_be_called" }, status: 400 }),
     })
 
     const cfg = config(undefined)
     const first = await getToken(cfg)
-    expect(first.token).toBe("access-1")
+    expect(first.token).toBe("login-token")
     expect(calls.login).toBe(1)
 
     // Second call within validity window → served from memory, no new login.
     const second = await getToken(cfg)
-    expect(second.token).toBe("access-1")
+    expect(second.token).toBe("login-token")
     expect(calls.login).toBe(1)
   })
 
