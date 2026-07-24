@@ -52,6 +52,22 @@
 - **WHEN** 用户既不提供 `--content` 也不提供 `--sql`
 - **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
 
+### Requirement: answer-builder create/validate 提供 DSL 语法帮助
+
+`cz-cli analytics-agent answer-builder create --help` 与 `validate --help` MUST 在 epilogue 中提供 `--content` DSL 的语法参考，至少覆盖：DSL 结构（`chartParams` / `outputColumns` / `relatedTables` / `sql`）、`${name}` 占位符必须在 `chartParams` 中有对应项、`outputColumns[].metricName` 为必填且**在域内唯一**、以及窗口/ROLLUP 引用 `${dims}` 列时需用子查询包裹的规避方法。目的是让用户无需查阅外部文档即可构造合法的 `--content`。
+
+#### Scenario: create help 展示 DSL 结构与关键规则
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --help`
+- **THEN** help 输出包含 `chartParams`、`outputColumns`
+- **且** 包含 `metricName` 及其"域内唯一"（UNIQUE within the domain）的说明
+- **且** 包含 `${name}` 占位符须有对应 chartParams 项的规则
+
+#### Scenario: validate help 同样展示 DSL 语法参考
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder validate --help`
+- **THEN** help 输出包含 `chartParams` 与 `metricName` 语法说明
+
 ### Requirement: answer-builder 命令组帮助说明与 metric 的关系
 
 `cz-cli analytics-agent answer-builder --help` MUST 在 epilogue 中说明 answer-builder 是 complex_metric（多步/多表 DSL 分析），单表单聚合应使用 `metric`（simple_metric），且两者都计入 `domain detail` 的 targetCounts，并提示可用 `--domain-id` 把 `answer-builder list` 限定到单个 domain。

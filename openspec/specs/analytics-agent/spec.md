@@ -50,6 +50,22 @@
 - **THEN** CLI MUST NOT 因 `parent-id=0` 报 `USAGE_ERROR`
 - **且** 正常按根节点查询
 
+### Requirement: 分页 list 命令透出总量并提示截断
+
+当后端 list 响应携带分页信息（`total`/`pageNum`/`pageSize`/`pageCount`）时，`analytics-agent` 的分页类命令（metric list、answer-builder list、datasource list 等经 executeAnalyticsCommand 的命令）MUST 把这些字段透出到输出（`total`、`page_num`、`page_size`、`page_count`、`has_more`），不得只保留等于当前页条数的 `count`。当仍有后续页（`has_more` 为真）时，MUST 通过 `ai_message` 提示总量与翻页方式。目的：避免当前页条数恰好等于 page_size 时无法判断是否还有数据、导致漏读。
+
+#### Scenario: 结果被分页截断时透出总量并提示
+
+- **WHEN** 某域有 14 条 answer-builder，用户执行 `cz-cli analytics-agent answer-builder list --domain-id <id>`（默认 page_size 10）
+- **THEN** 输出 MUST 包含 `count=10`、`total=14`、`page_count=2`、`has_more=true`
+- **且** `ai_message` MUST 提示"Showing 10 of 14"及用 `--page-num`/`--page-size` 获取其余数据
+
+#### Scenario: 单页结果不设 has_more
+
+- **WHEN** 结果总量不超过一页
+- **THEN** 输出 `has_more` 为 `false`
+- **且** 不输出翻页提示 `ai_message`
+
 ### Requirement: 输出字段面向用户和 agent
 
 本需求 MUST 按以下场景执行。
