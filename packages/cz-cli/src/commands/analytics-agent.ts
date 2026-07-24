@@ -168,6 +168,38 @@ function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: stri
   return JSON.stringify(dsl)
 }
 
+// Syntax reference shown in the epilogue of answer-builder create/validate.
+// Derived from hands-on authoring: the DSL shape, the ${placeholder} rule, the
+// required+domain-unique metricName, and the window/CTE subquery-wrap trick.
+const ANSWER_BUILDER_DSL_HELP = [
+  "DSL (--content) structure:",
+  "  {",
+  '    "chartParams": [        // interactive inputs; reference in SQL as ${name}',
+  '      {"name":"dims","type":"dimension","allowMulti":true,   // -> GROUP BY ${dims}',
+  '       "fromTableRefs":[{"tableName":"cat.schema.table","columns":["region"]}]},',
+  '      {"name":"filters","type":"filter","allowMulti":true,   // -> WHERE ${filters}',
+  '       "fromTableRefs":[{"tableName":"cat.schema.table","columns":["channel"]}]}',
+  "    ],",
+  '    "outputColumns": [      // one per SELECT output column',
+  '      {"name":"total_amt",           // MUST match the SQL AS alias',
+  '       "metricName":"区域销售额",     // REQUIRED, and UNIQUE within the domain',
+  '       "type":"decimal","stdTypeName":"double",  // type required; stdTypeName optional',
+  '       "alias":["销售额"],            // optional display aliases',
+  '       "description":"..."}           // optional',
+  "    ],",
+  '    "relatedTables": ["cat.schema.table", ...]   // every table the SQL touches',
+  "  }",
+  "  (Pass the SQL via --sql instead of embedding it in --content to avoid quote escaping.)",
+  "",
+  "Rules:",
+  "  - Every ${name} in the SQL MUST have a matching chartParams entry, else CZLH-42000 syntax error.",
+  "  - outputColumns[].metricName is REQUIRED and must be UNIQUE within the domain",
+  "    (prefix generic names, e.g. 区域销售额 vs 行业销售额).",
+  "  - Window/ROLLUP whose PARTITION BY / ORDER BY references a ${dims} column: compute in an",
+  "    inner subquery with fixed column names, then `SELECT ${dims}, ...` in the outer query.",
+  "  - Always run `answer-builder validate` (dry-run) before create.",
+].join("\n")
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return value === undefined ? undefined : [String(value)]
   return value.map((item) => String(item))
@@ -2672,7 +2704,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" })
                 .example(
                   'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "各省份中标金额排名" --content \'{"...DSL..."}\'',
@@ -2681,7 +2713,12 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .example(
                   'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "中标率" --content \'{"chartParams":[...],"outputColumns":[...]}\' --sql "SELECT ... WHERE bid_result=\'中标\'"',
                   "Pass SQL via --sql so single quotes don't collide with the --content JSON",
-                ),
+                )
+                .example(
+                  'cz-cli analytics-agent answer-builder create --domain-id 43 --datasource-id 8448 --analysis-name "各区域销售汇总" --content \'{"chartParams":[{"name":"dims","type":"dimension","allowMulti":true,"fromTableRefs":[{"tableName":"quick_start.ict_industry_demo.v_gpt_fact_sales","columns":["region"]}]}],"outputColumns":[{"name":"order_count","metricName":"区域订单数","type":"bigint","stdTypeName":"int"},{"name":"total_amount","metricName":"区域销售额","type":"decimal","stdTypeName":"double"}],"relatedTables":["quick_start.ict_industry_demo.v_gpt_fact_sales"]}\' --sql "SELECT ${dims}, COUNT(*) AS order_count, SUM(final_amount) AS total_amount FROM quick_start.ict_industry_demo.v_gpt_fact_sales GROUP BY ${dims}"',
+                  "Full example: dims placeholder + required unique metricName per output column",
+                )
+                .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
@@ -2854,8 +2891,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" }),
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" })
+                .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
