@@ -1074,6 +1074,31 @@ function unwrapResponse(payload: unknown): unknown {
   return data ?? payload
 }
 
+interface PageInfo {
+  total: number
+  page_num: number
+  page_size: number
+  page_count: number
+  has_more: boolean
+}
+
+// The backend list envelope carries total/pageNum/pageSize/pageCount alongside
+// `data`. unwrapResponse() keeps only `data`, so `count` (= data.length) reflects
+// the current page, not the total — hiding that more pages exist. Extract the
+// pagination fields so list commands can surface them and warn on truncation.
+function extractPageInfo(payload: unknown): PageInfo | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined
+  const p = payload as Record<string, unknown>
+  const total = numberValue(p.total)
+  const pageNum = numberValue(p.pageNum)
+  const pageSize = numberValue(p.pageSize)
+  const pageCount = numberValue(p.pageCount)
+  if (total === undefined || pageSize === undefined) return undefined
+  const num = pageNum ?? 1
+  const count = pageCount ?? (pageSize > 0 ? Math.ceil(total / pageSize) : 1)
+  return { total, page_num: num, page_size: pageSize, page_count: count, has_more: num < count }
+}
+
 /**
  * Analytics Agent backend always returns HTTP 200, using `success: false`
  * inside the envelope to signal business errors. Detect that here so callers
@@ -1328,7 +1353,17 @@ async function executeAnalyticsCommand(
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
     const data = unwrapResponse(payload)
-    success(data, { format, timeMs: Date.now() - t0, aiMessage: buildAiMessage?.(data) })
+    const page = extractPageInfo(payload)
+    const customAi = buildAiMessage?.(data)
+    const pageAi = page?.has_more
+      ? `Showing ${Array.isArray(data) ? data.length : 0} of ${page.total} (page ${page.page_num}/${page.page_count}). Pass --page-num/--page-size to fetch the rest.`
+      : undefined
+    success(data, {
+      format,
+      timeMs: Date.now() - t0,
+      aiMessage: customAi ?? pageAi,
+      ...(page ? { extra: { total: page.total, page_num: page.page_num, page_size: page.page_size, page_count: page.page_count, has_more: page.has_more } } : {}),
+    })
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
