@@ -51,6 +51,27 @@
 - **且** 请求体包含 `domainId`、`sessionId`、`msg`
 - **且** 请求体中的 `modelSettings.model_name` 为 `deepseek`
 
+`cz-cli analytics-agent session run` MUST 支持通过可重复的 `--model-setting KEY=VALUE` 传入 0 到多个任意 `modelSettings` 字段，不再固定暴露 `thinking-level` 这类单一开关。当前后端可用的键为 `language`（如 `zh-CN`）与 `thinkingLevel`（如 `off`）。每个条目按第一个 `=` 拆分：`=` 左侧为字段名（去除首尾空格），右侧为字段值；值 MUST 按宽松 JSON 规则解析（`true`/`false`/`null`、数字、`{...}`/`[...]`/带引号的字符串按 JSON 解析，其余保留为原始字符串）。`--model-name` 作为 `model_name` 的便捷写法保留；同名 `--model-setting` 条目 MUST 覆盖 `--model-name` 的值。
+
+#### Scenario: run 传入多个 --model-setting 时写入 modelSettings
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session run --domain-id 195 --session-id 7 --msg "hello" --model-setting thinkingLevel=off --model-setting language=zh-CN`
+- **THEN** CLI 调用 query API
+- **且** 请求体中的 `modelSettings.thinkingLevel` 为字符串 `off`
+- **且** 请求体中的 `modelSettings.language` 为字符串 `zh-CN`
+
+#### Scenario: run 未传任何 model 相关参数时不携带 modelSettings
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session run --domain-id 195 --session-id 7 --msg "hello"`
+- **THEN** CLI 调用 query API
+- **且** 请求体 MUST NOT 包含 `modelSettings` 字段
+
+#### Scenario: run 的 --model-setting 覆盖 --model-name
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session run --domain-id 195 --session-id 7 --msg "hello" --model-name deepseek --model-setting model_name=qwen`
+- **THEN** CLI 调用 query API
+- **且** 请求体中的 `modelSettings.model_name` 为 `qwen`
+
 #### Scenario: run 只有 session-id 但缺少 domain-id
 
 - **WHEN** 用户执行 `cz-cli analytics-agent session run --session-id 7 --msg "hello"`

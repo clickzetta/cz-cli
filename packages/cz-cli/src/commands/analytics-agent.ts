@@ -268,6 +268,16 @@ function parseLooseJsonValue(raw: string): unknown {
   return raw
 }
 
+function parseModelSettingValue(raw: string): unknown {
+  const value = raw.trim()
+  if (value === "") return raw
+  try {
+    return JSON.parse(value)
+  } catch {
+    return raw
+  }
+}
+
 function resolveTableSemanticsSetBody(argv: Record<string, unknown>): Record<string, unknown> {
   return mergeBody({}, {
     alias: stringArray(argv.alias),
@@ -2766,7 +2776,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("session-id", { type: "number", describe: "Session ID (creates a new session if omitted)" })
                 .option("domain-id", { type: "number", describe: "Domain ID (required when --session-id is omitted)" })
                 .option("msg", { type: "string", describe: "Question text" })
-                .option("model-name", { type: "string", describe: "Model name" })
+                .option("model-name", { type: "string", describe: "Model name (shorthand for --model-setting model_name=<name>)" })
+                .option("model-setting", { type: "string", array: true, describe: "modelSettings entry KEY=VALUE (repeatable). Available keys: language, thinkingLevel. E.g. --model-setting thinkingLevel=off --model-setting language=zh-CN" })
                 .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
                 .option("summary", { type: "boolean", default: false, describe: "Show the final answer instead of the full poll payload" }),
@@ -2776,9 +2787,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               if (!argv["domain-id"]) {
                 handledError("USAGE_ERROR", "--domain-id is required", { format, exitCode: 2 })
               }
-              const modelSettings = undefinedIfEmpty(mergeBody({}, {
-                model_name: argv["model-name"],
-              }))
+              const modelSettingEntries = (stringArray(argv["model-setting"]) ?? [])
+                .filter((entry) => entry.includes("="))
+                .map((entry) => {
+                  const eq = entry.indexOf("=")
+                  return [entry.slice(0, eq).trim(), parseModelSettingValue(entry.slice(eq + 1))] as const
+                })
+                .filter(([key]) => key.length > 0)
+              const modelSettings = undefinedIfEmpty(mergeBody(
+                mergeBody({}, { model_name: argv["model-name"] }),
+                Object.fromEntries(modelSettingEntries),
+              ))
               let sessionId: number | undefined = argv["session-id"]
               if (!sessionId) {
                 try {

@@ -204,7 +204,7 @@ cz-cli analytics-agent knowledge file upload 1 ./manual.md --target-path /sales 
 | `analytics-agent service enabled` | 检查当前 tenant 是否启用 Analytics Agent | 无 |
 | `analytics-agent session list` | 列出 text2insight 会话 | `--domain-id`、`--source-type`、`--source-id` |
 | `analytics-agent session create` | 创建安全 text2insight 会话 | `--domain-id`、`--title`、`--source-type`、`--source-id` |
-| `analytics-agent session run` | 发起问题并等待结果 | `--domain-id`、`--session-id`、`--msg`、`--model-name`、`--interval-ms`、`--timeout-ms`、`--summary` |
+| `analytics-agent session run` | 发起问题并等待结果 | `--domain-id`、`--session-id`、`--msg`、`--model-name`、`--model-setting KEY=VALUE`（可重复）、`--interval-ms`、`--timeout-ms`、`--summary` |
 | `analytics-agent session result <question-id>` | 查询问题结果 | `--wait`、`--interval-ms`、`--timeout-ms` |
 | `analytics-agent session stop [session-id] [question-id]` | 停止运行中的问题 | `[session-id]`、`[question-id]` |
 
@@ -214,6 +214,7 @@ cz-cli analytics-agent knowledge file upload 1 ./manual.md --target-path /sales 
 cz-cli analytics-agent service enabled
 cz-cli analytics-agent session create --domain-id 195 --title "销售分析"
 cz-cli analytics-agent session run --domain-id 195 --msg "上周销售额是多少？" --summary
+cz-cli analytics-agent session run --domain-id 195 --msg "分析趋势" --model-setting thinkingLevel=off --model-setting language=zh-CN
 cz-cli analytics-agent session result 123 --wait --interval-ms 1000 --timeout-ms 60000
 ```
 

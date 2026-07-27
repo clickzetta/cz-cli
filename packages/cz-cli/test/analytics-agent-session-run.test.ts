@@ -296,4 +296,141 @@ describe("analytics-agent session run", () => {
     expect(calls[1]?.url).toContain("/open/text2insight/query")
     expect(calls[1]?.body).toMatchObject({ domainId: 195, sessionId: 88, msg: "hello" })
   })
+
+  test("merges multiple --model-setting entries into modelSettings with loose typing", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
+      calls.push({ url, body })
+      if (url.includes("/open/text2insight/query")) {
+        return jsonResponse({ data: { questionId: 123 } })
+      }
+      if (url.includes("/open/safe_question_poll")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            questionId: 123,
+            responses: [
+              { resGroupId: 1, dataType: "finish", modelRes: { data: { message: "done" } } },
+            ],
+          },
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--session-id",
+      "7",
+      "--msg",
+      "hello",
+      "--model-setting",
+      "thinkingLevel=off",
+      "--model-setting",
+      "language=zh-CN",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const queryCall = calls.find((call) => call.url.includes("/open/text2insight/query"))
+    expect(queryCall?.body).toMatchObject({
+      domainId: 195,
+      sessionId: 7,
+      msg: "hello",
+      modelSettings: { thinkingLevel: "off", language: "zh-CN" },
+    })
+  })
+
+  test("--model-setting overrides --model-name", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
+      calls.push({ url, body })
+      if (url.includes("/open/text2insight/query")) {
+        return jsonResponse({ data: { questionId: 123 } })
+      }
+      if (url.includes("/open/safe_question_poll")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            questionId: 123,
+            responses: [
+              { resGroupId: 1, dataType: "finish", modelRes: { data: { message: "done" } } },
+            ],
+          },
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--session-id",
+      "7",
+      "--msg",
+      "hello",
+      "--model-name",
+      "deepseek",
+      "--model-setting",
+      "model_name=qwen",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const queryCall = calls.find((call) => call.url.includes("/open/text2insight/query"))
+    const modelSettings = (queryCall?.body as Record<string, unknown>)?.modelSettings as Record<string, unknown>
+    expect(modelSettings?.model_name).toBe("qwen")
+  })
+
+  test("omits modelSettings when no model params are set", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
+      calls.push({ url, body })
+      if (url.includes("/open/text2insight/query")) {
+        return jsonResponse({ data: { questionId: 123 } })
+      }
+      if (url.includes("/open/safe_question_poll")) {
+        return jsonResponse({
+          success: true,
+          data: {
+            questionId: 123,
+            responses: [
+              { resGroupId: 1, dataType: "finish", modelRes: { data: { message: "done" } } },
+            ],
+          },
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--session-id",
+      "7",
+      "--msg",
+      "hello",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const queryCall = calls.find((call) => call.url.includes("/open/text2insight/query"))
+    expect(queryCall?.body).not.toHaveProperty("modelSettings")
+  })
 })
