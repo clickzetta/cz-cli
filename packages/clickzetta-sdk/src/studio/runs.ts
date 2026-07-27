@@ -84,6 +84,8 @@ export function rerunInstance(config: StudioConfig, taskInstanceId: number) {
   return studioRequest(config, "/ide-admin/v1/taskInst/reRunTaskInstance", {
     taskInstanceId,
     nextType:0,
+    workspace: config.workspaceName,
+    projectId: config.projectId,
     updateBy: "cli-agent"
   })
 }
