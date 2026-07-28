@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, rmSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { injectClickzettaAgentConfig, parseAgentTimeoutMs } from "../src/bootstrap/runtime-config.js"
@@ -52,6 +52,29 @@ describe("injectClickzettaAgentConfig", () => {
     expect(Array.isArray(injected.plugin)).toBe(true)
     expect(clickzettaPlugin).toBeDefined()
     expect(clickzettaPlugin).toMatch(/^file:\/\//)
+  })
+
+  test("normalizes a legacy service root only in runtime config", () => {
+    writeLlmConfig({
+      provider: {
+        clickzetta: {
+          npm: "@clickzetta/ai-gateway",
+          options: { apiKey: "key-1", baseURL: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/" },
+        },
+      },
+    })
+
+    injectClickzettaAgentConfig()
+
+    const injected = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as {
+      provider?: Record<string, { options?: { baseURL?: string } }>
+    }
+    expect(injected.provider?.clickzetta?.options?.baseURL).toBe(
+      "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1",
+    )
+    expect(JSON.parse(readFileSync(join(HOME, ".clickzetta", "llm.json"), "utf-8")).provider.clickzetta.options.baseURL).toBe(
+      "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/",
+    )
   })
 
   test("carries llm.json's active default model into config so sessions don't pick a stale provider", () => {

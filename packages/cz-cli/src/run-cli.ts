@@ -5,6 +5,7 @@ import { createTraceparent } from "@clickzetta/sdk"
 import { injectAgentMcp } from "./agent-mcp.js"
 import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
+import { noteProfileDerivedCredentials } from "./bootstrap/profile-env.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
 import { migrateInlineOAuthTokens } from "./connection/profile-store.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
@@ -58,9 +59,23 @@ const LLM_ONBOARDING = {
   ],
 } as const
 
-const AGENT_FLAGS = new Set(["debug", "d", "help", "h", "version"])
+const AGENT_FLAGS = new Set(["debug", "d", "help", "h", "version", "v"])
+
+// Upstream opencode's value-taking short flags on the agent command tree
+// (run/tui/attach/session/agent/upgrade: -m model, -c continue, -f file, -s
+// session, -n max-count, -u username, -g global). The agent-path scanner must
+// know these consume a following value, or it mistakes the VALUE for the
+// subcommand: `agent -m fake/m run hi` read "fake/m" as the subcommand, failed
+// the AGENT_RUNTIME_SUBCOMMANDS test, never delegated to the agent runtime, and
+// exited 0 having done nothing at all.
+//
+// -c is boolean upstream (--continue), so it is deliberately NOT here; it is
+// listed in AGENT_FLAGS-style value-less handling via the scanner's default.
+const UPSTREAM_AGENT_VALUE_FLAGS = ["m", "f", "n", "u", "g"] as const
+
 const AGENT_FLAGS_WITH_VALUES = new Set([
   ...CLICKZETTA_PROFILE_OPTION_NAMES,
+  ...UPSTREAM_AGENT_VALUE_FLAGS,
   "jdbc",
   "pat",
   "username",
@@ -72,12 +87,14 @@ const AGENT_FLAGS_WITH_VALUES = new Set([
   "schema",
   "s",
   "session",
+  "model",
   "vcluster",
-  "v",
+  // "v" is deliberately absent: -v is --version (boolean), so it consumes no value.
   "format",
   "field",
 ])
-const GLOBAL_FLAGS = new Set(["debug", "d", "help", "h", "version"])
+// -v joins the value-less set: it is --version, a boolean, in both parser trees.
+const GLOBAL_FLAGS = new Set(["debug", "d", "help", "h", "version", "v"])
 const GLOBAL_FLAGS_WITH_VALUES = new Set([
   ...CLICKZETTA_PROFILE_OPTION_NAMES,
   "jdbc",
@@ -91,7 +108,6 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "schema",
   "s",
   "vcluster",
-  "v",
   "format",
   "field",
 ])
@@ -303,8 +319,43 @@ function agentSubcommand(args: string[], commandIndex: number) {
   }
 }
 
+// cz_change: `-p` is the cz-cli global short alias for `--profile`, but upstream
+// opencode binds `-p` to `--password` (basic auth against a headless server) on
+// run/attach/providers — a concept cz-cli does not expose at all. On the agent
+// runtime path that collision was silent and wrong: `agent run "x" -p staging`
+// parsed "staging" as a server password, left --profile unset, and the runtime
+// middleware then reset CZ_* back to default_profile — so the run silently hit
+// the WRONG lakehouse. Canonicalize the short form to `--profile` before any
+// parser sees it, so `-p` can never be reinterpreted downstream. Stops at `--`
+// so pass-through args keep their original meaning.
+function canonicalizeProfileShortFlag(args: string[]): string[] {
+  const result: string[] = []
+  let passthrough = false
+  for (const value of args) {
+    if (passthrough || value === undefined) {
+      result.push(value!)
+      continue
+    }
+    if (value === "--") {
+      passthrough = true
+      result.push(value)
+      continue
+    }
+    if (value === "-p") {
+      result.push("--profile")
+      continue
+    }
+    if (value.startsWith("-p=")) {
+      result.push(`--profile=${value.slice("-p=".length)}`)
+      continue
+    }
+    result.push(value)
+  }
+  return result
+}
+
 function normalizeCliArgs(rawArgs: string[]) {
-  const initialArgs = rawArgs.length === 0 ? ["--help"] : rawArgs
+  const initialArgs = canonicalizeProfileShortFlag(rawArgs.length === 0 ? ["--help"] : rawArgs)
   const { formatArgs, remaining } = extractGlobalFormatArgs(initialArgs)
   const commandArgs = remaining
   let command = ""
@@ -356,7 +407,25 @@ function profileOverrideFromArgs(args: string[]) {
   }
 }
 
-function connectionOverridesFromArgs(args: string[]): Partial<CliArgs> {
+// Flags that upstream opencode already owns on the agent command tree, so the cz
+// connection scanner must not ALSO read them there:
+//   -s  upstream --session  (run/tui/attach)   vs cz --schema
+//   -m  upstream --model, -f --file, -c --continue, -n --max-count
+//   -u/--username, -p/--password  upstream server basic auth  vs cz lakehouse creds
+//
+// Claiming these on the agent path made one token mean two things at once:
+// `agent run x -s ses_1` selected the session AND set CZ_SCHEMA=ses_1.
+//
+// -v is NOT here: it is --version in both trees now (see cli.ts), so there is
+// nothing to contest. -d is not here either: upstream's only -d is `uninstall
+// --keep-data`, a sibling of `agent`, never in scope for these args.
+//
+// Long forms stay available where the runtime implements them; upstream defines no
+// --schema/--vcluster/--instance, so those never collide. The cz-native path
+// (sql/schema/table/…) is untouched — nothing upstream parses those args.
+const AGENT_CONTESTED_FLAGS = new Set(["s", "username", "password", "u", "m", "c", "f", "n"])
+
+function connectionOverridesFromArgs(args: string[], agentPath = false): Partial<CliArgs> {
   const overrides: Partial<CliArgs> = {}
   const flagMap: Record<string, keyof CliArgs> = {
     profile: "profile",
@@ -372,7 +441,8 @@ function connectionOverridesFromArgs(args: string[]): Partial<CliArgs> {
     schema: "schema",
     s: "schema",
     vcluster: "vcluster",
-    v: "vcluster",
+    // No `v` entry: -v is --version, never --vcluster. Mapping it here made
+    // `-v <x>` set CZ_VCLUSTER while the parser read -v as --version.
   }
 
   for (let index = 0; index < args.length; index++) {
@@ -381,6 +451,12 @@ function connectionOverridesFromArgs(args: string[]): Partial<CliArgs> {
     if (value === "--") break
     const match = /^--?([^=]+)(?:=(.*))?$/.exec(value)
     if (!match) continue
+    if (agentPath && AGENT_CONTESTED_FLAGS.has(match[1]!)) {
+      // Upstream owns this flag here; skip it AND its value so a following
+      // token is not misread as another flag's value.
+      if (match[2] === undefined && args[index + 1] && !args[index + 1]!.startsWith("-")) index++
+      continue
+    }
     const key = flagMap[match[1]!]
     if (!key) continue
     const flagValue = match[2] ?? args[index + 1]
@@ -396,17 +472,27 @@ function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   if (Object.keys(overrides).length === 0) return overrides
   const resolved = resolveConnectionConfig(overrides)
   if (overrides.profile) process.env.CZ_PROFILE = overrides.profile
+  // Report which credential vars we derived from the profile, so a later profile
+  // switch inside the agent runtime clears them instead of letting them shadow the
+  // new profile's auth. See profile-env.ts's profileDerived set.
+  const derivedCredentials: Record<string, string> = {}
   if (resolved.pat) {
     process.env.CZ_PAT = resolved.pat
+    derivedCredentials.CZ_PAT = resolved.pat
     delete process.env.CZ_USERNAME
     delete process.env.CZ_PASSWORD
   } else {
     delete process.env.CZ_PAT
-    if (resolved.username) process.env.CZ_USERNAME = resolved.username
-    else delete process.env.CZ_USERNAME
-    if (resolved.password) process.env.CZ_PASSWORD = resolved.password
-    else delete process.env.CZ_PASSWORD
+    if (resolved.username) {
+      process.env.CZ_USERNAME = resolved.username
+      derivedCredentials.CZ_USERNAME = resolved.username
+    } else delete process.env.CZ_USERNAME
+    if (resolved.password) {
+      process.env.CZ_PASSWORD = resolved.password
+      derivedCredentials.CZ_PASSWORD = resolved.password
+    } else delete process.env.CZ_PASSWORD
   }
+  if (overrides.profile) noteProfileDerivedCredentials(derivedCredentials)
   if (resolved.service) process.env.CZ_SERVICE = resolved.service
   else delete process.env.CZ_SERVICE
   if (resolved.protocol) process.env.CZ_PROTOCOL = resolved.protocol
@@ -438,7 +524,12 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   // to the shared [oauth.<id>] layout. Best-effort; never throws.
   migrateInlineOAuthTokens()
   const normalized = normalizeCliArgs(rawArgs)
-  const agentConnectionOverrides = applyAgentConnectionEnv(connectionOverridesFromArgs(normalized.args))
+  // On the agent path, upstream opencode owns several of these short flags; tell
+  // the scanner so it does not also read them as cz connection overrides. See
+  // AGENT_CONTESTED_FLAGS.
+  const agentConnectionOverrides = applyAgentConnectionEnv(
+    connectionOverridesFromArgs(normalized.args, normalized.shouldDelegateToAgentRuntime),
+  )
   const profileOverride = agentConnectionOverrides.profile ?? profileOverrideFromArgs(normalized.args)
   if (profileOverride) process.env.CZ_PROFILE = profileOverride
   const isAgentSessionEntry =

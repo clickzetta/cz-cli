@@ -2,6 +2,7 @@ export const CLICKZETTA_PROVIDER_ID = "clickzetta"
 export const CLICKZETTA_PROVIDER_NAME = "ClickZetta"
 export const CLICKZETTA_PROVIDER_NPM = "@clickzetta/ai-gateway"
 export const CLICKZETTA_DEFAULT_GATEWAY_URL = "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1"
+export { normalizeClickzettaGatewayUrl } from "@clickzetta/ai-gateway/url"
 
 // cz_change: the model catalog is no longer hardcoded here. ClickZetta models are
 // discovered at runtime from the gateway's OpenAI-compatible `GET /v1/models`

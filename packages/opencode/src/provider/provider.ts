@@ -2037,11 +2037,10 @@ export function parseModel(model: string) {
 }
 
 // cz_change: ClickZetta dynamic-discovery helpers, extracted from the loader loop
-// above so the mapping logic is unit-testable. The gateway base may or may not
-// already carry "/v1"; normalize to exactly one "/v1/models".
+// above so the mapping logic is unit-testable. cz-cli normalizes the runtime
+// provider base to "/gateway/vN" before opencode receives it.
 export function clickzettaModelsUrl(baseURL: string): string {
-  const trimmed = baseURL.replace(/\/+$/, "")
-  return `${/\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`}/models`
+  return `${baseURL.replace(/\/+$/, "")}/models`
 }
 
 // Build a Model from a gateway model id. Gateway ids look like

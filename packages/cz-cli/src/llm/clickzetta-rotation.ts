@@ -6,6 +6,7 @@ import { parse as parseToml } from "smol-toml"
 import { studioRequest } from "@clickzetta/sdk"
 import { getGatewayContext } from "../commands/studio-context.js"
 import { readLlmConfig, readLlmEntries, setActiveModel, writeLlmEntries } from "./native-config.js"
+import { normalizeClickzettaGatewayUrl } from "./clickzetta-provider.js"
 
 const DEFAULT_QUOTA_TOTAL = 10000000
 const API = {
@@ -134,21 +135,15 @@ function resolveRotationAlias(profile: string, data = loadToml()) {
   return username ? PROFILE_ALIAS_PREFIX + username : randomAlias()
 }
 
-function normalizeGatewayUrl(url: string): string {
-  const trimmed = url.replace(/\/+$/, "")
-  if (/\/gateway\/v\d+(\/|$)/.test(trimmed)) return trimmed
-  if (/\/gateway(\/|$)/.test(trimmed)) return trimmed + "/v1"
-  return trimmed + "/gateway/v1"
-}
-
 function resolveAiGatewayUrl(profileEntry: Dict | undefined): string | undefined {
-  if (profileEntry && typeof profileEntry.aimeshEndpointBaseUrl === "string") return normalizeGatewayUrl(profileEntry.aimeshEndpointBaseUrl)
+  if (profileEntry && typeof profileEntry.aimeshEndpointBaseUrl === "string")
+    return normalizeClickzettaGatewayUrl(profileEntry.aimeshEndpointBaseUrl)
   if (!profileEntry) return undefined
   const inferred = inferAiGatewayUrl({
     service: typeof profileEntry.service === "string" ? profileEntry.service : undefined,
     instance: typeof profileEntry.instance === "string" ? profileEntry.instance : undefined,
   })
-  return inferred ? normalizeGatewayUrl(inferred) : undefined
+  return inferred ? normalizeClickzettaGatewayUrl(inferred) : undefined
 }
 
 function currentClickzettaEntry() {

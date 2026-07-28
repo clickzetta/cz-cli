@@ -1,10 +1,10 @@
-import { createServer } from "node:http"
+import { createServer, type RequestListener, type Server } from "node:http"
 
 import { loopbackRedirectUri } from "./oauth-constants.js"
 
 export interface CallbackOptions {
   expectedState: string
-  // Reject and stop listening after this many ms (default 120000).
+  // Reject and stop listening after this many ms (default 300000).
   timeoutMs?: number
   // Loopback port to bind. Defaults to 0 (ephemeral) so callers/tests can
   // bind without a privileged port.
@@ -33,7 +33,16 @@ export interface LoopbackCallback {
   close(): void
 }
 
-const DEFAULT_TIMEOUT_MS = 120000
+// Bounded by how long a person takes to sign in (credentials, possibly MFA),
+// not by network latency.
+const DEFAULT_TIMEOUT_MS = 300000
+
+/**
+ * Sent on every response. A one-shot listener must not let the browser pool its
+ * sockets: a pooled connection idles through the sign-in, gets reaped, and the
+ * redirect is then written to a dead socket and never arrives.
+ */
+const CLOSE_CONNECTION = { Connection: "close" } as const
 
 const SUCCESS_PAGE =
   "<!doctype html><html><head><meta charset=\"utf-8\"><title>Login complete</title></head>" +
@@ -44,9 +53,10 @@ const FAILURE_PAGE =
   "<body><h1>Login failed</h1><p>The authorization callback was invalid. Please retry from the CLI.</p></body></html>"
 
 /**
- * Feature switch for the local loopback callback flow. Returns true ONLY when
- * `CZ_OAUTH_LOCAL_CALLBACK` is set to "1" or "true". The default (unset) is
- * disabled, so the default login flow never starts a listener (requirement 3.6).
+ * Reads the legacy `CZ_OAUTH_LOCAL_CALLBACK` switch ("1"/"true" → enabled).
+ * Nothing consults it at runtime: the loopback flow is now the unconditional
+ * default, so there is no alternative path to gate. Kept for the env var's
+ * existing users.
  */
 export function isLocalCallbackEnabled(): boolean {
   const flag = process.env.CZ_OAUTH_LOCAL_CALLBACK
@@ -100,14 +110,25 @@ function startCallbackCore(opts: {
     // The original promise still rejects for the real awaiter.
     pending.promise.catch(() => {})
 
+    // Both loopback families listen on the same port and share this state, so
+    // whichever one the browser reaches settles the login exactly once.
+    const servers: Server[] = []
+
+    // Settle the caller before tearing down: `server.close(cb)` waits for every
+    // connection to drain, so an idle browser socket could otherwise stall the
+    // result indefinitely.
     const finish = (action: () => void) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      server.close(() => action())
+      action()
+      for (const server of servers) {
+        server.close()
+        server.closeAllConnections?.()
+      }
     }
 
-    const server = createServer((req, res) => {
+    const handleRequest: RequestListener = (req, res) => {
       if (settled) return
       const url = new URL(req.url ?? "/", "http://127.0.0.1")
 
@@ -122,7 +143,7 @@ function startCallbackCore(opts: {
       // consume this one-shot listener. Answer 404 and keep waiting so the
       // genuine `/callback?code=...&state=...` request still settles it.
       if (url.pathname !== "/callback") {
-        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" })
+        res.writeHead(404, { ...CLOSE_CONNECTION, "Content-Type": "text/plain; charset=utf-8" })
         res.end("not found")
         return
       }
@@ -131,7 +152,7 @@ function startCallbackCore(opts: {
       const state = url.searchParams.get("state")
 
       if (!code || state !== opts.expectedState) {
-        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" })
+        res.writeHead(400, { ...CLOSE_CONNECTION, "Content-Type": "text/html; charset=utf-8" })
         res.end(FAILURE_PAGE)
         finish(() =>
           pending.reject(
@@ -145,29 +166,33 @@ function startCallbackCore(opts: {
         return
       }
 
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+      res.writeHead(200, { ...CLOSE_CONNECTION, "Content-Type": "text/html; charset=utf-8" })
       res.end(SUCCESS_PAGE)
       finish(() => pending.resolve(code))
-    })
+    }
 
-    server.on("error", (err) => {
-      if (!listening) {
-        rejectListen(err)
-        return
-      }
-      finish(() => pending.reject(err))
-    })
+    const createListener = (): Server => {
+      const server = createServer(handleRequest)
+      // The round trip (code, close(), or timeoutMs) bounds this listener, so
+      // there is nothing for an idle reaper to collect — and reaping a socket the
+      // browser still considers usable is exactly what loses the redirect.
+      server.keepAliveTimeout = 0
+      servers.push(server)
+      return server
+    }
 
-    server.listen(opts.port ?? 0, "127.0.0.1", () => {
-      listening = true
+    const armTimeout = () => {
+      if (timer) return
       timer = setTimeout(
         () => finish(() => pending.reject(new Error("timed out waiting for authorization callback"))),
         timeoutMs,
       )
       timer.unref?.()
+    }
 
-      const addr = server.address()
-      const port = addr && typeof addr === "object" ? addr.port : 0
+    const settleListening = (port: number) => {
+      listening = true
+      armTimeout()
       resolveListen({
         port,
         waitForCode: () => pending.promise,
@@ -178,6 +203,32 @@ function startCallbackCore(opts: {
             ),
           ),
       })
+    }
+
+    // RFC 8252 §7.3 requires accepting the redirect on both loopback families:
+    // the address the browser actually dials is not ours to predict, and an
+    // intermediary (VPN, proxy in TUN mode) can steer 127.0.0.1 down the IPv6
+    // path. IPv4 is bound first because it decides the port and is the address we
+    // advertise as redirect_uri; [::1] then joins on that same port.
+    const v4 = createListener()
+    v4.on("error", (err) => {
+      if (!listening) {
+        rejectListen(err)
+        return
+      }
+      finish(() => pending.reject(err))
+    })
+
+    v4.listen(opts.port ?? 0, "127.0.0.1", () => {
+      const addr = v4.address()
+      const port = addr && typeof addr === "object" ? addr.port : 0
+
+      // Best-effort: hosts with IPv6 disabled, or where something already holds
+      // [::1] on this port, still log in fine over IPv4, so either outcome of this
+      // bind reports ready. Only failing to bind IPv4 above is fatal.
+      const v6 = createListener()
+      v6.on("error", () => settleListening(port))
+      v6.listen(port, "::1", () => settleListening(port))
     })
   })
 }

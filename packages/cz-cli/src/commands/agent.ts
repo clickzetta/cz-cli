@@ -1,9 +1,45 @@
 import type { Argv } from "yargs"
 import type { GlobalArgs } from "../cli.js"
 
+// cz_change: this command tree exists only to render `--help`; execution is
+// delegated to the agent runtime (bootstrap/runtime.ts), which declares just
+// --print-logs/--log-level/--pure/--profile. Every OTHER inherited cz global was
+// therefore advertised but not accepted: `agent session list --schema foo` and
+// `agent stats --debug` both exit 2 with "unrecognized option". Hide them so help
+// describes what actually parses.
+//
+// --profile stays visible (the runtime really implements it). --format/--field are
+// left alone: subcommands redefine --format themselves with their own choices.
+//
+// The short forms matter twice over, because upstream owns them inside `agent`:
+// -s is --session (not cz --schema), -v is --version (not cz --vcluster), -d is
+// unclaimed. `agent run --help` used to list "-s" twice, once per meaning.
+const UNSUPPORTED_AGENT_GLOBALS = [
+  "jdbc",
+  "pat",
+  "username",
+  "password",
+  "service",
+  "protocol",
+  "instance",
+  "workspace",
+  "schema",
+  "vcluster",
+  "debug",
+] as const
+
+function hideUnsupportedGlobals<T>(y: Argv<T>): Argv<T> {
+  let next = y
+  for (const name of UNSUPPORTED_AGENT_GLOBALS) next = next.option(name, { hidden: true }) as Argv<T>
+  return next
+}
+
 export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
   cli.command("agent", "AI agent — run sessions, configure LLMs, manage tasks, and optionally override default_profile for the current session", (yargs) =>
-    yargs
+    // Applied at the GROUP level, not just per-subcommand: yargs renders a
+    // subcommand's Options block from the instance the group builder received, so
+    // hiding on a leaf's nested instance alone had no effect on its --help.
+    hideUnsupportedGlobals(yargs)
       .command(
         "run <prompt>",
         "Run AI agent with a natural-language prompt",
@@ -11,7 +47,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
           // Reset inherited global --format choices before defining agent-specific ones
           const opts = (y as any).getOptions?.()
           if (opts?.choices?.format) opts.choices.format = []
-          return y
+          return hideUnsupportedGlobals(y)
             .positional("prompt", { type: "string", demandOption: true, describe: "Natural-language request" })
             .option("session", { alias: "s", type: "string", describe: "Session ID to continue" })
             .option("continue", { alias: "c", type: "boolean", describe: "Continue the last session" })
@@ -40,7 +76,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
         "session",
         "Manage agent sessions",
         (y) =>
-          y
+          hideUnsupportedGlobals(y)
             .command(
               "list",
               "List sessions",
@@ -93,7 +129,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
         "export [sessionID]",
         "Export session conversation as JSON",
         (y) =>
-          y
+          hideUnsupportedGlobals(y)
             .positional("sessionID", { type: "string", describe: "Session ID to export (defaults to last session)" })
             .option("sanitize", { type: "boolean", describe: "Redact sensitive transcript and file data" })
             .example("cz-cli agent export", "Export last session")
@@ -105,7 +141,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
         "stats",
         "Show token usage and cost statistics",
         (y) =>
-          y
+          hideUnsupportedGlobals(y)
             .option("days", { type: "number", describe: "Show stats for the last N days (default: all time)" })
             .option("tools", { type: "number", describe: "Number of top tools to show (default: all)" })
             .example("cz-cli agent stats", "Show all-time usage")
@@ -116,7 +152,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "llm",
         "Manage agent LLMs in ~/.clickzetta/llm.json, separate from ClickZetta Lakehouse profile setup",
-        (y) => y
+        (y) => hideUnsupportedGlobals(y)
           .command("show", "Show the active LLM, all defined entries, and setup guidance", (llm) => llm, () => {})
           .command("list", "List all configured agent LLM entries", (llm) => llm, () => {})
           .command(

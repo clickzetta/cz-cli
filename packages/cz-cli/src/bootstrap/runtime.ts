@@ -226,9 +226,29 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     await forward(isHelpOrEmpty ? ["--help"] : args)
   }
   // Dynamic imports — only reached for `cz-cli agent …`
+  //
+  // cz_change: only the commands cz-cli actually EXPOSES are imported and
+  // registered here. run-cli.ts routes `agent <sub>` into this runtime solely for
+  // AGENT_RUNTIME_SUBCOMMANDS (run/llm/session/stats/export); every other
+  // subcommand never reaches this parser. Registering the rest of upstream's tree
+  // (acp, attach, generate, account/login, providers, agent create, upgrade,
+  // uninstall, web, models, import, github, pr, plugin, db, debug) therefore added
+  // ~140ms of unreachable module loading per agent start, and — worse — split the
+  // definition of "what cz exposes" across two places that had to be kept in sync
+  // by hand. A re-baseline that added an upstream command would silently widen the
+  // registered set while the whitelist stayed put.
+  //
+  // The set below is now the single source of truth alongside that whitelist:
+  //   RunCommand/SessionCommand/AgentLlmCommand/StatsCommand/ExportCommand
+  //     — the five whitelisted subcommands
+  //   TuiThreadCommand ($0) — bare `cz-cli agent`, the interactive TUI
+  //   McpCommand/ServeCommand — reached through their own branches above, not as
+  //     `agent <sub>`; ServeCommand is also used by the `serve` fast path
+  //   SetupCommand — `cz-cli agent setup`, cz-owned (commands/agent-setup.ts)
+  // To expose another upstream command, add it BOTH here and to
+  // AGENT_RUNTIME_SUBCOMMANDS in run-cli.ts.
   const { default: yargs } = await import("yargs")
   const { UI } = await import("opencode/cli/ui")
-  const { Installation } = await import("opencode/installation/index")
   const { InstallationVersion } = await import("@opencode-ai/core/installation/version")
   const { FormatError } = await import("opencode/cli/error")
   const { Heap } = await import("opencode/cli/heap")
@@ -236,31 +256,15 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   // pristine upstream RunCommand, so ClickZetta customizations (--async,
   // --session create-if-missing) live in cz-cli. Mirrors SessionCommand.
   const { RunCommand } = await import("../agent-cmd/run.js")
-  const { GenerateCommand } = await import("opencode/cli/cmd/generate")
-  const { ConsoleCommand } = await import("opencode/cli/cmd/account")
-  const { ProvidersCommand } = await import("opencode/cli/cmd/providers")
-  const { AgentCommand } = await import("opencode/cli/cmd/agent")
-  const { UpgradeCommand } = await import("opencode/cli/cmd/upgrade")
-  const { UninstallCommand } = await import("opencode/cli/cmd/uninstall")
-  const { ModelsCommand } = await import("opencode/cli/cmd/models")
   const { ServeCommand } = await import("opencode/cli/cmd/serve")
-  const { DebugCommand } = await import("opencode/cli/cmd/debug/index")
   const { StatsCommand } = await import("opencode/cli/cmd/stats")
   const { McpCommand } = await import("opencode/cli/cmd/mcp")
-  const { GithubCommand } = await import("opencode/cli/cmd/github")
   const { ExportCommand } = await import("opencode/cli/cmd/export")
-  const { ImportCommand } = await import("opencode/cli/cmd/import")
-  const { AttachCommand } = await import("opencode/cli/cmd/attach")
   const { TuiThreadCommand } = await import("opencode/cli/cmd/tui")
-  const { AcpCommand } = await import("opencode/cli/cmd/acp")
-  const { WebCommand } = await import("opencode/cli/cmd/web")
-  const { PrCommand } = await import("opencode/cli/cmd/pr")
   // cz_change: session command tree is owned by cz-cli (adds `status`; a2's
   // rebase-to-pure-upstream dropped the cz SessionStatusCommand). Reuses
   // upstream list/delete internally. See src/agent-cmd/session.ts.
   const { SessionCommand } = await import("../agent-cmd/session.js")
-  const { DbCommand } = await import("opencode/cli/cmd/db")
-  const { PluginCommand } = await import("opencode/cli/cmd/plug")
   const { SetupCommand } = await import("../commands/agent-setup.js")
   const { AgentLlmCommand } = await import("../commands/agent-llm.js")
   const { commandGroup } = await import("@clickzetta/cli/command-group")
@@ -326,8 +330,14 @@ export async function main(args: string[], agentRuntime = false): Promise<number
 
     // cz_change: expand the selected profile into the CZ_* env vars the cz tooling
     // reads, before any agent/session work.
+    //
+    // Fall back to CZ_PROFILE, not to default_profile: run-cli.ts has already
+    // resolved --profile (and the -p short form) into CZ_PROFILE before
+    // delegating here. Passing a bare `undefined` made this middleware RESET an
+    // explicitly selected profile back to default_profile, silently retargeting
+    // the session at the wrong lakehouse.
     const { applyClickZettaProfile } = await import("./profile-env.js")
-    applyClickZettaProfile(opts.profile as string | undefined)
+    applyClickZettaProfile((opts.profile as string | undefined) ?? process.env.CZ_PROFILE)
 
     Heap.start()
 
@@ -339,30 +349,16 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   cli
     .usage("")
     .completion("completion", "generate shell completion script")
-    .command(AcpCommand)
+    // cz_change: exposed commands only — see the import block above for why the
+    // rest of upstream's tree is deliberately absent.
     .command(McpCommand)
     .command(TuiThreadCommand)
-    .command(AttachCommand)
     .command(RunCommand)
-    .command(GenerateCommand)
-    .command(DebugCommand)
-    .command(ConsoleCommand)
-    .command(ProvidersCommand)
-    .command(AgentCommand)
     .command(AgentLlmCommand)
-    .command(UpgradeCommand)
-    .command(UninstallCommand)
     .command(ServeCommand)
-    .command(WebCommand)
-    .command(ModelsCommand)
     .command(StatsCommand)
     .command(ExportCommand)
-    .command(ImportCommand)
-    .command(GithubCommand)
-    .command(PrCommand)
     .command(SessionCommand)
-    .command(PluginCommand)
-    .command(DbCommand)
     .command(SetupCommand)
 
   commandGroup(cli, "agent")

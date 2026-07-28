@@ -204,6 +204,102 @@ describe("loginWithBrowser", () => {
     ).rejects.toThrow(/state mismatch/)
   })
 
+  // When the redirect never arrives (proxy/VPN/firewall swallowing loopback
+  // traffic), the user can still finish by pasting the address-bar URL.
+  test("falls back to a pasted redirect URL when the callback times out", async () => {
+    let exchangedCode: string | undefined
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith("/oauth2/token")) {
+        exchangedCode = new URLSearchParams(String(init?.body)).get("code") ?? undefined
+        return new Response(
+          JSON.stringify({
+            access_token: "access-pasted",
+            refresh_token: "refresh-pasted",
+            expires_in: 3600,
+            token_type: "Bearer",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
+      }
+      if (url.endsWith("/oauth2/userinfo")) {
+        return new Response(JSON.stringify(SAMPLE_USERINFO), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected fetch to ${url}`)
+    }) as typeof fetch
+
+    let state: string | undefined
+    const result = await loginWithBrowser({
+      baseUrl: "https://api.example.com",
+      accountsBaseUrl: "https://accounts.example.com",
+      // Never drive the loopback, so the wait times out.
+      openBrowser: (authorizeUrl) => {
+        state = decodeAuthorizeUrl(authorizeUrl).state
+      },
+      timeoutMs: 30,
+      promptManualUrl: async () =>
+        `http://127.0.0.1:1234/callback?authorizationCode=PASTED_CODE&state=${state}`,
+    })
+
+    expect(exchangedCode).toBe("PASTED_CODE")
+    expect(result.token.token).toBe("access-pasted")
+  })
+
+  // Cancelling the paste prompt must surface the original timeout, not a
+  // confusing secondary error.
+  test("rethrows the timeout when the paste prompt is cancelled", async () => {
+    await expect(
+      loginWithBrowser({
+        baseUrl: "https://api.example.com",
+        accountsBaseUrl: "https://accounts.example.com",
+        openBrowser: () => {},
+        timeoutMs: 30,
+        promptManualUrl: async () => undefined,
+      }),
+    ).rejects.toThrow(/timed out/)
+  })
+
+  // A rejected callback DID arrive; offering a paste there would invite the user
+  // to hand-carry the request we just refused.
+  test("does not offer the paste fallback on a state mismatch", async () => {
+    let prompted = false
+    const fakeBrowser = (authorizeUrl: string) => {
+      const parsed = decodeAuthorizeUrl(authorizeUrl)
+      void httpGet(`${parsed.redirectUri}?code=THE_CODE&state=not-the-state`)
+    }
+
+    await expect(
+      loginWithBrowser({
+        baseUrl: "https://api.example.com",
+        accountsBaseUrl: "https://accounts.example.com",
+        openBrowser: fakeBrowser,
+        timeoutMs: 5000,
+        promptManualUrl: async () => {
+          prompted = true
+          return undefined
+        },
+      }),
+    ).rejects.toThrow(/state mismatch/)
+    expect(prompted).toBe(false)
+  })
+
+  // A pasted URL is held to the same state check as the loopback path.
+  test("rejects a pasted URL whose state does not match", async () => {
+    await expect(
+      loginWithBrowser({
+        baseUrl: "https://api.example.com",
+        accountsBaseUrl: "https://accounts.example.com",
+        openBrowser: () => {},
+        timeoutMs: 30,
+        promptManualUrl: async () =>
+          "http://127.0.0.1:1234/callback?authorizationCode=X&state=forged",
+      }),
+    ).rejects.toThrow(/state mismatch in the pasted redirect URL/)
+  })
+
   // Property 13 (Requirement 10.1): with CZ_OAUTH_LOCAL_CALLBACK unset the
   // gating check is false, so callers keep the existing default path.
   test("gating: isLocalCallbackEnabled is false when the switch is unset", () => {

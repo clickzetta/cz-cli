@@ -1,11 +1,9 @@
+import { normalizeClickzettaGatewayUrl } from "./clickzetta-provider.js"
+
 export function normalizeLlmBaseUrl(provider: string, url: string | undefined) {
   if (!url) return undefined
   let baseURL = url.replace(/\/+$/, "")
-  if (provider === "clickzetta") {
-    if (!/\/gateway(\/|$)/.test(baseURL)) baseURL += "/gateway"
-    if (!/\/v\d+(\/|$)/.test(baseURL)) baseURL += "/v1"
-    return baseURL
-  }
+  if (provider === "clickzetta") return normalizeClickzettaGatewayUrl(baseURL)
   const needsVersionPrefix = ["anthropic", "openai", "openai-compatible"].includes(provider)
   const hasVersionPath = /\/v\d+(\/|$)/.test(baseURL) || /\/openai(\/|$)/.test(baseURL)
   if (needsVersionPrefix && !hasVersionPath) baseURL += "/v1"

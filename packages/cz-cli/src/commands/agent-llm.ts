@@ -687,6 +687,16 @@ export async function runLlm(args: readonly string[]): Promise<never> {
   const { default: yargs } = await import("yargs")
   await yargs(args)
     .scriptName("cz-cli agent")
+    // cz_change: `llm` runs on its own parser (runtime.ts dispatches to it before
+    // the main agent yargs is built), so the global --profile/-p must be declared
+    // here too or it fails as an unknown option. It is not decorative: the
+    // ClickZetta gateway/virtual-key paths resolve the active profile via
+    // CZ_PROFILE (llm/clickzetta-rotation.ts), which run-cli.ts sets from this flag.
+    .option("profile", {
+      type: "string",
+      alias: "p",
+      describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
+    })
     .command(AgentLlmCommand)
     .demandCommand(1, "")
     .strictCommands()

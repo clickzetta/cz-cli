@@ -4,7 +4,11 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { readLlmConfig } from "../llm/native-config.js"
 import { CLICKZETTA_AGENT_IDENTITY_PROMPT } from "../agent-identity-prompt.js"
-import { CLICKZETTA_PROVIDER_NPM, isClickzettaGatewayUrl } from "../llm/clickzetta-provider.js"
+import {
+  CLICKZETTA_PROVIDER_NPM,
+  isClickzettaGatewayUrl,
+  normalizeClickzettaGatewayUrl,
+} from "../llm/clickzetta-provider.js"
 import {
   resolveClickzettaPluginSpecifier,
   resolveClickzettaProviderSpecifier,
@@ -53,12 +57,20 @@ function shouldRewriteProvider(provider: unknown) {
 function rewriteProviders(value: unknown, providerSpecifier: string) {
   if (!isRecord(value)) return undefined
 
-  const entries = Object.entries(value).map(([name, provider]) => [
-    name,
-    shouldRewriteProvider(provider)
-      ? { ...(provider as Record<string, unknown>), npm: providerSpecifier }
-      : provider,
-  ])
+  const entries = Object.entries(value).map(([name, provider]) => {
+    if (!shouldRewriteProvider(provider)) return [name, provider]
+    const current = provider as Record<string, unknown>
+    const options = isRecord(current.options) ? current.options : undefined
+    const baseURL = typeof options?.baseURL === "string" ? options.baseURL : undefined
+    return [
+      name,
+      {
+        ...current,
+        npm: providerSpecifier,
+        ...(baseURL ? { options: { ...options, baseURL: normalizeClickzettaGatewayUrl(baseURL) } } : {}),
+      },
+    ]
+  })
   const changed = entries.some(([, provider]) => isRecord(provider) && provider.npm === providerSpecifier)
   if (!changed) return undefined
   return Object.fromEntries(entries)

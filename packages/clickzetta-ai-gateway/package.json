@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./gateway-error": "./src/gateway-error.ts"
+    "./gateway-error": "./src/gateway-error.ts",
+    "./url": "./src/url.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.srconly.json"

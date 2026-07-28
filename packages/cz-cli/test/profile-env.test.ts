@@ -31,6 +31,13 @@ beforeEach(() => {
       `instance = "inst-1"`,
       `workspace = "ws-1"`,
       ``,
+      `[profiles.pwd]`,
+      `username = "u1"`,
+      `password = "p1"`,
+      `service = "clickzetta"`,
+      `instance = "inst-2"`,
+      `workspace = "ws-2"`,
+      ``,
     ].join("\n"),
     "utf-8",
   )
@@ -63,5 +70,35 @@ describe("applyClickZettaProfile", () => {
     applyClickZettaProfile("does-not-exist")
     expect(process.env.CZ_PROFILE).toBe("does-not-exist")
     expect(process.env.CZ_PAT).toBeUndefined()
+  })
+
+  // Switching profiles must not leave the previous profile's credential behind:
+  // CZ_PAT outranks username/password in resolveConnectionConfig(), so a leaked
+  // PAT would authenticate as the OLD identity. mcp serve switches per call.
+  test("switching from a PAT profile to a password profile clears CZ_PAT", () => {
+    applyClickZettaProfile("prod")
+    expect(process.env.CZ_PAT).toBe("pat-123")
+
+    applyClickZettaProfile("pwd")
+    expect(process.env.CZ_PAT).toBeUndefined()
+    expect(process.env.CZ_USERNAME).toBe("u1")
+    expect(process.env.CZ_PASSWORD).toBe("p1")
+    expect(process.env.CZ_INSTANCE).toBe("inst-2")
+  })
+
+  // A credential the USER exported is not ours to clear — only profile-derived
+  // values are. Provenance is tracked, not inferred from "was it already set".
+  test("a user-supplied CZ_PAT survives a profile switch", () => {
+    process.env.CZ_PAT = "user-pat"
+    applyClickZettaProfile("pwd")
+    expect(process.env.CZ_PAT).toBe("user-pat")
+  })
+
+  // Non-auth CZ_* vars are an override layer applied ON TOP of the profile, so
+  // they must survive a profile that does not define them.
+  test("a user-supplied CZ_SCHEMA survives a profile that omits schema", () => {
+    process.env.CZ_SCHEMA = "user-schema"
+    applyClickZettaProfile("prod")
+    expect(process.env.CZ_SCHEMA).toBe("user-schema")
   })
 })

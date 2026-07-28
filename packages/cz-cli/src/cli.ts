@@ -33,7 +33,9 @@ const JSON_ARRAY_OPTIONS = new Set(["--output-tables"])
 // Canonical global option/command names, used by both the top-level fail
 // handler and the nested commandGroup fail handler for "did you mean"
 // suggestions. Kept here as the single source of truth to avoid drift.
-export const KNOWN_GLOBAL_FLAGS = ["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "v", "format", "field", "debug", "d", "help", "h", "version", "target", "t"]
+// NOTE: "v" is listed as an alias of --version, not --vcluster. --vcluster is
+// long-form only. See the --vcluster option comment in createCli().
+export const KNOWN_GLOBAL_FLAGS = ["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "format", "field", "debug", "d", "help", "h", "version", "v", "target", "t"]
 export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "workspace-param", "status", "auth", "login", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent", "mcp"]
 
 export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
@@ -83,6 +85,9 @@ export function createCli(args: string[]) {
     // assertions expect stable English text in `message`/`ai_message`.
     .locale("en")
     .version(VERSION)
+    // cz_change: -v is --version here too, so the short flag means the same thing
+    // in this tree as in the agent runtime. See the --vcluster comment below.
+    .alias("version", "v")
     .exitProcess(false)
     .option("jdbc", {
       type: "string",
@@ -122,10 +127,15 @@ export function createCli(args: string[]) {
       type: "string",
       describe: "Default schema",
     })
+    // cz_change: --vcluster has NO -v alias. `-v` is --version across the whole
+    // CLI, matching the agent runtime (bootstrap/runtime.ts), which binds
+    // .alias("version", "v"). Previously the two parser trees disagreed: `-v` meant
+    // --vcluster at the top level but --version under `agent`, so
+    // `cz-cli agent -v myvc session list` printed the version string and silently
+    // discarded the command. One short flag, one meaning.
     .option("vcluster", {
-      alias: "v",
       type: "string",
-      describe: "Virtual cluster",
+      describe: "Virtual cluster (no -v short form; -v is --version)",
     })
     .option("format", {
       type: "string",

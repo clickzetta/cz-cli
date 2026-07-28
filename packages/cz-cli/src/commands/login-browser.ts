@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process"
 
+import * as p from "@clack/prompts"
+
 import {
   buildOauthLoginParam,
   encodeOauthLoginParam,
@@ -197,6 +199,93 @@ export interface LoginWithBrowserOptions {
   openBrowser?: (url: string) => void
   // Optional callback timeout in ms (forwarded to startLoopbackCallback).
   timeoutMs?: number
+  // Injectable prompt for the manual-paste fallback. Returns the redirect URL the
+  // user copied out of the browser, or undefined if they cancelled / it is
+  // non-interactive. Tests inject a fake; the default prompts on a TTY.
+  promptManualUrl?: () => Promise<string | undefined>
+}
+
+/**
+ * Extract the authorization code from a redirect URL the user pasted, validating
+ * `state` exactly as the loopback listener would.
+ *
+ * Accepts a bare `code=…` query fragment as well as a full URL: people copy
+ * inconsistently, and the failure mode of being strict here is a user who can
+ * see their code but cannot get it in.
+ */
+export function codeFromPastedUrl(input: string, expectedState: string): string {
+  const trimmed = input.trim()
+  if (!trimmed) throw new Error("LOGIN_CANCELLED: no redirect URL was provided")
+
+  let params: URLSearchParams
+  try {
+    params = new URL(trimmed).searchParams
+  } catch {
+    const query = trimmed.slice(trimmed.indexOf("?") + 1)
+    params = new URLSearchParams(query)
+  }
+
+  const code = params.get("code") ?? params.get("authorizationCode")
+  if (!code) {
+    throw new Error(
+      "LOGIN_FAILED: that URL carries no authorization code. Copy the full address bar contents after signing in.",
+    )
+  }
+  const state = params.get("state")
+  if (state !== expectedState) {
+    throw new Error("LOGIN_FAILED: state mismatch in the pasted redirect URL — start a fresh login")
+  }
+  return code
+}
+
+/** Default TTY prompt for the pasted redirect URL. Non-TTY → undefined. */
+async function defaultPromptManualUrl(): Promise<string | undefined> {
+  if (!process.stdin.isTTY) return undefined
+  const result = await p.text({
+    message: "Paste the full redirect URL from your browser's address bar (or press Esc to abort):",
+    placeholder: "http://127.0.0.1:1234/callback?authorizationCode=…&state=…",
+  })
+  if (p.isCancel(result)) return undefined
+  return String(result).trim()
+}
+
+/**
+ * Wait for the loopback redirect, falling back to manual paste if it never
+ * arrives.
+ *
+ * The loopback flow assumes the browser can reach 127.0.0.1, which is not always
+ * true — a proxy in TUN mode, a VPN, a firewall, or a headless/remote shell can
+ * all swallow the redirect, and the code is then visible in the address bar but
+ * unreachable by us. Rather than fail with only a timeout, offer the user the one
+ * thing they can still do. The pasted URL goes through the same `state` check.
+ */
+async function waitForCodeWithManualFallback(
+  cb: { waitForCode: () => Promise<string>; close: () => void },
+  expectedState: string,
+  promptManualUrl?: () => Promise<string | undefined>,
+): Promise<string> {
+  try {
+    return await cb.waitForCode()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    // Only a timeout means "the redirect never arrived". A state mismatch or a
+    // malformed callback means one DID arrive and was rejected — prompting for a
+    // paste there would invite the user to hand-carry the very request we just
+    // refused, so those propagate untouched.
+    if (!message.includes("timed out waiting for authorization callback")) throw err
+
+    const prompt = promptManualUrl ?? defaultPromptManualUrl
+    console.error(
+      "\nThe browser never delivered the redirect to the local callback.\n" +
+        "This usually means something between the browser and 127.0.0.1 dropped it — a proxy in TUN/enhanced mode, a VPN, or a firewall. " +
+        "If you already signed in, the address bar still holds the code and you can finish by pasting it here.",
+    )
+    const pasted = await prompt()
+    if (!pasted) throw err
+    return codeFromPastedUrl(pasted, expectedState)
+  } finally {
+    cb.close()
+  }
 }
 
 /**
@@ -229,7 +318,7 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<B
     console.log(`Open this URL in your browser to sign in:\n${authorizeUrl}`)
     ;(opts.openBrowser ?? openSystemBrowser)(authorizeUrl)
 
-    const code = await cb.waitForCode()
+    const code = await waitForCodeWithManualFallback(cb, state, opts.promptManualUrl)
     const result = await exchangeAuthorizationCode(opts.baseUrl, code, pkce.codeVerifier, cb.redirectUri)
 
     const token: AuthToken = {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { get } from "node:http"
+import { connect, type Socket } from "node:net"
 
 import {
   isLocalCallbackEnabled,
@@ -19,6 +20,38 @@ function httpGet(url: string): Promise<number> {
     req.on("error", reject)
   })
 }
+
+/**
+ * Raw HTTP over a socket we control, so a test can inspect response headers and
+ * decide whether to keep the connection open. `node:http` hides both.
+ */
+function rawRequest(
+  port: number,
+  path: string,
+  opts: { keepOpen?: boolean; socket?: Socket } = {},
+): Promise<{ head: string; socket: Socket }> {
+  return new Promise((resolve, reject) => {
+    const socket = opts.socket ?? connect(port, "127.0.0.1")
+    let buf = ""
+    const onData = (d: Buffer) => {
+      buf += d.toString()
+      if (!buf.includes("\r\n\r\n")) return
+      socket.off("data", onData)
+      if (!opts.keepOpen && !opts.socket) socket.destroy()
+      resolve({ head: buf.split("\r\n\r\n")[0]!, socket })
+    }
+    socket.on("data", onData)
+    socket.on("error", reject)
+    const send = () =>
+      socket.write(
+        `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: keep-alive\r\n\r\n`,
+      )
+    if (opts.socket) send()
+    else socket.on("connect", send)
+  })
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Bind an ephemeral port (0) and resolve once the listener is ready.
 async function startListener(expectedState: string) {
@@ -148,6 +181,88 @@ describe("startLoopbackCallback", () => {
     const status = await httpGet(`${cb.redirectUri}?code=real-code&state=state-probe`)
     expect(status).toBe(200)
     expect(await codePromise).toBe("real-code")
+  })
+
+  // RFC 8252 §7.3: the redirect must be accepted on both loopback families,
+  // since the address the browser dials is not ours to predict.
+  test("accepts the callback on the IPv6 loopback too", async () => {
+    const cb = await startLoopbackCallback({ expectedState: "state-v6", port: 0 })
+    const codePromise = cb.waitForCode()
+    codePromise.catch(() => {})
+
+    const status = await httpGet(
+      `http://[::1]:${cb.port}/callback?authorizationCode=v6-code&state=state-v6`,
+    )
+    expect(status).toBe(200)
+    expect(await codePromise).toBe("v6-code")
+  })
+
+  // Regression: the listener must not invite the browser to pool its sockets.
+  // A pooled connection idles through the sign-in, gets reaped, and the redirect
+  // is then written to a dead socket — the code never arrives.
+  test("tells the browser not to reuse the connection", async () => {
+    const cb = await startLoopbackCallback({ expectedState: "state-hdr", port: 0 })
+    cb.waitForCode().catch(() => {})
+
+    const probe = await rawRequest(cb.port, "/favicon.ico")
+    expect(probe.head).toMatch(/^HTTP\/1\.1 404/)
+    expect(probe.head.toLowerCase()).toContain("connection: close")
+    expect(probe.head.toLowerCase()).not.toContain("keep-alive")
+
+    cb.close()
+  })
+
+  // Regression: the real failure mode. The browser probes the port, banks the
+  // socket, and only redirects after the user has signed in. Reaping that socket
+  // meanwhile loses the redirect and hangs login until the timeout — so the probe
+  // response must decline reuse, and the socket must survive an idle stretch
+  // longer than Node's default 5s keepAliveTimeout.
+  test("keeps the probed socket alive across the sign-in delay", async () => {
+    const cb = await startLoopbackCallback({ expectedState: "state-pool", port: 0 })
+    const codePromise = cb.waitForCode()
+    codePromise.catch(() => {})
+
+    const probe = await rawRequest(cb.port, "/", { keepOpen: true })
+    expect(probe.head).toMatch(/^HTTP\/1\.1 404/)
+
+    let reaped = false
+    probe.socket.on("end", () => { reaped = true })
+    probe.socket.on("error", () => { reaped = true })
+
+    // Longer than the 5s idle window that used to kill this socket.
+    await sleep(5500)
+    expect(reaped).toBe(false)
+
+    // Write the redirect down that same socket, as a browser reusing a pooled
+    // connection would, and require it to actually reach the listener.
+    const redirect = await rawRequest(
+      cb.port,
+      "/callback?authorizationCode=late-code&state=state-pool",
+      { socket: probe.socket },
+    )
+    expect(redirect.head).toMatch(/^HTTP\/1\.1 200/)
+    expect(await codePromise).toBe("late-code")
+
+    probe.socket.destroy()
+  }, 20000)
+
+  // Regression: waitForCode must settle even while another socket is still open —
+  // it used to wait for every connection to drain first.
+  test("resolves promptly while an idle browser socket is still open", async () => {
+    const cb = await startLoopbackCallback({ expectedState: "state-idle", port: 0 })
+    const codePromise = cb.waitForCode()
+    codePromise.catch(() => {})
+
+    // A preconnect that never sends anything.
+    const idle = connect(cb.port, "127.0.0.1")
+    await new Promise((r) => idle.on("connect", r))
+
+    const started = Date.now()
+    await httpGet(`${cb.redirectUri}?code=prompt-code&state=state-idle`)
+    expect(await codePromise).toBe("prompt-code")
+    expect(Date.now() - started).toBeLessThan(2000)
+
+    idle.destroy()
   })
 })
 

@@ -262,6 +262,16 @@ function classifyLoginError(msg: string): { code: string; aiMessage: string } {
       aiMessage: "Sign-in was cancelled before completing. Re-run `cz-cli auth login <name>` to try again.",
     }
   }
+  // A callback timeout is not a generic failure: the browser could not reach our
+  // loopback listener, which in practice means something is intercepting local
+  // traffic. Naming the usual culprits saves the user a blind retry loop.
+  if (msg.includes("timed out waiting for authorization callback")) {
+    return {
+      code: "LOGIN_CALLBACK_TIMEOUT",
+      aiMessage:
+        "The browser never delivered the redirect to the local callback. Common causes: a proxy in TUN/enhanced mode (Clash, Surge, sing-box), a VPN, or a firewall intercepting 127.0.0.1. Add 127.0.0.1 to the proxy's bypass rules or disable the proxy, then re-run `cz-cli auth login <name>`. If you completed sign-in in the browser, re-run and paste the address-bar URL when prompted.",
+    }
+  }
   return {
     code: "LOGIN_FAILED",
     aiMessage: "Browser sign-in did not complete (network, timeout, or the authorization was not finished). Re-run `cz-cli auth login <name>`; for internal environments pass `--oauth-url <host>`. See `cz-cli auth login --help`.",

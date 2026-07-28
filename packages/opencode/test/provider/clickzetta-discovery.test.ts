@@ -1,16 +1,12 @@
 // cz_change: unit coverage for ClickZetta dynamic model discovery helpers
-// (provider.ts). These back the runtime loop that fetches {baseURL}/v1/models for
+// (provider.ts). These back the runtime loop that fetches {baseURL}/models for
 // every clickzetta gateway provider and merges the result into Provider.list().
 import { describe, expect, test } from "bun:test"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { clickzettaModelsUrl, buildClickzettaModel } from "@/provider/provider"
 
 describe("clickzettaModelsUrl", () => {
-  test("appends /v1/models when base lacks /v1", () => {
-    expect(clickzettaModelsUrl("https://gw.example.com/gateway")).toBe("https://gw.example.com/gateway/v1/models")
-  })
-
-  test("does not double the /v1 segment when base already has it", () => {
+  test("appends /models to the normalized runtime base", () => {
     expect(clickzettaModelsUrl("https://gw.example.com/gateway/v1")).toBe("https://gw.example.com/gateway/v1/models")
   })
 

@@ -11,6 +11,7 @@ import type {
   LanguageModelV3StreamResult,
 } from "@ai-sdk/provider"
 import { rewriteClickzettaGatewayError } from "./gateway-error"
+import { normalizeClickzettaGatewayUrl } from "./url"
 
 /**
  * @clickzetta/ai-gateway — a thin shell over @ai-sdk/openai-compatible for the
@@ -135,7 +136,10 @@ export type ClickzettaProviderSettings = OpenAICompatibleProviderSettings
  * billing/quota error rewriting on every language model it hands out.
  */
 export function createClickzetta(options: ClickzettaProviderSettings): OpenAICompatibleProvider {
-  const base = createOpenAICompatible(options)
+  const base = createOpenAICompatible({
+    ...options,
+    baseURL: normalizeClickzettaGatewayUrl(options.baseURL),
+  })
 
   const languageModel = (modelId: string): LanguageModelV3 => wrapModel(base.languageModel(modelId), modelId)
 
@@ -150,6 +154,7 @@ export function createClickzetta(options: ClickzettaProviderSettings): OpenAICom
 }
 
 export { createClickzetta as createOpenAICompatible }
+export { normalizeClickzettaGatewayUrl } from "./url"
 export {
   rewriteClickzettaGatewayError,
   AI_GATEWAY_QUOTA_URL,
