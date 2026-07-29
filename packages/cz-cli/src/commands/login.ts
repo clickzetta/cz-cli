@@ -3,7 +3,6 @@ import * as p from "@clack/prompts"
 import { toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { error, success } from "../output/index.js"
-import { accountsBaseUrl } from "../connection/accounts-url.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
@@ -29,9 +28,8 @@ export interface LoginArgs extends GlobalArgs {
 // orchestration without real network/browser. Note: NO resolveConnectionConfig
 // seam — the browser-OAuth path deliberately never reads a profile.
 export interface RunLoginDeps {
-  loginWithBrowser?: (opts: { baseUrl: string; accountsBaseUrl: string }) => Promise<BrowserLoginResult>
+  loginWithBrowser?: (opts: { baseUrl: string }) => Promise<BrowserLoginResult>
   resolveLoginTarget?: (args: { oauthUrl?: string; partition?: string }) => Promise<LoginTarget>
-  accountsBaseUrl?: (service: string) => string
   runAuthConfigure?: (argv: AuthConfigureArgs) => Promise<void>
   // Injectable enumerator (tests avoid real listUserWorkspaces network calls).
   enumerateOAuthCombos?: (input: {
@@ -127,7 +125,6 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
 async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void> {
   const resolveTarget = deps.resolveLoginTarget ?? resolveLoginTarget
   const doBrowserLogin = deps.loginWithBrowser ?? loginWithBrowser
-  const toAccountsBaseUrl = deps.accountsBaseUrl ?? accountsBaseUrl
   const enumerate = deps.enumerateOAuthCombos ?? enumerateOAuthCombos
 
   // Session name is required — it names the shared [oauth.<name>] token and the
@@ -157,9 +154,11 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
       partition: argv.partition,
     })
 
+    // The resolved entry host IS the OAuth issuer: every endpoint (authorize,
+    // token, userinfo) is discovered from it, so no accounts/sign-in host is
+    // derived here — the server's own metadata decides where the browser goes.
     const { token, userInfo, instances } = await doBrowserLogin({
       baseUrl: toServiceUrl(target.entryHost, target.protocol),
-      accountsBaseUrl: toAccountsBaseUrl(target.entryHost),
     })
 
     // Prefer the region-specific business service userinfo reports (via
@@ -302,7 +301,7 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         })
         .option("credential", { type: "string", describe: "Base64-encoded registration credential (new-user path)" })
         .option("name", { type: "string", describe: "Session name (same as the positional [name]); names [oauth.<name>] + profile prefix" })
-        .option("oauth-url", { type: "string", describe: "Explicit OAuth sign-in entry URL (internal envs / custom domains), e.g. uat-api.clickzetta.com. Distinct from the business --service." })
+        .option("oauth-url", { type: "string", describe: "OAuth issuer host (internal envs / custom domains), e.g. uat-api.clickzetta.com. Endpoints are discovered from it; distinct from the business --service." })
         .option("partition", { type: "string", choices: ["cn", "intl"], describe: "Region to sign in to: cn (clickzetta.com) or intl (singdata.com)" })
         .option("login-method", {
           type: "string",

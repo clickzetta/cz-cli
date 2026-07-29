@@ -100,7 +100,7 @@ describe("login OAuth opt-in", () => {
     expect(oauthLoginParam.oauthLogin).toBe(true)
     expect(oauthLoginParam.clientId).toBe("official-cli")
     expect(oauthLoginParam.redirectUri).toBe("http://127.0.0.1/callback")
-    expect(oauthLoginParam.scope).toBe("openid profile offline_access")
+    expect(oauthLoginParam.scope).toBe("profile offline_access")
     expect(oauthLoginParam.codeChallengeMethod).toBe("S256")
 
     const verifier = tokenPayload?.get("code_verifier") ?? ""

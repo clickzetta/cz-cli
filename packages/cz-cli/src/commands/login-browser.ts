@@ -1,16 +1,17 @@
 import { spawn } from "node:child_process"
 
 import * as p from "@clack/prompts"
+import * as client from "openid-client"
 
 import {
-  buildOauthLoginParam,
-  encodeOauthLoginParam,
-  exchangeAuthorizationCode,
-  fetchUserInfo,
-  generatePkce,
+  OAUTH_CLIENT_ID,
+  OAUTH_CODE_CHALLENGE_METHOD,
+  OAUTH_SCOPE,
   startLoopbackCallback,
   type AuthToken,
 } from "@clickzetta/sdk"
+
+import { oauthBodyError, toInterfaceError } from "./oauth-error.js"
 
 /**
  * Generate a random hex `state` for CSRF protection of the authorize round
@@ -189,11 +190,45 @@ function parseInstances(body: Record<string, unknown>): OAuthInstance[] {
     .filter((x): x is OAuthInstance => x !== undefined)
 }
 
+/**
+ * GET the discovered `userinfo_endpoint` with the access token and return the raw
+ * body.
+ *
+ * Uses `fetchProtectedResource` rather than the library's `fetchUserInfo`: that
+ * one runs `processUserInfoResponse`, which demands a string `sub` and an
+ * `expectedSubject` we cannot know before the call. We want the untouched body,
+ * since it is archived verbatim onto the profile.
+ *
+ * A 401 with a WWW-Authenticate header throws out of `fetchProtectedResource`
+ * itself (as WWWAuthenticateChallengeError); a body-only error response comes
+ * back as a non-ok Response, so both are converted here. Either way the caller
+ * treats a userinfo failure as non-fatal (requirement 11.7).
+ */
+async function fetchUserInfoBody(
+  config: client.Configuration,
+  userinfoEndpoint: string | undefined,
+  accessToken: string,
+  requestId: string,
+): Promise<Record<string, unknown>> {
+  if (!userinfoEndpoint) throw new Error("discovery document has no userinfo_endpoint")
+
+  let res: Response
+  try {
+    res = await client.fetchProtectedResource(config, accessToken, new URL(userinfoEndpoint), "GET")
+  } catch (err) {
+    throw toInterfaceError(err, requestId)
+  }
+
+  const body = (await res.json()) as Record<string, unknown>
+  if (!res.ok || typeof body.error === "string") throw oauthBodyError(body, res.status, requestId)
+  return body
+}
+
 export interface LoginWithBrowserOptions {
-  // Service base URL used to exchange the code (toServiceUrl(service, protocol)).
+  // OAuth issuer base URL (toServiceUrl(entryHost, protocol)). Every endpoint —
+  // authorize, token, userinfo — is discovered from it; the CLI never guesses a
+  // sign-in host of its own.
   baseUrl: string
-  // Accounts login-site base URL (accountsBaseUrl(service)).
-  accountsBaseUrl: string
   // Injectable browser opener; defaults to the system browser. Tests inject a
   // fake that drives the loopback callback.
   openBrowser?: (url: string) => void
@@ -289,46 +324,127 @@ async function waitForCodeWithManualFallback(
 }
 
 /**
+ * Generate the `requestId` header value the gateway logs correlate OAuth calls
+ * by (requirement 7.7). Mirrors the SDK's format so gateway-side log queries
+ * keep working across both paths. Random hex, no sensitive material.
+ */
+function generateRequestId(): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+  return `tssdk-oauth-${hex}`
+}
+
+/**
+ * Build the `customFetch` that injects our `requestId` header into every request
+ * the library makes. The high-level helpers expose no header option, so this is
+ * the only seam — and dropping the header is not an option: gateway log
+ * correlation is a real operational dependency.
+ */
+function fetchWithRequestId(requestId: string): client.CustomFetch {
+  return (url, options) =>
+    fetch(url, {
+      ...options,
+      headers: { ...options.headers, requestId },
+      // The library's FetchBody admits Uint8Array, which the DOM RequestInit
+      // type does not, though fetch accepts it at runtime. Cast the body alone
+      // rather than the whole init so the rest stays checked.
+      body: options.body as BodyInit | null | undefined,
+    })
+}
+
+/**
  * Browser loopback OAuth login orchestration (design Addendum 2, component I;
- * requirements 10.1/10.5/10.8/10.10). Callers MUST only invoke this when
- * `isLocalCallbackEnabled()` is true; otherwise the existing default path runs.
+ * requirements 10.1/10.5/10.8/10.10).
  *
- * Flow: generate PKCE + state → start the loopback listener to learn the
- * dynamic `redirect_uri` → build the authorize URL and open the browser (also
- * printing the URL) → wait for the validated `code` on the loopback → exchange
- * the code for tokens using the SAME `redirect_uri` (Property 11). On any
+ * Standard OAuth 2.0 authorization code + PKCE, driven by `openid-client`. Flow:
+ * discover the server metadata from `opts.baseUrl` (RFC 8414) → generate PKCE +
+ * state → start the loopback listener to learn the dynamic `redirect_uri` →
+ * build the authorize URL from the DISCOVERED `authorization_endpoint` and open
+ * the browser (also printing the URL) → wait for the validated `code` on the
+ * loopback → exchange it using the SAME `redirect_uri` (Property 11). On any
  * failure the listener is closed so it never leaks. Never logs `code_verifier`,
  * the authorization code, or tokens — printing the authorize URL is fine since
  * it only carries `code_challenge` + `state`.
+ *
+ * Note the deliberate asymmetry with token refresh: LOGIN is discovery-driven
+ * (RFC 8414 exists to bootstrap a client that does not yet know the server),
+ * while REFRESH stays convention-driven in the SDK (`OAUTH_PATH_PREFIX`). By
+ * refresh time the issuer was already recorded at login, so a discovery round
+ * trip on every expired-token command would buy nothing — each CLI invocation is
+ * a fresh process with no cross-process cache, so it would be a permanent cost.
  */
 export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<BrowserLoginResult> {
-  const pkce = generatePkce()
+  const requestId = generateRequestId()
+  // `algorithm: "oauth2"` selects RFC 8414's /.well-known/oauth-authorization-server.
+  // The library defaults to OIDC's /.well-known/openid-configuration, which the
+  // server does not serve — this is a live server constraint, not a preference.
+  const config = await client
+    .discovery(new URL(opts.baseUrl), OAUTH_CLIENT_ID, undefined, undefined, {
+      algorithm: "oauth2",
+      [client.customFetch]: fetchWithRequestId(requestId),
+    })
+    .catch((err) => {
+      throw toInterfaceError(err, requestId)
+    })
+  const meta = config.serverMetadata()
+
+  const codeVerifier = client.randomPKCECodeVerifier()
+  const codeChallenge = await client.calculatePKCECodeChallenge(codeVerifier)
   const state = randomState()
   const cb = await startLoopbackCallback({ expectedState: state, timeoutMs: opts.timeoutMs })
 
   try {
-    const authorizeUrl =
-      `${opts.accountsBaseUrl}/login?oauthLoginParam=` +
-      encodeURIComponent(
-        encodeOauthLoginParam(
-          buildOauthLoginParam({ redirectUri: cb.redirectUri, codeChallenge: pkce.codeChallenge, state }),
-        ),
-      )
+    const authorizeUrl = client.buildAuthorizationUrl(config, {
+      redirect_uri: cb.redirectUri,
+      scope: OAUTH_SCOPE,
+      code_challenge: codeChallenge,
+      code_challenge_method: OAUTH_CODE_CHALLENGE_METHOD,
+      state,
+    })
 
-    console.log(`Open this URL in your browser to sign in:\n${authorizeUrl}`)
-    ;(opts.openBrowser ?? openSystemBrowser)(authorizeUrl)
+    console.log(`Open this URL in your browser to sign in:\n${authorizeUrl.href}`)
+    ;(opts.openBrowser ?? openSystemBrowser)(authorizeUrl.href)
 
     const code = await waitForCodeWithManualFallback(cb, state, opts.promptManualUrl)
-    const result = await exchangeAuthorizationCode(opts.baseUrl, code, pkce.codeVerifier, cb.redirectUri)
+
+    // `authorizationCodeGrant` wants the redirect URL, but our listener (and the
+    // manual-paste fallback) hands back a bare code string. Synthesize the URL
+    // from `cb.redirectUri` rather than from the real request: it keeps both
+    // paths converging here, and — critically — it preserves the PORT. The
+    // library derives the token request's `redirect_uri` by stripping this URL's
+    // query/hash, so it must be byte-identical to the one in the authorize URL
+    // (RFC 6749 §4.1.3); a URL built from `req.url` against a portless origin
+    // silently drops the port and the server answers `invalid_grant`.
+    const callbackUrl = new URL(cb.redirectUri)
+    callbackUrl.searchParams.set("code", code)
+    // `state` is re-attached so the library's own validateAuthResponse passes.
+    // Our listener (callback-server.ts) already rejected any mismatch — this is
+    // a deliberate second gate, not dead weight. Do NOT "optimize" it into
+    // `skipStateCheck`: the paste fallback reaches the same code path, and one
+    // check is one place to get wrong.
+    callbackUrl.searchParams.set("state", state)
+    if (meta.authorization_response_iss_parameter_supported) {
+      callbackUrl.searchParams.set("iss", meta.issuer)
+    }
+
+    const tokens = await client
+      .authorizationCodeGrant(config, callbackUrl, {
+        pkceCodeVerifier: codeVerifier,
+        expectedState: state,
+      })
+      .catch((err) => {
+        throw toInterfaceError(err, requestId)
+      })
 
     const token: AuthToken = {
-      token: result.accessToken,
-      refreshToken: result.refreshToken,
+      token: tokens.access_token,
+      refreshToken: tokens.refresh_token,
       // expireTimeMs is a DURATION in ms (expires_in * 1000), matching the
       // login.ts OAuth path and token.ts isTokenExpired semantics
       // (elapsed = now - obtainedAt > expireTimeMs * EXPIRED_FACTOR). It must
       // NOT be an absolute timestamp.
-      expireTimeMs: result.expiresInMs,
+      expireTimeMs: tokens.expires_in !== undefined ? tokens.expires_in * 1000 : 0,
       obtainedAt: Date.now(),
       // Populated below from userinfo when available; default to 0 so legacy
       // consumers and the token store keep working when userinfo is missing.
@@ -342,7 +458,7 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<B
     let instances: OAuthInstance[] | undefined
     let raw: Record<string, unknown> | undefined
     try {
-      const body = await fetchUserInfo(opts.baseUrl, result.accessToken)
+      const body = await fetchUserInfoBody(config, meta.userinfo_endpoint, tokens.access_token, requestId)
       raw = body
       const parsed = parseUserInfo(body)
       if (isOauthDebug()) console.error(`[oauth-userinfo] keys=[${Object.keys(parsed ?? {}).join(",")}]`)

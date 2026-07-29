@@ -14,8 +14,11 @@ export interface OAuthTokenResult {
  * (`code`, `code_verifier`, `refresh_token`, `access_token`) so error
  * messages and logs cannot leak sensitive values (design Property 7,
  * requirement 7.6).
+ *
+ * Exported so the CLI's openid-client error adapter reuses the same wording
+ * instead of keeping a second copy of these strings in sync.
  */
-const OAUTH_ERROR_SEMANTICS: Record<string, string> = {
+export const OAUTH_ERROR_SEMANTICS: Record<string, string> = {
   invalid_request: "the OAuth request was malformed (missing or invalid parameters)",
   invalid_client: "the OAuth client configuration is missing or invalid",
   invalid_scope: "the requested OAuth scope was rejected",

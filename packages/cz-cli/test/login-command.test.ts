@@ -128,7 +128,6 @@ describe("runLogin", () => {
           return KNOWN_RESULT
         },
         resolveLoginTarget: async () => makeTarget(),
-        accountsBaseUrl: () => "https://accounts.example.com",
       })
     } finally {
       out.restore()
@@ -183,7 +182,6 @@ describe("runLogin", () => {
           return KNOWN_RESULT
         },
         resolveLoginTarget: async () => makeTarget(),
-        accountsBaseUrl: () => "https://accounts.example.com",
       })
     } finally {
       out.restore()
@@ -212,7 +210,6 @@ describe("runLogin", () => {
       await runLogin(makeArgs(), {
         loginWithBrowser: async () => resultWithInstances,
         resolveLoginTarget: async () => makeTarget(),
-        accountsBaseUrl: () => "https://accounts.example.com",
         // Fake enumerator: 2 instances × workspaces → 3 combos.
         enumerateOAuthCombos: async () => [
           { service: "cn-shanghai-alicloud.api.clickzetta.com", instance: "89b94150", instanceId: 159973, workspace: "quick_start" },
@@ -261,7 +258,6 @@ describe("runLogin", () => {
           return KNOWN_RESULT
         },
         resolveLoginTarget: async () => makeTarget(),
-        accountsBaseUrl: () => "https://accounts.example.com",
         promptSessionName: async () => undefined, // non-TTY / cancelled
       })
     } finally {
@@ -279,7 +275,6 @@ describe("runLogin", () => {
       await runLogin({ format: "json", debug: false } as GlobalArgs & { browser?: boolean }, {
         loginWithBrowser: async () => KNOWN_RESULT,
         resolveLoginTarget: async () => makeTarget(),
-        accountsBaseUrl: () => "https://accounts.example.com",
         promptSessionName: async () => "prompted-sess",
       })
     } finally {
@@ -305,7 +300,6 @@ describe("runLogin", () => {
           throw new Error("state mismatch")
         },
         resolveLoginTarget: async () => makeTarget(),
-        accountsBaseUrl: () => "https://accounts.example.com",
       })
     } finally {
       out.restore()

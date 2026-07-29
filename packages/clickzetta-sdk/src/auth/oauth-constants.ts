@@ -1,6 +1,13 @@
 export const OAUTH_CLIENT_ID = "official-cli"
 export const OAUTH_REDIRECT_URI = "http://127.0.0.1/callback"
-export const OAUTH_SCOPE = "openid profile offline_access"
+/**
+ * Scopes requested by the CLI. Deliberately NOT including `openid`: we never
+ * consume an `id_token` — identity comes from `/oauth2/userinfo` against the
+ * access token. Asking for `openid` would turn this into an OIDC flow and
+ * oblige the server to publish a `jwks_uri` and sign id_tokens we'd then be
+ * expected to verify, for no gain.
+ */
+export const OAUTH_SCOPE = "profile offline_access"
 export const OAUTH_CODE_CHALLENGE_METHOD = "S256"
 
 /**

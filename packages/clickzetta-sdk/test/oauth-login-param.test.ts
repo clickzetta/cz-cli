@@ -14,7 +14,8 @@ describe("buildOauthLoginParam", () => {
 
     expect(param.oauthLogin).toBe(true)
     expect(param.clientId).toBe("official-cli")
-    expect(param.scope).toBe("openid profile offline_access")
+    // No `openid`: identity comes from /oauth2/userinfo, not an id_token.
+    expect(param.scope).toBe("profile offline_access")
     expect(param.codeChallengeMethod).toBe("S256")
     expect(param.redirectUri).toBe("http://127.0.0.1:54321/callback")
     expect(param.codeChallenge).toBe("challenge-xyz")
