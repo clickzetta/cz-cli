@@ -29,10 +29,11 @@
 
 ### Requirement: table update 修改已加入域的表的显示名与描述
 
-`cz-cli analytics-agent table update <dataset-id> --domain-id <id>` MUST 支持修改一个已加入域的 dataset 的 `displayName` 与/或 `description`。CLI MUST 全部使用 Analytics Agent open API：先调用 `POST /open/api/v1/analytics-agent/datasets/list`（请求体 `{domainIds:[<domain-id>]}`）按 domain 校验 dataset 归属，再调用 `POST /open/api/v1/analytics-agent/datasets/update` 进行局部更新。open update 会在服务端加载现有详情并覆盖请求字段，因此 CLI MUST 只提交 `datasetId` 和用户提供的更新字段（`--name` → `displayName`、`--description` → `description`），不得继续依赖非 open 的 MVC dataset 接口。`--domain-id` MUST 提供；`--name` 与 `--description` MUST 至少提供其一；提供 `--name` 时其值 MUST 非空。
+`cz-cli analytics-agent table update <dataset-id> --domain-id <id>` MUST 支持修改一个已加入域的 dataset 的 `displayName` 与/或 `description`。CLI MUST 全部使用 Analytics Agent open API：先调用 `POST /open/api/v1/analytics-agent/datasets/list`（请求体 `{domainIds:[<domain-id>]}`）按 domain 校验 dataset 归属，再调用 `POST /open/api/v1/analytics-agent/datasets/update` 进行局部更新。open update 会在服务端加载现有详情并覆盖请求字段，因此 CLI MUST 只提交 `datasetId` 和用户提供的更新字段（`--name` → `displayName`、`--description` → `description`），不得继续依赖非 open 的 MVC dataset 接口。datasets/list 分页返回（默认 `pageSize=10`），因此归属校验 MUST 翻页读取该域的**全部** dataset（逐页 `pageNum` 递增直到取满 `total`/遇到短页），再在合并后的完整集合中按 `datasetId` 定位；MUST NOT 只读第一页——否则域内表数超过一页时，落在后续页的 dataset 会被误判为「不在此 domain」而报 not found。`--domain-id` MUST 提供；`--name` 与 `--description` MUST 至少提供其一；提供 `--name` 时其值 MUST 非空。
 
 > 说明：`table add --display-name` 只在**新建** dataset 时设置显示名；对**已存在**的 dataset 后端会忽略。要改已有表的显示名或描述必须用本命令。
 > 已知后端限制：旧的非 open `dataset/detail?datasetId=<id>` 对某些域的 dataset 返回 `CZD-20009`（列表能查到、详情查不到），因此本命令改用按域过滤的 open dataset list 作为归属校验源。
+> 分页陷阱：datasets/list 默认每页 10 条。曾经只读第一页，导致域内第 11 张表起（第 2 页）的 dataset 更新时报 `dataset <id> not found in domain <domain-id>`——这不是后端异步索引问题，而是 CLI 未翻页。现要求翻页读全。
 
 #### Scenario: 经 dataset/list 读取后更新 displayName
 
@@ -53,10 +54,18 @@
 - **THEN** update 请求体中 `description` 为 `只改描述`
 - **且** 请求体不包含 `displayName`，由 open update 在服务端保留原显示名
 
+#### Scenario: 更新落在 dataset/list 第二页的 dataset
+
+- **WHEN** 某域有 13 张表（`dataset/list` 默认每页 10 条，共 2 页），目标 `datasetId` 在第 2 页
+- **AND** 用户执行 `cz-cli analytics-agent table update <id> --domain-id <domain-id> --name X`
+- **THEN** CLI MUST 翻页读取所有页
+- **且** 在合并集合中定位到该 dataset 并成功 `dataset/update`
+- **且** MUST NOT 因只读第一页而报 `dataset <id> not found in domain`
+
 #### Scenario: dataset 不在指定 domain 中时报错
 
 - **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name X`
-- **AND** domain 27 的 dataset 列表中没有 datasetId=82
+- **AND** domain 27 的 dataset 列表中（含所有分页）没有 datasetId=82
 - **THEN** CLI MUST 报错说明该 dataset 不在此 domain 中，且不调用 update
 
 #### Scenario: 缺少 --domain-id 时本地拒绝

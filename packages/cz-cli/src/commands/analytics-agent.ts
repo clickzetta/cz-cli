@@ -396,6 +396,36 @@ async function runTableSemanticsList(argv: Record<string, unknown>): Promise<voi
   }
 }
 
+// Read every dataset in a domain via `dataset/list`, paginating until exhausted.
+// The list defaults to pageSize 10, so a single-page read misses datasets past
+// the first page — the cause of spurious "not found in domain" on tables 11+.
+// Dedup by datasetId and cap page count so a backend that ignores pageNum can't
+// loop forever.
+async function fetchAllDatasetsInDomain(
+  argv: Record<string, unknown>,
+  domainId: number,
+  ctx: ResolvedContext,
+): Promise<Record<string, unknown>[]> {
+  const pageSize = 200
+  const maxPages = 1000
+  const all: Record<string, unknown>[] = []
+  const seen = new Set<string>()
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const pageData = await requestAnalyticsData(argv, ROUTES.datasetList, { domainIds: [domainId], pageNum, pageSize }, {}, ctx)
+    const pageItems = Array.isArray(pageData) ? pageData as Record<string, unknown>[] : []
+    let added = 0
+    for (const item of pageItems) {
+      const key = String(item.datasetId)
+      if (seen.has(key)) continue
+      seen.add(key)
+      all.push(item)
+      added++
+    }
+    if (pageItems.length < pageSize || added === 0) break
+  }
+  return all
+}
+
 // Update a dataset's display name and/or description through the open dataset
 // API. The list step verifies the dataset belongs to the requested domain; the
 // open update endpoint supports partial updates, so only changed fields are sent.
@@ -416,8 +446,7 @@ async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
   }
   try {
     const ctx = await resolveAnalyticsContext(argv)
-    const listData = await requestAnalyticsData(argv, ROUTES.datasetList, { domainIds: [domainId] }, {}, ctx)
-    const items = Array.isArray(listData) ? listData as Record<string, unknown>[] : []
+    const items = await fetchAllDatasetsInDomain(argv, domainId, ctx)
     const current = items.find((d) => String(d.datasetId) === String(datasetId))
     if (!current) {
       error("ANALYTICS_AGENT_ERROR", `dataset ${datasetId} not found in domain ${domainId}`, { format })
