@@ -29,28 +29,29 @@
 
 ### Requirement: table update 修改已加入域的表的显示名与描述
 
-`cz-cli analytics-agent table update <dataset-id> --domain-id <id>` MUST 支持修改一个已加入域的 dataset 的 `displayName` 与/或 `description`。由于后端 `dataset/update` 接口需要**完整的 dataset 对象**，CLI MUST 采用 read-modify-write。read 源 MUST 使用 `POST /api/v1/dataset/list`（请求体 `{domainIds:[<domain-id>]}`）而**不是** `dataset/detail`——后者对部分域的 dataset 会返回 `CZD-20009`「数据集不存在」。CLI MUST 在 list 结果中按 `datasetId` 定位完整对象，仅改写用户提供的字段（`--name` → `displayName`、`--description` → `description`），再 `POST /api/v1/dataset/update` 把整个对象提交回去，不得只发部分字段（否则会清空其它字段）。`--domain-id` MUST 提供；`--name` 与 `--description` MUST 至少提供其一；提供 `--name` 时其值 MUST 非空。
+`cz-cli analytics-agent table update <dataset-id> --domain-id <id>` MUST 支持修改一个已加入域的 dataset 的 `displayName` 与/或 `description`。CLI MUST 全部使用 Analytics Agent open API：先调用 `POST /open/api/v1/analytics-agent/datasets/list`（请求体 `{domainIds:[<domain-id>]}`）按 domain 校验 dataset 归属，再调用 `POST /open/api/v1/analytics-agent/datasets/update` 进行局部更新。open update 会在服务端加载现有详情并覆盖请求字段，因此 CLI MUST 只提交 `datasetId` 和用户提供的更新字段（`--name` → `displayName`、`--description` → `description`），不得继续依赖非 open 的 MVC dataset 接口。`--domain-id` MUST 提供；`--name` 与 `--description` MUST 至少提供其一；提供 `--name` 时其值 MUST 非空。
 
 > 说明：`table add --display-name` 只在**新建** dataset 时设置显示名；对**已存在**的 dataset 后端会忽略。要改已有表的显示名或描述必须用本命令。
-> 已知后端限制：`dataset/detail?datasetId=<id>` 对某些域的 dataset 返回 `CZD-20009`（列表能查到、详情查不到），因此本命令改用按域过滤的 `dataset/list` 作为 read 源。
+> 已知后端限制：旧的非 open `dataset/detail?datasetId=<id>` 对某些域的 dataset 返回 `CZD-20009`（列表能查到、详情查不到），因此本命令改用按域过滤的 open dataset list 作为归属校验源。
 
 #### Scenario: 经 dataset/list 读取后更新 displayName
 
 - **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name "投标事实表"`
-- **THEN** CLI MUST 先调用 `POST /api/v1/dataset/list`，请求体含 `domainIds=[27]`
-- **且** 在结果中按 `datasetId=82` 定位完整对象
-- **且** 再调用 `POST /api/v1/dataset/update`，请求体为该完整对象且 `displayName` 改为 `投标事实表`
-- **且** 请求体保留其它字段（如 `description`、`tableName`、`completeSchema`）
+- **THEN** CLI MUST 先调用 `POST /open/api/v1/analytics-agent/datasets/list`，请求体含 `domainIds=[27]`
+- **且** 在结果中按 `datasetId=82` 确认 dataset 属于该 domain
+- **且** 再调用 `POST /open/api/v1/analytics-agent/datasets/update`
+- **且** update 请求体仅包含 `datasetId=82` 与 `displayName=投标事实表`，不提交 `completeSchema` 等完整对象字段
 
 #### Scenario: 同时更新 displayName 与 description
 
 - **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --name "投标事实表" --description "招投标明细"`
-- **THEN** 提交的对象中 `displayName` 为 `投标事实表`，`description` 为 `招投标明细`
+- **THEN** update 请求体中 `displayName` 为 `投标事实表`，`description` 为 `招投标明细`
 
 #### Scenario: 只更新 description 时保留原 displayName
 
 - **WHEN** 用户执行 `cz-cli analytics-agent table update 82 --domain-id 27 --description "只改描述"`
-- **THEN** 提交的对象中 `description` 为 `只改描述`，`displayName` 保持列表中的原值
+- **THEN** update 请求体中 `description` 为 `只改描述`
+- **且** 请求体不包含 `displayName`，由 open update 在服务端保留原显示名
 
 #### Scenario: dataset 不在指定 domain 中时报错
 

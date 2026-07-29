@@ -359,8 +359,8 @@ describe("analytics-agent knowledge", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    expect(capturedUrls[0]).toContain("/api/v1/kb/nodes/domains/set?tenantId=55")
-    expect(capturedUrls[1]).toContain("/api/v1/kb/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
+    expect(capturedUrls[0]).toContain("/open/api/v1/analytics-agent/knowledge/nodes/domains/set?tenantId=55")
+    expect(capturedUrls[1]).toContain("/open/api/v1/analytics-agent/knowledge/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
     expect(capturedBody).toEqual({
       nodeId: 11,
       domainIds: [195, 196],
@@ -425,8 +425,8 @@ describe("analytics-agent knowledge", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    expect(capturedUrls[0]).toContain("/api/v1/kb/nodes/domains/remove?tenantId=55")
-    expect(capturedUrls[1]).toContain("/api/v1/kb/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
+    expect(capturedUrls[0]).toContain("/open/api/v1/analytics-agent/knowledge/nodes/domains/remove?tenantId=55")
+    expect(capturedUrls[1]).toContain("/open/api/v1/analytics-agent/knowledge/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
     expect(capturedBody).toEqual({
       nodeId: 11,
       domainIds: [195],
@@ -516,8 +516,8 @@ describe("analytics-agent knowledge", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    expect(capturedUrls[0]).toContain("/api/v1/kb/nodes/domains/set?tenantId=55")
-    expect(capturedUrls[1]).toContain("/api/v1/kb/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
+    expect(capturedUrls[0]).toContain("/open/api/v1/analytics-agent/knowledge/nodes/domains/set?tenantId=55")
+    expect(capturedUrls[1]).toContain("/open/api/v1/analytics-agent/knowledge/nodes/detail/with-path?tenantId=55&spaceId=7&nodeId=11")
     const parsed = JSON.parse(result.output.trim()) as Record<string, any>
     expect(parsed.data.spaceId).toBe(7)
     expect(parsed.data.nodeId).toBe(11)

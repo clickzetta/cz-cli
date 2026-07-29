@@ -345,7 +345,64 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(requestBody).toEqual({
       path: "workspace:w/schema:s",
       tableName: "orders",
+      displayName: "w.s.orders",
       domainIds: [195, 196],
+    })
+  })
+
+  test("datasource table load honors an explicit --display-name", async () => {
+    let requestBody: unknown
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: 301 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "table",
+      "load",
+      "288",
+      "--workspace",
+      "w",
+      "--schema",
+      "s",
+      "--table",
+      "orders",
+      "--display-name",
+      "订单表",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({
+      path: "workspace:w/schema:s",
+      tableName: "orders",
+      displayName: "订单表",
+    })
+  })
+
+  test("datasource table load rejects blank --display-name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "table",
+      "load",
+      "288",
+      "--table",
+      "orders",
+      "--display-name",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--display-name must be non-empty",
     })
   })
 
@@ -365,6 +422,7 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     expect(result.status).toBe(0)
     expect(result.stdout).toContain("--table")
     expect(result.stdout).toContain("--domain-id")
+    expect(result.stdout).toContain("--display-name")
     expect(result.stdout).not.toContain("--domain-ids")
     expect(result.stdout).not.toContain("--table-name")
     expect(result.stdout).not.toContain("--body")
@@ -599,6 +657,25 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
 
     expect(result.exitCode).toBe(0)
     expect((requestBody as Record<string, unknown>).displayName).toBe("投标事实表")
+  })
+
+  test("domain table add rejects blank --display-name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "domain", "table", "add", "27",
+      "--datasource-id", "8448",
+      "--table", "quick_start.construction_dw.v_gpt_fact_bid",
+      "--display-name", "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--display-name must be non-empty",
+    })
   })
 
   test("domain table add surfaces the assigned dataset id via ai_message", async () => {

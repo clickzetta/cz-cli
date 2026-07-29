@@ -36,7 +36,7 @@ cz-cli [global options] analytics-agent <group> <command> [args] [options]
 | `analytics-agent datasource browse <datasource-id>` | 浏览数据源子节点 | `--workspace`、`--schema`、`--name`、`--page-num`、`--page-size` |
 | `analytics-agent datasource table search <datasource-id> <keyword>` | 按 scope 搜索数据源中的表 | `--workspace`、`--schema`、`--page-num`、`--page-size` |
 | `analytics-agent datasource table show <datasource-id>` | 查看表字段，可选预览 | `--workspace`、`--schema`、`--table`、`--preview`、`--preview-size` |
-| `analytics-agent datasource table load <datasource-id>` | 将表加载为 dataset，可选绑定 domain | `--workspace`、`--schema`、`--table`、`--domain-id` |
+| `analytics-agent datasource table load <datasource-id>` | 将表加载为 dataset，可选绑定 domain | `--workspace`、`--schema`、`--table`、`--display-name`、`--domain-id` |
 
 示例：
 
@@ -45,7 +45,7 @@ cz-cli analytics-agent datasource list --with-detail --format table
 cz-cli analytics-agent datasource browse 12 --workspace w --schema s
 cz-cli analytics-agent datasource table search 12 orders --workspace w --schema s
 cz-cli analytics-agent datasource table show 12 --workspace w --schema s --table orders --preview
-cz-cli analytics-agent datasource table load 12 --workspace w --schema s --table orders --domain-id 195
+cz-cli analytics-agent datasource table load 12 --workspace w --schema s --table orders --display-name "订单表" --domain-id 195
 ```
 
 ## 业务域命令

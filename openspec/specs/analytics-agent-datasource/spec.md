@@ -72,13 +72,24 @@
 
 ### Requirement: datasource table load 加载表为 dataset
 
-`cz-cli analytics-agent datasource table load <datasource-id>` MUST 使用 `--table` 指定表名，并把重复 `--domain-id` 组装为请求体中的 `domainIds` 数组。
+`cz-cli analytics-agent datasource table load <datasource-id>` MUST 使用 `--table` 指定表名，并把重复 `--domain-id` 组装为请求体中的 `domainIds` 数组。CLI MUST 为请求体设置非空 `displayName`：用户 MAY 通过 `--display-name` 显式覆盖；未传时 MUST 默认使用物理表名（若有 `--workspace` 与 `--schema`，则使用 `workspace.schema.table`；表名以 `v_gpt_` 开头时去掉此前缀）。
 
 #### Scenario: 加载表并绑定 domain
 
 - **WHEN** 用户执行 `cz-cli analytics-agent datasource table load 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm --domain-id 195`
 - **THEN** CLI 调用 `POST /open/api/v1/datasources/288/load`
-- **且** 请求体为 `{"path":"workspace:ai_workspace/schema:hll_dws","tableName":"dws_info_driver_daily_1d_tm","domainIds":[195]}`
+- **且** 请求体为 `{"path":"workspace:ai_workspace/schema:hll_dws","tableName":"dws_info_driver_daily_1d_tm","displayName":"ai_workspace.hll_dws.dws_info_driver_daily_1d_tm","domainIds":[195]}`
+
+#### Scenario: 显式 display-name 覆盖默认值
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table load 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm --display-name "司机日表"`
+- **THEN** 请求体 `displayName` 为 `司机日表`
+
+#### Scenario: 空 display-name 时拒绝请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource table load 288 --table orders --display-name "   "`
+- **THEN** CLI 返回参数错误
+- **且** 不发送 HTTP 请求
 
 #### Scenario: 非法 domain-id 时拒绝请求
 
