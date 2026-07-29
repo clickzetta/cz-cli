@@ -68,6 +68,22 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent answer-builder validate --help`
 - **THEN** help 输出包含 `chartParams` 与 `metricName` 语法说明
 
+### Requirement: --sql 帮助提示 shell 引号陷阱且示例不得示范该陷阱
+
+`--sql` 里的 `${name}` 占位符若置于双引号且不转义，会被 shell（bash/zsh）展开成空串，使后端收到 `SELECT , ... WHERE  GROUP BY`、报 `CZLH-42000: Syntax error at or near ','`。因此 `cz-cli analytics-agent answer-builder create`、`update`、`validate` 的 DSL epilogue MUST 说明该陷阱及规避方法（`--sql` 用单引号，或双引号内把 `$` 转义为 `\$`）。同时，help 中任何带 `--sql` 的示例 MUST NOT 示范该陷阱——即示例里 `--sql` 若含 `${...}` 占位符，MUST 使用单引号或转义写法，不得出现「双引号包裹且未转义的裸 `${...}`」。
+
+#### Scenario: create help 说明 shell 引号陷阱
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --help`
+- **THEN** epilogue MUST 提到 `--sql` 的 `${...}` 占位符在双引号下会被 shell 展开
+- **且** MUST 给出规避方法（单引号包裹或 `\$` 转义）
+
+#### Scenario: help 示例不得示范未转义的裸占位符
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --help`
+- **THEN** help 中所有 `--sql` 示例 MUST NOT 出现「双引号包裹且未转义的裸 `${dims}`/`${filters}`」
+- **且** 含占位符的 `--sql` 示例 MUST 用单引号或 `\$` 转义
+
 ### Requirement: answer-builder 命令组帮助说明与 metric 的关系
 
 `cz-cli analytics-agent answer-builder --help` MUST 在 epilogue 中说明 answer-builder 是 complex_metric（多步/多表 DSL 分析），单表单聚合应使用 `metric`（simple_metric），且两者都计入 `domain detail` 的 targetCounts，并提示可用 `--domain-id` 把 `answer-builder list` 限定到单个 domain。

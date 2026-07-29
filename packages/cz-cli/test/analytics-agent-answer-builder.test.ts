@@ -311,6 +311,28 @@ describe("analytics-agent answer-builder", () => {
     expect(result.stdout).not.toContain("--body")
   })
 
+  test("create help warns about the shell-quoting trap for --sql placeholders", async () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts", "analytics-agent", "answer-builder", "create", "--help",
+    ], { cwd: process.cwd(), encoding: "utf-8" })
+
+    expect(result.status).toBe(0)
+    // epilogue must mention the shell expansion trap and the single-quote / escape fix
+    expect(result.stdout).toMatch(/single quote|single-quote|'\.\.\.'/)
+    expect(result.stdout).toContain("\\${")
+  })
+
+  test("create help --sql examples do not demonstrate the unescaped double-quote trap", async () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts", "analytics-agent", "answer-builder", "create", "--help",
+    ], { cwd: process.cwd(), encoding: "utf-8" })
+
+    expect(result.status).toBe(0)
+    // No example may pass --sql "...${dims}..." with a bare, unescaped ${ inside double quotes.
+    const doubleQuotedSql = /--sql\s+"[^"]*\$\{/
+    expect(doubleQuotedSql.test(result.stdout)).toBe(false)
+  })
+
   test("disable falls back to detail plus update when direct status route says not found", async () => {
     const requestUrls: string[] = []
     const requestBodies: unknown[] = []

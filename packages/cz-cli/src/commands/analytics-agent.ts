@@ -192,6 +192,9 @@ const ANSWER_BUILDER_DSL_HELP = [
   "  (Pass the SQL via --sql instead of embedding it in --content to avoid quote escaping.)",
   "",
   "Rules:",
+  "  - Shell quoting: wrap --sql in single quotes so bash/zsh won't expand ${...} to empty",
+  "    (an expanded placeholder yields `SELECT ,` -> CZLH-42000 at ','); or escape as \\${name}",
+  "    inside double quotes. The ${...} must reach the CLI intact.",
   "  - Every ${name} in the SQL MUST have a matching chartParams entry, else CZLH-42000 syntax error.",
   "  - outputColumns[].metricName is REQUIRED and must be UNIQUE within the domain",
   "    (prefix generic names, e.g. 区域销售额 vs 行业销售额).",
@@ -2763,7 +2766,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .example(
                   'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "各省份中标金额排名" --content \'{"...DSL..."}\'',
                   "Create a complex metric (answer builder). Run `answer-builder validate` first to check the --content DSL",
@@ -2773,8 +2776,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   "Pass SQL via --sql so single quotes don't collide with the --content JSON",
                 )
                 .example(
-                  'cz-cli analytics-agent answer-builder create --domain-id 43 --datasource-id 8448 --analysis-name "各区域销售汇总" --content \'{"chartParams":[{"name":"dims","type":"dimension","allowMulti":true,"fromTableRefs":[{"tableName":"quick_start.ict_industry_demo.v_gpt_fact_sales","columns":["region"]}]}],"outputColumns":[{"name":"order_count","metricName":"区域订单数","type":"bigint","stdTypeName":"int"},{"name":"total_amount","metricName":"区域销售额","type":"decimal","stdTypeName":"double"}],"relatedTables":["quick_start.ict_industry_demo.v_gpt_fact_sales"]}\' --sql "SELECT ${dims}, COUNT(*) AS order_count, SUM(final_amount) AS total_amount FROM quick_start.ict_industry_demo.v_gpt_fact_sales GROUP BY ${dims}"',
-                  "Full example: dims placeholder + required unique metricName per output column",
+                  'cz-cli analytics-agent answer-builder create --domain-id 43 --datasource-id 8448 --analysis-name "各区域销售汇总" --content \'{"chartParams":[{"name":"dims","type":"dimension","allowMulti":true,"fromTableRefs":[{"tableName":"quick_start.ict_industry_demo.v_gpt_fact_sales","columns":["region"]}]}],"outputColumns":[{"name":"order_count","metricName":"区域订单数","type":"bigint","stdTypeName":"int"},{"name":"total_amount","metricName":"区域销售额","type":"decimal","stdTypeName":"double"}],"relatedTables":["quick_start.ict_industry_demo.v_gpt_fact_sales"]}\' --sql \'SELECT ${dims}, COUNT(*) AS order_count, SUM(final_amount) AS total_amount FROM quick_start.ict_industry_demo.v_gpt_fact_sales GROUP BY ${dims}\'',
+                  "Full example: single-quote --sql so ${dims} reaches the CLI; unique metricName per output column",
                 )
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
@@ -2801,7 +2804,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" }),
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
+                .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
@@ -2950,7 +2954,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
