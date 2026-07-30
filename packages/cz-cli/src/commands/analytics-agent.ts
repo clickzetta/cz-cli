@@ -53,9 +53,9 @@ const ROUTES = {
   tableSemanticsGet: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
   tableSemanticsSet: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
   tableSemanticsProp: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}/prop` },
-  datasetDetail: { method: "GET", path: "/api/v1/dataset/detail" },
-  datasetList: { method: "POST", path: "/api/v1/dataset/list" },
-  datasetUpdate: { method: "POST", path: "/api/v1/dataset/update" },
+  datasetDetail: { method: "GET", path: "/open/api/v1/analytics-agent/datasets/detail" },
+  datasetList: { method: "POST", path: "/open/api/v1/analytics-agent/datasets/list" },
+  datasetUpdate: { method: "POST", path: "/open/api/v1/analytics-agent/datasets/update" },
   domainJoinList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
   domainJoinDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/${encodePath(argv["join-id"])}` },
   domainJoinCreate: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
@@ -78,9 +78,9 @@ const ROUTES = {
   knowledgeNodeSort: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/sort` },
   knowledgeNodeContent: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/content` },
   knowledgeNodeDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}` },
-  knowledgeNodeDomainSet: { method: "POST", path: "/api/v1/kb/nodes/domains/set" },
-  knowledgeNodeDomainRemove: { method: "POST", path: "/api/v1/kb/nodes/domains/remove" },
-  knowledgeNodeDetailWithPath: { method: "GET", path: "/api/v1/kb/nodes/detail/with-path" },
+  knowledgeNodeDomainSet: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/nodes/domains/set" },
+  knowledgeNodeDomainRemove: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/nodes/domains/remove" },
+  knowledgeNodeDetailWithPath: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/nodes/detail/with-path" },
   knowledgeNodeByPath: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/by-path` },
   knowledgeUploadUrl: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/upload-url` },
   knowledgeUploadComplete: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/upload-complete` },
@@ -250,6 +250,12 @@ function requiredStringValue(value: unknown, optionName: string, format: string)
   handledError("USAGE_ERROR", `${optionName} is required`, { format })
 }
 
+function optionalNonEmptyStringValue(value: unknown, optionName: string, format: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === "string" && value.trim() !== "") return value.trim()
+  handledError("USAGE_ERROR", `${optionName} must be non-empty`, { format })
+}
+
 function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
   if (!raw) return undefined
   try {
@@ -355,12 +361,9 @@ async function runTableSemanticsList(argv: Record<string, unknown>): Promise<voi
   }
 }
 
-// Update a dataset's display name and/or description via read-modify-write: the
-// backend `dataset/update` endpoint expects the FULL dataset object. The read
-// source is `dataset/list` filtered by domainIds (NOT `dataset/detail`, which
-// returns CZD-20009 "dataset not found" for datasets in some domains). We locate
-// the full object by datasetId, change only the requested fields, and post the
-// whole object back — a partial body would blank out the other fields.
+// Update a dataset's display name and/or description through the open dataset
+// API. The list step verifies the dataset belongs to the requested domain; the
+// open update endpoint supports partial updates, so only changed fields are sent.
 async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
@@ -385,7 +388,7 @@ async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
       error("ANALYTICS_AGENT_ERROR", `dataset ${datasetId} not found in domain ${domainId}`, { format })
       return
     }
-    const body: Record<string, unknown> = { ...current }
+    const body: Record<string, unknown> = { datasetId }
     if (hasName) body.displayName = (argv.name as string).trim()
     if (hasDesc) body.description = argv.description
     const updated = await requestAnalyticsData(argv, ROUTES.datasetUpdate, body, {}, ctx)
@@ -422,6 +425,7 @@ function tableAddAiMessage(data: unknown): string | undefined {
 // given explicitly, split it so lakehouse datasources don't force the caller to
 // re-supply --workspace and --schema separately.
 function resolveDomainTableAddBody(argv: Record<string, unknown>): Record<string, unknown> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
   const rawTable = typeof argv.table === "string" ? argv.table.trim() : ""
   let workspace = typeof argv.workspace === "string" ? argv.workspace : undefined
   let schema = typeof argv.schema === "string" ? argv.schema : undefined
@@ -440,9 +444,7 @@ function resolveDomainTableAddBody(argv: Record<string, unknown>): Record<string
   // breaks page-level operations. Default it (matching the UI's convention) to
   // the fully-qualified physical table name — the view name with the `v_gpt_`
   // prefix stripped — unless the caller passes an explicit --display-name.
-  const explicit = typeof argv["display-name"] === "string" && argv["display-name"].trim() !== ""
-    ? (argv["display-name"] as string).trim()
-    : undefined
+  const explicit = optionalNonEmptyStringValue(argv["display-name"], "--display-name", format)
   const physicalTable = tableName.replace(/^v_gpt_/, "")
   const displayName = explicit
     ?? (workspace && schema ? `${workspace}.${schema}.${physicalTable}` : physicalTable)
@@ -453,6 +455,21 @@ function resolveDomainTableAddBody(argv: Record<string, unknown>): Record<string
     schema,
     tableName,
     displayName,
+  })
+}
+
+function resolveDatasourceTableLoadBody(argv: Record<string, unknown>): Record<string, unknown> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const tableName = requiredStringValue(argv.table, "--table", format)
+  const explicit = optionalNonEmptyStringValue(argv["display-name"], "--display-name", format)
+  const workspace = typeof argv.workspace === "string" && argv.workspace.trim() !== "" ? argv.workspace.trim() : undefined
+  const schema = typeof argv.schema === "string" && argv.schema.trim() !== "" ? argv.schema.trim() : undefined
+  const physicalTable = tableName.replace(/^v_gpt_/, "")
+  return mergeBody({}, {
+    path: buildBrowsePathFromScope(argv),
+    tableName,
+    displayName: explicit ?? (workspace && schema ? `${workspace}.${schema}.${physicalTable}` : physicalTable),
+    domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
   })
 }
 
@@ -1846,15 +1863,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .option("workspace", { type: "string", describe: "Lakehouse workspace name" })
                       .option("schema", { type: "string", describe: "Schema name" })
                       .option("table", { type: "string", demandOption: true, describe: "Table name" })
+                      .option("display-name", { type: "string", describe: "Display name shown in the UI; defaults to the physical table name" })
                       .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
                   async (argv) => {
-                    const format = typeof argv.format === "string" ? argv.format : "json"
                     const requestArgv = argv as Record<string, unknown>
-                    const body = mergeBody({}, {
-                      path: buildBrowsePathFromScope(requestArgv),
-                      tableName: argv.table,
-                      domainIds: positiveIntegerArray(argv["domain-id"], "--domain-id", format),
-                    })
+                    const body = resolveDatasourceTableLoadBody(requestArgv)
                     await executeAnalyticsCommand("analytics-agent datasource table load", requestArgv, ROUTES.datasourceLoad, body)
                   },
                 )

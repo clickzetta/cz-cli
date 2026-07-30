@@ -392,13 +392,13 @@ describe("analytics-agent table semantics", () => {
     expect(parsed.error.message).toBe("--attr-id must be a positive integer")
   })
 
-  test("update reads via dataset/list (domainIds) then posts full object with new displayName", async () => {
+  test("update reads via open dataset list (domainIds) then posts a partial open update", async () => {
     const calls: Array<{ url: string; method: string; body: unknown }> = []
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const body = init?.body ? JSON.parse(String(init.body)) : null
       calls.push({ url, method: init?.method ?? "GET", body })
-      if (url.includes("/dataset/list")) {
+      if (url.includes("/datasets/list")) {
         return jsonResponse({
           success: true,
           data: [
@@ -420,25 +420,24 @@ describe("analytics-agent table semantics", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    const listCall = calls.find((c) => c.url.includes("/dataset/list"))
-    const updateCall = calls.find((c) => c.url.includes("/dataset/update"))
+    const listCall = calls.find((c) => c.url.includes("/open/api/v1/analytics-agent/datasets/list"))
+    const updateCall = calls.find((c) => c.url.includes("/open/api/v1/analytics-agent/datasets/update"))
     expect(listCall).toBeDefined()
     expect((listCall!.body as Record<string, unknown>).domainIds).toEqual([27])
     expect(updateCall).toBeDefined()
-    // The update body must carry the FULL object (of dataset 82, not 99) with only displayName changed.
     const body = updateCall!.body as Record<string, unknown>
-    expect(body.datasetId).toBe("82")
+    expect(body.datasetId).toBe(82)
     expect(body.displayName).toBe("投标事实表")
-    expect(body.description).toBe("keep me")
-    expect(body.tableName).toBe("quick_start.construction_dw.v_gpt_fact_bid")
-    expect(body.completeSchema).toEqual([{ name: "c1" }])
+    expect(body.description).toBeUndefined()
+    expect(body.tableName).toBeUndefined()
+    expect(body.completeSchema).toBeUndefined()
   })
 
   test("update can set displayName and description together", async () => {
     let updateBody: Record<string, unknown> | null = null
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes("/dataset/list")) {
+      if (url.includes("/datasets/list")) {
         return jsonResponse({ success: true, data: [{ id: "82", datasetId: "82", displayName: "old", description: "olddesc", tableName: "t" }] })
       }
       updateBody = init?.body ? JSON.parse(String(init.body)) : null
@@ -458,7 +457,7 @@ describe("analytics-agent table semantics", () => {
     let updateBody: Record<string, unknown> | null = null
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes("/dataset/list")) {
+      if (url.includes("/datasets/list")) {
         return jsonResponse({ success: true, data: [{ id: "82", datasetId: "82", displayName: "keepname", description: "olddesc", tableName: "t" }] })
       }
       updateBody = init?.body ? JSON.parse(String(init.body)) : null
@@ -470,14 +469,14 @@ describe("analytics-agent table semantics", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    expect((updateBody as Record<string, unknown>).displayName).toBe("keepname")
+    expect((updateBody as Record<string, unknown>).displayName).toBeUndefined()
     expect((updateBody as Record<string, unknown>).description).toBe("只改描述")
   })
 
   test("update fails clearly when the dataset is not in the given domain", async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.includes("/dataset/list")) {
+      if (url.includes("/datasets/list")) {
         return jsonResponse({ success: true, data: [{ id: "99", datasetId: "99", displayName: "x", tableName: "t" }] })
       }
       throw new Error("update should not be called")

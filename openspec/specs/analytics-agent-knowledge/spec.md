@@ -80,17 +80,17 @@ CLI MUST provide an explicit node-level domain binding surface for existing docu
 #### Scenario: 绑定节点到一个或多个 domain
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge node bind-domain <space-id> <node-id> --domain-id <id1> --domain-id <id2>`
-- **THEN** CLI MUST call the internal KB node-domain set endpoint for that node
+- **THEN** CLI MUST call `POST /open/api/v1/analytics-agent/knowledge/nodes/domains/set` for that node
 - **AND** the request body MUST send `node-id` together with the repeated `--domain-id` values as `domainIds`
-- **AND** CLI MUST use `space-id` and `node-id` to fetch the refreshed node detail after the write succeeds
+- **AND** CLI MUST use `space-id` and `node-id` to fetch the refreshed node detail from `GET /open/api/v1/analytics-agent/knowledge/nodes/detail/with-path` after the write succeeds
 - **AND** the success output MUST include the node basic metadata together with the node's effective `domainIds`
 
 #### Scenario: 从节点解绑一个或多个 domain
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge node unbind-domain <space-id> <node-id> --domain-id <id>`
-- **THEN** CLI MUST call the internal KB node-domain remove endpoint for that node
+- **THEN** CLI MUST call `POST /open/api/v1/analytics-agent/knowledge/nodes/domains/remove` for that node
 - **AND** the request body MUST send `node-id` together with the repeated `--domain-id` values as `domainIds`
-- **AND** CLI MUST use `space-id` and `node-id` to fetch the refreshed node detail after the write succeeds
+- **AND** CLI MUST use `space-id` and `node-id` to fetch the refreshed node detail from `GET /open/api/v1/analytics-agent/knowledge/nodes/detail/with-path` after the write succeeds
 - **AND** the success output MUST include the node basic metadata together with the node's latest effective `domainIds`
 - **AND** when the node no longer has direct bindings but still inherits from an ancestor, the output MUST keep the inherited domain information instead of pretending the node is fully unbound
 
@@ -109,7 +109,7 @@ CLI MUST provide an explicit node-level domain binding surface for existing docu
 #### Scenario: 绑定写成功但回读 detail 失败时不误判整条命令失败
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge node bind-domain <space-id> <node-id> --domain-id 195`
-- **AND** internal KB node-domain set/remove write succeeds
+- **AND** open knowledge node-domain set/remove write succeeds
 - **AND** the follow-up `detail/with-path` request returns `5xx`
 - **THEN** CLI MUST still treat the write command itself as success
 - **AND** the success output MUST preserve the requested `space-id`、`node-id`、`domainIds`
