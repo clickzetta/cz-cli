@@ -47,6 +47,10 @@ function jsonResponse(payload: unknown): Response {
   })
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -175,6 +179,67 @@ describe("analytics-agent knowledge", () => {
     expect(result.exitCode).toBe(0)
     expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/spaces?tenantId=1504")
     expect(capturedAuthorization).toBe("agent-token")
+  })
+
+  test("space create rejects blank name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "space",
+      "create",
+      "--name",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
+    })
+  })
+
+  test("space create accepts valid name and optional metadata", async () => {
+    let capturedUrl = ""
+    let capturedBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrl = String(input)
+      capturedBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+      return jsonResponse({
+        success: true,
+        data: {
+          id: 7,
+          name: "投研空间",
+          description: "投研资料",
+          ocrModelIdentifier: "builtin-ocr",
+        },
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "space",
+      "create",
+      "--name",
+      "投研空间",
+      "--description",
+      "投研资料",
+      "--ocr-model-identifier",
+      "builtin-ocr",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/spaces?tenantId=55")
+    expect(capturedBody).toEqual({
+      name: "投研空间",
+      description: "投研资料",
+      ocrModelIdentifier: "builtin-ocr",
+    })
   })
 
   test("space rename calls the knowledge space update endpoint", async () => {
@@ -606,6 +671,28 @@ describe("analytics-agent knowledge", () => {
     })
   })
 
+  test("folder create rejects blank name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "create",
+      "7",
+      "--name",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
+    })
+  })
+
   test("folder by-path returns found folder node", async () => {
     let capturedUrl = ""
 
@@ -940,6 +1027,29 @@ describe("analytics-agent knowledge", () => {
     expect(capturedUrl).toContain("/open/api/v1/analytics-agent/knowledge/spaces/7/nodes/12?tenantId=55")
     expect(capturedBody).toEqual({
       name: "reports-renamed",
+    })
+  })
+
+  test("folder rename rejects blank name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "rename",
+      "7",
+      "12",
+      "--name",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
     })
   })
 
@@ -1368,6 +1478,29 @@ describe("analytics-agent knowledge", () => {
     })
     const parsed = JSON.parse(result.output.trim()) as Record<string, any>
     expect(parsed.data.path).toBe("reports/report-v2.md")
+  })
+
+  test("file rename rejects blank name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "file",
+      "rename",
+      "7",
+      "21",
+      "--name",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
+    })
   })
 
   test("file move calls the knowledge node move endpoint", async () => {

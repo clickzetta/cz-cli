@@ -7,7 +7,7 @@
 
 ### Requirement: column virtual compile 走 dataset 维度 open API 并以 expression 作为唯一用户主路径
 
-`cz-cli analytics-agent column virtual compile` MUST 调用 dataset 维度的 Analytics Agent open API。命令 MUST 使用 positional `dataset-id`，并以 `--expression` 作为用户主输入。`--name` 与 `--type` SHOULD 保持可选，以便做轻量预编译校验。CLI 不应把 `logicRule` 或内部 JSON body 直接暴露给普通用户。
+`cz-cli analytics-agent column virtual compile` MUST 调用 dataset 维度的 Analytics Agent open API。命令 MUST 使用 positional `dataset-id`，并以 `--expression` 作为用户主输入。`--name` 与 `--type` SHOULD 保持可选，以便做轻量预编译校验。CLI 不应把 `logicRule` 或内部 JSON body 直接暴露给普通用户。`--expression` MUST 非空；`--name` 与 `--type` 若显式提供则 MUST 非空。
 
 当 profile 中存在 Analytics Agent 专用 open token 上下文时，CLI MUST 优先使用该上下文里的 `token`、`tenant_id`、`user_id`，而不是回退到普通 studio 登录态推导出的 tenant。
 
@@ -28,6 +28,11 @@
 - **且** 错误信息明确指出 `--expression` 是必填项
 - **且** 不发送后端请求
 
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual compile 195 --expression "   "`
+- **THEN** 命令返回参数错误
+- **且** 错误信息明确指出 `--expression` 非空
+- **且** 不发送后端请求
+
 #### Scenario: profile 中已有 open token 上下文时优先使用该 tenant
 
 - **WHEN** 当前 profile 的 `agent.token`、`agent.tenant_id`、`agent.user_id` 已配置
@@ -36,7 +41,7 @@
 
 ### Requirement: column virtual set 创建并持久化虚拟列
 
-`cz-cli analytics-agent column virtual set` MUST 调用 Analytics Agent open API 创建并持久化虚拟列。命令 MUST 使用 positional `dataset-id`，并通过扁平参数传入 `name`、`type`、`expression`。第一版 MUST 只支持新增，不应暗示更新已有虚拟列。
+`cz-cli analytics-agent column virtual set` MUST 调用 Analytics Agent open API 创建并持久化虚拟列。命令 MUST 使用 positional `dataset-id`，并通过扁平参数传入 `name`、`type`、`expression`。第一版 MUST 只支持新增，不应暗示更新已有虚拟列。`--name`、`--type`、`--expression` MUST 全部提供且非空。
 
 #### Scenario: 创建虚拟列成功
 
@@ -48,6 +53,18 @@
 #### Scenario: 缺少表达式输入时拒绝请求
 
 - **WHEN** 用户执行 `cz-cli analytics-agent column virtual set 195 --name profit_rate --type double`
+- **THEN** 命令返回参数错误
+- **且** 不发送后端请求
+
+#### Scenario: 空虚拟列名称时拒绝请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set 195 --name "   " --type double --expression "amount / qty"`
+- **THEN** 命令返回参数错误
+- **且** 不发送后端请求
+
+#### Scenario: 空表达式时拒绝请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent column virtual set 195 --name profit_rate --type double --expression "   "`
 - **THEN** 命令返回参数错误
 - **且** 不发送后端请求
 

@@ -143,6 +143,21 @@ function parseOptionalJsonObject(raw: string | undefined, fieldName: string): Re
   return parseJsonObject(raw, fieldName)
 }
 
+function validateAnswerBuilderMetricNames(dsl: Record<string, unknown>, format: string): void {
+  const outputColumns = dsl.outputColumns
+  if (!Array.isArray(outputColumns) || outputColumns.length === 0) {
+    handledError("USAGE_ERROR", "--content outputColumns must include at least one non-empty metricName", { format })
+  }
+  const invalidIndex = outputColumns.findIndex((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return true
+    const metricName = (item as Record<string, unknown>).metricName
+    return typeof metricName !== "string" || metricName.trim() === ""
+  })
+  if (invalidIndex >= 0) {
+    handledError("USAGE_ERROR", `--content outputColumns[${invalidIndex}].metricName must be non-empty`, { format })
+  }
+}
+
 // Resolve the answer-builder `content` DSL string. `--content` carries the DSL
 // JSON (chartParams/outputColumns/relatedTables/…). `--sql`, when given, is
 // injected as the top-level `sql` field so the caller does not have to escape
@@ -151,11 +166,8 @@ function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: stri
   const rawContent = typeof argv.content === "string" ? argv.content : undefined
   const sql = typeof argv.sql === "string" ? argv.sql : undefined
 
-  if (sql === undefined) {
-    if (rawContent === undefined) {
-      handledError("USAGE_ERROR", "Provide --content (DSL JSON) or --sql.", { format })
-    }
-    return rawContent as string
+  if (rawContent === undefined && sql === undefined) {
+    handledError("USAGE_ERROR", "Provide --content (DSL JSON) or --sql.", { format })
   }
 
   let dsl: Record<string, unknown>
@@ -164,8 +176,9 @@ function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: stri
   } catch (err) {
     return handledError("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
   }
-  dsl.sql = sql
-  return JSON.stringify(dsl)
+  if (sql !== undefined) dsl.sql = sql
+  validateAnswerBuilderMetricNames(dsl, format)
+  return sql === undefined ? rawContent as string : JSON.stringify(dsl)
 }
 
 // Syntax reference shown in the epilogue of answer-builder create/validate.
@@ -235,6 +248,20 @@ function repeatedCliStringArray(
   return values
 }
 
+function repeatedNonEmptyCliStringArray(
+  value: unknown,
+  optionName: string,
+  format: string,
+): string[] | undefined {
+  const values = repeatedCliStringArray(value, optionName, format)
+  if (!values) return undefined
+  const invalidIndex = values.findIndex((item) => item.trim() === "")
+  if (invalidIndex >= 0) {
+    handledError("USAGE_ERROR", `${optionName}[${invalidIndex}] must be non-empty`, { format })
+  }
+  return values.map((item) => item.trim())
+}
+
 function numberArray(value: unknown): number[] | undefined {
   const values = stringArray(value)
   if (!values) return undefined
@@ -289,6 +316,11 @@ function optionalNonEmptyStringValue(value: unknown, optionName: string, format:
   if (value === undefined) return undefined
   if (typeof value === "string" && value.trim() !== "") return value.trim()
   handledError("USAGE_ERROR", `${optionName} must be non-empty`, { format })
+}
+
+function requiredNonEmptyStringValue(value: unknown, optionName: string, format: string): string {
+  if (value === undefined) handledError("USAGE_ERROR", `${optionName} is required`, { format })
+  return optionalNonEmptyStringValue(value, optionName, format) as string
 }
 
 function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
@@ -347,17 +379,43 @@ function parseModelSettingValue(raw: string): unknown {
   }
 }
 
-function resolveTableSemanticsSetBody(argv: Record<string, unknown>): Record<string, unknown> {
+function nonEmptyStringArrayValue(value: unknown, optionName: string, format: string): string[] | undefined {
+  const values = stringArray(value)
+  if (!values) return undefined
+  const invalidIndex = values.findIndex((item) => item.trim() === "")
+  if (invalidIndex >= 0) {
+    handledError("USAGE_ERROR", `${optionName}[${invalidIndex}] must be non-empty`, { format })
+  }
+  return values.map((item) => item.trim())
+}
+
+function resolveTableSemanticsSetBody(argv: Record<string, unknown>, format: string): Record<string, unknown> {
   return mergeBody({}, {
     alias: stringArray(argv.alias),
     description: argv.description,
-    semanticType: argv["semantic-type"],
-    intendedTypes: stringArray(argv["intended-type"]),
+    semanticType: optionalNonEmptyStringValue(argv["semantic-type"], "--semantic-type", format),
+    intendedTypes: nonEmptyStringArrayValue(argv["intended-type"], "--intended-type", format),
     hidden: argv.hidden,
     dimension: argv.dimension,
     index: argv.index,
-    dictCode: argv["dict-code"],
+    dictCode: optionalNonEmptyStringValue(argv["dict-code"], "--dict-code", format),
   })
+}
+
+function resolveTableSemanticsPropBody(argv: Record<string, unknown>, format: string): Record<string, unknown> {
+  const property = requiredNonEmptyStringValue(argv.property, "--property", format)
+  if (argv.value === undefined) handledError("USAGE_ERROR", "--value is required", { format })
+  if (property === "alias" || property === "description") {
+    return {
+      property,
+      value: parseLooseJsonValue(String(argv.value)),
+    }
+  }
+  const rawValue = requiredNonEmptyStringValue(argv.value, "--value", format)
+  return {
+    property,
+    value: parseLooseJsonValue(rawValue),
+  }
 }
 
 function pickTableSemanticsFields(value: unknown): Record<string, unknown> {
@@ -585,11 +643,29 @@ function resolveDomainJoinBody(argv: Record<string, unknown>, format: string): R
   }
 }
 
-function resolveColumnVirtualBody(argv: Record<string, unknown>): Record<string, unknown> {
+function resolveColumnVirtualBody(argv: Record<string, unknown>, format: string, persist = false): Record<string, unknown> {
   return mergeBody({}, {
-    name: argv.name ?? "__preview_virtual_column__",
-    type: argv.type ?? "string",
-    expression: argv.expression,
+    name: persist
+      ? requiredNonEmptyStringValue(argv.name, "--name", format)
+      : optionalNonEmptyStringValue(argv.name, "--name", format) ?? "__preview_virtual_column__",
+    type: persist
+      ? requiredNonEmptyStringValue(argv.type, "--type", format)
+      : optionalNonEmptyStringValue(argv.type, "--type", format) ?? "string",
+    expression: optionalNonEmptyStringValue(argv.expression, "--expression", format),
+  })
+}
+
+function resolveMetricWriteBody(argv: Record<string, unknown>, format: string, id?: unknown): Record<string, unknown> {
+  const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
+  return mergeBody({}, {
+    id,
+    datasourceId: argv["datasource-id"],
+    tableName: requiredNonEmptyStringValue(argv["table-name"], "--table-name", format),
+    names: [requiredNonEmptyStringValue(argv.name, "--name", format)],
+    aggExpr: requiredNonEmptyStringValue(argv.expression, "--expression", format),
+    alias: repeatedNonEmptyCliStringArray(argv.alias, "--alias", format),
+    description: argv.description,
+    domainIds: domainId === undefined ? undefined : [domainId],
   })
 }
 
@@ -1999,10 +2075,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const body = mergeBody({}, {
-                name: argv.name,
+                name: requiredNonEmptyStringValue(argv.name, "--name", format),
                 description: argv.description,
                 datasourceId: argv["datasource-id"],
-                sampleQuestions: repeatedCliStringArray(argv["sample-question"], "--sample-question", format),
+                sampleQuestions: repeatedNonEmptyCliStringArray(argv["sample-question"], "--sample-question", format),
               })
               await executeAnalyticsCommand("analytics-agent domain create", argv as Record<string, unknown>, ROUTES.domainCreate, body)
             },
@@ -2020,10 +2096,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const body = mergeBody({}, {
-                name: argv.name,
+                name: optionalNonEmptyStringValue(argv.name, "--name", format),
                 description: argv.description,
                 datasourceId: argv["datasource-id"],
-                sampleQuestions: repeatedCliStringArray(argv["sample-question"], "--sample-question", format),
+                sampleQuestions: repeatedNonEmptyCliStringArray(argv["sample-question"], "--sample-question", format),
               })
               await executeAnalyticsCommand("analytics-agent domain update", argv as Record<string, unknown>, ROUTES.domainUpdate, body)
             },
@@ -2359,8 +2435,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 const format = typeof argv.format === "string" ? argv.format : "json"
                 let body: Record<string, unknown>
                 try {
-                  body = resolveTableSemanticsSetBody(argv as Record<string, unknown>)
+                  body = resolveTableSemanticsSetBody(argv as Record<string, unknown>, format)
                 } catch (err) {
+                  if (isHandledCliError(err)) return
                   error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
                   return
                 }
@@ -2402,8 +2479,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     "dataset-id": datasetId,
                     "attr-id": attrId,
                   }, ROUTES.tableSemanticsProp, {
-                    property: argv.property,
-                    value: parseLooseJsonValue(String(argv.value)),
+                    ...resolveTableSemanticsPropBody(argv as Record<string, unknown>, format),
                   })
                   const bizErr = extractBusinessError(payload)
                   if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
@@ -2463,7 +2539,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   .option("expression", { type: "string", describe: "Virtual column expression" }),
               async (argv) => {
                 const format = typeof argv.format === "string" ? argv.format : "json"
-                const body = resolveColumnVirtualBody(argv as Record<string, unknown>)
+                const body = resolveColumnVirtualBody(argv as Record<string, unknown>, format)
                 if (body.expression === undefined) {
                   error("USAGE_ERROR", "--expression is required", { format })
                   return
@@ -2500,7 +2576,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   .option("expression", { type: "string", describe: "Virtual column expression" }),
               async (argv) => {
                 const format = typeof argv.format === "string" ? argv.format : "json"
-                const body = resolveColumnVirtualBody(argv as Record<string, unknown>)
+                const body = resolveColumnVirtualBody(argv as Record<string, unknown>, format, true)
                 if (body.expression === undefined) {
                   error("USAGE_ERROR", "--expression is required", { format })
                   return
@@ -2598,16 +2674,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
-              const body = mergeBody({}, {
-                datasourceId: argv["datasource-id"],
-                tableName: argv["table-name"],
-                names: [argv.name],
-                aggExpr: argv.expression,
-                alias: repeatedCliStringArray(argv.alias, "--alias", format),
-                description: argv.description,
-                domainIds: domainId === undefined ? undefined : [domainId],
-              })
+              const body = resolveMetricWriteBody(argv as Record<string, unknown>, format)
               await executeAnalyticsCommand("analytics-agent metric create", argv as Record<string, unknown>, ROUTES.simpleMetricCreate, body)
             },
           )
@@ -2626,17 +2693,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("description", { type: "string", describe: "Metric description" }),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
-              const body = mergeBody({}, {
-                id: argv["metric-id"],
-                datasourceId: argv["datasource-id"],
-                tableName: argv["table-name"],
-                names: [argv.name],
-                aggExpr: argv.expression,
-                alias: repeatedCliStringArray(argv.alias, "--alias", format),
-                description: argv.description,
-                domainIds: domainId === undefined ? undefined : [domainId],
-              })
+              const body = resolveMetricWriteBody(argv as Record<string, unknown>, format, argv["metric-id"])
               await executeAnalyticsCommand("analytics-agent metric update", argv as Record<string, unknown>, ROUTES.simpleMetricUpdate, body)
             },
           )
@@ -2668,16 +2725,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
-              const body = mergeBody({}, {
-                datasourceId: argv["datasource-id"],
-                tableName: argv["table-name"],
-                names: [argv.name],
-                aggExpr: argv.expression,
-                alias: repeatedCliStringArray(argv.alias, "--alias", format),
-                description: argv.description,
-                domainIds: domainId === undefined ? undefined : [domainId],
-              })
+              const body = resolveMetricWriteBody(argv as Record<string, unknown>, format)
               await executeAnalyticsCommand("analytics-agent metric validate", argv as Record<string, unknown>, ROUTES.simpleMetricValidate, body)
             },
           )
@@ -2813,7 +2861,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody({}, {
-                analysisName: argv["analysis-name"],
+                analysisName: requiredNonEmptyStringValue(argv["analysis-name"], "--analysis-name", format),
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds: [argv["domain-id"]],
@@ -2840,7 +2888,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody({}, {
                 id: argv["analysis-id"],
-                analysisName: argv["analysis-name"],
+                analysisName: requiredNonEmptyStringValue(argv["analysis-name"], "--analysis-name", format),
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds: [argv["domain-id"]],
@@ -2989,7 +3037,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody({}, {
-                analysisName: argv["analysis-name"],
+                analysisName: requiredNonEmptyStringValue(argv["analysis-name"], "--analysis-name", format),
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds: [argv["domain-id"]],
@@ -3032,8 +3080,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .option("description", { type: "string", describe: "Space description" })
                       .option("ocr-model-identifier", { type: "string", describe: "OCR model identifier" }),
                   async (argv) => {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
                     const body = mergeBody({}, {
-                      name: argv.name,
+                      name: requiredNonEmptyStringValue(argv.name, "--name", format),
                       description: argv.description,
                       ocrModelIdentifier: argv["ocr-model-identifier"],
                     })
@@ -3048,8 +3097,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .option("name", { type: "string", demandOption: true, describe: "New space name" }),
                   async (argv) => {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
                     const body = mergeBody({}, {
-                      name: argv.name,
+                      name: requiredNonEmptyStringValue(argv.name, "--name", format),
                     })
                     await executeAnalyticsCommand("analytics-agent knowledge space rename", argv as Record<string, unknown>, ROUTES.knowledgeSpaceRename, body)
                   },
@@ -3123,9 +3173,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .option("parent-id", { type: "number", describe: "Parent folder node ID" })
                       .option("name", { type: "string", demandOption: true, describe: "Folder name" }),
                   async (argv) => {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
                     await executeAnalyticsCommand("analytics-agent knowledge folder create", argv as Record<string, unknown>, ROUTES.knowledgeFolderCreate, {
                       parentId: argv["parent-id"],
-                      name: argv.name,
+                      name: requiredNonEmptyStringValue(argv.name, "--name", format),
                     })
                   },
                 )
@@ -3189,8 +3240,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
                       .option("name", { type: "string", demandOption: true, describe: "New folder name" }),
                   async (argv) => {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
                     const body = mergeBody({}, {
-                      name: argv.name,
+                      name: requiredNonEmptyStringValue(argv.name, "--name", format),
                     })
                     await executeAnalyticsCommand("analytics-agent knowledge folder rename", argv as Record<string, unknown>, ROUTES.knowledgeNodeRename, body)
                   },
@@ -3281,8 +3333,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
                       .option("name", { type: "string", demandOption: true, describe: "New file name" }),
                   async (argv) => {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
                     const body = mergeBody({}, {
-                      name: argv.name,
+                      name: requiredNonEmptyStringValue(argv.name, "--name", format),
                     })
                     await executeAnalyticsCommand("analytics-agent knowledge file rename", argv as Record<string, unknown>, ROUTES.knowledgeNodeRename, body)
                   },
@@ -3405,9 +3458,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const domainId = positiveIntegerValue(argv["domain-id"], "--domain-id", format)
+              const title = requiredNonEmptyStringValue(argv.title, "--title", format)
               const body = mergeBody({}, {
                 domainId,
-                title: argv.title,
+                title,
                 sourceType: argv["source-type"],
                 sourceId: argv["source-id"],
               })
@@ -3440,6 +3494,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               if (!argv["domain-id"]) {
                 handledError("USAGE_ERROR", "--domain-id is required", { format, exitCode: 2 })
               }
+              const msg = requiredNonEmptyStringValue(argv.msg, "--msg", format ?? "json")
               const modelSettingEntries = (stringArray(argv["model-setting"]) ?? [])
                 .filter((entry) => entry.includes("="))
                 .map((entry) => {
@@ -3454,7 +3509,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               let sessionId: number | undefined = argv["session-id"]
               if (!sessionId) {
                 try {
-                  const createPayload = await requestAnalytics(argvRec, ROUTES.sessionCreate, { domainId: argv["domain-id"] })
+                  const createPayload = await requestAnalytics(argvRec, ROUTES.sessionCreate, {
+                    domainId: argv["domain-id"],
+                    title: msg.slice(0, 80),
+                  })
                   const bizErr = extractBusinessError(createPayload)
                   if (bizErr) {
                     error(bizErr.code, bizErr.message, { format })
@@ -3479,7 +3537,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const body = mergeBody({}, {
                 domainId: argv["domain-id"],
                 sessionId,
-                msg: argv.msg,
+                msg,
                 modelSettings,
               })
               await executeSessionRunCommand("analytics-agent session run", argvRec, body)

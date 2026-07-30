@@ -101,7 +101,7 @@
 
 ### Requirement: table semantics set 支持扁平化常用字段更新
 
-`cz-cli analytics-agent table semantics set` MUST 调用 dataset 维度的 Analytics Agent open API，对单个字段做结构化语义更新。命令 MUST 优先暴露常用扁平字段，不要求用户手写内部 DTO，也不把内部 JSON body 作为主路径。
+`cz-cli analytics-agent table semantics set` MUST 调用 dataset 维度的 Analytics Agent open API，对单个字段做结构化语义更新。命令 MUST 优先暴露常用扁平字段，不要求用户手写内部 DTO，也不把内部 JSON body 作为主路径。`alias` MAY 接受空白字符串以便清空/删除别名；`--semantic-type`、`--intended-type`、`--dict-code` 若提供则 MUST 非空。
 
 #### Scenario: 更新字段语义成功
 
@@ -116,6 +116,27 @@
 - **THEN** 命令返回参数错误
 - **且** 不发送后端请求
 
+#### Scenario: alias 为空时允许请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics set 195 31 --alias "   "`
+- **THEN** CLI MUST 发送请求
+- **且** 请求体包含 `alias=["   "]`
+
+#### Scenario: semantic-type 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics set 195 31 --semantic-type "   "`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+
+#### Scenario: intended-type 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics set 195 31 --intended-type "   "`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+
+#### Scenario: dict-code 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics set 195 31 --dict-code "   "`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+
 #### Scenario: 重复 intended-type 被收集为数组
 
 - **WHEN** 用户执行 `cz-cli analytics-agent table semantics set 195 31 --intended-type DIM --intended-type FILTER`
@@ -123,7 +144,7 @@
 
 ### Requirement: table semantics prop 支持轻量单属性更新
 
-`cz-cli analytics-agent table semantics prop` MUST 支持按 positional `property + value` 更新单个字段属性，用于轻量修改隐藏、描述、语义类型等单一属性。
+`cz-cli analytics-agent table semantics prop` MUST 支持按 positional `property + value` 更新单个字段属性，用于轻量修改隐藏、描述、语义类型等单一属性。`property` MUST 非空；`value` 对 `alias` 与 `description` MAY 为空以支持清空，其他属性的 `value` MUST 非空。
 
 #### Scenario: 更新单个布尔属性
 
@@ -137,6 +158,22 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent table semantics prop 195 31 intendedTypes "[\"DIM\",\"FILTER\"]"`
 - **THEN** CLI 调用 `POST /open/api/v1/analytics-agent/datasets/195/semantics/31/prop`
 - **且** 请求体中的 `value` 为数组
+
+#### Scenario: alias value 为空时允许请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics prop 195 31 alias "   "`
+- **THEN** CLI MUST 发送请求
+- **且** 请求体包含 `property=alias` 与原始空白 `value`
+
+#### Scenario: property 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics prop 195 31 "   " x`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+
+#### Scenario: 非 alias/description 的 value 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent table semantics prop 195 31 semanticType "   "`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
 
 #### Scenario: dataset-id 非法时本地拒绝 prop 请求
 

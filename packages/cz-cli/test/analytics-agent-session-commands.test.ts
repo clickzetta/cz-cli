@@ -41,6 +41,10 @@ function jsonResponse(payload: unknown): Response {
   })
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -140,6 +144,48 @@ describe("analytics-agent session parameter simplification", () => {
       title: "销售诊断",
       sourceType: "dashboard",
       sourceId: 7,
+    })
+  })
+
+  test("session create rejects a missing title before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--title is required",
+    })
+  })
+
+  test("session create rejects a blank title before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+      "--title",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--title must be non-empty",
     })
   })
 
