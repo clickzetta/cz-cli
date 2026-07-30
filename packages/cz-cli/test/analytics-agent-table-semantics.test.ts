@@ -433,6 +433,48 @@ describe("analytics-agent table semantics", () => {
     expect(body.completeSchema).toBeUndefined()
   })
 
+  test("update paginates dataset/list and finds a dataset on the second page", async () => {
+    const listPages: number[] = []
+    let updateBody: Record<string, unknown> | null = null
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      if (url.includes("/datasets/list")) {
+        const pageNum = Number((body as Record<string, unknown>).pageNum)
+        const pageSize = Number((body as Record<string, unknown>).pageSize)
+        listPages.push(pageNum)
+        // Page 1 returns a full page (== pageSize) so the loop must continue to page 2.
+        if (pageNum === 1) {
+          const rows = Array.from({ length: pageSize }, (_, i) => ({
+            id: String(1000 + i), datasetId: String(1000 + i), displayName: `t${i}`, tableName: `t${i}`,
+          }))
+          return jsonResponse({ success: true, data: rows, total: String(pageSize + 1), pageNum: 1, pageSize, pageCount: 2 })
+        }
+        // Page 2 holds the target dataset 1935.
+        return jsonResponse({
+          success: true,
+          data: [{ id: "1935", datasetId: "1935", displayName: "能耗事实表", tableName: "v_gpt_fact_energy" }],
+          total: String(pageSize + 1), pageNum: 2, pageSize, pageCount: 2,
+        })
+      }
+      updateBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { datasetId: "1935" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "table", "update", "1935", "--domain-id", "308", "--name", "能耗事实表(改)",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    // Must have requested at least two pages (dataset on page 2 was previously unreachable).
+    expect(listPages).toContain(1)
+    expect(listPages).toContain(2)
+    // Open update is partial: only datasetId + changed displayName are sent.
+    expect(updateBody).not.toBeNull()
+    expect((updateBody as Record<string, unknown>).datasetId).toBe(1935)
+    expect((updateBody as Record<string, unknown>).displayName).toBe("能耗事实表(改)")
+  })
+
   test("update can set displayName and description together", async () => {
     let updateBody: Record<string, unknown> | null = null
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {

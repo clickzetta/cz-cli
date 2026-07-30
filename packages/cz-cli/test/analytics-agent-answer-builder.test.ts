@@ -212,6 +212,54 @@ describe("analytics-agent answer-builder", () => {
     })
   })
 
+  test("list surfaces backend pagination (total/page_count/has_more) and warns when truncated", async () => {
+    globalThis.fetch = mock(async () => {
+      // Backend envelope: 10 rows on page 1 of 2, total 14.
+      return jsonResponse({
+        success: true,
+        code: "200",
+        data: Array.from({ length: 10 }, (_, i) => ({ id: i + 1, analysisName: `ab${i + 1}` })),
+        total: "14",
+        pageNum: 1,
+        pageSize: 10,
+        pageCount: 2,
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "list", "--domain-id", "43",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const out = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(out.count).toBe(10)
+    expect(out.total).toBe(14)
+    expect(out.page_count).toBe(2)
+    expect(out.has_more).toBe(true)
+    // ai_message must warn there are more pages
+    expect(out.ai_message).toContain("Showing 10 of 14")
+  })
+
+  test("list does not set has_more when all rows fit on one page", async () => {
+    globalThis.fetch = mock(async () => {
+      return jsonResponse({
+        success: true, code: "200",
+        data: Array.from({ length: 3 }, (_, i) => ({ id: i + 1 })),
+        total: "3", pageNum: 1, pageSize: 10, pageCount: 1,
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "list", "--domain-id", "43",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const out = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(out.total).toBe(3)
+    expect(out.has_more).toBe(false)
+    expect(out.ai_message).toBeUndefined()
+  })
+
   test("validate maps flat fields into request body", async () => {
     let requestBody: unknown
 
@@ -261,6 +309,28 @@ describe("analytics-agent answer-builder", () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toContain("--analysis-name")
     expect(result.stdout).not.toContain("--body")
+  })
+
+  test("create help warns about the shell-quoting trap for --sql placeholders", async () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts", "analytics-agent", "answer-builder", "create", "--help",
+    ], { cwd: process.cwd(), encoding: "utf-8" })
+
+    expect(result.status).toBe(0)
+    // epilogue must mention the shell expansion trap and the single-quote / escape fix
+    expect(result.stdout).toMatch(/single quote|single-quote|'\.\.\.'/)
+    expect(result.stdout).toContain("\\${")
+  })
+
+  test("create help --sql examples do not demonstrate the unescaped double-quote trap", async () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts", "analytics-agent", "answer-builder", "create", "--help",
+    ], { cwd: process.cwd(), encoding: "utf-8" })
+
+    expect(result.status).toBe(0)
+    // No example may pass --sql "...${dims}..." with a bare, unescaped ${ inside double quotes.
+    const doubleQuotedSql = /--sql\s+"[^"]*\$\{/
+    expect(doubleQuotedSql.test(result.stdout)).toBe(false)
   })
 
   test("disable falls back to detail plus update when direct status route says not found", async () => {

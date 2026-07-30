@@ -142,6 +142,25 @@ describe("bare command group renders help (exit 0), not USAGE_ERROR", () => {
     expect(r.stdout).toContain("Examples:")
     expect(r.stdout).toContain("validate")
   })
+
+  test("cz-cli analytics-agent answer-builder create --help documents the DSL syntax", () => {
+    const r = run(["analytics-agent", "answer-builder", "create", "--help"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("chartParams")
+    expect(r.stdout).toContain("outputColumns")
+    // metricName is required + domain-unique — the key learning
+    expect(r.stdout).toContain("metricName")
+    expect(r.stdout).toContain("UNIQUE within the domain")
+    // placeholder rule
+    expect(r.stdout).toContain("matching chartParams entry")
+  })
+
+  test("cz-cli analytics-agent answer-builder validate --help documents the DSL syntax", () => {
+    const r = run(["analytics-agent", "answer-builder", "validate", "--help"])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain("chartParams")
+    expect(r.stdout).toContain("metricName")
+  })
 })
 
 describe("nested bare group shows its OWN help, not the parent's", () => {

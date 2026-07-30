@@ -168,6 +168,41 @@ function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: stri
   return JSON.stringify(dsl)
 }
 
+// Syntax reference shown in the epilogue of answer-builder create/validate.
+// Derived from hands-on authoring: the DSL shape, the ${placeholder} rule, the
+// required+domain-unique metricName, and the window/CTE subquery-wrap trick.
+const ANSWER_BUILDER_DSL_HELP = [
+  "DSL (--content) structure:",
+  "  {",
+  '    "chartParams": [        // interactive inputs; reference in SQL as ${name}',
+  '      {"name":"dims","type":"dimension","allowMulti":true,   // -> GROUP BY ${dims}',
+  '       "fromTableRefs":[{"tableName":"cat.schema.table","columns":["region"]}]},',
+  '      {"name":"filters","type":"filter","allowMulti":true,   // -> WHERE ${filters}',
+  '       "fromTableRefs":[{"tableName":"cat.schema.table","columns":["channel"]}]}',
+  "    ],",
+  '    "outputColumns": [      // one per SELECT output column',
+  '      {"name":"total_amt",           // MUST match the SQL AS alias',
+  '       "metricName":"区域销售额",     // REQUIRED, and UNIQUE within the domain',
+  '       "type":"decimal","stdTypeName":"double",  // type required; stdTypeName optional',
+  '       "alias":["销售额"],            // optional display aliases',
+  '       "description":"..."}           // optional',
+  "    ],",
+  '    "relatedTables": ["cat.schema.table", ...]   // every table the SQL touches',
+  "  }",
+  "  (Pass the SQL via --sql instead of embedding it in --content to avoid quote escaping.)",
+  "",
+  "Rules:",
+  "  - Shell quoting: wrap --sql in single quotes so bash/zsh won't expand ${...} to empty",
+  "    (an expanded placeholder yields `SELECT ,` -> CZLH-42000 at ','); or escape as \\${name}",
+  "    inside double quotes. The ${...} must reach the CLI intact.",
+  "  - Every ${name} in the SQL MUST have a matching chartParams entry, else CZLH-42000 syntax error.",
+  "  - outputColumns[].metricName is REQUIRED and must be UNIQUE within the domain",
+  "    (prefix generic names, e.g. 区域销售额 vs 行业销售额).",
+  "  - Window/ROLLUP whose PARTITION BY / ORDER BY references a ${dims} column: compute in an",
+  "    inner subquery with fixed column names, then `SELECT ${dims}, ...` in the outer query.",
+  "  - Always run `answer-builder validate` (dry-run) before create.",
+].join("\n")
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return value === undefined ? undefined : [String(value)]
   return value.map((item) => String(item))
@@ -361,6 +396,36 @@ async function runTableSemanticsList(argv: Record<string, unknown>): Promise<voi
   }
 }
 
+// Read every dataset in a domain via `dataset/list`, paginating until exhausted.
+// The list defaults to pageSize 10, so a single-page read misses datasets past
+// the first page — the cause of spurious "not found in domain" on tables 11+.
+// Dedup by datasetId and cap page count so a backend that ignores pageNum can't
+// loop forever.
+async function fetchAllDatasetsInDomain(
+  argv: Record<string, unknown>,
+  domainId: number,
+  ctx: ResolvedContext,
+): Promise<Record<string, unknown>[]> {
+  const pageSize = 200
+  const maxPages = 1000
+  const all: Record<string, unknown>[] = []
+  const seen = new Set<string>()
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const pageData = await requestAnalyticsData(argv, ROUTES.datasetList, { domainIds: [domainId], pageNum, pageSize }, {}, ctx)
+    const pageItems = Array.isArray(pageData) ? pageData as Record<string, unknown>[] : []
+    let added = 0
+    for (const item of pageItems) {
+      const key = String(item.datasetId)
+      if (seen.has(key)) continue
+      seen.add(key)
+      all.push(item)
+      added++
+    }
+    if (pageItems.length < pageSize || added === 0) break
+  }
+  return all
+}
+
 // Update a dataset's display name and/or description through the open dataset
 // API. The list step verifies the dataset belongs to the requested domain; the
 // open update endpoint supports partial updates, so only changed fields are sent.
@@ -381,8 +446,7 @@ async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
   }
   try {
     const ctx = await resolveAnalyticsContext(argv)
-    const listData = await requestAnalyticsData(argv, ROUTES.datasetList, { domainIds: [domainId] }, {}, ctx)
-    const items = Array.isArray(listData) ? listData as Record<string, unknown>[] : []
+    const items = await fetchAllDatasetsInDomain(argv, domainId, ctx)
     const current = items.find((d) => String(d.datasetId) === String(datasetId))
     if (!current) {
       error("ANALYTICS_AGENT_ERROR", `dataset ${datasetId} not found in domain ${domainId}`, { format })
@@ -1069,6 +1133,31 @@ function unwrapResponse(payload: unknown): unknown {
   return data ?? payload
 }
 
+interface PageInfo {
+  total: number
+  page_num: number
+  page_size: number
+  page_count: number
+  has_more: boolean
+}
+
+// The backend list envelope carries total/pageNum/pageSize/pageCount alongside
+// `data`. unwrapResponse() keeps only `data`, so `count` (= data.length) reflects
+// the current page, not the total — hiding that more pages exist. Extract the
+// pagination fields so list commands can surface them and warn on truncation.
+function extractPageInfo(payload: unknown): PageInfo | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined
+  const p = payload as Record<string, unknown>
+  const total = numberValue(p.total)
+  const pageNum = numberValue(p.pageNum)
+  const pageSize = numberValue(p.pageSize)
+  const pageCount = numberValue(p.pageCount)
+  if (total === undefined || pageSize === undefined) return undefined
+  const num = pageNum ?? 1
+  const count = pageCount ?? (pageSize > 0 ? Math.ceil(total / pageSize) : 1)
+  return { total, page_num: num, page_size: pageSize, page_count: count, has_more: num < count }
+}
+
 /**
  * Analytics Agent backend always returns HTTP 200, using `success: false`
  * inside the envelope to signal business errors. Detect that here so callers
@@ -1323,7 +1412,17 @@ async function executeAnalyticsCommand(
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
     const data = unwrapResponse(payload)
-    success(data, { format, timeMs: Date.now() - t0, aiMessage: buildAiMessage?.(data) })
+    const page = extractPageInfo(payload)
+    const customAi = buildAiMessage?.(data)
+    const pageAi = page?.has_more
+      ? `Showing ${Array.isArray(data) ? data.length : 0} of ${page.total} (page ${page.page_num}/${page.page_count}). Pass --page-num/--page-size to fetch the rest.`
+      : undefined
+    success(data, {
+      format,
+      timeMs: Date.now() - t0,
+      aiMessage: customAi ?? pageAi,
+      ...(page ? { extra: { total: page.total, page_num: page.page_num, page_size: page.page_size, page_count: page.page_count, has_more: page.has_more } } : {}),
+    })
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
@@ -2695,8 +2794,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" })
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .example(
                   'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "各省份中标金额排名" --content \'{"...DSL..."}\'',
                   "Create a complex metric (answer builder). Run `answer-builder validate` first to check the --content DSL",
@@ -2704,7 +2803,12 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .example(
                   'cz-cli analytics-agent answer-builder create --domain-id 27 --datasource-id 8448 --analysis-name "中标率" --content \'{"chartParams":[...],"outputColumns":[...]}\' --sql "SELECT ... WHERE bid_result=\'中标\'"',
                   "Pass SQL via --sql so single quotes don't collide with the --content JSON",
-                ),
+                )
+                .example(
+                  'cz-cli analytics-agent answer-builder create --domain-id 43 --datasource-id 8448 --analysis-name "各区域销售汇总" --content \'{"chartParams":[{"name":"dims","type":"dimension","allowMulti":true,"fromTableRefs":[{"tableName":"quick_start.ict_industry_demo.v_gpt_fact_sales","columns":["region"]}]}],"outputColumns":[{"name":"order_count","metricName":"区域订单数","type":"bigint","stdTypeName":"int"},{"name":"total_amount","metricName":"区域销售额","type":"decimal","stdTypeName":"double"}],"relatedTables":["quick_start.ict_industry_demo.v_gpt_fact_sales"]}\' --sql \'SELECT ${dims}, COUNT(*) AS order_count, SUM(final_amount) AS total_amount FROM quick_start.ict_industry_demo.v_gpt_fact_sales GROUP BY ${dims}\'',
+                  "Full example: single-quote --sql so ${dims} reaches the CLI; unique metricName per output column",
+                )
+                .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
@@ -2729,7 +2833,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" }),
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
+                .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
@@ -2877,8 +2982,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql)" })
-                .option("sql", { type: "string", describe: "SQL body, injected into content.sql — avoids escaping quotes inside --content JSON" }),
+                .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
+                .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
+                .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
