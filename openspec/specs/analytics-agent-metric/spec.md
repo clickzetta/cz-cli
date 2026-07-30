@@ -17,7 +17,7 @@
 
 ### Requirement: metric create/update/validate 使用重复 alias 参数
 
-`cz-cli analytics-agent metric create`、`update`、`validate` MUST 使用扁平参数构造请求体，不把 `--body` 暴露为普通用户主路径。`alias` MUST 支持重复 `--alias` 输入，并在请求体中组装为数组。
+`cz-cli analytics-agent metric create`、`update`、`validate` MUST 使用扁平参数构造请求体，不把 `--body` 暴露为普通用户主路径。`alias` MUST 支持重复 `--alias` 输入，并在请求体中组装为数组。`--table-name`、`--name`、`--expression` MUST 提供且非空；每个 `--alias` 若提供也 MUST 非空。
 
 #### Scenario: 创建 metric 时重复 alias 被收集为数组
 
@@ -36,6 +36,24 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-id 195 --datasource-id 11 --table-name orders --name pay_amount --expression "sum(amount)" --alias '["支付金额","成交金额"]'`
 - **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
 - **且** 错误信息 MUST 明确提示改用重复 `--alias`
+
+#### Scenario: metric name 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-id 195 --datasource-id 11 --table-name orders --name "   " --expression "sum(amount)"`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--name` 非空
+
+#### Scenario: table-name 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric update 301 --domain-id 195 --datasource-id 11 --table-name "   " --name pay_amount --expression "sum(amount)"`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--table-name` 非空
+
+#### Scenario: expression 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric validate --domain-id 195 --datasource-id 11 --table-name orders --name pay_amount --expression "   "`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--expression` 非空
 
 #### Scenario: domain-id 不是合法正整数时本地拒绝
 

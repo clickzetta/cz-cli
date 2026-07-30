@@ -99,16 +99,27 @@
 
 ### Requirement: domain table add 直接绑定 datasource 表到 domain
 
-`cz-cli analytics-agent domain table add <domain-id>` MUST 使用 `--table` 指定 datasource 内的表名，并直接调用 domain table add open API。CLI 不应把表名改写为 `v_gpt_*` 或 fullName；服务端负责查找已有 dataset、必要时加载 dataset，并绑定到 domain。
+`cz-cli analytics-agent domain table add <domain-id>` MUST 使用 `--table` 指定 datasource 内的表名，并直接调用 domain table add open API。CLI 不应把表名改写为 `v_gpt_*` 或 fullName；服务端负责查找已有 dataset、必要时加载 dataset，并绑定到 domain。CLI MUST 为请求体设置非空 `displayName`：用户 MAY 通过 `--display-name` 显式覆盖；未传时 MUST 默认使用物理表名（若有 `--workspace` 与 `--schema`，则使用 `workspace.schema.table`；表名以 `v_gpt_` 开头时去掉此前缀）。
 
 #### Scenario: 绑定 Lakehouse 表到 domain
 
 - **WHEN** 用户执行 `cz-cli analytics-agent domain table add 195 --datasource-id 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm`
 - **THEN** CLI 调用 `POST /open/api/v1/analytics-agent/domains/195/tables`
-- **且** 请求体为 `{"datasourceId":288,"workspace":"ai_workspace","schema":"hll_dws","tableName":"dws_info_driver_daily_1d_tm"}`
+- **且** 请求体为 `{"datasourceId":288,"workspace":"ai_workspace","schema":"hll_dws","tableName":"dws_info_driver_daily_1d_tm","displayName":"ai_workspace.hll_dws.dws_info_driver_daily_1d_tm"}`
+
+#### Scenario: 显式 display-name 覆盖默认值
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 195 --datasource-id 288 --workspace ai_workspace --schema hll_dws --table dws_info_driver_daily_1d_tm --display-name "司机日表"`
+- **THEN** 请求体 `displayName` 为 `司机日表`
 
 #### Scenario: 缺少 table 时本地拒绝
 
 - **WHEN** 用户执行 `cz-cli analytics-agent domain table add 195 --datasource-id 288 --workspace ai_workspace --schema hll_dws`
+- **THEN** CLI 返回参数错误
+- **且** 不发送 HTTP 请求
+
+#### Scenario: 空 display-name 时拒绝请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain table add 195 --datasource-id 288 --table orders --display-name "   "`
 - **THEN** CLI 返回参数错误
 - **且** 不发送 HTTP 请求

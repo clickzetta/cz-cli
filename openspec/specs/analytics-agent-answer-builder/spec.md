@@ -7,19 +7,25 @@
 
 ### Requirement: answer-builder create/update/validate 使用扁平参数
 
-`cz-cli analytics-agent answer-builder create`、`update`、`validate` MUST 使用显式参数构造请求体，不把 `--body` 暴露为普通用户主路径。
+`cz-cli analytics-agent answer-builder create`、`update`、`validate` MUST 使用显式参数构造请求体，不把 `--body` 暴露为普通用户主路径。`--analysis-name` MUST 非空。
 
 #### Scenario: 创建 answer-builder 时使用显式字段
 
-- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --analysis-name 销量分析 --analysis-desc 口径说明 --datasource-id 11 --domain-id 195 --content "{\"type\":\"metric\"}"`
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --analysis-name 销量分析 --analysis-desc 口径说明 --datasource-id 11 --domain-id 195 --content '{"outputColumns":[{"name":"order_count","metricName":"订单数"}]}'`
 - **THEN** CLI 调用 answer-builder create open API
 - **且** 请求体包含 `analysisName`、`analysisDesc`、`datasourceId`、`domainIds`、`content`
 
 #### Scenario: 校验 answer-builder 时使用显式字段
 
-- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder validate --analysis-name 销量分析 --datasource-id 11 --domain-id 195 --content "{\"type\":\"metric\"}"`
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder validate --analysis-name 销量分析 --datasource-id 11 --domain-id 195 --content '{"outputColumns":[{"name":"order_count","metricName":"订单数"}]}'`
 - **THEN** CLI 调用 answer-builder validate open API
 - **且** 请求体包含 `analysisName`、`datasourceId`、`domainIds`、`content`
+
+#### Scenario: 空 analysis-name 时拒绝请求
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --analysis-name "   " --datasource-id 11 --domain-id 195 --content '{"outputColumns":[{"name":"order_count","metricName":"订单数"}]}'`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--analysis-name` 非空
 
 #### Scenario: help 不再暴露 body 参数
 
@@ -34,7 +40,7 @@
 
 ### Requirement: answer-builder 支持 --sql 与 --content 分离
 
-`cz-cli analytics-agent answer-builder create`、`update`、`validate` MUST 支持用 `--sql` 单独传入 SQL 主体，注入到 content DSL 的顶层 `sql` 字段，使用户无需在 `--content` JSON 内转义 SQL 中的单/双引号。`--content` 承载 DSL 其余部分（chartParams/outputColumns/relatedTables 等）。`--content` 与 `--sql` MUST 至少提供其一。
+`cz-cli analytics-agent answer-builder create`、`update`、`validate` MUST 支持用 `--sql` 单独传入 SQL 主体，注入到 content DSL 的顶层 `sql` 字段，使用户无需在 `--content` JSON 内转义 SQL 中的单/双引号。`--content` 承载 DSL 其余部分（chartParams/outputColumns/relatedTables 等）。`--content` 与 `--sql` MUST 至少提供其一。最终 content DSL MUST 包含至少一个 `outputColumns` 条目，且每个条目的 `metricName` MUST 非空；否则 CLI MUST 在发请求前拒绝。
 
 #### Scenario: --sql 注入 content.sql
 
@@ -42,10 +48,17 @@
 - **THEN** 请求体 `content` 解析后 `sql` 等于该 SQL 原文
 - **且** `chartParams`、`outputColumns` 保留自 `--content`
 
-#### Scenario: 只给 --sql 不给 --content
+#### Scenario: 只给 --sql 不给 metricName 时本地拒绝
 
 - **WHEN** 用户只提供 `--sql` 而不提供 `--content`
-- **THEN** CLI MUST 构造仅含 `sql` 字段的 content 对象
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `outputColumns` 需要非空 `metricName`
+
+#### Scenario: outputColumns 缺少 metricName 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder create --analysis-name 订单数 --datasource-id 11 --domain-id 195 --content '{"outputColumns":[{"name":"order_count"}]}'`
+- **THEN** CLI MUST 在发请求前返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `outputColumns[0].metricName` 非空
 
 #### Scenario: --content 与 --sql 都缺失时本地拒绝
 

@@ -7,7 +7,7 @@
 
 ### Requirement: session list/create/result/stop 使用扁平参数
 
-`cz-cli analytics-agent session list`、`create`、`result`、`stop` MUST 使用显式参数构造请求体，不把 `--body` 暴露为普通用户主路径。
+`cz-cli analytics-agent session list`、`create`、`result`、`stop` MUST 使用显式参数构造请求体，不把 `--body` 暴露为普通用户主路径。`session create` 的 `--title` MUST 提供且非空。
 
 #### Scenario: session list 用扁平字段构造请求体
 
@@ -26,6 +26,18 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent session create --domain-id abc --title 销售诊断`
 - **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
 - **且** 错误信息 MUST 明确说明 `--domain-id` 必须是正整数
+
+#### Scenario: session create 缺少 title 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session create --domain-id 195`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--title` 必填
+
+#### Scenario: session create 传入空 title 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session create --domain-id 195 --title "   "`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--title` 非空
 
 #### Scenario: session result 用扁平字段构造请求体
 
@@ -82,8 +94,15 @@
 
 - **WHEN** 用户执行 `cz-cli analytics-agent session run --domain-id 195 --msg "hello"`
 - **THEN** CLI MUST 先调用 session create open API
+- **AND** session create 请求体 MUST 同时包含 `domainId` 与非空 `title`
 - **AND** 再使用返回的 `sessionId` 调用 query API
 - **AND** query 请求体 MUST 同时包含 `domainId` 与新建得到的 `sessionId`
+
+#### Scenario: run 缺少 msg 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session run --domain-id 195 --msg "   "`
+- **THEN** CLI MUST 在本地直接拒绝该请求
+- **且** 错误信息 MUST 明确说明 `--msg` 非空
 
 #### Scenario: help 不再暴露 body
 

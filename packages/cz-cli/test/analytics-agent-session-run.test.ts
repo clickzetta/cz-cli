@@ -40,6 +40,10 @@ function jsonResponse(payload: unknown): Response {
   })
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -292,9 +296,31 @@ describe("analytics-agent session run", () => {
 
     expect(result.exitCode).toBe(0)
     expect(calls[0]?.url).toContain("/open/session/safe_new")
-    expect(calls[0]?.body).toMatchObject({ domainId: 195 })
+    expect(calls[0]?.body).toMatchObject({ domainId: 195, title: "hello" })
     expect(calls[1]?.url).toContain("/open/text2insight/query")
     expect(calls[1]?.body).toMatchObject({ domainId: 195, sessionId: 88, msg: "hello" })
+  })
+
+  test("rejects blank msg before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--msg",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--msg must be non-empty",
+    })
   })
 
   test("merges multiple --model-setting entries into modelSettings with loose typing", async () => {

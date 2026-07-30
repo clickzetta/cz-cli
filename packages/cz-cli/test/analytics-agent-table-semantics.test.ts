@@ -44,6 +44,10 @@ function parseData(output: string): unknown {
   return JSON.parse(output.trim()).data
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -258,6 +262,57 @@ describe("analytics-agent table semantics", () => {
     })
   })
 
+  test("set accepts valid semantic type, intended types, booleans, and dict code", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({
+        success: true,
+        data: {
+          attrId: 31,
+          datasetId: 195,
+          semanticType: "STRING",
+          intendedTypes: ["DIM"],
+          hidden: false,
+          dimension: true,
+          index: true,
+          dictCode: "ORDER_STATUS",
+        },
+      })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "set",
+      "195",
+      "31",
+      "--semantic-type",
+      "STRING",
+      "--intended-type",
+      "DIM",
+      "--hidden",
+      "false",
+      "--dimension",
+      "true",
+      "--index",
+      "true",
+      "--dict-code",
+      "ORDER_STATUS",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({
+      semanticType: "STRING",
+      intendedTypes: ["DIM"],
+      hidden: false,
+      dimension: true,
+      index: true,
+      dictCode: "ORDER_STATUS",
+    })
+  })
+
   test("set rejects empty update body before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
@@ -276,6 +331,97 @@ describe("analytics-agent table semantics", () => {
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
     expect(parsed.error.message).toContain("At least one semantics field is required")
+  })
+
+  test("set allows blank alias so callers can clear aliases", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { attrId: 31, datasetId: 195, alias: ["   "] } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "set",
+      "195",
+      "31",
+      "--alias",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({ alias: ["   "] })
+  })
+
+  test("set rejects blank semantic-type before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "set",
+      "195",
+      "31",
+      "--semantic-type",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--semantic-type must be non-empty",
+    })
+  })
+
+  test("set rejects blank intended-type before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "set",
+      "195",
+      "31",
+      "--intended-type",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--intended-type[0] must be non-empty",
+    })
+  })
+
+  test("set rejects blank dict-code before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "set",
+      "195",
+      "31",
+      "--dict-code",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--dict-code must be non-empty",
+    })
   })
 
   test("prop parses boolean value before sending request", async () => {
@@ -345,6 +491,102 @@ describe("analytics-agent table semantics", () => {
     expect(requestBody).toEqual({
       property: "intendedTypes",
       value: ["DIM", "FILTER"],
+    })
+  })
+
+  test("prop allows blank alias value so callers can clear aliases", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { attrId: 31, datasetId: 195, alias: ["   "] } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "195",
+      "31",
+      "alias",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({
+      property: "alias",
+      value: "   ",
+    })
+  })
+
+  test("prop allows blank description value so callers can clear descriptions", async () => {
+    let requestBody: unknown
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { attrId: 31, datasetId: 195, description: "   " } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "195",
+      "31",
+      "description",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({
+      property: "description",
+      value: "   ",
+    })
+  })
+
+  test("prop rejects blank property before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "195",
+      "31",
+      "   ",
+      "x",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--property must be non-empty",
+    })
+  })
+
+  test("prop rejects blank non-alias value before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "prop",
+      "195",
+      "31",
+      "semanticType",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--value must be non-empty",
     })
   })
 

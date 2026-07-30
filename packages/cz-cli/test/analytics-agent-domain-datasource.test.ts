@@ -160,6 +160,86 @@ describe("analytics-agent domain and datasource parameter simplification", () =>
     })
   })
 
+  test("domain create rejects blank name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "create",
+      "--name",
+      "   ",
+      "--datasource-id",
+      "11",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
+    })
+  })
+
+  test("domain update rejects blank sample-question before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "update",
+      "195",
+      "--sample-question",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--sample-question[0] must be non-empty",
+    })
+  })
+
+  test("domain update accepts non-empty name and repeated sample questions", async () => {
+    let requestUrl = ""
+    let requestBody: unknown
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { id: 195, name: "销售域-更新" } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "update",
+      "195",
+      "--name",
+      "销售域-更新",
+      "--description",
+      "更新说明",
+      "--datasource-id",
+      "11",
+      "--sample-question",
+      "本月销售额多少",
+      "--sample-question",
+      "同比增长多少",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrl).toContain("/open/api/v1/analytics-agent/domains/195?tenantId=55")
+    expect(requestBody).toEqual({
+      name: "销售域-更新",
+      description: "更新说明",
+      datasourceId: 11,
+      sampleQuestions: ["本月销售额多少", "同比增长多少"],
+    })
+  })
+
   test("domain delete treats code 200 no-data success as success", async () => {
     let requestUrl = ""
 

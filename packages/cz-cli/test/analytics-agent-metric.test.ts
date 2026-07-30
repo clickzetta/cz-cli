@@ -45,6 +45,10 @@ function parseData(output: string): unknown {
   return JSON.parse(output.trim()).data
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -206,6 +210,53 @@ describe("analytics-agent metric", () => {
     })
   })
 
+  test("update accepts valid metric fields and repeated aliases", async () => {
+    let requestUrl = ""
+    let requestBody: unknown
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { id: 301, names: ["pay_amount"] } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "metric",
+      "update",
+      "301",
+      "--domain-id",
+      "195",
+      "--datasource-id",
+      "11",
+      "--table-name",
+      "orders",
+      "--name",
+      "pay_amount",
+      "--expression",
+      "sum(amount)",
+      "--alias",
+      "支付金额",
+      "--alias",
+      "成交金额",
+      "--description",
+      "支付金额口径",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrl).toContain("/open/api/v1/analytics-agent/metrics/update?tenantId=55")
+    expect(requestBody).toEqual({
+      id: 301,
+      datasourceId: 11,
+      tableName: "orders",
+      names: ["pay_amount"],
+      aggExpr: "sum(amount)",
+      alias: ["支付金额", "成交金额"],
+      description: "支付金额口径",
+      domainIds: [195],
+    })
+  })
+
   test("create rejects legacy alias JSON array string before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
@@ -261,6 +312,69 @@ describe("analytics-agent metric", () => {
     expect(parsed.error.code).toBe("USAGE_ERROR")
     expect(parsed.error.message).toContain("--domain-id")
     expect(parsed.error.message).toContain("positive integer")
+  })
+
+  test("create rejects blank metric name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "create",
+      "--domain-id", "195",
+      "--datasource-id", "11",
+      "--table-name", "orders",
+      "--name", "   ",
+      "--expression", "sum(amount)",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
+    })
+  })
+
+  test("update rejects blank table-name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "update", "301",
+      "--domain-id", "195",
+      "--datasource-id", "11",
+      "--table-name", "   ",
+      "--name", "pay_amount",
+      "--expression", "sum(amount)",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--table-name must be non-empty",
+    })
+  })
+
+  test("validate rejects blank expression before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "validate",
+      "--domain-id", "195",
+      "--datasource-id", "11",
+      "--table-name", "orders",
+      "--name", "pay_amount",
+      "--expression", "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--expression must be non-empty",
+    })
   })
 
   test("create help no longer exposes body option", async () => {

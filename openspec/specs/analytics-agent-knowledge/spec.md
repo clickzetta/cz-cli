@@ -39,6 +39,12 @@ CLI MUST provide `analytics-agent knowledge space list/create/rename/delete` for
 - **THEN** CLI MUST call the open knowledge space create endpoint
 - **AND** the success output MUST include the created space id and name
 
+#### Scenario: 知识空间名称为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge space create --name "   "`
+- **THEN** CLI MUST return `USAGE_ERROR` before sending any request
+- **AND** the error message MUST explain that `--name` must be non-empty
+
 #### Scenario: 重命名知识空间
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge space rename <space-id> --name <new-name>`
@@ -127,6 +133,12 @@ CLI MUST provide an explicit node-level domain binding surface for existing docu
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder create <space-id> --name <folder-name>`
 - **THEN** CLI MUST call the open knowledge folder create endpoint for that space
 - **AND** the success output MUST include the created folder node id and name
+
+#### Scenario: 文件夹名称为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder create <space-id> --name "   "`
+- **THEN** CLI MUST return `USAGE_ERROR` before sending any request
+- **AND** the error message MUST explain that `--name` must be non-empty
 
 #### Scenario: 重命名文件夹
 
@@ -278,6 +290,12 @@ CLI MUST provide an explicit node-level domain binding surface for existing docu
 - **THEN** CLI MUST call the open knowledge node update endpoint for that node
 - **AND** the request MUST keep both `space-id` and `node-id` in the request path
 - **AND** the success output MUST include the renamed file node id, new name, and updated path when present
+
+#### Scenario: 文件节点新名称为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file rename <space-id> <node-id> --name "   "`
+- **THEN** CLI MUST return `USAGE_ERROR` before sending any request
+- **AND** the error message MUST explain that `--name` must be non-empty
 
 #### Scenario: 文件写操作 help 不暴露 body 参数
 

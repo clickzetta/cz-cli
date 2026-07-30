@@ -7,7 +7,7 @@
 
 ### Requirement: domain create/update 使用重复 sample-question 参数
 
-`cz-cli analytics-agent domain create` 与 `update` MUST 支持重复 `--sample-question` 输入，并将其组装为请求体中的 `sampleQuestions` 数组。普通用户主路径不应再暴露 `--sample-questions` 或 `--body`。
+`cz-cli analytics-agent domain create` 与 `update` MUST 支持重复 `--sample-question` 输入，并将其组装为请求体中的 `sampleQuestions` 数组。普通用户主路径不应再暴露 `--sample-questions` 或 `--body`。`domain create --name` MUST 提供且非空；`domain update --name` 若提供则 MUST 非空；每个 `--sample-question` MUST 非空。
 
 #### Scenario: create 用重复 sample-question 组装数组
 
@@ -26,6 +26,18 @@
 - **WHEN** 用户执行 `cz-cli analytics-agent domain create --name 销售域 --datasource-id 11 --sample-question '["问题1","问题2"]'`
 - **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
 - **且** 错误信息 MUST 明确提示改用重复 `--sample-question`
+
+#### Scenario: create 空 name 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain create --name "   " --datasource-id 11`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--name` 非空
+
+#### Scenario: sample-question 为空时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent domain update 195 --sample-question "   "`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--sample-question` 非空
 
 #### Scenario: help 不再暴露 sample-questions 和 body
 

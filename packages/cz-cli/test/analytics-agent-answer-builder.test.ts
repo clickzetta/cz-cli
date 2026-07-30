@@ -45,6 +45,12 @@ function parseData(output: string): unknown {
   return JSON.parse(output.trim()).data
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
+const validContent = "{\"outputColumns\":[{\"name\":\"order_count\",\"metricName\":\"订单数\"}]}"
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -111,7 +117,7 @@ describe("analytics-agent answer-builder", () => {
       "--domain-id",
       "195",
       "--content",
-      "{\"type\":\"metric\"}",
+      validContent,
     ])
 
     expect(result.exitCode).toBe(0)
@@ -121,7 +127,7 @@ describe("analytics-agent answer-builder", () => {
       analysisDesc: "口径说明",
       datasourceId: 11,
       domainIds: [195],
-      content: "{\"type\":\"metric\"}",
+      content: validContent,
     })
   })
 
@@ -137,7 +143,7 @@ describe("analytics-agent answer-builder", () => {
       "--analysis-name", "中标率",
       "--datasource-id", "11",
       "--domain-id", "195",
-      "--content", "{\"chartParams\":[],\"outputColumns\":[]}",
+      "--content", "{\"chartParams\":[],\"outputColumns\":[{\"name\":\"order_count\",\"metricName\":\"订单数\"}]}",
       "--sql", "SELECT COUNT(*) FROM t WHERE bid_result='中标'",
     ])
 
@@ -145,14 +151,12 @@ describe("analytics-agent answer-builder", () => {
     const content = JSON.parse(String((requestBody as Record<string, unknown>).content))
     expect(content.sql).toBe("SELECT COUNT(*) FROM t WHERE bid_result='中标'")
     expect(content.chartParams).toEqual([])
-    expect(content.outputColumns).toEqual([])
+    expect(content.outputColumns).toEqual([{ name: "order_count", metricName: "订单数" }])
   })
 
-  test("create with --sql but no --content builds a content object with just sql", async () => {
-    let requestBody: Record<string, unknown> | null = null
-    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestBody = init?.body ? JSON.parse(String(init.body)) : null
-      return jsonResponse({ success: true, data: { id: 401 } })
+  test("create with --sql but no metricName is a local usage error", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
@@ -161,9 +165,65 @@ describe("analytics-agent answer-builder", () => {
       "--sql", "SELECT 1",
     ])
 
-    expect(result.exitCode).toBe(0)
-    const content = JSON.parse(String((requestBody as Record<string, unknown>).content))
-    expect(content).toEqual({ sql: "SELECT 1" })
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--content outputColumns must include at least one non-empty metricName",
+    })
+  })
+
+  test("create rejects a missing output column metricName before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "create",
+      "--analysis-name", "x", "--datasource-id", "11", "--domain-id", "195",
+      "--content", "{\"outputColumns\":[{\"name\":\"order_count\"}]}",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--content outputColumns[0].metricName must be non-empty",
+    })
+  })
+
+  test("validate rejects a blank output column metricName before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "validate",
+      "--analysis-name", "x", "--datasource-id", "11", "--domain-id", "195",
+      "--content", "{\"outputColumns\":[{\"name\":\"order_count\",\"metricName\":\"   \"}]}",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--content outputColumns[0].metricName must be non-empty",
+    })
+  })
+
+  test("create rejects a blank analysis name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "answer-builder", "create",
+      "--analysis-name", "   ", "--datasource-id", "11", "--domain-id", "195",
+      "--content", validContent,
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--analysis-name must be non-empty",
+    })
   })
 
   test("create with neither --content nor --sql is a local usage error", async () => {
@@ -281,7 +341,7 @@ describe("analytics-agent answer-builder", () => {
       "--domain-id",
       "195",
       "--content",
-      "{\"type\":\"metric\"}",
+      validContent,
     ])
 
     expect(result.exitCode).toBe(0)
@@ -290,7 +350,46 @@ describe("analytics-agent answer-builder", () => {
       analysisDesc: "口径说明",
       datasourceId: 11,
       domainIds: [195],
-      content: "{\"type\":\"metric\"}",
+      content: validContent,
+    })
+  })
+
+  test("update accepts valid analysis name and metric names", async () => {
+    let requestUrl = ""
+    let requestBody: unknown
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: { id: 401 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "answer-builder",
+      "update",
+      "401",
+      "--analysis-name",
+      "销量分析-更新",
+      "--analysis-desc",
+      "更新口径",
+      "--datasource-id",
+      "11",
+      "--domain-id",
+      "195",
+      "--content",
+      validContent,
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrl).toContain("/open/api/v1/analytics-agent/answer-builders/update?tenantId=55")
+    expect(requestBody).toEqual({
+      id: 401,
+      analysisName: "销量分析-更新",
+      analysisDesc: "更新口径",
+      datasourceId: 11,
+      domainIds: [195],
+      content: validContent,
     })
   })
 

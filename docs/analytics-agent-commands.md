@@ -76,6 +76,8 @@ cz-cli analytics-agent domain table add 195 --datasource-id 12 --workspace w --s
 cz-cli analytics-agent domain join create 195 --dataset-id 1773 --attr-code customer_id --join-dataset-id 1774 --join-attr-code id --relation n:1
 ```
 
+`domain create --name`、`domain update --name`（若提供）和每个 `--sample-question` 必须非空。
+
 ## 表语义与虚拟列命令
 
 | 命令 | 说明 | 关键参数 |
@@ -96,6 +98,9 @@ cz-cli analytics-agent table semantics set 195 31 --alias "销售额" --dimensio
 cz-cli analytics-agent column virtual compile 195 --name profit_rate --type double --expression "profit / amount"
 cz-cli analytics-agent column virtual set 195 --name profit_rate --type double --expression "profit / amount"
 ```
+
+`column virtual set` 的 `--name`、`--type`、`--expression` 必须非空；`compile` 的 `--expression` 必须非空。
+`table semantics` 中 `alias`/`description` 允许空值用于清空；`semantic-type`、`intended-type`、`dict-code` 以及 `prop` 的非 alias/description 值必须非空。
 
 ## 指标命令
 
@@ -118,6 +123,8 @@ cz-cli analytics-agent metric validate --domain-id 195 --datasource-id 12 --tabl
 cz-cli analytics-agent metric create --domain-id 195 --datasource-id 12 --table-name orders --name gmv --expression "sum(amount)"
 ```
 
+`--table-name`、`--name`、`--expression` 以及每个 `--alias`（若提供）必须非空；否则 CLI 会在发请求前返回参数错误。
+
 ## Answer Builder 命令
 
 | 命令 | 说明 | 关键参数 |
@@ -135,8 +142,10 @@ cz-cli analytics-agent metric create --domain-id 195 --datasource-id 12 --table-
 
 ```bash
 cz-cli analytics-agent answer-builder list --domain-id 195 --format table
-cz-cli analytics-agent answer-builder validate --analysis-name funnel --datasource-id 12 --domain-id 195 --content '{"steps":[]}'
+cz-cli analytics-agent answer-builder validate --analysis-name funnel --datasource-id 12 --domain-id 195 --content '{"outputColumns":[{"name":"order_count","metricName":"订单数"}]}'
 ```
+
+`--analysis-name` 与 `--content outputColumns[].metricName` 必须非空；否则 CLI 会在发请求前返回参数错误。
 
 ## 知识命令
 
@@ -197,6 +206,8 @@ cz-cli analytics-agent knowledge space create --name "销售知识库"
 cz-cli analytics-agent knowledge file upload 1 ./manual.md --target-path /sales --domain-id 195
 ```
 
+知识空间、文件夹、文件重命名等写入命令的 `--name` 必须非空。
+
 ## 服务与会话命令
 
 | 命令 | 说明 | 关键参数 |
@@ -223,4 +234,4 @@ cz-cli analytics-agent session result 123 --wait --interval-ms 1000 --timeout-ms
 - 分层数据源使用 `--workspace`、`--schema` 定位 scope；CLI 会合成服务端需要的内部 path。
 - `domain join` 是手动 CRUD；join 发现不再作为 CLI 主路径命令暴露。
 - `knowledge create --type dictionary` 必须提供 `--dictionary`；普通文本知识需要 `--content` 或 `--file`。
-- `session run` 当前要求 `--domain-id`；省略 `--session-id` 时会自动创建新 session。
+- `session create` 的 `--title` 必须非空；`session run` 当前要求 `--domain-id` 和非空 `--msg`，省略 `--session-id` 时会用问题文本自动创建带标题的新 session。

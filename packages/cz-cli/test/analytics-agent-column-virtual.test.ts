@@ -46,6 +46,10 @@ function parseData(output: string): unknown {
   return JSON.parse(output.trim()).data
 }
 
+function parseError(output: string): { code: string; message: string } {
+  return JSON.parse(output.trim()).error
+}
+
 async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; output: string }> {
   const chunks: string[] = []
   const savedExitCode = process.exitCode
@@ -366,5 +370,57 @@ describe("analytics-agent column virtual", () => {
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
     expect(parsed.error.message).toContain("--expression is required")
+  })
+
+  test("set rejects blank virtual column name before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "column",
+      "virtual",
+      "set",
+      "195",
+      "--name",
+      "   ",
+      "--type",
+      "double",
+      "--expression",
+      "amount / qty",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--name must be non-empty",
+    })
+  })
+
+  test("set rejects blank virtual column expression before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "column",
+      "virtual",
+      "set",
+      "195",
+      "--name",
+      "profit_rate",
+      "--type",
+      "double",
+      "--expression",
+      "   ",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parseError(result.output)).toEqual({
+      code: "USAGE_ERROR",
+      message: "--expression must be non-empty",
+    })
   })
 })
