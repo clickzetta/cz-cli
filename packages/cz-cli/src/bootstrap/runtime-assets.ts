@@ -9,6 +9,13 @@ export const CLICKZETTA_PROVIDER_ASSET = "clickzetta-ai-gateway.js"
 // at import() time and binds solid to the HOST singleton. A pre-bundled .js would
 // carry a second @opentui/core copy that throws the platform gate at load. See build.ts.
 export const CLICKZETTA_TUI_PLUGIN_ASSET = "clickzetta-tui-brand.tsx"
+// The quota indicator's slot renderer — also raw .tsx, for the same reason.
+export const CLICKZETTA_TUI_QUOTA_ASSET = "tui-quota.tsx"
+// Everything the indicator needs that ISN'T JSX, pre-bundled behind one entry
+// (tui-quota-runtime.ts re-exports the data/format/controller modules). It pulls
+// in @clickzetta/sdk and the cz connection/llm modules, none of which touch
+// @opentui or solid-js, so bundling carries no duplicate runtime.
+export const CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET = "tui-quota-runtime.js"
 
 function resolveRuntimeModulePath(options: { source: string; bundled: string }) {
   if (existsSync(options.source)) return options.source

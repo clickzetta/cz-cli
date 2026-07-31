@@ -57,6 +57,27 @@ function withFakeHome(profileToml?: string, llmJson?: string): { home: string; c
 
 const tests: TestCase[] = [
   {
+    name: "AGENT_LLM: zero entries are unavailable, not automatic",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const show = run(["agent", "llm", "show"], { HOME: home })
+        const json = parseJson(show.stdout)
+        const active = (json?.data as Record<string, unknown> | undefined)?.active as Record<string, unknown> | undefined
+        if (show.exitCode !== 0) return { pass: false, detail: `show exit=${show.exitCode}` }
+        if (active?.kind !== "none") return { pass: false, detail: `unexpected active state: ${show.stdout.slice(0, 200)}` }
+        if (show.stdout.includes("OpenCode selects at runtime")) {
+          return { pass: false, detail: `empty config claimed automatic selection: ${show.stdout.slice(0, 220)}` }
+        }
+        const reset = run(["agent", "llm", "reset"], { HOME: home })
+        if (reset.exitCode !== 0 || reset.stdout.includes("OpenCode") || !reset.stdout.includes("no usable LLM entry")) {
+          return { pass: false, detail: `reset misreported empty config: ${reset.stdout.slice(0, 220)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
     name: "NO_PROFILE: no profiles.toml → error.code=NO_PROFILE",
     run() {
       const { home, cleanup } = withFakeHome()
@@ -166,7 +187,7 @@ const tests: TestCase[] = [
         if (r.stderr.includes("No ClickZetta profile configured")) {
           return { pass: false, detail: `unexpected stderr: ${r.stderr.slice(0, 120)}` }
         }
-        if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+        if ((j?.error as any)?.code !== "NO_LLM_CONFIGURED") {
           return { pass: false, detail: `unexpected output: ${r.stdout.slice(0, 160)}` }
         }
         return { pass: true }
@@ -174,32 +195,90 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "AGENT_LLM: llm management commands are not blocked by NO_ACTIVE_LLM gating",
+    name: "AGENT_LLM: a provider works without a default model set",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
-        const add = run(["agent", "llm", "add", "relay", "--provider", "openai-compatible", "--base-url", "https://gateway.example/v1", "--api-key", "sk-test", "--use"], { HOME: home })
+        const add = run(["agent", "llm", "add", "relay", "--provider", "openai-compatible", "--base-url", "https://gateway.example/v1", "--api-key", "sk-test"], { HOME: home })
         const show = run(["agent", "llm", "show"], { HOME: home })
         if (add.exitCode !== 0) return { pass: false, detail: `add exit=${add.exitCode} stdout=${add.stdout.slice(0, 120)}` }
-        if (add.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"")) return { pass: false, detail: "llm add was blocked by NO_ACTIVE_LLM" }
+        if (add.stdout.includes("\"code\":\"NO_LLM_CONFIGURED\"")) return { pass: false, detail: "llm add was blocked by NO_LLM_CONFIGURED" }
         if (show.exitCode !== 0) return { pass: false, detail: `show exit=${show.exitCode} stdout=${show.stdout.slice(0, 120)}` }
-        if (show.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"")) return { pass: false, detail: "llm show was blocked by NO_ACTIVE_LLM" }
+        if (show.stdout.includes("\"code\":\"NO_LLM_CONFIGURED\"")) return { pass: false, detail: "llm show was blocked by NO_LLM_CONFIGURED" }
         if (!show.stdout.includes("\"provider\":\"openai-compatible\"")) {
           return { pass: false, detail: `unexpected show output: ${show.stdout.slice(0, 160)}` }
+        }
+        if (!show.stdout.includes('"kind":"auto"') || !show.stdout.includes("OpenCode selects at runtime")) {
+          return { pass: false, detail: `missing automatic selection state: ${show.stdout.slice(0, 240)}` }
         }
         return { pass: true }
       } finally { cleanup() }
     },
   },
   {
-    name: "AGENT_RUN: no active LLM returns NO_ACTIVE_LLM instead of runtime URL errors",
+    name: "AGENT_LLM: add --use explains the explicit model-selection workflow",
+    run() {
+      const { home, cleanup } = withFakeHome()
+      try {
+        const add = run(["agent", "llm", "add", "relay", "--provider", "openai-compatible", "--base-url", "https://gateway.example/v1", "--api-key", "sk-test", "--use"], { HOME: home })
+        const list = run(["agent", "llm", "list"], { HOME: home })
+        const json = parseJson(add.stdout)
+        if (add.exitCode !== 1) return { pass: false, detail: `add exit=${add.exitCode}` }
+        if ((json?.error as Record<string, unknown> | undefined)?.code !== "USE_OPTION_REMOVED") {
+          return { pass: false, detail: `unexpected output: ${add.stdout.slice(0, 200)}` }
+        }
+        if (!add.stdout.includes("agent llm test relay") || !add.stdout.includes("agent llm models relay") || !add.stdout.includes("agent llm use relay/<MODEL_ID>")) {
+          return { pass: false, detail: `missing next steps: ${add.stdout.slice(0, 240)}` }
+        }
+        const error = json?.error as Record<string, unknown> | undefined
+        if (JSON.stringify(error?.next_steps) !== JSON.stringify(["cz-cli agent llm models relay", "cz-cli agent llm use relay/<MODEL_ID>"])) {
+          return { pass: false, detail: `required next steps are not models → use: ${add.stdout.slice(0, 260)}` }
+        }
+        if (JSON.stringify(error?.optional_checks) !== JSON.stringify(["cz-cli agent llm test relay"])) {
+          return { pass: false, detail: `test should be optional: ${add.stdout.slice(0, 260)}` }
+        }
+        if (list.stdout.includes("relay")) return { pass: false, detail: "rejected add still wrote the LLM entry" }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "AGENT_LLM: configured provider discovery failure points to HTTP diagnostics",
+    run() {
+      const { home, cleanup } = withFakeHome(undefined, JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        provider: {
+          bad: {
+            name: "bad",
+            npm: "@ai-sdk/openai-compatible",
+            options: { apiKey: "bad-key", baseURL: "https://gateway.invalid/v1" },
+          },
+        },
+      }))
+      try {
+        const models = run(["agent", "llm", "models", "bad"], { HOME: home })
+        const json = parseJson(models.stdout)
+        const error = json?.error as Record<string, unknown> | undefined
+        if (models.exitCode !== 1) return { pass: false, detail: `models exit=${models.exitCode}` }
+        if (error?.code !== "MODEL_DISCOVERY_FAILED") {
+          return { pass: false, detail: `unexpected output: ${models.stdout.slice(0, 240)}` }
+        }
+        if (!models.stdout.includes("cz-cli agent llm test bad")) {
+          return { pass: false, detail: `missing HTTP diagnostic step: ${models.stdout.slice(0, 240)}` }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    name: "AGENT_RUN: no LLM API configuration returns NO_LLM_CONFIGURED",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
         const r = run(["agent", "run", "hello"], { HOME: home, CLICKZETTA_PID: "" })
         const j = parseJson(r.stdout)
         if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
-        if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+        if ((j?.error as any)?.code !== "NO_LLM_CONFIGURED") {
           return { pass: false, detail: `unexpected output: ${r.stdout.slice(0, 160)}` }
         }
         if (r.stdout.includes("undefined/chat/completions") || r.stderr.includes("undefined/chat/completions")) {
@@ -210,14 +289,14 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "AGENT_TUI: bare agent without active LLM returns NO_ACTIVE_LLM instead of usage error",
+    name: "AGENT_TUI: bare agent without LLM API configuration returns NO_LLM_CONFIGURED",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
         const r = run(["agent"], { HOME: home, CLICKZETTA_PID: "" })
         const j = parseJson(r.stdout)
         if (r.exitCode !== 1) return { pass: false, detail: `exitCode=${r.exitCode}` }
-        if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+        if ((j?.error as any)?.code !== "NO_LLM_CONFIGURED") {
           return { pass: false, detail: `unexpected output: ${r.stdout.slice(0, 160)} stderr=${r.stderr.slice(0, 120)}` }
         }
         if (r.stdout.includes("USAGE_ERROR") || r.stderr.includes("usage error")) {
@@ -228,7 +307,7 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "AGENT_HELP: agent run --help bypasses NO_ACTIVE_LLM gating",
+    name: "AGENT_HELP: agent run --help bypasses NO_LLM_CONFIGURED gating",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
@@ -236,7 +315,7 @@ const tests: TestCase[] = [
         const combined = r.stdout + r.stderr
         if (r.exitCode !== 0) return { pass: false, detail: `exitCode=${r.exitCode}` }
         if (!combined.includes("cz-cli agent run")) return { pass: false, detail: `missing help header: ${combined.slice(0, 120)}` }
-        if (combined.includes("NO_ACTIVE_LLM")) return { pass: false, detail: "help path was blocked by NO_ACTIVE_LLM" }
+        if (combined.includes("NO_LLM_CONFIGURED")) return { pass: false, detail: "help path was blocked by NO_LLM_CONFIGURED" }
         return { pass: true }
       } finally { cleanup() }
     },
@@ -275,7 +354,7 @@ const tests: TestCase[] = [
             continue
           }
           if (r.exitCode !== 1) return { pass: false, detail: `${args.join(" ")} exit=${r.exitCode}` }
-          if ((j?.error as any)?.code !== "NO_ACTIVE_LLM") {
+          if ((j?.error as any)?.code !== "NO_LLM_CONFIGURED") {
             return { pass: false, detail: `${args.join(" ")} unexpected output=${r.stdout.slice(0, 160)}` }
           }
         }

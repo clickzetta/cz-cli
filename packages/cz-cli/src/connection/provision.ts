@@ -1,7 +1,7 @@
 import type { AuthToken } from "@clickzetta/sdk"
 import type { BrowserLoginResult } from "../commands/login-browser.js"
 import type { OAuthConnCombo } from "./oauth-enumerate.js"
-import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
+import { readLlmEntries, setActiveModel, writeLlmEntries } from "../llm/native-config.js"
 import {
   clearOAuthLoginResidue,
   loadProfiles,
@@ -48,23 +48,32 @@ export function decodeCredential(credential: string): Record<string, unknown> {
 
 /**
  * Upsert the ClickZetta LLM provider entry for `name` in llm.json. No-op when
- * `apiKey` is absent (mirrors the old syncCredentialLlm guard). When llm.json
- * has no default yet, this entry becomes the default. Pure over
- * readLlmEntries/writeLlmEntries so it is home-isolatable in tests.
+ * `apiKey` is absent (mirrors the old syncCredentialLlm guard). Registration
+ * does not change config.model. Pure over readLlmEntries/writeLlmEntries so it
+ * is home-isolatable in tests.
  */
-export function configureClickzettaLlm(name: string, opts: { apiKey?: string; baseURL?: string }): boolean {
+export function configureClickzettaLlm(name: string, opts: { apiKey?: string; baseURL?: string; legacyName?: string }): boolean {
   if (!opts.apiKey) return false
   const config = readLlmEntries()
+  const legacy = opts.legacyName && opts.legacyName !== name && config.llm[opts.legacyName]?.provider === "clickzetta"
+    ? opts.legacyName
+    : undefined
+  const migratedModel = legacy && config.model?.startsWith(`${legacy}/`)
+    ? `${name}/${config.model.slice(legacy.length + 1)}`
+    : undefined
   config.llm[name] = {
+    ...(legacy ? config.llm[legacy] : {}),
     ...config.llm[name],
     provider: "clickzetta",
     api_key: opts.apiKey,
     ...(opts.baseURL && { base_url: opts.baseURL }),
   }
+  if (legacy) delete config.llm[legacy]
   // cz_change: no default_llm anymore. The entry is written as a provider; which
   // model is active is opencode's call (config.model → recent → first available).
   // On a fresh login this is the only provider, so opencode auto-selects it.
   writeLlmEntries({ llm: config.llm })
+  if (migratedModel) setActiveModel(migratedModel)
   return true
 }
 
@@ -122,7 +131,7 @@ export interface OAuthProvisionInput {
   userInfo?: BrowserLoginResult["userInfo"]
   /**
    * Region-specific business service host to persist. Derived from userinfo's
-   * gatewayMapping (falling back to the central login host), NOT from any prior
+   * gatewayMapping (falling back to the login entry host), NOT from any prior
    * profile — login must not depend on a profile it may later overwrite.
    */
   service: string
@@ -224,7 +233,7 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
  * token is written once; each profile only carries an `oauth = "<id>"` pointer,
  * so a later `getToken` resolves the same token regardless of which profile is
  * active. LLM is configured once from userinfo (apiKey + aimesh), keyed on the
- * default profile name.
+ * shared OAuth name rather than an arbitrary instance/workspace profile.
  *
  * Falls back to the single-profile path when `combos` is empty (e.g. every
  * instance's workspace listing failed) so a login still yields a usable profile
@@ -287,9 +296,10 @@ export function provisionProfilesFromOAuthCombos(
   const defaultProfile = created[0]!
   setDefaultProfile(defaultProfile)
 
-  const llmConfigured = configureClickzettaLlm(defaultProfile, {
+  const llmConfigured = configureClickzettaLlm(oauthId, {
     apiKey: userInfo?.apiKey,
     baseURL: userInfo?.aimeshEndpointBaseUrl,
+    legacyName: defaultProfile,
   })
 
   return { profiles: created, defaultProfile, llmConfigured }

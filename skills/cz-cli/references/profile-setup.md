@@ -24,19 +24,12 @@ For AI agents (non-TTY), pass an explicit method (`--credential` or
 ## LLM configuration
 
 The ClickZetta built-in LLM is configured on login. To use a different LLM, run
-`cz-cli agent llm --help` (`add` / `use` / `show` / `reset`).
+`cz-cli agent llm --help` (`add` / `test` / `models` / `use` / `show` / `reset`).
 
 ## Error JSON reference
 
 ```json
-// No profile at all
-{"ok": false, "error": "NO_PROFILE", "profile_exists": false,
- "next_steps": ["cz-cli auth login <name>"],
- "register_urls": ["https://accounts.clickzetta.com/register?ref=cz-cli"]}
-
-// Profile exists but no api_key, no llm entries
-{"ok": false, "error": "NO_PROFILE", "profile_exists": true, "has_llm_entry": false,
- "next_steps": ["cz-cli auth login <name>", "cz-cli agent llm add <name> --provider <p> --api-key <k> --use"]}
+{"error":{"code":"NO_PROFILE","message":"No ClickZetta profile configured.","next_step":"cz-cli auth login <name>","next_steps":["cz-cli auth login <name>","cz-cli auth login <name> --credential <base64_string>","cz-cli auth login <name> --username <username> --password <password> --account-name <account_name>"],"register_urls":["https://accounts.clickzetta.com/register?ref=cz-cli","https://accounts.singdata.com/register?ref=cz-cli"],"llm_help":"cz-cli agent llm --help"}}
 ```
 
 ## Alternative: create a profile directly (existing username/password account)

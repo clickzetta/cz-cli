@@ -13,8 +13,13 @@ export const AI_GATEWAY_API_KEY_QUOTA_MESSAGE =
 
 export const AI_GATEWAY_FREE_QUOTA_MESSAGE =
   "Your complimentary token quota has been exhausted.\n" +
-  "Create and switch to your own API key, then send your request again:\n" +
-  "  cz-cli ai-gateway key create my-key --add-to-llm my-key --use\n" +
+  "Create and register your own API key (this does not change the current default model):\n" +
+  "  cz-cli ai-gateway key create my-key --add-to-llm my-key\n" +
+  "To switch the default to the new key, list its models and choose one:\n" +
+  "  cz-cli agent llm models my-key\n" +
+  "  cz-cli agent llm use my-key/<MODEL_ID>\n" +
+  "Optional API diagnostic:\n" +
+  "  cz-cli agent llm test my-key\n" +
   `Or add paid quota at ${AI_GATEWAY_QUOTA_URL}.`
 
 export type GatewayErrorInput = {

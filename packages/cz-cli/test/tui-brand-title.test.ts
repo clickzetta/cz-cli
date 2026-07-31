@@ -42,6 +42,15 @@ function makeFakeApi() {
 }
 
 describe("installTerminalTitleBrand", () => {
+  // Install emits ONE catch-up write (the home title upstream already wrote before
+  // plugins loaded — see the cz_change note in tui-title-brand.ts), so every
+  // expectation below starts with "CZ CLI".
+  test("emits a catch-up write so the home title is branded immediately", () => {
+    const { api, calls } = makeFakeApi()
+    installTerminalTitleBrand(api as any)
+    expect(calls).toEqual(["CZ CLI"])
+  })
+
   test("wraps setTerminalTitle so upstream writes are rebranded", () => {
     const { api, renderer, calls } = makeFakeApi()
     installTerminalTitleBrand(api as any)
@@ -50,7 +59,7 @@ describe("installTerminalTitleBrand", () => {
     renderer.setTerminalTitle("OC | task 1")
     renderer.setTerminalTitle("")
 
-    expect(calls).toEqual(["CZ CLI", "CZ | task 1", ""])
+    expect(calls).toEqual(["CZ CLI", "CZ CLI", "CZ | task 1", ""])
   })
 
   test("is idempotent — a second install does not double-wrap", () => {
@@ -59,7 +68,7 @@ describe("installTerminalTitleBrand", () => {
     installTerminalTitleBrand(api as any)
 
     renderer.setTerminalTitle("OpenCode")
-    expect(calls).toEqual(["CZ CLI"])
+    expect(calls).toEqual(["CZ CLI", "CZ CLI"])
   })
 
   test("onDispose restores the original setTerminalTitle", () => {
@@ -68,6 +77,43 @@ describe("installTerminalTitleBrand", () => {
     for (const fn of disposers) fn()
 
     renderer.setTerminalTitle("OpenCode")
-    expect(calls).toEqual(["OpenCode"])
+    expect(calls).toEqual(["CZ CLI", "OpenCode"])
+  })
+
+  test("skips the catch-up write when the user disabled terminal titles", () => {
+    const { api, calls } = makeFakeApi()
+    installTerminalTitleBrand({
+      ...(api as any),
+      kv: { get: (_k: string, _f: boolean) => false },
+    })
+    expect(calls).toEqual([])
+  })
+
+  test("skips the catch-up write when OPENCODE_DISABLE_TERMINAL_TITLE is set", () => {
+    const { api, calls } = makeFakeApi()
+    const prev = process.env.OPENCODE_DISABLE_TERMINAL_TITLE
+    process.env.OPENCODE_DISABLE_TERMINAL_TITLE = "1"
+    try {
+      installTerminalTitleBrand(api as any)
+      expect(calls).toEqual([])
+    } finally {
+      if (prev === undefined) delete process.env.OPENCODE_DISABLE_TERMINAL_TITLE
+      else process.env.OPENCODE_DISABLE_TERMINAL_TITLE = prev
+    }
+  })
+
+  test("a throwing kv does not break activation", () => {
+    const { api, renderer, calls } = makeFakeApi()
+    installTerminalTitleBrand({
+      ...(api as any),
+      kv: {
+        get() {
+          throw new Error("kv not ready")
+        },
+      },
+    })
+    // Still wrapped despite the kv failure.
+    renderer.setTerminalTitle("OC | x")
+    expect(calls).toContain("CZ | x")
   })
 })

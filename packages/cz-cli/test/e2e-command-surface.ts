@@ -158,7 +158,7 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: "AGENT_ENTRY: bare agent and agent run return NO_ACTIVE_LLM without a configured llm",
+    name: "AGENT_ENTRY: bare agent and agent run return NO_LLM_CONFIGURED without an API configuration",
     run() {
       const { home, cleanup } = withFakeHome()
       try {
@@ -168,7 +168,7 @@ const tests: TestCase[] = [
           if (result.exitCode !== 1) {
             return { pass: false, detail: `${args.join(" ")} exit=${result.exitCode}` }
           }
-          if (!expectCode(result.stdout, "NO_ACTIVE_LLM")) {
+          if (!expectCode(result.stdout, "NO_LLM_CONFIGURED")) {
             return { pass: false, detail: `${args.join(" ")} unexpected output=${combined.slice(0, 160)}` }
           }
           if (combined.includes("USAGE_ERROR") || combined.includes("undefined/chat/completions")) {
@@ -185,13 +185,13 @@ const tests: TestCase[] = [
       const { home, cleanup } = withFakeHome()
       try {
         const show = run(["agent", "llm", "show"], { HOME: home, CLICKZETTA_TEST_HOME: home })
-        const add = run(["agent", "llm", "add", "relay", "--provider", "openai-compatible", "--base-url", "https://gateway.example/v1", "--api-key", "sk-test", "--use"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        const add = run(["agent", "llm", "add", "relay", "--provider", "openai-compatible", "--base-url", "https://gateway.example/v1", "--api-key", "sk-test"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const list = run(["agent", "llm", "list"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         if (show.exitCode !== 0 || add.exitCode !== 0 || list.exitCode !== 0) {
           return { pass: false, detail: `show=${show.exitCode} add=${add.exitCode} list=${list.exitCode}` }
         }
-        if (show.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"") || add.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"") || list.stdout.includes("\"code\":\"NO_ACTIVE_LLM\"")) {
-          return { pass: false, detail: "llm management was blocked by NO_ACTIVE_LLM" }
+        if (show.stdout.includes("\"code\":\"NO_LLM_CONFIGURED\"") || add.stdout.includes("\"code\":\"NO_LLM_CONFIGURED\"") || list.stdout.includes("\"code\":\"NO_LLM_CONFIGURED\"")) {
+          return { pass: false, detail: "llm management was blocked by NO_LLM_CONFIGURED" }
         }
         if (!list.stdout.includes("relay")) {
           return { pass: false, detail: `unexpected list output=${list.stdout.slice(0, 160)}` }
@@ -211,7 +211,7 @@ const tests: TestCase[] = [
         if (!combined.includes("starts a headless cz-cli agent server")) {
           return { pass: false, detail: `missing serve description: ${combined.slice(0, 200)}` }
         }
-        if (combined.includes("NO_PROFILE") || combined.includes("NO_ACTIVE_LLM")) {
+        if (combined.includes("NO_PROFILE") || combined.includes("NO_LLM_CONFIGURED")) {
           return { pass: false, detail: `serve help was gated: ${combined.slice(0, 160)}` }
         }
         return { pass: true }

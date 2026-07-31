@@ -153,7 +153,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
         "llm",
         "Manage agent LLMs in ~/.clickzetta/llm.json, separate from ClickZetta Lakehouse profile setup",
         (y) => hideUnsupportedGlobals(y)
-          .command("show", "Show the active LLM, all defined entries, and setup guidance", (llm) => llm, () => {})
+          .command("show", "Show LLM configuration and which model is used by default", (llm) => llm, () => {})
           .command("list", "List all configured agent LLM entries", (llm) => llm, () => {})
           .command(
             "add <name>",
@@ -167,36 +167,52 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
                 })
                 .option("api-key", { type: "string", describe: "API key for the provider" })
                 .option("base-url", { type: "string", describe: "Base URL for openai-compatible relays and custom gateways" })
-                .option("model", { type: "string", describe: "Optional model ID override" })
-                .option("use", { type: "boolean", describe: "Make this entry the active model (sets config.model) after writing" }),
+                .option("known-model", {
+                  type: "string",
+                  describe: "Declare a model available on this entry; does not set the default model",
+                }),
             () => {},
           )
           .command(
             "test [name]",
-            "Test the active or named LLM entry with a lightweight connectivity probe",
-            (llm) => llm.positional("name", { type: "string", describe: "entry name; defaults to the active entry (or the only one)" }),
+            "Probe an LLM entry's API connectivity",
+            (llm) => llm.positional("name", { type: "string", describe: "entry name; defaults to the default model's entry (or the only one)" }),
             () => {},
           )
-          .command("use <model>", "Set the active model (writes config.model), format <entry>/<modelId>", (llm) => llm.positional("model", { type: "string", demandOption: true }), () => {})
+          .command("models [provider]", "List available models for a configured LLM entry", (llm) => llm.positional("provider", { type: "string", describe: "configured LLM entry name" }), () => {})
+          .command(
+            "use <model>",
+            "Set the default model (writes config.model), format <entry>/<modelId>",
+            (llm) => llm.positional("model", {
+              type: "string",
+              describe: "full model ref, e.g. my-openai/gpt-4o or clickzetta/deepseek/deepseek-v4-pro",
+              demandOption: true,
+            }),
+            () => {},
+          )
           .command("remove <name>", "Remove an agent LLM entry", (llm) => llm.positional("name", { type: "string", demandOption: true }), () => {})
-          .command("reset", "Clear the active model (unsets config.model)", (llm) => llm, () => {})
+          .command("reset", "Clear the default model", (llm) => llm, () => {})
           .command("purge-legacy", "Remove deprecated llm_* fields from [profiles.*]", (llm) => llm, () => {})
           .strict(false)
           .demandCommand(1, "Run `cz-cli agent llm --help` to see available subcommands")
           .example("cz-cli auth login <name> --credential <base64_string>", "New environment: sign in and configure ClickZetta built-in LLM from registration credential")
-          .example("cz-cli agent llm add my-openai --provider openai --api-key $OPENAI_API_KEY --use", "Add OpenAI and select it")
-          .example("cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use", "Add an OpenAI-compatible relay")
+          .example("cz-cli agent llm add my-openai --provider openai --api-key $OPENAI_API_KEY", "Register OpenAI")
           .example("cz-cli agent llm test my-openai", "Verify GPT / OpenAI-style API connectivity")
-          .example("cz-cli agent llm show", "Show active LLM config and next steps")
+          .example("cz-cli agent llm models my-openai", "List models available to the registered entry")
+          .example("cz-cli agent llm use my-openai/gpt-4.1", "Set the default model")
+          .example("cz-cli agent llm show", "Show LLM configuration and the default model")
           .epilogue(
             "LLM setup paths:\n" +
             "  ClickZetta built-in LLM:\n" +
             "    `cz-cli auth login <name> --credential <base64_string>`\n\n" +
             "  External LLMs:\n" +
-            "    `cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use`\n" +
-            "    `cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use`\n\n" +
-            "  Verify:\n" +
-            "    `cz-cli agent llm test [name]`\n\n" +
+            "    `cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY>`\n" +
+            "    `cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY>`\n\n" +
+            "  Optional checks after registration:\n" +
+            "    `cz-cli agent llm test <name>`\n" +
+            "    `cz-cli agent llm models <name>`\n\n" +
+            "  Optional default model (otherwise OpenCode selects automatically):\n" +
+            "    `cz-cli agent llm use <name>/<MODEL_ID>`\n\n" +
             "  ClickZetta Lakehouse sign-in is separate:\n" +
             "    `cz-cli auth login <name>`  (see `cz-cli auth login --help` for all methods)",
           ),

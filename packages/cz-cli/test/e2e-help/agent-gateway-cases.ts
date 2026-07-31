@@ -42,6 +42,33 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectHeader: "cz-cli agent stats",
     expectOptions: ["--days", "--tools"],
   },
+  {
+    args: ["agent", "llm", "--help"],
+    expectHeader: "cz-cli agent llm",
+    expectCommands: ["show", "list", "add", "test", "models", "use", "remove", "reset"],
+    forbid: ["--use"],
+  },
+  {
+    args: ["agent", "llm", "add", "--help"],
+    expectHeader: "cz-cli agent llm add <name>",
+    expectOptions: ["--provider", "--api-key", "--base-url", "--known-model", "Declare a model available on this entry"],
+    forbid: ["--model", "--use"],
+  },
+  {
+    args: ["agent", "llm", "test", "--help"],
+    expectHeader: "cz-cli agent llm test [name]",
+    expectOptions: ["default model's entry (or the only one)"],
+  },
+  {
+    args: ["agent", "llm", "use", "--help"],
+    expectHeader: "cz-cli agent llm use <model>",
+    expectOptions: ["full model ref", "my-openai/gpt-4o"],
+  },
+  {
+    args: ["agent", "llm", "reset", "--help"],
+    expectHeader: "cz-cli agent llm reset",
+    forbid: ["OpenCode selects automatically"],
+  },
 
   // AIGW
   {
@@ -59,7 +86,7 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectHeader: "cz-cli ai-gateway key create",
     expectOptions: ["--period", "--quota", "--route-type", "--add-to-llm"],
     expectCommands: ["Examples:", "cz-cli ai-gateway key create my-key"],
-    forbid: ["cz-cli gateway key create"],
+    forbid: ["cz-cli gateway key create", "--add-to-llm my-key --use", "Select the registered config as the active agent LLM"],
   },
   {
     args: ["ai-gateway", "model", "--help"],

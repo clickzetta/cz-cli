@@ -260,7 +260,10 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   const { StatsCommand } = await import("opencode/cli/cmd/stats")
   const { McpCommand } = await import("opencode/cli/cmd/mcp")
   const { ExportCommand } = await import("opencode/cli/cmd/export")
-  const { TuiThreadCommand } = await import("opencode/cli/cmd/tui")
+  // cz_change: cz-owned $0 TUI command — drops upstream's `--mini` interface, which
+  // prints unbrandable opencode splash art plus a dead-end `opencode --mini -s <id>`
+  // continue hint. See src/agent-cmd/tui.ts.
+  const { TuiThreadCommand } = await import("../agent-cmd/tui.js")
   // cz_change: session command tree is owned by cz-cli (adds `status`; a2's
   // rebase-to-pure-upstream dropped the cz SessionStatusCommand). Reuses
   // upstream list/delete internally. See src/agent-cmd/session.ts.
@@ -293,11 +296,13 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     .alias("version", "v")
     .epilogue(
       "LLM configuration:\n" +
-      "  `cz-cli auth login <name> --credential <base64>` writes ~/.clickzetta/llm.json and selects it by default.\n" +
-      "  Add Claude/OpenAI/etc: `cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-... --use`\n" +
+      "  `cz-cli auth login <name> --credential <base64>` writes the API configuration to ~/.clickzetta/llm.json.\n" +
+      "  Add Claude/OpenAI/etc: `cz-cli agent llm add my-claude --provider anthropic --api-key sk-ant-...`\n" +
       "           supports clickzetta, anthropic, openai, bedrock, google, azure, openai-compatible, openrouter.\n" +
       "  Inspect: `cz-cli agent llm show`\n" +
-      "  Test:    `cz-cli agent llm test [name]`\n" +
+      "  Test:    `cz-cli agent llm test <name>`\n" +
+      "  Models:  `cz-cli agent llm models <name>`\n" +
+      "  Optional default: `cz-cli agent llm use <name>/<MODEL_ID>` (otherwise OpenCode selects automatically)\n" +
       "  Manage:  `cz-cli agent llm --help`"
     )
     .option("print-logs", {

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { readLlmEntries } from "../src/llm/native-config.js"
-import { onFetch, onStudio, stubStudioContext } from "./support/cz-fixtures.js"
+import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config.js"
+import { onFetch, onStudio, requireTestHome, stubStudioContext } from "./support/cz-fixtures.js"
 
 // Network-boundary test: no mock.module of our own src or of @clickzetta/sdk. The real gateway
 // command runs (execute → ai-gateway → getGatewayContext → SDK studioRequest),
@@ -86,8 +86,12 @@ beforeEach(() => {
   gatewayKeys.clear()
   modelListBodies.length = 0
   nextKeyID = 100
+  // Start from an empty provider map so each test's expectations don't inherit
+  // entries written by an earlier one (Bun shares a process across test files).
+  const testHome = requireTestHome()
+  writeLlmEntries({ llm: {} })
   writeFileSync(
-    join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+    join(testHome, ".clickzetta", "profiles.toml"),
     [
       "[profiles.test]",
       "pat = 'pat'",
@@ -144,10 +148,11 @@ describe("ai-gateway model list", () => {
 })
 
 describe("ai-gateway key add-to-llm", () => {
-  test("registers the created virtual key into ~/.clickzetta/llm.json", async () => {
-    mkdirSync(join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta"), { recursive: true })
+  test("registers the created virtual key without changing the active model", async () => {
+    const testHome = requireTestHome()
+    mkdirSync(join(testHome, ".clickzetta"), { recursive: true })
     writeFileSync(
-      join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+      join(testHome, ".clickzetta", "profiles.toml"),
       [
         'default_profile = "dev"',
         "",
@@ -161,21 +166,51 @@ describe("ai-gateway key add-to-llm", () => {
       ].join("\n"),
     )
 
-    const result = await execute("ai-gateway key create demo-key --add-to-llm demo-key --use")
+    writeLlmEntries({
+      llm: {
+        existing: {
+          provider: "clickzetta",
+          api_key: "ck-existing",
+          base_url: "https://profile-gateway.example/gateway/v1",
+        },
+      },
+    })
+    setActiveModel("existing/deepseek/deepseek-v4-pro")
+
+    const result = await execute("ai-gateway key create demo-key --add-to-llm demo-key")
     const json = firstJson(result.output)
     const entries = readLlmEntries()
 
     expect(result.exitCode).toBe(0)
-    expect(json.ai_message).toBe("Virtual key created and registered as agent LLM 'demo-key' (now active).")
-    // cz_change: no default_llm. --use makes the new entry active; when a model is
-    // already active its id is carried onto the new entry (config.model =
-    // demo-key/<modelId>), otherwise config.model stays unset and opencode
-    // auto-selects the sole entry. Either way the active entry prefix is demo-key.
-    if (typeof entries.model === "string") expect(entries.model.split("/")[0]).toBe("demo-key")
+    expect(json.ai_message).toContain("cz-cli agent llm test demo-key")
+    expect(json.ai_message).toContain("cz-cli agent llm models demo-key")
+    expect(json.ai_message).toContain("cz-cli agent llm use demo-key/<MODEL_ID>")
+    expect(json.ai_message).toContain("Default model 'existing/deepseek/deepseek-v4-pro' is unchanged")
+    expect(json.data.llm).toMatchObject({
+      current_default: "existing/deepseek/deepseek-v4-pro",
+      default_changed: false,
+      optional_checks: ["cz-cli agent llm test demo-key", "cz-cli agent llm models demo-key"],
+    })
+    expect(entries.model).toBe("existing/deepseek/deepseek-v4-pro")
     expect(entries.llm["demo-key"]).toEqual({
       provider: "clickzetta",
       api_key: "ck-demo-key-plaintext",
       base_url: "https://profile-gateway.example/gateway/v1",
     })
+  })
+
+  test("rejects the removed --use option before creating a virtual key", async () => {
+    const result = await execute("ai-gateway key create demo-key --add-to-llm demo-key --use")
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json.error).toMatchObject({ code: "USE_OPTION_REMOVED" })
+    expect(json.next_steps).toEqual([
+      "cz-cli agent llm models <name>",
+      "cz-cli agent llm use <name>/<MODEL_ID>",
+    ])
+    expect(json.optional_checks).toEqual(["cz-cli agent llm test <name>"])
+    expect(gatewayKeys.size).toBe(0)
+    expect(readLlmEntries().llm["demo-key"]).toBeUndefined()
   })
 })

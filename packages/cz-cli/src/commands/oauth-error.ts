@@ -82,7 +82,46 @@ function extract(err: unknown): { code: string; description?: string; status: nu
   // ClientError / network / anything else: no OAuth code to report. Keep the
   // library's own message as the detail — it describes the request problem, and
   // the library never puts credentials in it.
-  return { code: "oauth_error", description: err instanceof Error ? err.message : undefined, status: 0 }
+  //
+  // But that message alone is often useless: openid-client funnels EVERY
+  // unclassified failure (DNS, refused connection, TLS) through a single
+  // `new ClientError("something went wrong", { cause: err })`, so a
+  // nonexistent host and a broken proxy read identically. The real signal sits
+  // one level down in `cause`, so pull it up.
+  const detail = err instanceof Error ? causeDetail(err) : undefined
+  return {
+    code: "oauth_error",
+    description: detail ? `${err instanceof Error ? err.message : ""} (${detail})` : err instanceof Error ? err.message : undefined,
+    status: 0,
+  }
+}
+
+/**
+ * Extract a safe, specific reason from an error's `cause` chain.
+ *
+ * Two shapes matter in practice, both from `openid-client`:
+ *   - Node system errors: `cause.code` is `ENOTFOUND` / `ECONNREFUSED` /
+ *     `UND_ERR_CONNECT_TIMEOUT` — names the transport problem exactly.
+ *   - Issuer mismatch: `cause` is `{ expected, body, attribute: "issuer" }`,
+ *     where the two host names are the entire diagnosis.
+ *
+ * Only ever reads host names and error codes; never the response body wholesale,
+ * which could carry tokens (design Property 7).
+ */
+function causeDetail(err: Error): string | undefined {
+  const cause: unknown = (err as { cause?: unknown }).cause
+  if (!cause || typeof cause !== "object") return undefined
+  const c = cause as { code?: unknown; expected?: unknown; attribute?: unknown; body?: unknown }
+
+  if (c.attribute === "issuer") {
+    const expected = str(c.expected)
+    const actual = str((c.body as { issuer?: unknown } | undefined)?.issuer)
+    if (expected && actual) return `issuer mismatch: requested ${expected}, document declares ${actual}`
+  }
+
+  const sysCode = str(c.code)
+  if (sysCode) return sysCode
+  return undefined
 }
 
 function str(val: unknown): string | undefined {

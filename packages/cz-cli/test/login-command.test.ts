@@ -6,8 +6,9 @@ import type { AuthToken } from "@clickzetta/sdk"
 import { runLogin } from "../src/commands/login"
 import type { LoginTarget } from "../src/connection/login-target"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
+import { configureClickzettaLlm } from "../src/connection/provision"
 import { makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
-import { readLlmEntries } from "../src/llm/native-config"
+import { readLlmEntries, setActiveModel } from "../src/llm/native-config"
 import { GlobalArgs } from "../src/cli"
 
 const PAT = "pat-secret-123"
@@ -198,6 +199,11 @@ describe("runLogin", () => {
   // Multi-profile: enumeration yields several (instance × workspace) combos →
   // one profile per combo (_0/_1…), all sharing ONE [oauth.<id>] token section.
   test("enumeration: writes one profile per combo sharing a single oauth token", async () => {
+    configureClickzettaLlm(`${PROFILE}_0`, {
+      apiKey: "legacy-api-key",
+      baseURL: "https://legacy-aimesh.clickzetta.com/",
+    })
+    setActiveModel(`${PROFILE}_0/qwen/qwen3-coder-plus`)
     const resultWithInstances: BrowserLoginResult = {
       ...KNOWN_RESULT,
       instances: [
@@ -240,6 +246,16 @@ describe("runLogin", () => {
     expect(makeProfileTokenStore(`${PROFILE}_0`).load()).toEqual(PERSISTED_TOKEN)
     // Sibling profile shares the same token.
     expect(makeProfileTokenStore(`${PROFILE}_2`).load()).toEqual(PERSISTED_TOKEN)
+
+    // The LLM belongs to the shared OAuth login, not the arbitrary first profile.
+    const llm = readLlmEntries()
+    expect(llm.llm[PROFILE]).toEqual({
+      provider: "clickzetta",
+      api_key: "secret-api-key",
+      base_url: "https://dev-aimesh.clickzetta.com/",
+    })
+    expect(llm.llm[`${PROFILE}_0`]).toBeUndefined()
+    expect(llm.model).toBe(`${PROFILE}/qwen/qwen3-coder-plus`)
 
     expect(out.text()).toContain("logged_in")
     expect(out.text()).toContain(`${PROFILE}_0`)

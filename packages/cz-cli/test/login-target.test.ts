@@ -2,9 +2,19 @@ import { describe, expect, test } from "bun:test"
 import { partitionEntryHost, resolveLoginTarget } from "../src/connection/login-target"
 
 describe("partitionEntryHost", () => {
-  test("maps customer partitions to their prod entries", () => {
-    expect(partitionEntryHost("cn")).toBe("api.clickzetta.com")
-    expect(partitionEntryHost("intl")).toBe("api.singdata.com")
+  // Region hosts, NOT the central api.<root>: the central hosts cannot serve as
+  // OAuth issuers (api.clickzetta.com returns 200 but declares a region issuer,
+  // which RFC 8414 §3.3 forbids; api.singdata.com has no DNS record at all).
+  test("maps customer partitions to region OAuth entries", () => {
+    expect(partitionEntryHost("cn")).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+    expect(partitionEntryHost("intl")).toBe("ap-southeast-1-alicloud.api.singdata.com")
+  })
+
+  test("never returns a central host, whose discovery issuer does not self-reference", () => {
+    for (const p of ["cn", "intl"] as const) {
+      expect(partitionEntryHost(p)).not.toBe("api.clickzetta.com")
+      expect(partitionEntryHost(p)).not.toBe("api.singdata.com")
+    }
   })
 })
 
@@ -28,11 +38,13 @@ describe("resolveLoginTarget", () => {
     expect(t.entryHost).toBe("czstudio.devops.xiaohongshu.com")
   })
 
-  test("--partition cn/intl map to prod entries", async () => {
-    expect((await resolveLoginTarget({ partition: "cn" })).entryHost).toBe("api.clickzetta.com")
-    expect((await resolveLoginTarget({ partition: "intl" })).entryHost).toBe("api.singdata.com")
-    expect((await resolveLoginTarget({ partition: "China" })).entryHost).toBe("api.clickzetta.com")
-    expect((await resolveLoginTarget({ partition: "international" })).entryHost).toBe("api.singdata.com")
+  test("--partition cn/intl map to prod region entries", async () => {
+    const cn = "cn-shanghai-alicloud.api.clickzetta.com"
+    const intl = "ap-southeast-1-alicloud.api.singdata.com"
+    expect((await resolveLoginTarget({ partition: "cn" })).entryHost).toBe(cn)
+    expect((await resolveLoginTarget({ partition: "intl" })).entryHost).toBe(intl)
+    expect((await resolveLoginTarget({ partition: "China" })).entryHost).toBe(cn)
+    expect((await resolveLoginTarget({ partition: "international" })).entryHost).toBe(intl)
   })
 
   test("--oauth-url takes precedence over partition", async () => {

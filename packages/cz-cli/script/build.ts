@@ -16,6 +16,8 @@ import {
   CLICKZETTA_PLUGIN_ASSET,
   CLICKZETTA_PROVIDER_ASSET,
   CLICKZETTA_TUI_PLUGIN_ASSET,
+  CLICKZETTA_TUI_QUOTA_ASSET,
+  CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET,
 } from "../src/bootstrap/runtime-assets"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -311,6 +313,9 @@ for (const item of targets) {
   await Promise.all([
     buildRuntimeAsset(path.resolve(import.meta.dirname, "../src/opencode-plugin/server.ts"), `dist/${name}/bin/${CLICKZETTA_PLUGIN_ASSET}`),
     buildRuntimeAsset(path.resolve(import.meta.dirname, "../../clickzetta-ai-gateway/src/index.ts"), `dist/${name}/bin/${CLICKZETTA_PROVIDER_ASSET}`),
+    // cz_change: the quota indicator's non-JSX halves. Safe to pre-bundle (unlike
+    // the .tsx renderer) because nothing it reaches imports @opentui or solid-js.
+    buildRuntimeAsset(path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-quota-runtime.ts"), `dist/${name}/bin/${CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET}`),
   ])
   // cz_change: ship the TUI brand plugin (home_logo slot) as RAW .tsx SOURCE, not
   // a pre-bundled .js. The compiled binary's host-registered @opentui/solid transform
@@ -331,6 +336,13 @@ for (const item of targets) {
   fs.copyFileSync(
     path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-title-brand.ts"),
     `dist/${name}/bin/tui-title-brand.ts`,
+  )
+  // cz_change: same deal for the quota indicator's slot renderer — raw .tsx so the
+  // host compiles it against its own solid singleton. It imports the pre-bundled
+  // ./tui-quota-runtime.js built above, which lands in this same directory.
+  fs.copyFileSync(
+    path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-quota.tsx"),
+    `dist/${name}/bin/${CLICKZETTA_TUI_QUOTA_ASSET}`,
   )
   binaries[name] = Script.version
 }

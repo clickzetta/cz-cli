@@ -2,12 +2,12 @@ import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { studioRequest, request, type StudioConfig, type ApiResponse } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error, isHandledCliError } from "../output/index.js"
+import { success, error, handledError, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getGatewayContext, type GatewayContext } from "./studio-context.js"
-import { pinAlicloudAdminHost } from "../llm/clickzetta-rotation.js"
+import { pinAlicloudAdminHost } from "../llm/clickzetta-gateway-host.js"
 import { readProfileEntry } from "../connection/profile-store.js"
-import { readLlmConfig, readLlmEntries, setActiveModel, writeLlmEntries } from "../llm/native-config.js"
+import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 
 // ── AIGW admin API paths ────────────────────────────────────────────────────
 // Portal-proxied endpoints (standard portal token auth):
@@ -165,11 +165,17 @@ function configuredAiGatewayUrl() {
   return typeof profile?.aimeshEndpointBaseUrl === "string" ? profile.aimeshEndpointBaseUrl : undefined
 }
 
+function llmChecks(name: string) {
+  return [
+    `cz-cli agent llm test ${name}`,
+    `cz-cli agent llm models ${name}`,
+  ]
+}
+
 function addToLlm(
   name: string,
   apiKey: string,
   serviceBaseUrl: string,
-  use: boolean,
 ): Dict {
   const config = readLlmEntries()
   const entries = Object.values(config.llm)
@@ -185,7 +191,6 @@ function addToLlm(
     ?? activeClickzetta?.base_url
     ?? entries.find((entry) => entry.provider === "clickzetta" && entry.base_url)?.base_url
     ?? aimeshEndpoint(serviceBaseUrl)
-  const hadLlm = entries.length > 0
   config.llm[name] = {
     ...existing,
     provider: "clickzetta",
@@ -193,17 +198,47 @@ function addToLlm(
     base_url: baseUrl,
   }
   writeLlmEntries({ llm: config.llm })
-  // cz_change: --use (or first-ever entry) makes this the active LLM. With no
-  // stored model, carry the currently-active model id onto the new entry (same
-  // gateway, same models); if none is active yet, leave config.model unset and
-  // let opencode auto-select the first available model.
-  const makeDefault = use || !hadLlm
-  if (makeDefault) {
-    const active = readLlmConfig().model
-    const modelId = typeof active === "string" && active.includes("/") ? active.slice(active.indexOf("/") + 1) : undefined
-    if (modelId) setActiveModel(`${name}/${modelId}`)
+  return {
+    name,
+    base_url: baseUrl,
+    current_default: config.model ?? null,
+    default_changed: false,
+    optional_checks: llmChecks(name),
+    switch_default: [
+      `cz-cli agent llm models ${name}`,
+      `cz-cli agent llm use ${name}/<MODEL_ID>`,
+    ],
+    optional_default: `cz-cli agent llm use ${name}/<MODEL_ID>`,
   }
-  return { name, base_url: baseUrl, active: makeDefault }
+}
+
+function llmRegistrationMessage(registered: Dict) {
+  const name = String(registered.name)
+  const currentDefault = typeof registered.current_default === "string" ? registered.current_default : undefined
+  const defaultState = currentDefault
+    ? `Default model '${currentDefault}' is unchanged.`
+    : "No default model was set; OpenCode selects automatically."
+  return `Registered as agent LLM '${name}'. ${defaultState} Optional checks: ${llmChecks(name).join("; ")}. To switch the default: cz-cli agent llm models ${name}; cz-cli agent llm use ${name}/<MODEL_ID>`
+}
+
+function rejectUse(argv: Dict): void {
+  if (!argv.use) return
+  handledError(
+    "USE_OPTION_REMOVED",
+    "`--use` no longer activates an LLM while registering a virtual key. " +
+      "Register it with `--add-to-llm <name>`, list its models, then set the default model with " +
+      "`cz-cli agent llm use <name>/<MODEL_ID>`.",
+    {
+      format: argv.format as string | undefined,
+      extra: {
+        next_steps: [
+          "cz-cli agent llm models <name>",
+          "cz-cli agent llm use <name>/<MODEL_ID>",
+        ],
+        optional_checks: ["cz-cli agent llm test <name>"],
+      },
+    },
+  )
 }
 
 function removeFromLlm(apiKey: string): string | undefined {
@@ -338,21 +373,22 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 })
                 .option("add-to-llm", {
                   type: "string",
-                  describe: "Register the new key as an agent LLM config (defaults to alias)",
+                  describe: "Register the new key as an agent LLM config without changing the current default (defaults to alias)",
                 })
-                .option("use", { type: "boolean", describe: "Select the registered config as the active agent LLM" })
+                .option("use", { type: "boolean", hidden: true })
                 .epilogue(
                   [
                     "Examples:",
                     "  cz-cli ai-gateway key create my-key",
                     "  cz-cli ai-gateway key create my-key --period total --quota 1000000",
-                    "  cz-cli ai-gateway key create my-key --add-to-llm my-key --use",
+                    "  cz-cli ai-gateway key create my-key --add-to-llm my-key",
                   ].join("\n"),
                 ),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
               try {
+                rejectUse(argv as Dict)
                 const routingRule = buildRoutingRule(argv as Dict)
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
@@ -383,11 +419,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
 
                 const addName =
                   argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl) : undefined
 
                 const aiMessage = registered
-                  ? `Virtual key created and registered as agent LLM '${registered.name}'${registered.active ? " (now active)" : ""}.`
-                  : `Virtual key created. To use it with the agent run: cz-cli agent llm add ${argv.alias} --provider clickzetta --api-key <vApiKey> --base-url ${aimeshEndpoint(sc.baseUrl)} --use`
+                  ? `Virtual key created. ${llmRegistrationMessage(registered)}`
+                  : `Virtual key created. Register it with: cz-cli agent llm add ${argv.alias} --provider clickzetta --api-key <vApiKey> --base-url ${aimeshEndpoint(sc.baseUrl)}. Registration does not change the current default; to switch afterward, run cz-cli agent llm models ${argv.alias}, then cz-cli agent llm use ${argv.alias}/<MODEL_ID>.`
                 logOperation("gateway key create", { ok: true, timeMs: Date.now() - t0 })
                 success(
                   { id, alias: argv.alias, vApiKey, ...(registered && { llm: registered }) },
@@ -434,13 +470,14 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 })
                 .option("add-to-llm", {
                   type: "string",
-                  describe: "Register the key as an agent LLM config (defaults to alias)",
+                  describe: "Register the key as an agent LLM config without changing the current default (defaults to alias)",
                 })
-                .option("use", { type: "boolean", describe: "Select the registered config as the active agent LLM" }),
+                .option("use", { type: "boolean", hidden: true }),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
               try {
+                rejectUse(argv as Dict)
                 const routingRule = buildRoutingRule(argv as Dict)
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
@@ -459,12 +496,16 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
 
                 const addName =
                   argv["add-to-llm"] === "" ? (argv.alias as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl) : undefined
 
                 logOperation("gateway key upsert", { ok: true, timeMs: Date.now() - t0 })
                 success(
                   { id, alias: argv.alias, vApiKey, ...(registered ? { llm: registered } : {}) },
-                  { format, timeMs: Date.now() - t0 },
+                  {
+                    format,
+                    timeMs: Date.now() - t0,
+                    ...(registered ? { aiMessage: llmRegistrationMessage(registered) } : {}),
+                  },
                 )
               } catch (err) {
                 logOperation("gateway key upsert", { ok: false, timeMs: Date.now() - t0 })
@@ -479,12 +520,16 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("ref", { type: "string", demandOption: true, describe: "Alias or AIGW virtual key value" })
-                .option("add-to-llm", { type: "string", describe: "Register as an agent LLM config" })
-                .option("use", { type: "boolean", describe: "Select the registered config as the active agent LLM" }),
+                .option("add-to-llm", {
+                  type: "string",
+                  describe: "Register as an agent LLM config without changing the current default",
+                })
+                .option("use", { type: "boolean", hidden: true }),
             async (argv) => {
               const format = argv.format
               const t0 = Date.now()
               try {
+                rejectUse(argv as Dict)
                 setGatewayDebug(!!argv.debug)
                 const sc = await getGatewayContext(argv)
                 const id = await resolveKeyId(sc, argv.ref as string)
@@ -492,11 +537,15 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
                 const vApiKey = String(keyResp.data)
                 const addName =
                   argv["add-to-llm"] === "" ? (argv.ref as string) : (argv["add-to-llm"] as string | undefined)
-                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl, !!argv.use) : undefined
+                const registered = addName ? addToLlm(addName, vApiKey, sc.baseUrl) : undefined
                 logOperation("gateway key get", { ok: true, timeMs: Date.now() - t0 })
                 success(
                   { id, vApiKey, ...(registered ? { llm: registered } : {}) },
-                  { format, timeMs: Date.now() - t0 },
+                  {
+                    format,
+                    timeMs: Date.now() - t0,
+                    ...(registered ? { aiMessage: llmRegistrationMessage(registered) } : {}),
+                  },
                 )
               } catch (err) {
                 logOperation("gateway key get", { ok: false, timeMs: Date.now() - t0 })

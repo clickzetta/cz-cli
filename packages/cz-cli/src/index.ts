@@ -22,14 +22,4 @@ export {
 } from "./clickzetta-profile-option.js"
 export { execute, type ExecuteResult } from "./execute.js"
 export { registerSetupCommand } from "./commands/setup.js"
-export {
-  CLICKZETTA_ROTATION_CANCEL_LABEL,
-  CLICKZETTA_ROTATION_CONFIRM_LABEL,
-  CLICKZETTA_ROTATION_HEADER,
-  CLICKZETTA_ROTATION_PROMPT,
-  inferAiGatewayUrl,
-  isClickzettaQuotaExhausted,
-  maybeRotateExhaustedClickzettaLlm,
-  rotateClickzettaLlm,
-  type ClickZettaRotationResult,
-} from "./llm/clickzetta-rotation.js"
+export { inferAiGatewayUrl, pinAlicloudAdminHost } from "./llm/clickzetta-gateway-host.js"

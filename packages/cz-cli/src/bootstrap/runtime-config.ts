@@ -367,6 +367,21 @@ export function injectClickzettaAgentConfig(agentTimeoutMs?: number) {
 // plugin and set OPENCODE_TUI_CONFIG at it — mirroring how runtime.ts sets
 // OPENCODE_CONFIG for llm.json. Best-effort: if the plugin asset is missing or
 // the user already set OPENCODE_TUI_CONFIG, we skip and leave the upstream logo.
+//
+// cz_change: the same file also turns OFF upstream's built-in home tips plugin.
+// `plugin_enabled` is a public TUI config field (packages/plugin/src/tui.ts) that
+// opencode applies to INTERNAL builtins too, before activation
+// (plugin/tui/runtime.ts applyInitialPluginEnabledState). Verified against the
+// shipped binary: the tip that renders for cz users is
+// "Use /connect with OpenCode Zen for curated, tested models" — upstream brand plus
+// a pitch for a service cz users cannot use. Its sibling tips also name `opencode`
+// subcommands that do not exist in cz-cli. Disabling is a config-only fix; the
+// home_bottom slot could not do it (that slot is additive, not mode:replace).
+// A user who toggles tips back on wins: the runtime layers kv OVER config.
+const CZ_TUI_PLUGIN_ENABLED: Record<string, boolean> = {
+  "internal:home-tips": false,
+}
+
 export function injectClickzettaTuiConfig() {
   if (process.env.OPENCODE_TUI_CONFIG) return // respect a user-provided override
   const spec = resolveClickzettaTuiPluginSpecifier()
@@ -378,7 +393,7 @@ export function injectClickzettaTuiConfig() {
   try {
     mkdirSync(dir, { recursive: true })
     // A file:// spec so opencode resolves it directly (no npm install path).
-    writeFileSync(file, JSON.stringify({ plugin: [spec] }, null, 2))
+    writeFileSync(file, JSON.stringify({ plugin: [spec], plugin_enabled: CZ_TUI_PLUGIN_ENABLED }, null, 2))
     process.env.OPENCODE_TUI_CONFIG = file
   } catch {
     // Non-fatal: leave OPENCODE_TUI_CONFIG unset → upstream logo, TUI still works.

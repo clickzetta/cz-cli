@@ -12,7 +12,7 @@ import { splitEndpoint } from "../commands/account-login.js"
  * `resolveConnectionConfig`.
  *
  * Two ways to name the entry, no magic in between:
- *   - `--partition cn|intl`  → the fixed prod central hosts we own and vouch for.
+ *   - `--partition cn|intl`  → the fixed prod OAuth hosts we own and vouch for.
  *   - `--oauth-url <url>`    → an escape hatch for internal envs / custom domains,
  *                              used VERBATIM. The caller knows their own OAuth
  *                              host; we do not rewrite it (no region stripping,
@@ -27,9 +27,29 @@ import { splitEndpoint } from "../commands/account-login.js"
 /** Customer-facing partitions. The only choice a normal user makes. */
 export type Partition = "cn" | "intl"
 
-const PARTITION_ROOT: Record<Partition, string> = {
-  cn: "clickzetta.com",
-  intl: "singdata.com",
+/**
+ * OAuth entry host per partition — a REGION host, not the central `api.<root>`.
+ *
+ * The obvious choice (`api.clickzetta.com` / `api.singdata.com`) does not work,
+ * and each fails differently:
+ *   - `api.clickzetta.com` serves the discovery document with HTTP 200, but the
+ *     document declares `issuer: https://cn-shanghai-alicloud.api.clickzetta.com`
+ *     — a DIFFERENT host. RFC 8414 §3.3 requires issuer to equal the URL the
+ *     document was fetched from, and openid-client enforces it (exempting only
+ *     Entra ID / B2C), so discovery is rejected outright.
+ *   - `api.singdata.com` has no DNS A record at all.
+ * Only region hosts declare a self-referential issuer, so only they can serve as
+ * the OAuth entry.
+ *
+ * Which region is arbitrary: auth routes back to the central identity service
+ * regardless of the region host you enter through, and the region a profile
+ * actually talks to is discovered AFTER login from userinfo's gatewayMapping.
+ * These are pinned rather than probed because login must not depend on a
+ * liveness sweep; if one is retired, `--oauth-url` is the escape hatch.
+ */
+const PARTITION_OAUTH_HOST: Record<Partition, string> = {
+  cn: "cn-shanghai-alicloud.api.clickzetta.com",
+  intl: "ap-southeast-1-alicloud.api.singdata.com",
 }
 
 export interface LoginTarget {
@@ -50,9 +70,9 @@ export interface ResolveLoginTargetArgs {
   partition?: string
 }
 
-/** Prod central host for a customer partition. */
+/** Prod OAuth entry host for a customer partition (a region host — see above). */
 export function partitionEntryHost(partition: Partition): string {
-  return `api.${PARTITION_ROOT[partition]}`
+  return PARTITION_OAUTH_HOST[partition]
 }
 
 function isTTY(): boolean {

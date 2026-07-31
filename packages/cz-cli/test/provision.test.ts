@@ -12,7 +12,7 @@ import {
   ProvisionError,
 } from "../src/connection/provision"
 import { loadProfiles, makeProfileTokenStore, getDefaultProfileName, saveProfiles } from "../src/connection/profile-store"
-import { readLlmEntries } from "../src/llm/native-config"
+import { readLlmEntries, setActiveModel } from "../src/llm/native-config"
 
 const previousTestHome = process.env.CLICKZETTA_TEST_HOME
 let home: string
@@ -62,6 +62,24 @@ describe("configureClickzettaLlm", () => {
   test("no-ops and returns false when apiKey absent", () => {
     expect(configureClickzettaLlm("p1", { baseURL: "https://gw.example.com/" })).toBe(false)
     expect(readLlmEntries().llm).toEqual({})
+  })
+
+  test("preserves the legacy gateway URL and pinned model when renaming an entry", () => {
+    configureClickzettaLlm("login_0", { apiKey: "old-key", baseURL: "https://legacy-gateway.example/v1" })
+    setActiveModel("login_0/deepseek/deepseek-v4-pro")
+
+    configureClickzettaLlm("login", { apiKey: "new-key", legacyName: "login_0" })
+
+    expect(readLlmEntries()).toEqual({
+      llm: {
+        login: {
+          provider: "clickzetta",
+          api_key: "new-key",
+          base_url: "https://legacy-gateway.example/v1",
+        },
+      },
+      model: "login/deepseek/deepseek-v4-pro",
+    })
   })
 })
 

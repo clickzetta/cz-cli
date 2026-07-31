@@ -6,6 +6,7 @@ import {
   validateModelRef,
   writeLlmEntries,
 } from "../src/llm/native-config.js"
+import { requireTestHome } from "./support/cz-fixtures.js"
 
 // Covers the `agent llm use <model>` contract (replacing the removed default_llm):
 // validateModelRef is the pure guard the command runs before setActiveModel writes
@@ -22,6 +23,7 @@ const ENTRIES = {
 }
 
 beforeEach(() => {
+  requireTestHome()
   writeLlmEntries({ llm: { ...ENTRIES } })
   clearActiveModel()
 })

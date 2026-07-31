@@ -46,7 +46,7 @@ export const profileJobHelpCases: HelpCase[] = [
     expectHeader: "cz-cli login",
     // Adaptive front door: credential + non-interactive setup options surface;
     // --browser is a hidden no-op so it must NOT appear.
-    expectOptions: ["--credential", "--name", "--login-method", "--login", "--account-name"],
+    expectOptions: ["--credential", "name", "--login-method", "--login", "--account-name"],
   },
   {
     args: ["setup", "--help"],

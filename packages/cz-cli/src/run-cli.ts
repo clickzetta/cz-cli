@@ -41,17 +41,23 @@ const PROFILE_REQUIRED_COMMANDS = new Set([
 ])
 
 const LLM_ONBOARDING = {
+  next_steps: [
+    "cz-cli agent llm add <NAME> --provider <PROVIDER> --api-key <API_KEY>",
+  ],
   clickzetta_builtin: [
     "cz-cli auth login <name> --credential <base64_string>",
   ],
   external_llm: [
-    "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use",
-    "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use",
+    "cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY>",
+    "cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY>",
   ],
-  verify: [
+  optional_checks: [
     "cz-cli agent llm show",
-    "cz-cli agent llm test",
     "cz-cli agent llm test <NAME>",
+    "cz-cli agent llm models <NAME>",
+  ],
+  optional_default: [
+    "cz-cli agent llm use <NAME>/<MODEL_ID>",
   ],
   lakehouse_setup: [
     "cz-cli auth login <name>",
@@ -190,11 +196,11 @@ function noProfilePayload() {
   }
 }
 
-function noActiveLlmPayload() {
+function noLlmConfiguredPayload() {
   return {
     error: {
-      code: "NO_ACTIVE_LLM",
-      message: "No active LLM is configured. Run `cz-cli agent llm show` for setup paths.",
+      code: "NO_LLM_CONFIGURED",
+      message: "No usable LLM API configuration was found. Register one first; a default model is optional.",
       ...LLM_ONBOARDING,
     },
   }
@@ -219,19 +225,20 @@ function noProfileTtyMessage() {
   )
 }
 
-function noActiveLlmTtyMessage() {
+function noLlmConfiguredTtyMessage() {
   return (
-    "\n  No active LLM is configured.\n" +
-    "  Run `cz-cli agent llm show` to inspect the current state, or set one up with:\n\n" +
+    "\n  No usable LLM API configuration was found.\n" +
+    "  Register one first:\n\n" +
     "  ClickZetta built-in LLM:\n" +
     "    cz-cli auth login <name> --credential <base64_string>\n\n" +
     "  External LLMs:\n" +
-    "    cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY> --use\n" +
-    "    cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY> --use\n\n" +
-    "  Verify after adding one:\n" +
-    "    cz-cli agent llm show\n" +
-    "    cz-cli agent llm test\n" +
-    "    cz-cli agent llm test <NAME>\n\n" +
+    "    cz-cli agent llm add my-openai --provider openai --api-key <OPENAI_API_KEY>\n" +
+    "    cz-cli agent llm add my-relay --provider openai-compatible --base-url https://your-gateway.example.com/v1 --api-key <API_KEY>\n\n" +
+    "  Optional checks after registration:\n" +
+    "    cz-cli agent llm test <NAME>\n" +
+    "    cz-cli agent llm models <NAME>\n" +
+    "  To set the default model (otherwise OpenCode selects automatically):\n" +
+    "    cz-cli agent llm use <NAME>/<MODEL_ID>\n\n" +
     "  Lakehouse sign-in is separate:\n" +
     "    cz-cli auth login <name>   (see `cz-cli auth login --help` for all methods)\n\n"
   )
@@ -249,7 +256,7 @@ async function hasConfiguredLlm() {
   try {
     const { readLlmEntries } = await import("./llm/native-config.js")
     const { llm } = readLlmEntries()
-    return Object.values(llm).some((e) => e.provider && e.api_key)
+    return Object.values(llm).some((entry) => entry.provider && entry.api_key)
   } catch {
     return false
   }
@@ -265,12 +272,12 @@ export function emitNoProfile(runtime: CliRuntime, rawArgs?: string[]): never {
   return runtime.exit(1)
 }
 
-export function emitNoActiveLlm(runtime: CliRuntime, rawArgs?: string[]): never {
+export function emitNoLlmConfigured(runtime: CliRuntime, rawArgs?: string[]): never {
   if (runtime.stderr.isTTY) {
-    runtime.stderr.write(noActiveLlmTtyMessage())
+    runtime.stderr.write(noLlmConfiguredTtyMessage())
   } else {
     const outputArgs = parseOutputArgs(rawArgs ?? [])
-    runtime.stdout.write(renderOutput(noActiveLlmPayload(), outputArgs.format, outputArgs.field) + "\n")
+    runtime.stdout.write(renderOutput(noLlmConfiguredPayload(), outputArgs.format, outputArgs.field) + "\n")
   }
   return runtime.exit(1)
 }
@@ -549,12 +556,8 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     return runtime.exit(2)
   }
 
-  if (
-    isAgentSessionEntry &&
-    !process.env.CLICKZETTA_PID &&
-    !(await hasConfiguredLlm())
-  ) {
-    return emitNoActiveLlm(runtime, rawArgs)
+  if (isAgentSessionEntry && !process.env.CLICKZETTA_PID && !(await hasConfiguredLlm())) {
+    return emitNoLlmConfigured(runtime, rawArgs)
   }
 
   if (normalized.shouldDelegateToAgentRuntime) {

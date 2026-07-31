@@ -13,6 +13,19 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import "opentui-spinner/solid"
 import path from "path"
 import { fileURLToPath } from "url"
+//======================== cz-cli change ========================
+// `/sql` prompt command — see the dispatch branch in onSubmit below, and
+// UPSTREAM-PATCHES.md INTRUSIVE #4 for why this cannot be a plugin.
+import os from "os"
+import { unlink } from "fs/promises"
+import {
+  parseSqlInput,
+  canInlineSql,
+  buildSqlInlineCommand,
+  buildSqlFileCommand,
+  buildSqlCommandPrefix,
+} from "./sql-command"
+//====================== end cz-cli change ======================
 import { useLocal } from "../../context/local"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { tint, useTheme } from "../../context/theme"
@@ -527,6 +540,22 @@ export function Prompt(props: PromptProps) {
           ))
         },
       },
+      //======================== cz-cli change ========================
+      // Surface `/sql` in the command palette / slash autocomplete so it is
+      // discoverable; the dispatch itself is in onSubmit below.
+      {
+        title: "Run SQL",
+        desc: "Execute SQL against ClickZetta, equivalent to cz-cli sql",
+        name: "prompt.sql",
+        category: "ClickZetta",
+        slashName: "sql",
+        run: () => {
+          input.setText("/sql ")
+          setStore("prompt", { input: "/sql ", parts: [] })
+          input.gotoBufferEnd()
+        },
+      },
+      //====================== end cz-cli change ======================
       {
         title: "Warp",
         desc: "Change the workspace for the session",
@@ -1062,6 +1091,48 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
+      //======================== cz-cli change ========================
+      // `/sql <query>` runs SQL and shows the result, nothing else.
+      // It goes through session.shell — the same path as shell mode above — so
+      // the command and its output render as a tool part with no LLM in the
+      // loop. Routing it through the `/`-command branch below instead would make
+      // the result an LLM prompt (Command.execute always ends in prompt()),
+      // which is a different feature.
+      //
+      // MUST stay above that branch: a config-declared command named `sql`
+      // would otherwise win the dispatch and silently take the LLM path.
+      //
+      // Unlike shell mode, the user does not write the quoting here, so we own
+      // it — see sql-command.ts for why the temp-file fallback exists.
+    } else if (inputText === "/sql" || inputText.startsWith("/sql ") || inputText.startsWith("/sql\n")) {
+      const parsed = parseSqlInput(inputText)
+      if (!parsed || !parsed.sql) {
+        toast.show({ variant: "warning", message: "Usage: /sql [flags] <query>", duration: 3000 })
+        return
+      }
+      const { flags, sql: query } = parsed
+      const commandPrefix = buildSqlCommandPrefix({ shell: sync.data.config.shell })
+      const command = canInlineSql(query)
+        ? buildSqlInlineCommand(query, commandPrefix, flags)
+        : await (async () => {
+            const file = path.join(os.tmpdir(), `cz-cli-sql-${Date.now()}.sql`)
+            await Bun.write(file, query)
+            // cz-cli has read the file long before this fires; the delay only
+            // needs to outlast the read, not the query.
+            setTimeout(() => void unlink(file).catch(() => {}), 60_000)
+            return buildSqlFileCommand(file, commandPrefix, flags, process.platform)
+          })()
+      move.startSubmit()
+      void sdk.client.session.shell({
+        sessionID,
+        agent: agent.name,
+        model: {
+          providerID: selectedModel.providerID,
+          modelID: selectedModel.modelID,
+        },
+        command,
+      })
+      //====================== end cz-cli change ======================
     } else if (
       inputText.startsWith("/") &&
       sync.data.command.some((x) => x.name === inputText.split("\n")[0].split(" ")[0].slice(1))

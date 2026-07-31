@@ -157,19 +157,21 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // The resolved entry host IS the OAuth issuer: every endpoint (authorize,
     // token, userinfo) is discovered from it, so no accounts/sign-in host is
     // derived here — the server's own metadata decides where the browser goes.
+    // This is why `--partition` resolves to a REGION host: only those declare a
+    // self-referential issuer, which RFC 8414 requires (login-target.ts).
     const { token, userInfo, instances } = await doBrowserLogin({
       baseUrl: toServiceUrl(target.entryHost, target.protocol),
     })
 
     // Prefer the region-specific business service userinfo reports (via
     // gatewayMapping). Fall back to the login entry host ONLY so a profile is
-    // still written — but that central host does NOT serve SQL (/lh/submitJob),
-    // so flag it: a profile with service=central host can authenticate yet fail
-    // every query with a confusing 404. We surface this at login rather than let
-    // it manifest as an opaque runtime error.
+    // still written, and flag it: the fallback means the account has no resolved
+    // region, so the profile is not known to be able to run SQL even though the
+    // entry host is itself a region host. We surface this at login rather than
+    // let it manifest as an opaque runtime error.
     const regionService = userInfo?.service
     const finalService = regionService ?? target.entryHost
-    const serviceIsCentralFallback = !regionService
+    const serviceIsEntryFallback = !regionService
 
     // Enumerate every (instance × workspace) combination so each becomes its own
     // profile, all sharing one OAuth token. userinfo alone only knows the
@@ -207,9 +209,9 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // Warn when the provisioned profile may not be able to run SQL, so success
     // isn't silently misleading (login reported OK but the profile is unusable).
     const warnings: string[] = []
-    if (serviceIsCentralFallback) {
+    if (serviceIsEntryFallback) {
       warnings.push(
-        `Could not resolve a region service host from your account (no gatewayMapping); the profile's service falls back to the central login host '${finalService}', which does not serve SQL. Queries will fail until an instance/region is available. Re-run login after your account has a provisioned instance.`,
+        `Could not resolve a region service host from your account (no gatewayMapping); the profile's service falls back to the login entry host '${finalService}'. That entry serves OAuth, but it is not confirmed to be your account's data region, so queries may fail. Re-run login after your account has a provisioned instance.`,
       )
     }
     if (!userInfo?.instanceName && combos.length === 0) {
@@ -269,6 +271,32 @@ function classifyLoginError(msg: string): { code: string; aiMessage: string } {
       code: "LOGIN_CALLBACK_TIMEOUT",
       aiMessage:
         "The browser never delivered the redirect to the local callback. Common causes: a proxy in TUN/enhanced mode (Clash, Surge, sing-box), a VPN, or a firewall intercepting 127.0.0.1. Add 127.0.0.1 to the proxy's bypass rules or disable the proxy, then re-run `cz-cli auth login <name>`. If you completed sign-in in the browser, re-run and paste the address-bar URL when prompted.",
+    }
+  }
+  // Discovery/transport failures are NOT "the user didn't finish signing in", and
+  // telling them to retry is actively wrong — a host that doesn't resolve, or a
+  // metadata document that names someone else as issuer, will fail identically
+  // forever. These reach us as `oauth_error` with the reason pulled out of the
+  // error's cause chain (oauth-error.ts:causeDetail).
+  if (msg.includes("ENOTFOUND") || msg.includes("EAI_AGAIN")) {
+    return {
+      code: "LOGIN_ENTRY_UNREACHABLE",
+      aiMessage:
+        "The OAuth host could not be resolved by DNS, so no sign-in request was made. Retrying will not help. Check network/DNS, or pass a reachable host with `--oauth-url <host>`.",
+    }
+  }
+  if (msg.includes("ECONNREFUSED") || msg.includes("UND_ERR_CONNECT_TIMEOUT") || msg.includes("ECONNRESET")) {
+    return {
+      code: "LOGIN_ENTRY_UNREACHABLE",
+      aiMessage:
+        "The OAuth host resolved but the connection failed (refused, reset, or timed out) — often a proxy or firewall. Verify the host is reachable, then re-run; for internal environments pass `--oauth-url <host>`.",
+    }
+  }
+  if (msg.includes("issuer mismatch")) {
+    return {
+      code: "LOGIN_ISSUER_MISMATCH",
+      aiMessage:
+        "The host served an OAuth metadata document that declares a DIFFERENT issuer, which RFC 8414 forbids and the client rejects. This host cannot be used as a sign-in entry — use the issuer the document names (or `--partition cn|intl`, which pins hosts known to be valid).",
     }
   }
   return {

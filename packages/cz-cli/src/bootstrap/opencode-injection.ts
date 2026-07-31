@@ -13,6 +13,7 @@
 // │ OPENCODE_CONFIG_CONTENT=<json>   providers/skills/plugins +    agent runtime  │
 // │                                  data_engineer default agent                  │
 // │ OPENCODE_TUI_CONFIG=<file>       cz home logo / brand plugin   agent runtime  │
+// │                                  + plugin_enabled (off: tips)                 │
 // │ CLICKZETTA_AGENT_SYSTEM_PROMPT   cz-cli operational reference  agent runtime  │
 // │ global Worker shim (not an env)  carry process.env into the    agent runtime  │
 // │                                  TUI server Worker (Bun quirk)                │

@@ -53,7 +53,6 @@ function writeRelayLlm(clickzettaDir: string) {
           },
         },
       },
-      model: "relay",
     }) + "\n",
   )
 }

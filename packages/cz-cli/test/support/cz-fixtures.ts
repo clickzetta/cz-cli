@@ -23,6 +23,29 @@ export function onStudio(pathIncludes: string, respond: (body: unknown) => unkno
 export { onFetch, onPath }
 
 /**
+ * Assert the temp-home isolation is actually in place before a test destroys
+ * config under it.
+ *
+ * llmConfigPath() falls back to os.homedir() when CLICKZETTA_TEST_HOME is unset,
+ * and writeLlmEntries REPLACES the whole provider map — so a test that resets
+ * llm.json without that variable set wipes the developer's real ~/.clickzetta/
+ * credentials (and config.model with them). test/preload.ts normally guarantees
+ * it, but preload is wired per-package via bunfig.toml and re-established
+ * per-test because other files delete these vars; the failure mode is silent and
+ * costs real credentials, so destructive resets assert it rather than trust it.
+ */
+export function requireTestHome(): string {
+  const home = process.env.CLICKZETTA_TEST_HOME
+  if (!home) {
+    throw new Error(
+      "CLICKZETTA_TEST_HOME is unset — refusing to reset llm.json/profiles.toml, " +
+        "which would target the real home directory. Is test/preload.ts loaded?",
+    )
+  }
+  return home
+}
+
+/**
  * Build a `/lh/submitJob` (or getJob) response for a SUCCEEDED SQL job with
  * embedded TEXT results, matching the wire shape parseJobResponse expects:
  * fields in `resultSet.metadata`, rows base64-encoded in `resultSet.data.data`

@@ -216,10 +216,9 @@ function errorResult(err: unknown) {
 // so it can guide the user through setup/login instead of surfacing an opaque
 // 503 from the in-process agent server.
 function notConfiguredResult(reason: "no_profile" | "no_llm") {
-  const text =
-    reason === "no_profile"
-      ? "cz-cli is not configured: no ClickZetta profile found. Ask the user to run `cz-cli auth login <name>` (browser OAuth) to create one, then retry."
-      : "cz-cli has no agent LLM configured. Ask the user to run `cz-cli agent llm add` (or `cz-cli auth login <name> --credential <base64>` for the built-in LLM) to configure one, then retry."
+  const text = reason === "no_profile"
+    ? "cz-cli is not configured: no ClickZetta profile found. Ask the user to run `cz-cli auth login <name>` (browser OAuth) to create one, then retry."
+    : "cz-cli has no usable LLM API configuration. Ask the user to register one with `cz-cli agent llm add <name> --provider <provider> --api-key <key>` (or `cz-cli auth login <name> --credential <base64>`), then retry."
   return { isError: true, content: [{ type: "text" as const, text: `NOT_CONFIGURED (${reason}): ${text}` }] }
 }
 
@@ -234,10 +233,8 @@ function checkConfigured(): ReturnType<typeof notConfiguredResult> | undefined {
     return notConfiguredResult("no_profile")
   }
   try {
-    // cz_change: no default_llm concept — a usable LLM just means at least one
-    // provider entry has both provider + api_key. opencode selects the model.
     const { llm } = readLlmEntries()
-    const hasUsable = Object.values(llm).some((e) => e.provider && e.api_key)
+    const hasUsable = Object.values(llm).some((entry) => entry.provider && entry.api_key)
     if (!hasUsable) return notConfiguredResult("no_llm")
   } catch {
     return notConfiguredResult("no_llm")
