@@ -5,6 +5,8 @@ import {
   getTaskDetail,
   getTaskConfigDetail,
   saveTaskContent,
+  listVclusters,
+  resolveVclusterId,
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
@@ -675,7 +677,7 @@ async function loadIntegrationContent(sc: StudioConfig, taskId: number): Promise
 // ---------------------------------------------------------------------------
 // Save helpers
 // ---------------------------------------------------------------------------
-async function saveContent(sc: StudioConfig, taskId: number, content: Json, paramValueList: unknown[] = []): Promise<void> {
+async function saveContent(sc: StudioConfig, taskId: number, content: Json, paramValueList: unknown[] = [], adhocConfigs?: string): Promise<void> {
   await saveTaskContent(sc, {
     dataFileId: taskId,
     dataFileContent: content,
@@ -684,6 +686,69 @@ async function saveContent(sc: StudioConfig, taskId: number, content: Json, para
     instanceName: sc.instanceName,
     replaceEscapedChars: false,
     paramValueList,
+    ...(adhocConfigs !== undefined && { adhocConfigs }),
+  })
+}
+
+function isIntegrationVc(v: { type?: string }): boolean {
+  return String(v.type ?? "").toUpperCase() === "INTEGRATION"
+}
+
+// Integration tasks execute on a sync-type (INTEGRATION) VCluster. A GENERAL/ANALYTICS
+// VC cannot run sync jobs, so binding one would only surface as a run-time failure later.
+// When vcName is given, validate its type; when omitted, auto-pick the workspace's sole
+// INTEGRATION VC (mirroring Studio, which binds an execution VC on save). Returns the
+// adhocConfigs JSON string to persist alongside the pipeline content.
+async function resolveSyncVcAdhocConfigs(
+  sc: StudioConfig,
+  vcName: string | undefined,
+  sinkSchema: string,
+  format: string | undefined,
+): Promise<string> {
+  const list = await listVclusters(sc).catch(() => [])
+  const integrationVcs = list.filter(isIntegrationVc)
+
+  let resolvedName = vcName
+  let adhocVcId: string | undefined
+
+  if (vcName) {
+    const match = list.find((v) => v.name === vcName || v.id === vcName)
+    if (match && !isIntegrationVc(match)) {
+      const hint = integrationVcs.length
+        ? `Available INTEGRATION VClusters: ${integrationVcs.map((v) => v.name).filter(Boolean).join(", ")}.`
+        : "No INTEGRATION VCluster found in this workspace — create one or check permissions."
+      handledError(
+        "INVALID_VCLUSTER",
+        `VCluster '${vcName}' is type ${match.type}, but offline sync tasks require an INTEGRATION (sync-type) VCluster. ${hint}`,
+        { format, exitCode: 2 },
+      )
+    }
+    adhocVcId = match?.id ?? (await resolveVclusterId(sc, vcName).catch(() => undefined))
+  } else {
+    // No VC given: auto-pick the workspace's INTEGRATION VC.
+    if (integrationVcs.length === 0) {
+      handledError(
+        "SYNC_VC_REQUIRED",
+        "Offline sync tasks require an INTEGRATION (sync-type) VCluster, but none was found in this workspace. Create one in Studio, or pass --vc <SYNC_VC>.",
+        { format, exitCode: 2 },
+      )
+    }
+    if (integrationVcs.length > 1) {
+      handledError(
+        "SYNC_VC_AMBIGUOUS",
+        `Multiple INTEGRATION VClusters found: ${integrationVcs.map((v) => v.name).filter(Boolean).join(", ")}. Pass --vc <SYNC_VC> to choose one.`,
+        { format, exitCode: 2 },
+      )
+    }
+    resolvedName = integrationVcs[0]!.name
+    adhocVcId = integrationVcs[0]!.id
+  }
+
+  return JSON.stringify({
+    multiDataSource: [],
+    schema: sinkSchema,
+    adhocVcCode: resolvedName,
+    ...(adhocVcId != null && { adhocVcId: String(adhocVcId) }),
   })
 }
 
@@ -706,6 +771,10 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               choices: ["single", "multi", "whole_db"],
               default: "single",
               describe: "single: one table (creates sink table + field mapping); multi: many tables; whole_db: whole database (no table creation)",
+            })
+            .option("vc", {
+              type: "string",
+              describe: "[multi/whole_db] Sync VCluster name (INTEGRATION type) to bind to the task. Falls back to the session --vcluster. Required for the task to run.",
             })
             .option("source-datasource", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
             .option("source-schema", { type: "string", demandOption: true, describe: "Source schema/database" })
@@ -762,14 +831,20 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 jobsSpec,
                 dbNamespaces,
               })
-              await saveContent(sc, fileId, content)
+              // A literal "default"/"DEFAULT" vcluster is the connection default, not a
+              // real sync VC — treat it as "not provided" so the auto-pick kicks in.
+              const vcArg = (argv.vc as string | undefined) ?? conn.vcluster
+              const vcName = vcArg && vcArg.toLowerCase() !== "default" ? vcArg : undefined
+              const adhocConfigs = await resolveSyncVcAdhocConfigs(sc, vcName, sinkSchema, format)
+              const boundVc = (JSON.parse(adhocConfigs) as { adhocVcCode?: string }).adhocVcCode
+              await saveContent(sc, fileId, content, [], adhocConfigs)
               logOperation("integration setup", { ok: true })
               const kind = pipelineType === 1 ? "multi-table" : "whole-db"
               success(
-                { task_id: fileId, sync_type: syncType, tables, studio_url: studioUrl(sc, fileId) },
+                { task_id: fileId, sync_type: syncType, tables, ...(boundVc ? { vc: boundVc } : {}), studio_url: studioUrl(sc, fileId) },
                 {
                   format,
-                  aiMessage: `已创建${kind === "multi-table" ? "多表" : "整库"}同步任务（${jobsSpec.length} 张表）。集成任务执行需使用 INTEGRATION 类型的 vcluster。`,
+                  aiMessage: `已创建${kind === "multi-table" ? "多表" : "整库"}同步任务（${jobsSpec.length} 张表）。已绑定同步 VCluster：${boundVc}。`,
                 },
               )
               return
