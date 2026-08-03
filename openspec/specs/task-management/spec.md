@@ -259,3 +259,53 @@ CLI task 类型、状态、调度频率等 Studio 后端契约 MUST 通过集中
 - **WHEN** 执行未在 `--max-wait-seconds` 内完成
 - **THEN** CLI 返回 timeout 语义
 - **AND** `ai_message` SHOULD 提供后续查询 run/job 的命令
+
+### Requirement: create-setup 对 UI-only 同步任务给出精确的下一步命令引导
+
+本需求 MUST 按以下场景执行。
+
+`task create-setup` 对 `UI_ONLY_FILE_TYPES` 类型只创建任务空壳、不保存内容。此时返回的 `ai_message` MUST 根据具体任务类型给出**精确的下一步 CLI 命令**，而不是笼统地让用户「打开 Studio 配置」：
+
+- **离线数据集成同步**（MULTI_DI 多表、INTEGRATION/DI 单表）MUST 引导用户使用 `cz-cli task integration setup <task> --sync-type ...` 在 CLI 内配置源表/目标/映射。
+- **实时多表同步**（MULTI_REALTIME）MUST 引导用户使用 `cz-cli task create-realtime-sync` 或 `cz-cli task save-realtime-sync`。
+- **实时单表同步**（REALTIME，Kafka/AutoMQ → Lakehouse）MUST 引导用户使用 `cz-cli task create-stream-sync`。
+- **归并任务**（MERGE）MUST 引导用户使用 `cz-cli task save-merge`。
+- **组合流程任务**（FLOW）MUST 引导用户使用 `cz-cli task flow` 命令组。
+- 其余没有类型匹配的 CLI 配置命令的类型（如 STREAMING/FULL_INCREMENTAL/DYNAMIC_TABLE/SPARK/DATABRICKS 等）MUST 保留「打开 Studio 配置」的引导，并附 `studio_url`；MUST NOT 引导到不适用于该类型的命令。
+
+所有分支返回的成功载荷 MUST 继续包含 `task_id`、`studio_url`，且 `content_saved=false`、`cron_saved=false`。
+
+#### Scenario: 创建 MULTI_DI 任务引导到 integration setup
+
+- **WHEN** 用户执行 `cz-cli task create-setup NAME --type MULTI_DI --folder F`
+- **THEN** CLI 创建任务空壳并返回成功
+- **AND** `ai_message` MUST 包含 `task integration setup`
+- **AND** 载荷包含 `task_id` 与 `studio_url`
+
+#### Scenario: 创建 MULTI_REALTIME 任务引导到 realtime-sync 命令
+
+- **WHEN** 用户执行 `cz-cli task create-setup NAME --type MULTI_REALTIME --folder F`
+- **THEN** `ai_message` MUST 包含 `create-realtime-sync`
+
+#### Scenario: 创建 MERGE 任务引导到 save-merge
+
+- **WHEN** 用户执行 `cz-cli task create-setup NAME --type MERGE --folder F`
+- **THEN** `ai_message` MUST 包含 `save-merge`
+
+#### Scenario: 创建 FLOW 任务引导到 flow 命令组
+
+- **WHEN** 用户执行 `cz-cli task create-setup NAME --type FLOW --folder F`
+- **THEN** `ai_message` MUST 包含 `flow`
+
+#### Scenario: 纯 UI 类型保留 Studio 引导
+
+- **WHEN** 用户执行 `cz-cli task create-setup NAME --type SPARK --folder F`
+- **THEN** `ai_message` MUST 提示打开 Studio 配置
+- **AND** `ai_message` MUST NOT 包含 `task integration setup`
+
+#### Scenario: 无匹配命令的类型不得误导到不适用命令
+
+- **WHEN** 用户执行 `cz-cli task create-setup NAME --type STREAMING --folder F`
+- **THEN** `ai_message` MUST 提示打开 Studio 配置
+- **AND** `ai_message` MUST NOT 包含 `create-stream-sync`
+- **AND** `ai_message` MUST NOT 包含 `task integration setup`

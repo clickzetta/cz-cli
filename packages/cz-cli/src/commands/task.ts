@@ -130,6 +130,34 @@ function parseTaskType(value: string): number {
   throw new Error(`Unsupported task type: ${value}. Use ${TASK_TYPE_OPTIONS.join("/")} or integer code.`)
 }
 
+// UI_ONLY tasks are created as shells; point the user at the exact CLI command
+// that configures each type, instead of a generic "open Studio". Only types with
+// a verified, type-matched CLI command get a precise hint; the rest fall back to
+// Studio (no CLI config command exists for them).
+const OFFLINE_SYNC_FILE_TYPES = new Set<number>([
+  StudioFileType.MultipleDISync,
+  StudioFileType.DataIntegration,
+])
+
+function uiOnlyNextStep(fileType: number, name: string, url: string): string {
+  if (OFFLINE_SYNC_FILE_TYPES.has(fileType)) {
+    return `Task '${name}' created (offline sync shell). Configure source/target/mapping in the CLI: cz-cli task integration setup ${name} --sync-type single|multi|whole_db --source-datasource ... --sink-datasource ... (run 'cz-cli task integration setup --help' for all options). Or open Studio: ${url}`
+  }
+  if (fileType === StudioFileType.MultipleRISync) {
+    return `Task '${name}' created (realtime multi-table sync shell). Configure it in one step with: cz-cli task create-realtime-sync, or configure this task with: cz-cli task save-realtime-sync ${name} --source ... --target ... Or open Studio: ${url}`
+  }
+  if (fileType === StudioFileType.RealTimeDI) {
+    return `Task '${name}' created (realtime sync shell). Configure a Kafka/AutoMQ → Lakehouse stream in the CLI: cz-cli task create-stream-sync. Or open Studio: ${url}`
+  }
+  if (fileType === StudioFileType.Merge) {
+    return `Task '${name}' created (merge shell). Configure merge rules and schedule in the CLI: cz-cli task save-merge ${name} (run 'cz-cli task save-merge --help' for options). Or open Studio: ${url}`
+  }
+  if (fileType === StudioFileType.Flow) {
+    return `Task '${name}' created (flow shell). Build the flow in the CLI: cz-cli task flow create-node ${name} ... then flow node-save / node-save-config / bind / submit (run 'cz-cli task flow --help'). Or open Studio: ${url}`
+  }
+  return `Task '${name}' created (UI-only type). Open Studio to configure this task: ${url}`
+}
+
 const LINEAGE_ROW_FORMATS = new Set(["table", "csv", "text", "jsonl"])
 
 const SYSTEM_PARAM_NAMES = new Set([
@@ -1978,7 +2006,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 studio_url: studioUrl(sc, fileId),
               }, {
                 format,
-                aiMessage: `Task created (type=${argv.type} is UI-only). Open Studio to configure data source, field mapping, and sync rules: ${studioUrl(sc, fileId)}`,
+                aiMessage: uiOnlyNextStep(parsedFileType, argv.name as string, studioUrl(sc, fileId)),
               })
               return
             }
