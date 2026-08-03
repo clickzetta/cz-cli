@@ -30,7 +30,13 @@ chmod +x "$TARGET_BINARY"
 # "Missing ClickZetta runtime asset". build.ts emits them into the archive's bin/
 # next to the binary, so they sit in $SCRIPT_DIR here. The .tsx/.ts are shipped as
 # raw source on purpose (pre-bundling would embed a second @opentui/core).
-for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts; do
+#
+# KEEP IN SYNC with CLICKZETTA_RUNTIME_ASSETS in
+# packages/cz-cli/src/bootstrap/runtime-assets.ts — test/runtime-assets-installers.test.ts
+# fails if this list falls behind. It did once: the quota indicator's two files were
+# emitted by build.ts but never copied here, and because tui-brand.tsx imports
+# ./tui-quota, the missing file took the whole brand plugin (logo + title) down with it.
+for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts tui-quota.tsx tui-quota-runtime.js; do
   [ -f "${SCRIPT_DIR}/${asset}" ] && cp "${SCRIPT_DIR}/${asset}" "${INSTALL_DIR}/${asset}"
 done
 

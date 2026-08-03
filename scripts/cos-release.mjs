@@ -32,6 +32,11 @@ import {
   uploadFile,
   withRetry,
 } from "./cos-upload.mjs"
+// Single source of truth for the files that must sit beside the installed binary.
+// Imported (not re-listed) so the generated PowerShell installer cannot drift from
+// scripts/setup.sh — that drift is exactly what shipped a Windows installer with
+// zero runtime assets. This script runs under bun in CI, so importing .ts is fine.
+import { CLICKZETTA_RUNTIME_ASSETS } from "../packages/cz-cli/src/bootstrap/runtime-assets.ts"
 
 const PATH_PREFIX = process.env.COS_PATH_PREFIX ?? "cz-cli-releases"
 const META_INF_PREFIX = "META-INF"
@@ -532,6 +537,7 @@ function renderPowerShellPlatformCase(platforms) {
 }
 
 export function renderBootstrapPs1({ version, channel, platforms }) {
+  const RUNTIME_ASSETS_PS = CLICKZETTA_RUNTIME_ASSETS.map(psQuote).join(", ")
   return `#!/usr/bin/env pwsh
 $ErrorActionPreference = "Stop"
 $Version = '${version}'
@@ -579,6 +585,23 @@ function Repair-InstallDirPath($InstallDir) {
     Write-Host "Could not add $InstallDir to User PATH automatically." -ForegroundColor Yellow
     Write-Host "Run this PowerShell command manually:"
     Write-Host "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$InstallDir', [EnvironmentVariableTarget]::User)"
+  }
+}
+
+function Copy-RuntimeAssets($ExtractDir, $InstallDir) {
+  # The compiled cz-cli resolves these from dirname(process.execPath) at runtime
+  # (runtime-assets.ts resolveRuntimeModulePath). Two of them are REQUIRED and
+  # throw "Missing ClickZetta runtime asset" when absent, which kills every
+  # \`cz-cli agent\` / \`agent llm\` invocation — so a Windows install that copied
+  # only the .exe had a working \`--version\` and a dead agent. The list is
+  # generated from CLICKZETTA_RUNTIME_ASSETS so it cannot drift from the sh
+  # installer's. .tsx/.ts ship as raw source on purpose (pre-bundling would embed
+  # a second @opentui/core).
+  foreach ($Asset in @(${RUNTIME_ASSETS_PS})) {
+    $Source = Join-Path $ExtractDir $Asset
+    if (Test-Path -LiteralPath $Source) {
+      Copy-Item -LiteralPath $Source -Destination (Join-Path $InstallDir $Asset) -Force
+    }
   }
 }
 
@@ -683,6 +706,7 @@ ${renderPowerShellPlatformCase(platforms)}
     "@echo off"
     '"%~dp0cz-cli.exe" agent %*'
   )
+  Copy-RuntimeAssets $ExtractDir $InstallDir
   $SkillsSource = Join-Path $ExtractDir "skills"
   Copy-BundledSkills $SkillsSource
   Cleanup-ExternalAgentSkill

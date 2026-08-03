@@ -18,6 +18,7 @@ import {
   CLICKZETTA_TUI_PLUGIN_ASSET,
   CLICKZETTA_TUI_QUOTA_ASSET,
   CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET,
+  CLICKZETTA_TUI_TITLE_ASSET,
 } from "../src/bootstrap/runtime-assets"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -335,7 +336,7 @@ for (const item of targets) {
   // compile), so shipping it as raw source carries no second @opentui/core.
   fs.copyFileSync(
     path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-title-brand.ts"),
-    `dist/${name}/bin/tui-title-brand.ts`,
+    `dist/${name}/bin/${CLICKZETTA_TUI_TITLE_ASSET}`,
   )
   // cz_change: same deal for the quota indicator's slot renderer — raw .tsx so the
   // host compiles it against its own solid singleton. It imports the pre-bundled

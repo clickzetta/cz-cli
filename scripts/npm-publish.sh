@@ -110,7 +110,12 @@ for platform in "${PLATFORMS[@]}"; do
   # in-place from this package's bin/, so dirname(process.execPath) must contain these
   # or runtime-assets.ts resolveRuntimeModulePath throws "Missing ClickZetta runtime
   # asset" and agent/llm features crash. build.ts emits them into artifact bin/.
-  for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts; do
+  #
+  # KEEP IN SYNC with CLICKZETTA_RUNTIME_ASSETS in
+  # packages/cz-cli/src/bootstrap/runtime-assets.ts — test/runtime-assets-installers.test.ts
+  # fails if this list falls behind. See the note in scripts/setup.sh for the
+  # regression that motivated the guard.
+  for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts tui-quota.tsx tui-quota-runtime.js; do
     if [ -f "$artifact_dir/bin/$asset" ]; then
       cp "$artifact_dir/bin/$asset" "$pkg_dir/bin/$asset"
     fi

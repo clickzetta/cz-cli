@@ -16,6 +16,38 @@ export const CLICKZETTA_TUI_QUOTA_ASSET = "tui-quota.tsx"
 // in @clickzetta/sdk and the cz connection/llm modules, none of which touch
 // @opentui or solid-js, so bundling carries no duplicate runtime.
 export const CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET = "tui-quota-runtime.js"
+// The brand plugin's terminal-title logic, split into a non-JSX sibling so it is
+// unit-testable without the @opentui/solid runtime. tui-brand.tsx imports it as a
+// bare relative "./tui-title-brand", so it must sit next to the .tsx at runtime.
+export const CLICKZETTA_TUI_TITLE_ASSET = "tui-title-brand.ts"
+
+/**
+ * Every file that must land next to the installed binary, because the compiled
+ * cz-cli resolves them from `dirname(process.execPath)` (see
+ * resolveRuntimeModulePath below).
+ *
+ * This list is the SINGLE SOURCE OF TRUTH and exists because the set drifted:
+ * the TUI quota indicator added tui-quota.tsx + tui-quota-runtime.js and taught
+ * build.ts to emit them, but the two installer copy loops (scripts/setup.sh,
+ * scripts/npm-publish.sh) kept their own hand-written list and were not updated.
+ * tui-brand.tsx imports ./tui-quota, so on an installed binary that import threw
+ * and the ENTIRE brand plugin was dropped — silently, since the specifier resolver
+ * is best-effort. Net effect: upstream opencode logo, title stuck on "OpenCode",
+ * no quota indicator, i.e. the commit that added the indicator also regressed the
+ * logo and title that already worked.
+ *
+ * A missing asset can therefore be invisible in `dist/` and fatal once installed.
+ * test/runtime-assets-installers.test.ts asserts both installers cover this list,
+ * so adding an entry here fails the suite until the installers are updated too.
+ */
+export const CLICKZETTA_RUNTIME_ASSETS = [
+  CLICKZETTA_PROVIDER_ASSET,
+  CLICKZETTA_PLUGIN_ASSET,
+  CLICKZETTA_TUI_PLUGIN_ASSET,
+  CLICKZETTA_TUI_TITLE_ASSET,
+  CLICKZETTA_TUI_QUOTA_ASSET,
+  CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET,
+] as const
 
 function resolveRuntimeModulePath(options: { source: string; bundled: string }) {
   if (existsSync(options.source)) return options.source
