@@ -1,0 +1,108 @@
+{
+  "name": "cz-cli",
+  "displayName": "ClickZetta CLI",
+  "description": "Run the cz-cli agent inside VS Code",
+  "version": "0.1.0",
+  "publisher": "clickzetta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clickzetta/cz-cli"
+  },
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0A0A0A",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "clickzetta",
+    "lakehouse",
+    "ai",
+    "agent",
+    "sql"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cz.openTerminal",
+        "title": "Open cz-cli agent",
+        "icon": {
+          "light": "images/button-dark.svg",
+          "dark": "images/button-light.svg"
+        }
+      },
+      {
+        "command": "cz.openNewTerminal",
+        "title": "Open cz-cli agent in new tab",
+        "icon": {
+          "light": "images/button-dark.svg",
+          "dark": "images/button-light.svg"
+        }
+      },
+      {
+        "command": "cz.addFilepathToTerminal",
+        "title": "cz-cli: Insert At-Mentioned File"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cz.openNewTerminal",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cz.openTerminal",
+        "title": "Run cz-cli agent",
+        "key": "cmd+escape",
+        "mac": "cmd+escape",
+        "win": "ctrl+escape",
+        "linux": "ctrl+escape"
+      },
+      {
+        "command": "cz.openNewTerminal",
+        "title": "Run cz-cli agent in new tab",
+        "key": "cmd+shift+escape",
+        "mac": "cmd+shift+escape",
+        "win": "ctrl+shift+escape",
+        "linux": "ctrl+shift+escape"
+      },
+      {
+        "command": "cz.addFilepathToTerminal",
+        "title": "cz-cli: Insert At-Mentioned File",
+        "key": "cmd+alt+k",
+        "mac": "cmd+alt+k",
+        "win": "ctrl+alt+K",
+        "linux": "ctrl+alt+K"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run package",
+    "compile": "bun run check-types && bun run lint && node esbuild.js",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "bun run check-types && bun run lint && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.94.0",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "eslint": "^9.25.1",
+    "esbuild": "^0.25.3",
+    "typescript": "^5.8.3"
+  }
+}

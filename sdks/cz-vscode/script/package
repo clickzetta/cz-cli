@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Build the cz-cli VS Code extension into a distributable .vsix.
+#
+# Usage:
+#   ./script/package [version]
+#
+# With no argument the version in package.json is used. CI passes an explicit
+# version so per-commit artifacts are identifiable.
+#
+# Deliberately does NOT publish: this extension is distributed as a vsix through
+# CI artifacts and GitHub Releases, not the VS Code Marketplace, so there is no
+# publisher account or VSCE_PAT in play. See README.md "Install".
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+VERSION="${1:-$(node -p "require('./package.json').version")}"
+OUT="dist/cz-cli-vscode-${VERSION}.vsix"
+
+mkdir -p dist
+
+# --no-dependencies: the bundle is self-contained (esbuild), devDeps must not ship.
+# --skip-license: LICENSE lives at the repo root, not in this subdirectory.
+# --no-git-tag-version / --no-update-package-json: never mutate the tree in CI.
+vsce package \
+  --no-git-tag-version \
+  --no-update-package-json \
+  --no-dependencies \
+  --skip-license \
+  -o "$OUT" \
+  "$VERSION"
+
+echo "packaged: $OUT"

@@ -259,6 +259,101 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+  # Package the VS Code extension and attach the .vsix to the GitHub release, so
+  # internal users have a stable download URL per version instead of digging
+  # through workflow artifacts. This is the ONLY distribution channel for the
+  # extension — it is deliberately not published to the VS Code Marketplace or
+  # Open VSX, so no publisher account or token is involved.
+  #
+  # Depends only on resolve-release/create-release, NOT on build: the extension is
+  # a self-contained esbuild bundle that shells out to whatever `cz-cli` is on the
+  # user's PATH, so it shares nothing with the binary build. Keeping it off that
+  # dependency means a red binary build still yields a usable extension, and the
+  # job adds no wall-clock time to the release critical path.
+  #
+  # Runs for dev tags too: dev releases are how the extension gets tried out
+  # internally before a stable cut.
+  publish-vscode-extension:
+    needs: [resolve-release, create-release]
+    if: |
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: sdks/cz-vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # bun-version-file resolves from the repo root (working-directory applies to
+      # `run` steps only), which is what we want — sdks/cz-vscode/package.json has
+      # no packageManager field.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install vsce
+        run: bun install -g @vscode/vsce
+
+      # vsce requires strict semver, but cz release tags are not: a dev tag looks
+      # like `dev-v1.17.11.20260731110228` (four dot-separated numbers), which vsce
+      # rejects. Convert it to the semver prerelease `1.17.11-dev.20260731110228`
+      # so the extension version stays traceable to the release AND sorts below the
+      # eventual stable 1.17.11. Stable versions pass through untouched.
+      - name: Resolve extension version
+        id: version
+        run: |
+          RAW="${{ needs.resolve-release.outputs.version }}"
+          if printf '%s' "$RAW" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VERSION="$RAW"
+          else
+            BASE=$(printf '%s' "$RAW" | sed -E 's/^dev-v([0-9]+\.[0-9]+\.[0-9]+)\..*/\1/')
+            SUFFIX=$(printf '%s' "$RAW" | sed -E 's/^dev-v[0-9]+\.[0-9]+\.[0-9]+\.(.*)$/\1/')
+            VERSION="${BASE}-dev.${SUFFIX}"
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Could not derive a semver extension version from tag: $RAW" >&2
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extension version: $VERSION"
+
+      - name: Package extension
+        run: ./script/package "${{ steps.version.outputs.value }}"
+
+      # Named cz-cli-vscode-<version>.vsix. Safe alongside the binary archives
+      # despite the shared `cz-cli-` prefix: publish-npm and publish-cos both
+      # download `--pattern "cz-cli-*"`, but scripts/prepare-release-assets.mjs
+      # only consumes names ending in .zip/.tar.gz, so the .vsix is ignored.
+      - name: Attach vsix to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.resolve-release.outputs.tag }}" \
+            dist/cz-cli-vscode-${{ steps.version.outputs.value }}.vsix \
+            --clobber \
+            --repo "${{ github.repository }}"
+
+      # Also keep it as a workflow artifact: release assets can be deleted or the
+      # release re-cut (create-release does `gh release delete` first), and this
+      # gives a second retrieval path during triage.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vscode-extension
+          path: sdks/cz-vscode/dist/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
 
   publish-npm:
     needs: [resolve-release, build]
