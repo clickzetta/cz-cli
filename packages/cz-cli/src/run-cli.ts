@@ -79,9 +79,41 @@ const AGENT_FLAGS = new Set(["debug", "d", "help", "h", "version", "v"])
 // listed in AGENT_FLAGS-style value-less handling via the scanner's default.
 const UPSTREAM_AGENT_VALUE_FLAGS = ["m", "f", "n", "u", "g"] as const
 
+// Upstream's value-taking network options, from the `options` object in
+// packages/opencode/src/cli/network.ts. withNetworkOptions() mixes them into the
+// $0 TUI command — that is, bare `cz-cli agent` — so they legally appear BEFORE
+// any subcommand, exactly where this scanner looks. Keep in sync on re-baseline.
+//
+// Missing, they reproduced the UPSTREAM_AGENT_VALUE_FLAGS bug verbatim, and worse:
+// `agent --port 8080` read "8080" as the subcommand, missed
+// AGENT_RUNTIME_SUBCOMMANDS, never delegated, and printed the `agent` group help
+// with exit 0 — no server, no diagnostic. Adding a subcommand only made it audible:
+// `agent --port 8080 run hi` exited 2 on "Unknown argument: port".
+//
+// --mdns is deliberately NOT here: it is boolean, so listing it would swallow the
+// following token and stop `agent --mdns run hi` from delegating. --cors is
+// `array: true`, so yargs consumes its values greedily where this scanner skips
+// exactly one; the divergence is harmless because both readings still delegate, and
+// the runtime re-parses the raw args with the real parser.
+const UPSTREAM_NETWORK_VALUE_FLAGS = ["port", "hostname", "mdns-domain", "cors"] as const
+
+// The remaining value-taking options the $0 TUI command declares
+// (packages/opencode/src/cli/cmd/tui.ts); --model/--session are already covered
+// above. Same pre-subcommand position, same silent exit 0 without them.
+// --replay-limit belongs here even though agent-cmd/tui.ts rejects the --mini
+// family: delegating is what lets the user reach that purposeful error instead of
+// unexplained group help. Booleans (--continue/--fork/--mini/--replay/--no-replay/
+// --demo) are excluded for the same reason as --mdns.
+const UPSTREAM_TUI_VALUE_FLAGS = ["prompt", "agent", "replay-limit"] as const
+
 const AGENT_FLAGS_WITH_VALUES = new Set([
   ...CLICKZETTA_PROFILE_OPTION_NAMES,
   ...UPSTREAM_AGENT_VALUE_FLAGS,
+  ...UPSTREAM_NETWORK_VALUE_FLAGS,
+  ...UPSTREAM_TUI_VALUE_FLAGS,
+  // cz's own agent-level option (bootstrap/runtime.ts), alongside the boolean
+  // --print-logs/--pure, which take no value and so stay out.
+  "log-level",
   "jdbc",
   "pat",
   "username",
