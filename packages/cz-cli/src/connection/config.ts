@@ -1,5 +1,5 @@
-import { DEFAULT_CONNECTION, type ConnectionConfig } from "@clickzetta/sdk"
-import { getProfileConfig, makeProfileTokenStore, readProfileEntry } from "./profile-store.js"
+import { DEFAULT_CONNECTION, InterfaceError, type ConnectionConfig } from "@clickzetta/sdk"
+import { explicitAuthType, getProfileConfig, invalidAuthType, invalidAuthTypeMessage, makeProfileTokenStore, readProfileEntry, type AuthType } from "./profile-store.js"
 import { parseJdbcUrl } from "./jdbc.js"
 
 export interface CliArgs {
@@ -38,9 +38,38 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   cfg.protocol = normalizeProtocol(cfg.protocol)
 
   // Auth priority: --pat > CZ_PAT > profile pat > --username/--password > JDBC > env > profile
+  //
+  // A profile may carry SEVERAL credentials at once (a pat AND an `oauth = "<id>"`
+  // pointer AND username/password). Which one wins was previously an emergent
+  // property of two independent decisions — this function setting cfg.pat, and
+  // getToken() consulting config.tokenStore before fetchToken() — so a profile
+  // with both a pat and a stored OAuth token silently authenticated as the OAuth
+  // identity while cfg.pat sat there unused.
+  //
+  // `auth_type` resolves that: when set on the profile it SELECTS one credential
+  // and the profile's other credential fields are ignored. It only ever arbitrates
+  // between a profile's OWN fields — an explicit per-invocation credential
+  // (--pat / CZ_PAT / --username+--password) still outranks it, since that is the
+  // user speaking now rather than a stored preference.
+  const profileEntry = readProfileEntry(profileName)
+  // A present-but-invalid `auth_type` is a hard error, not a fallback. profiles.toml
+  // is hand-editable, so `auth_type = "passwrod"` is a realistic typo; ignoring it
+  // would silently restore the ambiguous precedence this field removes and could
+  // authenticate as a different identity than the user pinned. Fail where the
+  // credential is chosen — `profile list` deliberately still renders so the user can
+  // see the bad value and fix it.
+  const invalid = invalidAuthType(profileEntry)
+  if (invalid !== undefined) {
+    throw new InterfaceError(invalidAuthTypeMessage(profileName, invalid), { code: "INVALID_AUTH_TYPE" })
+  }
+  const pinnedAuth = explicitAuthType(profileEntry)
+  // Absent `auth_type` → no pin, and every branch below behaves exactly as it did
+  // before this field existed. Old profiles are untouched.
+  const pinAllows = (type: AuthType) => pinnedAuth === undefined || pinnedAuth === type
+
   const cliPat = cliArgs.pat || ""
   const envPat = process.env.CZ_PAT || ""
-  const profilePat = profileCfg?.pat || ""
+  const profilePat = pinAllows("pat") ? profileCfg?.pat || "" : ""
 
   const cliUsername = cliArgs.username
   const cliPassword = cliArgs.password
@@ -48,8 +77,8 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   const jdbcPassword = jdbcCfg?.password || ""
   const envUsername = envCfg?.username || ""
   const envPassword = envCfg?.password || ""
-  const profileUsername = profileCfg?.username || ""
-  const profilePassword = profileCfg?.password || ""
+  const profileUsername = pinAllows("password") ? profileCfg?.username || "" : ""
+  const profilePassword = pinAllows("password") ? profileCfg?.password || "" : ""
 
   if (cliPat) {
     cfg.pat = cliPat
@@ -85,6 +114,18 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
     cfg.customHeaders = { ...profileCfg.customHeaders, ...cfg.customHeaders }
   }
 
+  // A pinned non-cookie `auth_type` must drop the Cookie header. Every
+  // token-acquiring call site is hardcoded as `getCookieToken() ?? getToken()`, so
+  // a lingering cookie outranks the pinned credential regardless of what cfg's
+  // other fields say. This runs AFTER every merge on purpose: applyNonAuth already
+  // copied the profile's headers into cfg above, so filtering only the profile's
+  // copy would leave the cookie in place via cfg. Only the Cookie key goes — the
+  // rest of the headers are transport config, not credentials.
+  if (pinnedAuth !== undefined && pinnedAuth !== "cookie" && cfg.customHeaders) {
+    const kept = Object.entries(cfg.customHeaders).filter(([key]) => key.toLowerCase() !== "cookie")
+    cfg.customHeaders = kept.length > 0 ? Object.fromEntries(kept) : undefined
+  }
+
   // Attach a profile-backed OAuth token store so callers routing through this
   // function (exec.ts, studio-context.ts) get cross-process persistence
   // (requirement 9.3, 9.7). The OAuth token represents the user's own login,
@@ -108,9 +149,16 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // empty) — the token was persisted but unreadable, so a genuinely logged-in
   // user was reported as "no credentials". The OAuth token is keyed by the
   // profile pointer, not by instance, so instance must not gate it.
-  const oauthPointer = readProfileEntry(profileName)?.oauth
+  //
+  // A profile that pins a NON-oauth `auth_type` must not get the store either:
+  // this is the half that made the ambiguity silent. cfg.pat could be set from a
+  // profile pat while the store still handed getToken() a stored OAuth token,
+  // which it prefers. Withholding the store is what makes `auth_type = "pat"`
+  // (or "password"/"cookie") actually select that credential instead of merely
+  // labelling it.
+  const oauthPointer = profileEntry?.oauth
   const hasOAuthPointer = typeof oauthPointer === "string"
-  if ((cfg.instance || hasOAuthPointer) && !explicitCredential) {
+  if ((cfg.instance || hasOAuthPointer) && !explicitCredential && pinAllows("oauth")) {
     // No oauthId passed: the store resolves the shared-token id from this
     // profile's `oauth = "<id>"` pointer (or a legacy inline subtable).
     cfg.tokenStore = makeProfileTokenStore(profileName)

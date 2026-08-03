@@ -9,7 +9,7 @@ import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { loadProfiles, saveProfiles, getDefaultProfileName, type ProfileEntry } from "../connection/profile-store.js"
+import { loadProfiles, saveProfiles, getDefaultProfileName, deriveAuthType, explicitAuthType, invalidAuthType, invalidAuthTypeMessage, AUTH_TYPE, type ProfileEntry } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { registerBootstrapCommands } from "./profile-bootstrap.js"
 import { getExecContext, execSql, isQueryResult } from "./exec.js"
@@ -164,9 +164,25 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             const defaultProfile = data.default_profile as string | undefined
             const result = Object.entries(profiles).map(([name, p]) => {
               const pat = String(p.pat ?? "")
+              const invalid = invalidAuthType(p)
               const entry: Record<string, unknown> = {
                 name,
-                auth_mode: pat ? "pat" : "password",
+                // Replaces the former `auth_mode`, which was derived as
+                // `pat ? "pat" : "password"` and so reported every OAuth and
+                // cookie profile as "password". Explicit `auth_type` wins;
+                // otherwise it is inferred from the fields present. `null` when
+                // the profile carries no credential at all — that is a real state
+                // (a half-written profile) and worth showing rather than guessing.
+                // An invalid hand-edited value reports `null` plus the raw value and an
+                // error, rather than a derived guess: this profile does not resolve to
+                // any credential (every command that picks one fails hard on it), so
+                // printing e.g. "pat" here would show a guess as though it were the
+                // answer. Reported rather than thrown because `profile list` is where
+                // the user looks to find out WHICH profile is broken.
+                auth_type: invalid !== undefined ? null : explicitAuthType(p) ?? deriveAuthType(p) ?? null,
+                ...(invalid !== undefined
+                  ? { auth_type_raw: invalid, auth_type_error: invalidAuthTypeMessage(name, invalid) }
+                  : {}),
                 pat: argv["show-secret"] ? pat : maskSecret(pat),
                 username: String(p.username ?? ""),
                 service: String(p.service ?? ""),
@@ -291,11 +307,17 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               vcluster: argv.vcluster ?? jdbcCfg?.vcluster ?? "default",
               ...(argv["analysis-agent-endpoint"] ? { analysis_agent_endpoint: argv["analysis-agent-endpoint"] } : {}),
             }
+            // Pin the credential this profile was created with. These branches already
+            // know exactly which one the user supplied, so the pin is authoritative
+            // rather than inferred — and it keeps a later `auth login` against the same
+            // name from silently repointing the profile at an OAuth token.
             if (hasPat) {
               profileObj.pat = argv.pat!
+              profileObj.auth_type = AUTH_TYPE.pat
             } else if (hasUserPwd) {
               profileObj.username = resolvedUsername!
               profileObj.password = resolvedPassword!
+              profileObj.auth_type = AUTH_TYPE.password
             }
             if (argv.header) {
               const headerDict: Record<string, string> = {}
@@ -308,6 +330,12 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               if (Object.keys(headerDict).length > 0) {
                 profileObj.header = headerDict
               }
+            }
+            // A cookie-token header is the credential when no pat/username was given
+            // (the guard above requires one of the three). This is the only write path
+            // that produces auth_type = "cookie".
+            if (headerAuth && !hasPat && !hasUserPwd) {
+              profileObj.auth_type = AUTH_TYPE.cookie
             }
             if (!argv["skip-verify"] && !headerAuth) {
               try {

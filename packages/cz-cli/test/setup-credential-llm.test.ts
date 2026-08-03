@@ -103,6 +103,7 @@ describe("setup --credential", () => {
         schema: "clickzetta_account",
         vcluster: "CXH_TEST_1",
         pat: "czt_test_pat",
+        auth_type: "pat",
         service: "https://uat-api.clickzetta.com",
         protocol: "https",
         analysis_agent_endpoint: "https://analysis-agent.clickzetta.com",
@@ -126,6 +127,8 @@ describe("setup --login-method custom --login <jdbc>", () => {
       jdbc: {
         username: "alice",
         password: "secret",
+        // A JDBC URL carries username/password, so the profile is pinned to it.
+        auth_type: "password",
         service: "cn-hangzhou-alicloud.api.clickzetta.com",
         protocol: "https",
         instance: "00000000",

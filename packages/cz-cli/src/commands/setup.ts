@@ -9,7 +9,7 @@ import { JobStatus, getCurrentUser, DEFAULT_CONNECTION, getToken, listUserWorksp
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { setTelemetry, getTelemetry, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
+import { setTelemetry, getTelemetry, AUTH_TYPE, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
@@ -430,6 +430,8 @@ function parseJdbcSetupProfile(argv: Record<string, unknown>, login: string) {
     profile: {
       username,
       password,
+      // A JDBC URL carries username/password, so pin that.
+      auth_type: AUTH_TYPE.password,
       service: parsed.service,
       protocol,
       instance: parsed.instance,
@@ -1352,6 +1354,9 @@ async function runExistingAccountFlowTTY(
   const profile: ProfileEntry = {
     username,
     password,
+    // This flow authenticates with username/password, so pin it: without this a
+    // profile that later gains an OAuth token would silently switch identity.
+    auth_type: AUTH_TYPE.password,
     account_name: accountName,
     service: auth.service,
     protocol: "https",
@@ -1583,6 +1588,9 @@ async function runExistingAccountFlowNonTTY(
   const profile: ProfileEntry = {
     username,
     password,
+    // This flow authenticates with username/password, so pin it: without this a
+    // profile that later gains an OAuth token would silently switch identity.
+    auth_type: AUTH_TYPE.password,
     account_name: accountName,
     service: auth.service,
     protocol: "https",

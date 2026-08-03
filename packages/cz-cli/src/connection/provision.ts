@@ -10,8 +10,10 @@ import {
   sanitizeOAuthId,
   saveProfiles,
   saveSharedOAuthToken,
+  setAuthTypeIfAbsent,
   setDefaultProfile,
   setProfileOAuthPointer,
+  AUTH_TYPE,
   type ProfileEntry,
 } from "./profile-store.js"
 
@@ -88,6 +90,10 @@ function credentialToProfileEntry(cred: Record<string, unknown>): ProfileEntry {
     schema: String(cred.schema ?? "public"),
     vcluster: String(cred.virtualCluster ?? "default"),
     pat: String(cred.accessToken),
+    // The credential blob's accessToken IS a PAT, so pin it. Written at creation
+    // (this path throws on an existing profile) rather than patched afterwards,
+    // so there is never a window where the profile exists without its auth_type.
+    auth_type: AUTH_TYPE.pat,
     service: String(cred.service ?? "dev-api.clickzetta.com"),
     protocol: String(cred.protocol ?? "https"),
     ...(typeof cred.analysisAgentEndpoint === "string" ? { analysis_agent_endpoint: cred.analysisAgentEndpoint } : {}),
@@ -214,6 +220,11 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   const oauthId = sanitizeOAuthId(name ?? (finalInstance || "default"))
   makeProfileTokenStore(name, oauthId).save(token)
 
+  // Pin the profile to the OAuth token we just minted, so a pat or username that
+  // was already on the profile can't shadow this login. Only when unset — see
+  // setAuthTypeIfAbsent: re-login must not repoint a user's explicit choice.
+  setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
+
   if (name) setDefaultProfile(name)
 
   const llmConfigured = configureClickzettaLlm(name ?? finalInstance, {
@@ -290,6 +301,7 @@ export function provisionProfilesFromOAuthCombos(
       aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
     })
     setProfileOAuthPointer(name, oauthId)
+    setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
     created.push(name)
   })
 

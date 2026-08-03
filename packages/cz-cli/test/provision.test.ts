@@ -109,6 +109,8 @@ describe("provisionProfileFromCredential", () => {
       schema: "clickzetta_account",
       vcluster: "CXH_TEST_1",
       pat: "czt_test_pat",
+      // The credential blob's accessToken is a PAT, so the profile is pinned to it.
+      auth_type: "pat",
       service: "https://uat-api.clickzetta.com",
       protocol: "https",
       analysis_agent_endpoint: "https://analysis-agent.clickzetta.com",
@@ -134,6 +136,7 @@ describe("provisionProfileFromCredential", () => {
       schema: "public",
       vcluster: "default",
       pat: "tok",
+      auth_type: "pat",
       service: "dev-api.clickzetta.com",
       protocol: "https",
     })

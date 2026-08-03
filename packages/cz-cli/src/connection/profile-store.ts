@@ -140,6 +140,122 @@ export function readProfileEntry(profileName?: string): ProfileEntry | undefined
   return Object.values(profiles)[0]
 }
 
+/**
+ * Which credential a profile authenticates with. One value per login path:
+ * `pat` (loginWithPat), `password` (loginWithPassword), `oauth` (loginWithBrowser's
+ * refresh token via `[oauth.<id>]`), `cookie` (a pasted `header.Cookie`).
+ */
+export type AuthType = "pat" | "password" | "oauth" | "cookie"
+
+/**
+ * The `auth_type` values, as named constants.
+ *
+ * Write sites MUST use these rather than a bare string literal. `ProfileEntry` is
+ * `Record<string, unknown>`, so `auth_type: "passwrod"` typechecks silently, and the
+ * mistake would only surface as a runtime INVALID_AUTH_TYPE for the end user — after
+ * shipping. Referencing a constant turns it into a build failure instead. A value a
+ * USER hand-writes gets the runtime check ({@link invalidAuthType}); this guards the
+ * values WE write.
+ */
+export const AUTH_TYPE = {
+  pat: "pat",
+  password: "password",
+  oauth: "oauth",
+  cookie: "cookie",
+} as const satisfies Record<AuthType, AuthType>
+
+const AUTH_TYPES: readonly AuthType[] = Object.values(AUTH_TYPE)
+
+/**
+ * Infer the credential a profile would use from the fields it actually carries.
+ *
+ * ONLY for profiles with no explicit `auth_type` — i.e. every profile written
+ * before that field existed. The order mirrors the effective runtime precedence
+ * so a derived value reproduces today's behavior exactly rather than changing it:
+ * a cookie is consulted before the OAuth token (`getCookieToken() ?? getToken()`),
+ * and a persisted OAuth token is consulted before a profile pat/password
+ * (`getToken` reads `config.tokenStore` before `fetchToken`).
+ *
+ * Returns undefined when the profile carries no credential at all, which the
+ * callers surface rather than guessing.
+ */
+export function deriveAuthType(profile: ProfileEntry | undefined): AuthType | undefined {
+  if (!profile) return undefined
+  if (hasCookieHeader(profile)) return "cookie"
+  if (typeof profile.oauth === "string" && profile.oauth.length > 0) return "oauth"
+  if (typeof profile.pat === "string" && profile.pat.length > 0) return "pat"
+  if (typeof profile.username === "string" && profile.username.length > 0
+    && typeof profile.password === "string" && profile.password.length > 0) return "password"
+  return undefined
+}
+
+/** True when the profile carries a `Cookie` header in either storage shape. */
+function hasCookieHeader(profile: ProfileEntry): boolean {
+  const header = profile.header
+  if (header && typeof header === "object" && !Array.isArray(header)) {
+    if (Object.keys(header as Record<string, unknown>).some((k) => k.toLowerCase() === "cookie")) return true
+  }
+  return Object.keys(profile).some((k) => k.toLowerCase() === "header.cookie")
+}
+
+/**
+ * An `auth_type` that is present but not one of the four known values.
+ *
+ * Reported rather than ignored: profiles.toml is hand-editable, so `auth_type =
+ * "passwrod"` is a realistic typo, and silently treating it as absent falls back
+ * to the ambiguous credential precedence this field exists to remove — the CLI
+ * could authenticate as a different identity than the user pinned, with no
+ * message anywhere. A wrong credential is worth a hard error.
+ *
+ * Returns the offending raw string, or undefined when `auth_type` is absent
+ * (legitimate — every pre-existing profile) or valid.
+ */
+export function invalidAuthType(profile: ProfileEntry | undefined): string | undefined {
+  const raw = profile?.auth_type
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== "string") return String(raw)
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return undefined // `auth_type = ""` reads as "unset"
+  return AUTH_TYPES.includes(trimmed.toLowerCase() as AuthType) ? undefined : raw
+}
+
+/** The message used wherever an invalid `auth_type` is surfaced. */
+export function invalidAuthTypeMessage(profileName: string | undefined, raw: string): string {
+  return `Profile '${profileName ?? "(default)"}' has an invalid auth_type: ${JSON.stringify(raw)}. `
+    + `Valid values are ${AUTH_TYPES.map((t) => `"${t}"`).join(", ")}. `
+    + `Fix it in ~/.clickzetta/profiles.toml, or remove the line to fall back to automatic detection.`
+}
+
+/**
+ * A profile's EXPLICIT `auth_type`, or undefined when absent/unrecognized.
+ *
+ * Deliberately separate from {@link deriveAuthType}: an explicit value is
+ * authoritative and selects the credential outright, so callers must be able to
+ * tell "the user pinned this" from "we guessed".
+ *
+ * An unrecognized string returns undefined HERE, but callers that act on the
+ * credential must reject it first via {@link invalidAuthType} — this function is
+ * also used by read-only surfaces (`profile list`) that need to keep working so
+ * the user can actually see the bad value.
+ */
+export function explicitAuthType(profile: ProfileEntry | undefined): AuthType | undefined {
+  const raw = profile?.auth_type
+  if (typeof raw !== "string") return undefined
+  const value = raw.trim().toLowerCase() as AuthType
+  return AUTH_TYPES.includes(value) ? value : undefined
+}
+
+/**
+ * The credential this profile uses: its explicit `auth_type` when set, otherwise
+ * a derived guess. Never writes — reading a profile must not mutate it, so
+ * `profile list` stays free of write side effects and an old profile keeps
+ * working untouched.
+ */
+export function readAuthType(profileName?: string): AuthType | undefined {
+  const profile = readProfileEntry(profileName)
+  return explicitAuthType(profile) ?? deriveAuthType(profile)
+}
+
 export function getProfileConfig(profileName?: string): Partial<ConnectionConfig> | undefined {
   const profileData = readProfileEntry(profileName)
   if (!profileData) return undefined
@@ -205,6 +321,37 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
     return (agent?.endpoint as string) || undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Record how a profile authenticates — but ONLY when it has no `auth_type` yet.
+ *
+ * Never overwrites, deliberately, including on re-login. `auth_type` selects which
+ * of a profile's credentials is used, so it is a user-owned setting: a `cz-cli auth
+ * login --pat` against a profile pinned to `oauth` must not silently repoint it and
+ * change which identity every later command runs as. Someone who wants to change it
+ * edits profiles.toml.
+ *
+ * Best-effort; never throws (a login must not fail over a bookkeeping field).
+ */
+export function setAuthTypeIfAbsent(profileName: string | undefined, authType: AuthType): void {
+  if (!profileName) return
+  try {
+    const text = readFileSync(profilesFile(), "utf-8")
+    const data = parseTOML(text) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const profile = profiles[profileName]
+    if (!profile) return
+    // Any pre-existing value wins, including an invalid one. Overwriting would
+    // "fix" a typo by silently choosing a credential for the user; instead the
+    // credential-selecting path rejects it loudly (see invalidAuthType).
+    if (typeof profile.auth_type === "string" && profile.auth_type.trim().length > 0) return
+    profile.auth_type = authType
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block a login
   }
 }
 
