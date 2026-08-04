@@ -457,3 +457,65 @@ describe("fetchQuotaSnapshot", () => {
     await expect(fetchQuotaSnapshot({ providerID: "prod_0" })).rejects.toThrow()
   })
 })
+
+// The live portal is method-sensitive and inverts what the URLs imply:
+// getCurrentUser only answers to POST, while listApiKeys and the billing route
+// only answer to GET; the wrong verb yields code 8888 with data:null. The
+// original stubPortal ignores method, so it could not catch a read issued with
+// the wrong verb — the exact defect that left the quota indicator blank.
+describe("fetchQuotaSnapshot — portal method sensitivity", () => {
+  function stubMethodStrictPortal(opts: { currentUserPostFails?: boolean } = {}) {
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    const err8888 = { code: 8888, message: "unknown error", data: null }
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url, method) => {
+        if (url.includes("/user/getCurrentUser")) {
+          if (method !== "POST") return err8888
+          if (opts.currentUserPostFails) return err8888
+          return { code: 0, data: { id: 2, accountId: 228044, name: "pdiaxzjq", instanceId: 1 } }
+        }
+        if (url.includes("/hornhub/account/billing/account/")) {
+          if (method !== "GET") return err8888
+          return { code: 0, data: { cashAmount: 51.2772, oweAmount: 0, accountName: "pdiaxzjq" } }
+        }
+        if (url.includes("/user/listApiKeys")) {
+          if (method !== "GET") return err8888
+          return {
+            code: 0,
+            data: [
+              {
+                id: 587,
+                status: 1,
+                type: "free",
+                rateLimitType: "quota_total",
+                rateLimitValue: 10_000_000,
+                usage: 10_082_801,
+                vapiKeyAlias: "cz-code_auto_pdiaxzjq",
+                vapiKeyMasked: "ff52****9bc8",
+              },
+            ],
+          }
+        }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+  }
+
+  test("resolves usage when each endpoint is called with the verb it requires", async () => {
+    stubMethodStrictPortal()
+    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
+    expect(snapshot).toMatchObject({ used: 10_082_801, limit: 10_000_000, period: "total" })
+  })
+
+  // listApiKeys scopes to the token identity and ignores the userName value, so
+  // a failed getCurrentUser must not sink the whole quota read.
+  test("falls back to an empty userName when getCurrentUser fails", async () => {
+    stubMethodStrictPortal({ currentUserPostFails: true })
+    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
+    expect(snapshot).toMatchObject({ used: 10_082_801, limit: 10_000_000 })
+  })
+})

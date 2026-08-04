@@ -208,10 +208,27 @@ export function resolveClickzettaEntry(providerID?: string): { name: string; api
   return { name, apiKey: entry.api_key! }
 }
 
-async function portalGet(baseUrl: string, path: string, token: string, signal?: AbortSignal): Promise<unknown> {
+// The portal is method-sensitive per endpoint, and gets them backwards from what
+// the URLs suggest: `getCurrentUser` only answers to POST (GET returns error
+// code 8888), while `listApiKeys` and the billing account route only answer to
+// GET (POST returns 8888). Callers pass the method each endpoint actually wants;
+// the default stays GET so the two read routes need no change.
+async function portalCall(
+  baseUrl: string,
+  path: string,
+  token: string,
+  opts: { method?: "GET" | "POST"; signal?: AbortSignal } = {},
+): Promise<unknown> {
+  const method = opts.method ?? "GET"
   const response = await fetch(baseUrl + path, {
-    headers: { "x-clickzetta-token": token, Accept: "application/json" },
-    signal,
+    method,
+    headers: {
+      "x-clickzetta-token": token,
+      Accept: "application/json",
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(method === "POST" ? { body: "{}" } : {}),
+    signal: opts.signal,
   })
   if (!response.ok) throw new Error(`portal ${path} returned ${response.status}`)
   return await response.json()
@@ -300,19 +317,34 @@ async function fetchProfileSnapshot(input: {
       ? Promise.resolve(undefined)
       : accountId === undefined
         ? Promise.reject(new Error("profile has no account_id"))
-        : portalGet(baseUrl, `${BILLING_PATH}/${accountId}`, token.token, input.signal),
+        : portalCall(baseUrl, `${BILLING_PATH}/${accountId}`, token.token, { signal: input.signal }),
     (async () => {
-      const currentUser = profileUserName ? undefined : await portalGet(baseUrl, CURRENT_USER_PATH, token.token, input.signal)
-      const userName = profileUserName || (
-        isRecord(currentUser) &&
-        isPortalOk(currentUser.code) &&
-        isRecord(currentUser.data) &&
-        typeof currentUser.data.name === "string"
-          ? currentUser.data.name
-          : ""
-      )
-      if (!userName) throw new Error("current user has no name")
-      return portalGet(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, token.token, input.signal)
+      // getCurrentUser is a POST route (see portalCall). Resolving the user name
+      // lets us pass it through, but listApiKeys ignores the userName value and
+      // scopes to the token identity regardless, so a failed/empty lookup still
+      // returns the caller's keys — fall back to an empty name rather than bail.
+      let userName = profileUserName
+      if (!userName) {
+        try {
+          const currentUser = await portalCall(baseUrl, CURRENT_USER_PATH, token.token, {
+            method: "POST",
+            signal: input.signal,
+          })
+          if (
+            isRecord(currentUser) &&
+            isPortalOk(currentUser.code) &&
+            isRecord(currentUser.data) &&
+            typeof currentUser.data.name === "string"
+          ) {
+            userName = currentUser.data.name
+          }
+        } catch (error) {
+          if (input.signal?.aborted) throw error
+        }
+      }
+      return portalCall(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, token.token, {
+        signal: input.signal,
+      })
     })(),
   ])
   if (keys.status === "rejected" && (!input.includeBilling || billing.status === "rejected")) throw keys.reason
