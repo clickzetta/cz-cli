@@ -8,8 +8,29 @@ import { mkdirSync, writeFileSync, rmSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 
+// Two invocation modes, and the entry script belongs to only one of them:
+//   default          — `bun ./src/main.ts <args>`, running from source
+//   CZ_CLI_BIN set   — `<binary> <args>`, running a COMPILED binary, which has
+//                      main.ts baked in and takes no entry argument
+//
+// cz_change: BINARY_ENTRY used to default to ["./src/main.ts"] whenever
+// CZ_CLI_ENTRY was unset, including when CZ_CLI_BIN pointed at a compiled
+// binary. `test:ci` does exactly that (`CZ_CLI_BIN=./dist/cz-cli bun run
+// test:all`), so every command ran as `cz-cli ./src/main.ts sql "SELECT 1"` —
+// the path became a bogus first argument and the CLI answered USAGE_ERROR with
+// exit 2. 15 of 21 routing tests failed for that reason alone, which reads as a
+// broken CLI when the CLI is fine and the harness is wrong. Worse, it means
+// `test:ci` has never actually exercised a compiled binary.
+//
+// The entry is now tied to the interpreter path, so both modes work without the
+// caller having to remember to clear CZ_CLI_ENTRY. An explicit CZ_CLI_ENTRY still
+// wins, for running a different entry under bun.
 const BINARY = process.env.CZ_CLI_BIN ?? process.execPath
-const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["./src/main.ts"]
+const BINARY_ENTRY = process.env.CZ_CLI_ENTRY
+  ? [process.env.CZ_CLI_ENTRY]
+  : process.env.CZ_CLI_BIN
+    ? []
+    : ["./src/main.ts"]
 
 const PASS = "\x1b[32m✓\x1b[0m"
 const FAIL = "\x1b[31m✗\x1b[0m"

@@ -1,7 +1,14 @@
 import { spawnSync } from "child_process"
 
+// cz_change: a compiled binary (CZ_CLI_BIN) has main.ts baked in and takes no
+// entry argument, so passing "./src/main.ts" turns it into a bogus first arg and
+// every command answers USAGE_ERROR. See the note in e2e-routing.ts.
 const BINARY = process.env.CZ_CLI_BIN ?? process.execPath
-const BINARY_ENTRY = process.env.CZ_CLI_ENTRY ? [process.env.CZ_CLI_ENTRY] : ["./src/main.ts"]
+const BINARY_ENTRY = process.env.CZ_CLI_ENTRY
+  ? [process.env.CZ_CLI_ENTRY]
+  : process.env.CZ_CLI_BIN
+    ? []
+    : ["./src/main.ts"]
 const PASS = "\x1b[32m✓\x1b[0m"
 const FAIL = "\x1b[31m✗\x1b[0m"
 
