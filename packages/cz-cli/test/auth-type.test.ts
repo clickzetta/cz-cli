@@ -313,3 +313,107 @@ describe("invalidAuthType", () => {
     expect(message).toContain("profiles.toml")
   })
 })
+
+/**
+ * `cz-cli profile update <name> auth_type <value>`.
+ *
+ * auth_type was writable by nine code paths but not editable by any command, so
+ * the only ways to switch a profile between its own credentials — or to correct a
+ * typo — were hand-editing profiles.toml. That is the very file the
+ * INVALID_AUTH_TYPE message tells the user to fix, which made the CLI capable of
+ * creating a state it could only describe, not repair.
+ */
+describe("profile update auth_type", () => {
+  function writeMultiCredentialProfile() {
+    saveProfiles({
+      multi: {
+        service: "s.clickzetta.com",
+        protocol: "https",
+        instance: "i1",
+        workspace: "w",
+        pat: "PAT_VAL",
+        username: "u1",
+        password: "p1",
+      },
+    })
+  }
+
+  function storedAuthType() {
+    const raw = readFileSync(join(home, ".clickzetta", "profiles.toml"), "utf-8")
+    const data = parseTOML(raw) as { profiles?: Record<string, Record<string, unknown>> }
+    return data.profiles?.multi?.auth_type
+  }
+
+  test("sets a valid value and it actually selects the credential", async () => {
+    writeMultiCredentialProfile()
+    const { execute } = await import("../src/execute.ts")
+
+    const toPat = await execute("profile update multi auth_type pat")
+    expect(toPat.exitCode).toBe(0)
+    expect(storedAuthType()).toBe("pat")
+    // The pin must change behaviour, not just the file.
+    const pinnedPat = resolveConnectionConfig({ profile: "multi" })
+    expect(pinnedPat.pat).toBe("PAT_VAL")
+    expect(pinnedPat.username).toBe("")
+
+    const toPassword = await execute("profile update multi auth_type password")
+    expect(toPassword.exitCode).toBe(0)
+    const pinnedPassword = resolveConnectionConfig({ profile: "multi" })
+    expect(pinnedPassword.pat).toBe("")
+    expect(pinnedPassword.username).toBe("u1")
+  })
+
+  test("rejects an invalid value instead of storing it", async () => {
+    writeMultiCredentialProfile()
+    const { execute } = await import("../src/execute.ts")
+    await execute("profile update multi auth_type pat")
+
+    const bad = await execute("profile update multi auth_type passwrod")
+    expect(bad.exitCode).toBe(1)
+    expect(bad.output).toContain("passwrod")
+    // Every valid value is offered, so the message is actionable.
+    for (const t of ["pat", "password", "oauth", "cookie"]) expect(bad.output).toContain(t)
+    // The prior value survives: a rejected write must not corrupt the profile.
+    expect(storedAuthType()).toBe("pat")
+  })
+
+  test("normalizes case and surrounding whitespace", async () => {
+    writeMultiCredentialProfile()
+    const { execute } = await import("../src/execute.ts")
+    // Readers lowercase and trim before comparing, so the stored form has to match
+    // or `profile detail` would show a value that looks unlike what resolves.
+    await execute("profile update multi auth_type OAUTH")
+    expect(storedAuthType()).toBe("oauth")
+    await execute("profile update multi auth_type", ["  Cookie  "])
+    expect(storedAuthType()).toBe("cookie")
+  })
+
+  test("an empty value removes the pin rather than storing a blank", async () => {
+    writeMultiCredentialProfile()
+    const { execute } = await import("../src/execute.ts")
+    await execute("profile update multi auth_type pat")
+    expect(storedAuthType()).toBe("pat")
+
+    // Passed via extraArgs: execute() splits its command string, so an empty
+    // positional cannot be expressed inline.
+    const cleared = await execute("profile update multi auth_type", [""])
+    expect(cleared.exitCode).toBe(0)
+    // Absent, not "" — an empty string reads as unset everywhere, so leaving the
+    // key behind would be a confusing spelling of "no pin".
+    expect(storedAuthType()).toBeUndefined()
+    // With the pin gone, precedence falls back to automatic detection.
+    expect(readAuthType("multi")).toBe("pat")
+  })
+
+  test("the describe string is generated from the accepted-key list", () => {
+    // yargs renders --help to stderr, which execute() does not capture, so assert
+    // on the source instead: the describe string must interpolate
+    // VALID_UPDATE_KEYS rather than restate it. It had already drifted once —
+    // auth_type was accepted by the handler while help still listed the old set.
+    const source = readFileSync(join(import.meta.dir, "..", "src", "commands", "profile.ts"), "utf-8")
+    expect(source).toContain("${VALID_UPDATE_KEYS.join(\", \")}")
+    expect(source).not.toContain(
+      "Valid keys: pat, username, password, service, protocol, instance, workspace, schema, vcluster, analysis_agent_endpoint, header.<NAME>",
+    )
+  })
+})

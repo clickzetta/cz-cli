@@ -33,6 +33,14 @@ const VALID_UPDATE_KEYS = [
   "pat", "username", "password", "service", "protocol",
   "instance", "workspace", "schema", "vcluster",
   "analysis_agent_endpoint",
+  // cz_change: auth_type is authoritative — it SELECTS which of a profile's
+  // credentials authenticates, and resolveConnectionConfig throws
+  // INVALID_AUTH_TYPE on a bad value, so every credential-taking command fails
+  // until it is corrected. Without it here the only remedy was hand-editing
+  // profiles.toml, which is also the only way to switch a profile between its
+  // own credentials. Validated below rather than written blind: a typo must not
+  // reach the file, since the resulting error names the file as the fix.
+  "auth_type",
 ]
 
 function loadFullFile(): Record<string, unknown> {
@@ -432,7 +440,9 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "update <name> <key> <value>",
-        `Update a profile field. Valid keys: pat, username, password, service, protocol, instance, workspace, schema, vcluster, analysis_agent_endpoint, header.<NAME>`,
+        // Generated from VALID_UPDATE_KEYS so help cannot drift from what the
+        // handler accepts — it already had, before auth_type was added.
+        `Update a profile field. Valid keys: ${VALID_UPDATE_KEYS.join(", ")}, header.<NAME>`,
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Profile name" })
@@ -455,6 +465,19 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             if (key === "protocol" && !["http", "https"].includes(value.toLowerCase())) {
               return error("INVALID_ARGUMENTS", "protocol must be http or https", { format })
             }
+            // Reject a bad auth_type here rather than storing it. Writing it would
+            // leave the profile unusable for every credential-taking command, and
+            // the resulting message points at profiles.toml — so the CLI would have
+            // created a state it tells the user to fix by hand. An empty value is
+            // allowed through: `auth_type = ""` reads as unset everywhere
+            // (invalidAuthType/explicitAuthType both treat it that way), which is
+            // how the pin gets removed to fall back to automatic detection.
+            if (key === "auth_type" && value !== "") {
+              const invalid = invalidAuthType({ auth_type: value })
+              if (invalid !== undefined) {
+                return error("INVALID_ARGUMENTS", invalidAuthTypeMessage(name, invalid), { format })
+              }
+            }
             if (key.startsWith("header.")) {
               const headerName = key.slice(7)
               // Store headers as a nested "header" dict (matching Python behavior)
@@ -472,6 +495,17 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               }
               // Remove legacy flat header.X keys if present
               delete profiles[name][key]
+            } else if (key === "auth_type" && value === "") {
+              // Removing the pin, not storing an empty string: an empty auth_type is
+              // read as unset, and leaving the key behind would be a confusing way
+              // to say "absent".
+              delete profiles[name].auth_type
+            } else if (key === "auth_type") {
+              // Normalized on write so the stored value matches what the readers
+              // compare against (they lowercase and trim). Deliberately NOT applied
+              // to other keys: a password may legitimately contain surrounding
+              // whitespace, so trimming those would silently corrupt credentials.
+              profiles[name].auth_type = value.trim().toLowerCase()
             } else {
               profiles[name][key] = key === "protocol" ? value.toLowerCase() : value
             }
