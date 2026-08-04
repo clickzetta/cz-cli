@@ -2,7 +2,7 @@ import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { studioRequest, listPgSlots, type StudioConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error, isHandledCliError } from "../output/index.js"
+import { success, error, handledError, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 
@@ -19,7 +19,7 @@ const DS_TYPE_MAP: Record<string, number> = {
   aurora_mysql: 39, aurora_postgresql: 40, polardb_postgresql: 48,
 }
 
-const DS_TYPE_NAMES: Record<number, string> = {
+export const DS_TYPE_NAMES: Record<number, string> = {
   1: "LakeHouse", 2: "Kafka", 3: "Hive", 4: "ClickHouse", 5: "MySQL",
   7: "PostgreSQL", 8: "SqlServer", 9: "Oss", 10: "Hbase", 11: "Odps",
   12: "MongoDB", 13: "ElasticSearch7", 14: "Doris", 15: "StarRocks",
@@ -30,10 +30,15 @@ const DS_TYPE_NAMES: Record<number, string> = {
   51: "DynamoDB",
 }
 
-function parseDsType(value: string): number | undefined {
+export function parseDsType(value: string): number | undefined {
   const n = Number(value)
   if (Number.isFinite(n)) return n
   return DS_TYPE_MAP[value.toLowerCase()]
+}
+
+function dsTypeLabel(dsType: number | undefined): string {
+  if (dsType == null) return "unknown"
+  return DS_TYPE_NAMES[dsType] ?? String(dsType)
 }
 
 // ---------------------------------------------------------------------------
@@ -106,37 +111,99 @@ export interface ResolvedDatasource {
   connectionParams?: unknown
 }
 
-export async function resolveDatasource(sc: StudioConfig, nameOrId: string): Promise<ResolvedDatasource> {
-  const n = Number(nameOrId)
-  if (Number.isFinite(n) && n > 0) {
-    // Fetch detail by listing with no filter and finding by id
-    const resp = await apiList(sc, { pageSize: 100 })
+const DS_LIST_PAGE_SIZE = 100
+
+/** Page through the datasource list until fewer than a full page is returned. */
+async function listAllDatasources(
+  sc: StudioConfig,
+  opts: { dsName?: string; dsType?: number } = {},
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = []
+  for (let page = 1; ; page++) {
+    const resp = await apiList(sc, { ...opts, page, pageSize: DS_LIST_PAGE_SIZE })
     const list = (resp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined
       ?? (Array.isArray(resp.data) ? resp.data as Record<string, unknown>[] : [])
+    all.push(...list)
+    if (list.length < DS_LIST_PAGE_SIZE) break
+  }
+  return all
+}
+
+function toResolved(ds: Record<string, unknown>, fallbackName: string): ResolvedDatasource {
+  return {
+    id: Number(ds.id ?? ds.dsId),
+    name: String(ds.dsName ?? ds.name ?? fallbackName),
+    dsType: ds.dsType as number | undefined,
+    connectionParams: ds.connectionParams,
+  }
+}
+
+/**
+ * Resolve a datasource by numeric id or name.
+ *
+ * When `expectedType` is given, only datasources of that dsType are considered — this
+ * disambiguates same/similar-named datasources across types (e.g. a Lakehouse and a
+ * MySQL both matching a fuzzy name). When resolving by name and no exact-name match
+ * exists among the candidates, we do NOT silently pick the first fuzzy hit: if more
+ * than one candidate remains, we throw an ambiguity error listing name/id/type so the
+ * caller can pick precisely (mirrors resolveTaskId's TASK_AMBIGUOUS behavior).
+ */
+export async function resolveDatasource(
+  sc: StudioConfig,
+  nameOrId: string,
+  expectedType?: number,
+): Promise<ResolvedDatasource> {
+  const typeMatches = (ds: Record<string, unknown>) =>
+    expectedType === undefined || Number(ds.dsType) === expectedType
+
+  const n = Number(nameOrId)
+  if (Number.isFinite(n) && n > 0) {
+    const list = await listAllDatasources(sc)
     const match = list.find((ds) => Number(ds.id ?? ds.dsId) === n)
     if (match) {
-      return {
-        id: n,
-        name: String(match.dsName ?? match.name ?? nameOrId),
-        dsType: match.dsType as number | undefined,
-        connectionParams: match.connectionParams,
+      if (!typeMatches(match)) {
+        handledError(
+          "DATASOURCE_TYPE_MISMATCH",
+          `Datasource id ${n} ('${match.dsName ?? match.name}') is type ${dsTypeLabel(match.dsType as number)}, but ${dsTypeLabel(expectedType)} was expected.`,
+        )
       }
+      return toResolved(match, nameOrId)
     }
+    // Id not found in listing (e.g. large/filtered account); trust the id as given.
     return { id: n, name: nameOrId }
   }
-  // Search by name
-  const resp = await apiList(sc, { dsName: nameOrId, pageSize: 50 })
-  const list = (resp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined
-    ?? (Array.isArray(resp.data) ? resp.data as Record<string, unknown>[] : [])
-  const exact = list.find((ds) => String(ds.dsName ?? ds.name ?? "") === nameOrId)
-  const match = exact ?? list[0]
-  if (!match) throw new Error(`Datasource '${nameOrId}' not found`)
-  return {
-    id: Number(match.id ?? match.dsId),
-    name: String(match.dsName ?? match.name ?? nameOrId),
-    dsType: match.dsType as number | undefined,
-    connectionParams: match.connectionParams,
+
+  // Search by name. Constrain to expectedType when provided.
+  const list = (await listAllDatasources(sc, { dsName: nameOrId, dsType: expectedType }))
+    .filter(typeMatches)
+
+  const exactMatches = list.filter((ds) => String(ds.dsName ?? ds.name ?? "") === nameOrId)
+  if (exactMatches.length === 1) return toResolved(exactMatches[0]!, nameOrId)
+  if (exactMatches.length > 1) {
+    handledError("DATASOURCE_AMBIGUOUS", ambiguityMessage(nameOrId, exactMatches, expectedType))
   }
+
+  // No exact name match.
+  if (list.length === 0) {
+    const typeNote = expectedType !== undefined ? ` of type ${dsTypeLabel(expectedType)}` : ""
+    handledError("DATASOURCE_NOT_FOUND", `Datasource '${nameOrId}'${typeNote} not found.`)
+  }
+  if (list.length === 1) return toResolved(list[0]!, nameOrId)
+  // Multiple fuzzy candidates, none exact — refuse to guess.
+  handledError("DATASOURCE_AMBIGUOUS", ambiguityMessage(nameOrId, list, expectedType))
+}
+
+function ambiguityMessage(
+  nameOrId: string,
+  candidates: Record<string, unknown>[],
+  expectedType?: number,
+): string {
+  const shown = candidates.slice(0, 10).map((ds) =>
+    `${ds.dsName ?? ds.name} (id=${ds.id ?? ds.dsId}, type=${dsTypeLabel(ds.dsType as number)})`,
+  ).join(", ")
+  const more = candidates.length > 10 ? ` (+${candidates.length - 10} more)` : ""
+  const typeNote = expectedType !== undefined ? ` of type ${dsTypeLabel(expectedType)}` : ""
+  return `Multiple datasources${typeNote} match '${nameOrId}': ${shown}${more}. Pass the exact numeric id, or narrow by --source-type/--sink-type.`
 }
 
 // ---------------------------------------------------------------------------

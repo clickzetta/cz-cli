@@ -109,3 +109,43 @@ describe("generateSingleContent — dynamic partition (B semantics)", () => {
     expect(String(res.message)).toContain("nonexistent")
   })
 })
+
+describe("source-side partitions (lakehouse → mysql)", () => {
+  // Lakehouse source (dsType 1) → MySQL sink (dsType 5), with a partitioned source table.
+  const LAKE_SRC = { id: 1418, name: "LAKEHOUSE_wanxin_test_08", dsType: 1, schema: "ods", table: "employees" }
+  const MYSQL_SINK = { id: 20261, name: "xl_test_mysql8", dsType: 5, schema: "automated_test", table: "auto_mysql_sink" }
+  const srcCols = [{ name: "employee_id", type: "int" }, { name: "dt", type: "string" }]
+  const snkCols = [{ name: "employee_id", type: "INT" }, { name: "dt", type: "VARCHAR" }]
+
+  test("writes source.params.partitions as [[\"dt=...\"]] and flags the partition column", () => {
+    const content = generateSingleContent({
+      source: LAKE_SRC, sink: MYSQL_SINK, sourceColumns: srcCols, sinkColumns: snkCols,
+      writeMode: "APPEND", sourcePartitions: ["dt=2026-08-04"],
+    })
+    const j = job(content)
+    const sourceParams = (j.source as Record<string, unknown>).params as Record<string, unknown>
+    expect(sourceParams.partitions).toEqual([["dt=2026-08-04"]])
+    const cols = (j.source as Record<string, unknown>).columns as Record<string, unknown>[]
+    const dtCol = cols.find((c) => c.name === "dt")
+    expect(dtCol?.partitionColumn).toBe(true)
+    // sink params carry no source-side partitions.
+    expect(((j.sink as Record<string, unknown>).params as Record<string, unknown>).partitions).toBeUndefined()
+  })
+
+  test("supports a scheduling-param variable value (dt=${bizdate})", () => {
+    const content = generateSingleContent({
+      source: LAKE_SRC, sink: MYSQL_SINK, sourceColumns: srcCols, sinkColumns: snkCols,
+      sourcePartitions: ["dt=${bizdate}"],
+    })
+    const sourceParams = (job(content).source as Record<string, unknown>).params as Record<string, unknown>
+    expect(sourceParams.partitions).toEqual([["dt=${bizdate}"]])
+  })
+
+  test("no source partitions → source.params has no partitions key", () => {
+    const content = generateSingleContent({
+      source: LAKE_SRC, sink: MYSQL_SINK, sourceColumns: srcCols, sinkColumns: snkCols,
+    })
+    const sourceParams = (job(content).source as Record<string, unknown>).params as Record<string, unknown>
+    expect(sourceParams.partitions).toBeUndefined()
+  })
+})
