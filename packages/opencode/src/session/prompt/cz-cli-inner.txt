@@ -27,7 +27,7 @@ cz-cli table drop <name>                      Drop a table
 
 cz-cli task list                              List Studio tasks
 cz-cli task create <name> --type <TYPE>       Create task (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE; offline integration: INTEGRATION=single-table, MULTI_DI=multi-table/whole-db)
-cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. single also: --write-mode OVERWRITE|APPEND|UPSERT, --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates sink table + default field mapping. PARTITION (single, opt-in): add --partitioned, then EITHER --partitions 'dt=${bizdate}' (static: whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING) sink table) OR --dynamic-partition 'dt:source_col' (dynamic: per-row routing by a source column; source_col must exist or you'll be asked to confirm). Without --partitioned/--dynamic-partition behavior is unchanged (plain non-partition table).
+cz-cli task integration setup <task>          Configure OFFLINE data-integration content (builds the full Studio JSON for you): --sync-type single|multi|whole_db, --source-datasource/--source-schema/--source-table (single) or --source-tables a,b,c (multi) or --source-dbs db1,db2 (whole_db), --sink-datasource/--sink-schema/--sink-table. Disambiguate same-named datasources with --source-type/--sink-type (lakehouse/mysql/postgresql/elasticsearch/kafka/...). single also: --write-mode OVERWRITE|APPEND|UPSERT, --param-value-list '[{"paramKey":"bizdate","paramValue":"$[yyyyMMdd-1]"}]'. single auto-creates the sink table ONLY for a Lakehouse sink; other sink types must be pre-created (see per-datasource-type guide below). PARTITION (single, opt-in): add --partitioned, then EITHER --partitions 'dt=${bizdate}' (static: whole batch to one partition value; auto-creates PARTITIONED BY (dt STRING) sink table) OR --dynamic-partition 'dt:source_col' (dynamic: per-row routing by a source column; source_col must exist or you'll be asked to confirm). Without --partitioned/--dynamic-partition behavior is unchanged (plain non-partition table). Read a Lakehouse SOURCE partition with --source-partitions 'dt=${bizdate}'.
 cz-cli task integration show <task>           Show an existing integration task's current field/table mapping and sync params (read before edit)
 cz-cli task integration edit <task>           Edit an EXISTING integration task (applied+saved immediately). single: --column-mapping '[{"source","sink"}]' (full replace) / --split-pk / --where / --write-mode / --partitions 'dt=${bizdate}' (static) / --dynamic-partition 'dt:source_col' (dynamic, mutually exclusive with --partitions; empty string clears) / --param-value-list / --parallelism / --error-limit / --m-bytes. multi/whole_db: --table-mapping / --pk-write-mode / --non-pk-write-mode / --schema-rule / --table-rule / --batch-size / --connections
 cz-cli task content <task>                    Get task script, config, params, input_params, and output_params (draft)
@@ -126,6 +126,20 @@ cz-cli ai-gateway model list [ref]              List models available to a virtu
                                               [ref]: key VALUE or alias (alias auto-resolves)
                                               Output: modelIdentifier, modelName, modelDesc
 ```
+
+## Integration setup — per-datasource-type inputs (single-table)
+
+`task integration setup --sync-type single` supports different source/sink datasource types. Pick the flags by the datasource's TYPE (use --source-type/--sink-type to force it when names collide). Elasticsearch has NO schema — pass `--source-schema` only for relational/Lakehouse sources.
+
+- **Relational (MySQL/PostgreSQL/…) or Lakehouse as source**: standard `--source-schema/--source-table`. Optional `--source-partitions 'dt=${bizdate}'` reads only that partition from a partitioned Lakehouse source.
+- **Elasticsearch as source** (`--source-type elasticsearch`): `--source-table` is the index; optional `--source-filter '<query>'` and `--source-batch-size <n>` (scroll size, default 10). No `--source-schema`.
+- **Kafka as source** (`--source-type kafka`): `--source-table` is the topic; `--source-group-id <g>` is REQUIRED (consumer group, all modes); `--source-mode group-offsets|earliest-offset|latest-offset` (default group-offsets); `--source-end-mode <mode>` is the bounded-read task-end strategy (default period). No `--source-schema`.
+- **Lakehouse as sink**: auto-created (mirrored from the source DDL, or built from column metadata when the source is ES/Kafka). Standard `--sink-schema/--sink-table`, `--write-mode`.
+- **Relational as sink** (MySQL/…): table is NOT auto-created — pre-create it, then run setup (error `SINK_TABLE_REQUIRED` if missing).
+- **Elasticsearch as sink** (`--sink-type elasticsearch`): index must pre-exist (error `SINK_INDEX_REQUIRED` if missing); `--sink-batch-size <n>` (bulk size, default 10000), `--sink-id-rule <rule>` (doc id rule, default NONE). No sink schema.
+- **Kafka as sink** (`--sink-type kafka`): topic must pre-exist (error `SINK_TOPIC_REQUIRED` if missing); messages are json-encoded. No sink schema.
+
+When any sink pre-create error fires, tell the user to create the target table/index/topic first — do NOT try to build it via SQL. Run `cz-cli task integration setup --help` for the full flag list.
 
 ## Output Formats
 
