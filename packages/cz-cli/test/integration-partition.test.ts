@@ -149,3 +149,147 @@ describe("source-side partitions (lakehouse → mysql)", () => {
     expect(sourceParams.partitions).toBeUndefined()
   })
 })
+
+describe("elasticsearch source (es → lakehouse)", () => {
+  const ES_SRC = { id: 34444, name: "auto_elasticSearch", dsType: 13, schema: "ignored", table: "demo_es_source" }
+  const LAKE_SINK = { id: 26593, name: "LAKEHOUSE_smoke", dsType: 1, schema: "automated_test", table: "demo_es_sink" }
+  const esSrcCols = [{ name: "keyword", type: "text" }, { name: "long", type: "long" }]
+  const lakeSinkCols = [{ name: "keyword", type: "string" }, { name: "long", type: "bigint" }]
+
+  test("ES source sets namespace/database to '--' and writes filter + batchSize", () => {
+    const content = generateSingleContent({
+      source: ES_SRC, sink: LAKE_SINK, sourceColumns: esSrcCols, sinkColumns: lakeSinkCols,
+      writeMode: "OVERWRITE",
+    })
+    const j = job(content)
+    const src = j.source as Record<string, unknown>
+    expect(src.namespace).toBe("--")
+    const params = src.params as Record<string, unknown>
+    expect(params.database).toBe("--")
+    expect(params.filter).toBe("")
+    expect(params.batchSize).toBe(10)
+  })
+
+  test("ES filter + batchSize overrides are honored", () => {
+    const content = generateSingleContent({
+      source: ES_SRC, sink: LAKE_SINK, sourceColumns: esSrcCols, sinkColumns: lakeSinkCols,
+      esFilter: "status:active", esBatchSize: 500,
+    })
+    const params = (job(content).source as Record<string, unknown>).params as Record<string, unknown>
+    expect(params.filter).toBe("status:active")
+    expect(params.batchSize).toBe(500)
+  })
+
+  test("non-ES source has no filter/batchSize and keeps its real schema", () => {
+    const content = generateSingleContent({
+      source: SRC, sink: SINK, sourceColumns: sourceCols, sinkColumns: sinkCols,
+    })
+    const src = job(content).source as Record<string, unknown>
+    const params = src.params as Record<string, unknown>
+    expect(params.filter).toBeUndefined()
+    expect(params.batchSize).toBeUndefined()
+    expect(src.namespace).toBe("tc_demo")
+  })
+})
+
+describe("elasticsearch sink (lakehouse → es)", () => {
+  const LAKE_SRC = { id: 1418, name: "LAKEHOUSE_wanxin", dsType: 1, schema: "aaa", table: "complement_task" }
+  const ES_SINK = { id: 28366, name: "tianzhu_es", dsType: 13, schema: "public", table: "t1_entity_meta_1" }
+  const srcCols = [{ name: "id", type: "bigint" }, { name: "tenant_id", type: "bigint" }]
+  const esSinkCols = [{ name: "applyPermission", type: "nested" }, { name: "columnFilterInfo", type: "text" }]
+
+  test("ES sink omits namespace/database and writeMode, writes batchSize + idGenerateRule", () => {
+    const content = generateSingleContent({
+      source: LAKE_SRC, sink: ES_SINK, sourceColumns: srcCols, sinkColumns: esSinkCols,
+      writeMode: "OVERWRITE",
+    })
+    const sink = job(content).sink as Record<string, unknown>
+    expect(sink.namespace).toBeUndefined()
+    const params = sink.params as Record<string, unknown>
+    expect(params.database).toBeUndefined()
+    expect(params.writeMode).toBeUndefined()
+    expect(params.outputMode).toBeUndefined()
+    expect(params.batchSize).toBe(10000)
+    expect(params.idGenerateRule).toBe("NONE")
+    expect(params.is_partition).toBe(false)
+    // source side is a normal lakehouse source.
+    expect((job(content).source as Record<string, unknown>).namespace).toBe("aaa")
+  })
+
+  test("ES sink batchSize / idGenerateRule overrides are honored", () => {
+    const content = generateSingleContent({
+      source: LAKE_SRC, sink: ES_SINK, sourceColumns: srcCols, sinkColumns: esSinkCols,
+      esSinkBatchSize: 500, esSinkIdRule: "PRIMARY_KEY",
+    })
+    const params = (job(content).sink as Record<string, unknown>).params as Record<string, unknown>
+    expect(params.batchSize).toBe(500)
+    expect(params.idGenerateRule).toBe("PRIMARY_KEY")
+  })
+})
+
+describe("kafka sink (lakehouse → kafka)", () => {
+  const LAKE_SRC = { id: 1418, name: "LAKEHOUSE_wanxin", dsType: 1, schema: "aaa", table: "complement_task" }
+  const KAFKA_SINK = { id: 26590, name: "iol_event_hub", dsType: 2, schema: "public", table: "hotel-search-requests" }
+  const srcCols = [{ name: "id", type: "bigint" }, { name: "env", type: "string" }]
+  const kafkaSinkCols = [{ name: "id", type: "BIGINT" }, { name: "env", type: "STRING" }]
+
+  test("Kafka sink uses '--' namespace/database, json codec, no writeMode", () => {
+    const content = generateSingleContent({
+      source: LAKE_SRC, sink: KAFKA_SINK, sourceColumns: srcCols, sinkColumns: kafkaSinkCols,
+      writeMode: "OVERWRITE",
+    })
+    const sink = job(content).sink as Record<string, unknown>
+    expect(sink.namespace).toBe("--")
+    const params = sink.params as Record<string, unknown>
+    expect(params.database).toBe("--")
+    expect(params.codec).toBe("json")
+    expect(params.writeMode).toBeUndefined()
+    expect(params.outputMode).toBeUndefined()
+    expect(params.batchSize).toBeUndefined()
+    expect(params.is_partition).toBe(false)
+    // source side is a normal lakehouse source.
+    expect((job(content).source as Record<string, unknown>).namespace).toBe("aaa")
+  })
+})
+
+describe("kafka source (kafka → lakehouse)", () => {
+  const KAFKA_SRC = { id: 26590, name: "iol_event_hub", dsType: 2, schema: "public", table: "hotel-search-requests" }
+  const LAKE_SINK = { id: 1418, name: "LAKEHOUSE_wanxin", dsType: 1, schema: "aaa", table: "mn_01" }
+  const srcCols = [{ name: "__offset__", type: "LONG" }]
+  const lakeSinkCols = [{ name: "a", type: "int" }]
+
+  test("Kafka source uses '--' namespace, group-offsets mode with groupId + json codec", () => {
+    const content = generateSingleContent({
+      source: KAFKA_SRC, sink: LAKE_SINK, sourceColumns: srcCols, sinkColumns: lakeSinkCols,
+      kafkaSourceMode: "group-offsets", kafkaSourceGroupId: "test_01",
+    })
+    const src = job(content).source as Record<string, unknown>
+    expect(src.namespace).toBe("--")
+    const params = src.params as Record<string, unknown>
+    expect(params.database).toBe("--")
+    expect(params.mode).toBe("group-offsets")
+    expect(params.codec).toBe("json")
+    expect(params.groupId).toBe("test_01")
+    expect(params.endMode).toBe("period")  // default task-end strategy
+  })
+
+  test("earliest-offset mode still carries groupId (required for all modes)", () => {
+    const content = generateSingleContent({
+      source: KAFKA_SRC, sink: LAKE_SINK, sourceColumns: srcCols, sinkColumns: lakeSinkCols,
+      kafkaSourceMode: "earliest-offset", kafkaSourceGroupId: "lh_demo_group",
+    })
+    const params = (job(content).source as Record<string, unknown>).params as Record<string, unknown>
+    expect(params.mode).toBe("earliest-offset")
+    expect(params.groupId).toBe("lh_demo_group")
+    expect(params.endMode).toBe("period")
+  })
+
+  test("endMode override is honored", () => {
+    const content = generateSingleContent({
+      source: KAFKA_SRC, sink: LAKE_SINK, sourceColumns: srcCols, sinkColumns: lakeSinkCols,
+      kafkaSourceMode: "latest-offset", kafkaSourceGroupId: "g1", kafkaSourceEndMode: "latest",
+    })
+    const params = (job(content).source as Record<string, unknown>).params as Record<string, unknown>
+    expect(params.endMode).toBe("latest")
+  })
+})

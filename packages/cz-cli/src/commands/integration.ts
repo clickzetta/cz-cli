@@ -300,6 +300,24 @@ function rewriteDdlTarget(ddl: string, sinkSchema: string, sinkTable: string): s
  *  Returns "exists" if the sink table was already present, "created" otherwise.
  *  When partitionColumn is given and the table is created, append PARTITIONED BY (col STRING). */
 const LAKEHOUSE_DS_TYPE = 1
+const ES_DS_TYPE = 13
+// Elasticsearch has no schema/database; Studio uses this placeholder in source namespace/params.
+const ES_NAMESPACE_PLACEHOLDER = "--"
+const ES_DEFAULT_BATCH_SIZE = 10
+// ES sink writes in bulk batches with a document-id rule instead of a SQL write mode.
+const ES_SINK_DEFAULT_BATCH_SIZE = 10000
+const ES_SINK_DEFAULT_ID_RULE = "NONE"
+// Kafka sink: messages are encoded with a codec; topic has no schema (uses "--" placeholder).
+const KAFKA_DS_TYPE = 2
+const KAFKA_SINK_DEFAULT_CODEC = "json"
+// Kafka source: consume by offset mode (with a groupId for group-offsets) and a codec.
+const KAFKA_SOURCE_DEFAULT_MODE = "group-offsets"
+const KAFKA_SOURCE_MODES = ["group-offsets", "earliest-offset", "latest-offset"] as const
+// Offline Kafka reads are bounded; endMode is the task-end strategy (e.g. "period").
+const KAFKA_SOURCE_DEFAULT_END_MODE = "period"
+// Sinks whose target (ES index / Kafka topic) is managed externally and cannot be
+// auto-created from here — setup only reads column metadata for these.
+const METADATA_ONLY_SINK_TYPES = new Set([ES_DS_TYPE, KAFKA_DS_TYPE])
 
 async function createSinkTableFromSource(
   sc: StudioConfig,
@@ -329,6 +347,27 @@ async function createSinkTableFromSource(
   // subset; the mirrored source PK conflicts with the appended partition column), then append.
   const finalDdl = partitionColumn ? appendPartitionedBy(stripPrimaryKey(rewritten), partitionColumn) : rewritten
   await executeDatasourceSql(sc, sink.id, finalDdl, execOptions)
+  return "created"
+}
+
+/** Create a Lakehouse sink table from typed column metadata (used when the source can't
+ *  produce a mirrorable DDL, e.g. Elasticsearch). No-op if the table already exists.
+ *  `columns` come from getColumnMapMeta's sinkMeta — each has a `name` and a Lakehouse `type`. */
+async function createLakehouseSinkFromColumns(
+  sc: StudioConfig,
+  sink: { id: number; dsType: number; schema: string; table: string },
+  columns: ColumnMeta[],
+  execOptions: Json,
+  partitionColumn?: string,
+): Promise<"exists" | "created" | "missing-columns"> {
+  if (await tableExists(sc, sink.id, sink.dsType, sink.schema, sink.table)) return "exists"
+  const defs = columns
+    .filter((c) => c && typeof c === "object" && colName(c) && !(c.partitionColumn === true))
+    .map((c) => `\`${colName(c)}\` ${c.type ?? "string"}`)
+  if (!defs.length) return "missing-columns"
+  let ddl = `CREATE TABLE IF NOT EXISTS \`${sink.schema}\`.\`${sink.table}\` (\n  ${defs.join(",\n  ")}\n)`
+  if (partitionColumn) ddl = appendPartitionedBy(ddl, partitionColumn)
+  await executeDatasourceSql(sc, sink.id, ddl, execOptions)
   return "created"
 }
 
@@ -550,8 +589,19 @@ export function generateSingleContent(opts: {
   partitions?: string[]
   sourcePartitions?: string[]
   dynamicPartition?: { column: string; sourceColumn: string }
+  esFilter?: string
+  esBatchSize?: number
+  esSinkBatchSize?: number
+  esSinkIdRule?: string
+  kafkaSourceMode?: string
+  kafkaSourceGroupId?: string
+  kafkaSourceEndMode?: string
 }): Json {
   const { source, sink } = opts
+  const isEsSource = source.dsType === ES_DS_TYPE
+  const isKafkaSource = source.dsType === KAFKA_DS_TYPE
+  const isEsSink = sink.dsType === ES_DS_TYPE
+  const isKafkaSink = sink.dsType === KAFKA_DS_TYPE
   const writeMode = opts.writeMode || "OVERWRITE"
   const outputMode = opts.outputMode || opts.writeMode || "OVERWRITE"
 
@@ -623,8 +673,83 @@ export function generateSingleContent(opts: {
       if (col && typeof col === "object" && partCols.has(colName(col) ?? "")) col.partitionColumn = true
     }
   }
-  const sourceParams: Json = { dsType: source.dsType, operatorType: "source", table: source.table, database: source.schema }
-  if (sourcePartitions.length) sourceParams.partitions = wrapPartitions(sourcePartitions)
+  // Elasticsearch and Kafka have no schema: namespace/database use the "--" placeholder.
+  const schemaless = isEsSource || isKafkaSource
+  const sourceNamespace = schemaless ? ES_NAMESPACE_PLACEHOLDER : source.schema
+  const sourceDatabase = schemaless ? ES_NAMESPACE_PLACEHOLDER : source.schema
+  let sourceParams: Json
+  if (isKafkaSource) {
+    // Kafka source consumes by offset mode; group-offsets also carries a consumer groupId.
+    const mode = opts.kafkaSourceMode ?? KAFKA_SOURCE_DEFAULT_MODE
+    // groupId is the Kafka consumer group; required for every offset mode.
+    sourceParams = {
+      dsType: source.dsType,
+      mode,
+      codec: KAFKA_SINK_DEFAULT_CODEC,
+      ...(opts.kafkaSourceGroupId ? { groupId: opts.kafkaSourceGroupId } : {}),
+      operatorType: "source",
+      table: source.table,
+      database: sourceDatabase,
+      endMode: opts.kafkaSourceEndMode ?? KAFKA_SOURCE_DEFAULT_END_MODE,
+    }
+  } else {
+    sourceParams = { dsType: source.dsType, operatorType: "source", table: source.table, database: sourceDatabase }
+    if (isEsSource) {
+      sourceParams.filter = opts.esFilter ?? ""
+      sourceParams.batchSize = opts.esBatchSize ?? ES_DEFAULT_BATCH_SIZE
+    }
+    if (sourcePartitions.length) sourceParams.partitions = wrapPartitions(sourcePartitions)
+  }
+
+  // Sink shape varies by target type:
+  //  - Elasticsearch: no namespace/database; bulk batchSize + idGenerateRule.
+  //  - Kafka: namespace/database "--" placeholder; message codec.
+  //  - relational/Lakehouse: schema-backed with writeMode/outputMode (+ optional partitions).
+  let sinkObj: Json
+  if (isEsSink) {
+    sinkObj = {
+      dataObject: sink.table,
+      params: {
+        dsType: sink.dsType,
+        batchSize: opts.esSinkBatchSize ?? ES_SINK_DEFAULT_BATCH_SIZE,
+        idGenerateRule: opts.esSinkIdRule ?? ES_SINK_DEFAULT_ID_RULE,
+        operatorType: "sink",
+        table: sink.table,
+        is_partition: false,
+      },
+      columns: finalSinkCols,
+    }
+  } else if (isKafkaSink) {
+    sinkObj = {
+      dataObject: sink.table,
+      namespace: ES_NAMESPACE_PLACEHOLDER,
+      params: {
+        dsType: sink.dsType,
+        codec: KAFKA_SINK_DEFAULT_CODEC,
+        operatorType: "sink",
+        table: sink.table,
+        database: ES_NAMESPACE_PLACEHOLDER,
+        is_partition: false,
+      },
+      columns: finalSinkCols,
+    }
+  } else {
+    sinkObj = {
+      dataObject: sink.table,
+      namespace: sink.schema,
+      params: {
+        dsType: sink.dsType,
+        operatorType: "sink",
+        table: sink.table,
+        database: sink.schema,
+        is_partition: false,
+        writeMode,
+        outputMode,
+        ...(opts.partitions && opts.partitions.length ? { partitions: wrapPartitions(opts.partitions) } : {}),
+      },
+      columns: finalSinkCols,
+    }
+  }
 
   return {
     templateKey: 1,
@@ -635,25 +760,11 @@ export function generateSingleContent(opts: {
       {
         source: {
           dataObject: source.table,
-          namespace: source.schema,
+          namespace: sourceNamespace,
           params: sourceParams,
           columns: finalSourceCols,
         },
-        sink: {
-          dataObject: sink.table,
-          namespace: sink.schema,
-          params: {
-            dsType: sink.dsType,
-            operatorType: "sink",
-            table: sink.table,
-            database: sink.schema,
-            is_partition: false,
-            writeMode,
-            outputMode,
-            ...(opts.partitions && opts.partitions.length ? { partitions: wrapPartitions(opts.partitions) } : {}),
-          },
-          columns: finalSinkCols,
-        },
+        sink: sinkObj,
         setting: { parallelism: 1, errorLimit: { maxCount: -1, collectDirtyData: true, record: -1 } },
         columnMapping,
       },
@@ -827,12 +938,14 @@ async function editAdhocConfigs(
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
-  return taskYargs.command("integration", "Configure data integration (offline sync) task content", (yargs) => {
+  return taskYargs.command("integration", "Configure data integration (offline sync) task content across Lakehouse, relational (MySQL/PostgreSQL/…), Elasticsearch, and Kafka datasources", (yargs) => {
     yargs
       // ── setup ─────────────────────────────────────────────────────────
       .command(
         "setup <task>",
         "Configure an integration sync task's content (single-table / multi-table / whole-db). " +
+          "Single-table supports Lakehouse, relational (MySQL/PostgreSQL/…), Elasticsearch (--source-filter/--source-batch-size as source; --sink-batch-size/--sink-id-rule as sink), and Kafka (--source-mode/--source-group-id/--source-end-mode as source; codec-json as sink). " +
+          "Sink tables are auto-created only for Lakehouse targets (mirrored from the source, or built from column metadata for ES/Kafka sources); relational tables, ES indexes, and Kafka topics must be pre-created. " +
           "Create the task first with: cz-cli task create <name> --type INTEGRATION (single) or --type MULTI_DI (multi/whole_db).",
         (y) =>
           y
@@ -848,16 +961,23 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               describe: "[multi/whole_db] Sync VCluster name (INTEGRATION type) to bind to the task. Falls back to the session --vcluster. Required for the task to run.",
             })
             .option("source-datasource", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
-            .option("source-type", { type: "string", describe: "Source datasource type (e.g. lakehouse, mysql, postgresql) to disambiguate same-named datasources" })
-            .option("source-schema", { type: "string", demandOption: true, describe: "Source schema/database" })
-            .option("source-table", { type: "string", describe: "[single] Source table name" })
+            .option("source-type", { type: "string", describe: "Source datasource type (e.g. lakehouse, mysql, postgresql, elasticsearch) to disambiguate same-named datasources" })
+            .option("source-schema", { type: "string", describe: "Source schema/database. Required for relational sources; ignored for Elasticsearch (no schema)." })
+            .option("source-table", { type: "string", describe: "[single] Source table name (Elasticsearch index name)" })
+            .option("source-filter", { type: "string", describe: "[single][Elasticsearch] Query filter applied when reading the ES index (default: none)" })
+            .option("source-batch-size", { type: "number", describe: "[single][Elasticsearch] Scroll batch size when reading the ES index (default: 10)" })
+            .option("source-mode", { type: "string", choices: ["group-offsets", "earliest-offset", "latest-offset"], describe: "[single][Kafka] Offset consume mode (default: group-offsets)" })
+            .option("source-group-id", { type: "string", describe: "[single][Kafka] Consumer group id (required for a Kafka source, all offset modes)" })
+            .option("source-end-mode", { type: "string", describe: "[single][Kafka] Task-end strategy for the bounded offline read (default: period)" })
             .option("source-tables", { type: "string", describe: "[multi] Comma-separated source table names within --source-schema" })
             .option("source-dbs", { type: "string", describe: "[whole_db] Comma-separated source schemas/databases to mirror" })
             .option("sink-datasource", { type: "string", demandOption: true, describe: "Sink datasource name or ID" })
-            .option("sink-type", { type: "string", describe: "Sink datasource type (e.g. lakehouse, mysql, postgresql) to disambiguate same-named datasources" })
-            .option("sink-schema", { type: "string", default: "public", describe: "Sink schema (default: public)" })
-            .option("sink-table", { type: "string", describe: "[single] Sink table name (default: source table name)" })
-            .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], default: "OVERWRITE", describe: "[single] Sink write mode (default: OVERWRITE)" })
+            .option("sink-type", { type: "string", describe: "Sink datasource type (e.g. lakehouse, mysql, postgresql, elasticsearch) to disambiguate same-named datasources" })
+            .option("sink-schema", { type: "string", default: "public", describe: "Sink schema (default: public). Ignored for Elasticsearch sinks." })
+            .option("sink-table", { type: "string", describe: "[single] Sink table name / Elasticsearch index name (default: source table name)" })
+            .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], default: "OVERWRITE", describe: "[single] Sink write mode (default: OVERWRITE). Ignored for Elasticsearch sinks." })
+            .option("sink-batch-size", { type: "number", describe: "[single][Elasticsearch sink] Bulk write batch size (default: 10000)" })
+            .option("sink-id-rule", { type: "string", describe: "[single][Elasticsearch sink] Document id generation rule (default: NONE)" })
             .option("partitions", { type: "string", describe: "[single] Comma-separated sink partition expressions, e.g. 'dt=${bizdate}'. When using scheduling date/time params, look up the correct Studio param syntax first (cz-cli ai-guide / docs)." })
             .option("source-partitions", { type: "string", describe: "[single] Read only these partitions from a partitioned SOURCE (e.g. Lakehouse). Comma-separated 'col=value', e.g. 'dt=${bizdate}' or 'dt=2026-08-04'. Values may use Studio scheduling params (declare them via --param-value-list). Look up the correct param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." })
             .option("partitioned", { type: "boolean", describe: "[single] Declare the sink is a partition table. Required to auto-create a PARTITIONED BY sink table. Pair with --partitions (static) or --dynamic-partition." })
@@ -890,7 +1010,23 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               error("INVALID_DATASOURCE", "Could not resolve datasource type. Verify the datasource names/IDs.", { format })
               return
             }
-            const sourceSchema = String(argv["source-schema"])
+            const isEsSource = sourceDs.dsType === ES_DS_TYPE
+            const isKafkaSource = sourceDs.dsType === KAFKA_DS_TYPE
+            const schemalessSource = isEsSource || isKafkaSource
+            const isKafkaSink = sinkDs.dsType === KAFKA_DS_TYPE
+            const isMetadataOnlySink = sinkDs.dsType !== undefined && METADATA_ONLY_SINK_TYPES.has(sinkDs.dsType)
+            const sourceSchemaArg = argv["source-schema"] as string | undefined
+            if (!schemalessSource && !sourceSchemaArg) {
+              error("INVALID_ARGUMENTS", "--source-schema is required for this source type.", { format, exitCode: 2 }); return
+            }
+            // Elasticsearch/Kafka have no schema; force the "--" placeholder regardless of input.
+            const sourceSchema = schemalessSource ? ES_NAMESPACE_PLACEHOLDER : String(sourceSchemaArg)
+            // A Kafka source always needs a consumer group id, regardless of offset mode.
+            const kafkaSourceMode = (argv["source-mode"] as string | undefined) ?? (isKafkaSource ? KAFKA_SOURCE_DEFAULT_MODE : undefined)
+            const kafkaSourceGroupId = argv["source-group-id"] as string | undefined
+            if (isKafkaSource && !kafkaSourceGroupId) {
+              error("INVALID_ARGUMENTS", "--source-group-id is required for a Kafka source (the consumer group id). Pass --source-group-id <group>.", { format, exitCode: 2 }); return
+            }
             const sinkSchema = String(argv["sink-schema"])
 
             // ── multi-table / whole-db: build pipeline content, no table creation ──
@@ -958,23 +1094,64 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               ? (dynamicPartition?.column ?? staticPartitionColumn(partitionExprs) ?? DEFAULT_PARTITION_COLUMN)
               : undefined
 
-            // Ensure sink schema, then mirror the source table on the sink (PARTITIONED BY when declared).
             await ensureSchema(sc, sinkDs.id, sinkDs.dsType, sinkSchema, execOptions)
-            await createSinkTableFromSource(
-              sc,
-              { id: sourceDs.id, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
-              { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
-              execOptions,
-              partitionColumn,
-              format,
-            )
 
-            // Fetch column metadata and build a default position-based mapping.
-            const meta = await getColumnMapMeta(
-              sc,
-              { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
-              { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
-            )
+            let meta: { source: ColumnMeta[]; sink: ColumnMeta[] }
+            if (isMetadataOnlySink) {
+              // ES index / Kafka topic are managed externally and can't be created from here.
+              // Only fetch column metadata; do NOT attempt to build the target.
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
+              if (!meta.sink.length) {
+                const { code, hint } = isKafkaSink
+                  ? { code: "SINK_TOPIC_REQUIRED", hint: `Kafka topic '${sinkTable}' was not found (no column metadata). Create the topic first, then re-run setup.` }
+                  : { code: "SINK_INDEX_REQUIRED", hint: `Elasticsearch index '${sinkTable}' was not found (no column metadata). Create the ES index with its mapping first, then re-run setup.` }
+                error(code, hint, { format, exitCode: 2 })
+                return
+              }
+            } else if (schemalessSource) {
+              // Elasticsearch/Kafka sources can't produce a mirrorable DDL. Fetch column
+              // metadata first (it returns the typed Lakehouse sink columns), then build the
+              // Lakehouse sink table from those columns.
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
+              const result = await createLakehouseSinkFromColumns(
+                sc,
+                { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
+                meta.sink,
+                execOptions,
+                partitionColumn,
+              )
+              if (result === "missing-columns") {
+                error(
+                  "SINK_TABLE_REQUIRED",
+                  `Sink table ${sinkSchema}.${sinkTable} does not exist and no column metadata was returned for the ${isKafkaSource ? "Kafka" : "Elasticsearch"} source, so it cannot be auto-created. Create the Lakehouse table first, then re-run setup.`,
+                  { format, exitCode: 2 },
+                )
+                return
+              }
+            } else {
+              // Relational/Lakehouse source: mirror the source table's DDL onto the sink.
+              await createSinkTableFromSource(
+                sc,
+                { id: sourceDs.id, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
+                { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
+                execOptions,
+                partitionColumn,
+                format,
+              )
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
+            }
             // Dynamic partition: the routing source column must exist; otherwise ask the user to confirm it.
             if (dynamicPartition && !meta.source.some((c) => colName(c) === dynamicPartition.sourceColumn)) {
               error(
@@ -993,6 +1170,13 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               partitions: partitionExprs,
               sourcePartitions: sourcePartitionExprs,
               dynamicPartition,
+              esFilter: argv["source-filter"] as string | undefined,
+              esBatchSize: argv["source-batch-size"] as number | undefined,
+              esSinkBatchSize: argv["sink-batch-size"] as number | undefined,
+              esSinkIdRule: argv["sink-id-rule"] as string | undefined,
+              kafkaSourceMode,
+              kafkaSourceGroupId,
+              kafkaSourceEndMode: argv["source-end-mode"] as string | undefined,
             })
             const paramValueList = parseJsonArg<unknown[]>(argv["param-value-list"] as string | undefined, "param-value-list", format) ?? []
             const singleVcName = effectiveVcName(argv as Record<string, unknown>, conn)
