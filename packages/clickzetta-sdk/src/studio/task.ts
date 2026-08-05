@@ -28,6 +28,12 @@ export interface GetTaskConfigDetailParams {
   collectType?: number
 }
 
+export interface GetTaskPublishedVersionDetailParams {
+  projectId: number
+  dataFileId: number
+  dataFileVersion: number
+}
+
 export interface ParseTaskDependencyOutParams {
   projectId: number
   workspaceId: number | string
@@ -101,6 +107,27 @@ export interface SubmitTaskParams {
   updatedBy: string
 }
 
+export interface WorkspaceParamInvalidParam {
+  paramKey?: string
+  reason?: string
+}
+
+export interface TaskPreCheckDetail {
+  fileId?: number
+  fileName?: string
+  invalidParams?: WorkspaceParamInvalidParam[]
+}
+
+export interface TaskPreCheckParams {
+  projectId: number
+  fileIds: number[]
+}
+
+export interface TaskPreCheckResult {
+  pass?: boolean
+  details?: TaskPreCheckDetail[]
+}
+
 export interface GetTaskDependenciesParams {
   currentId: number
   fileIds: number[]
@@ -149,6 +176,18 @@ export function getTaskConfigDetail(config: StudioConfig, params: GetTaskConfigD
       dataFileId: params.dataFileId,
       ...(params.nodeId !== undefined && { nodeId: params.nodeId }),
       ...(params.collectType !== undefined && { collectType: params.collectType }),
+    },
+  )
+}
+
+export function getTaskPublishedVersionDetail(config: StudioConfig, params: GetTaskPublishedVersionDetailParams) {
+  return studioRequest(
+    config,
+    "/ide-admin/v1/fileVersion/getFileDetailByVersion",
+    {
+      projectId: params.projectId,
+      dataFileId: params.dataFileId,
+      dataFileVersion: params.dataFileVersion,
     },
   )
 }
@@ -251,6 +290,17 @@ export function submitTask(config: StudioConfig, params: SubmitTaskParams) {
     projectId: params.projectId,
     updatedBy: params.updatedBy,
   })
+}
+
+export function taskPreCheck(config: StudioConfig, params: TaskPreCheckParams) {
+  return studioRequest<TaskPreCheckResult>(
+    config,
+    "/ide-admin/v1/workspaceParams/task/preCheck",
+    {
+      projectId: params.projectId,
+      fileIds: params.fileIds,
+    },
+  )
 }
 
 export function onlineTask(config: StudioConfig, taskId: number, projectId: number) {

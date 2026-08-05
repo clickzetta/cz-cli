@@ -45,6 +45,18 @@ export interface ExecuteFlowParams {
   nodeParams?: { id: number; name: string; paramValueList?: unknown[] }[]
 }
 
+export interface SubmitFlowParams {
+  fileId: number
+  projectId: number
+  env?: string
+  commitMsg?: string
+  approvers?: number[]
+}
+
+export interface CheckFlowSubmitStatusParams {
+  submitTraceId: string
+}
+
 export interface ListFlowInstancesParams {
   flowId: number
   flowInstanceId?: number
@@ -229,6 +241,38 @@ export function executeFlow(config: StudioConfig, params: ExecuteFlowParams) {
       updateBy: params.updateBy,
       dataFileId: params.dataFileId,
       instanceName: params.instanceName,
+    },
+  )
+}
+
+export function submitFlow(config: StudioConfig, params: SubmitFlowParams) {
+  return studioRequest(
+    config,
+    "/ide-admin/v1/flow/submit",
+    {
+      fileId: params.fileId,
+      projectId: params.projectId,
+      env: params.env ?? config.env,
+      ...(params.commitMsg !== undefined && { commitMsg: params.commitMsg }),
+      ...(params.approvers !== undefined && { approvers: params.approvers }),
+    },
+    {
+      tenantId: String(config.tenantId),
+      userId: String(config.userId),
+      env: config.env,
+      openApi: "false",
+    },
+  )
+}
+
+export function checkFlowSubmitStatus(config: StudioConfig, params: CheckFlowSubmitStatusParams) {
+  return studioRequest<number>(
+    config,
+    `/ide-admin/v1/flow/checkSubmitStatus?submitTraceId=${encodeURIComponent(params.submitTraceId)}`,
+    {},
+    {
+      tenantId: String(config.tenantId),
+      openApi: "false",
     },
   )
 }

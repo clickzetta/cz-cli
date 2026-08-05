@@ -31,6 +31,7 @@ const saveTaskConfigCalls: Array<Record<string, unknown>> = []
 const saveFlowNodeConfigCalls: Array<Record<string, unknown>> = []
 const saveFlowNodeContentCalls: Array<Record<string, unknown>> = []
 const submitTaskCalls: Array<Record<string, unknown>> = []
+const submitFlowCalls: Array<Record<string, unknown>> = []
 const bindFlowNodeCalls: Array<Record<string, unknown>> = []
 let failNodeConfigDetail = false
 
@@ -42,6 +43,7 @@ beforeEach(() => {
   saveFlowNodeConfigCalls.length = 0
   saveFlowNodeContentCalls.length = 0
   submitTaskCalls.length = 0
+  submitFlowCalls.length = 0
   bindFlowNodeCalls.length = 0
   failNodeConfigDetail = false
   writeFileSync(
@@ -189,6 +191,27 @@ beforeEach(() => {
     return { code: 0, data: { ok: true } }
   })
 
+  // taskPreCheck — workspace-param pre-check gate before publish/flow-submit.
+  onStudio("/ide-admin/v1/workspaceParams/task/preCheck", () => ({
+    code: 0,
+    data: { pass: true, details: [] },
+  }))
+
+  // submitFlow — returns a submitTraceId string used to poll checkSubmitStatus.
+  onFetch({
+    match: (url) => url.includes("/ide-admin/v1/flow/submit"),
+    respond: (_url, _method, body) => {
+      submitFlowCalls.push((body ?? {}) as Record<string, unknown>)
+      return { code: 0, data: "trace-123" }
+    },
+  })
+
+  // checkFlowSubmitStatus — 2 = submitted/ok.
+  onFetch({
+    match: (url) => url.includes("/ide-admin/v1/flow/checkSubmitStatus"),
+    respond: () => ({ code: 0, data: 2 }),
+  })
+
   // saveDataFileConfiguration — one path, three callers told apart by body fields.
   onFetch({
     match: (url) => url.includes("/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"),
@@ -330,12 +353,16 @@ describe("condition task contracts", () => {
       adhocVcCode: "NODE_SQL_VC",
       adhocVcId: "node-sql-vc-id",
     })
-    expect(submitTaskCalls).toEqual([
+    // Flow publish now goes through submitFlow (POST /ide-admin/v1/flow/submit),
+    // followed by a checkSubmitStatus poll. The legacy dataFile/submit path is no
+    // longer used for flows.
+    expect(submitTaskCalls).toHaveLength(0)
+    expect(submitFlowCalls).toEqual([
       {
         commitMsg: "Published flow via cz-cli",
-        dataFileId: 13412004,
+        fileId: 13412004,
         projectId: 60001,
-        updatedBy: "12365",
+        env: "dev",
       },
     ])
   })

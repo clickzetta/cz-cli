@@ -117,6 +117,12 @@ beforeEach(() => {
     submitTaskCalls.push(body as Record<string, unknown>)
     return { code: 0, data: true }
   })
+
+  // taskPreCheck — workspace-param pre-check gate before publish.
+  onStudio("/ide-admin/v1/workspaceParams/task/preCheck", () => ({
+    code: 0,
+    data: { pass: true, details: [] },
+  }))
 })
 
 describe("task merge", () => {

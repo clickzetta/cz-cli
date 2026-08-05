@@ -5,6 +5,8 @@ import {
   getTaskDetail,
   getTaskConfigDetail,
   saveTaskContent,
+  listVclusters,
+  resolveVclusterId,
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
@@ -13,7 +15,7 @@ import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
 import { resolveTaskId } from "../resolver.js"
 import { studioUrl } from "./studio-url.js"
-import { resolveDatasource } from "./datasource.js"
+import { resolveDatasource, parseDsType } from "./datasource.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 
 // ---------------------------------------------------------------------------
@@ -297,14 +299,47 @@ function rewriteDdlTarget(ddl: string, sinkSchema: string, sinkTable: string): s
 /** Create the sink table by mirroring the source table's DDL. No-op if it already exists.
  *  Returns "exists" if the sink table was already present, "created" otherwise.
  *  When partitionColumn is given and the table is created, append PARTITIONED BY (col STRING). */
+const LAKEHOUSE_DS_TYPE = 1
+const ES_DS_TYPE = 13
+// Elasticsearch has no schema/database; Studio uses this placeholder in source namespace/params.
+const ES_NAMESPACE_PLACEHOLDER = "--"
+const ES_DEFAULT_BATCH_SIZE = 10
+// ES sink writes in bulk batches with a document-id rule instead of a SQL write mode.
+const ES_SINK_DEFAULT_BATCH_SIZE = 10000
+const ES_SINK_DEFAULT_ID_RULE = "NONE"
+// Kafka sink: messages are encoded with a codec; topic has no schema (uses "--" placeholder).
+const KAFKA_DS_TYPE = 2
+const KAFKA_SINK_DEFAULT_CODEC = "json"
+// Kafka source: consume by offset mode (with a groupId for group-offsets) and a codec.
+const KAFKA_SOURCE_DEFAULT_MODE = "group-offsets"
+const KAFKA_SOURCE_MODES = ["group-offsets", "earliest-offset", "latest-offset"] as const
+// Offline Kafka reads are bounded; endMode is the task-end strategy (e.g. "period").
+const KAFKA_SOURCE_DEFAULT_END_MODE = "period"
+// Sinks whose target (ES index / Kafka topic) is managed externally and cannot be
+// auto-created from here — setup only reads column metadata for these.
+const METADATA_ONLY_SINK_TYPES = new Set([ES_DS_TYPE, KAFKA_DS_TYPE])
+
 async function createSinkTableFromSource(
   sc: StudioConfig,
   source: { id: number; dsType: number; schema: string; table: string },
   sink: { id: number; dsType: number; schema: string; table: string },
   execOptions: Json,
   partitionColumn?: string,
+  format?: string,
 ): Promise<"exists" | "created"> {
   if (await tableExists(sc, sink.id, sink.dsType, sink.schema, sink.table)) return "exists"
+  // Only Lakehouse sinks can be auto-created by mirroring the source DDL. Other targets
+  // (MySQL, PostgreSQL, …) don't support server-side DDL generation, so instead of hitting
+  // an opaque backend error ("... doesn't support generate ddl"), tell the user to create
+  // the target table first.
+  if (sink.dsType !== LAKEHOUSE_DS_TYPE) {
+    handledError(
+      "SINK_TABLE_REQUIRED",
+      `Sink table ${sink.schema}.${sink.table} does not exist, and non-Lakehouse targets (dsType=${sink.dsType}) cannot be auto-created. ` +
+        `Create it in the target datasource first (matching the source columns), then re-run setup.`,
+      { format, exitCode: 2 },
+    )
+  }
   const ddl = await getDatasourceDdl(sc, source, sink)
   if (!ddl) throw new Error(`Could not fetch DDL for source table ${source.schema}.${source.table}`)
   const rewritten = rewriteDdlTarget(ddl, sink.schema, sink.table)
@@ -312,6 +347,27 @@ async function createSinkTableFromSource(
   // subset; the mirrored source PK conflicts with the appended partition column), then append.
   const finalDdl = partitionColumn ? appendPartitionedBy(stripPrimaryKey(rewritten), partitionColumn) : rewritten
   await executeDatasourceSql(sc, sink.id, finalDdl, execOptions)
+  return "created"
+}
+
+/** Create a Lakehouse sink table from typed column metadata (used when the source can't
+ *  produce a mirrorable DDL, e.g. Elasticsearch). No-op if the table already exists.
+ *  `columns` come from getColumnMapMeta's sinkMeta — each has a `name` and a Lakehouse `type`. */
+async function createLakehouseSinkFromColumns(
+  sc: StudioConfig,
+  sink: { id: number; dsType: number; schema: string; table: string },
+  columns: ColumnMeta[],
+  execOptions: Json,
+  partitionColumn?: string,
+): Promise<"exists" | "created" | "missing-columns"> {
+  if (await tableExists(sc, sink.id, sink.dsType, sink.schema, sink.table)) return "exists"
+  const defs = columns
+    .filter((c) => c && typeof c === "object" && colName(c) && !(c.partitionColumn === true))
+    .map((c) => `\`${colName(c)}\` ${c.type ?? "string"}`)
+  if (!defs.length) return "missing-columns"
+  let ddl = `CREATE TABLE IF NOT EXISTS \`${sink.schema}\`.\`${sink.table}\` (\n  ${defs.join(",\n  ")}\n)`
+  if (partitionColumn) ddl = appendPartitionedBy(ddl, partitionColumn)
+  await executeDatasourceSql(sc, sink.id, ddl, execOptions)
   return "created"
 }
 
@@ -531,9 +587,21 @@ export function generateSingleContent(opts: {
   writeMode?: string
   outputMode?: string
   partitions?: string[]
+  sourcePartitions?: string[]
   dynamicPartition?: { column: string; sourceColumn: string }
+  esFilter?: string
+  esBatchSize?: number
+  esSinkBatchSize?: number
+  esSinkIdRule?: string
+  kafkaSourceMode?: string
+  kafkaSourceGroupId?: string
+  kafkaSourceEndMode?: string
 }): Json {
   const { source, sink } = opts
+  const isEsSource = source.dsType === ES_DS_TYPE
+  const isKafkaSource = source.dsType === KAFKA_DS_TYPE
+  const isEsSink = sink.dsType === ES_DS_TYPE
+  const isKafkaSink = sink.dsType === KAFKA_DS_TYPE
   const writeMode = opts.writeMode || "OVERWRITE"
   const outputMode = opts.outputMode || opts.writeMode || "OVERWRITE"
 
@@ -594,6 +662,95 @@ export function generateSingleContent(opts: {
       columnMapping[dp.column] = dp.sourceColumn
     }
   }
+  // Source-side partitions: read only the given partition(s) from a partitioned source
+  // (e.g. Lakehouse). Written to source.params.partitions as [["col=value", ...]]. The
+  // partition columns are also flagged partitionColumn=true (the source metadata usually
+  // already marks them; this is a fallback so the flag is present when it isn't).
+  const sourcePartitions = opts.sourcePartitions ?? []
+  if (sourcePartitions.length) {
+    const partCols = new Set(sourcePartitions.map((e) => staticPartitionColumn([e])).filter(Boolean) as string[])
+    for (const col of finalSourceCols) {
+      if (col && typeof col === "object" && partCols.has(colName(col) ?? "")) col.partitionColumn = true
+    }
+  }
+  // Elasticsearch and Kafka have no schema: namespace/database use the "--" placeholder.
+  const schemaless = isEsSource || isKafkaSource
+  const sourceNamespace = schemaless ? ES_NAMESPACE_PLACEHOLDER : source.schema
+  const sourceDatabase = schemaless ? ES_NAMESPACE_PLACEHOLDER : source.schema
+  let sourceParams: Json
+  if (isKafkaSource) {
+    // Kafka source consumes by offset mode; group-offsets also carries a consumer groupId.
+    const mode = opts.kafkaSourceMode ?? KAFKA_SOURCE_DEFAULT_MODE
+    // groupId is the Kafka consumer group; required for every offset mode.
+    sourceParams = {
+      dsType: source.dsType,
+      mode,
+      codec: KAFKA_SINK_DEFAULT_CODEC,
+      ...(opts.kafkaSourceGroupId ? { groupId: opts.kafkaSourceGroupId } : {}),
+      operatorType: "source",
+      table: source.table,
+      database: sourceDatabase,
+      endMode: opts.kafkaSourceEndMode ?? KAFKA_SOURCE_DEFAULT_END_MODE,
+    }
+  } else {
+    sourceParams = { dsType: source.dsType, operatorType: "source", table: source.table, database: sourceDatabase }
+    if (isEsSource) {
+      sourceParams.filter = opts.esFilter ?? ""
+      sourceParams.batchSize = opts.esBatchSize ?? ES_DEFAULT_BATCH_SIZE
+    }
+    if (sourcePartitions.length) sourceParams.partitions = wrapPartitions(sourcePartitions)
+  }
+
+  // Sink shape varies by target type:
+  //  - Elasticsearch: no namespace/database; bulk batchSize + idGenerateRule.
+  //  - Kafka: namespace/database "--" placeholder; message codec.
+  //  - relational/Lakehouse: schema-backed with writeMode/outputMode (+ optional partitions).
+  let sinkObj: Json
+  if (isEsSink) {
+    sinkObj = {
+      dataObject: sink.table,
+      params: {
+        dsType: sink.dsType,
+        batchSize: opts.esSinkBatchSize ?? ES_SINK_DEFAULT_BATCH_SIZE,
+        idGenerateRule: opts.esSinkIdRule ?? ES_SINK_DEFAULT_ID_RULE,
+        operatorType: "sink",
+        table: sink.table,
+        is_partition: false,
+      },
+      columns: finalSinkCols,
+    }
+  } else if (isKafkaSink) {
+    sinkObj = {
+      dataObject: sink.table,
+      namespace: ES_NAMESPACE_PLACEHOLDER,
+      params: {
+        dsType: sink.dsType,
+        codec: KAFKA_SINK_DEFAULT_CODEC,
+        operatorType: "sink",
+        table: sink.table,
+        database: ES_NAMESPACE_PLACEHOLDER,
+        is_partition: false,
+      },
+      columns: finalSinkCols,
+    }
+  } else {
+    sinkObj = {
+      dataObject: sink.table,
+      namespace: sink.schema,
+      params: {
+        dsType: sink.dsType,
+        operatorType: "sink",
+        table: sink.table,
+        database: sink.schema,
+        is_partition: false,
+        writeMode,
+        outputMode,
+        ...(opts.partitions && opts.partitions.length ? { partitions: wrapPartitions(opts.partitions) } : {}),
+      },
+      columns: finalSinkCols,
+    }
+  }
+
   return {
     templateKey: 1,
     userParams: {},
@@ -603,25 +760,11 @@ export function generateSingleContent(opts: {
       {
         source: {
           dataObject: source.table,
-          namespace: source.schema,
-          params: { dsType: source.dsType, operatorType: "source", table: source.table, database: source.schema },
+          namespace: sourceNamespace,
+          params: sourceParams,
           columns: finalSourceCols,
         },
-        sink: {
-          dataObject: sink.table,
-          namespace: sink.schema,
-          params: {
-            dsType: sink.dsType,
-            operatorType: "sink",
-            table: sink.table,
-            database: sink.schema,
-            is_partition: false,
-            writeMode,
-            outputMode,
-            ...(opts.partitions && opts.partitions.length ? { partitions: wrapPartitions(opts.partitions) } : {}),
-          },
-          columns: finalSinkCols,
-        },
+        sink: sinkObj,
         setting: { parallelism: 1, errorLimit: { maxCount: -1, collectDirtyData: true, record: -1 } },
         columnMapping,
       },
@@ -675,7 +818,7 @@ async function loadIntegrationContent(sc: StudioConfig, taskId: number): Promise
 // ---------------------------------------------------------------------------
 // Save helpers
 // ---------------------------------------------------------------------------
-async function saveContent(sc: StudioConfig, taskId: number, content: Json, paramValueList: unknown[] = []): Promise<void> {
+async function saveContent(sc: StudioConfig, taskId: number, content: Json, paramValueList: unknown[] = [], adhocConfigs?: string): Promise<void> {
   await saveTaskContent(sc, {
     dataFileId: taskId,
     dataFileContent: content,
@@ -684,19 +827,125 @@ async function saveContent(sc: StudioConfig, taskId: number, content: Json, para
     instanceName: sc.instanceName,
     replaceEscapedChars: false,
     paramValueList,
+    ...(adhocConfigs !== undefined && { adhocConfigs }),
   })
+}
+
+function isIntegrationVc(v: { type?: string }): boolean {
+  return String(v.type ?? "").toUpperCase() === "INTEGRATION"
+}
+
+// Integration tasks execute on a sync-type (INTEGRATION) VCluster. A GENERAL/ANALYTICS
+// VC cannot run sync jobs, so binding one would only surface as a run-time failure later.
+// When vcName is given, validate its type; when omitted, auto-pick the workspace's sole
+// INTEGRATION VC (mirroring Studio, which binds an execution VC on save). Returns the
+// adhocConfigs JSON string to persist alongside the pipeline content.
+async function resolveSyncVcAdhocConfigs(
+  sc: StudioConfig,
+  vcName: string | undefined,
+  sinkSchema: string,
+  format: string | undefined,
+): Promise<string> {
+  const list = await listVclusters(sc).catch(() => [])
+  const integrationVcs = list.filter(isIntegrationVc)
+
+  let resolvedName = vcName
+  let adhocVcId: string | undefined
+
+  if (vcName) {
+    const match = list.find((v) => v.name === vcName || v.id === vcName)
+    if (match && !isIntegrationVc(match)) {
+      const hint = integrationVcs.length
+        ? `Available INTEGRATION VClusters: ${integrationVcs.map((v) => v.name).filter(Boolean).join(", ")}.`
+        : "No INTEGRATION VCluster found in this workspace — create one or check permissions."
+      handledError(
+        "INVALID_VCLUSTER",
+        `VCluster '${vcName}' is type ${match.type}, but offline sync tasks require an INTEGRATION (sync-type) VCluster. ${hint}`,
+        { format, exitCode: 2 },
+      )
+    }
+    adhocVcId = match?.id ?? (await resolveVclusterId(sc, vcName).catch(() => undefined))
+  } else {
+    // No VC given: auto-pick the workspace's INTEGRATION VC.
+    if (integrationVcs.length === 0) {
+      handledError(
+        "SYNC_VC_REQUIRED",
+        "Offline sync tasks require an INTEGRATION (sync-type) VCluster, but none was found in this workspace. Create one in Studio, or pass --vc <SYNC_VC>.",
+        { format, exitCode: 2 },
+      )
+    }
+    if (integrationVcs.length > 1) {
+      handledError(
+        "SYNC_VC_AMBIGUOUS",
+        `Multiple INTEGRATION VClusters found: ${integrationVcs.map((v) => v.name).filter(Boolean).join(", ")}. Pass --vc <SYNC_VC> to choose one.`,
+        { format, exitCode: 2 },
+      )
+    }
+    resolvedName = integrationVcs[0]!.name
+    adhocVcId = integrationVcs[0]!.id
+  }
+
+  return JSON.stringify({
+    multiDataSource: [],
+    schema: sinkSchema,
+    adhocVcCode: resolvedName,
+    ...(adhocVcId != null && { adhocVcId: String(adhocVcId) }),
+  })
+}
+
+// Resolve the effective sync-VC name from --vc, falling back to the session
+// --vcluster. A literal "default"/"DEFAULT" is the connection default, not a real
+// sync VC, so it is treated as "not provided" (lets the INTEGRATION auto-pick run).
+function effectiveVcName(argv: Record<string, unknown>, conn: { vcluster?: string }): string | undefined {
+  const vcArg = (argv.vc as string | undefined) ?? conn.vcluster
+  return vcArg && vcArg.toLowerCase() !== "default" ? vcArg : undefined
+}
+
+// Read the adhocConfigs JSON string already persisted on a task, if any, so an edit
+// that doesn't touch the VC preserves it instead of letting the backend clear it.
+async function existingAdhocConfigs(sc: StudioConfig, taskId: number): Promise<string | undefined> {
+  try {
+    const detail = await getTaskDetail(sc, taskId)
+    const data = (detail.data && typeof detail.data === "object" ? detail.data : {}) as Json
+    const raw = data.adhocConfigs
+    return typeof raw === "string" && raw.trim() ? raw : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Compute the adhocConfigs to persist on an edit save. When --vc is passed, resolve and
+// validate it as an INTEGRATION VC; otherwise preserve whatever the task already has so
+// the sync VC isn't dropped by a save that only touched mappings/params.
+async function editAdhocConfigs(
+  sc: StudioConfig,
+  argv: Record<string, unknown>,
+  conn: { vcluster?: string },
+  taskId: number,
+  content: Json,
+  format: string | undefined,
+): Promise<string | undefined> {
+  const vcName = argv.vc !== undefined ? effectiveVcName(argv, conn) : undefined
+  if (vcName) {
+    const sinkSchema =
+      (((content.jobs as Json[] | undefined)?.[0]?.sink as Json | undefined)?.namespace as string | undefined) ?? "public"
+    return resolveSyncVcAdhocConfigs(sc, vcName, sinkSchema, format)
+  }
+  return existingAdhocConfigs(sc, taskId)
 }
 
 // ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
-  return taskYargs.command("integration", "Configure data integration (offline sync) task content", (yargs) => {
+  return taskYargs.command("integration", "Configure data integration (offline sync) task content across Lakehouse, relational (MySQL/PostgreSQL/…), Elasticsearch, and Kafka datasources", (yargs) => {
     yargs
       // ── setup ─────────────────────────────────────────────────────────
       .command(
         "setup <task>",
         "Configure an integration sync task's content (single-table / multi-table / whole-db). " +
+          "Single-table supports Lakehouse, relational (MySQL/PostgreSQL/…), Elasticsearch (--source-filter/--source-batch-size as source; --sink-batch-size/--sink-id-rule as sink), and Kafka (--source-mode/--source-group-id/--source-end-mode as source; codec-json as sink). " +
+          "Sink tables are auto-created only for Lakehouse targets (mirrored from the source, or built from column metadata for ES/Kafka sources); relational tables, ES indexes, and Kafka topics must be pre-created. " +
           "Create the task first with: cz-cli task create <name> --type INTEGRATION (single) or --type MULTI_DI (multi/whole_db).",
         (y) =>
           y
@@ -707,16 +956,30 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               default: "single",
               describe: "single: one table (creates sink table + field mapping); multi: many tables; whole_db: whole database (no table creation)",
             })
+            .option("vc", {
+              type: "string",
+              describe: "[multi/whole_db] Sync VCluster name (INTEGRATION type) to bind to the task. Falls back to the session --vcluster. Required for the task to run.",
+            })
             .option("source-datasource", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
-            .option("source-schema", { type: "string", demandOption: true, describe: "Source schema/database" })
-            .option("source-table", { type: "string", describe: "[single] Source table name" })
+            .option("source-type", { type: "string", describe: "Source datasource type (e.g. lakehouse, mysql, postgresql, elasticsearch) to disambiguate same-named datasources" })
+            .option("source-schema", { type: "string", describe: "Source schema/database. Required for relational sources; ignored for Elasticsearch (no schema)." })
+            .option("source-table", { type: "string", describe: "[single] Source table name (Elasticsearch index name)" })
+            .option("source-filter", { type: "string", describe: "[single][Elasticsearch] Query filter applied when reading the ES index (default: none)" })
+            .option("source-batch-size", { type: "number", describe: "[single][Elasticsearch] Scroll batch size when reading the ES index (default: 10)" })
+            .option("source-mode", { type: "string", choices: ["group-offsets", "earliest-offset", "latest-offset"], describe: "[single][Kafka] Offset consume mode (default: group-offsets)" })
+            .option("source-group-id", { type: "string", describe: "[single][Kafka] Consumer group id (required for a Kafka source, all offset modes)" })
+            .option("source-end-mode", { type: "string", describe: "[single][Kafka] Task-end strategy for the bounded offline read (default: period)" })
             .option("source-tables", { type: "string", describe: "[multi] Comma-separated source table names within --source-schema" })
             .option("source-dbs", { type: "string", describe: "[whole_db] Comma-separated source schemas/databases to mirror" })
             .option("sink-datasource", { type: "string", demandOption: true, describe: "Sink datasource name or ID" })
-            .option("sink-schema", { type: "string", default: "public", describe: "Sink schema (default: public)" })
-            .option("sink-table", { type: "string", describe: "[single] Sink table name (default: source table name)" })
-            .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], default: "OVERWRITE", describe: "[single] Sink write mode (default: OVERWRITE)" })
+            .option("sink-type", { type: "string", describe: "Sink datasource type (e.g. lakehouse, mysql, postgresql, elasticsearch) to disambiguate same-named datasources" })
+            .option("sink-schema", { type: "string", default: "public", describe: "Sink schema (default: public). Ignored for Elasticsearch sinks." })
+            .option("sink-table", { type: "string", describe: "[single] Sink table name / Elasticsearch index name (default: source table name)" })
+            .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], default: "OVERWRITE", describe: "[single] Sink write mode (default: OVERWRITE). Ignored for Elasticsearch sinks." })
+            .option("sink-batch-size", { type: "number", describe: "[single][Elasticsearch sink] Bulk write batch size (default: 10000)" })
+            .option("sink-id-rule", { type: "string", describe: "[single][Elasticsearch sink] Document id generation rule (default: NONE)" })
             .option("partitions", { type: "string", describe: "[single] Comma-separated sink partition expressions, e.g. 'dt=${bizdate}'. When using scheduling date/time params, look up the correct Studio param syntax first (cz-cli ai-guide / docs)." })
+            .option("source-partitions", { type: "string", describe: "[single] Read only these partitions from a partitioned SOURCE (e.g. Lakehouse). Comma-separated 'col=value', e.g. 'dt=${bizdate}' or 'dt=2026-08-04'. Values may use Studio scheduling params (declare them via --param-value-list). Look up the correct param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." })
             .option("partitioned", { type: "boolean", describe: "[single] Declare the sink is a partition table. Required to auto-create a PARTITIONED BY sink table. Pair with --partitions (static) or --dynamic-partition." })
             .option("dynamic-partition", { type: "string", describe: "[single] Dynamic partition routing: 'col:source_col' (col defaults to dt). Each row is routed to a partition by the source column's value. Mutually exclusive with --partitions." })
             .option("param-value-list", { type: "string", describe: "Scheduling parameter declarations as JSON, e.g. '[{\"paramKey\":\"bizdate\",\"paramValue\":\"$[yyyyMMdd-1]\"}]' (needed by partition/where expressions). Look up the correct Studio scheduling-param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." }),
@@ -731,13 +994,39 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const syncType = String(argv["sync-type"])
 
-            const sourceDs = await resolveDatasource(sc, String(argv["source-datasource"]))
-            const sinkDs = await resolveDatasource(sc, String(argv["sink-datasource"]))
+            const sourceTypeArg = argv["source-type"] as string | undefined
+            const sinkTypeArg = argv["sink-type"] as string | undefined
+            const sourceType = sourceTypeArg ? parseDsType(sourceTypeArg) : undefined
+            const sinkType = sinkTypeArg ? parseDsType(sinkTypeArg) : undefined
+            if (sourceTypeArg && sourceType === undefined) {
+              error("INVALID_ARGUMENTS", `Unknown --source-type '${sourceTypeArg}'.`, { format, exitCode: 2 }); return
+            }
+            if (sinkTypeArg && sinkType === undefined) {
+              error("INVALID_ARGUMENTS", `Unknown --sink-type '${sinkTypeArg}'.`, { format, exitCode: 2 }); return
+            }
+            const sourceDs = await resolveDatasource(sc, String(argv["source-datasource"]), sourceType)
+            const sinkDs = await resolveDatasource(sc, String(argv["sink-datasource"]), sinkType)
             if (sourceDs.dsType === undefined || sinkDs.dsType === undefined) {
               error("INVALID_DATASOURCE", "Could not resolve datasource type. Verify the datasource names/IDs.", { format })
               return
             }
-            const sourceSchema = String(argv["source-schema"])
+            const isEsSource = sourceDs.dsType === ES_DS_TYPE
+            const isKafkaSource = sourceDs.dsType === KAFKA_DS_TYPE
+            const schemalessSource = isEsSource || isKafkaSource
+            const isKafkaSink = sinkDs.dsType === KAFKA_DS_TYPE
+            const isMetadataOnlySink = sinkDs.dsType !== undefined && METADATA_ONLY_SINK_TYPES.has(sinkDs.dsType)
+            const sourceSchemaArg = argv["source-schema"] as string | undefined
+            if (!schemalessSource && !sourceSchemaArg) {
+              error("INVALID_ARGUMENTS", "--source-schema is required for this source type.", { format, exitCode: 2 }); return
+            }
+            // Elasticsearch/Kafka have no schema; force the "--" placeholder regardless of input.
+            const sourceSchema = schemalessSource ? ES_NAMESPACE_PLACEHOLDER : String(sourceSchemaArg)
+            // A Kafka source always needs a consumer group id, regardless of offset mode.
+            const kafkaSourceMode = (argv["source-mode"] as string | undefined) ?? (isKafkaSource ? KAFKA_SOURCE_DEFAULT_MODE : undefined)
+            const kafkaSourceGroupId = argv["source-group-id"] as string | undefined
+            if (isKafkaSource && !kafkaSourceGroupId) {
+              error("INVALID_ARGUMENTS", "--source-group-id is required for a Kafka source (the consumer group id). Pass --source-group-id <group>.", { format, exitCode: 2 }); return
+            }
             const sinkSchema = String(argv["sink-schema"])
 
             // ── multi-table / whole-db: build pipeline content, no table creation ──
@@ -762,14 +1051,17 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 jobsSpec,
                 dbNamespaces,
               })
-              await saveContent(sc, fileId, content)
+              const vcName = effectiveVcName(argv as Record<string, unknown>, conn)
+              const adhocConfigs = await resolveSyncVcAdhocConfigs(sc, vcName, sinkSchema, format)
+              const boundVc = (JSON.parse(adhocConfigs) as { adhocVcCode?: string }).adhocVcCode
+              await saveContent(sc, fileId, content, [], adhocConfigs)
               logOperation("integration setup", { ok: true })
               const kind = pipelineType === 1 ? "multi-table" : "whole-db"
               success(
-                { task_id: fileId, sync_type: syncType, tables, studio_url: studioUrl(sc, fileId) },
+                { task_id: fileId, sync_type: syncType, tables, ...(boundVc ? { vc: boundVc } : {}), studio_url: studioUrl(sc, fileId) },
                 {
                   format,
-                  aiMessage: `已创建${kind === "multi-table" ? "多表" : "整库"}同步任务（${jobsSpec.length} 张表）。集成任务执行需使用 INTEGRATION 类型的 vcluster。`,
+                  aiMessage: `已创建${kind === "multi-table" ? "多表" : "整库"}同步任务（${jobsSpec.length} 张表）。已绑定同步 VCluster：${boundVc}。`,
                 },
               )
               return
@@ -787,6 +1079,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             // a plain mirror table is created and --partitions only fills sink.params.partitions.
             const dynamicPartitionArg = argv["dynamic-partition"] as string | undefined
             const partitionExprs = splitCsv(argv["partitions"] as string | undefined)
+            const sourcePartitionExprs = splitCsv(argv["source-partitions"] as string | undefined)
             const partitioned = Boolean(argv.partitioned) || dynamicPartitionArg !== undefined
             if (dynamicPartitionArg !== undefined && partitionExprs.length) {
               error("INVALID_ARGUMENTS", "--partitions and --dynamic-partition are mutually exclusive. Use --partitions for a fixed partition value, --dynamic-partition for per-row routing.", { format, exitCode: 2 })
@@ -801,22 +1094,64 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               ? (dynamicPartition?.column ?? staticPartitionColumn(partitionExprs) ?? DEFAULT_PARTITION_COLUMN)
               : undefined
 
-            // Ensure sink schema, then mirror the source table on the sink (PARTITIONED BY when declared).
             await ensureSchema(sc, sinkDs.id, sinkDs.dsType, sinkSchema, execOptions)
-            await createSinkTableFromSource(
-              sc,
-              { id: sourceDs.id, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
-              { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
-              execOptions,
-              partitionColumn,
-            )
 
-            // Fetch column metadata and build a default position-based mapping.
-            const meta = await getColumnMapMeta(
-              sc,
-              { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
-              { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
-            )
+            let meta: { source: ColumnMeta[]; sink: ColumnMeta[] }
+            if (isMetadataOnlySink) {
+              // ES index / Kafka topic are managed externally and can't be created from here.
+              // Only fetch column metadata; do NOT attempt to build the target.
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
+              if (!meta.sink.length) {
+                const { code, hint } = isKafkaSink
+                  ? { code: "SINK_TOPIC_REQUIRED", hint: `Kafka topic '${sinkTable}' was not found (no column metadata). Create the topic first, then re-run setup.` }
+                  : { code: "SINK_INDEX_REQUIRED", hint: `Elasticsearch index '${sinkTable}' was not found (no column metadata). Create the ES index with its mapping first, then re-run setup.` }
+                error(code, hint, { format, exitCode: 2 })
+                return
+              }
+            } else if (schemalessSource) {
+              // Elasticsearch/Kafka sources can't produce a mirrorable DDL. Fetch column
+              // metadata first (it returns the typed Lakehouse sink columns), then build the
+              // Lakehouse sink table from those columns.
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
+              const result = await createLakehouseSinkFromColumns(
+                sc,
+                { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
+                meta.sink,
+                execOptions,
+                partitionColumn,
+              )
+              if (result === "missing-columns") {
+                error(
+                  "SINK_TABLE_REQUIRED",
+                  `Sink table ${sinkSchema}.${sinkTable} does not exist and no column metadata was returned for the ${isKafkaSource ? "Kafka" : "Elasticsearch"} source, so it cannot be auto-created. Create the Lakehouse table first, then re-run setup.`,
+                  { format, exitCode: 2 },
+                )
+                return
+              }
+            } else {
+              // Relational/Lakehouse source: mirror the source table's DDL onto the sink.
+              await createSinkTableFromSource(
+                sc,
+                { id: sourceDs.id, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
+                { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
+                execOptions,
+                partitionColumn,
+                format,
+              )
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
+            }
             // Dynamic partition: the routing source column must exist; otherwise ask the user to confirm it.
             if (dynamicPartition && !meta.source.some((c) => colName(c) === dynamicPartition.sourceColumn)) {
               error(
@@ -833,10 +1168,21 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               sinkColumns: meta.sink,
               writeMode: argv["write-mode"] as string | undefined,
               partitions: partitionExprs,
+              sourcePartitions: sourcePartitionExprs,
               dynamicPartition,
+              esFilter: argv["source-filter"] as string | undefined,
+              esBatchSize: argv["source-batch-size"] as number | undefined,
+              esSinkBatchSize: argv["sink-batch-size"] as number | undefined,
+              esSinkIdRule: argv["sink-id-rule"] as string | undefined,
+              kafkaSourceMode,
+              kafkaSourceGroupId,
+              kafkaSourceEndMode: argv["source-end-mode"] as string | undefined,
             })
             const paramValueList = parseJsonArg<unknown[]>(argv["param-value-list"] as string | undefined, "param-value-list", format) ?? []
-            await saveContent(sc, fileId, content, paramValueList)
+            const singleVcName = effectiveVcName(argv as Record<string, unknown>, conn)
+            const singleAdhocConfigs = await resolveSyncVcAdhocConfigs(sc, singleVcName, sinkSchema, format)
+            const singleBoundVc = (JSON.parse(singleAdhocConfigs) as { adhocVcCode?: string }).adhocVcCode
+            await saveContent(sc, fileId, content, paramValueList, singleAdhocConfigs)
             const rows = mappingToRows((content.jobs as Json[])[0].columnMapping as Record<string, string>)
             logOperation("integration setup", { ok: true })
             success(
@@ -845,6 +1191,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 sync_type: "single",
                 source: `${sourceSchema}.${sourceTable}`,
                 sink: `${sinkSchema}.${sinkTable}`,
+                ...(singleBoundVc ? { vc: singleBoundVc } : {}),
                 column_mapping: rows,
                 ...(partitioned
                   ? {
@@ -858,7 +1205,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               {
                 format,
                 aiMessage:
-                  "已创建单表同步任务并生成默认字段映射。如需调整映射或同步参数，使用: cz-cli task integration edit <task>。集成任务执行需使用 INTEGRATION 类型的 vcluster。",
+                  `已创建单表同步任务并生成默认字段映射。已绑定同步 VCluster：${singleBoundVc}。如需调整映射或同步参数，使用: cz-cli task integration edit <task>。`,
               },
             )
           } catch (err) {
@@ -945,6 +1292,10 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
+            .option("vc", {
+              type: "string",
+              describe: "Sync VCluster name (INTEGRATION type) to (re)bind. When omitted, the task's existing bound VC is preserved.",
+            })
             // single-table
             .option("column-mapping", {
               type: "string",
@@ -963,6 +1314,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             .option("advanced-params", { type: "string", describe: "[single] Advanced params as JSON rows [{\"key\":\"k\",\"value\":\"v\"}] (replaces existing)" })
             .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], describe: "[single] Sink write mode: OVERWRITE | APPEND | UPSERT" })
             .option("partitions", { type: "string", describe: "[single] Comma-separated sink partition expressions (empty string clears), e.g. 'dt=${bizdate}'" })
+            .option("source-partitions", { type: "string", describe: "[single] Read only these partitions from a partitioned SOURCE (empty string clears). Comma-separated 'col=value', e.g. 'dt=${bizdate}'. Values may use Studio scheduling params (declare via --param-value-list). Look up the correct param syntax first (cz-cli ai-guide / docs)." })
             .option("dynamic-partition", { type: "string", describe: "[single] Dynamic partition routing: 'col:source_col' (col defaults to dt). Routes each row to a partition by the source column's value. Empty string clears it. Mutually exclusive with --partitions." })
             .option("param-value-list", { type: "string", describe: "Scheduling parameter declarations as JSON [{\"paramKey\":\"bizdate\",\"paramValue\":\"$[yyyyMMdd-1]\"}] (passed to save; needed by partition/where params). Look up the correct Studio scheduling-param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." })
             // multi-table / whole-db
@@ -981,6 +1333,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
           const format = argv.format
           try {
             const sc = await ctx(argv)
+            const conn = resolveConnectionConfig(argv as Record<string, unknown>)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const content = (await loadIntegrationContent(sc, fileId)) ?? { jobs: [{ columnMapping: {} }] }
 
@@ -1006,6 +1359,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
 
               const hasChange =
                 tableMapping !== undefined ||
+                argv.vc !== undefined ||
                 [pkWriteMode, nonPkWriteMode, schemaRule, tableRule, parallelism, batchSize, connections].some(
                   (v) => v !== undefined,
                 )
@@ -1051,13 +1405,16 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 .map((j) => ({ schema: (j.source as Json).namespace as string, table: (j.source as Json).dataObject as string }))
               const warning = await pipelineCheckTables(sc, fileId, tableInfo, pipelineType)
 
-              await saveContent(sc, fileId, content)
+              const multiAdhocConfigs = await editAdhocConfigs(sc, argv as Record<string, unknown>, conn, fileId, content, format)
+              const multiBoundVc = multiAdhocConfigs ? (JSON.parse(multiAdhocConfigs) as { adhocVcCode?: string }).adhocVcCode : undefined
+              await saveContent(sc, fileId, content, [], multiAdhocConfigs)
               logOperation("integration edit", { ok: true })
               success(
                 {
                   task_id: fileId,
                   sync_type: pipelineType === 1 ? "multi" : "whole_db",
                   table_mapping: jobsToTableRows(content),
+                  ...(multiBoundVc ? { vc: multiBoundVc } : {}),
                   studio_url: studioUrl(sc, fileId),
                   ...(warning ? { validation_warning: warning } : {}),
                 },
@@ -1076,6 +1433,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             const where = argv.where as string | undefined
             const writeMode = argv["write-mode"] as string | undefined
             const partitionsArg = argv["partitions"] as string | undefined
+            const sourcePartitionsArg = argv["source-partitions"] as string | undefined
             const dynamicPartitionArg = argv["dynamic-partition"] as string | undefined
             const paramValueList = parseJsonArg<unknown[]>(argv["param-value-list"] as string | undefined, "param-value-list", format)
 
@@ -1088,8 +1446,10 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               columnMapping !== undefined ||
               advancedParams !== undefined ||
               partitionsArg !== undefined ||
+              sourcePartitionsArg !== undefined ||
               dynamicPartitionArg !== undefined ||
               paramValueList !== undefined ||
+              argv.vc !== undefined ||
               [parallelism, errorLimit, mBytes, splitPk, where, writeMode].some((v) => v !== undefined)
             if (!hasChange) {
               error("INVALID_ARGUMENTS", "Provide at least one field to change. See 'cz-cli task integration edit --help'.", { format, exitCode: 2 })
@@ -1205,6 +1565,23 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
               if (where) sp.where = where
               else delete sp.where
             }
+            // source.params: read-partition selection (empty string clears it).
+            if (sourcePartitionsArg !== undefined) {
+              const exprs = splitCsv(sourcePartitionsArg)
+              const cols = (source.columns as ColumnMeta[] | undefined) ?? []
+              if (exprs.length) {
+                sp.partitions = wrapPartitions(exprs)
+                const partCols = new Set(exprs.map((e) => staticPartitionColumn([e])).filter(Boolean) as string[])
+                for (const c of cols) {
+                  if (c && typeof c === "object" && partCols.has(colName(c) ?? "")) c.partitionColumn = true
+                }
+              } else {
+                delete sp.partitions
+                for (const c of cols) {
+                  if (c && typeof c === "object" && c.partitionColumn === true) c.partitionColumn = false
+                }
+              }
+            }
 
             // sink.params: write mode + partitions
             const sinkParams = (sink.params && typeof sink.params === "object" ? sink.params : {}) as Json
@@ -1238,7 +1615,9 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 .map((r) => ({ key: r.key, value: r.value }))
             }
 
-            await saveContent(sc, fileId, content, paramValueList ?? [])
+            const singleEditAdhoc = await editAdhocConfigs(sc, argv as Record<string, unknown>, conn, fileId, content, format)
+            const singleEditVc = singleEditAdhoc ? (JSON.parse(singleEditAdhoc) as { adhocVcCode?: string }).adhocVcCode : undefined
+            await saveContent(sc, fileId, content, paramValueList ?? [], singleEditAdhoc)
             logOperation("integration edit", { ok: true })
             const finalPartCol = (sink.columns as ColumnMeta[]).find((c) => c.partitionColumn === true)
             const finalStatic = (sinkParams.partitions as unknown[] | undefined) ?? []
@@ -1247,6 +1626,7 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 task_id: fileId,
                 sync_type: "single",
                 column_mapping: mappingToRows(mapping),
+                ...(singleEditVc ? { vc: singleEditVc } : {}),
                 ...(finalPartCol
                   ? { partition_mode: "dynamic", partition_column: colName(finalPartCol), partition_source_column: mapping[colName(finalPartCol) ?? ""] }
                   : finalStatic.length
