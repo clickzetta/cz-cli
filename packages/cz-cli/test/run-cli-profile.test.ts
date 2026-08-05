@@ -166,6 +166,11 @@ describe("classifyCliArgs profile-aware agent routing", () => {
     expect(result.shouldDelegateToAgentRuntime).toBe(true)
     expect(result.command).toBe("agent")
     expect(result.subcommand).toBe("run")
-    expect(result.runtimeArgs).toEqual(["agent", "--format", "text", "run", "hello"])
+    // --format is re-inserted after the SUBCOMMAND, not after `agent`. The old
+    // placement (`agent --format text run hello`) put it at args[1], which is a
+    // dispatch key in bootstrap/runtime.ts — `agent llm show --format json` became
+    // `agent --format json llm show` and stopped routing to the llm parser. See
+    // test/agent-global-flags.test.ts for the invariant this protects.
+    expect(result.runtimeArgs).toEqual(["agent", "run", "--format", "text", "hello"])
   })
 })

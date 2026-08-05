@@ -384,6 +384,49 @@ const tests: TestCase[] = [
     },
   },
   {
+    // The unit side (test/agent-global-flags.test.ts) proves the arg rewrite keeps
+    // dispatch keys intact; this proves each REAL parser actually accepts the flag.
+    // Both halves are needed: --format survived normalization for `agent llm` yet
+    // was still rejected downstream, because that subtree runs its own yargs under
+    // commandGroup()'s strictOptions() and never declared the option. AGENT_FORMAT_FLAG
+    // below only ever exercised `agent run`, which is why the siblings drifted.
+    name: "AGENT_GLOBAL_OUTPUT_FLAGS: --format is accepted on every agent subcommand, not just run",
+    run() {
+      const { home, cleanup } = withFakeHome(
+        undefined,
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            test: { npm: "@ai-sdk/openai-compatible", options: { apiKey: "k", baseURL: "https://example.invalid/v1" } },
+          },
+        }),
+      )
+      try {
+        for (const args of [
+          ["agent", "llm", "show"],
+          ["agent", "llm", "list"],
+          ["agent", "stats"],
+          ["llm", "show"],
+        ]) {
+          const withFlag = run([...args, "--format", "json"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+          const code = (parseJson(withFlag.stdout)?.error as Record<string, unknown> | undefined)?.code
+          if (code === "USAGE_ERROR") {
+            return { pass: false, detail: `${args.join(" ")} --format json rejected: ${withFlag.stdout.slice(0, 160)}` }
+          }
+          // --format must not change WHICH command ran: same exit code as without it.
+          const bare = run([...args], { HOME: home, CLICKZETTA_TEST_HOME: home })
+          if (withFlag.exitCode !== bare.exitCode) {
+            return {
+              pass: false,
+              detail: `${args.join(" ")} exit changed with --format: ${bare.exitCode} -> ${withFlag.exitCode}`,
+            }
+          }
+        }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
     name: "AGENT_SESSION_STATUS_FORMAT: session status accepts --format json on runtime path",
     run() {
       const { home, cleanup } = withFakeHome(
