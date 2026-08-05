@@ -354,6 +354,22 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   cli
     .usage("")
     .completion("completion", "generate shell completion script")
+    // cz_change: declare the cz global output flags on the agent runtime root.
+    // commandGroup(cli, "agent") below applies strictOptions(), so anything not
+    // declared here is rejected as unknown — and cz's own `-o/--output` removal
+    // notice points users at --format, which then failed on `agent stats`.
+    // Upstream declares --format on `session` only, so acceptance differed per
+    // subcommand for no reason a user could see. Declaring both at the root makes
+    // the whole agent tree accept them uniformly; subcommands that implement a
+    // formatter (session) still consume it, the rest ignore it.
+    .option("format", {
+      type: "string",
+      describe: "Output format. Commands that emit JSON already ignore this; accepted everywhere for consistency.",
+    })
+    .option("field", {
+      type: "string",
+      describe: "Extract a single field from the response, where the command supports it.",
+    })
     // cz_change: exposed commands only — see the import block above for why the
     // rest of upstream's tree is deliberately absent.
     .command(McpCommand)

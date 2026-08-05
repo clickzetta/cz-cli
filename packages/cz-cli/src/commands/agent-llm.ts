@@ -791,6 +791,22 @@ export async function runLlm(args: readonly string[]): Promise<never> {
         alias: "p",
         describe: "ClickZetta connection profile to use (overrides default_profile in profiles.toml)",
       })
+      // cz_change: declare --format/--field for the same reason as --profile above.
+      // AgentLlmCommand goes through commandGroup(), which applies strictOptions(),
+      // so an undeclared flag is rejected outright — and the `-o/--output` removal
+      // notice tells users to "use --format instead", which then failed with
+      // "unrecognized option: format". These commands emit JSON unconditionally, so
+      // the flags are accepted and ignored rather than wired to a formatter; that
+      // keeps the documented replacement working without implying table/csv output
+      // this path does not produce.
+      .option("format", {
+        type: "string",
+        describe: "Output format. These commands always emit JSON; accepted for compatibility.",
+      })
+      .option("field", {
+        type: "string",
+        describe: "Accepted for compatibility with the global flag; has no effect here.",
+      })
       .command(AgentLlmCommand)
       .demandCommand(1, "")
       .strictCommands()

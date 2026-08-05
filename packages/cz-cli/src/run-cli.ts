@@ -189,6 +189,15 @@ function extractGlobalFormatArgs(args: string[]) {
 
   for (let index = 0; index < args.length; index++) {
     const value = args[index]
+    // cz_change: stop at `--`. Everything after it belongs to the command being
+    // wrapped, so hoisting a `--format` out of there both stole a pass-through
+    // token and moved it in front of the separator, where it changed cz's own
+    // output instead. canonicalizeProfileShortFlag already stops here for the
+    // same reason.
+    if (value === "--") {
+      remaining.push(...args.slice(index))
+      break
+    }
     if (value === "--format") {
       formatArgs.push(value)
       const next = args[index + 1]
@@ -347,15 +356,26 @@ async function parseRegisteredCommands(args: string[], onValidated?: () => void)
 }
 
 function agentSubcommand(args: string[], commandIndex: number) {
+  const index = subcommandIndex(args, commandIndex)
+  return index < 0 ? undefined : args[index]
+}
+
+/**
+ * Position of the agent subcommand token, or -1. Same scan as agentSubcommand —
+ * kept as one walk so the token and its index can never disagree, which is what
+ * the --format re-insertion depends on.
+ */
+function subcommandIndex(args: string[], commandIndex: number): number {
   for (let index = commandIndex + 1; index < args.length; index++) {
     const value = args[index]
     if (!value) continue
-    if (value === "--") return
-    if (!value.startsWith("-")) return value
+    if (value === "--") return -1
+    if (!value.startsWith("-")) return index
     const flag = value.replace(/^-+/, "").split("=")[0]
     if (!flag || AGENT_FLAGS.has(flag) || value.includes("=")) continue
     if (AGENT_FLAGS_WITH_VALUES.has(flag)) index++
   }
+  return -1
 }
 
 // cz_change: `-p` is the cz-cli global short alias for `--profile`, but upstream
@@ -415,14 +435,22 @@ function normalizeCliArgs(rawArgs: string[]) {
   const isHelpRequest = initialArgs.includes("--help") || initialArgs.includes("-h")
   const subcommand = command === "agent" ? agentSubcommand(commandArgs, commandIndex) : undefined
   const bareAgentInvocation = command === "agent" && !subcommand
-  const runtimeArgs = formatArgs.length === 0 || commandIndex < 0
+  // cz_change: re-insert --format AFTER the full command path, not after the
+  // first word. bootstrap/runtime.ts dispatches on fixed positions (`args[0] ===
+  // "agent" && args[1] === "llm"`), and the old splice put the flag at args[1],
+  // so `agent llm show --format json` became `agent --format json llm show` and
+  // stopped matching — the flag then reached a parser that never declared it and
+  // was rejected as unknown. `agent run` only worked by accident: it has no
+  // deeper dispatch key to displace. Insert past the subcommand as well so every
+  // agent-path command sees the same args shape.
+  const formatInsertAt = commandIndex < 0
+    ? -1
+    : subcommand
+      ? subcommandIndex(commandArgs, commandIndex) + 1
+      : commandIndex + 1
+  const runtimeArgs = formatArgs.length === 0 || formatInsertAt < 0
     ? commandArgs
-    : [
-        ...commandArgs.slice(0, commandIndex),
-        commandArgs[commandIndex],
-        ...formatArgs,
-        ...commandArgs.slice(commandIndex + 1),
-      ]
+    : [...commandArgs.slice(0, formatInsertAt), ...formatArgs, ...commandArgs.slice(formatInsertAt)]
   return {
     args: initialArgs,
     runtimeArgs,
