@@ -36,7 +36,7 @@ const JSON_ARRAY_OPTIONS = new Set(["--output-tables"])
 // NOTE: "v" is listed as an alias of --version, not --vcluster. --vcluster is
 // long-form only. See the --vcluster option comment in createCli().
 export const KNOWN_GLOBAL_FLAGS = ["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "format", "field", "debug", "d", "help", "h", "version", "v", "target", "t"]
-export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "workspace-param", "status", "auth", "login", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent", "mcp"]
+export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "workspace-param", "status", "auth", "login", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent", "dqc", "mcp"]
 
 export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
   const result: string[] = []

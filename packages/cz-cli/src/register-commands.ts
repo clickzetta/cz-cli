@@ -20,6 +20,7 @@ import { registerAnalyticsAgentCommand } from "./commands/analytics-agent.js"
 import { registerAutoupdateCommand } from "./commands/autoupdate.js"
 import { registerMcpCommand } from "./commands/mcp.js"
 import { registerAuthCommand } from "./commands/auth.js"
+import { registerDqcCommand } from "./commands/dqc.js"
 
 export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerAuthCommand(cli)
@@ -41,6 +42,7 @@ export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
   registerDatasourceCommand(cli)
   registerGatewayCommand(cli)
   registerAnalyticsAgentCommand(cli)
+  registerDqcCommand(cli)
   registerMcpCommand(cli)
   return cli
 }
