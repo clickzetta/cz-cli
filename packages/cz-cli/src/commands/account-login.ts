@@ -1,5 +1,6 @@
 import { constants, publicEncrypt } from "node:crypto"
 import { toServiceUrl } from "@clickzetta/sdk"
+import { CLICKZETTA_HOST_SUFFIXES } from "../llm/clickzetta-hosts.js"
 
 interface AccountConsoleMeta {
   apiGateway: string
@@ -30,7 +31,10 @@ export function stripProtocol(value: string): string {
 }
 
 export function extractRootDomain(host: string): string {
-  for (const suffix of [".clickzetta.com", ".singdata.com", ".clickzetta-inc.com"]) {
+  // cz_change: reads the shared suffix list rather than restating it. This site
+  // and isClickzettaGatewayUrl carried identical lists until the latter fell
+  // behind on `.singdata.com`. See llm/clickzetta-hosts.ts.
+  for (const suffix of CLICKZETTA_HOST_SUFFIXES) {
     if (host.endsWith(suffix)) return suffix.slice(1)
   }
   const parts = host.split(".")

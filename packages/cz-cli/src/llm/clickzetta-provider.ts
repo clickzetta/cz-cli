@@ -1,3 +1,5 @@
+import { isClickzettaHost } from "./clickzetta-hosts.js"
+
 export const CLICKZETTA_PROVIDER_ID = "clickzetta"
 export const CLICKZETTA_PROVIDER_NAME = "ClickZetta"
 export const CLICKZETTA_PROVIDER_NPM = "@clickzetta/ai-gateway"
@@ -9,11 +11,14 @@ export { normalizeClickzettaGatewayUrl } from "@clickzetta/ai-gateway/url"
 // endpoint (see the `clickzetta` custom loader in opencode's provider.ts). The
 // gateway is the single source of truth; llm.json stores connection info only.
 
+// cz_change: the host list moved to clickzetta-hosts.ts. This function used to
+// carry its own copy that accepted only `.clickzetta.com`, so entries pointing at
+// the intl partition (`.singdata.com`) were not recognized as ClickZetta — which
+// blanked the entire TUI quota indicator for those users. See clickzetta-hosts.ts.
 export function isClickzettaGatewayUrl(url: string | undefined) {
   if (typeof url !== "string" || url === "") return false
   try {
-    const host = new URL(url).hostname
-    return host === "clickzetta.com" || host.endsWith(".clickzetta.com")
+    return isClickzettaHost(new URL(url).hostname)
   } catch {
     return false
   }
