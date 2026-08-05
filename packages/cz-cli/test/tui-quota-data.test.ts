@@ -519,3 +519,69 @@ describe("fetchQuotaSnapshot — portal method sensitivity", () => {
     expect(snapshot).toMatchObject({ used: 10_082_801, limit: 10_000_000 })
   })
 })
+
+/**
+ * The cash balance is a property of the connection Profile and does NOT depend on
+ * which LLM key is in play. It used to: fetchQuotaSnapshot bailed on the shared
+ * `resolveClickzettaEntry` exit, so any failure to pin an LLM entry also removed
+ * the balance — and issued zero portal requests, so "no balance" was really "never
+ * asked". Users saw both figures vanish and no way to tell which half was broken.
+ */
+describe("balance survives an unresolvable LLM entry", () => {
+  test("reports the balance when several ClickZetta entries make the key ambiguous", async () => {
+    // writeEntries() defines three ClickZetta entries and nothing pins one, so no
+    // key can be named. Pre-fix this returned undefined and skipped every read.
+    setActiveModel("")
+    stubPortal()
+    const snapshot = await fetchQuotaSnapshot({})
+    expect(snapshot).toMatchObject({ cash: 0 })
+    // Quota is genuinely unknowable here — absent, not guessed from another tenant.
+    expect(snapshot?.used).toBeUndefined()
+    expect(snapshot?.limit).toBeUndefined()
+  })
+
+  test("reports the balance when the pinned ClickZetta entry has no api_key", async () => {
+    writeLlmEntries({ llm: { keyless: { provider: "clickzetta", base_url: "https://aimesh.example.com/gateway/v1" } } })
+    setActiveModel("keyless/deepseek-v3.2")
+    stubPortal()
+    const snapshot = await fetchQuotaSnapshot({})
+    expect(snapshot).toMatchObject({ cash: 0 })
+    expect(snapshot?.used).toBeUndefined()
+  })
+
+  // The one case that SHOULD hide everything: a ¥ figure next to a Claude model
+  // would name money that model is not spending.
+  test("still renders nothing when the session is on a foreign provider", async () => {
+    stubPortal()
+    expect(await fetchQuotaSnapshot({ providerID: "claude" })).toBeUndefined()
+  })
+
+  test("still renders nothing when no ClickZetta entry exists at all", async () => {
+    writeLlmEntries({ llm: { claude: { provider: "anthropic", api_key: "sk-ant-xxx" } } })
+    setActiveModel("")
+    stubPortal()
+    expect(await fetchQuotaSnapshot({})).toBeUndefined()
+  })
+
+  /**
+   * Walking past the current profile only serves the quota hunt (finding the portal
+   * that knows this key). With no key there is nothing to hunt, and continuing hides
+   * failures: a later profile's empty-but-successful snapshot lands in `loaded` and
+   * swallows the current profile's real error, so a broken balance read renders as a
+   * silent blank indistinguishable from "nothing to show". Caught on a live config
+   * where the default profile's host was unreachable and the result was `{}`.
+   */
+  test("surfaces the balance error instead of masking it with another profile", async () => {
+    // dev_0 is the default profile; make only ITS billing read fail. prod_0 would
+    // otherwise answer successfully and hide it.
+    onFetch({
+      match: (url) => url.includes("dev-api.clickzetta.com") && url.includes("/hornhub/account/billing/"),
+      respond: () => {
+        throw new Error("billing unreachable")
+      },
+    })
+    stubPortal()
+    setActiveModel("")
+    await expect(fetchQuotaSnapshot({})).rejects.toThrow("billing unreachable")
+  })
+})

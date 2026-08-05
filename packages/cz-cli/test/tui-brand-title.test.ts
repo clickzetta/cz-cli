@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { czBrandTitle, installTerminalTitleBrand } from "../src/opencode-plugin/tui-title-brand"
+import {
+  czAbbreviateHome,
+  czBrandTitle,
+  czFooterPath,
+  installTerminalTitleBrand,
+  CZ_BRAND_LEAD,
+  CZ_BRAND_TAIL,
+} from "../src/opencode-plugin/tui-title-brand"
 
 describe("czBrandTitle", () => {
   test("rebrands the bare home/no-title title", () => {
@@ -18,6 +25,53 @@ describe("czBrandTitle", () => {
   test("leaves unrelated titles untouched", () => {
     expect(czBrandTitle("Something Else")).toBe("Something Else")
     expect(czBrandTitle("OCwithoutspace")).toBe("OCwithoutspace")
+  })
+})
+
+// The sidebar footer's brand line. Upstream's builtin renders "• OpenCode <ver>";
+// the cz brand plugin claims the slot and renders these two tokens instead.
+describe("sidebar footer brand", () => {
+  test("spells CZ CLI, with no opencode token left", () => {
+    expect(CZ_BRAND_LEAD + " " + CZ_BRAND_TAIL).toBe("CZ CLI")
+    expect((CZ_BRAND_LEAD + CZ_BRAND_TAIL).toLowerCase()).not.toContain("code")
+  })
+})
+
+describe("czAbbreviateHome", () => {
+  test("collapses the home prefix", () => {
+    expect(czAbbreviateHome("/Users/x/playground/hello", "/Users/x")).toBe("~/playground/hello")
+  })
+
+  test("returns home itself as a bare ~", () => {
+    expect(czAbbreviateHome("/Users/x", "/Users/x")).toBe("~")
+  })
+
+  test("leaves paths outside home untouched", () => {
+    expect(czAbbreviateHome("/tmp/work", "/Users/x")).toBe("/tmp/work")
+  })
+
+  test("passes through when home is unknown", () => {
+    expect(czAbbreviateHome("/tmp/work", "")).toBe("/tmp/work")
+  })
+})
+
+describe("czFooterPath", () => {
+  test("splits off the last segment so it can be emphasized", () => {
+    expect(czFooterPath({ directory: "/Users/x/playground/hello", home: "/Users/x" })).toEqual({
+      parent: "~/playground",
+      name: "hello",
+    })
+  })
+
+  test("appends the branch to the emphasized segment", () => {
+    expect(czFooterPath({ directory: "/Users/x/repo", home: "/Users/x", branch: "main" })).toEqual({
+      parent: "~",
+      name: "repo:main",
+    })
+  })
+
+  test("handles a directory that abbreviates to bare ~", () => {
+    expect(czFooterPath({ directory: "/Users/x", home: "/Users/x" })).toEqual({ parent: "", name: "~" })
   })
 })
 

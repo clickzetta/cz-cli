@@ -1,3 +1,5 @@
+import path from "node:path"
+import os from "node:os"
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 
 // cz_change: rebrand the terminal window/tab title without touching packages/tui
@@ -21,6 +23,50 @@ import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 // We only do this when the title feature is actually on, mirroring upstream's own
 // guard (kv "terminal_title_enabled" + Flag.OPENCODE_DISABLE_TERMINAL_TITLE), so we
 // never resurrect a title the user turned off.
+
+// cz_change: the sidebar footer's brand line. Upstream's own sidebar_footer
+// builtin (packages/tui/src/feature-plugins/sidebar/footer.tsx) renders
+// "• OpenCode <version>" under the session's directory — a brand token sitting in
+// plain view on every session screen. It cannot be rebranded by wrapping a
+// renderer method the way the terminal title is, so the cz brand plugin claims
+// the slot instead (see tui-brand.tsx). The pieces the replacement view needs
+// that aren't JSX live here, next to czBrandTitle, so they're unit-testable.
+// (The /connect dialog and home tips still carry opencode copy — deliberately
+// kept, since replacing them would mean editing packages/tui.)
+export const CZ_BRAND_LEAD = "CZ"
+export const CZ_BRAND_TAIL = "CLI"
+
+/**
+ * `~`-abbreviated path, matching upstream abbreviateHome (packages/tui/src/runtime.tsx)
+ * — reimplemented because it isn't part of the public plugin API. Paths outside
+ * home are returned untouched.
+ */
+export function czAbbreviateHome(input: string, home: string): string {
+  if (!home) return input
+  const relative = path.relative(home, input)
+  if (relative === "") return "~"
+  if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) return input
+  return "~" + path.sep + relative
+}
+
+/**
+ * The directory line upstream shows above the brand, split the same way: every
+ * segment but the last is muted, the last is emphasized. `branch` is appended as
+ * `:branch` only when the session sits in the TUI's own directory, which is the
+ * caller's decision — upstream compares session.directory with state.path.directory.
+ */
+export function czFooterPath(input: { directory: string; home?: string; branch?: string }): {
+  parent: string
+  name: string
+} {
+  const out = czAbbreviateHome(input.directory, input.home ?? os.homedir())
+  const text = input.branch ? out + ":" + input.branch : out
+  const list = text.split("/")
+  return {
+    parent: list.slice(0, -1).join("/"),
+    name: list.at(-1) ?? "",
+  }
+}
 
 // Pure mapping from an upstream title to its cz-branded form.
 export function czBrandTitle(title: string): string {

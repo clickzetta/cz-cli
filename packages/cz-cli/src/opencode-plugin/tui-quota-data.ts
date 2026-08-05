@@ -181,31 +181,70 @@ export function matchKeyUsage(
  * anthropic/openai/…), which is the signal to render nothing at all.
  */
 export function resolveClickzettaEntry(providerID?: string): { name: string; apiKey: string } | undefined {
+  const resolved = classifyClickzettaEntry(providerID)
+  return resolved.kind === "clickzetta" ? { name: resolved.name, apiKey: resolved.apiKey } : undefined
+}
+
+/**
+ * Why this is a three-way answer and not `entry | undefined`.
+ *
+ * Cash balance belongs to the connection Profile; token quota belongs to the LLM
+ * key. Collapsing "not a ClickZetta key" with "user is on another provider" into
+ * one `undefined` made fetchQuotaSnapshot bail before it read profiles at all, so
+ * ANY failure to pin an LLM entry also silently removed the cash balance — a
+ * reading that never depended on the LLM entry in the first place.
+ *
+ *   - `clickzetta` — a specific ClickZetta key. Report balance and quota.
+ *   - `foreign`    — the session is demonstrably on a non-ClickZetta provider
+ *                    (anthropic/openai/…), or there is no ClickZetta entry at all.
+ *                    Report nothing; a ¥ figure next to a Claude model would name
+ *                    money that model is not spending. This is the case the
+ *                    original `undefined` was meant for.
+ *   - `ambiguous`  — this IS a ClickZetta user, but which key is in play cannot be
+ *                    pinned (several entries, none selected or pinned; or the
+ *                    matched entry carries no api_key). Report the balance, skip
+ *                    the quota — guessing a tenant's key would misreport usage.
+ */
+export type ClickzettaEntryResolution =
+  | { kind: "clickzetta"; name: string; apiKey: string }
+  | { kind: "foreign" }
+  | { kind: "ambiguous" }
+
+export function classifyClickzettaEntry(providerID?: string): ClickzettaEntryResolution {
   const { llm, model } = readLlmEntries()
-  const usable = (name: string | undefined) => {
+  const isClickzetta = (name: string | undefined) => (name ? llm[name]?.provider === "clickzetta" : false)
+  const usable = (name: string | undefined): ClickzettaEntryResolution | undefined => {
     if (!name) return undefined
     const entry = llm[name]
-    if (entry?.provider !== "clickzetta" || !entry.api_key) return undefined
-    return { name, apiKey: entry.api_key }
+    if (entry?.provider !== "clickzetta") return undefined
+    // A ClickZetta entry with no key is still a ClickZetta user — quota is
+    // unknowable, the balance is not.
+    if (!entry.api_key) return { kind: "ambiguous" }
+    return { kind: "clickzetta", name, apiKey: entry.api_key }
   }
 
   const selected = usable(providerID)
   if (selected) return selected
 
-  // Any explicit selection that is not a usable ClickZetta entry ends the search.
-  // The provider can come from environment/plugin discovery and therefore need
-  // not exist in llm.json; falling through would report the sole ClickZetta key
-  // while the prompt visibly names a different provider.
-  if (providerID) return undefined
+  // An explicit selection that is not a ClickZetta entry ends the search: the
+  // provider may come from environment/plugin discovery and need not appear in
+  // llm.json, and falling through would report the sole ClickZetta key while the
+  // prompt visibly names a different provider.
+  if (providerID) return { kind: "foreign" }
 
   const configured = typeof model === "string" && model.includes("/") ? model.slice(0, model.indexOf("/")) : undefined
   const inferred = usable(configured)
   if (inferred) return inferred
 
   const clickzetta = Object.entries(llm).filter(([, entry]) => entry.provider === "clickzetta" && entry.api_key)
-  if (clickzetta.length !== 1) return undefined
-  const [name, entry] = clickzetta[0]!
-  return { name, apiKey: entry.api_key! }
+  if (clickzetta.length === 1) {
+    const [name, entry] = clickzetta[0]!
+    return { kind: "clickzetta", name, apiKey: entry.api_key! }
+  }
+  // Several ClickZetta entries and nothing to choose between them is ambiguous,
+  // not foreign — as is a pinned model naming a ClickZetta entry we could not use.
+  if (clickzetta.length > 1 || isClickzetta(configured)) return { kind: "ambiguous" }
+  return { kind: "foreign" }
 }
 
 // The portal is method-sensitive per endpoint, and gets them backwards from what
@@ -256,15 +295,26 @@ export async function fetchQuotaSnapshot(
     signal?: AbortSignal
   } = {},
 ): Promise<QuotaSnapshot | undefined> {
-  const entry = resolveClickzettaEntry(input.providerID)
-  if (!entry) return undefined
+  // cz_change: only a demonstrably foreign provider suppresses the whole
+  // indicator. "Could not pin a ClickZetta key" used to take this same exit,
+  // which silently removed the cash balance too — see classifyClickzettaEntry.
+  const resolved = classifyClickzettaEntry(input.providerID)
+  if (resolved.kind === "foreign") return undefined
+  const entry = resolved.kind === "clickzetta" ? resolved : undefined
 
   const profiles = loadProfiles()
   const current = process.env.CZ_PROFILE ?? getDefaultProfileName()
-  const names =
+  const ordered =
     current && profiles[current]
       ? [current, ...Object.keys(profiles).filter((name) => name !== current)]
       : Object.keys(profiles)
+  // Scanning past the current profile only ever serves the quota read (hunting the
+  // profile whose portal knows this key). With no key there is nothing to hunt, and
+  // continuing would be actively harmful: a later profile returns an empty-but-
+  // successful snapshot, which lands in `loaded` and swallows the current profile's
+  // real error — turning "the balance read failed" into a silent blank that the
+  // caller cannot distinguish from "nothing to show".
+  const names = entry ? ordered : ordered.slice(0, 1)
   if (names.length === 0) return {}
 
   const loaded: Array<{ name: string; billing: Pick<QuotaSnapshot, "cash" | "owe">; usage: Pick<QuotaSnapshot, "used" | "limit" | "period" | "alias"> }> = []
@@ -274,7 +324,9 @@ export async function fetchQuotaSnapshot(
       const snapshot = await fetchProfileSnapshot({
         name,
         profile: profiles[name]!,
-        apiKey: entry.apiKey,
+        // No pinned key: skip the quota read entirely rather than scan profiles
+        // for a key we cannot name. The balance below still resolves.
+        apiKey: entry?.apiKey,
         includeBilling: name === current,
         signal: input.signal,
       })
@@ -296,7 +348,8 @@ export async function fetchQuotaSnapshot(
 async function fetchProfileSnapshot(input: {
   name: string
   profile: Record<string, unknown>
-  apiKey: string
+  /** Undefined when no ClickZetta key could be pinned — billing still applies. */
+  apiKey?: string
   includeBilling: boolean
   signal?: AbortSignal
 }) {
@@ -319,6 +372,9 @@ async function fetchProfileSnapshot(input: {
         ? Promise.reject(new Error("profile has no account_id"))
         : portalCall(baseUrl, `${BILLING_PATH}/${accountId}`, token.token, { signal: input.signal }),
     (async () => {
+      // No key to match against — skip the read rather than spend two portal
+      // round-trips on a result nothing can consume.
+      if (!input.apiKey) return undefined
       // getCurrentUser is a POST route (see portalCall). Resolving the user name
       // lets us pass it through, but listApiKeys ignores the userName value and
       // scopes to the token identity regardless, so a failed/empty lookup still
@@ -347,7 +403,11 @@ async function fetchProfileSnapshot(input: {
       })
     })(),
   ])
+  // Surface a failure only when nothing usable came back. With no api_key the
+  // quota half resolves to undefined rather than rejecting, so this reduces to
+  // "the billing read failed", which the caller reports by keeping the last value.
   if (keys.status === "rejected" && (!input.includeBilling || billing.status === "rejected")) throw keys.reason
+  if (!input.apiKey && input.includeBilling && billing.status === "rejected") throw billing.reason
 
   const billingData =
     billing.status === "fulfilled" &&
@@ -364,7 +424,7 @@ async function fetchProfileSnapshot(input: {
       ...(owe !== undefined ? { owe } : {}),
     },
     usage:
-      keys.status === "fulfilled" && isRecord(keys.value) && isPortalOk(keys.value.code)
+      input.apiKey && keys.status === "fulfilled" && isRecord(keys.value) && isPortalOk(keys.value.code)
         ? matchKeyUsage(keys.value, input.apiKey)
         : {},
   }
