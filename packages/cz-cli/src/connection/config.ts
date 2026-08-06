@@ -156,9 +156,23 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // which it prefers. Withholding the store is what makes `auth_type = "pat"`
   // (or "password"/"cookie") actually select that credential instead of merely
   // labelling it.
+  //
+  // The gate is the profile's OAuth IDENTITY — an `oauth = "<id>"` pointer (or a
+  // not-yet-migrated legacy inline subtable) — never `cfg.instance`. An instance
+  // says nothing about whether the user ever ran `cz-cli login`, so the old
+  // `cfg.instance || hasOAuthPointer` gate attached the store to pure
+  // username/password and pat profiles too. There the store had nothing to LOAD,
+  // but `save` still ran: getToken persists whatever it obtained, so a plain
+  // password login's JWT was written into a freshly minted `[oauth.cz<random>]`
+  // section. Those sections are the accumulating junk — a non-OAuth credential's
+  // token filed under an OAuth id that nothing durably owns.
   const oauthPointer = profileEntry?.oauth
-  const hasOAuthPointer = typeof oauthPointer === "string"
-  if ((cfg.instance || hasOAuthPointer) && !explicitCredential && pinAllows("oauth")) {
+  const hasOAuthPointer = typeof oauthPointer === "string" && oauthPointer.length > 0
+  // Pre-migration profiles carry the token as an inline `[profiles.<n>.oauth.<k>]`
+  // object. That IS an OAuth identity, so it still gets the store.
+  const hasLegacyInlineOAuth =
+    typeof oauthPointer === "object" && oauthPointer !== null && !Array.isArray(oauthPointer)
+  if ((hasOAuthPointer || hasLegacyInlineOAuth) && !explicitCredential && pinAllows("oauth")) {
     // No oauthId passed: the store resolves the shared-token id from this
     // profile's `oauth = "<id>"` pointer (or a legacy inline subtable).
     cfg.tokenStore = makeProfileTokenStore(profileName)

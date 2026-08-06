@@ -47,28 +47,28 @@ const sampleToken: AuthToken = {
 }
 
 test("resolveConnectionConfig attaches a token store that round-trips via the shared oauth pointer", () => {
-  saveProfiles({ czcli: { pat: "the-pat", instance: "myinstance", service: "api.example.com" } })
+  // The store is gated on the profile's OAuth IDENTITY (`oauth = "<id>"`), not on
+  // `instance` — see oauth-section-hygiene.test.ts. A pat alongside it does not
+  // suppress the store: only an EXPLICIT per-invocation credential does.
+  saveProfiles({ czcli: { pat: "the-pat", instance: "myinstance", service: "api.example.com", oauth: "sess" } })
 
   const cfg = resolveConnectionConfig({ profile: "czcli" })
   expect(cfg.tokenStore).toBeDefined()
 
-  // The OAuth slot is keyed by INSTANCE ONLY (decoupled from pat/username).
-  // Save via the resolved store, then load via a freshly-built store using the
-  // instance key to prove they line up.
   cfg.tokenStore!.save(sampleToken)
 
   expect(cfg.instance).toBe("myinstance")
 
-  // save wrote a shared [oauth.<id>] section and set the profile's `oauth`
-  // pointer; a fresh store (no explicit id) resolves the token via that pointer.
+  // save reused the profile's existing `oauth` pointer, so a fresh store (no
+  // explicit id) resolves the very same [oauth.sess] section.
   const { makeProfileTokenStore } = require("../src/connection/profile-store.ts")
   const independent = makeProfileTokenStore("czcli")
   expect(independent.load()).toEqual(sampleToken)
 })
 
-test("resolveConnectionConfig keys the store by instance even with username auth", () => {
+test("resolveConnectionConfig attaches the store for an oauth profile that also has username auth", () => {
   saveProfiles({
-    czcli: { username: "alice", password: "secret", instance: "inst2", service: "api.example.com" },
+    czcli: { username: "alice", password: "secret", instance: "inst2", service: "api.example.com", oauth: "sess" },
   })
 
   const cfg = resolveConnectionConfig({ profile: "czcli" })
@@ -82,10 +82,9 @@ test("resolveConnectionConfig keys the store by instance even with username auth
   expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
 })
 
-test("resolveConnectionConfig attaches a token store when only an instance is known (no pat/username)", () => {
-  // A pure-OAuth profile carries no pat and no username/password, but the
-  // OAuth slot must still be keyed/attached so a persisted login is reachable.
-  saveProfiles({ czcli: { instance: "oauthonly", service: "api.example.com" } })
+test("a pure-OAuth profile (no pat/username) attaches the store", () => {
+  // No credential fields at all — just the OAuth pointer, which is the identity.
+  saveProfiles({ czcli: { instance: "oauthonly", service: "api.example.com", oauth: "sess" } })
 
   const cfg = resolveConnectionConfig({ profile: "czcli" })
   expect(cfg.pat).toBeFalsy()
@@ -96,6 +95,15 @@ test("resolveConnectionConfig attaches a token store when only an instance is kn
   cfg.tokenStore!.save(sampleToken)
   const { makeProfileTokenStore } = require("../src/connection/profile-store.ts")
   expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
+})
+
+test("an instance alone does NOT attach the store (no OAuth identity to persist under)", () => {
+  // Regression: the old `cfg.instance || hasOAuthPointer` gate attached the store
+  // here, and a password/pat login's JWT was then saved into a random
+  // [oauth.cz<hex>] section that nothing owned.
+  saveProfiles({ czcli: { instance: "myinstance", service: "api.example.com", username: "u", password: "p" } })
+
+  expect(resolveConnectionConfig({ profile: "czcli" }).tokenStore).toBeUndefined()
 })
 
 test("resolveConnectionConfig leaves tokenStore undefined when no auth identity resolves", () => {
@@ -134,21 +142,23 @@ test("CZ_PAT from the environment does NOT attach a token store", () => {
   expect(cfg.tokenStore).toBeUndefined()
 })
 
-test("a profile-level pat STILL attaches the store (provenance: not an explicit per-invocation credential)", () => {
-  // The persisted OAuth token is keyed by instance and decoupled from pat, so a
-  // profile that carries both a stored pat and an OAuth login still gets the
-  // store — only EXPLICIT --pat/CZ_PAT/--username+--password suppress it.
-  saveProfiles({ czcli: { pat: "profile-pat", instance: "inst", service: "api.example.com" } })
+test("a profile-level pat STILL attaches the store when the profile has an OAuth identity", () => {
+  // Provenance rule: only EXPLICIT --pat/CZ_PAT/--username+--password suppress the
+  // store. A pat stored ON the profile does not, so a profile carrying both a pat
+  // and a real OAuth login can still reach the persisted token.
+  saveProfiles({ czcli: { pat: "profile-pat", instance: "inst", service: "api.example.com", oauth: "sess" } })
 
   const cfg = resolveConnectionConfig({ profile: "czcli" })
   expect(cfg.pat).toBe("profile-pat")
   expect(cfg.tokenStore).toBeDefined()
 })
 
-test("resolveConnectionConfig leaves tokenStore undefined when instance is missing", () => {
+test("a pat-only profile gets no store, with or without an instance", () => {
+  // Nothing here is an OAuth login, so there is no section to read and none to
+  // create: the PAT-exchanged token stays in memory.
   saveProfiles({ czcli: { pat: "the-pat", service: "api.example.com" } })
+  expect(resolveConnectionConfig({ profile: "czcli" }).tokenStore).toBeUndefined()
 
-  const cfg = resolveConnectionConfig({ profile: "czcli" })
-  expect(cfg.instance).toBeFalsy()
-  expect(cfg.tokenStore).toBeUndefined()
+  saveProfiles({ czcli: { pat: "the-pat", instance: "inst", service: "api.example.com" } })
+  expect(resolveConnectionConfig({ profile: "czcli" }).tokenStore).toBeUndefined()
 })

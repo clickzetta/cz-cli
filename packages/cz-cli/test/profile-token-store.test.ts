@@ -39,17 +39,19 @@ const sampleToken: AuthToken = {
 }
 
 test("save then load returns an equal AuthToken including refreshToken", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance", oauth: "sess" } })
 
-  // save writes a shared [oauth.<id>] section and points the profile at it;
-  // a fresh store with no explicit id resolves the token via that pointer.
+  // save writes the shared [oauth.<id>] section the profile's pointer names; a
+  // fresh store with no explicit id resolves the token via that same pointer.
+  // (A profile with NO pointer is not an OAuth identity and save writes nothing —
+  // see oauth-section-hygiene.test.ts.)
   makeProfileTokenStore("czcli").save(sampleToken)
 
   expect(makeProfileTokenStore("czcli").load()).toEqual(sampleToken)
 })
 
 test("OAuth issuer round-trips and persists as `issuer` in [oauth.<id>]", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance", oauth: "sess" } })
 
   // The issuer host is required for refresh to hit the central /oauth2/token;
   // it must survive save→load and be stored under the `issuer` key.
@@ -64,7 +66,7 @@ test("OAuth issuer round-trips and persists as `issuer` in [oauth.<id>]", () => 
 })
 
 test("legacy token without refreshToken round-trips without the field", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance", oauth: "sess" } })
 
   const legacy: AuthToken = {
     token: "legacy-token",
@@ -81,7 +83,7 @@ test("legacy token without refreshToken round-trips without the field", () => {
 })
 
 test("profiles.toml stays mode 0o600 after save", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance", oauth: "sess" } })
 
   makeProfileTokenStore("czcli").save(sampleToken)
 
@@ -91,7 +93,7 @@ test("profiles.toml stays mode 0o600 after save", () => {
 })
 
 test("clear is a no-op: shared token survives (only explicit logout removes it)", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance" } })
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance", oauth: "sess" } })
 
   const store = makeProfileTokenStore("czcli")
   store.save(sampleToken)
@@ -126,7 +128,7 @@ test("profiles sharing an oauth id share the token; unrelated profiles do not", 
 })
 
 test("save does not clobber the profile's existing fields", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "myinstance", workspace: "ws" } })
+  saveProfiles({ czcli: { pat: "p", instance: "myinstance", workspace: "ws", oauth: "sess" } })
 
   makeProfileTokenStore("czcli").save(sampleToken)
 
@@ -139,7 +141,7 @@ test("save does not clobber the profile's existing fields", () => {
 // Requirement 11.6/11.7: patchProfileConnection merges the logged-in context
 // into the profile entry without touching oauth or unrelated fields.
 test("patchProfileConnection merges connection context into the profile", () => {
-  saveProfiles({ czcli: { pat: "p", instance: "old-instance", region: "cn" } })
+  saveProfiles({ czcli: { pat: "p", instance: "old-instance", region: "cn", oauth: "sess" } })
   // Seed an oauth token to prove patchProfileConnection leaves it loadable.
   makeProfileTokenStore("czcli").save(sampleToken)
 

@@ -538,8 +538,28 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             if (!profiles[name]) {
               return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             }
+            // The [oauth.<id>] section this profile points at, before the row goes.
+            const pointer = profiles[name]?.oauth
+            const oauthId = typeof pointer === "string" && pointer.length > 0 ? pointer : undefined
             delete profiles[name]
             data.profiles = profiles
+            // Drop the token section too, but ONLY when this was its last
+            // reference. A login shared across several profiles (robert_0..robert_3
+            // all pointing at [oauth.robert]) must survive deleting one of them —
+            // removing the section would sign the siblings out. Leaving an
+            // unreferenced one behind is the other failure: its access/refresh
+            // token stays readable on disk after the user thinks it is gone, and
+            // it is only swept on the NEXT run by pruneOrphanOAuthSections.
+            // Deleting a credential should take effect immediately.
+            const oauth = (data.oauth ?? {}) as Record<string, unknown>
+            const stillShared = Object.values(profiles).some((p) => p?.oauth === oauthId)
+            const tokenRemoved = oauthId !== undefined && oauthId in oauth && !stillShared
+            if (tokenRemoved) {
+              delete oauth[oauthId!]
+              // Don't leave a bare `[oauth]` header behind once the last one goes.
+              if (Object.keys(oauth).length === 0) delete data.oauth
+              else data.oauth = oauth
+            }
             if (data.default_profile === name) {
               const remaining = Object.keys(profiles)
               if (remaining.length > 0) data.default_profile = remaining[0]
@@ -547,7 +567,18 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             }
             saveFullFile(data)
             logOperation("profile delete", { ok: true })
-            success({ message: `Profile '${name}' deleted successfully` }, { format })
+            success(
+              {
+                message: tokenRemoved
+                  ? `Profile '${name}' deleted successfully (also removed its unused auth session '${oauthId}')`
+                  : `Profile '${name}' deleted successfully`,
+                // Surfaced so the user can see whether a token went with it —
+                // "did deleting this profile sign me out?" is not guessable.
+                token_removed: tokenRemoved,
+                ...(oauthId !== undefined ? { session: oauthId, session_shared: stillShared } : {}),
+              },
+              { format },
+            )
           } catch (err) {
             error("INTERNAL_ERROR", err instanceof Error ? err.message : String(err), { format })
           }

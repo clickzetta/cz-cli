@@ -667,8 +667,20 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
         const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
         const profile = profiles[name] ?? {}
 
-        // Resolve the shared id: explicit > existing pointer > freshly generated.
-        const id = oauthId ?? profileOAuthPointer(profile) ?? generateOAuthId()
+        // Resolve the shared id: explicit (provisioning) > the profile's existing
+        // pointer. NEVER freshly generated.
+        //
+        // Minting an id here is what produced drifts of orphan `[oauth.cz<random>]`
+        // sections. Only `cz-cli login` establishes an OAuth identity, and it always
+        // passes an explicit, stable id (the session name). A save with neither an
+        // explicit id nor an existing pointer is therefore never an OAuth login —
+        // it is some other credential's token arriving through an over-attached
+        // store, and a random id gives it a section nothing owns: the next run
+        // reads no pointer, mints another, and the file grows without bound.
+        // Dropping the write keeps such a token in memory only, which is where a
+        // non-OAuth credential's token belongs.
+        const id = oauthId ?? profileOAuthPointer(profile)
+        if (!id) return
 
         const shared = (data.oauth ?? {}) as Record<string, unknown>
         shared[id] = tokenToEntry(token)
@@ -759,5 +771,51 @@ export function migrateInlineOAuthTokens(): void {
     }
   } catch {
     // best-effort: missing/corrupt file → nothing to migrate
+  }
+}
+
+/**
+ * Delete `[oauth.<id>]` sections that no profile points at.
+ *
+ * Two ways they arise:
+ *   - the fixed over-attachment bug: a username/password or pat profile got an
+ *     OAuth token store, and its login JWT was saved under a freshly minted
+ *     random id. Every distinct profile sharing one identity minted its own, so
+ *     the file accumulated a section per profile per re-login.
+ *   - `profile delete` removes the profile row but not the section it pointed at.
+ *
+ * Only unreferenced sections go. A section any profile still points at is a live
+ * login and is kept, so this can never sign a user out. Runs after
+ * {@link migrateInlineOAuthTokens} so freshly migrated pointers count as
+ * references. Best-effort; never throws.
+ */
+export function pruneOrphanOAuthSections(): void {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const shared = data.oauth
+    if (!shared || typeof shared !== "object" || Array.isArray(shared)) return
+    const sections = shared as Record<string, unknown>
+
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const referenced = new Set<string>()
+    for (const profile of Object.values(profiles)) {
+      const id = profileOAuthPointer(profile)
+      if (id) referenced.add(id)
+    }
+
+    let removed = false
+    for (const id of Object.keys(sections)) {
+      if (referenced.has(id)) continue
+      delete sections[id]
+      removed = true
+    }
+    if (!removed) return
+
+    // Drop an emptied table rather than leaving a bare `[oauth]` header behind.
+    if (Object.keys(sections).length === 0) delete data.oauth
+    else data.oauth = sections
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: missing/corrupt file → nothing to prune
   }
 }

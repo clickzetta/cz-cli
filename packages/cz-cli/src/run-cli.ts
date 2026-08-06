@@ -7,7 +7,7 @@ import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { noteProfileDerivedCredentials } from "./bootstrap/profile-env.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
-import { migrateInlineOAuthTokens } from "./connection/profile-store.js"
+import { migrateInlineOAuthTokens, pruneOrphanOAuthSections } from "./connection/profile-store.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
@@ -278,7 +278,7 @@ function noLlmConfiguredTtyMessage() {
     "  Optional checks after registration:\n" +
     "    cz-cli agent llm test <NAME>\n" +
     "    cz-cli agent llm models <NAME>\n" +
-    "  To set the default model (otherwise OpenCode selects automatically):\n" +
+    "  To pin the default model (otherwise the first available one is used):\n" +
     "    cz-cli agent llm use <NAME>/<MODEL_ID>\n\n" +
     "  Lakehouse sign-in is separate:\n" +
     "    cz-cli auth login <name>   (see `cz-cli auth login --help` for all methods)\n\n"
@@ -590,6 +590,10 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   // One-time, idempotent migration of legacy inline [profiles.x.oauth.y] tokens
   // to the shared [oauth.<id>] layout. Best-effort; never throws.
   migrateInlineOAuthTokens()
+  // Then sweep [oauth.<id>] sections no profile points at — the residue of the
+  // fixed over-attachment bug, which filed non-OAuth login tokens under random
+  // ids. Runs AFTER the migration so its fresh pointers count as references.
+  pruneOrphanOAuthSections()
   const normalized = normalizeCliArgs(rawArgs)
   // On the agent path, upstream opencode owns several of these short flags; tell
   // the scanner so it does not also read them as cz connection overrides. See
