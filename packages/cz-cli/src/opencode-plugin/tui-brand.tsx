@@ -8,6 +8,7 @@ import {
   CZ_BRAND_TAIL,
 } from "./tui-title-brand"
 import { installQuotaIndicator } from "./tui-quota"
+import { installGatewayPrompt } from "./gateway-prompt-view"
 
 // cz_change: restore the ClickZetta "CZ-CLI" home logo through opencode's PUBLIC
 // TUI plugin slot API (home_logo is a host slot declared mode:replace in
@@ -68,6 +69,9 @@ const tui: TuiPlugin = async (api) => {
   // as a second tui.json entry — one plugin spec keeps injectClickzettaTuiConfig
   // and the build's asset list unchanged in shape. See tui-quota.tsx.
   installQuotaIndicator(api)
+  // cz_change: same rationale — one plugin spec. Offers a browser jump when the
+  // gateway blocks a call for billing / key-quota reasons. See gateway-prompt.ts.
+  installGatewayPrompt(api)
   const theme = () => api.theme.current
   api.slots.register({
     order: 100,

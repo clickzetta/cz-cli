@@ -15,6 +15,7 @@ import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
+import { browserOpenCommandForPlatform } from "../util/browser.js"
 import { trackCommand, isSensitiveKey } from "../telemetry.js"
 
 const setupStartMs = Date.now()
@@ -364,11 +365,10 @@ function appendRef(url: string): string {
   }
 }
 
-export function browserOpenCommandForPlatform(platform: NodeJS.Platform, url: string): { command: string; args: string[] } {
-  if (platform === "darwin") return { command: "open", args: [url] }
-  if (platform === "win32") return { command: "cmd.exe", args: ["/c", "start", "", url] }
-  return { command: "xdg-open", args: [url] }
-}
+// cz_change: moved to util/browser.ts so plugin bundles can use it without
+// importing this module (and @clack/prompts with it). Re-exported for callers
+// that already import it from here (commands/profile.ts).
+export { browserOpenCommandForPlatform } from "../util/browser.js"
 
 function openBrowser(url: string): void {
   const opener = browserOpenCommandForPlatform(process.platform, url)

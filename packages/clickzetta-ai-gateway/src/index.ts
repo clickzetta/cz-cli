@@ -27,12 +27,28 @@ import { normalizeClickzettaGatewayUrl } from "./url"
  * straight through.
  */
 
+/** Read the gateway's `code` off the parsed error payload the SDK kept for us. */
+function errorCode(error: APICallError): string | undefined {
+  const data = error.data
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined
+  const nested = (data as { error?: unknown }).error
+  const from = (value: unknown) => {
+    if (!value || typeof value !== "object") return undefined
+    const code = (value as { code?: unknown }).code
+    return typeof code === "string" ? code : undefined
+  }
+  return from(nested) ?? from(data)
+}
+
 /** Rebuild an APICallError with a rewritten message and forced retryability. */
 function rewriteApiCallError(error: APICallError): APICallError {
   const rewrite = rewriteClickzettaGatewayError({
     statusCode: error.statusCode,
     message: error.message,
     responseBody: error.responseBody,
+    // `data` is the schema-parsed body; passing its code lets the rewriter
+    // classify by code even when the message wording gives nothing away.
+    code: errorCode(error),
   })
   if (!rewrite) return error
   return new APICallError({
@@ -48,10 +64,35 @@ function rewriteApiCallError(error: APICallError): APICallError {
   })
 }
 
+/**
+ * A 429 from the gateway is a quota ceiling, not congestion.
+ *
+ * The AI SDK marks every 429 retryable, so the loop backs off and retries a call
+ * that cannot succeed until the quota resets — burning the user's time to arrive
+ * at the same error. The documented guidance for 429 is to lower concurrency and
+ * back off, which is the caller's decision to make, not something to spend
+ * retries discovering. Applies to any 429 the gateway returns; nothing here reads
+ * the response body.
+ */
+function suppressQuotaRetry(error: APICallError): APICallError {
+  if (error.statusCode !== 429 || !error.isRetryable) return error
+  return new APICallError({
+    message: error.message,
+    url: error.url,
+    requestBodyValues: error.requestBodyValues,
+    statusCode: error.statusCode,
+    responseHeaders: error.responseHeaders,
+    responseBody: error.responseBody,
+    cause: error.cause,
+    isRetryable: false,
+    data: error.data,
+  })
+}
+
 /** Map any thrown value through the rewriter; non-APICallErrors pass through. */
 function mapThrown(error: unknown): unknown {
-  if (APICallError.isInstance(error)) return rewriteApiCallError(error)
-  return error
+  if (!APICallError.isInstance(error)) return error
+  return suppressQuotaRetry(rewriteApiCallError(error))
 }
 
 const CLICKZETTA_CACHE_CONTROL_MODELS = new Set(["qwen/qwen3.6-plus"])
@@ -157,9 +198,14 @@ export { createClickzetta as createOpenAICompatible }
 export { normalizeClickzettaGatewayUrl } from "./url"
 export {
   rewriteClickzettaGatewayError,
-  AI_GATEWAY_QUOTA_URL,
-  AI_GATEWAY_API_KEY_QUOTA_MESSAGE,
-  AI_GATEWAY_FREE_QUOTA_MESSAGE,
+  clickzettaGatewayCode,
+  isClickzettaBillingCode,
+  parseGatewayBody,
+  TENANT_OVER_QUOTA_MESSAGE,
+  FREE_KEY_EXHAUSTED_MESSAGE,
+  KEY_QUOTA_EXHAUSTED_MESSAGE,
+  clickzettaKeyAlias,
+  type GatewayErrorCode,
   type GatewayErrorInput,
   type GatewayErrorRewrite,
 } from "./gateway-error"

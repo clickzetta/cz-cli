@@ -11,6 +11,8 @@ export const CLICKZETTA_PROVIDER_ASSET = "clickzetta-ai-gateway.js"
 export const CLICKZETTA_TUI_PLUGIN_ASSET = "clickzetta-tui-brand.tsx"
 // The quota indicator's slot renderer — also raw .tsx, for the same reason.
 export const CLICKZETTA_TUI_QUOTA_ASSET = "tui-quota.tsx"
+// The gateway billing/quota confirm dialog — raw .tsx, same reason again.
+export const CLICKZETTA_TUI_GATEWAY_PROMPT_ASSET = "gateway-prompt-view.tsx"
 // Everything the indicator needs that ISN'T JSX, pre-bundled behind one entry
 // (tui-quota-runtime.ts re-exports the data/format/controller modules). It pulls
 // in @clickzetta/sdk and the cz connection/llm modules, none of which touch
@@ -47,6 +49,7 @@ export const CLICKZETTA_RUNTIME_ASSETS = [
   CLICKZETTA_TUI_TITLE_ASSET,
   CLICKZETTA_TUI_QUOTA_ASSET,
   CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET,
+  CLICKZETTA_TUI_GATEWAY_PROMPT_ASSET,
 ] as const
 
 function resolveRuntimeModulePath(options: { source: string; bundled: string }) {

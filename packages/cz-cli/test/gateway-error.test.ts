@@ -1,89 +1,105 @@
 /**
- * Unit tests for rewriteClickzettaGatewayError().
+ * Consumer-side tests for rewriteClickzettaGatewayError(), reached through the
+ * cz-cli re-export the CLI and TUI actually import.
  * Run: bun test test/gateway-error.test.ts
  *
- * This is the consolidated replacement for the former opencode-side billing seam
- * (test/session/billing-semantic.test.ts) + rotation handler. The rewriter is a
- * pure function consumed by the @clickzetta/ai-gateway shell; it must turn every
- * ClickZetta billing / quota condition into a non-retryable, actionable message,
- * and leave everything else untouched.
+ * Classification detail lives in the gateway package's own suite
+ * (packages/clickzetta-ai-gateway/test/gateway-error.test.ts). What matters here
+ * is the contract cz-cli depends on: the gateway's own error code comes back, the
+ * two billing conditions get different advice, and nothing is retried.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import {
-  rewriteClickzettaGatewayError,
-  AI_GATEWAY_API_KEY_QUOTA_MESSAGE,
-  AI_GATEWAY_FREE_QUOTA_MESSAGE,
-} from "../src/llm/gateway-error.ts"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { rewriteClickzettaGatewayError } from "../src/llm/gateway-error.ts"
 
 const ACCOUNTS_URL = "https://accounts.clickzetta.com"
-const originalAccountsUrl = process.env.CZ_ACCOUNTS_URL
+let saved: string | undefined
 
-beforeAll(() => {
+beforeEach(() => {
+  saved = process.env.CZ_ACCOUNTS_URL
   process.env.CZ_ACCOUNTS_URL = ACCOUNTS_URL
 })
 
-afterAll(() => {
-  if (originalAccountsUrl === undefined) delete process.env.CZ_ACCOUNTS_URL
-  else process.env.CZ_ACCOUNTS_URL = originalAccountsUrl
+afterEach(() => {
+  if (saved === undefined) delete process.env.CZ_ACCOUNTS_URL
+  else process.env.CZ_ACCOUNTS_URL = saved
 })
 
 describe("rewriteClickzettaGatewayError", () => {
-  test("insufficient-balance → actionable rewrite, non-retryable", () => {
+  test("lakehouse insufficient balance → add-funds rewrite, non-retryable", () => {
     const r = rewriteClickzettaGatewayError({
       message: "insufficient account balance, overdue payments",
       statusCode: 429,
     })
     expect(r).toBeDefined()
+    expect(r!.code).toBe("GATEWAY_TENANT_OVERDUE")
     expect(r!.message).toBe(`Insufficient account balance. Please visit ${ACCOUNTS_URL} to add funds.`)
     expect(r!.isRetryable).toBe(false)
   })
 
-  test("gateway tenant-overdue code → add-funds rewrite, non-retryable", () => {
+  test("tenant overdue code → add-funds rewrite, non-retryable", () => {
     const r = rewriteClickzettaGatewayError({
       message: "request blocked",
-      responseBody: JSON.stringify({ code: "GATEWAY_TENANT_OVERDUE", message: "[G2] Tenant overdue" }),
-      code: "GATEWAY_TENANT_OVERDUE",
-      statusCode: 429,
+      responseBody: JSON.stringify({ error: { code: "GATEWAY_TENANT_OVERDUE", message: "[G2] Tenant overdue" } }),
+      statusCode: 403,
     })
     expect(r).toBeDefined()
+    expect(r!.code).toBe("GATEWAY_TENANT_OVERDUE")
     expect(r!.message).toContain("add funds")
     expect(r!.isRetryable).toBe(false)
   })
 
-  test("user-created virtual key quota exhausted → standard quota message, non-retryable", () => {
-    const body =
-      "Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'paid_key_001', current usage: 10082801 tokens"
-    const r = rewriteClickzettaGatewayError({ message: body, responseBody: body, statusCode: 429 })
+  test("tenant over quota gets its own advice — topping up would not fix it", () => {
+    // Same 403, opposite remedy. These shared one "add funds" message until the
+    // codes were separated, so a capped tenant was told to pay and stayed blocked.
+    const r = rewriteClickzettaGatewayError({
+      message: "request blocked",
+      responseBody: JSON.stringify({ error: { code: "GATEWAY_TENANT_OVER_QUOTA", message: "[G2] Tenant over quota" } }),
+      statusCode: 403,
+    })
     expect(r).toBeDefined()
-    expect(r!.message).toBe(AI_GATEWAY_API_KEY_QUOTA_MESSAGE)
+    expect(r!.code).toBe("GATEWAY_TENANT_OVER_QUOTA")
+    expect(r!.message).not.toContain("add funds")
+    expect(r!.message).toContain("billing cycle")
     expect(r!.isRetryable).toBe(false)
   })
 
-  test("free complimentary key (cz-code_auto_*) exhausted → create-key guidance, non-retryable", () => {
-    const body =
-      "Virtual key total quota exceeded: limit is 1000000 tokens for virtual key 'cz-code_auto_alice', current usage: 1000001 tokens"
-    const r = rewriteClickzettaGatewayError({ message: body, responseBody: body, statusCode: 429 })
-    expect(r).toBeDefined()
-    expect(r!.message).toBe(AI_GATEWAY_FREE_QUOTA_MESSAGE)
+  test("requestId is preserved through the rewrite", () => {
+    const r = rewriteClickzettaGatewayError({
+      message: "[G2] Tenant overdue. requestId=req-abc",
+      statusCode: 403,
+    })
+    expect(r!.requestId).toBe("req-abc")
+    expect(r!.message).toContain("req-abc")
+  })
+
+  test("a spent complimentary key gets the create-your-own-key guidance", () => {
+    // GATEWAY_TOO_MANY_REQUESTS is what the live gateway sends for an exhausted
+    // key — it is absent from the documented code table, so this payload was
+    // captured from cn-shanghai rather than taken from the docs.
+    const message =
+      "[G2] Too many request. path=/gateway/v1/chat/completions, requestId=req-abc, " +
+      "virtualApiKeyAlias=cz-code_auto_vmhmdkcc, tenantId=1, detail=Virtual key total quota exceeded"
+    const r = rewriteClickzettaGatewayError({
+      message,
+      responseBody: JSON.stringify({ error: { code: "GATEWAY_TOO_MANY_REQUESTS", message, source: "gateway" } }),
+      statusCode: 429,
+    })
+    expect(r?.code).toBe("GATEWAY_TOO_MANY_REQUESTS")
+    expect(r?.isComplimentaryKey).toBe(true)
     expect(r!.message).toContain("cz-cli ai-gateway key create")
     expect(r!.isRetryable).toBe(false)
   })
 
-  test("generic daily-token-limit 429 → keep message, non-retryable", () => {
-    const body = "you have hit your daily token limit"
-    const r = rewriteClickzettaGatewayError({ message: body, responseBody: body, statusCode: 429 })
-    expect(r).toBeDefined()
-    expect(r!.message).toBe(body)
-    expect(r!.isRetryable).toBe(false)
+  test("a bare quota body with no code is left untouched", () => {
+    // Same condition, no code attached: there is nothing to branch on, so the
+    // gateway's own message reaches the user rather than a guess from its prose.
+    const body =
+      "Virtual key total quota exceeded: limit is 10000000 tokens for virtual key 'paid_key_001', current usage: 10082801 tokens"
+    expect(rewriteClickzettaGatewayError({ message: body, responseBody: body, statusCode: 429 })).toBeUndefined()
   })
 
-  test("ordinary non-billing error → undefined (passthrough)", () => {
-    const r = rewriteClickzettaGatewayError({ message: "temporary upstream hiccup", statusCode: 503 })
-    expect(r).toBeUndefined()
-  })
-
-  test("non-429 with no billing signature → undefined (passthrough)", () => {
-    const r = rewriteClickzettaGatewayError({ message: "bad request", statusCode: 400 })
-    expect(r).toBeUndefined()
+  test("ordinary errors pass through", () => {
+    expect(rewriteClickzettaGatewayError({ message: "temporary upstream hiccup", statusCode: 503 })).toBeUndefined()
+    expect(rewriteClickzettaGatewayError({ message: "bad request", statusCode: 400 })).toBeUndefined()
   })
 })

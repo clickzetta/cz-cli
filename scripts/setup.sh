@@ -36,7 +36,7 @@ chmod +x "$TARGET_BINARY"
 # fails if this list falls behind. It did once: the quota indicator's two files were
 # emitted by build.ts but never copied here, and because tui-brand.tsx imports
 # ./tui-quota, the missing file took the whole brand plugin (logo + title) down with it.
-for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts tui-quota.tsx tui-quota-runtime.js; do
+for asset in clickzetta-ai-gateway.js clickzetta-opencode-plugin.js clickzetta-tui-brand.tsx tui-title-brand.ts tui-quota.tsx tui-quota-runtime.js gateway-prompt-view.tsx; do
   [ -f "${SCRIPT_DIR}/${asset}" ] && cp "${SCRIPT_DIR}/${asset}" "${INSTALL_DIR}/${asset}"
 done
 

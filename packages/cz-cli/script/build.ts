@@ -15,6 +15,7 @@ import { Script } from "@opencode-ai/script"
 import {
   CLICKZETTA_PLUGIN_ASSET,
   CLICKZETTA_PROVIDER_ASSET,
+  CLICKZETTA_TUI_GATEWAY_PROMPT_ASSET,
   CLICKZETTA_TUI_PLUGIN_ASSET,
   CLICKZETTA_TUI_QUOTA_ASSET,
   CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET,
@@ -344,6 +345,12 @@ for (const item of targets) {
   fs.copyFileSync(
     path.resolve(import.meta.dirname, "../src/opencode-plugin/tui-quota.tsx"),
     `dist/${name}/bin/${CLICKZETTA_TUI_QUOTA_ASSET}`,
+  )
+  // cz_change: the gateway billing/quota confirm dialog — raw .tsx for the same
+  // reason, and it imports the same ./tui-quota-runtime.js bundled above.
+  fs.copyFileSync(
+    path.resolve(import.meta.dirname, "../src/opencode-plugin/gateway-prompt-view.tsx"),
+    `dist/${name}/bin/${CLICKZETTA_TUI_GATEWAY_PROMPT_ASSET}`,
   )
   binaries[name] = Script.version
 }

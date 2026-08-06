@@ -39,6 +39,11 @@ const SHIPPERS = [
   "scripts/setup.sh",
   // npm platform packages: copies from the artifact into the published bin/.
   "scripts/npm-publish.sh",
+  // `build:local`'s cp list — the dev-loop binary tested by test:ci. It globs
+  // clickzetta-* but names the others one by one, so it drifts the same way and
+  // for the same reason. A stale list here means test:ci exercises a binary
+  // missing an asset that a real install would have.
+  "packages/cz-cli/package.json",
 ] as const
 
 describe("runtime assets reach the installed binary", () => {
@@ -51,7 +56,12 @@ describe("runtime assets reach the installed binary", () => {
   for (const shipper of SHIPPERS) {
     test(`${shipper} copies every runtime asset`, () => {
       const src = read(shipper)
-      const missing = CLICKZETTA_RUNTIME_ASSETS.filter((asset) => !src.includes(asset))
+      const missing = CLICKZETTA_RUNTIME_ASSETS.filter((asset) => {
+        if (src.includes(asset)) return false
+        // Some shippers glob the clickzetta-prefixed assets rather than naming
+        // them; that is still coverage. Everything else must appear verbatim.
+        return !(asset.startsWith("clickzetta-") && src.includes("clickzetta-*"))
+      })
       expect(missing).toEqual([])
     })
   }
@@ -68,6 +78,7 @@ describe("runtime assets reach the installed binary", () => {
       "CLICKZETTA_TUI_TITLE_ASSET",
       "CLICKZETTA_TUI_QUOTA_ASSET",
       "CLICKZETTA_TUI_QUOTA_RUNTIME_ASSET",
+      "CLICKZETTA_TUI_GATEWAY_PROMPT_ASSET",
     ]
     // Guards the mapping itself: if an asset joins the list, this arity check fails
     // until the constant is added above and its emit site verified.
@@ -109,15 +120,17 @@ describe("runtime assets reach the installed binary", () => {
     }
   })
 
-  test("the quota renderer's relative imports are all shipped assets", () => {
-    // Same invariant one level down: tui-quota.tsx is also raw source and pulls in
-    // the pre-bundled runtime next to it.
-    const src = read("packages/cz-cli/src/opencode-plugin/tui-quota.tsx")
-    const specifiers = [...src.matchAll(/from "\.\/([\w-]+)\.js"/g)].map((m) => m[1]!)
-    expect(specifiers.length).toBeGreaterThan(0)
-    for (const specifier of specifiers) {
-      const shipped = CLICKZETTA_RUNTIME_ASSETS.includes(`${specifier}.js` as never)
-      expect(shipped, `tui-quota.tsx imports ./${specifier}.js, which no installer ships`).toBe(true)
-    }
-  })
+  // Same invariant one level down: these render as raw source and pull in the
+  // pre-bundled runtime next to them.
+  for (const renderer of ["tui-quota.tsx", "gateway-prompt-view.tsx"] as const) {
+    test(`${renderer}'s relative imports are all shipped assets`, () => {
+      const src = read(`packages/cz-cli/src/opencode-plugin/${renderer}`)
+      const specifiers = [...src.matchAll(/from "\.\/([\w-]+)\.js"/g)].map((m) => m[1]!)
+      expect(specifiers.length).toBeGreaterThan(0)
+      for (const specifier of specifiers) {
+        const shipped = CLICKZETTA_RUNTIME_ASSETS.includes(`${specifier}.js` as never)
+        expect(shipped, `${renderer} imports ./${specifier}.js, which no installer ships`).toBe(true)
+      }
+    })
+  }
 })

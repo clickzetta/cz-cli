@@ -9,6 +9,7 @@
     "./url": "./src/url.ts"
   },
   "scripts": {
+    "test": "bun test",
     "typecheck": "tsgo --noEmit -p tsconfig.srconly.json"
   },
   "dependencies": {

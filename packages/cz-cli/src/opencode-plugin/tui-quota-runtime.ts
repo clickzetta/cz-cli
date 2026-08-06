@@ -34,3 +34,15 @@ export {
 } from "./tui-quota-format.js"
 
 export { createQuotaController, type QuotaController, type QuotaControllerInput } from "./tui-quota-controller.js"
+
+// cz_change: the gateway billing/quota prompt rides this same bundle. It is not
+// quota-indicator code, but it has the same constraints (plain .ts, no @opentui,
+// consumed by a raw .tsx renderer) and adding a second bundling entry would mean
+// a second build asset plus installer-list churn for one module.
+export {
+  browserOpenCommandForPlatform,
+  classifyGatewayError,
+  gatewayErrorFields,
+  planGatewayPrompt,
+  type GatewayPromptPlan,
+} from "./gateway-prompt.js"
