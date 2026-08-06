@@ -211,7 +211,7 @@ export function registerAgentCommand(cli: Argv<GlobalArgs>): void {
             "  Optional checks after registration:\n" +
             "    `cz-cli agent llm test <name>`\n" +
             "    `cz-cli agent llm models <name>`\n\n" +
-            "  Optional default model (otherwise OpenCode selects automatically):\n" +
+            "  Optional model pin (otherwise the first available one is used):\n" +
             "    `cz-cli agent llm use <name>/<MODEL_ID>`\n\n" +
             "  ClickZetta Lakehouse sign-in is separate:\n" +
             "    `cz-cli auth login <name>`  (see `cz-cli auth login --help` for all methods)",

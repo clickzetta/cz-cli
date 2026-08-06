@@ -9,6 +9,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { readJson, writeJsonAtomic } from "../util/persistence"
+import { resolveModelSelection } from "@opencode-ai/core/model-selection"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
@@ -191,43 +192,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
 
       const args = useArgs()
+      // cz_change: the four-tier chain that used to be inlined here now lives in
+      // @opencode-ai/core/model-selection, so `cz-cli agent llm show` can report
+      // the very model this resolves to instead of guessing. Behaviour unchanged;
+      // only the inputs are passed explicitly. Keep the memo wrapper for reactivity.
       const fallbackModel = createMemo(() => {
-        if (args.model) {
-          const { providerID, modelID } = parseModel(args.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
-
-        if (sync.data.config.model) {
-          const { providerID, modelID } = parseModel(sync.data.config.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
-
-        for (const item of modelStore.recent) {
-          if (isModelValid(item)) {
-            return item
-          }
-        }
-
-        const provider = sync.data.provider[0]
-        if (!provider) return undefined
-        const defaultModel = sync.data.provider_default[provider.id]
-        const firstModel = Object.values(provider.models)[0]
-        const model = defaultModel ?? firstModel?.id
-        if (!model) return undefined
-        return {
-          providerID: provider.id,
-          modelID: model,
-        }
+        const resolved = resolveModelSelection({
+          argsModel: args.model,
+          configModel: sync.data.config.model,
+          recent: modelStore.recent,
+          providers: sync.data.provider,
+          providerDefault: sync.data.provider_default,
+        })
+        if (!resolved) return undefined
+        return { providerID: resolved.providerID, modelID: resolved.modelID }
       })
 
       const currentModel = createMemo(() => {

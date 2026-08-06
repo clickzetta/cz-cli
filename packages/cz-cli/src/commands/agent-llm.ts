@@ -10,6 +10,7 @@ import {
   type LlmEntryView,
 } from "../llm/native-config.js"
 import { buildLlmProbeRequest, normalizeLlmBaseUrl } from "../llm/probe.js"
+import { describeSelectionSource, resolveDefaultModel } from "../llm/default-model.js"
 
 const VALID_PROVIDERS = [
   "clickzetta",
@@ -119,7 +120,7 @@ function writeOnboarding() {
   process.stderr.write("  Optional checks after registration:\n")
   for (const step of guide.optional_checks) process.stderr.write(`    ${step}\n`)
   process.stderr.write("\n")
-  process.stderr.write("  To set the default model (otherwise OpenCode selects automatically):\n")
+  process.stderr.write("  To pin the default model (otherwise the first available one is used):\n")
   for (const step of guide.optional_default) process.stderr.write(`    ${step}\n`)
   process.stderr.write("\n")
   process.stderr.write("  Note: Lakehouse connection setup is separate:\n")
@@ -236,19 +237,55 @@ function ok(isTTY: boolean, ttyMessage: string, jsonData: Record<string, unknown
   process.exit(0)
 }
 
-// Describes the explicit model pin. Without config.model, opencode selects one
-// using its native recent-model/provider fallback.
-function describeActive(state: LlmState): { kind: "llm" | "auto" | "none"; name: string; detail: string } {
-  const name = activeEntryName(state)
-  if (!name || typeof state.model !== "string") {
-    if (!hasUsableEntry(state)) return { kind: "none", name: "", detail: "no usable LLM entry is configured" }
-    return { kind: "auto", name: "", detail: "OpenCode selects at runtime" }
+// cz_change: reports the model `cz-cli agent` will actually start on, resolved by
+// the TUI's own chain (llm/default-model.ts → core/model-selection). It used to
+// print "automatic (OpenCode selects at runtime)" whenever config.model was
+// unset, which leaked the upstream brand and implied the outcome was undecided.
+// It never is: the resolver's last tier is unconditional.
+//
+// `kind: "unresolved"` is the one honest gap — the model catalog is fetched from
+// the gateway at runtime, so with no network (or no models served) we cannot name
+// the model and say so, rather than guessing.
+type ActiveModel = {
+  kind: "model" | "none" | "unresolved"
+  /** Owning llm.json entry, i.e. the provider prefix of the resolved ref. */
+  name: string
+  /** Full `provider/model` ref, empty when unresolved. */
+  model: string
+  detail: string
+}
+
+async function describeActive(state: LlmState): Promise<ActiveModel> {
+  if (!hasUsableEntry(state)) {
+    return { kind: "none", name: "", model: "", detail: "no usable LLM entry is configured" }
   }
-  const entry = state.llm[name]
-  if (!entry?.provider || !entry.api_key) {
-    return { kind: "none", name: "", detail: "selected entry is incomplete" }
+  const pinned = activeEntryName(state)
+  if (pinned) {
+    const entry = state.llm[pinned]
+    if (!entry?.provider || !entry.api_key) {
+      return { kind: "none", name: "", model: "", detail: "selected entry is incomplete" }
+    }
   }
-  return { kind: "llm", name, detail: `${state.model} (config.model)` }
+
+  const resolved = await resolveDefaultModel().catch(() => undefined)
+  if (!resolved) {
+    // A pin we cannot verify is still worth showing — it is what config says.
+    if (pinned && typeof state.model === "string") {
+      return { kind: "model", name: pinned, model: state.model, detail: "config.model, not verified" }
+    }
+    return {
+      kind: "unresolved",
+      name: "",
+      model: "",
+      detail: "could not reach the provider to list models",
+    }
+  }
+  return {
+    kind: "model",
+    name: resolved.providerID,
+    model: `${resolved.providerID}/${resolved.modelID}`,
+    detail: describeSelectionSource(resolved.source),
+  }
 }
 
 const LlmListCommand = cmd({
@@ -286,7 +323,7 @@ const LlmShowCommand = cmd({
   async handler() {
     const isTTY = process.stderr.isTTY
     const state = readState()
-    const active = describeActive(state)
+    const active = await describeActive(state)
     const entries = Object.entries(state.llm).map(([name, entry]) => ({
       name,
       provider: entry.provider ?? null,
@@ -297,19 +334,27 @@ const LlmShowCommand = cmd({
 
     if (isTTY) {
       process.stderr.write("\n")
-      if (active.kind === "llm") {
-        process.stderr.write(`  Default model: ${active.name}  ${active.detail}\n`)
-      } else if (active.kind === "auto") {
-        process.stderr.write("  Default model: automatic (OpenCode selects at runtime)\n")
+      if (active.kind === "model") {
+        process.stderr.write(`  Default model: ${active.model}  (${active.detail})\n`)
+      } else if (active.kind === "unresolved") {
+        process.stderr.write(`  Default model: unresolved (${active.detail})\n`)
       } else {
         process.stderr.write(`  Default model: unavailable (${active.detail})\n`)
       }
       process.stderr.write("\n")
 
+      // cz_change: the resolved provider is not always an llm.json entry — opencode
+      // also serves providers from its own `auth login`. Say so, otherwise the
+      // "Default model" line names something with no `*` beside it and no row to
+      // match, which reads like a bug.
+      if (active.kind === "model" && entries.length > 0 && !entries.some((entry) => entry.name === active.name)) {
+        process.stderr.write(`  (provider '${active.name}' is not an entry below; it comes from \`cz-cli auth login\`)\n\n`)
+      }
+
       if (entries.length > 0) {
         process.stderr.write("  Defined LLMs:\n")
         for (const entry of entries) {
-          const mark = entry.name === active.name && active.kind === "llm" ? "*" : " "
+          const mark = entry.name === active.name && active.kind === "model" ? "*" : " "
           const providerModel = entry.model ? `${entry.provider ?? "?"}/${entry.model}` : (entry.provider ?? "?")
           process.stderr.write(`    ${mark} ${entry.name}   ${providerModel}\n`)
           if (entry.base_url) process.stderr.write(`        base_url: ${entry.base_url}\n`)
@@ -323,7 +368,15 @@ const LlmShowCommand = cmd({
       process.stdout.write(
         JSON.stringify({
           data: {
-            active: { kind: active.kind, name: active.name, detail: active.detail },
+            // cz_change: `model` is the full resolved ref (empty when unresolved);
+            // `detail` names the tier that chose it. Consumers that only had
+            // kind:"auto" to go on can now read the actual model.
+            active: {
+              kind: active.kind,
+              name: active.name,
+              model: active.model || null,
+              detail: active.detail,
+            },
             llms: entries,
             ...getOnboardingData(),
           },
@@ -732,8 +785,8 @@ const LlmRemoveCommand = cmd({
   },
 })
 
-// cz_change: clears opencode's active model (config.model), returning model
-// selection to opencode's native recent-model/provider fallback.
+// cz_change: clears the active model pin (config.model), so selection falls to
+// the recent/first-available tiers of the shared resolver (core/model-selection).
 const LlmResetCommand = cmd({
   command: "reset",
   describe: "clear the default model",
@@ -744,8 +797,8 @@ const LlmResetCommand = cmd({
     clearActiveModel()
     const message = hasUsableEntry(state)
       ? had
-        ? "Default model cleared; OpenCode will select automatically."
-        : "No default model was set; OpenCode already selects automatically."
+        ? "Default model cleared; the last used or first available model is now used. Run `cz-cli agent llm show` to see which."
+        : "No default model was set; the last used or first available model is used. Run `cz-cli agent llm show` to see which."
       : had
         ? "Default model cleared; no usable LLM entry is configured. Add one before running the agent."
         : "No default model was set, and no usable LLM entry is configured. Add one before running the agent."

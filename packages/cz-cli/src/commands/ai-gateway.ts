@@ -217,7 +217,7 @@ function llmRegistrationMessage(registered: Dict) {
   const currentDefault = typeof registered.current_default === "string" ? registered.current_default : undefined
   const defaultState = currentDefault
     ? `Default model '${currentDefault}' is unchanged.`
-    : "No default model was set; OpenCode selects automatically."
+    : "No default model is pinned; the last used or first available model is used."
   return `Registered as agent LLM '${name}'. ${defaultState} Optional checks: ${llmChecks(name).join("; ")}. To switch the default: cz-cli agent llm models ${name}; cz-cli agent llm use ${name}/<MODEL_ID>`
 }
 

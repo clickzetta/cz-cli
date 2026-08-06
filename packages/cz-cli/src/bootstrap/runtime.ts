@@ -302,7 +302,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
       "  Inspect: `cz-cli agent llm show`\n" +
       "  Test:    `cz-cli agent llm test <name>`\n" +
       "  Models:  `cz-cli agent llm models <name>`\n" +
-      "  Optional default: `cz-cli agent llm use <name>/<MODEL_ID>` (otherwise OpenCode selects automatically)\n" +
+      "  Optional pin: `cz-cli agent llm use <name>/<MODEL_ID>` (otherwise the first available model is used)\n" +
       "  Manage:  `cz-cli agent llm --help`"
     )
     .option("print-logs", {

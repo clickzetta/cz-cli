@@ -87,8 +87,10 @@ const tests: TestCase[] = [
         const active = (json?.data as Record<string, unknown> | undefined)?.active as Record<string, unknown> | undefined
         if (show.exitCode !== 0) return { pass: false, detail: `show exit=${show.exitCode}` }
         if (active?.kind !== "none") return { pass: false, detail: `unexpected active state: ${show.stdout.slice(0, 200)}` }
-        if (show.stdout.includes("OpenCode selects at runtime")) {
-          return { pass: false, detail: `empty config claimed automatic selection: ${show.stdout.slice(0, 220)}` }
+        // The brand must never reach user output, and an empty config must not
+        // claim a model was chosen — kind:"none" is the only honest answer here.
+        if (show.stdout.includes("OpenCode")) {
+          return { pass: false, detail: `upstream brand leaked into show: ${show.stdout.slice(0, 220)}` }
         }
         const reset = run(["agent", "llm", "reset"], { HOME: home })
         if (reset.exitCode !== 0 || reset.stdout.includes("OpenCode") || !reset.stdout.includes("no usable LLM entry")) {
@@ -229,8 +231,15 @@ const tests: TestCase[] = [
         if (!show.stdout.includes("\"provider\":\"openai-compatible\"")) {
           return { pass: false, detail: `unexpected show output: ${show.stdout.slice(0, 160)}` }
         }
-        if (!show.stdout.includes('"kind":"auto"') || !show.stdout.includes("OpenCode selects at runtime")) {
-          return { pass: false, detail: `missing automatic selection state: ${show.stdout.slice(0, 240)}` }
+        // With no config.model, `show` resolves the startup model through the same
+        // chain the TUI runs. This entry points at an unreachable gateway with no
+        // known-model, so the catalog stays empty and the honest answer is
+        // "unresolved" — never a fabricated name, and never the upstream brand.
+        if (show.stdout.includes("OpenCode")) {
+          return { pass: false, detail: `upstream brand leaked into show: ${show.stdout.slice(0, 240)}` }
+        }
+        if (!show.stdout.includes('"kind":"unresolved"')) {
+          return { pass: false, detail: `unexpected selection state: ${show.stdout.slice(0, 240)}` }
         }
         return { pass: true }
       } finally { cleanup() }
