@@ -8,9 +8,13 @@ describe("job performance MCP parity helpers", () => {
     expect(serviceUrlToMcpUrl("cn-beijing-alicloud.api.clickzetta.com")).toBe(
       "https://cn-shanghai-alicloud-mcp.api.clickzetta.com/mcp",
     )
-    expect(serviceUrlToMcpUrl("ap-southeast-1-aws.api.singdata.com")).toBe(
-      "https://ap-southeast-1-alicloud-mcp.api.singdata.com/mcp",
-    )
+    // MCP is not deployed in every region that has an API host. On the intl
+    // partition only `-aws` has an `-mcp` sibling; the alicloud spelling this
+    // test used to require is NXDOMAIN, so every singdata user was pointed at a
+    // host that does not exist. Both intl spellings converge on the served one.
+    for (const intl of ["ap-southeast-1-aws.api.singdata.com", "ap-southeast-1-alicloud.api.singdata.com"]) {
+      expect(serviceUrlToMcpUrl(intl)).toBe("https://ap-southeast-1-aws-mcp.api.singdata.com/mcp")
+    }
   })
 
   test("builds the same auth headers as the built-in tool", () => {

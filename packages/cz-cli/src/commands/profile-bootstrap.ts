@@ -50,10 +50,24 @@ function extractRootDomain(host: string): string {
   return parts.length >= 2 ? parts.slice(-2).join(".") : host
 }
 
+/**
+ * Whether a host label is a cloud REGION (`cn-shanghai-alicloud`,
+ * `ap-southeast-1-aws`, …) rather than a deployment environment (`dev`, `uat`).
+ *
+ * The distinction matters wherever a label is formatted back into a derived
+ * hostname: environments carry over (`uat-accounts.<root>` exists), regions do
+ * not (`cn-shanghai-alicloud-accounts.<root>` is NXDOMAIN — accounts sites are
+ * global). Mirrors the guard in commands/account-login.ts.
+ */
+function isRegionToken(token: string): boolean {
+  return /^(?:cn|ap|us|eu)-/i.test(token.trim())
+}
+
 function serviceFromEnv(envToken: string | null, rootDomain: string): string {
   if (!envToken) return `api.${rootDomain}`
   const env = envToken.trim().toLowerCase()
   if (["dev", "sit", "uat"].includes(env)) return `${env}-api.${rootDomain}`
+  // Regions land here too, and correctly: `<region>.api.<root>` is the real shape.
   return `${env}.api.${rootDomain}`
 }
 
@@ -199,8 +213,13 @@ function parseStudioUrl(studioUrl: string, serviceOverride?: string): StudioUrlI
   if (routeAccountPrefix) {
     accountLoginUrl = routeAccountPrefix
   } else if (urlType === "account" && accountDisplayName) {
-    accountLoginUrl = envToken
-      ? `https://${accountDisplayName}.${envToken}-accounts.${rootDomain}`
+    // `envToken` is whatever label preceded `-accounts`/`.accounts`, which for a
+    // region-style host is a REGION, not an environment. Accounts sites are
+    // global — `<acct>.cn-shanghai-alicloud-accounts.<root>` is NXDOMAIN — so a
+    // region must be dropped here the way serviceEnvFromApiHost drops it.
+    const env = envToken && !isRegionToken(envToken) ? envToken : undefined
+    accountLoginUrl = env
+      ? `https://${accountDisplayName}.${env}-accounts.${rootDomain}`
       : `https://${accountDisplayName}.accounts.${rootDomain}`
   }
 
@@ -326,8 +345,14 @@ async function authenticate(
   if (info.urlType === "api") {
     const inst = (instanceName || "").trim()
     if (inst) return loginByInstance(info, username, password, inst)
-    // Fallback: use env_token as account for account-level login
-    if (info.envToken) {
+    // Fallback: treat env_token as the account name for account-level login.
+    //
+    // Only valid when the token really is an account-ish label. For a region-style
+    // host the token is the REGION (`cn-shanghai-alicloud`), which is nobody's
+    // account, so this would post those credentials to a bogus account site and
+    // report the region back as `accountDisplayName`. Regions carry no account
+    // information, so there is nothing to fall back to — ask for the instance.
+    if (info.envToken && !isRegionToken(info.envToken)) {
       const accountLoginUrl = `https://${info.envToken}.accounts.${info.rootDomain}`
       const { token, data, serviceUrl } = await loginWithPasswordRaw(
         info.envToken, username, password, accountLoginUrl, timeout,
@@ -354,6 +379,37 @@ async function authenticate(
 // ---------------------------------------------------------------------------
 // Region / instance / workspace helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The API host each region/environment is actually reachable at.
+ *
+ * A region name does NOT imply its partition, so the host cannot be derived by
+ * formatting: `ap-southeast-1-aws.api.clickzetta.com` is NXDOMAIN and only
+ * `…api.singdata.com` answers, while `ap-southeast-1-alicloud` happens to resolve
+ * on both. Every domestic region is `clickzetta.com`-only. Verified against DNS.
+ *
+ * This table is the single authority — the region-probe loop below and
+ * resolveServiceHost both read it instead of building hosts themselves. The loop
+ * previously formatted `${region}.api.clickzetta.com` for the whole list, so the
+ * intl AWS region was probed at a hostname that does not exist and could never be
+ * detected.
+ */
+const REGION_API_HOSTS: Record<string, string> = {
+  dev: "dev-api.clickzetta.com",
+  sit: "sit-api.clickzetta.com",
+  uat: "uat-api.clickzetta.com",
+  "cn-shanghai-alicloud": "cn-shanghai-alicloud.api.clickzetta.com",
+  "cn-north-1-aws": "cn-north-1-aws.api.clickzetta.com",
+  "ap-shanghai-tencentcloud": "ap-shanghai-tencentcloud.api.clickzetta.com",
+  "ap-beijing-tencentcloud": "ap-beijing-tencentcloud.api.clickzetta.com",
+  "ap-guangzhou-tencentcloud": "ap-guangzhou-tencentcloud.api.clickzetta.com",
+  "ap-southeast-1-alicloud": "ap-southeast-1-alicloud.api.singdata.com",
+  "ap-southeast-1-aws": "ap-southeast-1-aws.api.singdata.com",
+  kuaishou: "cz-account.corp.kuaishou.com/api",
+  "kuaishou-sgp": "cz-sgp-account.corp.kuaishou.com/api",
+  gaotu: "studio-bj-gaotu.clickzetta-inc.com/api",
+  "gaotu-ap-beijing-tencentcloud": "studio-bj-gaotu.clickzetta-inc.com/api",
+}
 
 const PROD_REGIONS = [
   "cn-shanghai-alicloud", "ap-shanghai-tencentcloud", "ap-beijing-tencentcloud",
@@ -432,7 +488,12 @@ async function loadRegions(auth: AuthResult): Promise<{ regions: RegionItem[]; r
   if (!regions.length && ["dev", "sit", "uat"].includes(auth.centerRegion)) {
     // Probe prod regions as fallback
     for (const env of PROD_REGIONS) {
-      const serviceUrl = toServiceUrl(serviceFromEnv(env, "clickzetta.com"))
+      // Read the host from the table rather than formatting one: the intl AWS
+      // region does not exist on clickzetta.com, so the old
+      // `${env}.api.clickzetta.com` made it unprobeable.
+      const host = REGION_API_HOSTS[env]
+      if (!host) continue
+      const serviceUrl = toServiceUrl(host)
       const found = await loadRegionsForEnv(auth.token, serviceUrl)
       if (found.length) {
         regions = found
@@ -525,25 +586,12 @@ async function listWorkspacesForInstance(
 
 function resolveServiceHost(serviceHost: string, regionKey: string): string {
   if (serviceHost) return serviceHost.replace(/^https?:\/\//, "")
-  // Fallback: derive service URL from region key (matching Python's read_url from config.ini)
-  const REGION_URL_MAP: Record<string, string> = {
-    dev: "dev-api.clickzetta.com",
-    sit: "sit-api.clickzetta.com",
-    uat: "uat-api.clickzetta.com",
-    "cn-shanghai-alicloud": "cn-shanghai-alicloud.api.clickzetta.com",
-    "ap-southeast-1-alicloud": "ap-southeast-1-alicloud.api.singdata.com",
-    "ap-shanghai-tencentcloud": "ap-shanghai-tencentcloud.api.clickzetta.com",
-    "ap-beijing-tencentcloud": "ap-beijing-tencentcloud.api.clickzetta.com",
-    "ap-guangzhou-tencentcloud": "ap-guangzhou-tencentcloud.api.clickzetta.com",
-    "cn-north-1-aws": "cn-north-1-aws.api.clickzetta.com",
-    "ap-southeast-1-aws": "ap-southeast-1-aws.api.singdata.com",
-    kuaishou: "cz-account.corp.kuaishou.com/api",
-    "kuaishou-sgp": "cz-sgp-account.corp.kuaishou.com/api",
-    gaotu: "studio-bj-gaotu.clickzetta-inc.com/api",
-    "gaotu-ap-beijing-tencentcloud": "studio-bj-gaotu.clickzetta-inc.com/api",
-  }
-  if (regionKey && regionKey in REGION_URL_MAP) return REGION_URL_MAP[regionKey]
-  // Generic pattern: {regionKey}.api.clickzetta.com
+  const mapped = REGION_API_HOSTS[regionKey]
+  if (mapped) return mapped
+  // A region absent from the table: the partition is NOT derivable from the region
+  // name (ap-southeast-1-aws answers only on singdata.com, ap-southeast-1-alicloud
+  // on both), so this guesses the domestic partition. A new intl region has to be
+  // added to REGION_API_HOSTS rather than rely on this.
   if (regionKey) return `${regionKey}.api.clickzetta.com`
   return ""
 }

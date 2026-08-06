@@ -31,10 +31,25 @@ export function normalizeHost(serviceUrl: string): string {
   }
 }
 
+/**
+ * MCP is deployed per-region, and not in every region an API host exists in.
+ *
+ * On the intl partition both `ap-southeast-1-alicloud.api.singdata.com` and
+ * `ap-southeast-1-aws.api.singdata.com` resolve, but only `-aws` has an `-mcp`
+ * sibling — `ap-southeast-1-alicloud-mcp.api.singdata.com` is NXDOMAIN. Since
+ * centralApiUrl pins the whole partition to the alicloud spelling, deriving the
+ * MCP host from it produced an address that does not exist for every singdata
+ * user. Rewrite to the region that actually serves MCP.
+ */
+const MCP_REGION_FIXUPS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^ap-southeast-1-alicloud(?=[.-])/, "ap-southeast-1-aws"],
+]
+
 export function serviceUrlToMcpUrl(serviceUrl: string): string {
   const host = normalizeHost(serviceUrl)
   if (host === VW_UAT_HOST) return `http://${VW_UAT_HOST}/mcp`
-  const apiHost = normalizeHost(centralApiUrl(host))
+  let apiHost = normalizeHost(centralApiUrl(host))
+  for (const [pattern, region] of MCP_REGION_FIXUPS) apiHost = apiHost.replace(pattern, region)
   if (!apiHost.includes("api")) return `https://${apiHost}/mcp`
   return `https://${apiHost.replace(/([.-])api(?=\.)/, "-mcp$1api")}/mcp`
 }

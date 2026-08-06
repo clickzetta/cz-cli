@@ -79,8 +79,9 @@ describe("setup guidance", () => {
   })
 
   test("builds account login urls for region and uat api services", () => {
+    // Region segments are dropped (accounts sites are global); env prefixes stay.
     expect(accountLoginUrlForService("cn-shanghai-alicloud.api.clickzetta.com", "acct")).toBe(
-      "https://acct.cn-shanghai-alicloud-accounts.clickzetta.com",
+      "https://acct.accounts.clickzetta.com",
     )
     expect(accountLoginUrlForService("uat-api.clickzetta.com", "acct")).toBe(
       "https://acct.uat-accounts.clickzetta.com",

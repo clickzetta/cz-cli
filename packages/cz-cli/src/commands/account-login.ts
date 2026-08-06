@@ -79,11 +79,26 @@ function serviceHostFromInput(host: string): string {
   return host
 }
 
+/**
+ * A REGION segment, not an environment: `cn-shanghai-alicloud`,
+ * `ap-southeast-1-aws`, and so on. Accounts sites are global — there is no
+ * `<account>.cn-shanghai-alicloud-accounts.clickzetta.com` — so a region must not
+ * be carried into the accounts host the way `dev`/`uat` are.
+ *
+ * Verified against production: `bxhzbghd.accounts.clickzetta.com` resolves,
+ * `bxhzbghd.cn-shanghai-alicloud-accounts.clickzetta.com` is NXDOMAIN.
+ */
+const REGION_PREFIX_RE = /^(?:cn|ap|us|eu)-/i
+
+/**
+ * The deployment environment encoded in an API host (`uat-api.…` → `uat`), or ""
+ * for production. Region-prefixed hosts return "" because they ARE production.
+ */
 export function serviceEnvFromApiHost(host: string): string {
   const hyphenEnv = host.match(/^([^.]+)-api\./)
-  if (hyphenEnv?.[1]) return hyphenEnv[1]
+  if (hyphenEnv?.[1]) return REGION_PREFIX_RE.test(hyphenEnv[1]) ? "" : hyphenEnv[1]
   const dottedEnv = host.match(/^([^.]+)\.api\./)
-  if (dottedEnv?.[1]) return dottedEnv[1]
+  if (dottedEnv?.[1]) return REGION_PREFIX_RE.test(dottedEnv[1]) ? "" : dottedEnv[1]
   return ""
 }
 

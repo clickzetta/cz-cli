@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { generateKeyPairSync } from "node:crypto"
 import { createServer } from "node:http"
-import { accountLoginUrlForService, loginByAccountSite, parseAccountConsoleMeta } from "../src/commands/account-login"
+import { accountLoginUrlForService, loginByAccountSite, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
 
 const { publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 1024,
@@ -54,13 +54,54 @@ afterAll(() => {
   server.close()
 })
 
+describe("region vs environment host labels", () => {
+  // A host label that looks like a prefix is either a deployment ENVIRONMENT
+  // (dev/sit/uat) or a cloud REGION (cn-*/ap-*/us-*/eu-*). Environments carry
+  // into derived hostnames; regions must not, because the derived sites are
+  // global. Getting this wrong produced NXDOMAIN links in the billing dialog.
+  test("region labels are not treated as environments", () => {
+    for (const host of [
+      "cn-shanghai-alicloud.api.clickzetta.com",
+      "cn-beijing-alicloud.api.clickzetta.com",
+      "ap-southeast-1-aws.api.singdata.com",
+      "ap-shanghai-tencentcloud.api.clickzetta.com",
+      "eu-central-1-aws.api.clickzetta.com",
+      "us-east-1-aws.api.clickzetta.com",
+    ]) {
+      expect(serviceEnvFromApiHost(host)).toBe("")
+    }
+  })
+
+  test("real environment labels still resolve", () => {
+    expect(serviceEnvFromApiHost("uat-api.clickzetta.com")).toBe("uat")
+    expect(serviceEnvFromApiHost("dev-api.clickzetta.com")).toBe("dev")
+    expect(serviceEnvFromApiHost("sit-api.clickzetta.com")).toBe("sit")
+    expect(serviceEnvFromApiHost("api.clickzetta.com")).toBe("")
+  })
+})
+
 describe("account login", () => {
   test("builds account login urls for api and account hosts", () => {
+    // A region segment is NOT an environment: accounts sites are global, so
+    // cn-shanghai-alicloud must not be carried across. Verified against
+    // production — acct.accounts.clickzetta.com resolves, while
+    // acct.cn-shanghai-alicloud-accounts.clickzetta.com is NXDOMAIN, which is
+    // what this test used to require.
     expect(accountLoginUrlForService("cn-shanghai-alicloud.api.clickzetta.com", "acct")).toBe(
-      "https://acct.cn-shanghai-alicloud-accounts.clickzetta.com",
+      "https://acct.accounts.clickzetta.com",
     )
+    expect(accountLoginUrlForService("cn-beijing-alicloud.api.clickzetta.com", "acct")).toBe(
+      "https://acct.accounts.clickzetta.com",
+    )
+    expect(accountLoginUrlForService("ap-southeast-1-aws.api.singdata.com", "acct")).toBe(
+      "https://acct.accounts.singdata.com",
+    )
+    // Real environment prefixes still carry over — those hosts do exist.
     expect(accountLoginUrlForService("dev-accounts.clickzetta.com", "acct")).toBe(
       "https://acct.dev-accounts.clickzetta.com",
+    )
+    expect(accountLoginUrlForService("uat-api.clickzetta.com", "acct")).toBe(
+      "https://acct.uat-accounts.clickzetta.com",
     )
   })
 
