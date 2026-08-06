@@ -61,6 +61,38 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
+      # cz-1.17.11 and main are separate code lines sharing one semver space, so
+      # a higher version number does not mean newer code. Refuse a release that
+      # would take its channel's pointer while regressing the opencode baseline —
+      # clients would "upgrade" onto code that cannot read their database.
+      #
+      # The stable and nightly streams are checked independently: a dev-v* release
+      # is only ever compared against nightly, a plain semver release only against
+      # stable. Neither can affect the other's pointer.
+      #
+      # fetch-depth: 0 is required — the published version's baseline is read out
+      # of its git tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Check release lineage
+        env:
+          FORCE_LINEAGE_SWITCH: ${{ vars.FORCE_LINEAGE_SWITCH }}
+        run: |
+          ARGS=(
+            --version "${{ steps.release.outputs.version }}"
+            --channel "${{ steps.release.outputs.is_stable == 'true' && 'stable' || 'nightly' }}"
+          )
+          if [ "$FORCE_LINEAGE_SWITCH" = "true" ]; then
+            ARGS+=(--force)
+          fi
+          bun run scripts/check-release-lineage.mjs "${ARGS[@]}"
+
   create-release:
     needs: resolve-release
     runs-on: ubuntu-latest
