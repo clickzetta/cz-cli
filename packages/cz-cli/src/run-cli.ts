@@ -293,6 +293,16 @@ function hasConfiguredProfile() {
   }
 }
 
+// cz_change: dynamic import to keep llm/native-config off the startup path of
+// commands that never touch LLM config. Best-effort — a failed migration must
+// never block the CLI (llm.json stays the source of truth either way).
+async function migrateProfilesLlm() {
+  try {
+    const { migrateProfilesLlmToJson } = await import("./llm/native-config.js")
+    migrateProfilesLlmToJson()
+  } catch {}
+}
+
 async function hasConfiguredLlm() {
   try {
     const { readLlmEntries } = await import("./llm/native-config.js")
@@ -594,6 +604,15 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   // fixed over-attachment bug, which filed non-OAuth login tokens under random
   // ids. Runs AFTER the migration so its fresh pointers count as references.
   pruneOrphanOAuthSections()
+  // cz_change: lift origin/main's `[llm.*]` tables out of profiles.toml into
+  // llm.json. This is a config-layer migration and must run HERE, before any
+  // gate — it used to live only in the agent runtime (bootstrap/runtime.ts),
+  // downstream of the NO_LLM_CONFIGURED gate below. hasConfiguredLlm() reads
+  // only llm.json, so an upgraded user whose LLM config was still in
+  // profiles.toml was rejected on `cz-cli agent` / `agent run` and the
+  // migration never got the chance to run — the error even told them to
+  // re-add entries they already had. Idempotent; no-ops without `[llm.*]`.
+  await migrateProfilesLlm()
   const normalized = normalizeCliArgs(rawArgs)
   // On the agent path, upstream opencode owns several of these short flags; tell
   // the scanner so it does not also read them as cz connection overrides. See

@@ -43,9 +43,11 @@ export async function main(args: string[], agentRuntime = false): Promise<number
 
   // cz_change: one-time llm.json migrations must run BEFORE the agent-runtime
   // injection reads llm.json. migrateProfilesLlmToJson pulls origin/main's
-  // `[llm.*]` tables from profiles.toml (the `update` command runs in the OLD
-  // binary and can't do this, so trigger on first agent run); normalizeLlmProviderNames
-  // heals older llm.json where every provider collapsed to name="ClickZetta".
+  // `[llm.*]` tables from profiles.toml — runCli() already ran it before its
+  // gates (that is the load-bearing call; see the comment there), this stays as
+  // a belt-and-braces no-op for entries that reach the runtime some other way.
+  // normalizeLlmProviderNames heals older llm.json where every provider
+  // collapsed to name="ClickZetta".
   try {
     const { migrateProfilesLlmToJson, normalizeLlmProviderNames } = await import("../llm/native-config.js")
     try {

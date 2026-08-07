@@ -4,7 +4,7 @@
  * Run: bun test/e2e-routing.ts
  */
 import { spawnSync } from "child_process"
-import { mkdirSync, writeFileSync, rmSync } from "fs"
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 
@@ -332,6 +332,55 @@ const tests: TestCase[] = [
         if (r.stdout.includes("USAGE_ERROR") || r.stderr.includes("usage error")) {
           return { pass: false, detail: "bare agent still hit usage error path" }
         }
+        return { pass: true }
+      } finally { cleanup() }
+    },
+  },
+  {
+    // An upgrading user's LLM config lives in origin/main's `[llm.*]` tables in
+    // profiles.toml. The migration into llm.json used to run only inside the
+    // agent runtime, DOWNSTREAM of the NO_LLM_CONFIGURED gate — and that gate
+    // reads llm.json only. So `agent` / `agent run` exited 1 telling them to
+    // re-add entries they already had, and the migration never got to run.
+    // It now runs at the top of runCli(), before every gate.
+    name: "LLM_MIGRATION: legacy [llm.*] in profiles.toml satisfies the agent gate",
+    run() {
+      const legacyToml = [
+        'default_llm = "legacy"',
+        "",
+        "[profiles.demo]",
+        'username = "u"',
+        "",
+        "[llm.legacy]",
+        'provider = "openai-compatible"',
+        'api_key = "sk-legacy"',
+        'base_url = "http://127.0.0.1:1/v1"',
+        'model = "gpt-legacy"',
+        "",
+      ].join("\n")
+      // --help exits before any network use but still runs the migration, so the
+      // whole legacy→llm.json move is observable without starting a session.
+      const { home, cleanup } = withFakeHome(legacyToml)
+      try {
+        const r = run(["agent", "run", "--help"], { HOME: home, CLICKZETTA_TEST_HOME: home })
+        if (r.stdout.includes("NO_LLM_CONFIGURED") || r.stderr.includes("NO_LLM_CONFIGURED")) {
+          return { pass: false, detail: "legacy [llm.*] user was still rejected by the gate" }
+        }
+        const llmPath = join(home, ".clickzetta", "llm.json")
+        if (!existsSync(llmPath)) return { pass: false, detail: "migration did not create llm.json" }
+        const cfg = JSON.parse(readFileSync(llmPath, "utf-8"))
+        const entry = cfg?.provider?.legacy
+        if (!entry) return { pass: false, detail: `entry not migrated: ${JSON.stringify(cfg).slice(0, 200)}` }
+        if (entry.options?.apiKey !== "sk-legacy") return { pass: false, detail: "api_key lost in migration" }
+        if (entry.options?.baseURL !== "http://127.0.0.1:1/v1") return { pass: false, detail: "base_url lost in migration" }
+        // default_llm carries a concrete model, so it becomes opencode's config.model.
+        if (cfg.model !== "legacy/gpt-legacy") return { pass: false, detail: `default_llm not carried over: model=${cfg.model}` }
+        // profiles.toml goes back to holding connection profiles only.
+        const toml = readFileSync(join(home, ".clickzetta", "profiles.toml"), "utf-8")
+        if (toml.includes("[llm.") || toml.includes("default_llm")) {
+          return { pass: false, detail: "legacy LLM keys were not stripped from profiles.toml" }
+        }
+        if (!toml.includes("[profiles.demo]")) return { pass: false, detail: "connection profile was destroyed by the migration" }
         return { pass: true }
       } finally { cleanup() }
     },
