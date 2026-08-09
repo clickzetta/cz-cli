@@ -153,7 +153,7 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
         "List all profiles",
         (y) => y.option("show-secret", { type: "boolean", default: false, describe: "Reveal secrets" }),
         (argv) => {
-          const format = argv.format
+          const format = argv.format_explicit ? argv.format : "table"
           try {
             const data = loadFullFile()
             const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
