@@ -32,6 +32,7 @@ import { recordRawProviderRequest } from "@/plugin/otel/context"
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
 import { resolveDefaultModel, type ModelRef } from "./model-resolution"
+import { normalizeMoAConfig, synthesizePresetModel } from "@/session/moa"
 
 const log = Log.create({ service: "provider" })
 
@@ -1523,6 +1524,35 @@ const layer: Layer.Layer<
           log.info("found", { providerID })
         }
 
+        // Synthesize the virtual `moa` provider: one model per configured preset.
+        const moaCfg = normalizeMoAConfig((cfg as any).moa)
+        if (Object.keys(moaCfg.presets).length > 0) {
+          const moaModels: Record<string, any> = {}
+          for (const [presetName, preset] of Object.entries(moaCfg.presets)) {
+            const agg = preset.aggregator
+            const aggProvider = providers[agg.providerID as ProviderID]
+            const aggModel = aggProvider?.models?.[agg.modelID]
+            if (!aggModel) {
+              log.warn("moa preset aggregator not found; skipping preset", {
+                preset: presetName,
+                aggregator: `${agg.providerID}/${agg.modelID}`,
+              })
+              continue
+            }
+            moaModels[presetName] = synthesizePresetModel(presetName, aggModel)
+          }
+          if (Object.keys(moaModels).length > 0) {
+            providers[ProviderID.make("moa")] = {
+              id: ProviderID.make("moa"),
+              name: "Mixture of Agents",
+              source: "config",
+              env: [],
+              options: {},
+              models: moaModels,
+            } as any
+          }
+        }
+
         return {
           models: languages,
           providers,
@@ -1717,6 +1747,10 @@ const layer: Layer.Layer<
     })
 
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
+      if (model.providerID === "moa")
+        throw new Error(
+          `moa provider models are resolved via their aggregator; "${model.id}" is not directly callable`,
+        )
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`

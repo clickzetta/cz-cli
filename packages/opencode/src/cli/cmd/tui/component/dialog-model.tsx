@@ -107,6 +107,24 @@ export function DialogModel(props: { providerID?: string }) {
       }]
     })
 
+    const moaProvider = sync.data.provider.find((x) => x.id === "moa")
+    if (moaProvider) {
+      for (const [modelID, info] of Object.entries(moaProvider.models)) {
+        providerOptions.push({
+          key: llmOptionKey(moaProvider.id, moaProvider.id, modelID),
+          value: { providerID: moaProvider.id, modelID },
+          title: info.name ?? modelID,
+          description: undefined as string | undefined,
+          category: moaProvider.name,
+          disabled: false,
+          footer: undefined as string | undefined,
+          onSelect() {
+            onSelect(moaProvider.id, modelID)
+          },
+        })
+      }
+    }
+
     if (needle) {
       return fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj)
     }

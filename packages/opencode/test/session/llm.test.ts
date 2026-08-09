@@ -1464,3 +1464,100 @@ describe("session.llm.stream", () => {
     })
   })
 })
+
+describe("session.llm.moa", () => {
+  test("reference resolution failure degrades to [failed: …] and does not abort the turn", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const fixture = await loadFixture("openai", "gpt-5.2")
+
+    // Only the aggregator streams over the network. The reference points at a
+    // provider that does not exist, so getModel/getLanguage resolution throws.
+    // The turn must still complete, with the failed reference captured as
+    // [failed: …] in the aggregator's injected context.
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("done"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: ["openai"],
+            provider: {
+              openai: {
+                name: "OpenAI",
+                env: [],
+                npm: "@ai-sdk/openai",
+                api: `${server.url.origin}/v1`,
+                models: {
+                  [fixture.model.id]: fixture.model,
+                },
+                options: {
+                  apiKey: "test-openai-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+            moa: {
+              default_preset: "team",
+              presets: {
+                team: {
+                  aggregator: `openai/${fixture.model.id}`,
+                  reference_models: ["ghostprovider/ghost-model"],
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.make("moa"), ModelID.make("team"))
+        const sessionID = SessionID.make("session-moa-1")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-moa-1"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make("moa"), modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        // The turn completes (drain resolves) rather than throwing.
+        await drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+
+        const capture = await request
+        const serialized = JSON.stringify(capture.body)
+        // Failed reference resolution is captured as a [failed: …] note carrying
+        // the label, and injected into the aggregator's request context.
+        expect(serialized).toContain("[failed:")
+        expect(serialized).toContain("ghostprovider/ghost-model")
+      },
+    })
+  })
+})

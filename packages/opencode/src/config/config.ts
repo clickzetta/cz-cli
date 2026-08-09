@@ -138,6 +138,30 @@ export const Info = z
     small_model: ConfigModelID.describe(
       "Small model to use for tasks like title generation in the format of provider/model",
     ).optional(),
+    moa: z
+      .object({
+        default_preset: z.string().optional().describe("Default MoA preset name"),
+        reference_concurrency: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Max reference models to call in parallel (default 8)"),
+        presets: z.record(
+          z.string(),
+          z.object({
+            enabled: z.boolean().optional().describe("Enable reference fan-out; false ⇒ aggregator acts alone"),
+            reference_models: z
+              .array(ConfigModelID)
+              .min(1)
+              .describe("Advisory models run in parallel, in provider/model form"),
+            aggregator: ConfigModelID.describe("The acting model that calls tools, in provider/model form"),
+            max_tokens: z.number().int().positive().optional().describe("Output cap; unset ⇒ model maximum"),
+          }),
+        ),
+      })
+      .optional()
+      .describe("Mixture of Agents presets, selectable as models under the 'moa' provider"),
     default_agent: z
       .string()
       .optional()
@@ -357,8 +381,9 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.json"))),
         mergeDeep(yield* loadFile(path.join(clickzettaDir, "czcli.jsonc"))),
       )
-      // model is exclusively owned by profiles.toml; ignore any value from czcli.json
+      // model and moa are exclusively owned by profiles.toml; ignore any value from czcli.json
       delete result.model
+      delete result.moa
 
       // Read AI provider config from profiles.toml.
       // Legacy profile-level ClickZetta fields are migrated to [llm.clickzetta] on read.
@@ -372,7 +397,7 @@ export const layer = Layer.effect(
             writeFileSync(profilesPath, toml)
             log.info("migrated legacy ClickZetta LLM config to [llm.clickzetta]", { path: profilesPath })
           }
-          const { providers, entries, defaultLlmEntry, defaultModel, warnings } = parseProfilesToml(toml)
+          const { providers, entries, defaultLlmEntry, defaultModel, moa, warnings } = parseProfilesToml(toml)
           for (const w of warnings) log.warn(w, { path: profilesPath })
           if (Object.keys(providers).length > 0) {
             result = mergeDeep(result, { provider: providers } as any)
@@ -385,6 +410,9 @@ export const layer = Layer.effect(
           }
           if (defaultModel) {
             result.model = defaultModel as any
+          }
+          if (moa) {
+            result.moa = moa as any
           }
         } catch (e) {
           log.warn("failed to read profiles.toml, LLM config may be incomplete", { path: profilesPath, error: String(e) })

@@ -59,6 +59,53 @@ aimesh_endpoint = "https://legacy.clickzetta.com"
     )
   })
 
+  test("returns the top-level [moa] section", () => {
+    const result = parseProfilesToml(`
+default_llm = "clickzetta"
+
+[llm.clickzetta]
+provider = "clickzetta"
+api_key = "ck-test"
+base_url = "https://gateway.clickzetta.com"
+
+[moa]
+default_preset = "balanced"
+reference_concurrency = 4
+
+[moa.presets.balanced]
+enabled = true
+reference_models = ["clickzetta/anthropic/claude-sonnet-4.6"]
+aggregator = "clickzetta/anthropic/claude-sonnet-4.6"
+max_tokens = 8192
+`)
+
+    expect(result.moa).toEqual({
+      default_preset: "balanced",
+      reference_concurrency: 4,
+      presets: {
+        balanced: {
+          enabled: true,
+          reference_models: ["clickzetta/anthropic/claude-sonnet-4.6"],
+          aggregator: "clickzetta/anthropic/claude-sonnet-4.6",
+          max_tokens: 8192,
+        },
+      },
+    })
+  })
+
+  test("moa is undefined when profiles.toml has no [moa] section", () => {
+    const result = parseProfilesToml(`
+default_llm = "clickzetta"
+
+[llm.clickzetta]
+provider = "clickzetta"
+api_key = "ck-test"
+base_url = "https://gateway.clickzetta.com"
+`)
+
+    expect(result.moa).toBeUndefined()
+  })
+
   test("uses default_llm to resolve duplicate provider entries", () => {
     const result = parseProfilesToml(`
 default_llm = "prod-openai"
