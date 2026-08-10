@@ -21,7 +21,8 @@ import { join } from "node:path"
 import { getToken, toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { getCookieToken } from "../connection/cookie-token.js"
-import { getDefaultProfileName, loadProfiles } from "../connection/profile-store.js"
+import * as Profile from "../connection/profile-context.js"
+import { loadProfiles } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 
 const BILLING_PATH = "/clickzetta-portal/hornhub/account/billing/account"
@@ -303,7 +304,7 @@ export async function fetchQuotaSnapshot(
   const entry = resolved.kind === "clickzetta" ? resolved : undefined
 
   const profiles = loadProfiles()
-  const current = process.env.CZ_PROFILE ?? getDefaultProfileName()
+  const current = Profile.current()
   const ordered =
     current && profiles[current]
       ? [current, ...Object.keys(profiles).filter((name) => name !== current)]

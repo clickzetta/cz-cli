@@ -7,6 +7,7 @@ import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
+import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
 const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -40,6 +41,44 @@ interface SqlArgs extends GlobalArgs {
   "limit": number
   batch: boolean
   "dry-run": boolean
+}
+
+/** Config key that turns `;` statement splitting off. */
+export const SQL_SPLIT_CONFIG_KEY = "sql_split"
+
+/**
+ * cz_change (temporary): whether to split the input into `;`-separated statements.
+ *
+ * ClickZetta has server-side syntax that carries a `;` INSIDE a single statement,
+ * outside any string literal, quoted identifier, or comment. splitSql only knows
+ * those three shelters, so it chops such a statement into fragments and submits
+ * each half on its own — which the server rejects. Until the splitter understands
+ * that grammar, `"sql_split": false` in the config file submits the text verbatim.
+ *
+ * Config-file only, deliberately: the statements that need it are written by the
+ * agent and by scripts that build their own `cz-cli sql` command line, so a
+ * per-invocation flag would have to be threaded through every one of those call
+ * sites. Setting it once covers them all.
+ *
+ * Splitting stays ON when unset: multi-statement input is the common case and
+ * every existing caller depends on it.
+ */
+export async function isSplitEnabled(): Promise<boolean> {
+  return await czConfigBool(SQL_SPLIT_CONFIG_KEY) ?? true
+}
+
+/**
+ * The statements to execute, in submission order.
+ *
+ * With splitting off this is the whole input as ONE statement. The single trailing
+ * `;` is dropped because splitSql drops it too and execSql appends its own `\n;`
+ * terminator — keeping it would submit `…;\n;`, i.e. a trailing empty statement
+ * that the split path never produces. Comment-only input is filtered out either
+ * way so the caller still gets "No SQL statements found." rather than a job.
+ */
+export function resolveStatements(sql: string, splitEnabled: boolean): string[] {
+  const raw = splitEnabled ? splitSql(sql) : [sql.replace(/\s*;\s*$/, "")]
+  return raw.map((s) => s.trim()).filter((s) => s && stripLeadingComment(s))
 }
 
 interface TruncateResult {
@@ -251,22 +290,32 @@ async function executeSingle(
   hints: Record<string, string>,
   configStatements?: string[],
   onJobId?: (id: string) => void,
+  opts: { verbatim?: boolean } = {},
 ): Promise<void> {
   const format = argv.format
 
-  // Intercept SET statements — these are client-side session directives, not executable SQL
-  const setMatch = sql.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
-  if (setMatch) {
-    success({ set: `${setMatch[1]}=${setMatch[2].replace(/;$/, "").trim()}` }, { format, timeMs: 0 })
-    return
-  }
+  // Both interceptions below assume `sql` is ONE statement, which is what the splitter
+  // guarantees. With splitting off it is the whole input, so a text that merely STARTS
+  // with `USE …` / `SET …` and continues past a `;` would be reported as a successful
+  // context switch while everything after the first `;` was silently dropped. Skip the
+  // interception for exactly that shape — an embedded `;` — and let the server read the
+  // whole script and say what it makes of it. A plain `USE …` / `SET …` still gets the
+  // client-side handling either way (resolveStatements already dropped its trailing `;`).
+  if (!opts.verbatim || !sql.includes(";")) {
+    // Intercept SET statements — these are client-side session directives, not executable SQL
+    const setMatch = sql.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
+    if (setMatch) {
+      success({ set: `${setMatch[1]}=${setMatch[2].replace(/;$/, "").trim()}` }, { format, timeMs: 0 })
+      return
+    }
 
-  // Intercept USE statements — client-side context switch
-  const use = parseUseStatement(sql)
-  if (use) {
-    if (!await applyUseStatement(ctx, use, format, hints, configStatements, argv.timeout * 1000, argv.profile)) return
-    success({ use: use.normalized }, { format, timeMs: 0 })
-    return
+    // Intercept USE statements — client-side context switch
+    const use = parseUseStatement(sql)
+    if (use) {
+      if (!await applyUseStatement(ctx, use, format, hints, configStatements, argv.timeout * 1000, argv.profile)) return
+      success({ use: use.normalized }, { format, timeMs: 0 })
+      return
+    }
   }
 
   const isWrite = WRITE_RE.test(sql)
@@ -525,7 +574,8 @@ async function handler(argv: SqlArgs): Promise<void> {
   process.on("SIGINT", sigintHandler)
 
   try {
-    const statements = splitSql(sql).map((s) => s.trim()).filter((s) => s && stripLeadingComment(s))
+    const splitEnabled = await isSplitEnabled()
+    const statements = resolveStatements(sql, splitEnabled)
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
     }
@@ -609,7 +659,7 @@ async function handler(argv: SqlArgs): Promise<void> {
         }
       }
     } else {
-      await executeSingle(ctx, statements[0], argv, hints ?? {}, undefined, (id) => { currentJobId = id })
+      await executeSingle(ctx, statements[0], argv, hints ?? {}, undefined, (id) => { currentJobId = id }, { verbatim: !splitEnabled })
     }
   } catch (err) {
     const { code, message, aiMessage, jobId } = classifyExecError(err)
@@ -695,6 +745,10 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
                 "",
                 "SQL input priority: positional > -e/--execute > -f/--file > --stdin",
                 "Default mode is sync (waits for results). Use --async for large/long-running queries.",
+                "",
+                "Statement splitting is on by default. To submit SQL verbatim when a single",
+                `statement itself contains ';', put this in ${CZ_CONFIG_FILE}:`,
+                `  { "${SQL_SPLIT_CONFIG_KEY}": false }`,
               ].join("\n")),
           (argv) => handler(argv as unknown as SqlArgs),
         ),

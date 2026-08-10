@@ -43,6 +43,22 @@ export {
   browserOpenCommandForPlatform,
   classifyGatewayError,
   gatewayErrorFields,
-  planGatewayPrompt,
-  type GatewayPromptPlan,
+  planGatewayNotice,
+  type GatewayNoticeAction,
+  type GatewayNoticePlan,
 } from "./gateway-prompt.js"
+
+// cz_change: the quota-exhausted dialog mints a key on confirm, so the renderer
+// needs the provisioning helper from this same bundle (it cannot import
+// src/ directly — see the bundling note above).
+export { provisionKeyForEntry, gatewayAliasForEntry, type KeyProvisionResult } from "../llm/key-provision.js"
+
+// cz_change: the active provider/model context. Both renderers in this bundle need
+// it — the quota indicator to know whose key to measure, the quota-exhausted notice
+// to know whose key to replace — and they must agree, so it ships as one module
+// rather than one answer per consumer.
+export {
+  createActiveModelContext,
+  currentSessionID,
+  type ActiveModelContext,
+} from "./active-model.js"

@@ -131,6 +131,17 @@ export function getDefaultProfileName(): string | undefined {
   }
 }
 
+// cz_change: WHICH profile is active is NOT here — it is process state that can
+// change mid-session, so it lives in connection/profile-context.ts as a
+// `current()` / `set()` / `onChange()` trio (import it as a namespace:
+// `import * as Profile from "./profile-context.js"`). This module owns the
+// profiles.toml STORE — reading and writing entries — and deliberately does not
+// re-export that trio: a second name for the same function is a second entry point
+// in practice, which is the duplication the split exists to remove.
+//
+// `getDefaultProfileName` above is the FALLBACK, not the active profile. Reading it
+// directly is almost always a bug — see Profile.current().
+
 export function readProfileEntry(profileName?: string): ProfileEntry | undefined {
   const profiles = loadProfiles()
   if (Object.keys(profiles).length === 0) return undefined

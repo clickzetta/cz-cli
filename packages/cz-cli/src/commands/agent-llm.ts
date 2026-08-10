@@ -10,6 +10,7 @@ import {
   type LlmEntryView,
 } from "../llm/native-config.js"
 import { buildLlmProbeRequest, normalizeLlmBaseUrl } from "../llm/probe.js"
+import { rewriteClickzettaGatewayError } from "../llm/gateway-error.js"
 import { describeSelectionSource, resolveDefaultModel } from "../llm/default-model.js"
 
 const VALID_PROVIDERS = [
@@ -645,15 +646,30 @@ const LlmTestCommand = cmd({
     const text = await response.text()
     if (!response.ok) {
       const detail = responseDetail(text)
+      // cz_change: a ClickZetta gateway failure gets the same actionable message
+      // here as it does mid-session. This path builds its own request rather than
+      // going through the provider, so without this the probe reported the raw
+      // body — `HTTP 403 … {"error":{"code":"GATEWAY_TENANT_OVERDUE",…}}` — for a
+      // condition the agent itself explains as "Insufficient account balance.
+      // Please visit … to add funds." Same classifier, so the two agree.
+      const rewrite = rewriteClickzettaGatewayError({
+        statusCode: response.status,
+        message: detail || response.statusText,
+        responseBody: text,
+      })
       fail(
         isTTY,
         "LLM_TEST_HTTP_ERROR",
-        `LLM test failed with HTTP ${response.status} for ${displayUrl}${detail ? `: ${detail}` : ""}`,
+        rewrite
+          ? `LLM test failed for ${displayUrl}: ${rewrite.message}`
+          : `LLM test failed with HTTP ${response.status} for ${displayUrl}${detail ? `: ${detail}` : ""}`,
         {
           provider: target.provider,
           url: displayUrl,
           status: response.status,
           detail,
+          // Keep the gateway's own code so scripted callers can branch on it.
+          ...(rewrite ? { gateway_code: rewrite.code } : {}),
         },
       )
     }

@@ -9,6 +9,7 @@ import {
 } from "./tui-title-brand"
 import { installQuotaIndicator } from "./tui-quota"
 import { installGatewayPrompt } from "./gateway-prompt-view"
+import { createActiveModelContext } from "./tui-quota-runtime.js"
 
 // cz_change: restore the ClickZetta "CZ-CLI" home logo through opencode's PUBLIC
 // TUI plugin slot API (home_logo is a host slot declared mode:replace in
@@ -65,13 +66,20 @@ function SidebarFooter(props: { api: TuiPluginApi; sessionID: string }) {
 
 const tui: TuiPlugin = async (api) => {
   installTerminalTitleBrand(api)
+  // cz_change: ONE active provider/model context for the whole TUI, created here
+  // and handed to every consumer. Both features below act on "the provider serving
+  // this session" — measuring its quota, replacing its exhausted key — so they must
+  // agree; two independent answers is precisely the bug that swapped a new key into
+  // the wrong llm.json entry. See active-model.ts.
+  const activeModel = createActiveModelContext(api)
+  api.lifecycle.onDispose(() => activeModel.dispose())
   // cz_change: the balance/quota indicator rides along in this plugin rather than
   // as a second tui.json entry — one plugin spec keeps injectClickzettaTuiConfig
   // and the build's asset list unchanged in shape. See tui-quota.tsx.
-  installQuotaIndicator(api)
+  installQuotaIndicator(api, activeModel)
   // cz_change: same rationale — one plugin spec. Offers a browser jump when the
   // gateway blocks a call for billing / key-quota reasons. See gateway-prompt.ts.
-  installGatewayPrompt(api)
+  installGatewayPrompt(api, activeModel)
   const theme = () => api.theme.current
   api.slots.register({
     order: 100,

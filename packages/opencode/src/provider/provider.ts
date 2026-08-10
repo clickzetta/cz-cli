@@ -1586,8 +1586,9 @@ export const layer = Layer.effect(
         // reuses that authoritative decision, covers every entry regardless of
         // name, and — unlike a domain check — correctly EXCLUDES misconfigured
         // entries (e.g. a gateway URL wired to @ai-sdk/anthropic), letting the
-        // misconfig surface instead of being papered over. On any failure the
-        // model table is left as-is (no fallback), like gitlab.
+        // misconfig surface instead of being papered over. Unlike gitlab, a provider
+        // left with zero models is seeded from CLICKZETTA_FALLBACK_MODELS — see that
+        // constant for why silence is the worse failure here.
         yield* Effect.promise(async () => {
           const isClickzettaProvider = (id: string): boolean => {
             const npm = cfg.provider?.[id]?.npm
@@ -1619,14 +1620,26 @@ export const layer = Layer.effect(
                   method: "GET",
                   headers: { Authorization: `Bearer ${apiKey}` },
                 })
-                if (!response.ok) return
-                const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
-                for (const entry of body.data ?? []) {
-                  const modelID = typeof entry?.id === "string" ? entry.id : undefined
-                  if (!modelID || provider.models[modelID]) continue
-                  provider.models[modelID] = buildClickzettaModel(providerID, modelID, baseURL, npm)
+                // A non-OK response is not fatal: the fallback below still runs, so a
+                // blocked or flaky gateway leaves the provider reachable instead of
+                // deleted.
+                if (response.ok) {
+                  const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
+                  for (const entry of body.data ?? []) {
+                    const modelID = typeof entry?.id === "string" ? entry.id : undefined
+                    if (!modelID || provider.models[modelID]) continue
+                    provider.models[modelID] = buildClickzettaModel(providerID, modelID, baseURL, npm)
+                  }
                 }
               } catch (e) {}
+              // cz_change: keep the provider alive when discovery produced nothing.
+              // Only ever a substitute for an empty table — never merged alongside
+              // discovered models, so a working gateway never sees these ids.
+              if (Object.keys(provider.models).length === 0) {
+                for (const modelID of CLICKZETTA_FALLBACK_MODELS) {
+                  provider.models[modelID] = buildClickzettaModel(providerID, modelID, baseURL, npm)
+                }
+              }
             }),
           )
         })
@@ -2043,10 +2056,116 @@ export function clickzettaModelsUrl(baseURL: string): string {
   return `${baseURL.replace(/\/+$/, "")}/models`
 }
 
+/**
+ * Context window per gateway model id, longest-matching prefix wins.
+ *
+ * The gateway's `/v1/models` returns ids and nothing else, so every id used to get
+ * the same flat 128000 — wrong in both directions, by up to 7.7x at the top end.
+ *
+ * Two independent sources agree, which is why these figures are trusted. The
+ * published price list (https://www.yunqi.tech/documents/modelprice) bands each
+ * model by input length, and the top band is its context window; probing the live
+ * cn-shanghai gateway with an oversized prompt returns the ceiling verbatim
+ * ("Range of input length should be [1, N]"). Where both exist they match:
+ *
+ *   z-ai/glm-4.7        doc 166K  →  probe 169984  (= 166 * 1024)
+ *   qwen/qwen3-max      doc 256K  →  probe 258048  (= 252 * 1024)
+ *   qwen/qwen3.6-flash  doc   1M  →  probe 983616
+ *
+ * `limit.context` drives auto-compaction (session/overflow.ts), so both error
+ * directions hurt. Under-declaring silently discards history the model could still
+ * hold, which the user experiences as forgetfulness with nothing in the logs;
+ * over-declaring (deepseek-r1, whose real window is BELOW the old default) means no
+ * compaction happens and the upstream rejects the request.
+ *
+ * These are prefixes, not exact ids, so a new point release in a family inherits
+ * its window instead of silently dropping to the fallback.
+ */
+const CLICKZETTA_CONTEXT_LIMITS: ReadonlyArray<readonly [prefix: string, context: number]> = [
+  // Each figure is the ceiling the upstream provider reported when it rejected an
+  // oversized prompt ("Range of input length should be [1, N]"), or the largest
+  // prompt observed accepted. Longest matching prefix wins.
+  // Probed only — the price list gives no tier for these.
+  ["deepseek/deepseek-r1", 98_304], // SMALLER than the old flat 128000
+  ["deepseek/deepseek-v3", 131_072],
+  ["moonshotai/kimi-k2", 262_144],
+  ["deepseek/deepseek-v4", 500_000], // accepted 500k; ceiling not bisected
+  // From the published tiers, cross-checked against probes where available.
+  ["z-ai/glm-4", 169_984], // doc 166K; probe reported exactly 169984
+  ["z-ai/glm-5", 198_000], // doc 32K–198K
+  ["z-ai/glm-5.1", 200_000], // doc 32K–200K
+  ["z-ai/glm-5.2", 500_000], // no doc tier; accepted 500k
+  ["qwen/qwen-max", 32_768], // untiered in the price list, smallest qwen band
+  ["qwen/qwen3-max", 258_048], // doc 128K–256K; probe reported exactly 258048
+  ["qwen/qwen3.6-max-preview", 258_048], // doc 128K–256K
+  ["qwen/qwen3-coder", 1_000_000],
+  ["qwen/qwen-plus", 1_000_000],
+  ["qwen/qwen3.5-flash", 1_000_000],
+  ["qwen/qwen3.5-plus", 1_000_000],
+  ["qwen/qwen3.6-plus", 1_000_000],
+  ["qwen/qwen3.7-plus", 1_000_000],
+  ["qwen/qwen3.6-flash", 983_616], // doc 1M; probe reported exactly 983616
+  ["qwen/qwen3.7-max", 983_616], // doc 1M; probe reported exactly 983616
+]
+
+/**
+ * For ids not in the table. Deliberately the smallest window measured on the
+ * gateway (deepseek-r1's 98304): compacting earlier than necessary loses history
+ * but keeps the session working, while over-declaring hands the model a prompt it
+ * rejects. Wrong-but-small beats wrong-but-large here.
+ */
+const CLICKZETTA_FALLBACK_CONTEXT = 98_304
+
+export function clickzettaContextLimit(modelID: string): number {
+  let best = CLICKZETTA_FALLBACK_CONTEXT
+  let bestLength = -1
+  for (const [prefix, context] of CLICKZETTA_CONTEXT_LIMITS) {
+    if (modelID.startsWith(prefix) && prefix.length > bestLength) {
+      best = context
+      bestLength = prefix.length
+    }
+  }
+  return best
+}
+
+/**
+ * cz_change: the model a ClickZetta provider keeps when `GET /v1/models`
+ * discovered nothing.
+ *
+ * Why a phantom model beats an honest empty table. A provider with zero models is
+ * DELETED outright a few lines below (`if (Object.keys(provider.models).length === 0)`),
+ * which is the worst possible outcome for the two ways discovery actually fails:
+ *
+ *   - Tenant-level block (overdue / cycle cap). Every route 403s, `/v1/models`
+ *     included, so the entry vanishes from `/model` with no error anywhere — the
+ *     user sees their configured provider silently gone and has nothing to act on.
+ *     Worse, the billing notice that exists to fix this (cz-cli's gateway-prompt)
+ *     is only reachable from a failed inference call, which a deleted provider can
+ *     never make. Seeding one model restores that path: sending a message returns
+ *     the real gateway error, classified, with the remedy attached.
+ *   - Transient failure (gateway hiccup, proxy, DNS) at startup only. Here the
+ *     seeded model simply works, where deletion would have forced a restart.
+ *
+ * The cost is a model id that may not exist on the tenant, whose first request
+ * 404s. That is a strictly better failure than an absent provider: it names what
+ * went wrong. It is also why these are seeded ONLY into an empty table — a working
+ * gateway never reaches this line, so no drift is possible for anyone whose
+ * discovery succeeds.
+ *
+ * A list holding one entry, not a bare string: adding a second id must not be a
+ * refactor of the seeding loop. Kept short on purpose — a long one would recreate
+ * the hardcoded CLICKZETTA_MODELS catalog this runtime discovery replaced, and
+ * every id here is a maintenance liability the gateway can retire.
+ *
+ * ORDER IS SIGNIFICANT: with no pinned model, opencode auto-selects the first
+ * available one, so index 0 is what a fresh session lands on.
+ */
+export const CLICKZETTA_FALLBACK_MODELS: readonly string[] = ["deepseek/deepseek-v4-pro"]
+
 // Build a Model from a gateway model id. Gateway ids look like
 // "deepseek/deepseek-v4-pro" — the WHOLE string is the modelID (parseModel splits
 // on the first "/", so the full ref stays <entry>/<vendor>/<model> with no double
-// prefix). family is the vendor segment; cost/limit/capabilities get conservative
+// prefix). family is the vendor segment; cost/capabilities get conservative
 // defaults since /v1/models returns only ids.
 export function buildClickzettaModel(
   providerID: ProviderV2.ID,
@@ -2064,7 +2183,7 @@ export function buildClickzettaModel(
     headers: {},
     options: {},
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-    limit: { context: 128000, output: 16384 },
+    limit: { context: clickzettaContextLimit(modelID), output: 16384 },
     capabilities: {
       temperature: true,
       reasoning: true,

@@ -3,7 +3,7 @@
  *
  *   bun script/preview-gateway-prompt.ts
  *
- * The text and URLs come from the real planGatewayPrompt, so this verifies the
+ * The text and URLs come from the real planGatewayNotice, so this verifies the
  * shipped copy rather than a mockup of it. It also shows which conditions
  * deliberately produce NO dialog: a cycle cap no page can lift, a spent key
  * whose guidance is a set of commands, and anything the gateway gives no code for.
@@ -31,7 +31,7 @@ writeFileSync(
 process.env.CLICKZETTA_TEST_HOME = home
 delete process.env.CZ_PROFILE
 
-const { planGatewayPrompt, gatewayErrorFields } = await import("../src/opencode-plugin/gateway-prompt.js")
+const { planGatewayNotice, gatewayErrorFields } = await import("../src/opencode-plugin/gateway-prompt.js")
 const { rewriteClickzettaGatewayError } = await import("../src/llm/gateway-error.js")
 const gatewayFields = (e: unknown) => gatewayErrorFields(e)!
 
@@ -123,7 +123,7 @@ function wrap(text: string) {
 let failures = 0
 
 for (const item of CASES) {
-  const plan = await planGatewayPrompt(item.error)
+  const plan = await planGatewayNotice(item.error)
   const got = plan ? "dialog" : "silent"
   const ok = got === item.expect
   if (!ok) failures++

@@ -13,20 +13,21 @@
 // @opentui/core and get dropped at load). Everything else is bundled and
 // unit-tested behind one bundling entry, tui-quota-runtime.ts: tui-quota-data.ts
 // (fetch), tui-quota-format.ts (presentation), tui-quota-controller.ts (refresh).
-import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
+import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import { createEffect, createSignal, createMemo, For, Show } from "solid-js"
 import {
   createQuotaController,
+  currentSessionID,
   fetchQuotaSnapshot,
   quotaSegments,
-  readRecentProviders,
-  selectDisplayedProvider,
+  type ActiveModelContext,
   type QuotaSnapshot,
   type QuotaTone,
 } from "./tui-quota-runtime.js"
 
 function View(props: {
   api: TuiPluginApi
+  activeModel: ActiveModelContext
   snapshot: () => QuotaSnapshot | undefined
   onContext: (key: string) => void
 }) {
@@ -40,7 +41,9 @@ function View(props: {
   // an effect created there is never scheduled.
   createEffect(() => {
     const sessionID = currentSessionID(props.api) ?? ""
-    props.onContext(`${props.api.route.current.name}:${sessionID}:${displayedProviderID(props.api) ?? ""}`)
+    props.onContext(
+      `${props.api.route.current.name}:${sessionID}:${props.activeModel.providerID(sessionID || undefined) ?? ""}`,
+    )
   })
 
   // No segments = nothing worth showing (non-ClickZetta provider, or no reading
@@ -68,18 +71,15 @@ function View(props: {
   )
 }
 
-export function installQuotaIndicator(api: TuiPluginApi) {
+export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveModelContext) {
   const [snapshot, setSnapshot] = createSignal<QuotaSnapshot | undefined>(undefined)
-  const observed = new Map<string, string>()
 
   const controller = createQuotaController({
-    load: () => {
-      const sessionID = currentSessionID(api)
-      return fetchQuotaSnapshot({
-        providerID: (sessionID ? observed.get(sessionID) : undefined) ?? displayedProviderID(api),
+    load: () =>
+      fetchQuotaSnapshot({
+        providerID: activeModel.providerID(),
         signal: api.lifecycle.signal,
-      })
-    },
+      }),
     onSnapshot: setSnapshot,
   })
 
@@ -87,31 +87,17 @@ export function installQuotaIndicator(api: TuiPluginApi) {
     api.event.on("session.status", (event) => {
       controller.observeStatus(event.properties.sessionID, event.properties.status)
     }),
-    // An assistant message carries the provider that actually served it — the
-    // ground truth for auto-selected models.
-    api.event.on("message.updated", (event) => {
-      const message = event.properties.info
-      if (message.role !== "assistant") return
-      if (typeof message.providerID !== "string") return
-      if (message.providerID === observed.get(message.sessionID)) return
-      observed.set(message.sessionID, message.providerID)
-      if (message.sessionID !== currentSessionID(api)) return
-      controller.refresh()
-    }),
-    // Switching model mid-session can switch tenant, which changes both the key
-    // and the portal to read it from.
-    api.event.on("session.next.model.switched", (event) => {
-      const next = event.properties.model.providerID
-      if (next === observed.get(event.properties.sessionID)) return
-      observed.set(event.properties.sessionID, next)
-      if (event.properties.sessionID !== currentSessionID(api)) return
+    // Which provider is active is tracked by the shared context (see active-model
+    // .ts); this only reacts to it. Quota is charged to the active provider's key,
+    // so a change means the reading is for the wrong key until refreshed.
+    activeModel.onChange(({ sessionID }) => {
+      if (sessionID !== currentSessionID(api)) return
       controller.refresh()
     }),
   ]
 
   api.lifecycle.onDispose(() => {
     for (const off of unsubscribe) off()
-    observed.clear()
     controller.dispose()
   })
 
@@ -129,10 +115,10 @@ export function installQuotaIndicator(api: TuiPluginApi) {
     order: 100,
     slots: {
       home_prompt_right() {
-        return <View api={api} snapshot={snapshot} onContext={onContext} />
+        return <View api={api} activeModel={activeModel} snapshot={snapshot} onContext={onContext} />
       },
       session_prompt_right() {
-        return <View api={api} snapshot={snapshot} onContext={onContext} />
+        return <View api={api} activeModel={activeModel} snapshot={snapshot} onContext={onContext} />
       },
     },
   })
@@ -146,33 +132,8 @@ export function installQuotaIndicator(api: TuiPluginApi) {
   controller.refresh()
 }
 
-/**
- * The provider the prompt will show next to the model name, worked out the way
- * the TUI itself works it out: pinned model, else recent-model history, else the
- * first available provider.
- *
- * Reading `config.model` alone is not enough — it is unset unless the user ran
- * `cz-cli agent llm use`, and the auto-selected provider is often a different
- * one from the launch profile. Reporting the launch profile's quota while the
- * prompt names another provider would show a number for a key the session isn't
- * spending. Once a message lands, the assistant's own providerID supersedes this.
- */
-function displayedProviderID(api: TuiPluginApi): string | undefined {
-  return selectDisplayedProvider({
-    configModel: typeof api.state.config.model === "string" ? api.state.config.model : undefined,
-    recent: readRecentProviders(api.state.path.state),
-    providers: api.state.provider.map((item) => ({ id: item.id, models: item.models })),
-  })
-}
-
-function currentSessionID(api: TuiPluginApi) {
-  const route = api.route.current
-  if (route.name !== "session" || !route.params || typeof route.params.sessionID !== "string") return undefined
-  return route.params.sessionID
-}
-
-const tui: TuiPlugin = async (api) => {
-  installQuotaIndicator(api)
-}
-
-export default { id: "clickzetta.tui-quota", tui }
+// No default export / `tui` entry on purpose: this file is not loaded as a plugin
+// of its own. injectClickzettaTuiConfig registers exactly ONE spec —
+// tui-brand.tsx (resolveClickzettaTuiPluginSpecifier) — which calls
+// installQuotaIndicator with the shared active-model context. A second entry here
+// would be dead code, and if it ever did load it would create a rival context.

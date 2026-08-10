@@ -15,6 +15,7 @@ import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { requireTestHome } from "./support/cz-fixtures.js"
 import { formatBillingError, resolveAccountsUrl } from "../src/commands/billing-error.ts"
+import { accountTopUpUrl } from "../src/commands/account-login.ts"
 
 const originalProfile = process.env.CZ_PROFILE
 
@@ -42,6 +43,35 @@ afterEach(() => {
   else process.env.CZ_PROFILE = originalProfile
 })
 
+/**
+ * The expected deep link, spelled out once. A billing block must land the user on
+ * the top-up form, not the console home — signed out, the plain root bounces
+ * through login and drops them at the home page.
+ */
+const topUp = (origin: string) => `${origin}/login?fallback=${encodeURIComponent(origin)}/billing/balance/topUp`
+
+describe("accountTopUpUrl shape", () => {
+  test("is the login route with the top-up page as its fallback", () => {
+    // Pinned literally, not via the helper, so a change to either the path or the
+    // encoding has to be made deliberately here.
+    expect(accountTopUpUrl("https://xxjrdhjr.accounts.clickzetta.com")).toBe(
+      "https://xxjrdhjr.accounts.clickzetta.com/login?fallback=https%3A%2F%2Fxxjrdhjr.accounts.clickzetta.com/billing/balance/topUp",
+    )
+  })
+
+  test("tolerates a trailing slash without doubling it", () => {
+    expect(accountTopUpUrl("https://acct.accounts.clickzetta.com/")).toBe(
+      accountTopUpUrl("https://acct.accounts.clickzetta.com"),
+    )
+  })
+
+  test("keeps the account as the first host label so callers can still verify it", () => {
+    // overduePlan names the account only when the URL is that account's own site
+    // (`includes("//<name>.")`), which the deep link must not break.
+    expect(accountTopUpUrl("https://acct.accounts.clickzetta.com")).toContain("//acct.")
+  })
+})
+
 describe("resolveAccountsUrl precedence", () => {
   test("an explicit accounts_url wins over everything", () => {
     writeProfiles(['accounts_url = "https://pinned.accounts.clickzetta.com/"', 'account_name = "stored"'])
@@ -51,12 +81,12 @@ describe("resolveAccountsUrl precedence", () => {
   test("the runtime account name beats the profile's stored one", () => {
     writeProfiles(['account_name = "stale"'])
     // uat- service host → the uat accounts site, per accountLoginUrlForService.
-    expect(resolveAccountsUrl({ accountDisplayName: "runtime" })).toBe("https://runtime.uat-accounts.clickzetta.com")
+    expect(resolveAccountsUrl({ accountDisplayName: "runtime" })).toBe(topUp("https://runtime.uat-accounts.clickzetta.com"))
   })
 
   test("the profile's account_name is used only when no runtime name is supplied", () => {
     writeProfiles(['account_name = "stored"'])
-    expect(resolveAccountsUrl({})).toBe("https://stored.uat-accounts.clickzetta.com")
+    expect(resolveAccountsUrl({})).toBe(topUp("https://stored.uat-accounts.clickzetta.com"))
   })
 
   test("no account name anywhere resolves to nothing", () => {
@@ -70,13 +100,13 @@ describe("resolveAccountsUrl precedence", () => {
     // dialog offered a link that could not open. Caught by pointing the real
     // cn-shanghai profile at a genuinely overdue tenant.
     expect(resolveAccountsUrl({ accountDisplayName: "bxhzbghd", service: "https://cn-shanghai-alicloud.api.clickzetta.com" })).toBe(
-      "https://bxhzbghd.accounts.clickzetta.com",
+      topUp("https://bxhzbghd.accounts.clickzetta.com"),
     )
   })
 
   test("an explicit service overrides the profile's", () => {
     expect(resolveAccountsUrl({ accountDisplayName: "acct", service: "api.singdata.com" })).toBe(
-      "https://acct.accounts.singdata.com",
+      topUp("https://acct.accounts.singdata.com"),
     )
   })
 })
@@ -85,7 +115,7 @@ describe("formatBillingError", () => {
   test("adds the top-up link for a billing error", () => {
     writeProfiles(['account_name = "stored"'])
     expect(formatBillingError({ code: "CZLH-60029", message: "overdue payments" })).toBe(
-      "Insufficient account balance. Please visit https://stored.uat-accounts.clickzetta.com to add funds.",
+      `Insufficient account balance. Please visit ${topUp("https://stored.uat-accounts.clickzetta.com")} to add funds.`,
     )
   })
 

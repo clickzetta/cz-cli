@@ -5,8 +5,7 @@ import os from "os"
 import path from "path"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { ConfigManaged } from "opencode/config/managed"
-import { jsonc } from "opencode/config/parse"
-import { parse as parseToml } from "smol-toml"
+import { czConfigCandidates, parseCzConfigText } from "../config/cz-config.js"
 
 // Our own release channel, intentionally isolated from opencode's
 // `InstallationChannel` (the build-time CLICKZETTA_CHANNEL constant, which also
@@ -87,17 +86,6 @@ function xdgStateHome(home?: string, env: NodeJS.ProcessEnv = process.env) {
   return env.XDG_STATE_HOME ?? path.join(homeDirectory(home, env), ".local", "state")
 }
 
-function configCandidates(home?: string, env: NodeJS.ProcessEnv = process.env) {
-  const root = homeDirectory(home, env)
-  return [
-    path.join(root, CLICKZETTA_DIR, "czcli.json"),
-    path.join(root, CLICKZETTA_DIR, "czcli.jsonc"),
-    path.join(env.XDG_CONFIG_HOME ?? path.join(root, ".config"), "clickzetta", "opencode.jsonc"),
-    path.join(env.XDG_CONFIG_HOME ?? path.join(root, ".config"), "clickzetta", "opencode.json"),
-    path.join(env.XDG_CONFIG_HOME ?? path.join(root, ".config"), "clickzetta", "config.json"),
-  ]
-}
-
 function managedCandidates(env: NodeJS.ProcessEnv = process.env) {
   const root = env.CLICKZETTA_TEST_MANAGED_CONFIG_DIR ?? ConfigManaged.managedConfigDir()
   return [path.join(root, "opencode.json"), path.join(root, "opencode.jsonc")]
@@ -107,21 +95,6 @@ function updatePaths(home?: string, env: NodeJS.ProcessEnv = process.env): Updat
   return {
     install: path.join(homeDirectory(home, env), CLICKZETTA_DIR, INSTALL_METADATA_FILE),
     state: path.join(xdgStateHome(home, env), "clickzetta", UPDATE_STATE_FILE),
-  }
-}
-
-function parseConfig(text: string) {
-  const json = readJsonConfig(text)
-  if (json && typeof json === "object" && !Array.isArray(json)) return json as Record<string, unknown>
-  const toml = parseToml(text)
-  return toml && typeof toml === "object" && !Array.isArray(toml) ? (toml as Record<string, unknown>) : {}
-}
-
-function readJsonConfig(text: string) {
-  try {
-    return jsonc(text, "clickzetta config")
-  } catch {
-    return undefined
   }
 }
 
@@ -149,7 +122,7 @@ export async function resolveReleaseChannel(input: { home?: string; env?: NodeJS
 async function readObject(file: string) {
   const text = await fs.readFile(file, "utf-8").catch(() => undefined)
   if (!text) return {}
-  return parseConfig(text)
+  return parseCzConfigText(text)
 }
 
 async function writeJson(file: string, value: unknown) {
@@ -387,7 +360,7 @@ export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.P
     if (legacy !== undefined) merged.autoupdate = legacy
   }
 
-  for (const file of configCandidates(input.home, env)) {
+  for (const file of czConfigCandidates(input.home, env)) {
     const value = coerceAutoupdate((await readObject(file)).autoupdate)
     if (value !== undefined) merged.autoupdate = value
   }
@@ -399,7 +372,7 @@ export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.P
 
   const mobileConfig = await ConfigManaged.readManagedPreferences().catch(() => undefined)
   if (mobileConfig) {
-    const value = coerceAutoupdate(parseConfig(mobileConfig.text).autoupdate)
+    const value = coerceAutoupdate(parseCzConfigText(mobileConfig.text).autoupdate)
     if (value !== undefined) merged.autoupdate = value
   }
 

@@ -1,5 +1,6 @@
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
+import { Config } from "@/config/config"
 import * as InstanceState from "@/effect/instance-state"
 import { Format } from "@/format"
 import { Global } from "@opencode-ai/core/global"
@@ -15,6 +16,7 @@ import { markInstanceForDisposal } from "../lifecycle"
 export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance", (handlers) =>
   Effect.gen(function* () {
     const agent = yield* Agent.Service
+    const cfg = yield* Config.Service
     const command = yield* Command.Service
     const format = yield* Format.Service
     const lsp = yield* LSP.Service
@@ -22,6 +24,18 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
     const vcs = yield* Vcs.Service
 
     const dispose = Effect.fn("InstanceHttpApi.dispose")(function* () {
+      // cz_change: drop the cached global config too, so the rebuilt instance
+      // re-reads it from disk.
+      //
+      // The global config is cached with `Duration.infinity` on the PROCESS-level
+      // BootstrapRuntime (config/config.ts cachedInvalidateWithTTL), not on the
+      // instance — so disposing the instance alone leaves it in place and the
+      // rebuild observes the config as it was at startup. Callers that rewrite a
+      // config file and then dispose to pick it up (the TUI's provider-credential
+      // flows) silently got the stale providers. Writers that go through
+      // Config.updateGlobal already invalidate; a caller editing the file directly
+      // has no other way to.
+      yield* cfg.invalidate()
       yield* markInstanceForDisposal(yield* InstanceState.context)
       return true
     })

@@ -76,6 +76,44 @@ function rewriteProviders(value: unknown, providerSpecifier: string) {
   return Object.fromEntries(entries)
 }
 
+/**
+ * cz_change: what OPENCODE_CONFIG_CONTENT may say about a provider that llm.json
+ * already defines — the npm specifier, and NOTHING else.
+ *
+ * Both sources reach opencode: OPENCODE_CONFIG points at llm.json (merged in
+ * config/config.ts) and this env var is merged AFTER it, so the env wins on any
+ * field both carry. But the env var is a SNAPSHOT taken at process start, and the
+ * TUI server reads it inside a Worker whose env is copied by value
+ * (installClickzettaWorkerEnvShim) — no later write can reach it. Anything mutable
+ * placed here therefore goes stale and then overwrites the live file with the stale
+ * value.
+ *
+ * That is exactly how a rotated api_key stopped taking effect: the new key was
+ * written to llm.json, the instance was rebuilt and re-read the file, and the frozen
+ * snapshot put the spent key back. So only process-fixed facts belong here. The npm
+ * specifier qualifies: it names an asset shipped beside the binary and cannot change
+ * while the process lives — and it must be injected, because llm.json stores the bare
+ * package name, which a compiled binary cannot resolve.
+ *
+ * Everything else is dropped on purpose, verified against the real loader
+ * (`opencode debug config` with these env vars resolves all three of the author's
+ * providers, npm rewritten, apiKey supplied by the file):
+ *   - `options.apiKey` is mutable (key rotation) and must come from the file.
+ *   - `options.baseURL` is derived from the file, and the provider normalizes it
+ *     itself (clickzetta-ai-gateway/src/index.ts applies
+ *     normalizeClickzettaGatewayUrl to its own options.baseURL), so re-deriving here
+ *     only created a second, staler copy.
+ *   - `name` / `api` / `env` / `models` are read straight from the file by opencode.
+ */
+function providerNpmStubs(value: unknown, providerSpecifier: string) {
+  const rewritten = rewriteProviders(value, providerSpecifier)
+  if (!rewritten) return undefined
+  const stubs = Object.entries(rewritten).flatMap(([name, provider]) =>
+    isRecord(provider) && provider.npm === providerSpecifier ? [[name, { npm: providerSpecifier }] as const] : [],
+  )
+  return stubs.length > 0 ? Object.fromEntries(stubs) : undefined
+}
+
 // Nearest ancestor holding `.git` (dir or file — covers worktrees/submodules),
 // i.e. opencode's git worktree root. Returns undefined when cwd is not in a repo,
 // mirroring origin where ctx.worktree is then undefined.
@@ -284,7 +322,13 @@ export function injectClickzettaAgentConfig(agentTimeoutMs?: number) {
   const llmConfig = readLlmConfig()
   const existing = parseConfigContent()
   const provider = {
-    ...(rewriteProviders(llmConfig.provider, providerSpecifier) ?? {}),
+    // opencode already merges llm.json itself (OPENCODE_CONFIG points at it), so only
+    // the npm specifier is contributed here — see providerNpmStubs for why carrying
+    // anything mutable is a bug rather than mere redundancy.
+    ...(providerNpmStubs(llmConfig.provider, providerSpecifier) ?? {}),
+    // Providers the user declared in their OWN OPENCODE_CONFIG_CONTENT have no file
+    // behind them, so they keep every field — stubbing these would delete the only
+    // copy of their apiKey.
     ...(rewriteProviders(existing.provider, providerSpecifier) ?? {}),
   }
 
@@ -297,10 +341,21 @@ export function injectClickzettaAgentConfig(agentTimeoutMs?: number) {
   // map, so this covers every configured provider — matching origin's Object.values loop.
   // Skip any provider already pinning either field (origin: `if options.timeout !== undefined continue`).
   if (agentTimeoutMs !== undefined) {
-    for (const entry of Object.values(provider)) {
+    // llm.json-derived entries are npm-only stubs here (providerNpmStubs), so their
+    // `options` are not visible on `entry` — the "already pinned" check has to consult
+    // the file directly, or a user who set `options.timeout` in llm.json would silently
+    // get a headerTimeout alongside it.
+    const fileProviders = isRecord(llmConfig.provider) ? llmConfig.provider : {}
+    const pinnedInFile = (name: string) => {
+      const fromFile = fileProviders[name]
+      if (!isRecord(fromFile)) return false
+      const opts = isRecord(fromFile.options) ? fromFile.options : {}
+      return opts.headerTimeout !== undefined || opts.timeout !== undefined
+    }
+    for (const [name, entry] of Object.entries(provider)) {
       if (!isRecord(entry)) continue
       const opts = isRecord(entry.options) ? entry.options : {}
-      if (opts.headerTimeout === undefined && opts.timeout === undefined) {
+      if (opts.headerTimeout === undefined && opts.timeout === undefined && !pinnedInFile(name)) {
         ;(entry as Record<string, unknown>).options = { ...opts, headerTimeout: agentTimeoutMs }
       }
     }

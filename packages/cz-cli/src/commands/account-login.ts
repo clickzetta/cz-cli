@@ -118,6 +118,37 @@ export function accountLoginUrlForService(service: string, accountName: string):
   return `${protocol}://${accountHost}`
 }
 
+/** Where the accounts console keeps the top-up form, relative to the site root. */
+const TOP_UP_PATH = "/billing/balance/topUp"
+
+/**
+ * cz_change: turn an accounts-console origin into a link that lands the user ON
+ * the top-up form.
+ *
+ * The site root is not good enough for a billing block. A user sent to
+ * `https://<account>.accounts.clickzetta.com` arrives at the console home and has
+ * to find the top-up form themselves — and, if not signed in, gets bounced to a
+ * login page that then drops them at the home page rather than where they were
+ * going. The console's own answer is the `fallback` parameter: sign in, then
+ * redirect. So the link we hand out is the login route with the top-up page as its
+ * fallback, which works signed-in and signed-out alike.
+ *
+ * Encoding matches the console's own form — the origin is percent-encoded (it
+ * carries the `:` and `//` that genuinely need it) while the fallback's path stays
+ * literal. `/` is legal unencoded in a query value per RFC 3986, and reproducing
+ * the format the app itself emits is the safer bet against a redirect handler we
+ * cannot test.
+ *
+ * Deliberately NOT folded into accountLoginUrlForService: that function's result
+ * is a base other callers append to (`${url}/login`, the console meta endpoint in
+ * loadAccountConsoleMeta) and is shown by `profile`/`setup` as the plain web login
+ * URL. Returning a deep link from it would corrupt all three.
+ */
+export function accountTopUpUrl(siteUrl: string): string {
+  const origin = siteUrl.replace(/\/+$/, "")
+  return `${origin}/login?fallback=${encodeURIComponent(origin)}${TOP_UP_PATH}`
+}
+
 function extractAssignedJsonObject(script: string, globalVarName: string): string {
   const marker = `${globalVarName} =`
   const start = script.indexOf(marker)

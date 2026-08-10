@@ -169,6 +169,16 @@ function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
   })
 }
 
+/**
+ * The error-mapping wrapper, exposed for tests.
+ *
+ * `createClickzetta` closes over the base provider it builds, so there is no seam
+ * to substitute a fake model through from outside. Exporting the wrapper lets the
+ * suite drive doGenerate/doStream against a stub instead of the network — which is
+ * the only way to cover the in-stream error branch and the Proxy delegation.
+ */
+export const wrapModelForTest = wrapModel
+
 export type ClickzettaProviderSettings = OpenAICompatibleProviderSettings
 
 /**

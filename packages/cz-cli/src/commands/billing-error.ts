@@ -1,6 +1,7 @@
 import { TENANT_OVER_QUOTA_MESSAGE, clickzettaGatewayCode, isClickzettaBillingCode } from "../llm/gateway-error.js"
-import { accountLoginUrlForService } from "./account-login.js"
-import { getDefaultProfileName, loadProfiles } from "../connection/profile-store.js"
+import { accountLoginUrlForService, accountTopUpUrl } from "./account-login.js"
+import * as Profile from "../connection/profile-context.js"
+import { loadProfiles } from "../connection/profile-store.js"
 
 // cz_change: billing/quota error presentation for the CLI.
 //
@@ -17,10 +18,9 @@ export function isBillingError(input: { code?: string; message?: string }) {
 
 function activeProfileEntry(profileName?: string) {
   const profiles = loadProfiles()
-  const explicitName = profileName ?? process.env.CZ_PROFILE
-  if (explicitName) return profiles[explicitName]
-  const defaultName = getDefaultProfileName()
-  if (defaultName) return profiles[defaultName]
+  const name = profileName ?? Profile.current()
+  if (name) return profiles[name]
+  // No profile resolvable at all: a lone profile is still unambiguous.
   return Object.values(profiles)[0]
 }
 
@@ -57,11 +57,17 @@ export function resolveAccountsUrl(input: {
 }) {
   const profile = activeProfileEntry(input.profileName)
   const configured = str(profile?.accounts_url)
+  // An explicit accounts_url is returned verbatim. It is the one value the user set
+  // deliberately, may already point at a specific page, and need not be a
+  // ClickZetta console at all — appending our top-up path to it would be a guess.
   if (configured) return normalizeAccountsUrl(configured)
   const accountName = str(input.accountDisplayName) ?? str(profile?.account_name)
   const service = input.service ?? str(profile?.service)
   if (!accountName || !service) return undefined
-  return accountLoginUrlForService(service, accountName)
+  // Land on the top-up form, not the console home — see accountTopUpUrl. The
+  // account name stays the first host label, so callers that verify the URL belongs
+  // to the account they are about to name (gateway-prompt's overduePlan) still can.
+  return accountTopUpUrl(accountLoginUrlForService(service, accountName))
 }
 
 /**

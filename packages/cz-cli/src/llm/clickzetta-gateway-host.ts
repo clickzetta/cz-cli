@@ -44,3 +44,31 @@ export function pinAlicloudAdminHost(baseUrl: string): string {
     "$1cn-shanghai-alicloud.api.clickzetta.com",
   )
 }
+
+/** The one admin host inside the mainland `clickzetta.com` partition. */
+const CN_ADMIN_HOST = "cn-shanghai-alicloud.api.clickzetta.com"
+
+/**
+ * The host to send AIGW virtual-key admin calls to.
+ *
+ * Broader than {@link pinAlicloudAdminHost}: that one only rewrites
+ * `cn-*-alicloud` hosts, so a **tencentcloud** profile sailed through untouched
+ * and the admin route answered "Can not find healthy upstream" — verified against
+ * the live gateway, where `ap-shanghai-tencentcloud.api.clickzetta.com` fails and
+ * `cn-shanghai-alicloud.api.clickzetta.com` returns the key id for the same token.
+ * Virtual keys are tenant-global, so redirecting across regions is safe.
+ *
+ * Scoped to the mainland partition on purpose. Every other partition
+ * (`singdata.com` intl, `clickzetta-inc.com`, dev/uat/localhost) keeps its own
+ * host: rewriting those to a `clickzetta.com` host would cross a partition
+ * boundary, where the token is not even valid. Their admin routes are left as-is,
+ * which is the pre-existing behavior — this function does not claim to fix them.
+ */
+export function aigwAdminHost(baseUrl: string): string {
+  const host = baseUrl.replace(/^https?:\/\//, "").split("/")[0] ?? ""
+  // Leave non-production hosts alone: dev/uat/local portals serve their own admin
+  // routes, and there is no mainland-production equivalent to redirect them to.
+  if (/^(dev-|uat-|localhost|0\.0\.0\.0|127\.0\.0\.1)/.test(host)) return baseUrl
+  if (!host.endsWith(".clickzetta.com")) return baseUrl
+  return baseUrl.replace(/^(https?:\/\/)[^/]+/, `$1${CN_ADMIN_HOST}`)
+}

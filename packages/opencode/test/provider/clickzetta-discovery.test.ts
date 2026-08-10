@@ -3,7 +3,7 @@
 // every clickzetta gateway provider and merges the result into Provider.list().
 import { describe, expect, test } from "bun:test"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { clickzettaModelsUrl, buildClickzettaModel } from "@/provider/provider"
+import { clickzettaModelsUrl, buildClickzettaModel, CLICKZETTA_FALLBACK_MODELS } from "@/provider/provider"
 
 describe("clickzettaModelsUrl", () => {
   test("appends /models to the normalized runtime base", () => {
@@ -42,5 +42,36 @@ describe("buildClickzettaModel", () => {
     expect(m.cost).toEqual({ input: 0, output: 0, cache: { read: 0, write: 0 } })
     expect(m.capabilities.toolcall).toBe(true)
     expect(m.status).toBe("active")
+  })
+})
+
+// A provider whose model table is empty is deleted by the loop right after
+// discovery, taking the entry out of `/model` with no error to act on — including
+// the billing error that would explain a 403ing gateway. The fallback exists to
+// keep that entry reachable; these pin the contract it depends on.
+describe("CLICKZETTA_FALLBACK_MODELS", () => {
+  const providerID = ProviderV2.ID.make("clickzetta")
+
+  test("is non-empty, so a zero-model provider is never left to be deleted", () => {
+    expect(CLICKZETTA_FALLBACK_MODELS.length).toBeGreaterThan(0)
+  })
+
+  test("holds only vendor-prefixed gateway ids, which parseModel keeps intact", () => {
+    for (const modelID of CLICKZETTA_FALLBACK_MODELS) {
+      expect(modelID).toMatch(/^[a-z0-9-]+\/[A-Za-z0-9._-]+$/)
+      // The whole string stays the modelID: <entry>/<vendor>/<model> resolves back
+      // with no double prefix, same as a discovered id.
+      expect(String(buildClickzettaModel(providerID, modelID, "https://gw/gateway/v1", "npm").id)).toBe(modelID)
+    }
+  })
+
+  test("has no duplicates, so seeding cannot silently drop an entry", () => {
+    expect(new Set(CLICKZETTA_FALLBACK_MODELS).size).toBe(CLICKZETTA_FALLBACK_MODELS.length)
+  })
+
+  test("index 0 is the id a fresh session auto-selects", () => {
+    // Pinned deliberately: opencode picks the first available model when nothing is
+    // configured, so reordering this list changes what users land on.
+    expect(CLICKZETTA_FALLBACK_MODELS[0]).toBe("deepseek/deepseek-v4-pro")
   })
 })

@@ -394,7 +394,7 @@ async function authenticate(
  * intl AWS region was probed at a hostname that does not exist and could never be
  * detected.
  */
-const REGION_API_HOSTS: Record<string, string> = {
+export const REGION_API_HOSTS: Record<string, string> = {
   dev: "dev-api.clickzetta.com",
   sit: "sit-api.clickzetta.com",
   uat: "uat-api.clickzetta.com",
@@ -411,7 +411,8 @@ const REGION_API_HOSTS: Record<string, string> = {
   "gaotu-ap-beijing-tencentcloud": "studio-bj-gaotu.clickzetta-inc.com/api",
 }
 
-const PROD_REGIONS = [
+/** Regions tried in order when auto-detecting where a login belongs. */
+export const PROD_REGIONS = [
   "cn-shanghai-alicloud", "ap-shanghai-tencentcloud", "ap-beijing-tencentcloud",
   "ap-guangzhou-tencentcloud", "ap-southeast-1-alicloud", "ap-southeast-1-aws",
   "kuaishou", "kuaishou-sgp", "gaotu-ap-beijing-tencentcloud",

@@ -6,6 +6,7 @@ import { success, error, handledError, isHandledCliError } from "../output/index
 import { logOperation } from "../logger.js"
 import { getGatewayContext, type GatewayContext } from "./studio-context.js"
 import { pinAlicloudAdminHost } from "../llm/clickzetta-gateway-host.js"
+import * as Profile from "../connection/profile-context.js"
 import { readProfileEntry } from "../connection/profile-store.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 
@@ -161,7 +162,7 @@ function aimeshEndpoint(base: string): string {
 }
 
 function configuredAiGatewayUrl() {
-  const profile = readProfileEntry(process.env.CZ_PROFILE)
+  const profile = readProfileEntry(Profile.current())
   return typeof profile?.aimeshEndpointBaseUrl === "string" ? profile.aimeshEndpointBaseUrl : undefined
 }
 

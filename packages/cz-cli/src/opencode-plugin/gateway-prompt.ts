@@ -1,5 +1,9 @@
-// cz_change: turn an AI-gateway billing/quota failure into an actionable browser
-// jump for the TUI (see gateway-prompt-view.tsx for the confirm dialog).
+// cz_change: turn an AI-gateway billing/quota failure into an actionable TUI
+// dialog (see gateway-prompt-view.tsx for the confirm dialog and the handlers).
+//
+// "Actionable" means one of two things, per GatewayNoticeAction: hand off to a
+// billing page, or mint the user's own key and swap it in place. This module only
+// DECIDES which — it performs neither, so it stays plain .ts and unit-testable.
 //
 // Split from the renderer for the same reason as the quota indicator: this half
 // is plain .ts, so it is unit-testable under `bun test` and can be pre-bundled
@@ -17,20 +21,39 @@ import { browserOpenCommandForPlatform } from "../util/browser.js"
 import { resolveAccountsUrl } from "../commands/billing-error.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { getCookieToken } from "../connection/cookie-token.js"
-import { getDefaultProfileName, loadProfiles } from "../connection/profile-store.js"
+import * as Profile from "../connection/profile-context.js"
+import { loadProfiles } from "../connection/profile-store.js"
 import { rewriteClickzettaGatewayError, type GatewayErrorCode } from "../llm/gateway-error.js"
+import { readLlmEntries } from "../llm/native-config.js"
 
 export { browserOpenCommandForPlatform }
 
-export type GatewayPromptPlan = {
-  /** The gateway code that produced this prompt. */
+/**
+ * What confirming the dialog does. Two shapes because the remedies differ in
+ * kind, not just in text: an unpaid balance can only be settled on a web page we
+ * hand the user off to, while a spent complimentary key is fixed entirely
+ * in-process (mint a key, swap it in). Discriminated so the renderer cannot
+ * accidentally treat one as the other.
+ */
+export type GatewayNoticeAction =
+  /** Hand off to a page the user acts on; nothing is changed locally. */
+  | { kind: "open-url"; url: string }
+  /**
+   * Replace `entry`'s api_key in llm.json with a freshly minted virtual key.
+   * The entry name is reused deliberately, so `config.model` stays valid and the
+   * user's active model does not change.
+   */
+  | { kind: "provision-key"; entry: string }
+
+export type GatewayNoticePlan = {
+  /** The gateway code that produced this notice. */
   code: GatewayErrorCode
   /** Dialog title. */
   title: string
-  /** Dialog body, already including the account name and the URL. */
+  /** Dialog body, already including the account name and any URL. */
   message: string
-  /** Opened on confirm. */
-  url: string
+  /** Performed when the user confirms. */
+  action: GatewayNoticeAction
 }
 
 /**
@@ -42,7 +65,16 @@ export type GatewayPromptPlan = {
  * either, since raising one virtual key's ceiling leaves the tenant-level cap in
  * force. Its advice is text-only, so it gets no dialog.
  */
-const PROMPTABLE_CODES: readonly string[] = ["GATEWAY_TENANT_OVERDUE", "CZLH-60029"]
+const PROMPTABLE_CODES: readonly string[] = [
+  "GATEWAY_TENANT_OVERDUE",
+  "CZLH-60029",
+  // A spent complimentary key qualifies for the opposite reason to the overdue
+  // codes: no page fixes it, but we can fix it outright by minting the user's own
+  // key. Only offered when the classifier confirms the blamed key is the
+  // complimentary grant (isComplimentaryKey) — a user's own spent key needs its
+  // quota raised, which this flow does not do.
+  "GATEWAY_TOO_MANY_REQUESTS",
+]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -79,7 +111,10 @@ export function classifyGatewayError(error: unknown) {
 
 function activeProfile() {
   const profiles = loadProfiles()
-  const name = process.env.CZ_PROFILE ?? getDefaultProfileName() ?? Object.keys(profiles)[0]
+  // Profile.current() is the single source (CZ_PROFILE, else the default_profile
+  // fallback). The sole-profile guess remains as a last resort for a profiles.toml
+  // with no default_profile set.
+  const name = Profile.current() ?? Object.keys(profiles)[0]
   if (!name) return undefined
   const profile = profiles[name]
   if (!profile) return undefined
@@ -123,7 +158,7 @@ async function runtimeAccountName(input: {
   }
 }
 
-function overduePlan(code: GatewayErrorCode, accountName: string | undefined, url: string): GatewayPromptPlan {
+function overduePlan(code: GatewayErrorCode, accountName: string | undefined, url: string): GatewayNoticePlan {
   // The account is named so a user with several keys can check this is the tenant
   // that actually owes money before paying anything.
   const target = accountName ? `the billing page for ${accountName}` : "the billing page"
@@ -133,7 +168,43 @@ function overduePlan(code: GatewayErrorCode, accountName: string | undefined, ur
     message:
       "This API key is blocked by unpaid charges. Adding funds restores access.\n" +
       `Open ${target}? You will need to sign in to pay.\n${url}`,
-    url,
+    action: { kind: "open-url", url },
+  }
+}
+
+/**
+ * Confirm `providerID` names a ClickZetta entry we can swap a key into.
+ *
+ * The provider id IS the llm.json entry key, so no derivation is needed — the
+ * caller passes the ACTIVE provider from the runtime context (active-model.ts) and
+ * this only validates it. An earlier version derived the entry from
+ * `config.model` instead and swapped the key into the wrong entry whenever
+ * opencode had auto-selected a different provider, leaving the exhausted one
+ * untouched: the error kept firing with a fresh key sitting unused elsewhere.
+ */
+function clickzettaEntry(providerID: string | undefined): string | undefined {
+  if (!providerID) return undefined
+  const config = readLlmEntries()
+  return config.llm[providerID]?.provider === "clickzetta" ? providerID : undefined
+}
+
+/**
+ * The complimentary grant is spent. Its allowance is fixed, so the way forward is
+ * a key of the user's own — which we can mint and swap in without the user
+ * leaving the session or re-picking a model.
+ *
+ * The billing consequence is stated plainly: the free ride is over, and anything
+ * from here bills the account.
+ */
+function freeKeyExhaustedPlan(code: GatewayErrorCode, entry: string): GatewayNoticePlan {
+  return {
+    code,
+    title: "Free trial quota exhausted",
+    message:
+      "Your complimentary token quota is used up. Choose how to continue —\n" +
+      "either way, usage from here is billed to your account.\n" +
+      "Option 1 keeps your current model.",
+    action: { kind: "provision-key", entry },
   }
 }
 
@@ -142,12 +213,31 @@ function overduePlan(code: GatewayErrorCode, accountName: string | undefined, ur
  * should stay quiet (not a billing block, a code no page can fix, or no reachable
  * account console).
  */
-export async function planGatewayPrompt(
+export async function planGatewayNotice(
   error: unknown,
-  options: { signal?: AbortSignal } = {},
-): Promise<GatewayPromptPlan | undefined> {
+  options: {
+    signal?: AbortSignal
+    /**
+     * The provider currently serving this session, from the runtime context
+     * (active-model.ts). Required to offer a key swap: it names the llm.json entry
+     * to replace, and nothing else here can determine it correctly.
+     */
+    activeProviderID?: string
+  } = {},
+): Promise<GatewayNoticePlan | undefined> {
   const classified = classifyGatewayError(error)
   if (!classified) return undefined
+
+  // A spent key is handled entirely locally, so it short-circuits before the
+  // account-name lookup and URL derivation the overdue path needs. Only the
+  // complimentary grant qualifies: a key the user provisioned needs its quota
+  // raised, and silently replacing it would discard settings they chose.
+  if (classified.code === "GATEWAY_TOO_MANY_REQUESTS") {
+    if (!classified.isComplimentaryKey) return undefined
+    const entry = clickzettaEntry(options.activeProviderID)
+    if (!entry) return undefined
+    return freeKeyExhaustedPlan(classified.code, entry)
+  }
 
   const active = activeProfile()
   const accountDisplayName = active
