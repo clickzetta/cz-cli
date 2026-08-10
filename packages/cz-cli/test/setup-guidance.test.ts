@@ -60,11 +60,11 @@ describe("setup guidance", () => {
   test("shares the new login-method copy across TTY and staged setup", () => {
     expect(SETUP_LOGIN_METHODS).toEqual([
       {
-        label: "ClickZetta - https://accounts.clickzetta.com/login",
+        label: "ClickZetta - https://accounts.clickzetta.com/login?ref=cz-cli",
         value: "clickzetta",
       },
       {
-        label: "Singdata  - https://accounts.singdata.com/login",
+        label: "Singdata  - https://accounts.singdata.com/login?ref=cz-cli",
         value: "singdata",
       },
       {
@@ -115,8 +115,8 @@ describe("setup guidance", () => {
     const result = run(["setup", "--help"])
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain("Choose a login method:")
-    expect(result.stdout).toContain("1. ClickZetta - https://accounts.clickzetta.com/login")
-    expect(result.stdout).toContain("2. Singdata  - https://accounts.singdata.com/login")
+    expect(result.stdout).toContain("1. ClickZetta - https://accounts.clickzetta.com/login?ref=cz-cli")
+    expect(result.stdout).toContain("2. Singdata  - https://accounts.singdata.com/login?ref=cz-cli")
     expect(result.stdout).toContain("3. Custom URL - Enter a login page URL or paste a JDBC connection string")
     expect(result.stdout.replace(/\s+/g, "")).toContain(JDBC_EXAMPLE.replace(/\s+/g, ""))
   })

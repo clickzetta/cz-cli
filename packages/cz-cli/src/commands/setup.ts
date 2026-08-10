@@ -67,8 +67,8 @@ export const JDBC_EXAMPLE =
   "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?username=<username>&password=<password>&schema=public&virtualCluster=DEFAULT"
 
 export const SETUP_LOGIN_METHODS = [
-  { label: "ClickZetta - https://accounts.clickzetta.com/login", value: "clickzetta" },
-  { label: "Singdata  - https://accounts.singdata.com/login", value: "singdata" },
+  { label: "ClickZetta - https://accounts.clickzetta.com/login?ref=cz-cli", value: "clickzetta" },
+  { label: "Singdata  - https://accounts.singdata.com/login?ref=cz-cli", value: "singdata" },
   { label: "Custom URL - Enter a login page URL or paste a JDBC connection string", value: "custom" },
 ] as const
 
@@ -1098,7 +1098,7 @@ async function runModernSetupFlowTTY(
     const registerChoice = await promptSelect(
       "Choose a registration method:",
       [
-        { label: "ClickZetta - https://accounts.clickzetta.com/register", value: "default" },
+        { label: "ClickZetta - https://accounts.clickzetta.com/register?ref=cz-cli", value: "default" },
         { label: "Custom URL - Enter a registration page URL", value: "custom" },
       ],
     )
@@ -1694,8 +1694,8 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         )
         .epilogue(
           "Choose a login method:\n" +
-          "1. ClickZetta - https://accounts.clickzetta.com/login\n" +
-          "2. Singdata  - https://accounts.singdata.com/login\n" +
+          "1. ClickZetta - https://accounts.clickzetta.com/login?ref=cz-cli\n" +
+          "2. Singdata  - https://accounts.singdata.com/login?ref=cz-cli\n" +
           "3. Custom URL - Enter a login page URL or paste a JDBC connection string\n\n" +
           "JDBC example:\n" +
           `${JDBC_EXAMPLE}\n\n` +

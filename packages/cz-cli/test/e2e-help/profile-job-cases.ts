@@ -57,8 +57,8 @@ export const profileJobHelpCases: HelpCase[] = [
     expectOptions: ["--credential", "--login-method", "--login", "--account-name", "--username", "--password"],
     expectCommands: [
       "Choose a login method:",
-      "ClickZetta - https://accounts.clickzetta.com/login",
-      "Singdata  - https://accounts.singdata.com/login",
+      "ClickZetta - https://accounts.clickzetta.com/login?ref=cz-cli",
+      "Singdata  - https://accounts.singdata.com/login?ref=cz-cli",
       "Custom URL - Enter a login page URL or paste a JDBC connection string",
       "JDBC example:",
     ],
