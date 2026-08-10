@@ -34,6 +34,7 @@ export * from "./studio/schedule.js"
 export * from "./studio/workspace-params.js"
 export * from "./studio/dqc.js"
 export * from "./workspace/workspace.js"
+export * from "./headers.js"
 export * from "./agent/chat.js"
 export * from "./traceparent.js"
 

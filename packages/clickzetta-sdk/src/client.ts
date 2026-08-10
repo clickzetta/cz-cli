@@ -1,6 +1,7 @@
 import { ClickZettaApiError, type ApiResponse } from "./types/api.js"
 import type { ConnectionConfig } from "./types/index.js"
 import { currentTraceparent } from "./traceparent.js"
+import { getHeader, mergeHeaders } from "./headers.js"
 
 const SDK_VERSION = "0.1.0"
 const MAX_RETRIES = 3
@@ -48,24 +49,32 @@ function generateRequestId(): string {
   return `tssdk-v${SDK_VERSION}-${hex}`
 }
 
+/**
+ * Header name of the wire credential. Lower case because {@link mergeHeaders}
+ * folds every name that way; the 401 refresh path below rewrites this same key,
+ * and using a different casing there would re-introduce a duplicate field.
+ */
+const TOKEN_HEADER = "x-clickzetta-token"
+
 function buildHeaders(opts: ClientOptions): Record<string, string> {
   const requestId = generateRequestId()
-  const instanceName = opts.customHeaders?.instanceName ?? opts.config?.instance
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/plain, */*",
-    "User-Agent": `tssdk/${SDK_VERSION}`,
-    // client.py:293 — trace id header, required by the gateway for correlation
-    "requestId": requestId,
-    "X-Request-ID": requestId,
-    "traceparent": opts.traceparent ?? currentTraceparent(),
-    ...(instanceName ? { instanceName } : {}),
-    ...opts.customHeaders,
-  }
-  if (opts.token) {
-    headers["X-Clickzetta-Token"] = opts.token
-  }
-  return headers
+  // Case-insensitive: a profile may spell this `Instancename`, and missing it
+  // here would fall back to config.instance and emit a second, conflicting value.
+  const instanceName = getHeader(opts.customHeaders, "instanceName") ?? opts.config?.instance
+  return mergeHeaders(
+    {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/plain, */*",
+      "User-Agent": `tssdk/${SDK_VERSION}`,
+      // client.py:293 — trace id header, required by the gateway for correlation
+      "requestId": requestId,
+      "X-Request-ID": requestId,
+      "traceparent": opts.traceparent ?? currentTraceparent(),
+      ...(instanceName ? { instanceName } : {}),
+    },
+    opts.customHeaders,
+    opts.token ? { [TOKEN_HEADER]: opts.token } : undefined,
+  )
 }
 
 /**
@@ -111,7 +120,7 @@ async function doRequest<T>(
             try {
               const fresh = await forceRefreshToken(opts.config)
               opts.token = fresh.token
-              headers["X-Clickzetta-Token"] = fresh.token
+              headers[TOKEN_HEADER] = fresh.token
             } catch (refreshErr) {
               // Bubble up the refresh error as the final cause so
               // callers see why we gave up on this request.

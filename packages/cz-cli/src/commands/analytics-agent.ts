@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises"
 import { basename, posix, resolve } from "node:path"
 import type { Argv } from "yargs"
-import { createTraceparent } from "@clickzetta/sdk"
+import { createTraceparent, mergeHeaders } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
@@ -503,22 +503,24 @@ async function requestAnalytics(
   ctx?: ResolvedContext,
 ): Promise<unknown> {
   const { endpoint, studio } = ctx ?? await resolveAnalyticsContext(argv)
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "x-clickzetta-token": studio.token,
-    Authorization: studio.token,
-    traceparent: createTraceparent(),
-    userId: String(studio.userId),
-    instanceId: String(studio.instanceId),
-    accountId: String(studio.tenantId),
-    tenantId: String(studio.tenantId),
-    instanceName: studio.instanceName,
-    workspaceName: studio.workspaceName,
-    workspaceId: String(studio.workspaceId),
-    projectId: String(studio.projectId),
-    ...studio.customHeaders,
-  }
+  const headers = mergeHeaders(
+    {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "x-clickzetta-token": studio.token,
+      Authorization: studio.token,
+      traceparent: createTraceparent(),
+      userId: String(studio.userId),
+      instanceId: String(studio.instanceId),
+      accountId: String(studio.tenantId),
+      tenantId: String(studio.tenantId),
+      instanceName: studio.instanceName,
+      workspaceName: studio.workspaceName,
+      workspaceId: String(studio.workspaceId),
+      projectId: String(studio.projectId),
+    },
+    studio.customHeaders,
+  )
   const url = buildUrl(endpoint, route, argv, query, studio.tenantId)
   const requestBody = route.openSessionAuth
     ? mergeBody(body, { tenantId: studio.tenantId, userId: studio.userId, loginToken: studio.token })
