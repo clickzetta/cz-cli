@@ -9,11 +9,17 @@ interface UserInfo {
   accountDisplayName?: string
 }
 
+/**
+ * `customHeaders` carries the profile's own headers (notably `Cookie`) so
+ * cookie-authenticated deployments accept this call. Without it the request
+ * only proves the token, which a session-authenticating gateway may reject.
+ */
 export async function getCurrentUser(
   baseUrl: string,
   token: string,
+  customHeaders?: Record<string, string>,
 ): Promise<UserInfo> {
-  const opts: ClientOptions = { baseUrl, token }
+  const opts: ClientOptions = { baseUrl, token, customHeaders }
   const resp = await request<UserInfo>(
     opts,
     "/clickzetta-portal/user/getCurrentUser",

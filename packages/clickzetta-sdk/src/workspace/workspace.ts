@@ -7,6 +7,11 @@ export interface WorkspaceInfo {
   projectId: number
 }
 
+/**
+ * `customHeaders` carries the profile's own headers (notably `Cookie`) so
+ * cookie-authenticated deployments accept this call. It is spread first: the
+ * identity headers resolved by the caller always win over profile values.
+ */
 export async function listUserWorkspaces(
   baseUrl: string,
   token: string,
@@ -15,11 +20,13 @@ export async function listUserWorkspaces(
   instanceId: number,
   instanceName: string,
   debug?: boolean,
+  customHeaders?: Record<string, string>,
 ): Promise<WorkspaceInfo[]> {
   const opts: ClientOptions = {
     baseUrl,
     token,
     customHeaders: {
+      ...customHeaders,
       instanceid: String(instanceId),
       instancename: instanceName,
       userId: String(userId),
@@ -59,6 +66,7 @@ export async function getWorkspaceByName(
   instanceName: string,
   workspaceName: string,
   debug?: boolean,
+  customHeaders?: Record<string, string>,
 ): Promise<WorkspaceInfo | undefined> {
   const all = await listUserWorkspaces(
     baseUrl,
@@ -68,6 +76,7 @@ export async function getWorkspaceByName(
     instanceId,
     instanceName,
     debug,
+    customHeaders,
   )
   return all.find((w) => {
     const raw = w as unknown as Record<string, unknown>
