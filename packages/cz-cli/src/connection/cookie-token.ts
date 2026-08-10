@@ -1,4 +1,5 @@
 import { toServiceUrl, type AuthToken, type ConnectionConfig } from "@clickzetta/sdk"
+import { resolveInstanceIdByName } from "./instance-id.js"
 
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
   return Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]
@@ -41,25 +42,6 @@ function numeric(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-async function resolveInstanceId(
-  baseUrl: string,
-  token: string,
-  accountId: number,
-  instanceName: string,
-  customHeaders?: Record<string, string>,
-): Promise<number> {
-  const response = await fetch(`${baseUrl}/clickzetta-portal/service/serviceInstanceList?accountId=${accountId}`, {
-    headers: { ...customHeaders, "x-clickzetta-token": token, Accept: "application/json" },
-  })
-  if (!response.ok) return 0
-  const payload = await response.json() as { data?: Array<Record<string, unknown>> }
-  const match = (payload.data ?? []).find((row) =>
-    String(row.name ?? row.instanceName ?? "") === instanceName
-    && numeric(row.serviceId ?? 1) === 1,
-  )
-  return numeric(match?.id ?? match?.instanceId)
-}
-
 /**
  * Resolve an {@link AuthToken} directly from a profile's `header.Cookie`
  * `X-ClickZetta-Token` value, skipping the `loginSingle` exchange entirely.
@@ -81,7 +63,13 @@ export async function getCookieToken(config: ConnectionConfig): Promise<AuthToke
   const exp = numeric(payload.exp)
   const instanceId = numeric(payload.instanceId ?? payload.instance_id)
     || numeric(getHeader(config.customHeaders, "Instanceid"))
-    || await resolveInstanceId(toServiceUrl(config.service, config.protocol), token, accountId, config.instance, config.customHeaders)
+    || await resolveInstanceIdByName(
+      toServiceUrl(config.service, config.protocol),
+      token,
+      accountId,
+      config.instance,
+      { customHeaders: config.customHeaders },
+    )
   if (!instanceId) throw new Error(`Unable to resolve instance id for '${config.instance}' from cookie auth.`)
   return {
     token,

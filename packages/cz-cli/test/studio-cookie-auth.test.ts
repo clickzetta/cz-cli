@@ -37,11 +37,14 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
   const token = jwt({ userId: 7, accountId: 3, instanceId: 86, exp: 4_102_444_800 })
   const cookie = `theme=light; X-ClickZetta-Token=${token}`
   const hits: string[] = []
+  const cookies: Record<string, string | undefined> = {}
   let currentUserToken: string | undefined
   let workspaceToken: string | undefined
 
   const server = createServer(async (request, response) => {
+    const path = (request.url ?? "").split("?")[0]
     hits.push(request.url ?? "")
+    cookies[path] = request.headers["cookie"] as string | undefined
     const bodyChunks: Uint8Array[] = []
     for await (const chunk of request) bodyChunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
 
@@ -49,6 +52,12 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
       currentUserToken = request.headers["x-clickzetta-token"] as string | undefined
       response.writeHead(200, { "content-type": "application/json" })
       response.end(JSON.stringify({ code: 0, data: { id: 7, accountId: 3, name: "tester", instanceId: 86 } }))
+      return
+    }
+
+    if (path === "/clickzetta-portal/service/serviceInstanceList") {
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ code: 0, data: [{ id: 86, name: "acct", serviceId: 1 }] }))
       return
     }
 
@@ -99,6 +108,12 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
       expect(ctx.projectId).toBe(9)
       expect(currentUserToken).toBe(token)
       expect(workspaceToken).toBe(token)
+      // Every identity-resolution preflight must carry the profile Cookie, not
+      // just the token extracted from it — deployments that authenticate the
+      // session cookie reject these calls otherwise.
+      expect(cookies["/clickzetta-portal/user/getCurrentUser"]).toBe(cookie)
+      expect(cookies["/clickzetta-portal/service/serviceInstanceList"]).toBe(cookie)
+      expect(cookies["/ide-authority/v1/workspace/listUserWorkspaces"]).toBe(cookie)
       // Cookie token must never trigger a login exchange.
       expect(hits).not.toContain("/clickzetta-portal/user/loginSingle")
     } finally {
