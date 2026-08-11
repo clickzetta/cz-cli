@@ -57,6 +57,10 @@ jobs:
           # github-actions[bot]. Remove this line to use the App instead.
           github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
+          # TEMPORARY — diagnosing an is_error:true result with no SDK error
+          # string. Prints Claude's full output into the Actions log, which is
+          # public on this repo. Remove once the failure is identified.
+          show_full_output: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
