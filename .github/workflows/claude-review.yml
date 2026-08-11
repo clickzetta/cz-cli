@@ -1,0 +1,187 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # NOTE: `paths` and `paths-ignore` cannot both be used for the same event.
+    # Exclusions go here as `!` patterns, evaluated in order.
+    paths:
+      - "packages/**"
+      - "infra/**"
+      - "script/**"
+      - "!**/*.md"
+      - "!**/*.txt"
+      - "!**/dist/**"
+      - "!**/node_modules/**"
+      - "!packages/docs/**"
+      - "!packages/*/src/generated/**"
+      - "!packages/*/src/generated-effect/**"
+      - "!**/__snapshots__/**"
+
+concurrency:
+  # Cancel the review for stale commits so we don't pay for outdated code.
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Public repo: fork PRs get no secrets, so skip them instead of failing red.
+    # Drafts are skipped until marked ready_for_review.
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      # `id-token: write` is only needed if you drop `github_token` below and
+      # switch to the Claude GitHub App (OIDC -> app token exchange).
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          # Endpoint and model are both secrets, deliberately with NO fallback:
+          # if either is unset the run fails loudly. A default would silently
+          # route requests to api.anthropic.com and leak the chosen model.
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          # Uncomment if the endpoint needs extra auth headers:
+          # ANTHROPIC_CUSTOM_HEADERS: ${{ secrets.ANTHROPIC_CUSTOM_HEADERS }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Skips the Claude GitHub App entirely; comments post as
+          # github-actions[bot]. Remove this line to use the App instead.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are reviewing a pull request on cz-cli, a ClickZetta
+            customization layer built on top of pristine upstream opencode.
+            Read these two files before reviewing anything:
+
+            - .github/claude-review-context.md — conventions, and the false
+              positives you must not report
+            - packages/cz-cli/UPSTREAM-PATCHES.md — the upstream patch ledger,
+              which defines the invariant governing section A below
+
+            This is a Bun + TypeScript monorepo. Read the full files around each
+            change and follow calls into other packages. A diff hunk alone is
+            not enough to judge correctness here.
+
+            ## A. Upstream invasiveness — highest priority
+
+            The invariant: packages/opencode, packages/tui, and packages/core
+            stay pristine. ClickZetta behavior belongs in packages/cz-cli/,
+            reaching upstream through hooks it already exposes — plugin APIs,
+            env flags, config injection.
+
+            If this PR edits a file under those three packages, check all three:
+
+            1. Could a hook have carried it instead? If a plugin API, env flag,
+               or config injection could express this change, name the hook. An
+               avoidable intrusive edit is itself the finding.
+            2. Is the edit wrapped in the scannable banner?
+                   //======================== cz-cli change ========================
+                   ... the edit, with rationale ...
+                   //====================== end cz-cli change ======================
+               An inline `cz_change:` comment does NOT satisfy this. Only the
+               wrapped banner is found by `rg -n "cz-cli change"`, which is
+               step 2 of the re-baseline procedure in the ledger.
+            3. Is there a matching new entry in the ledger's INTRUSIVE section,
+               carrying File, Marker, Upstream value, What/why, Why intrusive
+               (no hook), History, and Verify?
+
+            Rate a missing banner or missing ledger entry HIGH, not LOW. The
+            consequence is not stylistic: that grep is the only thing that finds
+            these patches at re-baseline time, so an unmarked or unrecorded edit
+            is silently overwritten when upstream is next bumped. This has
+            already happened here — the 1.4.7 to 1.17.11 re-baseline dropped
+            patches, and the /sql patch was invisible to the checklist because
+            it carried only `cz_change:` comments.
+
+            Do not flag `cz_change:` comments elsewhere. Inside packages/cz-cli
+            and in tests they are ordinary explanatory comments, and correct.
+
+            ## B. Is this the clean fix, or a hole drilled around the problem?
+
+            Report a finding when the change treats a symptom rather than its
+            cause:
+
+            - A special case added for one caller, input, or path while the
+              shared code stays wrong for every other caller
+            - A new flag, env var, or config key introduced to route around a bug
+            - A try/catch, fallback value, or default that hides the failure
+              instead of fixing it
+            - Logic copy-pasted into a second place instead of fixing the one
+              shared function
+            - Dead code, commented-out code, or leftover debug logging
+            - Unrelated drive-by edits mixed into the same PR
+
+            For each, say what the root cause appears to be and what the smaller
+            correct change would have been. If the change genuinely is the right
+            fix, say so — do not manufacture findings in this category.
+
+            ## C. Regression risk
+
+            Enumerate explicitly what already-working behavior this PR could
+            change. Look for:
+
+            - Changed defaults, or a CLI flag or subcommand renamed, removed, or
+              given new semantics
+            - Changed exported API surface, config keys, or on-disk paths
+            - Changed command output shape, which scripts may parse
+            - Tests deleted, skipped, or with assertions loosened
+            - Existing callers of a modified function that were not updated —
+              find them with Grep rather than assuming there are none
+
+            For each behavioral change, point to the test that covers the
+            touched path, or say plainly that none does. You cannot run tests,
+            so never claim anything passes.
+
+            When a behavior change looks plausible but may be unintentional, do
+            not assert it is a bug. Raise it as its own separate comment asking
+            the author to confirm the intent, so it is not buried in the summary.
+
+            ## D. General correctness
+
+            - null/undefined dereference, off-by-one, wrong await/Promise
+              handling, unhandled rejection, resource leaks
+            - Command injection in spawned processes; credentials or tokens
+              reaching logs or telemetry; missing auth on new endpoints
+            - Swallowed errors, missing retries on network calls, error messages
+              that hide the cause
+            - New dependency edges between packages that did not previously
+              import each other — surface as a question for the author, not as a
+              rule violation
+
+            Skip formatting, naming style, and import ordering.
+
+            ## Output
+
+            Rate every finding CRITICAL, HIGH, MEDIUM, or LOW and state your
+            confidence. Report everything you find, including low-confidence and
+            low-severity items — a human decides what matters, not you. Better to
+            surface a finding that gets dismissed than to silently drop a bug.
+
+            Anchor every finding to the code it is about. A finding about
+            specific lines goes in an inline comment on those exact lines,
+            quoting the relevant code and explaining that one issue. Do not
+            collect findings into a single message — one issue, one comment, at
+            the place in the code where it applies.
+
+            The summary comment carries only the overall verdict on A, B, and C:
+            for each, either a pointer to the inline findings or an explicit "no
+            issues found". Only post GitHub comments; do not return the review as
+            a chat message.
+
+            These are suggestions the author can accept or reject.
+
+          claude_args: |
+            --model ${{ secrets.CLAUDE_REVIEW_MODEL }}
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
