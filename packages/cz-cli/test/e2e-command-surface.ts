@@ -119,6 +119,7 @@ const noProfileCases = [
   // running after yargs validation, a missing required option surfaces a
   // USAGE_ERROR before NO_PROFILE — which is intended (see run-cli.ts).
   ["analytics-agent", "session", "create", "--domain-id", "1"],
+  ["analytics-agent", "session", "delete", "--session-id", "1"],
   ["analytics-agent", "session", "run", "--session-id", "1"],
   ["analytics-agent", "session", "result", "1"],
   ["analytics-agent", "session", "stop", "1", "1"],
