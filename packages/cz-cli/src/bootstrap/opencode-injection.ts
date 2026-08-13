@@ -1,8 +1,15 @@
-// Single entry point for every customization cz-cli injects into the pristine
-// upstream opencode runtime. cz-1.17.11 keeps packages/opencode zero-cz-change; all
-// behavior below is applied at runtime via environment variables (plus one global
-// Worker shim). Centralized here so the full injection surface is reviewable in one
-// place and easy to extend.
+// Single entry point for every customization cz-cli injects into the upstream
+// opencode runtime: environment variables (plus one global Worker shim), centralized
+// here so the full injection surface is reviewable in one place.
+//
+// This whole mechanism REQUIRES that upstream read env at access time, not at module
+// load — every write below happens from inside main(), long after opencode's module
+// graph is loaded. Upstream's `Flag` (packages/core/src/flag/flag.ts) had 26 of its 34
+// entries snapshotted at import instead, so OPENCODE_CONFIG / OPENCODE_CONFIG_CONTENT
+// were silently ignored in-process (the TUI escaped it only because its server runs in
+// a Worker with a fresh module registry). That is fixed at the root — flag.ts now reads
+// lazily throughout, see UPSTREAM-PATCHES.md INTRUSIVE #5 — and
+// test/flag-injection-visibility.test.ts fails loudly if a re-baseline drops it.
 //
 // ┌─ REGISTRY — everything we inject ───────────────────────────────────────────┐
 // │ ENV VAR / MECHANISM              WHAT                          WHEN           │

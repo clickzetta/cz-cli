@@ -54,12 +54,18 @@ describe("injectClickzettaAgentConfig", () => {
     expect(clickzettaPlugin).toMatch(/^file:\/\//)
   })
 
-  test("contributes ONLY npm for a provider llm.json already defines", () => {
-    // The env var is merged AFTER llm.json, so every field it carries overwrites the
-    // file. It is also a snapshot (copied by value into the TUI's server Worker), so
+  test("contributes ONLY npm and the normalized baseURL for a provider llm.json defines", () => {
+    // The env var is merged AFTER llm.json (deep-merged, so co-existing fields
+    // survive) and it is a SNAPSHOT copied by value into the TUI's server Worker, so
     // anything mutable placed here goes stale and then wins — which is how a rotated
-    // api_key stopped taking effect. npm is the one process-fixed fact that must be
-    // injected: llm.json stores a bare package name that is private and unpublished.
+    // api_key stopped taking effect. Only process-fixed facts belong here:
+    //   npm     — names an asset shipped beside the binary; llm.json holds a bare,
+    //             unpublished package name a compiled binary cannot resolve.
+    //   baseURL — nothing rewrites a live entry's base_url in-process, and opencode's
+    //             model discovery reads options.baseURL directly and appends
+    //             "/models". A bare host (what `ai-gateway --add-to-llm` writes) sent
+    //             raw would request `{host}/models` → 400 "Invalid API key", a path
+    //             bug reported as a credential one.
     writeLlmConfig({
       provider: {
         clickzetta: {
@@ -72,14 +78,17 @@ describe("injectClickzettaAgentConfig", () => {
     injectClickzettaAgentConfig()
 
     const injected = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as {
-      provider?: Record<string, Record<string, unknown>>
+      provider?: Record<string, Record<string, any>>
     }
     const stub = injected.provider?.clickzetta
-    expect(Object.keys(stub ?? {})).toEqual(["npm"])
+    expect(Object.keys(stub ?? {}).sort()).toEqual(["npm", "options"])
     expect(stub?.npm).toMatch(/^file:\/\//)
-    // baseURL normalization belongs to the provider itself
-    // (clickzetta-ai-gateway/src/index.ts), so re-deriving it here only produced a
-    // second, staler copy. The file keeps whatever the user wrote.
+    // A bare host is normalized to the canonical gateway base.
+    expect(stub?.options).toEqual({ baseURL: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1" })
+    // apiKey is NOT carried — it is mutable (rotation) and must come from the file,
+    // which the deep merge preserves alongside the injected baseURL.
+    expect(stub?.options.apiKey).toBeUndefined()
+    // The file itself is untouched; llm.json keeps whatever the user wrote.
     expect(JSON.parse(readFileSync(join(HOME, ".clickzetta", "llm.json"), "utf-8")).provider.clickzetta.options.baseURL).toBe(
       "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/",
     )
@@ -150,10 +159,11 @@ describe("injectClickzettaAgentConfig", () => {
     expect(injected.provider?.relay?.npm).toContain("clickzetta-ai-gateway")
   })
 
-  test("agent --timeout adds headerTimeout WITHOUT restating the file's apiKey/baseURL", () => {
-    // The timeout comes from argv, so it is process-fixed and belongs in the env.
-    // The credentials do not: carrying them alongside would reintroduce the frozen
-    // copy that overwrites a rotated key.
+  test("agent --timeout adds headerTimeout WITHOUT restating the file's apiKey", () => {
+    // The timeout comes from argv, so it is process-fixed and belongs in the env. The
+    // credential does not: carrying it alongside would reintroduce the frozen copy
+    // that overwrites a rotated key. baseURL rides along because opencode's model
+    // discovery reads it directly (see providerNpmStubs).
     writeLlmConfig({
       provider: {
         clickzetta: {
@@ -169,13 +179,18 @@ describe("injectClickzettaAgentConfig", () => {
       provider?: Record<string, { options?: Record<string, unknown> }>
     }
     const opts = injected.provider?.clickzetta?.options
-    expect(opts).toEqual({ headerTimeout: 150_000 })
+    expect(opts).toEqual({
+      baseURL: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1",
+      headerTimeout: 150_000,
+    })
+    expect(opts?.apiKey).toBeUndefined()
   })
 
   test("agent --timeout does NOT override a provider that pins timeout/headerTimeout IN llm.json", () => {
-    // The stub carries no `options`, so the "already pinned" check cannot read it off
-    // the env entry and has to consult the file (pinnedInFile). Without that, a user
-    // who set options.timeout in llm.json would silently get a headerTimeout too.
+    // The stub carries only npm + baseURL, so the "already pinned" check cannot read
+    // timeout off the env entry and has to consult the file (pinnedInFile). Without
+    // that, a user who set options.timeout in llm.json would silently get a
+    // headerTimeout too.
     writeLlmConfig({
       provider: {
         clickzetta: {
@@ -190,9 +205,11 @@ describe("injectClickzettaAgentConfig", () => {
     const injected = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as {
       provider?: Record<string, Record<string, unknown>>
     }
-    // Nothing injected at all: the file's 5_000 is left to win by being the only
+    // No headerTimeout injected: the file's 5_000 is left to win by being the only
     // value in play, rather than by being copied here.
-    expect(Object.keys(injected.provider?.clickzetta ?? {})).toEqual(["npm"])
+    expect(injected.provider?.clickzetta?.options).toEqual({
+      baseURL: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1",
+    })
     expect(JSON.parse(readFileSync(join(HOME, ".clickzetta", "llm.json"), "utf-8")).provider.clickzetta.options.headerTimeout).toBe(
       5_000,
     )
@@ -213,9 +230,11 @@ describe("injectClickzettaAgentConfig", () => {
     injectClickzettaAgentConfig(150_000)
 
     const injected = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as {
-      provider?: Record<string, Record<string, unknown>>
+      provider?: Record<string, Record<string, any>>
     }
-    expect(Object.keys(injected.provider?.clickzetta ?? {})).toEqual(["npm"])
+    expect(injected.provider?.clickzetta?.options).toEqual({
+      baseURL: "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/gateway/v1",
+    })
   })
 
   test("a provider from the user's OWN config keeps every field, since no file backs it", () => {

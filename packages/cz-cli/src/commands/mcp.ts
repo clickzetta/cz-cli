@@ -47,13 +47,11 @@ export function assertNoTurnError(data: unknown): void {
   if (!info || typeof info !== "object") return
   const error = (info as { error?: unknown }).error
   if (!error || typeof error !== "object") return
-  const name = String((error as { name?: unknown }).name ?? "AgentError")
-  const errData = (error as { data?: unknown }).data
-  const message =
-    errData && typeof errData === "object" && typeof (errData as { message?: unknown }).message === "string"
-      ? (errData as { message: string }).message
-      : name
-  throw new Error(`${name}: ${message}`)
+  // cz_change: render through the same formatter as thrown failures, so an error that
+  // arrives embedded in the turn keeps its ref and `detail` (real error + cause) rather
+  // than being flattened to "<name>: <message>". A session error whose only field is a
+  // name still reads as before.
+  throw new Error(formatToolError(error))
 }
 
 // A prompt response is `{ data: { parts: [...] } }`; the assistant's reply text
@@ -207,9 +205,52 @@ async function runAgentTurn(params: {
   return extractText(res.data.parts)
 }
 
+// cz_change: render the real failure, not "[object Object]".
+//
+// The SDK's `throwOnError` throws the PARSED RESPONSE BODY, not an Error (see
+// sdk/js/src/v2/gen/client/client.gen.ts: `throw finalError`), so the old
+// `err instanceof Error ? err.message : String(err)` stringified a 500 body to
+// "[object Object]" and a typed API failure lost its name and fields. Every shape the
+// two paths can produce is handled here:
+//   - an Error (assertNoTurnError, transport failures)
+//   - a NamedError body: { name, data: { message, ref, detail? } }
+//   - anything else (string, plain object)
+// `detail` is present when OPENCODE_ERROR_DETAIL is on — runMcpServe sets it, so a
+// swallowed defect arrives with its real error and cause instead of just a ref.
+export function formatToolError(err: unknown): string {
+  if (err instanceof Error) return err.stack && err.stack.includes(err.message) ? err.stack : `${err.name}: ${err.message}`
+  if (typeof err === "string") return err
+  if (!err || typeof err !== "object") return String(err)
+
+  const body = err as { name?: unknown; data?: unknown }
+  const data = (body.data ?? {}) as { message?: unknown; ref?: unknown; detail?: unknown }
+  const name = typeof body.name === "string" ? body.name : "Error"
+  const message = typeof data.message === "string" ? data.message : JSON.stringify(err)
+  const lines = [`${name}: ${message}`]
+  if (typeof data.ref === "string") lines.push(`ref: ${data.ref}`)
+
+  const detail = data.detail as { error?: unknown; cause?: unknown } | undefined
+  if (detail?.error !== undefined) {
+    const inner = detail.error as { name?: unknown; message?: unknown; data?: unknown }
+    if (inner && typeof inner === "object") {
+      const innerName = typeof inner.name === "string" ? inner.name : "cause"
+      const innerMessage =
+        typeof inner.message === "string"
+          ? inner.message
+          : inner.data !== undefined
+            ? JSON.stringify(inner.data)
+            : JSON.stringify(inner)
+      lines.push(`caused by ${innerName}: ${innerMessage}`)
+    } else {
+      lines.push(`caused by: ${String(detail.error)}`)
+    }
+  }
+  if (typeof detail?.cause === "string" && detail.cause.trim()) lines.push(detail.cause.trim())
+  return lines.join("\n")
+}
+
 function errorResult(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err)
-  return { isError: true, content: [{ type: "text" as const, text: msg }] }
+  return { isError: true, content: [{ type: "text" as const, text: formatToolError(err) }] }
 }
 
 // A structured, agent-actionable error for the calling client (Claude Code etc.)
@@ -220,6 +261,26 @@ function notConfiguredResult(reason: "no_profile" | "no_llm") {
     ? "cz-cli is not configured: no ClickZetta profile found. Ask the user to run `cz-cli auth login <name>` (browser OAuth) to create one, then retry."
     : "cz-cli has no usable LLM API configuration. Ask the user to register one with `cz-cli agent llm add <name> --provider <provider> --api-key <key>` (or `cz-cli auth login <name> --credential <base64>`), then retry."
   return { isError: true, content: [{ type: "text" as const, text: `NOT_CONFIGURED (${reason}): ${text}` }] }
+}
+
+// cz_change: same contract as notConfiguredResult, for a model that cannot resolve.
+// A separate code so the calling agent can tell "nothing is set up" from "what is set
+// up no longer works" — the remedies have nothing in common.
+export function notResolvableResult(reason: string) {
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text: `MODEL_NOT_RESOLVABLE: ${reason}` }],
+  }
+}
+
+/** llm.json's active model ref (`config.model`), the value opencode falls back to. */
+function configuredModelRef(): string | undefined {
+  try {
+    const { model } = readLlmEntries()
+    return typeof model === "string" ? model : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // Preflight both required pieces before creating a session: a ClickZetta profile
@@ -288,6 +349,16 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
   const { applyAgentRuntimeInjection } = await import("../bootstrap/opencode-injection.js")
   applyAgentRuntimeInjection()
 
+  // cz_change: ask the server's defect boundary to include the real error and cause in
+  // its 500 body (middleware/error.ts, gated by this flag). Safe here and nowhere else:
+  // this server is loopback-only, started by us, and its single client is the agent
+  // calling our MCP tools — the party that needs to know WHY. Without it every
+  // swallowed defect reaches the agent as "Unexpected server error" plus a ref into a
+  // batched log file, which is how a stale `config.model` looked like a crash.
+  // Deliberately NOT set in applyAgentRuntimeInjection: `cz-cli serve` binds a real
+  // port, and internals must not go out over it.
+  process.env.OPENCODE_ERROR_DETAIL = "1"
+
   // Start an in-process loopback opencode server (port 0 -> auto), exactly like
   // acp.ts does, but from a plain async handler (no Effect runtime): both
   // Server.listen and resolveNetworkOptionsNoConfig have non-Effect entry points.
@@ -344,6 +415,71 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
     return parseModelSelection(id, await getProviders())
   }
 
+  // cz_change: fail with a diagnosis instead of letting the server die on getModel.
+  //
+  // When no model is passed per-call and none is configured on the server, opencode
+  // resolves llm.json's `config.model`. If that ref no longer exists — a pinned id the
+  // gateway retired, or a gateway whose catalog came back empty so only the seeded
+  // fallback is present — `getModel` raises ProviderModelNotFoundError, which is a
+  // DEFECT: the defect boundary turns it into an opaque 500 and the agent learns
+  // nothing. The information needed to explain it is right here, so check first.
+  //
+  // Two distinct causes, deliberately worded differently, because the remedies differ:
+  //   - the entry serves only GATEWAY_FALLBACK_MODEL → the gateway's catalog request
+  //     failed (overdue tenant / blocked key). Discovery swallows that error by design
+  //     (an entry with zero models would be deleted outright), so this seeded id is the
+  //     only trace it leaves.
+  //   - the entry serves a real catalog that just does not include the pinned id → a
+  //     stale pin; list what it does serve.
+  //
+  // Never falls back to another provider: env-var-detected openai/anthropic sit in the
+  // same list, and silently routing a ClickZetta request there would bill and expose
+  // data on the wrong path. Hard failure is the correct outcome.
+  //
+  // The seeded ids come from opencode's own constant rather than a copy here — a
+  // hardcoded "deepseek/deepseek-v4-pro" would stop matching the day that list changes,
+  // and this heuristic would silently downgrade to the generic "stale pin" wording.
+  async function gatewayFallbackModels(): Promise<readonly string[]> {
+    try {
+      const { CLICKZETTA_FALLBACK_MODELS } = await import("opencode/provider/provider")
+      return CLICKZETTA_FALLBACK_MODELS
+    } catch {
+      return []
+    }
+  }
+
+  async function checkModelResolvable(model?: string) {
+    const id = model ?? defaults.model ?? configuredModelRef()
+    if (!id || !id.includes("/")) return undefined
+    const providers = await getProviders()
+    const [providerID, ...rest] = id.split("/")
+    const modelID = rest.join("/")
+    const provider = providers.find((item) => item.id === providerID)
+    if (!provider) {
+      const known = providers.map((item) => item.id).join(", ")
+      return notResolvableResult(
+        `the configured model is '${id}', but no provider '${providerID}' is registered. ` +
+          `Registered providers: ${known || "(none)"}. ` +
+          `Check \`cz-cli agent llm list\`, then pin a valid one with \`cz-cli agent llm use <entry>/<model>\`.`,
+      )
+    }
+    const available = Object.keys(provider.models ?? {})
+    if (available.includes(modelID)) return undefined
+    const seeded = await gatewayFallbackModels()
+    if (seeded.length > 0 && available.length === seeded.length && available.every((one) => seeded.includes(one))) {
+      return notResolvableResult(
+        `model discovery failed for '${providerID}': the gateway returned no catalog, so only the seeded ` +
+          `fallback '${available.join(", ")}' is available and the configured model '${id}' cannot be resolved. ` +
+          `This is usually an overdue tenant or a blocked key — run \`cz-cli agent llm test ${providerID}\` for the ` +
+          `gateway's own error.`,
+      )
+    }
+    return notResolvableResult(
+      `the configured model '${id}' is not served by '${providerID}'. Available: ${available.join(", ") || "(none)"}. ` +
+        `Pin one with \`cz-cli agent llm use ${providerID}/<MODEL_ID>\`.`,
+    )
+  }
+
   const mcp = new McpServer({ name: "cz-cli", version: VERSION })
 
   const czInputSchema = {
@@ -370,6 +506,10 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
           if (args.profile) applyClickZettaProfile(args.profile)
           const preflight = checkConfigured()
           if (preflight) return preflight
+          // cz_change: and that the model it would use actually resolves — see
+          // checkModelResolvable for why this cannot be left to the server.
+          const modelCheck = await checkModelResolvable(args.model)
+          if (modelCheck) return modelCheck
           const directory = args.cwd ?? defaults.cwd
           const agent = args.agent ?? defaults.agent
           const created = await client.session.create({ directory, agent, title: "mcp" }, { throwOnError: true })
@@ -415,6 +555,10 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
           if (args.profile) applyClickZettaProfile(args.profile)
           const preflight = checkConfigured()
           if (preflight) return preflight
+          // cz_change: and that the model it would use actually resolves — see
+          // checkModelResolvable for why this cannot be left to the server.
+          const modelCheck = await checkModelResolvable(args.model)
+          if (modelCheck) return modelCheck
           const directory = defaults.cwd
           const agent = defaults.agent
           const modelArg = await resolveModel(args.model)

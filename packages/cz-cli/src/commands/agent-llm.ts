@@ -9,7 +9,7 @@ import {
   writeLlmEntries,
   type LlmEntryView,
 } from "../llm/native-config.js"
-import { buildLlmProbeRequest, normalizeLlmBaseUrl } from "../llm/probe.js"
+import { buildLlmProbeRequest, firstClickzettaModel, normalizeLlmBaseUrl } from "../llm/probe.js"
 import { rewriteClickzettaGatewayError } from "../llm/gateway-error.js"
 import { describeSelectionSource, resolveDefaultModel } from "../llm/default-model.js"
 
@@ -605,7 +605,14 @@ const LlmTestCommand = cmd({
       )
     }
 
-    const buildProbe = (value: string) => buildLlmProbeRequest(target.provider!, target.baseUrl, value, target.model)
+    // cz_change: probe a model the gateway actually serves. ClickZetta entries never
+    // carry a pinned model (the catalog is discovered at runtime), so without this the
+    // probe used a hardcoded id and could fail on a tenant that does not serve it —
+    // while the TUI, which lists the real catalog, worked fine. See firstClickzettaModel.
+    const probeModel =
+      target.model ??
+      (target.provider === "clickzetta" ? await firstClickzettaModel(target.baseUrl, target.apiKey) : undefined)
+    const buildProbe = (value: string) => buildLlmProbeRequest(target.provider!, target.baseUrl, value, probeModel)
     const probe = buildProbe(target.apiKey)
     if (!probe) {
       const example = target.provider === "azure"

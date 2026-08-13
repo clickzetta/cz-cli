@@ -10,6 +10,41 @@ export function normalizeLlmBaseUrl(provider: string, url: string | undefined) {
   return baseURL
 }
 
+/**
+ * cz_change: the first model the gateway actually serves this key, for probing.
+ *
+ * `agent llm test` needs SOME model id to send a chat request. For ClickZetta entries
+ * llm.json never stores one (native-config.ts providerFromInput deliberately keeps no
+ * catalog — it is discovered at runtime), so the probe fell back to a hardcoded
+ * DEFAULT_PROBE_MODELS id. On a tenant that does not serve that id, `llm test`
+ * reported a 404 failure for an entry the TUI was using happily: two surfaces, two
+ * verdicts, from the same credential.
+ *
+ * Asking the catalog first makes the verdicts agree — the probe uses a model the
+ * gateway just said it has, which is exactly the set the TUI's picker is built from.
+ * Best-effort: any failure returns undefined and the caller keeps the old default, so
+ * the diagnostic never gets worse than before. The URL is built from the same
+ * normalizer every other reader uses; opencode's discovery loop carries its own copy
+ * of this concat (provider/provider.ts clickzettaModelsUrl) because it cannot import
+ * from this package.
+ */
+export async function firstClickzettaModel(baseUrl: string | undefined, apiKey: string): Promise<string | undefined> {
+  const base = normalizeLlmBaseUrl("clickzetta", baseUrl)
+  if (!base) return undefined
+  try {
+    const response = await fetch(`${base}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    if (!response.ok) return undefined
+    const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
+    for (const entry of body.data ?? []) if (typeof entry?.id === "string") return entry.id
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 export interface LlmProbe {
   url: string
   method: "POST"

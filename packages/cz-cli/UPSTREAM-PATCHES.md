@@ -137,6 +137,75 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   the re-baseline checklist. Banners added; no behavior change.
 - **Verify:** `/sql show schemas` renders results as a tool part, with no LLM turn.
 
+### 5. Lazy flag reads — the precondition for ALL env-based injection
+
+- **File:** `packages/core/src/flag/flag.ts`
+- **Marker:** one `//===== cz-cli change =====` banner around the converted block.
+- **Upstream value:** 26 of 34 entries were plain properties (`OPENCODE_CONFIG:
+  process.env["OPENCODE_CONFIG"]`), i.e. a snapshot taken when the module is first
+  imported; the other 8 were already getters.
+- **What/why:** every cz customization reaches opencode by writing `process.env` from
+  `bootstrap/opencode-injection.ts`, which runs inside `main()` — always AFTER
+  opencode's module graph is loaded (`bootstrap/runtime.ts` statically imports an
+  opencode module, and merely importing `run-cli.ts` pulls in the flag module). With an
+  import-time snapshot, `Flag.OPENCODE_CONFIG` stayed `undefined` forever while
+  `process.env.OPENCODE_CONFIG` held the real path, so opencode's config loader never
+  read llm.json. Converting the env-backed entries to getters makes the reads lazy, so
+  no caller needs to control import order.
+- **Symptoms it fixed** (all one cause, all verified before/after on a built binary):
+  `cz-cli agent llm models <entry>` → `MODEL_DISCOVERY_FAILED` for a healthy gateway
+  entry; `agent llm models` listed zero llm.json providers; `agent run --model
+  <entry>/<id>` → `Model not found`; `agent llm show` resolved its default model from a
+  provider set with no llm.json entries. **The TUI was unaffected**, which is why this
+  survived so long: its server runs in a Bun Worker whose fresh module registry
+  re-evaluates flag.ts after the env is already set.
+- **Why intrusive (no hook):** the value is captured inside upstream's own module
+  initializer. No env var, flag, or plugin hook can influence it. The cz-side
+  alternative — moving all injection into a module imported before anything else in
+  every entry point — was rejected: it imposes permanent import-order discipline on two
+  entry files to work around a defect one level down, and it only protects the vars cz
+  happens to know about.
+- **Not cz-specific:** opencode assigns `process.env.AWS_BEARER_TOKEN_BEDROCK` at
+  runtime in `provider/provider.ts`, and upstream's own getter block carries the comment
+  "Evaluated at access time (not module load) because tests, the CLI, and external
+  tooling set these env vars at runtime". This patch finishes what that comment started,
+  using upstream's existing pattern — so it is a good upstream PR candidate, after which
+  this entry can be deleted.
+- **Setters:** `OPENCODE_DB`, `OPENCODE_MODELS_PATH` and `OPENCODE_DISABLE_MODELS_FETCH`
+  keep write access (writing through to `process.env`) because upstream tests assign to
+  them as mutable slots (`core/test/plugin/models-dev.test.ts`,
+  `sdk-next/test/embedded.test.ts`). Getter-only would have broken those tests.
+- **Verify:** `packages/cz-cli/test/flag-injection-visibility.test.ts` imports the flag
+  module first, then writes env, and asserts every injected var is observed — it goes
+  RED if this patch is dropped. That test is the enforcement; this entry is only the
+  explanation.
+
+### 6. Opt-in error detail at the defect boundary
+
+- **File:** `packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts`
+- **Marker:** one `//===== cz-cli change =====` banner around the `detail` block.
+- **Upstream value:** the 500 body carries only
+  `{ message: "Unexpected server error. Check server logs for details.", ref }`.
+- **What/why:** that boundary swallows every defect. Correct for a server answering
+  network clients, a dead end for `cz-cli mcp serve`, which starts a LOOPBACK opencode
+  server in-process and relays its answers to the calling agent — so the agent got an
+  opaque 500 for everything. A `ProviderModelNotFoundError` from a stale `config.model`
+  was indistinguishable from a crash, and the only way to see the cause was correlating
+  `ref` against the log file, which `Logger.toFile` writes on a batch window (the line
+  is not on disk yet when the response goes out). With `OPENCODE_ERROR_DETAIL` set, the
+  body also carries `data.detail = { error, cause }`.
+- **Why intrusive (no hook):** the real error exists only inside this handler's
+  `Cause`. There is no logger, layer or plugin seam cz can reach —
+  `Server.listen()` is a non-Effect entry point that builds its own runtime, so cz
+  cannot provide a Logger layer to it.
+- **Blast radius:** nothing changes unless the flag is set. cz sets it in
+  `runMcpServe` ONLY — deliberately not in `applyAgentRuntimeInjection`, because
+  `cz-cli serve` binds a real port and internals must not leave the machine.
+- **Verify:** `packages/cz-cli/test/mcp-error-format.test.ts` pins the rendering of both
+  shapes (with and without `detail`). End to end:
+  `CZ_MCP_ARGS='{"prompt":"hi"}' bun test/mcp-call-repro.ts` must name the real cause,
+  not a bare ref.
+
 ---
 
 ## HOOK-based customizations (safe — live entirely in the cz layer)

@@ -95,22 +95,45 @@ function rewriteProviders(value: unknown, providerSpecifier: string) {
  * while the process lives — and it must be injected, because llm.json stores the bare
  * package name, which a compiled binary cannot resolve.
  *
+ * `options.baseURL` qualifies too, for a different reason: it is process-fixed in
+ * practice. Nothing rewrites a live entry's base_url — the quota/rotation path
+ * touches api_key only and says so (llm/key-provision.ts leaves base_url and the
+ * rest of the entry alone), and every writer that does set it (`ai-gateway
+ * --add-to-llm`, `auth login`) runs in a separate CLI process. The one stale window
+ * left is a `cz-cli auth login` that repoints the gateway host while a TUI is open;
+ * that session keeps the old host until restart. Accepted deliberately, because the
+ * alternative is worse:
+ *
+ * llm.json legitimately holds THREE base_url shapes — a bare host (what
+ * `ai-gateway --add-to-llm` writes), `.../v1`, and `.../gateway/v1` — and
+ * rewriteProviders above already normalizes all three. Dropping the result here sent
+ * opencode the raw value, and while the provider package normalizes its own
+ * options.baseURL before talking to the gateway (so inference worked), opencode's
+ * model discovery reads options.baseURL directly and appends `/models`. A bare host
+ * therefore requested `{host}/models`, which the gateway answers with 400 `40101
+ * Invalid API key` — blaming the credential for a path bug — leaving the entry with
+ * zero discovered models and a single phantom fallback. Carrying the normalized value
+ * is what makes every reader on the opencode side agree on the base. Verified end to
+ * end: bare host, `/v1` and `/gateway/v1` entries now all request
+ * `{host}/gateway/v1/models` and resolve the gateway's full catalog.
+ *
  * Everything else is dropped on purpose, verified against the real loader
  * (`opencode debug config` with these env vars resolves all three of the author's
  * providers, npm rewritten, apiKey supplied by the file):
  *   - `options.apiKey` is mutable (key rotation) and must come from the file.
- *   - `options.baseURL` is derived from the file, and the provider normalizes it
- *     itself (clickzetta-ai-gateway/src/index.ts applies
- *     normalizeClickzettaGatewayUrl to its own options.baseURL), so re-deriving here
- *     only created a second, staler copy.
  *   - `name` / `api` / `env` / `models` are read straight from the file by opencode.
  */
 function providerNpmStubs(value: unknown, providerSpecifier: string) {
   const rewritten = rewriteProviders(value, providerSpecifier)
   if (!rewritten) return undefined
-  const stubs = Object.entries(rewritten).flatMap(([name, provider]) =>
-    isRecord(provider) && provider.npm === providerSpecifier ? [[name, { npm: providerSpecifier }] as const] : [],
-  )
+  const stubs = Object.entries(rewritten).flatMap(([name, provider]) => {
+    if (!isRecord(provider) || provider.npm !== providerSpecifier) return []
+    // The normalized base rewriteProviders just computed — see the doc above for why
+    // this one derived field is carried while apiKey is not.
+    const options = isRecord(provider.options) ? provider.options : undefined
+    const baseURL = typeof options?.baseURL === "string" ? options.baseURL : undefined
+    return [[name, { npm: providerSpecifier, ...(baseURL ? { options: { baseURL } } : {}) }] as const]
+  })
   return stubs.length > 0 ? Object.fromEntries(stubs) : undefined
 }
 

@@ -13,6 +13,21 @@ describe("clickzettaModelsUrl", () => {
   test("tolerates a trailing slash", () => {
     expect(clickzettaModelsUrl("https://gw.example.com/gateway/v1/")).toBe("https://gw.example.com/gateway/v1/models")
   })
+
+  // This helper does NOT normalize — it only trims and appends. It relies on the cz
+  // layer sending a base that already carries /gateway/vN (bootstrap/runtime-config.ts
+  // providerNpmStubs). That contract was broken once: the stub carried only `npm`, so
+  // opencode read llm.json's raw base_url, and a bare host — the shape
+  // `ai-gateway --add-to-llm` writes — produced `{host}/models`. The gateway answers
+  // that with 400 `40101 Invalid API key`, blaming the credential for a path bug, and
+  // the entry ended up with a single phantom fallback model instead of the catalog.
+  // Pinning the un-normalized inputs here so a regression on either side is visible:
+  // if these ever start returning /gateway/v1 URLs, normalization moved into this
+  // function and the cz-side injection can be reconsidered.
+  test("does NOT normalize — a base without /gateway is passed through as-is", () => {
+    expect(clickzettaModelsUrl("https://gw.example.com")).toBe("https://gw.example.com/models")
+    expect(clickzettaModelsUrl("https://gw.example.com/v1")).toBe("https://gw.example.com/v1/models")
+  })
 })
 
 describe("buildClickzettaModel", () => {
