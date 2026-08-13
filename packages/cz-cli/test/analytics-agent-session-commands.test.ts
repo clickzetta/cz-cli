@@ -116,6 +116,32 @@ describe("analytics-agent session parameter simplification", () => {
     })
   })
 
+  test("session delete maps session id into request body", async () => {
+    let requestBody: unknown
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) : null
+      return jsonResponse({ success: true, data: null })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "delete",
+      "--session-id",
+      "88",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({
+      sessionId: 88,
+      tenantId: 55,
+      userId: 44,
+      loginToken: "studio-token",
+    })
+    expect(result.output).toContain("Session deleted (id=88).")
+  })
+
   test("session create maps flat fields into request body", async () => {
     let requestBody: unknown
 
@@ -210,6 +236,23 @@ describe("analytics-agent session parameter simplification", () => {
     expect(parsed.error.message).toBe("--domain-id must be a positive integer")
   })
 
+  test("session delete rejects missing session-id before sending request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "delete",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, any>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("Missing required argument: session-id")
+  })
+
   test("session result maps question id into request body", async () => {
     let requestBody: unknown
 
@@ -270,5 +313,22 @@ describe("analytics-agent session parameter simplification", () => {
     expect(result.stdout).toContain("--msg")
     expect(result.stdout).toContain("--domain-id")
     expect(result.stdout).not.toContain("--body")
+  })
+
+  test("session delete help is discoverable", () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts",
+      "analytics-agent",
+      "session",
+      "delete",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("analytics-agent session delete")
+    expect(result.stdout).toContain("--session-id")
   })
 })
