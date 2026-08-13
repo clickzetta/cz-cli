@@ -273,6 +273,32 @@ export function notResolvableResult(reason: string) {
   }
 }
 
+/**
+ * cz_change: treat an empty (or whitespace-only) string argument as "not provided".
+ *
+ * Our tool schema declares these as `z.string().optional()`, and `optional` only means
+ * the KEY may be absent — `""` is a perfectly valid `z.string()`, so a client sending
+ * `{"agent":"","model":"","profile":""}` passes validation. That is not a broken
+ * client: LLM-driven callers routinely fill every declared field and use "" to mean
+ * "none". Observed in the wild from Claude Code.
+ *
+ * The bug was ours, and it was an inconsistency: `profile` happened to be read with a
+ * truthiness check (so "" was correctly ignored) while `model` / `agent` / `cwd` used
+ * `??`, which only falls back on null/undefined. So `model: ""` slipped past
+ * checkModelResolvable's `if (!id) return undefined` guard — skipping the very preflight
+ * that exists to explain an unresolvable model — and `agent: ""` / `cwd: ""` were passed
+ * down as if they were real values.
+ *
+ * Normalizing here rather than tightening the schema to `min(1)`: a hard validation
+ * error would be worse for the caller than honouring the obvious intent, which is "use
+ * the server default".
+ */
+export function optionalArg(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
 /** llm.json's active model ref (`config.model`), the value opencode falls back to. */
 function configuredModelRef(): string | undefined {
   try {
@@ -503,18 +529,21 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
     ) => {
       return serialize(async () => {
         try {
-          if (args.profile) applyClickZettaProfile(args.profile)
+          // cz_change: "" means "not provided" — see optionalArg.
+          const profileArg = optionalArg(args.profile)
+          const modelName = optionalArg(args.model)
+          if (profileArg) applyClickZettaProfile(profileArg)
           const preflight = checkConfigured()
           if (preflight) return preflight
           // cz_change: and that the model it would use actually resolves — see
           // checkModelResolvable for why this cannot be left to the server.
-          const modelCheck = await checkModelResolvable(args.model)
+          const modelCheck = await checkModelResolvable(modelName)
           if (modelCheck) return modelCheck
-          const directory = args.cwd ?? defaults.cwd
-          const agent = args.agent ?? defaults.agent
+          const directory = optionalArg(args.cwd) ?? defaults.cwd
+          const agent = optionalArg(args.agent) ?? defaults.agent
           const created = await client.session.create({ directory, agent, title: "mcp" }, { throwOnError: true })
           const sessionID = created.data.id
-          const modelArg = await resolveModel(args.model)
+          const modelArg = await resolveModel(modelName)
           const text = await runAgentTurn({
             client,
             sessionID,
@@ -552,16 +581,19 @@ async function runMcpServe(argv: McpServeArgs): Promise<void> {
     ) => {
       return serialize(async () => {
         try {
-          if (args.profile) applyClickZettaProfile(args.profile)
+          // cz_change: "" means "not provided" — see optionalArg.
+          const profileArg = optionalArg(args.profile)
+          const modelName = optionalArg(args.model)
+          if (profileArg) applyClickZettaProfile(profileArg)
           const preflight = checkConfigured()
           if (preflight) return preflight
           // cz_change: and that the model it would use actually resolves — see
           // checkModelResolvable for why this cannot be left to the server.
-          const modelCheck = await checkModelResolvable(args.model)
+          const modelCheck = await checkModelResolvable(modelName)
           if (modelCheck) return modelCheck
           const directory = defaults.cwd
           const agent = defaults.agent
-          const modelArg = await resolveModel(args.model)
+          const modelArg = await resolveModel(modelName)
           const text = await runAgentTurn({
             client,
             sessionID: args.sessionID,
