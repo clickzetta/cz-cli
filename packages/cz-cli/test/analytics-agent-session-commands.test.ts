@@ -127,6 +127,42 @@ describe("analytics-agent session delete command", () => {
     expect(parsed.error.message).toBe("Missing required argument: session-id")
   })
 
+  test("session create output warns that follow-up questions must be serial", async () => {
+    globalThis.fetch = mock(async () => jsonResponse({ success: true, data: "123" })) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+      "--title",
+      "销售诊断",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.output).toContain("Session created (id=123)")
+    expect(result.output).toContain("同一个 session 内的问答必须串行")
+    expect(result.output).toContain("Another question is currently being processed")
+  })
+
+  test("session run help warns that questions in the same session must be serial", () => {
+    const result = spawnSync(process.execPath, [
+      "./src/main.ts",
+      "analytics-agent",
+      "session",
+      "run",
+      "--help",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("同一个 session 内的问答必须串行")
+    expect(result.stdout).toContain("Another question is currently being processed")
+  })
+
   test("help is discoverable", () => {
     const result = spawnSync(process.execPath, [
       "./src/main.ts",
