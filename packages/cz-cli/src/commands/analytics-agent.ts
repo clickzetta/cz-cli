@@ -86,6 +86,7 @@ const ROUTES = {
   knowledgeUploadComplete: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/upload-complete` },
   sessionList: { method: "POST", path: "/open/session/list" },
   sessionCreate: { method: "POST", path: "/open/session/safe_new", openSessionAuth: true },
+  sessionDelete: { method: "POST", path: "/open/datagpt/deleteSession", openSessionAuth: true },
   sessionRun: { method: "POST", path: "/open/text2insight/query", openSessionAuth: true },
   sessionResult: { method: "POST", path: "/open/safe_question_poll", openSessionAuth: true },
   sessionStop: { method: "POST", path: "/open/text2insight/stop", openSessionAuth: true },
@@ -3473,6 +3474,26 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   ? `Session created (id=${id}). Ask a question with: cz-cli analytics-agent session run --domain-id ${argv["domain-id"]} --session-id ${id} --msg "<your question>"`
                   : undefined
               })
+            },
+          )
+          .command(
+            "delete",
+            "Delete a text2insight session by session ID",
+            (y) =>
+              y
+                .option("session-id", { type: "number", demandOption: true, describe: "Session ID" }),
+            async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const sessionId = requiredPositiveIntegerValue(argv["session-id"], "--session-id", format)
+              const body = mergeBody({}, { sessionId })
+              await executeAnalyticsCommand(
+                "analytics-agent session delete",
+                argv as Record<string, unknown>,
+                ROUTES.sessionDelete,
+                body,
+                {},
+                () => `Session deleted (id=${sessionId}).`,
+              )
             },
           )
           .command(

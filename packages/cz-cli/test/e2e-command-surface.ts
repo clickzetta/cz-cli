@@ -138,6 +138,7 @@ const noProfileCases = [
   ["analytics-agent", "column", "virtual", "set", "1", "--name", "v1", "--type", "string", "--expression", "col_a"],
   ["analytics-agent", "column", "virtual", "delete", "1", "1"],
   ["analytics-agent", "session", "create", "--domain-id", "1"],
+  ["analytics-agent", "session", "delete", "--session-id", "1"],
   ["analytics-agent", "session", "run", "--domain-id", "1", "--session-id", "1"],
   ["analytics-agent", "session", "result", "1"],
   ["analytics-agent", "session", "stop", "1", "1"],

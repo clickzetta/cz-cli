@@ -28,6 +28,17 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectOptions: ["sessionID"],
   },
   {
+    args: ["analytics-agent", "session", "--help"],
+    expectHeader: "cz-cli analytics-agent session",
+    expectCommands: ["list", "create", "delete", "run", "result", "stop"],
+  },
+  {
+    args: ["analytics-agent", "session", "delete", "--help"],
+    expectHeader: "cz-cli analytics-agent session delete",
+    expectOptions: ["--session-id"],
+    expectCommands: ["Delete a text2insight session by session ID"],
+  },
+  {
     args: ["agent", "session", "status", "--help"],
     expectHeader: "cz-cli agent session status",
     expectOptions: ["sessionID", "--wait", "timeout"],

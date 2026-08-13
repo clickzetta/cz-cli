@@ -5,9 +5,9 @@
 
 ## Requirements
 
-### Requirement: session list/create/result/stop 使用扁平参数
+### Requirement: session list/create/delete/result/stop 使用扁平参数
 
-`cz-cli analytics-agent session list`、`create`、`result`、`stop` MUST 使用显式参数构造请求体，不把 `--body` 暴露为普通用户主路径。`session create` 的 `--title` MUST 提供且非空。
+`cz-cli analytics-agent session list`、`create`、`delete`、`result`、`stop` MUST 使用显式参数构造请求体，不把 `--body` 暴露为普通用户主路径。`session create` 的 `--title` MUST 提供且非空。`session delete` MUST 通过显式 `--session-id` 传入要删除的会话。
 
 #### Scenario: session list 用扁平字段构造请求体
 
@@ -21,11 +21,24 @@
 - **THEN** CLI 调用 session create open API
 - **且** 请求体包含 `domainId`、`title`、`sourceType`、`sourceId`
 
+#### Scenario: session delete 用扁平字段构造请求体
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session delete --session-id 88`
+- **THEN** CLI 调用 session delete open API
+- **且** 请求体包含 `sessionId=88`
+- **且** 请求体不需要手写 `--body`
+
 #### Scenario: session create 传入非法 domain-id 时本地拒绝
 
 - **WHEN** 用户执行 `cz-cli analytics-agent session create --domain-id abc --title 销售诊断`
 - **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
 - **且** 错误信息 MUST 明确说明 `--domain-id` 必须是正整数
+
+#### Scenario: session delete 缺少 session-id 时本地拒绝
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session delete`
+- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
+- **且** 错误信息 MUST 明确说明 `--session-id` 必填
 
 #### Scenario: session create 缺少 title 时本地拒绝
 
