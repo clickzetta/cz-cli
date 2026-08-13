@@ -217,6 +217,11 @@ const ANSWER_BUILDER_DSL_HELP = [
   "  - Always run `answer-builder validate` (dry-run) before create.",
 ].join("\n")
 
+const SESSION_SERIAL_CONCURRENCY_WARNING = [
+  "同一个 session 内的问答必须串行：前一个问题完成后才能开始下一个。",
+  "并行发问会报错：Analysis failed: Another question is currently being processed, please try again later。",
+].join(" ")
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return value === undefined ? undefined : [String(value)]
   return value.map((item) => String(item))
@@ -480,13 +485,14 @@ async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<R
   if (!endpoint) {
     handledError(
       "NO_ANALYSIS_AGENT_ENDPOINT",
-      "No analysis agent endpoint configured for the active profile. Set profiles.<name>.analysis_agent_endpoint first.",
+      "No analysis agent endpoint can be resolved for the active profile. Configure profiles.<name>.service or set profiles.<name>.analysis_agent_endpoint explicitly.",
       {
         format,
         extra: {
           next_steps: [
+            "cz-cli profile update <profile> service <service-host>",
             "cz-cli profile update <profile> analysis_agent_endpoint <URL>",
-            "cz-cli profile create <name> ... --analysis-agent-endpoint <URL>",
+            "cz-cli profile create <name> ... --service <service-host>",
           ],
         },
       },
@@ -792,19 +798,23 @@ async function executeSessionRunCommand(
       return
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    const guidancePayload = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...(payload as Record<string, unknown>), ai_message: SESSION_SERIAL_CONCURRENCY_WARNING }
+      : payload
     if (!summaryOnly) {
-      writeRenderedPayload(payload, format, field)
+      writeRenderedPayload(guidancePayload, format, field)
       return
     }
     const summary = extractSummaryString(payload) ?? extractFinalSummary(payload)
     if (summary) {
       if (format === "json") {
-        process.stdout.write(summary + "\n")
+        success(summary, { format, timeMs: Date.now() - t0, aiMessage: SESSION_SERIAL_CONCURRENCY_WARNING })
       } else {
         process.stdout.write(renderSummary(summary) + "\n")
+        process.stderr.write(SESSION_SERIAL_CONCURRENCY_WARNING + "\n")
       }
     } else {
-      success(null, { format, timeMs: Date.now() - t0 })
+      success(null, { format, timeMs: Date.now() - t0, aiMessage: SESSION_SERIAL_CONCURRENCY_WARNING })
     }
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
@@ -3256,7 +3266,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   ? data
                   : (data as Record<string, unknown>)?.sessionId ?? (data as Record<string, unknown>)?.id
                 return id
-                  ? `Session created (id=${id}). Ask a question with: cz-cli analytics-agent session run --session-id ${id} --msg "<your question>"`
+                  ? `Session created (id=${id}). Ask a question with: cz-cli analytics-agent session run --session-id ${id} --msg "<your question>". ${SESSION_SERIAL_CONCURRENCY_WARNING}`
                   : undefined
               })
             },
@@ -3294,6 +3304,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
                 .option("summary", { type: "boolean", default: false, describe: "Show the final answer instead of the full poll payload" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .epilogue(SESSION_SERIAL_CONCURRENCY_WARNING)
                 .check((argv) => {
                   if (!argv["session-id"] && !argv["domain-id"]) {
                     throw new Error("--domain-id is required when --session-id is not provided")

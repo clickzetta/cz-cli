@@ -43,6 +43,7 @@ describe("readAgentEndpoint", () => {
       'default_profile = "default"',
       "",
       "[profiles.default]",
+      'service = "uat-api.clickzetta.com"',
       "[profiles.default.agent]",
       'endpoint = "https://legacy-agent.clickzetta.com"',
       "",
@@ -50,5 +51,33 @@ describe("readAgentEndpoint", () => {
 
     const { readAgentEndpoint } = await import(`../src/connection/profile-store.ts?${Date.now()}`)
     expect(readAgentEndpoint()).toBe("https://legacy-agent.clickzetta.com")
+  })
+
+  test("infers endpoint from profile service when explicit endpoint is missing", async () => {
+    writeProfilesToml([
+      'default_profile = "default"',
+      "",
+      "[profiles.default]",
+      'service = "uat-api.clickzetta.com"',
+      'protocol = "https"',
+      "",
+    ].join("\n"))
+
+    const { readAgentEndpoint } = await import(`../src/connection/profile-store.ts?${Date.now()}`)
+    expect(readAgentEndpoint()).toBe("https://uat-api.clickzetta.com/clickzetta-campaign-data")
+  })
+
+  test("infers endpoint from full service URL without duplicating protocol", async () => {
+    writeProfilesToml([
+      'default_profile = "default"',
+      "",
+      "[profiles.default]",
+      'service = "http://127.0.0.1:3000/api/"',
+      'protocol = "https"',
+      "",
+    ].join("\n"))
+
+    const { readAgentEndpoint } = await import(`../src/connection/profile-store.ts?${Date.now()}`)
+    expect(readAgentEndpoint()).toBe("http://127.0.0.1:3000/api/clickzetta-campaign-data")
   })
 })
