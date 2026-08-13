@@ -171,6 +171,7 @@ describe("analytics-agent session parameter simplification", () => {
       sourceType: "dashboard",
       sourceId: 7,
     })
+    expect(result.output).toContain("同一个 session 内的问答必须串行")
   })
 
   test("session create rejects a missing title before sending request", async () => {
@@ -313,6 +314,8 @@ describe("analytics-agent session parameter simplification", () => {
     expect(result.stdout).toContain("--msg")
     expect(result.stdout).toContain("--domain-id")
     expect(result.stdout).not.toContain("--body")
+    expect(result.stdout).toContain("同一个 session 内的问答必须串行")
+    expect(result.stdout).toContain("Another question is currently being processed")
   })
 
   test("session delete help is discoverable", () => {
