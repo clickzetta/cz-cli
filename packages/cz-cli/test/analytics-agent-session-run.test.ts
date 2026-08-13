@@ -136,7 +136,10 @@ describe("analytics-agent session run", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    expect(JSON.parse(result.output.trim())).toEqual(pollPayload)
+    expect(JSON.parse(result.output.trim())).toMatchObject({
+      ...pollPayload,
+      ai_message: expect.stringContaining("同一个 session 内的问答必须串行"),
+    })
   })
 
   test("shows plain-text final summary when --summary and --format text are set", async () => {
@@ -184,7 +187,9 @@ describe("analytics-agent session run", () => {
     ])
 
     expect(result.exitCode).toBe(0)
-    expect(result.output.trim()).toBe("final answer")
+    expect(result.output).toContain("final answer")
+    expect(result.output).toContain("同一个 session 内的问答必须串行")
+    expect(result.output).toContain("Another question is currently being processed")
   })
 
   test("shows structured json when --summary and --format json are both set", async () => {

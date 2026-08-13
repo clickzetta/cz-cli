@@ -121,3 +121,16 @@
 
 - **WHEN** 用户执行 `cz-cli analytics-agent session run --help`
 - **THEN** help 中不包含 `--body`
+
+#### Scenario: session run help 提示同一 session 必须串行
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session run --help`
+- **THEN** help 中 MUST 提示同一个 session 内的问答必须串行
+- **且** 提示 MUST 明确说明前一个问题完成后才能开始下一个
+- **且** 提示 MUST 提醒并行时会收到 `Analysis failed: Another question is currently being processed, please try again later`
+
+#### Scenario: session create 输出下一步时提示串行约束
+
+- **WHEN** 用户执行 `cz-cli analytics-agent session create --domain-id 195 --title 销售诊断`
+- **THEN** 输出的下一步提示 MUST 提示同一个 session 内的后续问答必须串行
+- **且** 提示 MUST 明确说明前一个问题完成后再发下一个
