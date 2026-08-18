@@ -1,5 +1,7 @@
 import { DEFAULT_CONNECTION, InterfaceError, type ConnectionConfig } from "@clickzetta/sdk"
 import { explicitAuthType, getProfileConfig, invalidAuthType, invalidAuthTypeMessage, makeProfileTokenStore, readProfileEntry, type AuthType } from "./profile-store.js"
+import { ConnectionEnv } from "./env.js"
+import * as Profile from "./profile-context.js"
 import { parseJdbcUrl } from "./jdbc.js"
 
 export interface CliArgs {
@@ -17,15 +19,28 @@ export interface CliArgs {
 }
 
 export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): ConnectionConfig {
-  const profileName = cliArgs.profile ?? process.env.CZ_PROFILE
+  // Profile.current() is the single semantic source for "which profile is
+  // active" (CZ_PROFILE, falling back to profiles.toml's default_profile) — see
+  // its own docstring in profile-context.ts. This used to re-derive the CZ_PROFILE
+  // half here directly and let the `default_profile` half happen only as a side
+  // effect of getProfileConfig/readProfileEntry being called with `undefined`,
+  // which is a second, easy-to-miss place that formula could drift from
+  // Profile.current()'s (see commands/workspace.ts's history for exactly that).
+  const profileName = cliArgs.profile ?? Profile.current()
   const profileCfg = getProfileConfig(profileName) ?? (profileName ? undefined : getProfileConfig())
-  const envCfg = getEnvConfig()
+  const ambient = ConnectionEnv.read()
   const jdbcCfg = cliArgs.jdbcUrl ? parseJdbcUrl(cliArgs.jdbcUrl) : undefined
 
   const cfg: ConnectionConfig = { ...DEFAULT_CONNECTION }
 
+  // Lowest precedence first. The INHERITED layer sits below the profile on
+  // purpose: those variables are this process's own expansion of a possibly
+  // different profile, so a profile that omits `schema` must land on its default
+  // rather than adopt what we injected for the previous one. The user's own
+  // variables stay above the profile, which is the override layer they document.
+  applyNonAuth(cfg, ambient.inherited)
   applyNonAuth(cfg, profileCfg)
-  applyNonAuth(cfg, envCfg)
+  applyNonAuth(cfg, ambient.user)
   applyNonAuth(cfg, jdbcCfg)
 
   const nonAuthKeys = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
@@ -67,46 +82,11 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // before this field existed. Old profiles are untouched.
   const pinAllows = (type: AuthType) => pinnedAuth === undefined || pinnedAuth === type
 
-  const cliPat = cliArgs.pat || ""
-  const envPat = process.env.CZ_PAT || ""
-  const profilePat = pinAllows("pat") ? profileCfg?.pat || "" : ""
-
-  const cliUsername = cliArgs.username
-  const cliPassword = cliArgs.password
-  const jdbcUsername = jdbcCfg?.username || ""
-  const jdbcPassword = jdbcCfg?.password || ""
-  const envUsername = envCfg?.username || ""
-  const envPassword = envCfg?.password || ""
-  const profileUsername = pinAllows("password") ? profileCfg?.username || "" : ""
-  const profilePassword = pinAllows("password") ? profileCfg?.password || "" : ""
-
-  if (cliPat) {
-    cfg.pat = cliPat
-  } else if (envPat) {
-    cfg.pat = envPat
-  } else if (profilePat) {
-    cfg.pat = profilePat
-  } else if (cliUsername !== undefined || cliPassword !== undefined) {
-    const mergedUsername = cliUsername || jdbcUsername || envUsername || profileUsername
-    const mergedPassword = cliPassword || jdbcPassword || envPassword || profilePassword
-    if (mergedUsername && mergedPassword) {
-      cfg.username = mergedUsername
-      cfg.password = mergedPassword
-    }
-  } else if (jdbcUsername && jdbcPassword) {
-    cfg.username = jdbcUsername
-    cfg.password = jdbcPassword
-  } else if (envUsername && envPassword) {
-    cfg.username = envUsername
-    cfg.password = envPassword
-  } else if (profileUsername && profilePassword) {
-    cfg.username = profileUsername
-    cfg.password = profilePassword
-  }
-
-  if (cfg.pat) {
-    cfg.username = ""
-    cfg.password = ""
+  const credential = pickCredential({ cliArgs, ambient, jdbc: jdbcCfg, profile: profileCfg, pinAllows })
+  if (credential.kind === "pat") cfg.pat = credential.pat
+  if (credential.kind === "password") {
+    cfg.username = credential.username
+    cfg.password = credential.password
   }
 
   // Propagate customHeaders from profile (highest priority: env headers could override if needed)
@@ -141,7 +121,13 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // violating the documented auth priority (--pat > CZ_PAT > …) and defeating
   // PAT rotation. Skipping the store also stops the PAT-exchanged token from
   // being persisted. Profile-level and pure-OAuth flows still attach it.
-  const explicitCredential = Boolean(cliPat) || Boolean(envPat) || Boolean(cliUsername && cliPassword)
+  //
+  // "Explicit" is now decided by the credential's SOURCE rather than by which
+  // fields happen to be set. An INHERITED credential — one we expanded into the
+  // env ourselves — is not the user speaking, so it must not suppress the store:
+  // treating it as explicit is what let a stale injection outrank the profile's
+  // own OAuth login.
+  const explicitCredential = credential.source === "flag" || credential.source === "env"
   // Attach the OAuth token store when the profile can carry an OAuth login:
   // either it has an instance (the common case) OR it has an `oauth = "<id>"`
   // pointer to a shared [oauth.<id>] token. The old `cfg.instance`-only gate
@@ -186,55 +172,86 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   return cfg
 }
 
-function getEnvConfig(): Partial<ConnectionConfig> | undefined {
-  const env = process.env
-  const result: Partial<ConnectionConfig> = {}
+/** Where the selected credential came from, in descending precedence. */
+type CredentialSource = "flag" | "env" | "profile" | "inherited" | "jdbc"
 
-  const pat = env.CZ_PAT || ""
-  const username = env.CZ_USERNAME || ""
-  const password = env.CZ_PASSWORD || ""
+type Credential =
+  | { kind: "pat"; source: CredentialSource; pat: string }
+  | { kind: "password"; source: CredentialSource; username: string; password: string }
+  | { kind: "none"; source: "default" }
 
-  // Require PAT or both username+password to return auth config (matching Python)
-  if (!pat && !(username && password)) {
-    // Still return non-auth fields if any are set
-    const nonAuthMap: Array<[string, keyof ConnectionConfig]> = [
-      ["CZ_SERVICE", "service"],
-      ["CZ_PROTOCOL", "protocol"],
-      ["CZ_INSTANCE", "instance"],
-      ["CZ_WORKSPACE", "workspace"],
-      ["CZ_SCHEMA", "schema"],
-      ["CZ_VCLUSTER", "vcluster"],
-    ]
-    let hasAny = false
-    for (const [envKey, cfgKey] of nonAuthMap) {
-      const val = env[envKey]
-      if (val) {
-        ;(result as Record<string, string>)[cfgKey] = val
-        hasAny = true
-      }
-    }
-    return hasAny ? result : undefined
+/**
+ * Choose ONE credential, as a group.
+ *
+ * A credential is an identity, not a bag of fields: a username from one source
+ * and a password from another authenticate as nobody. The old code set
+ * `cfg.pat` / `cfg.username` / `cfg.password` from independent priority chains,
+ * which is how a profile's instance ended up paired with a username we had
+ * injected for a different profile ("Login failed: 没有这样的用户").
+ *
+ * The tier order is the one this function has always had — flag pat, user's
+ * `CZ_PAT`, profile pat, flag username/password, JDBC, user's `CZ_USERNAME`
+ * pair, profile pair — with one tier ADDED at the bottom: a credential we
+ * expanded into the environment ourselves ranks below the profile, because it is
+ * OUR value rather than the user's (see connection/env.ts). Nothing else about
+ * the order changes here; this is a provenance fix, not a re-litigation of
+ * flag-versus-profile.
+ */
+function pickCredential(input: {
+  cliArgs: Partial<CliArgs>
+  ambient: ConnectionEnv.Ambient
+  jdbc: Partial<ConnectionConfig> | undefined
+  profile: Partial<ConnectionConfig> | undefined
+  pinAllows: (type: AuthType) => boolean
+}): Credential {
+  if (input.cliArgs.pat) return { kind: "pat", source: "flag", pat: input.cliArgs.pat }
+  if (input.ambient.user.pat) return { kind: "pat", source: "env", pat: input.ambient.user.pat }
+  if (input.pinAllows("pat") && input.profile?.pat) {
+    return { kind: "pat", source: "profile", pat: input.profile.pat }
   }
 
-  if (pat) result.pat = pat
-  if (username) result.username = username
-  if (password) result.password = password
+  // A flag that supplies only half of the pair still selects the flag tier; the
+  // missing half is filled from the tiers below, which is how
+  // `--username alice` against a profile that stores the password keeps working.
+  if (input.cliArgs.username !== undefined || input.cliArgs.password !== undefined) {
+    const username =
+      input.cliArgs.username ||
+      input.jdbc?.username ||
+      input.ambient.user.username ||
+      (input.pinAllows("password") ? input.profile?.username : undefined) ||
+      input.ambient.inherited.username
+    const password =
+      input.cliArgs.password ||
+      input.jdbc?.password ||
+      input.ambient.user.password ||
+      (input.pinAllows("password") ? input.profile?.password : undefined) ||
+      input.ambient.inherited.password
+    if (username && password) return { kind: "password", source: "flag", username, password }
+  }
 
-  const nonAuthMap: Array<[string, keyof ConnectionConfig]> = [
-    ["CZ_SERVICE", "service"],
-    ["CZ_PROTOCOL", "protocol"],
-    ["CZ_INSTANCE", "instance"],
-    ["CZ_WORKSPACE", "workspace"],
-    ["CZ_SCHEMA", "schema"],
-    ["CZ_VCLUSTER", "vcluster"],
-  ]
-  for (const [envKey, cfgKey] of nonAuthMap) {
-    const val = env[envKey]
-    if (val) {
-      ;(result as Record<string, string>)[cfgKey] = val
+  if (input.jdbc?.username && input.jdbc.password) {
+    return { kind: "password", source: "jdbc", username: input.jdbc.username, password: input.jdbc.password }
+  }
+
+  if (input.ambient.user.username && input.ambient.user.password) {
+    return { kind: "password", source: "env", username: input.ambient.user.username, password: input.ambient.user.password }
+  }
+
+  if (input.pinAllows("password") && input.profile?.username && input.profile.password) {
+    return { kind: "password", source: "profile", username: input.profile.username, password: input.profile.password }
+  }
+
+  if (input.ambient.inherited.pat) return { kind: "pat", source: "inherited", pat: input.ambient.inherited.pat }
+  if (input.ambient.inherited.username && input.ambient.inherited.password) {
+    return {
+      kind: "password",
+      source: "inherited",
+      username: input.ambient.inherited.username,
+      password: input.ambient.inherited.password,
     }
   }
-  return result
+
+  return { kind: "none", source: "default" }
 }
 
 function applyNonAuth(target: ConnectionConfig, src: Partial<ConnectionConfig> | undefined): void {
