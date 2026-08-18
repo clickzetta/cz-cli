@@ -1,0 +1,40 @@
+name: cz-test
+
+# Runs cz-cli's OWN unit tests and typecheck. Distinct from `test.yml`, which
+# only covers upstream opencode packages (turbo.json's `test` task names
+# opencode/@opencode-ai/{core,app,ui,session-ui} exclusively — cz-cli,
+# clickzetta-sdk and clickzetta-ai-gateway are not in that list and are never
+# exercised there) and which is stuck queued forever on this fork because
+# `blacksmith-*` runners were never provisioned for clickzetta/cz-cli. This
+# workflow uses GitHub-hosted runners so it actually executes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Typecheck cz-cli
+        working-directory: packages/cz-cli
+        run: bun run typecheck
+
+      - name: Run cz-cli unit tests
+        working-directory: packages/cz-cli
+        run: bun test --timeout 30000
