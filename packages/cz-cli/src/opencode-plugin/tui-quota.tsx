@@ -1,11 +1,23 @@
 /** @jsxImportSource @opentui/solid */
-// cz_change: show ClickZetta account balance + AI-gateway token quota in the
-// prompt's top-right corner, next to the agent and model labels.
+// cz_change: show ClickZetta account balance + AI-gateway token quota as a
+// "Quota" section in the session sidebar, directly under "Context".
 //
-// Rendered through opencode's PUBLIC slot API (home_prompt_right /
-// session_prompt_right, declared in packages/plugin/src/tui.ts and passed to
-// Prompt as its `right` prop), so packages/tui and packages/opencode stay
-// pristine — same approach as the home_logo brand plugin next door.
+// It started on one line in the prompt's top-right corner and moved here because
+// that line already carries the agent name, the model id and the provider: at 80
+// columns the layout shrank the balance away entirely. The sidebar is the right
+// home on the merits too — the Context section next to it reports tokens, percent
+// used and dollars spent in exactly this vertical, one-figure-per-line shape, and
+// this is the same kind of information about the same session.
+//
+// Rendered through opencode's PUBLIC slot API (sidebar_content, declared in
+// packages/plugin/src/tui.ts), so packages/tui and packages/opencode stay pristine
+// — same approach as the home_logo brand plugin next door. sidebar_content is an
+// append slot, so this composes with upstream's own sections instead of displacing
+// any of them.
+//
+// The sidebar is session-only and auto-opens above 120 columns (sidebarVisible in
+// packages/tui/src/routes/session/index.tsx); narrower terminals reach it with the
+// toggle. That is upstream's layout policy and deliberately not fought here.
 //
 // The split across four files is deliberate: only this file may contain JSX,
 // because it has to ship as raw .tsx (the host compiles it at import time and
@@ -19,7 +31,7 @@ import {
   createQuotaController,
   currentSessionID,
   fetchQuotaSnapshot,
-  quotaSegments,
+  quotaRows,
   type ActiveModelContext,
   type QuotaSnapshot,
   type QuotaTone,
@@ -28,11 +40,12 @@ import {
 function View(props: {
   api: TuiPluginApi
   activeModel: ActiveModelContext
+  sessionID: string
   snapshot: () => QuotaSnapshot | undefined
   onContext: (key: string) => void
 }) {
   const theme = () => props.api.theme.current
-  const segments = createMemo(() => quotaSegments(props.snapshot()))
+  const rows = createMemo(() => quotaRows(props.snapshot()))
   const color = (tone: QuotaTone) => theme()[tone]
 
   // The provider list arrives with sync, well after plugins load, and attributing
@@ -40,30 +53,23 @@ function View(props: {
   // only place with a reactive owner — plugin init runs outside any Solid root, so
   // an effect created there is never scheduled.
   createEffect(() => {
-    const sessionID = currentSessionID(props.api) ?? ""
-    props.onContext(
-      `${props.api.route.current.name}:${sessionID}:${props.activeModel.providerID(sessionID || undefined) ?? ""}`,
-    )
+    props.onContext(`${props.sessionID}:${props.activeModel.providerID(props.sessionID) ?? ""}`)
   })
 
-  // No segments = nothing worth showing (non-ClickZetta provider, or no reading
-  // yet). Render an empty fragment rather than a placeholder: the slot sits in
-  // the prompt header and any filler would look like real data.
+  // No rows = nothing worth showing (non-ClickZetta provider, or no reading yet).
+  // Draw no section at all rather than a "Quota" heading over blanks, which would
+  // read as "your quota is zero".
   return (
-    <Show when={segments().length > 0}>
-      <box flexDirection="row" gap={1} flexShrink={0}>
-        <For each={segments()}>
-          {(segment, index) => (
-            <>
-              <Show when={index() > 0}>
-                <text fg={theme().textMuted} selectable={false}>
-                  ·
-                </text>
-              </Show>
-              <text fg={color(segment.tone)} selectable={false} wrapMode="none">
-                {segment.text}
-              </text>
-            </>
+    <Show when={rows().length > 0}>
+      <box>
+        <text fg={theme().text}>
+          <b>Quota</b>
+        </text>
+        <For each={rows()}>
+          {(row) => (
+            <text fg={color(row.tone)} selectable={false}>
+              {row.text}
+            </text>
           )}
         </For>
       </box>
@@ -111,14 +117,22 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     controller.refresh()
   }
 
+  // order 150 puts Quota immediately after upstream's Context section (order 100)
+  // and ahead of MCP/LSP/Todo/Files (200/300/400/500) — the two usage readouts read
+  // as one group, which is the point of moving here.
   api.slots.register({
-    order: 100,
+    order: 150,
     slots: {
-      home_prompt_right() {
-        return <View api={api} activeModel={activeModel} snapshot={snapshot} onContext={onContext} />
-      },
-      session_prompt_right() {
-        return <View api={api} activeModel={activeModel} snapshot={snapshot} onContext={onContext} />
+      sidebar_content(_ctx, props) {
+        return (
+          <View
+            api={api}
+            activeModel={activeModel}
+            sessionID={props.session_id}
+            snapshot={snapshot}
+            onContext={onContext}
+          />
+        )
       },
     },
   })

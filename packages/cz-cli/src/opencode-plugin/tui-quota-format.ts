@@ -26,15 +26,16 @@ export function formatCash(amount: number): string {
 }
 
 /**
- * Label distinguishing a daily/weekly/monthly cap from a lifetime one.
+ * Phrase distinguishing a daily/weekly/monthly cap from a lifetime one, empty for
+ * a lifetime cap since "10.1M / 10.0M tokens" already says everything then.
  *
- * Rendered as a leading word rather than a trailing "/day": the quota itself is
- * already a `used/limit` pair, so a third slash reads as part of the fraction.
+ * A trailing phrase rather than a "/day" suffix: the figure is already a
+ * `used / limit` pair, so a third slash would read as part of the fraction.
  */
-export function periodLabel(period: QuotaPeriod | undefined): string {
-  if (period === "daily") return "today "
-  if (period === "weekly") return "week "
-  if (period === "monthly") return "month "
+export function periodSuffix(period: QuotaPeriod | undefined): string {
+  if (period === "daily") return " today"
+  if (period === "weekly") return " this week"
+  if (period === "monthly") return " this month"
   return ""
 }
 
@@ -72,35 +73,48 @@ export function cashTone(cash: number, owe = 0): QuotaTone {
   return "textMuted"
 }
 
-export interface QuotaSegment {
+export interface QuotaRow {
   text: string
   tone: QuotaTone
 }
 
 /**
- * Render a snapshot into the segments the indicator draws, left to right.
+ * Render a snapshot into the sidebar's rows, top to bottom.
+ *
+ * One labelled figure per line, matching the Context section it sits under
+ * (packages/tui/src/feature-plugins/sidebar/context.tsx renders "12,345 tokens" /
+ * "3% used" / "$0.01 spent" the same way). The trailing word is what makes a bare
+ * number readable in a 42-column column, so it is part of the text rather than a
+ * separate label the caller has to supply.
  *
  * Returns an empty array when there is nothing meaningful to show, which the
- * renderer treats as "occupy no space" — the indicator must be invisible for
- * non-ClickZetta providers rather than showing a placeholder or an error.
+ * renderer treats as "draw no section at all" — better than a heading over
+ * placeholder figures for a user on a non-ClickZetta provider.
  */
-export function quotaSegments(snapshot: QuotaSnapshot | undefined): QuotaSegment[] {
+export function quotaRows(snapshot: QuotaSnapshot | undefined): QuotaRow[] {
   if (!snapshot) return []
-  const segments: QuotaSegment[] = []
+  const rows: QuotaRow[] = []
 
   if (snapshot.cash !== undefined) {
-    segments.push({ text: formatCash(snapshot.cash), tone: cashTone(snapshot.cash, snapshot.owe ?? 0) })
+    rows.push({ text: `${formatCash(snapshot.cash)} balance`, tone: cashTone(snapshot.cash, snapshot.owe ?? 0) })
   }
 
   const { used, limit } = snapshot
   if (used !== undefined && limit !== undefined && limit > 0) {
-    // Both numbers, not just a percentage: the user asked to see how much has
-    // been consumed alongside the ceiling it counts against.
-    segments.push({
-      text: `${periodLabel(snapshot.period)}${abbreviate(used)}/${abbreviate(limit)}`,
-      tone: quotaTone(remainingRatio(used, limit)),
-    })
+    const tone = quotaTone(remainingRatio(used, limit))
+    // Both numbers, not just a percentage: seeing the ceiling is what tells you
+    // whether the percentage is worth acting on.
+    rows.push({ text: `${abbreviate(used)} / ${abbreviate(limit)} tokens${periodSuffix(snapshot.period)}`, tone })
+    rows.push({ text: `${formatPercentLeft(remainingRatio(used, limit))} left`, tone })
   }
 
-  return segments
+  return rows
+}
+
+/**
+ * Percentage still available, floored so a nearly-spent quota never rounds up to a
+ * reassuring figure — 0.4% remaining reads as "0%", not "1%".
+ */
+export function formatPercentLeft(remaining: number): string {
+  return `${Math.floor(remaining * 100)}%`
 }

@@ -25,11 +25,12 @@ export {
   abbreviate,
   cashTone,
   formatCash,
-  periodLabel,
-  quotaSegments,
+  formatPercentLeft,
+  periodSuffix,
+  quotaRows,
   quotaTone,
   remainingRatio,
-  type QuotaSegment,
+  type QuotaRow,
   type QuotaTone,
 } from "./tui-quota-format.js"
 
