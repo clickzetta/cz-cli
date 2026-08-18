@@ -275,6 +275,79 @@ async function portalCall(
 }
 
 /**
+ * Drop the region label from a regional API host: `<region>.api.<root>` →
+ * `api.<root>`. Returns undefined when there is no region label to drop.
+ *
+ * Both reads here are tenant-global — a balance and a tenant's virtual keys are
+ * not per-region facts — but only some hosts serve them. Measured with one
+ * profile's token against three hosts:
+ *
+ *   ap-shanghai-tencentcloud.api.clickzetta.com  →  code 8888 "未知异常"
+ *   cn-shanghai-alicloud.api.clickzetta.com      →  code 0, correct data
+ *   api.clickzetta.com                           →  code 0, correct data
+ *
+ * So a tencentcloud-region profile could read neither figure and the indicator
+ * silently showed nothing. The central host is the honest target for global data,
+ * and is preferred here over pinning one region the way pinAlicloudAdminHost does
+ * for the AIGW admin routes (see llm/clickzetta-rotation.ts) — that helper had to
+ * name a region because it predates knowing the central host answers.
+ *
+ * Deliberately narrow: it matches only a leading label directly before `api.`, so
+ * `uat-api.clickzetta.com` and `dev-api.clickzetta.com` are left alone (verified
+ * still working — their label is part of `uat-api`, not a region segment).
+ */
+export function centralPortalHost(baseUrl: string): string | undefined {
+  const stripped = baseUrl.replace(/^(https?:\/\/)[a-z0-9-]+\.(api\.)/i, "$1$2")
+  return stripped === baseUrl ? undefined : stripped
+}
+
+/**
+ * A portal read that tolerates a host which does not serve the route.
+ *
+ * Tries the profile's OWN host first so every environment that works today keeps
+ * its exact behaviour, and only falls back to the central host when the answer is
+ * unusable. Ordered this way on purpose: only two of the deployments could be
+ * verified first-hand (tencentcloud and uat), so an unconditional rewrite risked
+ * breaking singdata / private deployments that were untestable here. The extra
+ * round-trip is spent only on the path that was already failing.
+ */
+async function portalRead(
+  baseUrl: string,
+  path: string,
+  token: string,
+  opts: { method?: "GET" | "POST"; signal?: AbortSignal } = {},
+): Promise<unknown> {
+  let firstError: unknown
+  let firstPayload: unknown
+  try {
+    const payload = await portalCall(baseUrl, path, token, opts)
+    if (isRecord(payload) && isPortalOk(payload.code)) return payload
+    firstPayload = payload
+  } catch (error) {
+    if (opts.signal?.aborted) throw error
+    firstError = error
+  }
+
+  const central = centralPortalHost(baseUrl)
+  if (!central) {
+    if (firstError) throw firstError
+    return firstPayload
+  }
+  try {
+    const payload = await portalCall(central, path, token, opts)
+    if (isRecord(payload) && isPortalOk(payload.code)) return payload
+    // Neither host produced a usable answer: surface the original host's result so
+    // the failure reads as the profile's own, not the fallback's.
+    return firstPayload ?? payload
+  } catch (error) {
+    if (opts.signal?.aborted) throw error
+    if (firstError) throw firstError
+    if (firstPayload !== undefined) return firstPayload
+    throw error
+  }
+}
+
+/**
  * Fetch balance + quota for the given provider selection without coupling the
  * selected LLM entry to a same-named connection Profile.
  *
@@ -371,7 +444,7 @@ async function fetchProfileSnapshot(input: {
       ? Promise.resolve(undefined)
       : accountId === undefined
         ? Promise.reject(new Error("profile has no account_id"))
-        : portalCall(baseUrl, `${BILLING_PATH}/${accountId}`, token.token, { signal: input.signal }),
+        : portalRead(baseUrl, `${BILLING_PATH}/${accountId}`, token.token, { signal: input.signal }),
     (async () => {
       // No key to match against — skip the read rather than spend two portal
       // round-trips on a result nothing can consume.
@@ -383,7 +456,7 @@ async function fetchProfileSnapshot(input: {
       let userName = profileUserName
       if (!userName) {
         try {
-          const currentUser = await portalCall(baseUrl, CURRENT_USER_PATH, token.token, {
+          const currentUser = await portalRead(baseUrl, CURRENT_USER_PATH, token.token, {
             method: "POST",
             signal: input.signal,
           })
@@ -399,7 +472,7 @@ async function fetchProfileSnapshot(input: {
           if (input.signal?.aborted) throw error
         }
       }
-      return portalCall(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, token.token, {
+      return portalRead(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, token.token, {
         signal: input.signal,
       })
     })(),

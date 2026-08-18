@@ -6,6 +6,7 @@ import { requireTestHome } from "./support/cz-fixtures"
 import { clearTokenCache } from "@clickzetta/sdk"
 import { setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 import {
+  centralPortalHost,
   fetchQuotaSnapshot,
   isPortalOk,
   maskApiKey,
@@ -583,5 +584,99 @@ describe("balance survives an unresolvable LLM entry", () => {
     stubPortal()
     setActiveModel("")
     await expect(fetchQuotaSnapshot({})).rejects.toThrow("billing unreachable")
+  })
+})
+
+describe("centralPortalHost", () => {
+  test("drops a region label from a regional api host", () => {
+    expect(centralPortalHost("https://ap-shanghai-tencentcloud.api.clickzetta.com")).toBe("https://api.clickzetta.com")
+    expect(centralPortalHost("https://cn-shanghai-alicloud.api.clickzetta.com")).toBe("https://api.clickzetta.com")
+    expect(centralPortalHost("https://ap-southeast-1-aws.api.singdata.com")).toBe("https://api.singdata.com")
+  })
+
+  // These are environment labels, not region segments: the label is part of
+  // `uat-api` / `dev-api` rather than a segment before `api.`. Verified against
+  // both hosts — they serve these routes as-is, so rewriting them would break the
+  // deployments that currently work.
+  test("leaves environment hosts and an already-central host alone", () => {
+    expect(centralPortalHost("https://uat-api.clickzetta.com")).toBeUndefined()
+    expect(centralPortalHost("https://dev-api.clickzetta.com")).toBeUndefined()
+    expect(centralPortalHost("https://api.clickzetta.com")).toBeUndefined()
+    expect(centralPortalHost("http://localhost:8080")).toBeUndefined()
+  })
+})
+
+describe("portal reads fall back to the central host", () => {
+  // The measured failure: a tencentcloud-region host answers HTTP 200 with the
+  // portal's own error code 8888 for both reads, while the same token against the
+  // central host returns the data. Without the fallback the indicator silently
+  // showed nothing for any such profile.
+  test("recovers a balance when the profile's own host answers 8888", async () => {
+    const seen: string[] = []
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        seen.push(url)
+        // Region host: HTTP 200 but a business error, exactly as observed.
+        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com")) {
+          return { code: 8888, message: "未知异常", data: null }
+        }
+        if (url.includes("/hornhub/account/billing/account/")) {
+          return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
+        }
+        if (url.includes("/user/listApiKeys")) return { code: 0, data: [] }
+        if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
+      expect(snapshot?.cash).toBe(12.5)
+      expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com"))).toBe(true)
+      expect(seen.some((url) => url.includes("//api.clickzetta.com"))).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // The profile's own host must stay the primary: only two deployments could be
+  // verified first-hand, so a working host must never be second-guessed.
+  test("does not touch the central host when the profile's own host answers", async () => {
+    const seen: string[] = []
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        seen.push(url)
+        if (url.includes("/hornhub/account/billing/account/")) {
+          return { code: 0, data: { cashAmount: 7, oweAmount: 0 } }
+        }
+        if (url.includes("/user/listApiKeys")) return { code: 0, data: [] }
+        if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
+      expect(snapshot?.cash).toBe(7)
+      expect(seen.some((url) => url.includes("//api.clickzetta.com"))).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
   })
 })
