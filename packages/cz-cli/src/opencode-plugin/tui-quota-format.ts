@@ -142,7 +142,7 @@ export function profileRows(info: ProfileInfo | undefined): QuotaRow[] {
   }
   add(info.accountName, "account")
   add(info.userName, "user")
-  add(info.region, "region")
+  add(info.env, "env")
   add(info.instance, "instance")
   add(info.workspace, "workspace")
   return rows

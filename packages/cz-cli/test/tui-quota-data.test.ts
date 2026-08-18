@@ -598,7 +598,7 @@ describe("readProfileInfo", () => {
         authType: "pat",
         accountName: "prod-account",
         userName: undefined,
-        region: "cn-shanghai-alicloud",
+        env: "cn-shanghai-alicloud",
         instance: "inst-prod",
         workspace: "quick_start",
       })
@@ -608,13 +608,13 @@ describe("readProfileInfo", () => {
     }
   })
 
-  // The region label comes off the service host, so an environment host reports the
-  // environment rather than a bogus region.
-  test("derives the region from the service host", () => {
+  // The env label comes off the service host, so an environment host reports the
+  // environment rather than a bogus "prod".
+  test("derives the env from the service host", () => {
     const previous = process.env.CZ_PROFILE
     process.env.CZ_PROFILE = "dev_0"
     try {
-      expect(readProfileInfo()?.region).toBe("dev")
+      expect(readProfileInfo()?.env).toBe("dev")
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous
@@ -629,6 +629,37 @@ describe("readProfileInfo", () => {
     onFetch({ match: () => true, respond: () => { throw new Error("no network expected") } })
     try {
       expect(readProfileInfo()?.profile).toBe("prod_0")
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // A custom/private domain must render nothing rather than a fabricated "prod":
+  // this panel's job is telling the user which deployment they're pointed at, and
+  // an invented answer is worse than an absent row.
+  test("omits env for a custom domain detectEnv would have guessed \"prod\" for", () => {
+    writeFileSync(
+      join(requireTestHome(), ".clickzetta", "profiles.toml"),
+      ["[profiles.private_0]", "pat = 'pat-private'", "service = 'cn-east.api.acme-internal.example'"].join("\n"),
+    )
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "private_0"
+    try {
+      expect(readProfileInfo()?.env).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // A stale/typo'd CZ_PROFILE naming a profile absent from the file must render
+  // nothing, not silently substitute a different tenant's identity.
+  test("renders nothing when CZ_PROFILE names a profile absent from the file", () => {
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "does_not_exist"
+    try {
+      expect(readProfileInfo()).toBeUndefined()
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous
@@ -652,6 +683,15 @@ describe("centralPortalHost", () => {
     expect(centralPortalHost("https://dev-api.clickzetta.com")).toBeUndefined()
     expect(centralPortalHost("https://api.clickzetta.com")).toBeUndefined()
     expect(centralPortalHost("http://localhost:8080")).toBeUndefined()
+  })
+
+  // The root is pinned to the two measured domains. A private/enterprise deployment
+  // names its own domain in profiles.toml's `service` field, and that domain was
+  // never verified to serve these routes at any host — rewriting it would send the
+  // profile's portal token to a host the tenant never configured.
+  test("does not rewrite a host outside clickzetta.com/singdata.com", () => {
+    expect(centralPortalHost("https://cn-east.api.acme-internal.example")).toBeUndefined()
+    expect(centralPortalHost("https://region.api.clickzetta.com.evil.example")).toBeUndefined()
   })
 })
 
@@ -723,6 +763,41 @@ describe("portal reads fall back to the central host", () => {
       const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
       expect(snapshot?.cash).toBe(7)
       expect(seen.some((url) => url.includes("//api.clickzetta.com"))).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // A THROWN first attempt (transport/auth failure, not a business-code error) must
+  // win over an unusable central-host answer: retrying a different host cannot fix
+  // a network error, and swallowing it into a resolved-but-empty payload would
+  // overwrite fetchQuotaSnapshot's last-good snapshot instead of preserving it.
+  // Both reads fail here (not just billing) so the failure actually surfaces as a
+  // rejection per the guards in fetchQuotaSnapshot/fetchProfileSnapshot — see
+  // "throws when both reads fail" above for why a billing-only failure resolves.
+  test("rethrows the profile host's own error when the central host is also unusable", async () => {
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com")) {
+          throw new Error("connection reset")
+        }
+        if (url.includes("//api.clickzetta.com")) {
+          return { code: 8888, message: "未知异常", data: null }
+        }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      await expect(fetchQuotaSnapshot({ providerID: "prod_0" })).rejects.toThrow("connection reset")
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous

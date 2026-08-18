@@ -109,7 +109,7 @@ describe("profileRows", () => {
     authType: "oauth",
     accountName: "xxjrdhjr",
     userName: "xh123",
-    region: "ap-shanghai-tencentcloud",
+    env: "ap-shanghai-tencentcloud",
     instance: "0e824e33",
     workspace: "quick_start",
   }
@@ -119,7 +119,7 @@ describe("profileRows", () => {
       { text: "xh_0 · oauth", tone: "text" },
       { text: "xxjrdhjr account", tone: "textMuted" },
       { text: "xh123 user", tone: "textMuted" },
-      { text: "ap-shanghai-tencentcloud region", tone: "textMuted" },
+      { text: "ap-shanghai-tencentcloud env", tone: "textMuted" },
       { text: "0e824e33 instance", tone: "textMuted" },
       { text: "quick_start workspace", tone: "textMuted" },
     ])

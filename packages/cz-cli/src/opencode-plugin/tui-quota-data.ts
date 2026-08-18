@@ -18,7 +18,7 @@
 // tui-title-brand.ts.
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { detectEnv, getToken, toServiceUrl } from "@clickzetta/sdk"
+import { getToken, toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { getCookieToken } from "../connection/cookie-token.js"
 import * as Profile from "../connection/profile-context.js"
@@ -124,8 +124,8 @@ export interface ProfileInfo {
   accountName?: string
   /** Human user within the account. Resolved from the portal. */
   userName?: string
-  /** Region/deployment label parsed off the service host. */
-  region?: string
+  /** Environment/region label parsed off the service host, when recognizable. */
+  env?: string
   instance?: string
   workspace?: string
 }
@@ -146,6 +146,28 @@ function num(value: unknown): number | undefined {
 }
 
 /**
+ * Environment/region label for a service host, or undefined when the host
+ * doesn't match a recognizable ClickZetta/Singdata shape.
+ *
+ * Deliberately NOT `@clickzetta/sdk`'s `detectEnv`: that function ends with an
+ * unconditional `return "prod"` for anything it doesn't recognize (private
+ * deployments, custom domains, `localhost`), which is a reasonable default for
+ * picking a service URL shape but would be a FABRICATED fact if rendered in this
+ * panel — whose whole job is answering "am I pointed at the right lakehouse".
+ * Showing an invented "prod" for a deployment that may not be prod is worse than
+ * showing nothing, so this mirrors detectEnv's pattern list but drops the catch-all.
+ */
+function knownEnv(service: string): string | undefined {
+  const host = service.replace(/^https?:\/\//, "").split("/")[0] ?? ""
+  if (host.startsWith("dev-api.")) return "dev"
+  if (host.startsWith("sit-api.")) return "sit"
+  if (host.startsWith("uat-api.")) return "uat"
+  if (host === "api.clickzetta.com" || host === "api.singdata.com") return "prod"
+  const match = host.match(/^([^.]+)\.api\.(clickzetta|singdata)\.com$/)
+  return match ? match[1] : undefined
+}
+
+/**
  * Read the active profile's identity and connection target from profiles.toml.
  *
  * Synchronous and network-free on purpose: this is the half of the sidebar that
@@ -157,7 +179,13 @@ function num(value: unknown): number | undefined {
 export function readProfileInfo(): ProfileInfo | undefined {
   const current = Profile.current()
   const profiles = loadProfiles()
-  const name = current && profiles[current] ? current : Object.keys(profiles)[0]
+  // Only substitute the first TOML profile when NOTHING is pinned (current ===
+  // undefined, i.e. genuinely unconfigured — Profile.current()'s own docs say to
+  // treat that as "no profile configured"). A current that names a profile absent
+  // from the file (stale CZ_PROFILE, deleted profile) must render nothing rather
+  // than silently swap in a different tenant's identity — this panel's whole job
+  // is telling the user which lakehouse they're pointed at.
+  const name = current === undefined ? Object.keys(profiles)[0] : profiles[current] ? current : undefined
   if (!name) return undefined
   const profile = profiles[name]!
   const str = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
@@ -171,7 +199,7 @@ export function readProfileInfo(): ProfileInfo | undefined {
     authType: readAuthType(name),
     accountName: str(profile.account_name),
     userName: str(profile.username),
-    region: service ? detectEnv(service) : undefined,
+    env: service ? knownEnv(service) : undefined,
     instance: str(profile.instance),
     workspace: str(profile.workspace),
   }
@@ -180,6 +208,34 @@ export function readProfileInfo(): ProfileInfo | undefined {
 // Resolved user names, keyed by profile. Identity does not change for the life of
 // a session, so this is asked once rather than on every quota refresh.
 const userNameCache = new Map<string, string>()
+
+/**
+ * POST getCurrentUser and pull out the login handle, or undefined on any failure
+ * or an envelope that doesn't carry one.
+ *
+ * `name` is the login handle; `accountDisplayName` is the tenant and is already
+ * covered by `accountName` elsewhere. Nothing else from this payload is used — it
+ * also carries a phone number and an email, which have no place in a status panel.
+ *
+ * The one call site both `fetchProfileUserName` and `fetchProfileSnapshot` share,
+ * so the envelope check (four-part: record / isPortalOk / record data / string
+ * name) is written once rather than kept in sync by hand in two places.
+ */
+async function readCurrentUserName(
+  baseUrl: string,
+  token: string,
+  signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+  try {
+    const payload = await portalRead(baseUrl, CURRENT_USER_PATH, token, { method: "POST", signal })
+    if (!isRecord(payload) || !isPortalOk(payload.code) || !isRecord(payload.data)) return undefined
+    const name = typeof payload.data.name === "string" ? payload.data.name.trim() : ""
+    return name || undefined
+  } catch (error) {
+    if (signal?.aborted) throw error
+    return undefined
+  }
+}
 
 /**
  * Resolve the human user name for the active profile.
@@ -210,15 +266,7 @@ export async function fetchProfileUserName(input: { signal?: AbortSignal } = {})
       ...(typeof profile.instance === "string" ? { instance: profile.instance } : {}),
     })
     const token = (await getCookieToken(config)) ?? (await getToken(config))
-    const payload = await portalRead(toServiceUrl(config.service, config.protocol), CURRENT_USER_PATH, token.token, {
-      method: "POST",
-      signal: input.signal,
-    })
-    if (!isRecord(payload) || !isPortalOk(payload.code) || !isRecord(payload.data)) return undefined
-    // `name` is the login handle; accountDisplayName is the tenant and is already
-    // covered by accountName. Nothing else from this payload is displayed — it also
-    // carries a phone number and an email, which have no place in a status panel.
-    const name = typeof payload.data.name === "string" ? payload.data.name.trim() : ""
+    const name = await readCurrentUserName(toServiceUrl(config.service, config.protocol), token.token, input.signal)
     if (!name) return undefined
     userNameCache.set(info.profile, name)
     return name
@@ -399,12 +447,17 @@ async function portalCall(
  * for the AIGW admin routes (see llm/clickzetta-rotation.ts) — that helper had to
  * name a region because it predates knowing the central host answers.
  *
- * Deliberately narrow: it matches only a leading label directly before `api.`, so
- * `uat-api.clickzetta.com` and `dev-api.clickzetta.com` are left alone (verified
- * still working — their label is part of `uat-api`, not a region segment).
+ * Deliberately narrow two ways. First, it matches only a leading label directly
+ * before `api.`, so `uat-api.clickzetta.com` and `dev-api.clickzetta.com` are left
+ * alone (verified still working — their label is part of `uat-api`, not a region
+ * segment). Second, the root itself is pinned to `clickzetta.com`/`singdata.com` —
+ * the only two measured — rather than matching ANY `<label>.api.<anything>`.
+ * `service` comes from profiles.toml, which a private/enterprise deployment can
+ * point at its own domain; matching unconditionally would send that profile's
+ * portal token to a host the tenant never configured and may not control.
  */
 export function centralPortalHost(baseUrl: string): string | undefined {
-  const stripped = baseUrl.replace(/^(https?:\/\/)[a-z0-9-]+\.(api\.)/i, "$1$2")
+  const stripped = baseUrl.replace(/^(https?:\/\/)[a-z0-9-]+\.(api\.(?:clickzetta|singdata)\.com)(?=\/|$)/i, "$1$2")
   return stripped === baseUrl ? undefined : stripped
 }
 
@@ -443,9 +496,16 @@ async function portalRead(
   try {
     const payload = await portalCall(central, path, token, opts)
     if (isRecord(payload) && isPortalOk(payload.code)) return payload
-    // Neither host produced a usable answer: surface the original host's result so
-    // the failure reads as the profile's own, not the fallback's.
-    return firstPayload ?? payload
+    // Neither host produced a usable answer. Prefer surfacing the ORIGINAL host's
+    // result so the failure reads as the profile's own, not the fallback's — but
+    // only when the first attempt actually answered with something (firstPayload
+    // set). If it instead THREW (transport/auth failure a different host cannot
+    // fix), that error must win: swallowing it into this unusable payload would
+    // turn a rejection fetchQuotaSnapshot needs (to keep showing the last good
+    // snapshot) into a resolved-but-empty one that overwrites it.
+    if (firstPayload !== undefined) return firstPayload
+    if (firstError) throw firstError
+    return payload
   } catch (error) {
     if (opts.signal?.aborted) throw error
     if (firstError) throw firstError
@@ -560,25 +620,7 @@ async function fetchProfileSnapshot(input: {
       // lets us pass it through, but listApiKeys ignores the userName value and
       // scopes to the token identity regardless, so a failed/empty lookup still
       // returns the caller's keys — fall back to an empty name rather than bail.
-      let userName = profileUserName
-      if (!userName) {
-        try {
-          const currentUser = await portalRead(baseUrl, CURRENT_USER_PATH, token.token, {
-            method: "POST",
-            signal: input.signal,
-          })
-          if (
-            isRecord(currentUser) &&
-            isPortalOk(currentUser.code) &&
-            isRecord(currentUser.data) &&
-            typeof currentUser.data.name === "string"
-          ) {
-            userName = currentUser.data.name
-          }
-        } catch (error) {
-          if (input.signal?.aborted) throw error
-        }
-      }
+      const userName = profileUserName || (await readCurrentUserName(baseUrl, token.token, input.signal)) || ""
       return portalRead(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, token.token, {
         signal: input.signal,
       })
