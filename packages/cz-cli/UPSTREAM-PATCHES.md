@@ -183,7 +183,8 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 ### 6. Opt-in error detail at the defect boundary
 
 - **File:** `packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts`
-- **Marker:** one `//===== cz-cli change =====` banner around the `detail` block.
+- **Marker:** two `//===== cz-cli change =====` banners — one around the `Flag`
+  import, one around the `detail` block.
 - **Upstream value:** the 500 body carries only
   `{ message: "Unexpected server error. Check server logs for details.", ref }`.
 - **What/why:** that boundary swallows every defect. Correct for a server answering
@@ -228,6 +229,9 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 - **History:** previously marked only with `cz_change:` comments (no banner, not in
   this ledger) — exactly the gap this ledger exists to catch, per entry 4's history
   note. Banner added; no behavior change.
+- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts` and
+  `clickzetta-context-limit.test.ts` cover discovery and the context-window table;
+  both must stay green after a re-baseline.
 
 ### 8. Drop the cached global config on instance dispose
 
@@ -244,6 +248,9 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   reachable from the cz layer can invalidate it except at this dispose call site.
 - **History:** previously marked only with `cz_change:`, not in this ledger. Banner
   added; no behavior change.
+- **Verify:** rewrite a global config file, dispose the instance, confirm the
+  rebuilt instance's provider list reflects the rewrite rather than the one
+  observed at startup.
 
 ### 9. Model-selection chain extracted for reuse by `cz-cli agent llm show`
 
@@ -265,6 +272,9 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   reads that state, which lives in upstream's `local.tsx`.
 - **History:** previously marked only with `cz_change:`, not in this ledger. Banners
   added; no behavior change.
+- **Verify:** `packages/core/src/model-selection.ts`'s own unit tests, plus
+  `cz-cli agent llm show` naming a concrete provider/model with `config.model`
+  unset (never "automatic").
 
 ---
 
@@ -338,6 +348,37 @@ the hooks they depend on still exist in the new upstream.
   carrying that debt. The full TUI (the default) is unaffected.
 - **Upstream hook to re-verify on re-baseline:** `TuiThreadCommand` is still `$0` and
   still exposes `command`/`describe`/`builder`/`handler` we can wrap.
+
+### 5. Quota/Profile sidebar sections
+
+- **cz files:** `packages/cz-cli/src/opencode-plugin/tui-quota.tsx` (and its
+  `tui-quota-{data,format,runtime}.ts` siblings).
+- **Mechanism:** registers on the public `sidebar_content` slot
+  (`packages/plugin/src/tui.ts`'s `TuiHostSlotMap`), rendering a "Profile" section
+  (which profile/account/env/instance/workspace the session is connected as) and a
+  "Quota" section (balance + token usage) at `order: 150` — directly after
+  upstream's own Context section (`order: 100`) and ahead of MCP/LSP/Todo/Files
+  (200/300/400/500).
+- **Why:** the readout used to share the prompt's top-right corner with the
+  agent/model/provider labels and got squeezed out at 80 columns; the sidebar has
+  room and groups it with the Context section reporting the same kind of
+  per-session usage facts.
+- **Upstream hooks to re-verify on re-baseline:**
+  - `sidebar_content` still exists in `TuiHostSlotMap` and still passes
+    `props.session_id`.
+  - It is still an **append** slot (not `single_winner` like
+    `sidebar_title`/`sidebar_footer` next to it) — otherwise these sections would
+    displace upstream's Context section instead of composing with it.
+  - The order values these sections sit between — 100 (context) / 200 (mcp) / 300
+    (lsp) / 400 (todo) / 500 (files) — are still what upstream assigns; `order: 150`
+    is only meaningful relative to them.
+  - `sidebar_content` is rendered only from
+    `packages/tui/src/routes/session/sidebar.tsx`: there is no home-route consumer,
+    so these sections are session-only, and the sidebar auto-opens only at ≥120
+    columns (`sidebarVisible` in `packages/tui/src/routes/session/index.tsx`) —
+    narrower terminals reach it via the toggle. This is upstream's own layout
+    policy, not something cz controls, and is the deliberate trade for legibility
+    made in place of the old prompt-corner placement.
 
 ---
 

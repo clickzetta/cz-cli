@@ -72,8 +72,11 @@ function View(props: {
   userName: () => string | undefined
   onContext: (key: string) => void
 }) {
-  // Read live rather than once: the profile is resolved from profiles.toml on every
-  // render, so a `cz-cli profile use` elsewhere is reflected without extra plumbing.
+  // Resolved once per mount, not live: readProfileInfo() is a plain file read with
+  // no reactive dependency, so this memo only recomputes if props.userName() later
+  // changes (the OAuth path below). A `cz-cli profile use` run in another shell —
+  // or an in-process Profile.set(), which nothing under opencode-plugin calls today
+  // — is picked up only if the sidebar section remounts, not while it stays open.
   // userName arrives separately because OAuth profiles need a portal call for it.
   const profile = createMemo(() => {
     const info = readProfileInfo()

@@ -12,10 +12,15 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Issues only: the PR half of this mechanism (pr-standards.yml's check-compliance
+  # job, the only thing that ever applied needs:compliance to a pull request) was
+  # removed as part of dropping the upstream community-PR-governance workflows this
+  # fork doesn't use (see .github/workflows/pr-standards.yml's removal). The only
+  # remaining producer of this label, duplicate-issues.yml, labels issues only.
   close-non-compliant:
     runs-on: ubuntu-latest
     steps:
-      - name: Close non-compliant issues and PRs after 2 hours
+      - name: Close non-compliant issues after 2 hours
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
@@ -27,18 +32,16 @@ jobs:
               per_page: 100,
             });
 
-            if (items.length === 0) {
-              core.info('No open issues/PRs with needs:compliance label');
+            const issues = items.filter((item) => !item.pull_request);
+            if (issues.length === 0) {
+              core.info('No open issues with needs:compliance label');
               return;
             }
 
             const now = Date.now();
             const twoHours = 2 * 60 * 60 * 1000;
 
-            for (const item of items) {
-              const isPR = !!item.pull_request;
-              const kind = isPR ? 'PR' : 'issue';
-
+            for (const item of issues) {
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -50,13 +53,11 @@ jobs:
 
               const commentAge = now - new Date(complianceComment.created_at).getTime();
               if (commentAge < twoHours) {
-                core.info(`${kind} #${item.number} still within 2-hour window (${Math.round(commentAge / 60000)}m elapsed)`);
+                core.info(`Issue #${item.number} still within 2-hour window (${Math.round(commentAge / 60000)}m elapsed)`);
                 continue;
               }
 
-              const closeMessage = isPR
-                ? 'This pull request has been automatically closed because it was not updated to meet our [contributing guidelines](../blob/dev/CONTRIBUTING.md) within the 2-hour window.\n\nFeel free to open a new pull request that follows our guidelines.'
-                : 'This issue has been automatically closed because it was not updated to meet our [contributing guidelines](../blob/dev/CONTRIBUTING.md) within the 2-hour window.\n\nFeel free to open a new issue that follows our issue templates.';
+              const closeMessage = 'This issue has been automatically closed because it was not updated to meet our [contributing guidelines](../blob/dev/CONTRIBUTING.md) within the 2-hour window.\n\nFeel free to open a new issue that follows our issue templates.';
 
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -74,22 +75,13 @@ jobs:
                 });
               } catch (e) {}
 
-              if (isPR) {
-                await github.rest.pulls.update({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: item.number,
-                  state: 'closed',
-                });
-              } else {
-                await github.rest.issues.update({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: item.number,
-                  state: 'closed',
-                  state_reason: 'not_planned',
-                });
-              }
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: item.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
 
-              core.info(`Closed non-compliant ${kind} #${item.number} after 2-hour window`);
+              core.info(`Closed non-compliant issue #${item.number} after 2-hour window`);
             }
