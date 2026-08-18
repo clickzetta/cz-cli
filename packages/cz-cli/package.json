@@ -16,7 +16,7 @@
     "dev": "bun --conditions=browser src/main.ts",
     "build": "bun run script/build.ts",
     "typecheck": "tsgo --noEmit",
-    "test": "bun test --timeout 30000",
+    "test": "bun test --isolate --timeout 30000",
     "test:e2e": "bun test/e2e.ts",
     "test:e2e:full": "bun test/e2e-full.ts",
     "test:e2e:routing": "bun test/e2e-routing.ts",

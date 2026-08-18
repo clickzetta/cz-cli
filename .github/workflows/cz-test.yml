@@ -37,4 +37,11 @@ jobs:
 
       - name: Run cz-cli unit tests
         working-directory: packages/cz-cli
-        run: bun test --timeout 30000
+        # test script runs with --isolate: several suites (e.g.
+        # analytics-agent-session-commands.test.ts) mock.module() their own src,
+        # which bun's default shared-process test run leaks across files sharing
+        # that process — a later network-boundary suite (task-condition-flow,
+        # task-merge) that expects the REAL module then reads this file's fixture
+        # data instead. --isolate gives each file its own global object so a
+        # leaked mock cannot reach another file at all.
+        run: bun run test
