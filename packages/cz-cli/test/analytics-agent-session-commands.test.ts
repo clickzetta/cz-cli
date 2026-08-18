@@ -1,5 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { spawnSync } from "node:child_process"
+
+// Bun's mock.module registrations are process-global and outlive this file.
+// Other cz-cli suites (task-condition-flow, task-merge, task-lineage, ...) are
+// network-boundary tests that run the REAL modules and stub only globalThis.fetch,
+// so a leftover mock here silently feeds them this file's fixture data instead —
+// same failure mode integration-sync-vc.test.ts's afterAll guard documents. Import
+// the real modules up front so afterAll can restore them.
+const actualProfileStore = await import("../src/connection/profile-store.ts")
+const actualStudioContext = await import("../src/commands/studio-context.ts")
+const actualLogger = await import("../src/logger.ts")
 
 mock.module("../src/connection/profile-store.js", () => ({
   readAgentEndpoint: () => "https://example.clickzetta.com",
@@ -26,6 +36,12 @@ mock.module("../src/commands/studio-context.js", () => ({
 mock.module("../src/logger.js", () => ({
   logOperation: () => {},
 }))
+
+afterAll(() => {
+  mock.module("../src/connection/profile-store.js", () => actualProfileStore)
+  mock.module("../src/commands/studio-context.js", () => actualStudioContext)
+  mock.module("../src/logger.js", () => actualLogger)
+})
 
 const { createCli } = await import("../src/cli.ts")
 const { registerAnalyticsAgentCommand } = await import("../src/commands/analytics-agent.ts")
