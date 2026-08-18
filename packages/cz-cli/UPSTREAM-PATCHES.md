@@ -272,9 +272,10 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   reads that state, which lives in upstream's `local.tsx`.
 - **History:** previously marked only with `cz_change:`, not in this ledger. Banners
   added; no behavior change.
-- **Verify:** `packages/core/src/model-selection.ts`'s own unit tests, plus
-  `cz-cli agent llm show` naming a concrete provider/model with `config.model`
-  unset (never "automatic").
+- **Verify:** `packages/core/test/model-selection.test.ts` covers the four-tier
+  precedence directly; goes RED if `resolveModelSelection`'s tier order or
+  fallback-on-dead-ref behavior regresses. Manually: `cz-cli agent llm show`
+  names a concrete provider/model with `config.model` unset (never "automatic").
 
 ---
 
@@ -379,6 +380,23 @@ the hooks they depend on still exist in the new upstream.
     narrower terminals reach it via the toggle. This is upstream's own layout
     policy, not something cz controls, and is the deliberate trade for legibility
     made in place of the old prompt-corner placement.
+  - `sidebarVisible`'s FIRST check is `if (session()?.parentID) return false`
+    (`routes/session/index.tsx`) — a child (subagent) session never renders the
+    sidebar at ANY width, and the toggle cannot override it (checked after that
+    early return). So on a child session these sections are gone entirely, not
+    merely harder to reach — where the old prompt-corner slot rendered the same
+    on parent and child. Expected/accepted: a subagent turn still spends the
+    parent's quota and the user returns to the parent session to see it, but this
+    is upstream's policy, not cz's, and worth re-verifying it still holds.
+- **Also new on this feature's network path:** `centralPortalHost`/`portalRead`
+  (`tui-quota-data.ts`) send the profile's portal token to `api.clickzetta.com`/
+  `api.singdata.com` when the profile's own regional host answers an unusable
+  business code — a host the user never named in profiles.toml. Confirmed
+  intentional: both hosts answer with the SAME tenant-global data (balance, a
+  tenant's virtual keys are not per-region facts), the rewrite is pinned to the
+  two roots actually measured (see `centralPortalHost`'s docstring), and it only
+  fires when the configured host has already failed to answer usably. No config
+  escape hatch exists to opt out of the fallback.
 
 ---
 

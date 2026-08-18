@@ -69,19 +69,34 @@ function View(props: {
   activeModel: ActiveModelContext
   sessionID: string
   snapshot: () => QuotaSnapshot | undefined
-  userName: () => string | undefined
+  profileInfo: ReturnType<typeof readProfileInfo>
+  userName: () => { profile: string; name: string } | undefined
   onContext: (key: string) => void
 }) {
-  // Resolved once per mount, not live: readProfileInfo() is a plain file read with
-  // no reactive dependency, so this memo only recomputes if props.userName() later
-  // changes (the OAuth path below). A `cz-cli profile use` run in another shell —
-  // or an in-process Profile.set(), which nothing under opencode-plugin calls today
-  // — is picked up only if the sidebar section remounts, not while it stays open.
-  // userName arrives separately because OAuth profiles need a portal call for it.
+  // profileInfo is resolved ONCE by the caller (sidebar_content, at the same
+  // point this component is instantiated) and passed down as a plain value —
+  // not re-read here. readProfileInfo() does two-to-three synchronous
+  // readFileSync+TOML-parse passes with no memoization of its own; doing that
+  // inside a createMemo only LOOKS reactive, since nothing in its body is a
+  // signal read — it actually just repeats the same file I/O on every mount of
+  // this component (the sidebar's ≥120-column toggle, or a resize across that
+  // threshold, both remount it). Hoisting the call one level up takes the I/O
+  // off the render path entirely and makes "resolved once, not live" explicit
+  // in the shape of the code rather than a comment explaining a memo that
+  // doesn't do what a memo implies.
+  //
+  // userName arrives separately because OAuth profiles need a portal call for
+  // it, and is tagged with the profile it was resolved for: if the active
+  // profile changed since that fetch started, `resolved.profile !==
+  // profileInfo.profile` drops the row rather than naming the CURRENT profile
+  // with the PREVIOUS profile's user — a wrong person attached to the right
+  // tenant is worse than a blank row.
   const profile = createMemo(() => {
-    const info = readProfileInfo()
+    const info = props.profileInfo
     if (!info) return undefined
-    return info.userName ? info : { ...info, userName: props.userName() }
+    if (info.userName) return info
+    const resolved = props.userName()
+    return resolved?.profile === info.profile ? { ...info, userName: resolved.name } : info
   })
   const identityRows = createMemo(() => profileRows(profile()))
   const usageRows = createMemo(() => quotaRows(props.snapshot()))
@@ -104,16 +119,26 @@ function View(props: {
 
 export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveModelContext) {
   const [snapshot, setSnapshot] = createSignal<QuotaSnapshot | undefined>(undefined)
-  // Resolved once, unawaited: identity is fixed for the session, and the rest of
-  // the Profile section is already on screen from profiles.toml without it.
-  const [userName, setUserName] = createSignal<string | undefined>(undefined)
-  void fetchProfileUserName({ signal: api.lifecycle.signal })
-    .then((name) => {
-      if (name) setUserName(name)
-    })
-    .catch(() => {
-      // A missing user name costs one row, never the section.
-    })
+  const [userName, setUserName] = createSignal<{ profile: string; name: string } | undefined>(undefined)
+  // Deferred until the sidebar section first mounts, not fired at install: a
+  // portal round-trip (token acquisition included) here would run on every TUI
+  // startup for every user, including one who never opens the sidebar — the
+  // OLD prompt-corner placement's only network work was fetchQuotaSnapshot,
+  // which exits before touching a token for a foreign provider. Idempotent
+  // (guarded by `started`) because the sidebar can mount more than once (the
+  // ≥120-column toggle, or a resize across that threshold).
+  let started = false
+  const startUserNameFetch = () => {
+    if (started) return
+    started = true
+    void fetchProfileUserName({ signal: api.lifecycle.signal })
+      .then((resolved) => {
+        if (resolved) setUserName(resolved)
+      })
+      .catch(() => {
+        // A missing user name costs one row, never the section.
+      })
+  }
 
   const controller = createQuotaController({
     load: () =>
@@ -159,12 +184,14 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     order: 150,
     slots: {
       sidebar_content(_ctx, props) {
+        startUserNameFetch()
         return (
           <View
             api={api}
             activeModel={activeModel}
             sessionID={props.session_id}
             snapshot={snapshot}
+            profileInfo={readProfileInfo()}
             userName={userName}
             onContext={onContext}
           />

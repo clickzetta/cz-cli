@@ -22,7 +22,7 @@ import { getToken, toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { getCookieToken } from "../connection/cookie-token.js"
 import * as Profile from "../connection/profile-context.js"
-import { loadProfiles, readAuthType } from "../connection/profile-store.js"
+import { deriveAuthType, explicitAuthType, loadProfiles } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 
 const BILLING_PATH = "/clickzetta-portal/hornhub/account/billing/account"
@@ -118,14 +118,16 @@ export interface QuotaSnapshot {
 export interface ProfileInfo {
   /** Active profile name, i.e. what `-p` selected or default_profile. */
   profile: string
-  /** How that profile authenticates: oauth / pat / password / header. */
+  /** How that profile authenticates: oauth / pat / password / cookie. */
   authType?: string
   /** Account (tenant) name — NOT the user; the two differ. */
   accountName?: string
   /** Human user within the account. Resolved from the portal. */
   userName?: string
-  /** Environment/region label parsed off the service host, when recognizable. */
+  /** Deployment environment (dev/sit/uat/prod), when the host names one. */
   env?: string
+  /** Cloud region segment, for a regional host that names one instead of an env. */
+  region?: string
   instance?: string
   workspace?: string
 }
@@ -146,16 +148,22 @@ function num(value: unknown): number | undefined {
 }
 
 /**
- * Environment/region label for a service host, or undefined when the host
- * doesn't match a recognizable ClickZetta/Singdata shape.
+ * Deployment environment and cloud region for a service host — two DIFFERENT
+ * facts, kept apart on purpose. A `dev-api.`/`sit-api.`/`uat-api.` host or a
+ * central host names an environment (`dev`/`sit`/`uat`/`prod`); a regional host
+ * like `cn-shanghai-alicloud.api.clickzetta.com` names a region instead, and IS
+ * production — collapsing the two into one label would print a region name
+ * under a heading that invites reading it as "not prod", which is the more
+ * consequential half of "am I pointed at the right lakehouse" for that host.
+ * Each is undefined when the host doesn't match a recognizable shape.
  *
  * Deliberately NOT `@clickzetta/sdk`'s `detectEnv`: that function ends with an
  * unconditional `return "prod"` for anything it doesn't recognize (private
  * deployments, custom domains, `localhost`), which is a reasonable default for
  * picking a service URL shape but would be a FABRICATED fact if rendered in this
- * panel — whose whole job is answering "am I pointed at the right lakehouse".
- * Showing an invented "prod" for a deployment that may not be prod is worse than
- * showing nothing, so this mirrors detectEnv's pattern list but drops the catch-all.
+ * panel. Showing an invented "prod" for a deployment that may not be prod is
+ * worse than showing nothing, so this mirrors detectEnv's pattern list but drops
+ * the catch-all.
  */
 function knownEnv(service: string): string | undefined {
   const host = service.replace(/^https?:\/\//, "").split("/")[0] ?? ""
@@ -163,6 +171,11 @@ function knownEnv(service: string): string | undefined {
   if (host.startsWith("sit-api.")) return "sit"
   if (host.startsWith("uat-api.")) return "uat"
   if (host === "api.clickzetta.com" || host === "api.singdata.com") return "prod"
+  return undefined
+}
+
+function knownRegion(service: string): string | undefined {
+  const host = service.replace(/^https?:\/\//, "").split("/")[0] ?? ""
   const match = host.match(/^([^.]+)\.api\.(clickzetta|singdata)\.com$/)
   return match ? match[1] : undefined
 }
@@ -190,16 +203,19 @@ export function readProfileInfo(): ProfileInfo | undefined {
   const profile = profiles[name]!
   const str = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
   const service = str(profile.service)
-  // Delegates to readAuthType rather than re-deriving from the raw fields: that is
-  // the same precedence (explicit auth_type, else cookie/oauth/pat/password) the
-  // rest of the CLI uses to pick a credential, including the `cookie` case a
-  // hand-rolled check here would otherwise miss.
+  // explicitAuthType ?? deriveAuthType is readAuthType's own body (profile-store
+  // .ts), applied to the `profile` entry already in hand rather than having
+  // readAuthType(name) look it up by name and re-read+re-parse profiles.toml a
+  // third time in this function. Same precedence (explicit auth_type, else
+  // cookie/oauth/pat/password) the rest of the CLI uses to pick a credential,
+  // including the `cookie` case a hand-rolled check here would otherwise miss.
   return {
     profile: name,
-    authType: readAuthType(name),
+    authType: explicitAuthType(profile) ?? deriveAuthType(profile),
     accountName: str(profile.account_name),
     userName: str(profile.username),
     env: service ? knownEnv(service) : undefined,
+    region: service ? knownRegion(service) : undefined,
     instance: str(profile.instance),
     workspace: str(profile.workspace),
   }
@@ -208,6 +224,11 @@ export function readProfileInfo(): ProfileInfo | undefined {
 // Resolved user names, keyed by profile. Identity does not change for the life of
 // a session, so this is asked once rather than on every quota refresh.
 const userNameCache = new Map<string, string>()
+
+/** Test-only: clear the user-name cache between tests sharing a process. */
+export function clearUserNameCacheForTest(): void {
+  userNameCache.clear()
+}
 
 /**
  * POST getCurrentUser and pull out the login handle, or undefined on any failure
@@ -247,13 +268,20 @@ async function readCurrentUserName(
  *
  * Returns undefined rather than throwing: a missing user name should cost one
  * line of the section, never the section itself.
+ *
+ * Tagged with the profile it resolved for (not a bare string) so a caller can
+ * detect a profile switch that happened while this was in flight — composing a
+ * later profile's identity with an earlier profile's user name would misattribute
+ * a real person to the wrong tenant, worse than the row simply being absent.
  */
-export async function fetchProfileUserName(input: { signal?: AbortSignal } = {}): Promise<string | undefined> {
+export async function fetchProfileUserName(
+  input: { signal?: AbortSignal } = {},
+): Promise<{ profile: string; name: string } | undefined> {
   const info = readProfileInfo()
   if (!info) return undefined
-  if (info.userName) return info.userName
+  if (info.userName) return { profile: info.profile, name: info.userName }
   const cached = userNameCache.get(info.profile)
-  if (cached) return cached
+  if (cached) return { profile: info.profile, name: cached }
 
   const profiles = loadProfiles()
   const profile = profiles[info.profile]
@@ -269,7 +297,7 @@ export async function fetchProfileUserName(input: { signal?: AbortSignal } = {})
     const name = await readCurrentUserName(toServiceUrl(config.service, config.protocol), token.token, input.signal)
     if (!name) return undefined
     userNameCache.set(info.profile, name)
-    return name
+    return { profile: info.profile, name }
   } catch {
     return undefined
   }
@@ -470,32 +498,56 @@ export function centralPortalHost(baseUrl: string): string | undefined {
  * verified first-hand (tencentcloud and uat), so an unconditional rewrite risked
  * breaking singdata / private deployments that were untestable here. The extra
  * round-trip is spent only on the path that was already failing.
+ *
+ * A host once observed NOT to serve these routes (`unservedHost`) skips straight
+ * to the central host on every later call: the controller refreshes on every
+ * busy→idle edge — once per agent turn — so without this a session on such a
+ * profile pays double the portal requests for as long as it runs, not once while
+ * the fallback is discovered. Promotion requires the central host to have PROVEN
+ * it can serve the route (an OK payload), not merely that the profile host
+ * failed once — a transient blip on a healthy region host must not permanently
+ * redirect it.
  */
+const unservedHost = new Set<string>()
+
+/** Test-only: clear the unserved-host memory between tests sharing a process. */
+export function clearUnservedHostForTest(): void {
+  unservedHost.clear()
+}
+
 async function portalRead(
   baseUrl: string,
   path: string,
   token: string,
   opts: { method?: "GET" | "POST"; signal?: AbortSignal } = {},
 ): Promise<unknown> {
+  const central = centralPortalHost(baseUrl)
   let firstError: unknown
   let firstPayload: unknown
-  try {
-    const payload = await portalCall(baseUrl, path, token, opts)
-    if (isRecord(payload) && isPortalOk(payload.code)) return payload
-    firstPayload = payload
-  } catch (error) {
-    if (opts.signal?.aborted) throw error
-    firstError = error
+  if (!central || !unservedHost.has(baseUrl)) {
+    try {
+      const payload = await portalCall(baseUrl, path, token, opts)
+      if (isRecord(payload) && isPortalOk(payload.code)) return payload
+      firstPayload = payload
+    } catch (error) {
+      if (opts.signal?.aborted) throw error
+      firstError = error
+    }
   }
 
-  const central = centralPortalHost(baseUrl)
   if (!central) {
     if (firstError) throw firstError
     return firstPayload
   }
   try {
     const payload = await portalCall(central, path, token, opts)
-    if (isRecord(payload) && isPortalOk(payload.code)) return payload
+    if (isRecord(payload) && isPortalOk(payload.code)) {
+      // Promote only on a proven business-code failure (firstPayload set), never
+      // on a bare transport/auth error (firstError) — a network blip is not
+      // evidence the host doesn't serve the route.
+      if (firstPayload !== undefined) unservedHost.add(baseUrl)
+      return payload
+    }
     // Neither host produced a usable answer. Prefer surfacing the ORIGINAL host's
     // result so the failure reads as the profile's own, not the fallback's — but
     // only when the first attempt actually answered with something (firstPayload
