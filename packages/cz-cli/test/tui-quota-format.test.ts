@@ -109,7 +109,7 @@ describe("profileRows", () => {
     authType: "oauth",
     accountName: "xxjrdhjr",
     userName: "xh123",
-    env: "ap-shanghai-tencentcloud",
+    env: "uat",
     instance: "0e824e33",
     workspace: "quick_start",
   }
@@ -119,9 +119,18 @@ describe("profileRows", () => {
       { text: "xh_0 · oauth", tone: "text" },
       { text: "xxjrdhjr account", tone: "textMuted" },
       { text: "xh123 user", tone: "textMuted" },
-      { text: "ap-shanghai-tencentcloud env", tone: "textMuted" },
+      { text: "uat env", tone: "textMuted" },
       { text: "0e824e33 instance", tone: "textMuted" },
       { text: "quick_start workspace", tone: "textMuted" },
+    ])
+  })
+
+  // env and region are different facts (see tui-quota-data.ts's knownEnv/
+  // knownRegion) and get their own rows so neither is mislabelled as the other.
+  test("renders region on its own row, distinct from env", () => {
+    expect(profileRows({ profile: "p1", region: "ap-shanghai-tencentcloud" })).toEqual([
+      { text: "p1", tone: "text" },
+      { text: "ap-shanghai-tencentcloud region", tone: "textMuted" },
     ])
   })
 

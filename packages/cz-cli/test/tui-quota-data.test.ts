@@ -7,6 +7,9 @@ import { clearTokenCache } from "@clickzetta/sdk"
 import { setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 import {
   centralPortalHost,
+  clearUnservedHostForTest,
+  clearUserNameCacheForTest,
+  fetchProfileUserName,
   fetchQuotaSnapshot,
   isPortalOk,
   maskApiKey,
@@ -146,6 +149,13 @@ beforeEach(() => {
   // The SDK memoizes tokens per connection for the process; without this a later
   // test reuses the token minted against an earlier test's stub.
   clearTokenCache()
+  // portalRead's unserved-host memory is process-global too; without this, a
+  // test that gets its region host marked unserved leaks that into a later
+  // test using the SAME host with a different fixture (a healthy region host,
+  // or an error the test expects to be rethrown).
+  clearUnservedHostForTest()
+  // Same reasoning as above, for fetchProfileUserName's per-profile name cache.
+  clearUserNameCacheForTest()
 })
 
 describe("isPortalOk", () => {
@@ -598,7 +608,8 @@ describe("readProfileInfo", () => {
         authType: "pat",
         accountName: "prod-account",
         userName: undefined,
-        env: "cn-shanghai-alicloud",
+        env: undefined,
+        region: "cn-shanghai-alicloud",
         instance: "inst-prod",
         workspace: "quick_start",
       })
@@ -615,6 +626,23 @@ describe("readProfileInfo", () => {
     process.env.CZ_PROFILE = "dev_0"
     try {
       expect(readProfileInfo()?.env).toBe("dev")
+      expect(readProfileInfo()?.region).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // env and region are different facts, not alternatives: a regional host IS
+  // production, so it must not report an env at all (which would invite reading
+  // "no env" as "not prod") while it DOES report which region.
+  test("reports region rather than env for a regional host, and never both", () => {
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      const info = readProfileInfo()
+      expect(info?.region).toBe("cn-shanghai-alicloud")
+      expect(info?.env).toBeUndefined()
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous
@@ -660,6 +688,72 @@ describe("readProfileInfo", () => {
     process.env.CZ_PROFILE = "does_not_exist"
     try {
       expect(readProfileInfo()).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+})
+
+describe("fetchProfileUserName", () => {
+  // prod_0's TOML block carries no `username` (it's a `pat` profile) — the exact
+  // shape that needs the portal round-trip, not the direct-from-TOML shortcut.
+  test("resolves via the portal and tags the result with the profile it came from", async () => {
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "pdiaxzjq" } }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      expect(await fetchProfileUserName()).toEqual({ profile: "prod_0", name: "pdiaxzjq" })
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  test("returns undefined rather than throwing when the portal fails", async () => {
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: () => new Response("nope", { status: 500 }),
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      expect(await fetchProfileUserName()).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // A profile with `username` already in its TOML block (password auth) never
+  // touches the network at all — the value comes straight from readProfileInfo.
+  test("returns the TOML username with no portal call for a password profile", async () => {
+    writeFileSync(
+      join(requireTestHome(), ".clickzetta", "profiles.toml"),
+      ["[profiles.pw_0]", "username = 'alice'", "password = 'secret'"].join("\n"),
+    )
+    onFetch({ match: () => true, respond: () => { throw new Error("no network expected") } })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "pw_0"
+    try {
+      expect(await fetchProfileUserName()).toEqual({ profile: "pw_0", name: "alice" })
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous
@@ -798,6 +892,53 @@ describe("portal reads fall back to the central host", () => {
     process.env.CZ_PROFILE = "prod_0"
     try {
       await expect(fetchQuotaSnapshot({ providerID: "prod_0" })).rejects.toThrow("connection reset")
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // Once the central host has PROVEN it can serve the route for a given baseUrl,
+  // later reads against that same host skip the doomed first attempt entirely —
+  // otherwise a session on this profile pays double the portal requests on every
+  // refresh for as long as it runs, not once while the fallback is discovered.
+  test("skips the region host on a later call once it is known unserved", async () => {
+    const seen: string[] = []
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        seen.push(url)
+        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com")) {
+          return { code: 8888, message: "未知异常", data: null }
+        }
+        if (url.includes("/hornhub/account/billing/account/")) {
+          return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
+        }
+        // A key matching PROD_KEY, so the scan stops at prod_0 (usage found) rather
+        // than continuing to dev_0's host and polluting `seen` with an unrelated call.
+        if (url.includes("/user/listApiKeys")) {
+          return {
+            code: 0,
+            data: [{ rateLimitType: "quota_total", rateLimitValue: 10_000_000, usage: 0, vapiKeyMasked: "ff52****9bc8" }],
+          }
+        }
+        if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // first call: learns the host is unserved
+      seen.length = 0
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // second call: should skip straight to central
+      expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com"))).toBe(false)
+      expect(seen.every((url) => url.includes("//api.clickzetta.com"))).toBe(true)
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous

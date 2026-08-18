@@ -124,8 +124,11 @@ export function formatPercentLeft(remaining: number): string {
  * and where.
  *
  * These are the facts that answer "am I about to run this against the right
- * lakehouse", which is worth a glance before every prompt — so they are plain
- * `text` tone rather than muted, unlike the figures below them.
+ * lakehouse", which is worth a glance before every prompt. Only the profile row
+ * itself is plain `text` tone, so the section leads with the answer; every
+ * supporting detail below it is `textMuted`, same as the Quota figures and same
+ * as upstream's own Context section (heading `text`, every figure under it
+ * `textMuted` — packages/tui/src/feature-plugins/sidebar/context.tsx).
  *
  * Account and user are separate rows because they are separate things and their
  * values look alike (`xxjrdhjr` the tenant vs `xh123` the person); a single
@@ -143,6 +146,7 @@ export function profileRows(info: ProfileInfo | undefined): QuotaRow[] {
   add(info.accountName, "account")
   add(info.userName, "user")
   add(info.env, "env")
+  add(info.region, "region")
   add(info.instance, "instance")
   add(info.workspace, "workspace")
   return rows
