@@ -24,8 +24,9 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
     const vcs = yield* Vcs.Service
 
     const dispose = Effect.fn("InstanceHttpApi.dispose")(function* () {
-      // cz_change: drop the cached global config too, so the rebuilt instance
-      // re-reads it from disk.
+      //======================== cz-cli change ========================
+      // Drop the cached global config too, so the rebuilt instance re-reads it
+      // from disk.
       //
       // The global config is cached with `Duration.infinity` on the PROCESS-level
       // BootstrapRuntime (config/config.ts cachedInvalidateWithTTL), not on the
@@ -36,6 +37,7 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       // Config.updateGlobal already invalidate; a caller editing the file directly
       // has no other way to.
       yield* cfg.invalidate()
+      //====================== end cz-cli change ======================
       yield* markInstanceForDisposal(yield* InstanceState.context)
       return true
     })

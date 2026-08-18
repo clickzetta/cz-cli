@@ -5,6 +5,7 @@ import {
   formatCash,
   formatPercentLeft,
   periodSuffix,
+  profileRows,
   quotaRows,
   quotaTone,
   remainingRatio,
@@ -99,6 +100,50 @@ describe("cashTone", () => {
     expect(cashTone(0)).toBe("error")
     expect(cashTone(5)).toBe("warning")
     expect(cashTone(51.2772)).toBe("textMuted")
+  })
+})
+
+describe("profileRows", () => {
+  const info = {
+    profile: "xh_0",
+    authType: "oauth",
+    accountName: "xxjrdhjr",
+    userName: "xh123",
+    region: "ap-shanghai-tencentcloud",
+    instance: "0e824e33",
+    workspace: "quick_start",
+  }
+
+  test("leads with the profile and lists identity then connection target", () => {
+    expect(profileRows(info)).toEqual([
+      { text: "xh_0 · oauth", tone: "text" },
+      { text: "xxjrdhjr account", tone: "textMuted" },
+      { text: "xh123 user", tone: "textMuted" },
+      { text: "ap-shanghai-tencentcloud region", tone: "textMuted" },
+      { text: "0e824e33 instance", tone: "textMuted" },
+      { text: "quick_start workspace", tone: "textMuted" },
+    ])
+  })
+
+  // Account and user look alike (a tenant handle vs a person) and must not be
+  // collapsed into one line where either could be read as the other.
+  test("keeps account and user on separate labelled rows", () => {
+    const rows = profileRows(info).map((row) => row.text)
+    expect(rows).toContain("xxjrdhjr account")
+    expect(rows).toContain("xh123 user")
+  })
+
+  // userName arrives from the portal after the rest is already painted, so its row
+  // must simply be absent rather than showing a placeholder.
+  test("drops rows for fields that are not known yet", () => {
+    expect(profileRows({ profile: "p1", accountName: "acct" })).toEqual([
+      { text: "p1", tone: "text" },
+      { text: "acct account", tone: "textMuted" },
+    ])
+  })
+
+  test("renders nothing without a profile", () => {
+    expect(profileRows(undefined)).toEqual([])
   })
 })
 

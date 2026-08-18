@@ -9,7 +9,9 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { readJson, writeJsonAtomic } from "../util/persistence"
+//======================== cz-cli change ========================
 import { resolveModelSelection } from "@opencode-ai/core/model-selection"
+//====================== end cz-cli change ======================
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
@@ -192,7 +194,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
 
       const args = useArgs()
-      // cz_change: the four-tier chain that used to be inlined here now lives in
+      //======================== cz-cli change ========================
+      // The four-tier chain that used to be inlined here now lives in
       // @opencode-ai/core/model-selection, so `cz-cli agent llm show` can report
       // the very model this resolves to instead of guessing. Behaviour unchanged;
       // only the inputs are passed explicitly. Keep the memo wrapper for reactivity.
@@ -207,6 +210,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         if (!resolved) return undefined
         return { providerID: resolved.providerID, modelID: resolved.modelID }
       })
+      //====================== end cz-cli change ======================
 
       const currentModel = createMemo(() => {
         const a = agent.current()
