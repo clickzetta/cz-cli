@@ -1,7 +1,7 @@
 // cz_change: pure presentation logic for the TUI quota indicator. No I/O, no JSX,
 // so it is unit-testable on its own and shared by the renderer (tui-quota.tsx)
 // and its tests.
-import type { QuotaPeriod, QuotaSnapshot } from "./tui-quota-data.js"
+import type { ProfileInfo, QuotaPeriod, QuotaSnapshot } from "./tui-quota-data.js"
 
 /** Theme color token the indicator asks for. Resolved against api.theme.current. */
 export type QuotaTone = "text" | "textMuted" | "success" | "warning" | "error"
@@ -117,4 +117,33 @@ export function quotaRows(snapshot: QuotaSnapshot | undefined): QuotaRow[] {
  */
 export function formatPercentLeft(remaining: number): string {
   return `${Math.floor(remaining * 100)}%`
+}
+
+/**
+ * Render the active profile into sidebar rows: who this session is connected as,
+ * and where.
+ *
+ * These are the facts that answer "am I about to run this against the right
+ * lakehouse", which is worth a glance before every prompt — so they are plain
+ * `text` tone rather than muted, unlike the figures below them.
+ *
+ * Account and user are separate rows because they are separate things and their
+ * values look alike (`xxjrdhjr` the tenant vs `xh123` the person); a single
+ * combined line invites reading one as the other. Missing fields drop their row
+ * rather than printing a placeholder.
+ */
+export function profileRows(info: ProfileInfo | undefined): QuotaRow[] {
+  if (!info) return []
+  const rows: QuotaRow[] = [
+    { text: info.authType ? `${info.profile} · ${info.authType}` : info.profile, tone: "text" },
+  ]
+  const add = (value: string | undefined, label: string) => {
+    if (value) rows.push({ text: `${value} ${label}`, tone: "textMuted" })
+  }
+  add(info.accountName, "account")
+  add(info.userName, "user")
+  add(info.region, "region")
+  add(info.instance, "instance")
+  add(info.workspace, "workspace")
+  return rows
 }

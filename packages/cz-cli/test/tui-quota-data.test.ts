@@ -11,6 +11,7 @@ import {
   isPortalOk,
   maskApiKey,
   matchKeyUsage,
+  readProfileInfo,
   readRecentProviders,
   resolveClickzettaEntry,
   selectDisplayedProvider,
@@ -584,6 +585,54 @@ describe("balance survives an unresolvable LLM entry", () => {
     stubPortal()
     setActiveModel("")
     await expect(fetchQuotaSnapshot({})).rejects.toThrow("billing unreachable")
+  })
+})
+
+describe("readProfileInfo", () => {
+  test("reports the active profile's identity and connection target", () => {
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      expect(readProfileInfo()).toEqual({
+        profile: "prod_0",
+        authType: "pat",
+        accountName: "prod-account",
+        userName: undefined,
+        region: "cn-shanghai-alicloud",
+        instance: "inst-prod",
+        workspace: "quick_start",
+      })
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // The region label comes off the service host, so an environment host reports the
+  // environment rather than a bogus region.
+  test("derives the region from the service host", () => {
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "dev_0"
+    try {
+      expect(readProfileInfo()?.region).toBe("dev")
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // This half must never need the network: it is the part of the section that has
+  // to stay on screen when the portal is unreachable or does not serve the host.
+  test("resolves with no portal handler registered at all", () => {
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    onFetch({ match: () => true, respond: () => { throw new Error("no network expected") } })
+    try {
+      expect(readProfileInfo()?.profile).toBe("prod_0")
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
   })
 })
 

@@ -206,6 +206,66 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   `CZ_MCP_ARGS='{"prompt":"hi"}' bun test/mcp-call-repro.ts` must name the real cause,
   not a bare ref.
 
+### 7. ClickZetta dynamic model discovery in the provider loader
+
+- **File:** `packages/opencode/src/provider/provider.ts`
+- **Marker:** two `//===== cz-cli change =====` banners — one wrapping the discovery
+  block inside the loader (`isClickzettaProvider` through the fallback seed loop),
+  one wrapping the cz-owned helpers appended after `parseModel`
+  (`clickzettaModelsUrl` through `buildClickzettaModel`, ending before the
+  untouched `export const node = LayerNode.make(...)`).
+- **What/why:** ClickZetta is a private gateway, so its models aren't in the
+  models.dev catalog. Discovers them at runtime from the gateway's OpenAI-compatible
+  `GET {baseURL}/v1/models`, matched on the provider's npm (the file:// specifier the
+  cz layer rewrites every genuine ClickZetta entry to — see
+  rewriteProviders/shouldRewriteProvider), not its URL. A provider left with zero
+  models after discovery is seeded from `CLICKZETTA_FALLBACK_MODELS` rather than left
+  empty.
+- **Why intrusive (no hook):** discovery has to run inside the same loader pass that
+  merges config providers and applies `isProviderAllowed`, mirroring the built-in
+  gitlab discoverModels precedent; there is no plugin seam that runs before models
+  are handed to the TUI.
+- **History:** previously marked only with `cz_change:` comments (no banner, not in
+  this ledger) — exactly the gap this ledger exists to catch, per entry 4's history
+  note. Banner added; no behavior change.
+
+### 8. Drop the cached global config on instance dispose
+
+- **File:** `packages/opencode/src/server/routes/instance/httpapi/handlers/instance.ts`
+- **Marker:** one `//===== cz-cli change =====` banner around the `cfg.invalidate()`
+  call in `dispose`.
+- **What/why:** the global config is cached with `Duration.infinity` on the
+  PROCESS-level BootstrapRuntime (`config/config.ts` `cachedInvalidateWithTTL`), not
+  on the instance, so disposing the instance alone left it in place and a rebuild
+  observed the config as it was at startup. Callers that rewrite a config file and
+  then dispose to pick it up (the TUI's provider-credential flows) silently got the
+  stale providers.
+- **Why intrusive (no hook):** the cache lives on the process-level runtime; nothing
+  reachable from the cz layer can invalidate it except at this dispose call site.
+- **History:** previously marked only with `cz_change:`, not in this ledger. Banner
+  added; no behavior change.
+
+### 9. Model-selection chain extracted for reuse by `cz-cli agent llm show`
+
+- **File:** `packages/tui/src/context/local.tsx`
+- **Marker:** two `//===== cz-cli change =====` banners — one around the
+  `resolveModelSelection` import, one around the `fallbackModel` memo body.
+- **cz files:** `packages/core/src/model-selection.ts` (new, cz-owned — the four-tier
+  provider/model resolution chain, unit-tested).
+- **What/why:** `cz-cli agent llm show` used to print "Default model: automatic
+  (OpenCode selects at runtime)" whenever `config.model` was unset — wrong, since the
+  chain's last tier is unconditional and always lands on one concrete model. The
+  chain lived inline in `local.tsx`'s `fallbackModel` memo; extracted whole to
+  `@opencode-ai/core/model-selection` so both callers run the same code instead of
+  `show` guessing with a second copy of the rules. TUI behavior is unchanged — only
+  the four inputs are now passed explicitly.
+- **Why intrusive (no hook):** the chain reads TUI-only reactive state
+  (`sync.data.config.model`, `modelStore.recent`, `sync.data.provider`,
+  `sync.data.provider_default`); extracting it required changing the call site that
+  reads that state, which lives in upstream's `local.tsx`.
+- **History:** previously marked only with `cz_change:`, not in this ledger. Banners
+  added; no behavior change.
+
 ---
 
 ## HOOK-based customizations (safe — live entirely in the cz layer)

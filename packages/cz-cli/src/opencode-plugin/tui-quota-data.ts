@@ -18,11 +18,11 @@
 // tui-title-brand.ts.
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { getToken, toServiceUrl } from "@clickzetta/sdk"
+import { detectEnv, getToken, toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { getCookieToken } from "../connection/cookie-token.js"
 import * as Profile from "../connection/profile-context.js"
-import { loadProfiles } from "../connection/profile-store.js"
+import { loadProfiles, readAuthType } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 
 const BILLING_PATH = "/clickzetta-portal/hornhub/account/billing/account"
@@ -105,6 +105,31 @@ export interface QuotaSnapshot {
   alias?: string
 }
 
+/**
+ * Who and where the session is connected as — the "am I pointed at the right
+ * lakehouse" facts, shown alongside the money figures.
+ *
+ * Everything except `userName` comes straight out of profiles.toml, so the
+ * section paints immediately and keeps working with no network at all. `userName`
+ * needs a portal round-trip for OAuth profiles (their TOML block carries no
+ * username), so it fills in when the snapshot lands and is simply absent until
+ * then rather than blocking the rest.
+ */
+export interface ProfileInfo {
+  /** Active profile name, i.e. what `-p` selected or default_profile. */
+  profile: string
+  /** How that profile authenticates: oauth / pat / password / header. */
+  authType?: string
+  /** Account (tenant) name — NOT the user; the two differ. */
+  accountName?: string
+  /** Human user within the account. Resolved from the portal. */
+  userName?: string
+  /** Region/deployment label parsed off the service host. */
+  region?: string
+  instance?: string
+  workspace?: string
+}
+
 type Dict = Record<string, unknown>
 
 function isRecord(value: unknown): value is Dict {
@@ -118,6 +143,88 @@ function num(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+/**
+ * Read the active profile's identity and connection target from profiles.toml.
+ *
+ * Synchronous and network-free on purpose: this is the half of the sidebar that
+ * should never be missing, so it must not depend on a portal that may be slow,
+ * unreachable, or (as measured) not serving a region's host at all.
+ *
+ * `userName` is deliberately absent here — see fetchProfileUserName.
+ */
+export function readProfileInfo(): ProfileInfo | undefined {
+  const current = Profile.current()
+  const profiles = loadProfiles()
+  const name = current && profiles[current] ? current : Object.keys(profiles)[0]
+  if (!name) return undefined
+  const profile = profiles[name]!
+  const str = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
+  const service = str(profile.service)
+  // Delegates to readAuthType rather than re-deriving from the raw fields: that is
+  // the same precedence (explicit auth_type, else cookie/oauth/pat/password) the
+  // rest of the CLI uses to pick a credential, including the `cookie` case a
+  // hand-rolled check here would otherwise miss.
+  return {
+    profile: name,
+    authType: readAuthType(name),
+    accountName: str(profile.account_name),
+    userName: str(profile.username),
+    region: service ? detectEnv(service) : undefined,
+    instance: str(profile.instance),
+    workspace: str(profile.workspace),
+  }
+}
+
+// Resolved user names, keyed by profile. Identity does not change for the life of
+// a session, so this is asked once rather than on every quota refresh.
+const userNameCache = new Map<string, string>()
+
+/**
+ * Resolve the human user name for the active profile.
+ *
+ * Only OAuth profiles need this — a password profile's TOML block already carries
+ * `username`, which readProfileInfo returns directly. Separate from the quota
+ * fetch on purpose: the quota path only resolves a name when it happens to need
+ * one for a key lookup, and the sidebar wants it whether or not a key was pinned.
+ *
+ * Returns undefined rather than throwing: a missing user name should cost one
+ * line of the section, never the section itself.
+ */
+export async function fetchProfileUserName(input: { signal?: AbortSignal } = {}): Promise<string | undefined> {
+  const info = readProfileInfo()
+  if (!info) return undefined
+  if (info.userName) return info.userName
+  const cached = userNameCache.get(info.profile)
+  if (cached) return cached
+
+  const profiles = loadProfiles()
+  const profile = profiles[info.profile]
+  if (!profile) return undefined
+  try {
+    const config = resolveConnectionConfig({
+      profile: info.profile,
+      ...(typeof profile.service === "string" ? { service: profile.service } : {}),
+      ...(profile.protocol === "http" || profile.protocol === "https" ? { protocol: profile.protocol } : {}),
+      ...(typeof profile.instance === "string" ? { instance: profile.instance } : {}),
+    })
+    const token = (await getCookieToken(config)) ?? (await getToken(config))
+    const payload = await portalRead(toServiceUrl(config.service, config.protocol), CURRENT_USER_PATH, token.token, {
+      method: "POST",
+      signal: input.signal,
+    })
+    if (!isRecord(payload) || !isPortalOk(payload.code) || !isRecord(payload.data)) return undefined
+    // `name` is the login handle; accountDisplayName is the tenant and is already
+    // covered by accountName. Nothing else from this payload is displayed — it also
+    // carries a phone number and an email, which have no place in a status panel.
+    const name = typeof payload.data.name === "string" ? payload.data.name.trim() : ""
+    if (!name) return undefined
+    userNameCache.set(info.profile, name)
+    return name
+  } catch {
+    return undefined
+  }
 }
 
 // The portal is inconsistent about its success code: the production host answers

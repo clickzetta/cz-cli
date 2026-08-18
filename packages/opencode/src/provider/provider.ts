@@ -1574,7 +1574,8 @@ export const layer = Layer.effect(
           })
         }
 
-        // cz_change: ClickZetta is a private gateway, so its models aren't in the
+        //======================== cz-cli change ========================
+        // ClickZetta is a private gateway, so its models aren't in the
         // models.dev catalog — the gateway is the only source of truth for which
         // models exist. Discover them at runtime from its OpenAI-compatible
         // `GET {baseURL}/v1/models` endpoint instead of hardcoding a catalog. This
@@ -1632,8 +1633,8 @@ export const layer = Layer.effect(
                   }
                 }
               } catch (e) {}
-              // cz_change: keep the provider alive when discovery produced nothing.
-              // Only ever a substitute for an empty table — never merged alongside
+              // Keep the provider alive when discovery produced nothing. Only ever
+              // a substitute for an empty table — never merged alongside
               // discovered models, so a working gateway never sees these ids.
               if (Object.keys(provider.models).length === 0) {
                 for (const modelID of CLICKZETTA_FALLBACK_MODELS) {
@@ -1643,6 +1644,7 @@ export const layer = Layer.effect(
             }),
           )
         })
+        //====================== end cz-cli change ======================
 
         for (const [id, provider] of Object.entries(providers)) {
           const providerID = ProviderV2.ID.make(id)
@@ -2049,9 +2051,13 @@ export function parseModel(model: string) {
   }
 }
 
-// cz_change: ClickZetta dynamic-discovery helpers, extracted from the loader loop
-// above so the mapping logic is unit-testable. cz-cli normalizes the runtime
-// provider base to "/gateway/vN" before opencode receives it.
+//======================== cz-cli change ========================
+// ClickZetta dynamic-discovery helpers, extracted from the loader loop above so
+// the mapping logic is unit-testable. cz-cli normalizes the runtime provider base
+// to "/gateway/vN" before opencode receives it. Everything from here to the end
+// of the file is cz-owned code appended to this upstream module — see the
+// discovery block above (entry 7 in UPSTREAM-PATCHES.md) for why it has to live
+// here rather than in a cz-layer module.
 export function clickzettaModelsUrl(baseURL: string): string {
   return `${baseURL.replace(/\/+$/, "")}/models`
 }
@@ -2129,8 +2135,8 @@ export function clickzettaContextLimit(modelID: string): number {
 }
 
 /**
- * cz_change: the model a ClickZetta provider keeps when `GET /v1/models`
- * discovered nothing.
+ * The model a ClickZetta provider keeps when `GET /v1/models` discovered
+ * nothing.
  *
  * Why a phantom model beats an honest empty table. A provider with zero models is
  * DELETED outright a few lines below (`if (Object.keys(provider.models).length === 0)`),
@@ -2197,6 +2203,7 @@ export function buildClickzettaModel(
     variants: {},
   }
 }
+//====================== end cz-cli change ======================
 
 export const node = LayerNode.make(layer, [
   FSUtil.node,

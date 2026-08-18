@@ -1,6 +1,8 @@
 import { NamedError } from "@opencode-ai/core/util/error"
-// cz_change: gate for the `detail` field below — see the banner in the handler.
+//======================== cz-cli change ========================
+// Gate for the `detail` field below — see the banner in the handler.
 import { Flag } from "@opencode-ai/core/flag/flag"
+//====================== end cz-cli change ======================
 import { ConfigErrorV1 } from "@opencode-ai/core/v1/config/error"
 import { Cause, Effect } from "effect"
 import { HttpRouter, HttpServerError, HttpServerRespondable, HttpServerResponse } from "effect/unstable/http"

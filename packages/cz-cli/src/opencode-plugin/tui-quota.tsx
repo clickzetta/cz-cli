@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
-// cz_change: show ClickZetta account balance + AI-gateway token quota as a
-// "Quota" section in the session sidebar, directly under "Context".
+// Shows which profile the session is connected as, plus ClickZetta account
+// balance + AI-gateway token quota, as "Profile" and "Quota" sections in the
+// session sidebar, directly under "Context".
 //
 // It started on one line in the prompt's top-right corner and moved here because
 // that line already carries the agent name, the model id and the provider: at 80
@@ -30,44 +31,30 @@ import { createEffect, createSignal, createMemo, For, Show } from "solid-js"
 import {
   createQuotaController,
   currentSessionID,
+  fetchProfileUserName,
   fetchQuotaSnapshot,
+  profileRows,
   quotaRows,
+  readProfileInfo,
   type ActiveModelContext,
+  type QuotaRow,
   type QuotaSnapshot,
-  type QuotaTone,
 } from "./tui-quota-runtime.js"
 
-function View(props: {
-  api: TuiPluginApi
-  activeModel: ActiveModelContext
-  sessionID: string
-  snapshot: () => QuotaSnapshot | undefined
-  onContext: (key: string) => void
-}) {
+/** One sidebar section: a bold heading over labelled rows, matching upstream's. */
+function Section(props: { api: TuiPluginApi; title: string; rows: () => QuotaRow[] }) {
   const theme = () => props.api.theme.current
-  const rows = createMemo(() => quotaRows(props.snapshot()))
-  const color = (tone: QuotaTone) => theme()[tone]
-
-  // The provider list arrives with sync, well after plugins load, and attributing
-  // usage needs it. This effect lives in the slot component because that is the
-  // only place with a reactive owner — plugin init runs outside any Solid root, so
-  // an effect created there is never scheduled.
-  createEffect(() => {
-    props.onContext(`${props.sessionID}:${props.activeModel.providerID(props.sessionID) ?? ""}`)
-  })
-
-  // No rows = nothing worth showing (non-ClickZetta provider, or no reading yet).
-  // Draw no section at all rather than a "Quota" heading over blanks, which would
-  // read as "your quota is zero".
+  // No rows = nothing worth showing. Draw no section at all rather than a heading
+  // over blanks, which for "Quota" would read as "your quota is zero".
   return (
-    <Show when={rows().length > 0}>
+    <Show when={props.rows().length > 0}>
       <box>
         <text fg={theme().text}>
-          <b>Quota</b>
+          <b>{props.title}</b>
         </text>
-        <For each={rows()}>
+        <For each={props.rows()}>
           {(row) => (
-            <text fg={color(row.tone)} selectable={false}>
+            <text fg={theme()[row.tone]} selectable={false}>
               {row.text}
             </text>
           )}
@@ -77,8 +64,53 @@ function View(props: {
   )
 }
 
+function View(props: {
+  api: TuiPluginApi
+  activeModel: ActiveModelContext
+  sessionID: string
+  snapshot: () => QuotaSnapshot | undefined
+  userName: () => string | undefined
+  onContext: (key: string) => void
+}) {
+  // Read live rather than once: the profile is resolved from profiles.toml on every
+  // render, so a `cz-cli profile use` elsewhere is reflected without extra plumbing.
+  // userName arrives separately because OAuth profiles need a portal call for it.
+  const profile = createMemo(() => {
+    const info = readProfileInfo()
+    if (!info) return undefined
+    return info.userName ? info : { ...info, userName: props.userName() }
+  })
+  const identityRows = createMemo(() => profileRows(profile()))
+  const usageRows = createMemo(() => quotaRows(props.snapshot()))
+
+  // The provider list arrives with sync, well after plugins load, and attributing
+  // usage needs it. This effect lives in the slot component because that is the
+  // only place with a reactive owner — plugin init runs outside any Solid root, so
+  // an effect created there is never scheduled.
+  createEffect(() => {
+    props.onContext(`${props.sessionID}:${props.activeModel.providerID(props.sessionID) ?? ""}`)
+  })
+
+  return (
+    <>
+      <Section api={props.api} title="Profile" rows={identityRows} />
+      <Section api={props.api} title="Quota" rows={usageRows} />
+    </>
+  )
+}
+
 export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveModelContext) {
   const [snapshot, setSnapshot] = createSignal<QuotaSnapshot | undefined>(undefined)
+  // Resolved once, unawaited: identity is fixed for the session, and the rest of
+  // the Profile section is already on screen from profiles.toml without it.
+  const [userName, setUserName] = createSignal<string | undefined>(undefined)
+  void fetchProfileUserName({ signal: api.lifecycle.signal })
+    .then((name) => {
+      if (name) setUserName(name)
+    })
+    .catch(() => {
+      // A missing user name costs one row, never the section.
+    })
 
   const controller = createQuotaController({
     load: () =>
@@ -130,6 +162,7 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
             activeModel={activeModel}
             sessionID={props.session_id}
             snapshot={snapshot}
+            userName={userName}
             onContext={onContext}
           />
         )
