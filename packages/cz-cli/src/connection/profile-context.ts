@@ -23,6 +23,7 @@
 // a far worse failure than for a model: an agent silently pointed at the wrong
 // lakehouse can run writes there. `cz-cli profile use` remains the explicit,
 // visible way to change the default.
+import { ConnectionEnv } from "./env.js"
 import { getDefaultProfileName } from "./profile-store.js"
 
 /** Notified after the active profile actually changes. Never fires on a no-op. */
@@ -46,9 +47,7 @@ const listeners = new Set<ProfileListener>()
  * "no profile configured" rather than substituting one of their own.
  */
 export function current(): string | undefined {
-  const pinned = process.env.CZ_PROFILE
-  if (pinned && pinned.length > 0) return pinned
-  return getDefaultProfileName()
+  return ConnectionEnv.profileName() ?? getDefaultProfileName()
 }
 
 /**
@@ -81,7 +80,7 @@ export async function set(name: string | undefined): Promise<string | undefined>
   // later `cz-cli profile use` elsewhere is picked up rather than shadowed by a
   // snapshot of the old value. The CZ_* layer it just derived stays — those are the
   // default profile's settings, which is exactly what unpinned should use.
-  if (name === undefined) delete process.env.CZ_PROFILE
+  if (name === undefined) ConnectionEnv.unpin()
 
   const next = current()
   if (next === previous) return next

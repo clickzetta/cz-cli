@@ -5,7 +5,7 @@ import { createTraceparent } from "@clickzetta/sdk"
 import { injectAgentMcp } from "./agent-mcp.js"
 import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
-import { noteProfileDerivedCredentials } from "./bootstrap/profile-env.js"
+import { ConnectionEnv } from "./connection/env.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
 import { migrateInlineOAuthTokens, pruneOrphanOAuthSections } from "./connection/profile-store.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
@@ -545,43 +545,33 @@ function connectionOverridesFromArgs(args: string[], agentPath = false): Partial
   return overrides
 }
 
+/**
+ * Expand the connection flags of this invocation into the `CZ_*` layer, so the
+ * agent runtime and any child process it spawns see the same connection the
+ * flags selected.
+ *
+ * The resolved credential is written as ONE of pat / username+password, never
+ * both: they are alternatives, and a leftover from the other kind would win the
+ * priority in resolveConnectionConfig and authenticate as a different identity.
+ * ConnectionEnv.apply owns the reset and the provenance marker.
+ */
 function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   if (Object.keys(overrides).length === 0) return overrides
   const resolved = resolveConnectionConfig(overrides)
-  if (overrides.profile) process.env.CZ_PROFILE = overrides.profile
-  // Report which credential vars we derived from the profile, so a later profile
-  // switch inside the agent runtime clears them instead of letting them shadow the
-  // new profile's auth. See profile-env.ts's profileDerived set.
-  const derivedCredentials: Record<string, string> = {}
-  if (resolved.pat) {
-    process.env.CZ_PAT = resolved.pat
-    derivedCredentials.CZ_PAT = resolved.pat
-    delete process.env.CZ_USERNAME
-    delete process.env.CZ_PASSWORD
-  } else {
-    delete process.env.CZ_PAT
-    if (resolved.username) {
-      process.env.CZ_USERNAME = resolved.username
-      derivedCredentials.CZ_USERNAME = resolved.username
-    } else delete process.env.CZ_USERNAME
-    if (resolved.password) {
-      process.env.CZ_PASSWORD = resolved.password
-      derivedCredentials.CZ_PASSWORD = resolved.password
-    } else delete process.env.CZ_PASSWORD
-  }
-  if (overrides.profile) noteProfileDerivedCredentials(derivedCredentials)
-  if (resolved.service) process.env.CZ_SERVICE = resolved.service
-  else delete process.env.CZ_SERVICE
-  if (resolved.protocol) process.env.CZ_PROTOCOL = resolved.protocol
-  else delete process.env.CZ_PROTOCOL
-  if (resolved.instance) process.env.CZ_INSTANCE = resolved.instance
-  else delete process.env.CZ_INSTANCE
-  if (resolved.workspace) process.env.CZ_WORKSPACE = resolved.workspace
-  else delete process.env.CZ_WORKSPACE
-  if (resolved.schema) process.env.CZ_SCHEMA = resolved.schema
-  else delete process.env.CZ_SCHEMA
-  if (resolved.vcluster) process.env.CZ_VCLUSTER = resolved.vcluster
-  else delete process.env.CZ_VCLUSTER
+  ConnectionEnv.apply(
+    {
+      ...(resolved.pat
+        ? { pat: resolved.pat }
+        : { username: resolved.username || undefined, password: resolved.password || undefined }),
+      service: resolved.service || undefined,
+      protocol: resolved.protocol || undefined,
+      instance: resolved.instance || undefined,
+      workspace: resolved.workspace || undefined,
+      schema: resolved.schema || undefined,
+      vcluster: resolved.vcluster || undefined,
+    },
+    overrides.profile,
+  )
   return overrides
 }
 
@@ -621,7 +611,7 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     connectionOverridesFromArgs(normalized.args, normalized.shouldDelegateToAgentRuntime),
   )
   const profileOverride = agentConnectionOverrides.profile ?? profileOverrideFromArgs(normalized.args)
-  if (profileOverride) process.env.CZ_PROFILE = profileOverride
+  if (profileOverride) ConnectionEnv.pin(profileOverride)
   const isAgentSessionEntry =
     !normalized.isHelpRequest &&
     (

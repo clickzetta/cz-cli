@@ -3,7 +3,8 @@ import { commandGroup } from "../command-group.js"
 import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
-import { loadProfiles, saveProfiles, getDefaultProfileName } from "../connection/profile-store.js"
+import { loadProfiles, saveProfiles } from "../connection/profile-store.js"
+import * as Profile from "../connection/profile-context.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, classifyExecError } from "./exec.js"
 
@@ -81,7 +82,18 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
           if (argv.persist) {
             try {
               const profiles = loadProfiles()
-              const profileName = argv.profile ?? getDefaultProfileName() ?? Object.keys(profiles)[0]
+              // Profile.current() (CZ_PROFILE, falling back to profiles.toml's
+              // default_profile) is the single semantic source for "which profile is
+              // active" — see its own docstring. The old fallback here
+              // (getDefaultProfileName() ?? Object.keys(profiles)[0]) skipped
+              // CZ_PROFILE entirely, so a `-p other` invocation with --no-persist-arg
+              // could WRITE workspace/schema into a different profile than the one
+              // the rest of the command actually queried against. Falling further to
+              // "the first profile in the file" when even the default is unset is
+              // worse here than on a read path: this persists a mutation into
+              // profiles.toml, and Profile.current()'s own contract is that an
+              // undefined result means "no profile configured", not "guess one".
+              const profileName = argv.profile ?? Profile.current()
               if (!profileName || !profiles[profileName]) {
                 error("PROFILE_NOT_FOUND", `Profile '${profileName}' not found. Create a profile first.`, { format })
                 return

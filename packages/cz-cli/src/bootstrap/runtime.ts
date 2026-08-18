@@ -344,7 +344,8 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     // explicitly selected profile back to default_profile, silently retargeting
     // the session at the wrong lakehouse.
     const { applyClickZettaProfile } = await import("./profile-env.js")
-    applyClickZettaProfile((opts.profile as string | undefined) ?? process.env.CZ_PROFILE)
+    const { ConnectionEnv } = await import("../connection/env.js")
+    applyClickZettaProfile((opts.profile as string | undefined) ?? ConnectionEnv.profileName())
 
     Heap.start()
 
