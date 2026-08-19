@@ -7,7 +7,8 @@ import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { ConnectionEnv } from "./connection/env.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
-import { migrateInlineOAuthTokens, pruneOrphanOAuthSections } from "./connection/profile-store.js"
+import { migrateInlineOAuthTokens, pruneOrphanOAuthSections, readProfileEntry } from "./connection/profile-store.js"
+import * as Profile from "./connection/profile-context.js"
 import { parseOutputArgs, renderOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
@@ -642,10 +643,28 @@ export function splitConnectionEnv(
   return { userFields, derivedFields }
 }
 
+/**
+ * `resolveConnectionConfig`'s output has no `accountsUrl` field at all (it
+ * isn't part of `ConnectionConfig`), so `splitConnectionEnv`'s `derivedFields`
+ * can never carry it — yet `ConnectionEnv.apply` deletes every derived name
+ * absent from what it's given. Reads it directly off the profile entry, same
+ * field `bootstrap/profile-env.ts`'s `FIELDS` table maps, so it survives this
+ * call instead of being cleared out from under a nested `cz-cli` invocation
+ * that inherits `CZ_ENV_DERIVED` but never reaches the agent-runtime
+ * middleware that would otherwise re-derive it. Exported so a test can assert
+ * it directly, the same reasoning as `splitConnectionEnv`.
+ */
+export function resolveAccountsUrl(profileName: string | undefined): string | undefined {
+  const accountsUrl = readProfileEntry(profileName)?.accounts_url
+  return typeof accountsUrl === "string" && accountsUrl.length > 0 ? accountsUrl : undefined
+}
+
 function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   if (Object.keys(overrides).length === 0) return overrides
   const resolved = resolveConnectionConfig(overrides)
   const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+  const accountsUrl = resolveAccountsUrl(overrides.profile ?? Profile.current())
+  if (accountsUrl) derivedFields.accountsUrl = accountsUrl
   ConnectionEnv.applyUser(userFields)
   ConnectionEnv.apply(derivedFields, overrides.profile)
   return overrides
