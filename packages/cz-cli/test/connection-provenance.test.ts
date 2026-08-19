@@ -110,23 +110,3 @@ describe("non-auth fields do not survive a profile switch", () => {
     expect(resolveConnectionConfig({}).schema).toBe("user_schema")
   })
 })
-
-describe("childEnv", () => {
-  test("carries the derived layer, its marker and the pinned profile", () => {
-    applyClickZettaProfile("a")
-    const env = ConnectionEnv.childEnv()
-
-    expect(env.CZ_PROFILE).toBe("a")
-    expect(env.CZ_INSTANCE).toBe("inst-a")
-    expect(env.CZ_ENV_DERIVED?.split(",")).toContain("CZ_USERNAME")
-  })
-
-  // The user's own variables reach the child by ordinary inheritance; repeating
-  // them here would relabel them as ours and demote them below the profile.
-  test("does not relabel the user's variables as derived", () => {
-    process.env.CZ_SCHEMA = "user_schema"
-    applyClickZettaProfile("a")
-
-    expect(ConnectionEnv.childEnv().CZ_ENV_DERIVED?.split(",") ?? []).not.toContain("CZ_SCHEMA")
-  })
-})

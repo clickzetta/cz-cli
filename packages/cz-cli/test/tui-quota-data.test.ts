@@ -944,4 +944,55 @@ describe("portal reads fall back to the central host", () => {
       else process.env.CZ_PROFILE = previous
     }
   })
+
+  // unservedHost is keyed by baseUrl + path, not by host alone: a region host
+  // that fails ONE route (listApiKeys, business code 8888) must not stop being
+  // asked for a DIFFERENT route (getCurrentUser) it actually serves. A host-wide
+  // key would make the first failure redirect every later call for every route.
+  test("marking one route unserved does not redirect a different route on the same host", async () => {
+    const seen: string[] = []
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        seen.push(url)
+        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/user/listApiKeys")) {
+          return { code: 8888, message: "未知异常", data: null }
+        }
+        if (url.includes("/hornhub/account/billing/account/")) {
+          return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
+        }
+        if (url.includes("/user/listApiKeys")) {
+          return {
+            code: 0,
+            data: [{ rateLimitType: "quota_total", rateLimitValue: 10_000_000, usage: 0, vapiKeyMasked: "ff52****9bc8" }],
+          }
+        }
+        if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      // First call: listApiKeys against the region host fails (8888), promotes
+      // that ROUTE to unserved and falls back to central for it.
+      await fetchQuotaSnapshot({ providerID: "prod_0" })
+
+      // Second call: getCurrentUser (a different route, same host) must still try
+      // the region host first — it was never proven unserved for THIS route.
+      seen.length = 0
+      await fetchProfileUserName()
+      expect(
+        seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/user/getCurrentUser")),
+      ).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
 })

@@ -73,15 +73,18 @@ function View(props: {
   userName: () => { profile: string; name: string } | undefined
   onContext: (key: string) => void
 }) {
-  // profileInfo is resolved ONCE by the caller (sidebar_content, at the same
-  // point this component is instantiated) and passed down as a plain value —
-  // not re-read here. readProfileInfo() does two-to-three synchronous
-  // readFileSync+TOML-parse passes with no memoization of its own; doing that
-  // inside a createMemo only LOOKS reactive, since nothing in its body is a
-  // signal read — it actually just repeats the same file I/O on every mount of
-  // this component (the sidebar's ≥120-column toggle, or a resize across that
-  // threshold, both remount it). Hoisting the call one level up takes the I/O
-  // off the render path entirely and makes "resolved once, not live" explicit
+  // profileInfo is resolved ONCE per process, in installQuotaIndicator's
+  // `activeProfileInfo` cache, and passed down as a plain value — not re-read
+  // here. readProfileInfo() does two-to-three synchronous readFileSync+TOML-parse
+  // passes with no memoization of its own; doing that inside a createMemo only
+  // LOOKS reactive, since nothing in its body is a signal read — it actually just
+  // repeats the same file I/O on every mount of this component (the sidebar's
+  // ≥120-column toggle, or a resize across that threshold, both remount it), and
+  // would repeat it again on every prop READ if passed as a bare call expression
+  // in JSX, since babel-preset-solid compiles that into a re-invoking getter.
+  // Caching it one level up, outside any component, takes the I/O off the render
+  // path entirely regardless of how the prop compiles, and makes "resolved once,
+  // not live" explicit
   // in the shape of the code rather than a comment explaining a memo that
   // doesn't do what a memo implies.
   //
@@ -128,15 +131,43 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
   // (guarded by `started`) because the sidebar can mount more than once (the
   // ≥120-column toggle, or a resize across that threshold).
   let started = false
+  // Cached here, not passed as `readProfileInfo()` inline in JSX: a prop whose
+  // value is a call expression compiles (babel-preset-solid) to a getter that
+  // re-invokes the call on every read, and the sole read is inside a createMemo
+  // that also tracks the userName signal — so every settle of that signal would
+  // re-run the file I/O this is meant to take off the render path. Reading it
+  // once here, like `started`/`userName` above, is what actually makes
+  // "resolved once, not live" hold regardless of how the prop compiles.
+  let profileInfoRead = false
+  let profileInfoCache: ReturnType<typeof readProfileInfo> | undefined
+  const activeProfileInfo = () => {
+    if (!profileInfoRead) {
+      profileInfoRead = true
+      profileInfoCache = readProfileInfo()
+    }
+    return profileInfoCache
+  }
   const startUserNameFetch = () => {
     if (started) return
     started = true
+    // Latched on SUCCESS, not on attempt: fetchProfileUserName swallows every
+    // failure (portal blip, expired cookie, token acquisition) and returns
+    // undefined, and the quota half of this sidebar self-heals on every
+    // busy→idle edge (createQuotaController.refresh) while this fetch fires
+    // only once per mount. Re-arming `started` on a resultless resolve lets the
+    // NEXT mount (the same ≥120-column toggle/resize this guard is for) retry,
+    // instead of the user row staying gone for the rest of the session after
+    // one transient failure. Not re-arming when the signal is already aborted:
+    // that means the sidebar is disposing, and firing another request into a
+    // dead lifecycle would just be wasted work.
     void fetchProfileUserName({ signal: api.lifecycle.signal })
       .then((resolved) => {
         if (resolved) setUserName(resolved)
+        else if (!api.lifecycle.signal.aborted) started = false
       })
       .catch(() => {
         // A missing user name costs one row, never the section.
+        if (!api.lifecycle.signal.aborted) started = false
       })
   }
 
@@ -191,7 +222,7 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
             activeModel={activeModel}
             sessionID={props.session_id}
             snapshot={snapshot}
-            profileInfo={readProfileInfo()}
+            profileInfo={activeProfileInfo()}
             userName={userName}
             onContext={onContext}
           />

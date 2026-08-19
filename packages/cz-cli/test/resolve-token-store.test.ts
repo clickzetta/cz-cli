@@ -153,6 +153,34 @@ test("a profile-level pat STILL attaches the store when the profile has an OAuth
   expect(cfg.tokenStore).toBeDefined()
 })
 
+test("--username alone against a profile-stored password STILL attaches the store", () => {
+  // pickCredential enters the flag tier as soon as EITHER --username or
+  // --password is set and fills the missing half from the profile — that is
+  // how `--username alice` against a profile-stored password keeps working.
+  // The credential is only HALF the user speaking now; the OAuth login the
+  // other half came from must not be suppressed by it.
+  saveProfiles({
+    czcli: { username: "alice", password: "profile-secret", instance: "inst", service: "api.example.com", oauth: "sess" },
+  })
+
+  const cfg = resolveConnectionConfig({ profile: "czcli", username: "alice" })
+  expect(cfg.username).toBe("alice")
+  expect(cfg.password).toBe("profile-secret")
+  expect(cfg.tokenStore).toBeDefined()
+})
+
+test("CZ_USERNAME/CZ_PASSWORD from the environment does NOT suppress the store", () => {
+  // Unlike CZ_PAT (a single value, unambiguously the user's), an env
+  // username/password pair has never been treated as explicit here.
+  saveProfiles({ czcli: { instance: "inst", service: "api.example.com", oauth: "sess" } })
+  process.env.CZ_USERNAME = "envuser"
+  process.env.CZ_PASSWORD = "envpass"
+
+  const cfg = resolveConnectionConfig({ profile: "czcli" })
+  expect(cfg.username).toBe("envuser")
+  expect(cfg.tokenStore).toBeDefined()
+})
+
 test("a pat-only profile gets no store, with or without an instance", () => {
   // Nothing here is an OAuth login, so there is no section to read and none to
   // create: the PAT-exchanged token stays in memory.

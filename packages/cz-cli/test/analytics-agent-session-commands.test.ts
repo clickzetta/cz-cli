@@ -37,6 +37,12 @@ mock.module("../src/logger.js", () => ({
   logOperation: () => {},
 }))
 
+// The test script also runs with --isolate (see package.json / cz-test.yml),
+// which already stops a leak like this from reaching another file. This restore
+// stays anyway: it is the fix for the ONE suite that actually leaked, and it is
+// unconditional insurance if --isolate is ever dropped for its cost (a fresh
+// global per file is slower). Two overlapping fixes for one cause, kept on
+// purpose rather than by oversight.
 afterAll(() => {
   mock.module("../src/connection/profile-store.js", () => actualProfileStore)
   mock.module("../src/commands/studio-context.js", () => actualStudioContext)

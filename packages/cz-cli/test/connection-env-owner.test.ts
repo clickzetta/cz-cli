@@ -31,7 +31,7 @@ function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) return sources(full)
-    return full.endsWith(".ts") ? [full] : []
+    return full.endsWith(".ts") || full.endsWith(".tsx") ? [full] : []
   })
 }
 

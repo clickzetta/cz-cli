@@ -127,7 +127,26 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // env ourselves — is not the user speaking, so it must not suppress the store:
   // treating it as explicit is what let a stale injection outrank the profile's
   // own OAuth login.
-  const explicitCredential = credential.source === "flag" || credential.source === "env"
+  //
+  // A "flag" password credential needs one more check than that, though:
+  // pickCredential enters the flag tier as soon as EITHER --username or
+  // --password is set, then fills the other half from a lower tier (profile,
+  // env, JDBC) — that is what makes `--username alice` against a profile-stored
+  // password keep working. Tagging that result explicit on source alone would
+  // suppress the token store on a credential that is only HALF the user
+  // speaking now; the stored OAuth login the other half came from is exactly
+  // what should stay attached. Only a pair supplied ENTIRELY by flags — or, for
+  // pat, the single flag/env value — is unambiguously "not the profile's".
+  //
+  // Same reasoning excludes an env-sourced password PAIR: unlike CZ_PAT (a
+  // single value, unambiguously the user's), CZ_USERNAME+CZ_PASSWORD have never
+  // been treated as explicit here, and there is no flag-style "half from the
+  // profile" case to protect for env — so credential.source === "env" is only
+  // explicit for a pat.
+  const explicitCredential =
+    (credential.source === "env" && credential.kind === "pat") ||
+    (credential.source === "flag" &&
+      (credential.kind === "pat" || Boolean(cliArgs.username && cliArgs.password)))
   // Attach the OAuth token store when the profile can carry an OAuth login:
   // either it has an instance (the common case) OR it has an `oauth = "<id>"`
   // pointer to a shared [oauth.<id>] token. The old `cfg.instance`-only gate
