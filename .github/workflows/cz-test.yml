@@ -54,4 +54,24 @@ jobs:
         # removed for its cost (a fresh global per file is slower, and it can also
         # hide a REAL cross-file coupling that would still bite in the shipped
         # binary, where every test file's module cache is shared).
+        #
+        # Intent, confirmed: --isolate is the PRIMARY guarantee for the whole
+        # suite (every file, not just the one known leaker), accepted as a
+        # change to the shared local/CI test contract, not a CI-only knob. The
+        # afterAll restore and the two test-only resets added alongside it
+        # (clearUnservedHostForTest, clearUserNameCacheForTest in
+        # tui-quota-data.ts) are deliberately kept as belt-and-suspenders on top
+        # of it, per the reasoning above and in each of those call sites.
         run: bun run test
+
+      # UPSTREAM-PATCHES.md's re-baseline checklist points at these three files
+      # as the enforcement for their respective ledger entries (7, 9), but they
+      # live inside upstream packages and are only named by test.yml's
+      # @opencode-ai/core#test / opencode#test turbo tasks — the workflow stuck
+      # queued forever on unprovisioned blacksmith-* runners. Run them directly
+      # here so the ledger's claim is actually backed by a green check on this
+      # fork, without pulling every upstream package's suite into this workflow.
+      - name: Run cz-owned tests inside upstream packages
+        run: |
+          (cd packages/core && bun test test/model-selection.test.ts)
+          (cd packages/opencode && bun test test/provider/clickzetta-discovery.test.ts test/provider/clickzetta-context-limit.test.ts)

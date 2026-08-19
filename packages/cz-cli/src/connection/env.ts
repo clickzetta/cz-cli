@@ -112,26 +112,55 @@ export function apply(fields: Fields, profile?: string): void {
 }
 
 /**
- * Write `fields` as the USER's layer — never marked in `CZ_ENV_DERIVED`.
+ * Write `fields` as the USER's layer — never marked in `CZ_ENV_DERIVED`, and
+ * un-marking any of these names that were previously derived.
  *
- * Use this when the values themselves already represent the user speaking now
- * (a `--pat` / `--schema` flag, or a value `resolveConnectionConfig` picked
- * because a flag won its priority tier), even though the caller is *this*
- * process rather than a shell. Writing them through `apply()` instead would
- * label them derived, and a later `apply()` from a profile expansion — the
- * agent runtime's per-invocation `applyClickZettaProfile` — replaces the
- * derived set wholesale and does not know these came from a flag, not from
- * the profile it is currently expanding. That mislabelling both let the
- * profile outrank a flag it should have lost to, and deleted the flag's value
- * outright when the profile omitted the same field. `apply()`'s own skip-if-
- * user-owns-it check (`!derived.has(name)`) is what protects a value written
- * here from either.
+ * Use this ONLY for values that are literally, exactly what a flag on THIS
+ * invocation supplied — never a resolved/expanded value that merely happens
+ * to equal the profile's, since the caller cannot tell the two apart once
+ * resolved (see run-cli.ts's applyAgentConnectionEnv for the split that keeps
+ * this true). Writing a profile-sourced value through here instead of
+ * `apply()` would mislabel it as the user's and make it permanently
+ * un-clearable: `apply()`'s skip-if-user-owns-it check (`!derived.has(name)`)
+ * treats every name written here as never eligible for replacement again,
+ * even by a later `apply()` that legitimately switches profiles.
+ *
+ * The un-marking matters for the same reason in the other direction: without
+ * it, a name this call writes but that a PRIOR `apply()` had marked derived
+ * (typical in a nested invocation — an agent session that already expanded a
+ * profile, spawning `cz-cli … --schema x`) would still read back as
+ * `inherited` from `read()`, ranking it below the profile it should now
+ * outrank, and a later `apply()` would still delete or overwrite it as if it
+ * were still derived.
+ *
+ * Credentials are alternatives, not independent fields: writing a pat here
+ * clears any username/password this layer holds, and vice versa, so a
+ * leftover from the OTHER kind can never survive to win a priority tier it
+ * has no business being in.
  */
 export function applyUser(fields: Fields): void {
+  const derived = new Set((process.env[DERIVED] ?? "").split(",").filter((name) => name.length > 0))
+  const writingPat = fields.pat !== undefined
+  const writingPassword = fields.username !== undefined || fields.password !== undefined
   for (const [field, name] of FIELDS) {
+    if (field === "username" || field === "password") {
+      if (writingPat) {
+        delete process.env[name]
+        derived.delete(name)
+        continue
+      }
+    } else if (field === "pat" && writingPassword) {
+      delete process.env[name]
+      derived.delete(name)
+      continue
+    }
     const value = fields[field]
-    if (value) process.env[name] = value
+    if (!value) continue
+    process.env[name] = value
+    derived.delete(name)
   }
+  if (derived.size > 0) process.env[DERIVED] = [...derived].join(",")
+  else delete process.env[DERIVED]
 }
 
 /** Pin the profile name without touching the derived values. */

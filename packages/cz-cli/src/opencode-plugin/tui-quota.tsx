@@ -136,15 +136,20 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
   // re-invokes the call on every read, and the sole read is inside a createMemo
   // that also tracks the userName signal — so every settle of that signal would
   // re-run the file I/O this is meant to take off the render path. Reading it
-  // once here, like `started`/`userName` above, is what actually makes
-  // "resolved once, not live" hold regardless of how the prop compiles.
-  let profileInfoRead = false
+  // from a cache, like `started`/`userName` above, is what actually makes
+  // "resolved on refresh, not on render" hold regardless of how the prop
+  // compiles. The controller's `load()` below refreshes this cache on every
+  // busy→idle edge — the same cadence the balance already re-resolves
+  // Profile.current() on — so the two halves of this sidebar cannot disagree
+  // about which profile is active for longer than one refresh cycle.
   let profileInfoCache: ReturnType<typeof readProfileInfo> | undefined
   const activeProfileInfo = () => {
-    if (!profileInfoRead) {
-      profileInfoRead = true
-      profileInfoCache = readProfileInfo()
-    }
+    // Latched on a DEFINED result, not on attempt: readProfileInfo() returning
+    // undefined (no profile resolved yet) must not stick — the same "latch on
+    // success" reasoning as startUserNameFetch's `started` below, otherwise a
+    // first mount that resolves nothing means the Profile section is gone for
+    // the rest of the session even once a profile becomes configured.
+    if (profileInfoCache === undefined) profileInfoCache = readProfileInfo()
     return profileInfoCache
   }
   const startUserNameFetch = () => {
@@ -172,11 +177,22 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
   }
 
   const controller = createQuotaController({
-    load: () =>
-      fetchQuotaSnapshot({
+    // Re-reads profileInfo on the SAME busy→idle edge as the balance, rather
+    // than only once per process: fetchQuotaSnapshot resolves Profile.current()
+    // fresh on every refresh, so if the two disagreed — default_profile
+    // rewritten by `cz-cli profile use` in another terminal is the only trigger
+    // today, since nothing in this process calls Profile.set() — the Profile
+    // section would keep naming the OLD profile while the balance below it is
+    // the new one's. This still respects the caching comment above: the I/O
+    // moves from "every render" to "every refresh", which is the same cadence
+    // fetchQuotaSnapshot already pays for the network call.
+    load: () => {
+      profileInfoCache = readProfileInfo()
+      return fetchQuotaSnapshot({
         providerID: activeModel.providerID(),
         signal: api.lifecycle.signal,
-      }),
+      })
+    },
     onSnapshot: setSnapshot,
   })
 
