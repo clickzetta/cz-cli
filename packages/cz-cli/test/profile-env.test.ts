@@ -7,6 +7,7 @@ import { applyClickZettaProfile } from "../src/bootstrap/profile-env"
 const HOME = join(tmpdir(), `cz-profile-test-${process.pid}-${Date.now()}`)
 const CZ_ENV = [
   "CZ_PROFILE",
+  "CZ_ENV_DERIVED",
   "CZ_PAT",
   "CZ_USERNAME",
   "CZ_PASSWORD",
@@ -16,6 +17,7 @@ const CZ_ENV = [
   "CZ_WORKSPACE",
   "CZ_SCHEMA",
   "CZ_VCLUSTER",
+  "CZ_ACCOUNTS_URL",
 ]
 
 beforeEach(() => {
