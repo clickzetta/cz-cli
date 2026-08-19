@@ -579,15 +579,32 @@ function connectionOverridesFromArgs(args: string[], agentPath = false): Partial
  * mostly the profile speaking, so it takes the derived path — same reasoning
  * as why that case does not suppress the OAuth token store in config.ts.
  */
-function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
-  if (Object.keys(overrides).length === 0) return overrides
-  const resolved = resolveConnectionConfig(overrides)
+const NON_AUTH_CONNECTION_KEYS = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
 
+/**
+ * Pure split of `resolveConnectionConfig`'s output into the two provenance
+ * layers `applyAgentConnectionEnv` writes. Exported so a test can assert the
+ * split ITSELF — the two decisions that can regress silently (`credentialIsFlag`
+ * reading `overrides.*` rather than `resolved.*`, and which non-auth keys land
+ * in which layer) — rather than only the behaviour `ConnectionEnv` produces
+ * given an already-correct split. This formula has been wrong twice: once
+ * writing `resolved` wholesale through `applyUser`, mislabelling every
+ * profile-sourced field as the user's own.
+ */
+export function splitConnectionEnv(
+  overrides: Partial<CliArgs>,
+  resolved: Partial<ConnectionEnv.Fields> & { pat?: string; username?: string; password?: string },
+): { userFields: ConnectionEnv.Fields; derivedFields: ConnectionEnv.Fields } {
   const userFields: ConnectionEnv.Fields = {}
-  const nonAuthKeys = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
-  for (const key of nonAuthKeys) {
+  for (const key of NON_AUTH_CONNECTION_KEYS) {
     if (overrides[key]) userFields[key] = overrides[key]
   }
+  // Only a flag-pat, or a flag pair with BOTH username AND password present on
+  // `overrides`, counts as fully the user's — follows config.ts's own
+  // `explicitCredential` line. A lone `--username` with the password filled
+  // from the profile is still mostly the profile speaking, so it takes the
+  // derived path, same reasoning as why that case does not suppress the OAuth
+  // token store in config.ts.
   const credentialIsFlag = Boolean(overrides.pat) || Boolean(overrides.username && overrides.password)
   if (credentialIsFlag) {
     if (resolved.pat) userFields.pat = resolved.pat
@@ -596,10 +613,9 @@ function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
       userFields.password = resolved.password
     }
   }
-  ConnectionEnv.applyUser(userFields)
 
   const derivedFields: ConnectionEnv.Fields = {}
-  for (const key of nonAuthKeys) {
+  for (const key of NON_AUTH_CONNECTION_KEYS) {
     if (!overrides[key] && resolved[key]) derivedFields[key] = resolved[key]
   }
   if (!credentialIsFlag) {
@@ -609,6 +625,14 @@ function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
       derivedFields.password = resolved.password
     }
   }
+  return { userFields, derivedFields }
+}
+
+function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
+  if (Object.keys(overrides).length === 0) return overrides
+  const resolved = resolveConnectionConfig(overrides)
+  const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+  ConnectionEnv.applyUser(userFields)
   ConnectionEnv.apply(derivedFields, overrides.profile)
   return overrides
 }

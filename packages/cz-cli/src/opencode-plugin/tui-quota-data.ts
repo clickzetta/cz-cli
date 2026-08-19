@@ -499,7 +499,7 @@ export function centralPortalHost(baseUrl: string): string | undefined {
  * breaking singdata / private deployments that were untestable here. The extra
  * round-trip is spent only on the path that was already failing.
  *
- * A host once observed NOT to serve a given ROUTE (`unservedHost`, keyed by
+ * A host observed NOT to serve a given ROUTE (`unservedHost`, keyed by
  * `baseUrl + path`, not by host alone) skips straight to the central host on
  * every later call for that same route: the controller refreshes on every
  * busy→idle edge — once per agent turn — so without this a session on such a
@@ -508,17 +508,28 @@ export function centralPortalHost(baseUrl: string): string | undefined {
  * because the three routes this module reads (billing, listApiKeys,
  * getCurrentUser) are independent endpoints — a region host observed to fail
  * one is not proof it fails the other two, and a coarser host-wide key would
- * stop asking a route that host actually serves. Promotion requires the
- * central host to have PROVEN it can serve the route (an OK payload), not
- * merely that the profile host failed once — a transient blip on a healthy
- * region host must not permanently redirect it.
+ * stop asking a route that host actually serves.
+ *
+ * Promotion requires TWO CONSECUTIVE proven business-code failures on that
+ * route, never a bare transport/auth error. One such response is not enough:
+ * a business code (the measured case is `8888` "未知异常", a generic
+ * server-side error) is not proof the host doesn't serve the route either —
+ * it's exactly what a healthy region host can answer during a backend blip.
+ * A single SUCCESSFUL direct read resets the strike count before the
+ * threshold is reached, so the two failures must be consecutive to count as
+ * "observed" rather than merely accumulate over the session. This raises the
+ * bar to promote but does not add an expiry: once the threshold is reached,
+ * the route is skipped for the rest of the process exactly as a single
+ * failure used to trigger, same as before — this only makes a lone transient
+ * blip insufficient to cause it.
  */
-const unservedHost = new Set<string>()
+const unservedHostStrikes = new Map<string, number>()
+const UNSERVED_HOST_THRESHOLD = 2
 const unservedHostKey = (baseUrl: string, path: string) => `${baseUrl}\n${path}`
 
 /** Test-only: clear the unserved-host memory between tests sharing a process. */
 export function clearUnservedHostForTest(): void {
-  unservedHost.clear()
+  unservedHostStrikes.clear()
 }
 
 async function portalRead(
@@ -529,12 +540,19 @@ async function portalRead(
 ): Promise<unknown> {
   const central = centralPortalHost(baseUrl)
   const routeKey = unservedHostKey(baseUrl, path)
+  const skipDirect = central !== undefined && (unservedHostStrikes.get(routeKey) ?? 0) >= UNSERVED_HOST_THRESHOLD
   let firstError: unknown
   let firstPayload: unknown
-  if (!central || !unservedHost.has(routeKey)) {
+  if (!central || !skipDirect) {
     try {
       const payload = await portalCall(baseUrl, path, token, opts)
-      if (isRecord(payload) && isPortalOk(payload.code)) return payload
+      if (isRecord(payload) && isPortalOk(payload.code)) {
+        // A successful direct read resets the strike count: the failures must
+        // be CONSECUTIVE to count as "observed", not merely accumulate over
+        // the life of the session.
+        unservedHostStrikes.delete(routeKey)
+        return payload
+      }
       firstPayload = payload
     } catch (error) {
       if (opts.signal?.aborted) throw error
@@ -549,10 +567,13 @@ async function portalRead(
   try {
     const payload = await portalCall(central, path, token, opts)
     if (isRecord(payload) && isPortalOk(payload.code)) {
-      // Promote only on a proven business-code failure (firstPayload set), never
+      // Strike only on a proven business-code failure (firstPayload set), never
       // on a bare transport/auth error (firstError) — a network blip is not
-      // evidence the host doesn't serve the route.
-      if (firstPayload !== undefined) unservedHost.add(routeKey)
+      // evidence the host doesn't serve the route. A skipped direct attempt
+      // (skipDirect) already carries the prior strikes forward untouched.
+      if (firstPayload !== undefined) {
+        unservedHostStrikes.set(routeKey, (unservedHostStrikes.get(routeKey) ?? 0) + 1)
+      }
       return payload
     }
     // Neither host produced a usable answer. Prefer surfacing the ORIGINAL host's

@@ -140,16 +140,21 @@ export function apply(fields: Fields, profile?: string): void {
  */
 export function applyUser(fields: Fields): void {
   const derived = new Set((process.env[DERIVED] ?? "").split(",").filter((name) => name.length > 0))
-  const writingPat = fields.pat !== undefined
-  const writingPassword = fields.username !== undefined || fields.password !== undefined
+  // The incoming kind is resolved ONCE, not inferred separately per field from
+  // `fields` itself — inferring it per field is what let a caller passing BOTH
+  // a pat and a username/password (today unreachable, but not prevented by the
+  // type) delete all three: each clear-the-other-kind check independently saw
+  // evidence of the other kind and fired. Pat wins the tie, matching every
+  // other precedence table in this codebase (`--pat > CZ_PAT > … >
+  // --username/--password`).
+  const kind = fields.pat !== undefined ? "pat" : fields.username !== undefined || fields.password !== undefined ? "password" : undefined
   for (const [field, name] of FIELDS) {
-    if (field === "username" || field === "password") {
-      if (writingPat) {
-        delete process.env[name]
-        derived.delete(name)
-        continue
-      }
-    } else if (field === "pat" && writingPassword) {
+    if (kind === "pat" && (field === "username" || field === "password")) {
+      delete process.env[name]
+      derived.delete(name)
+      continue
+    }
+    if (kind === "password" && field === "pat") {
       delete process.env[name]
       derived.delete(name)
       continue

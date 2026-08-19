@@ -934,11 +934,59 @@ describe("portal reads fall back to the central host", () => {
     const previous = process.env.CZ_PROFILE
     process.env.CZ_PROFILE = "prod_0"
     try {
-      await fetchQuotaSnapshot({ providerID: "prod_0" }) // first call: learns the host is unserved
+      // Two CONSECUTIVE failures are required before the route is skipped — a
+      // single failure must not permanently redirect it.
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // strike 1
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // strike 2: now unserved
       seen.length = 0
-      await fetchQuotaSnapshot({ providerID: "prod_0" }) // second call: should skip straight to central
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // third call: should skip straight to central
       expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com"))).toBe(false)
       expect(seen.every((url) => url.includes("//api.clickzetta.com"))).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  // A single transient business-code failure must NOT trigger the skip: the
+  // threshold requires two CONSECUTIVE failures, and a successful direct read
+  // in between resets the count.
+  test("a single business-code failure does not skip the region host on the next call", async () => {
+    const seen: string[] = []
+    let regionFails = true
+    onPath("/clickzetta-portal/user/loginSingle", () => ({
+      code: 0,
+      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
+    }))
+    onFetch({
+      match: (url) => url.includes("/clickzetta-portal/"),
+      respond: (url) => {
+        seen.push(url)
+        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com") && regionFails) {
+          regionFails = false // only the FIRST region call fails
+          return { code: 8888, message: "未知异常", data: null }
+        }
+        if (url.includes("/hornhub/account/billing/account/")) {
+          return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
+        }
+        if (url.includes("/user/listApiKeys")) {
+          return {
+            code: 0,
+            data: [{ rateLimitType: "quota_total", rateLimitValue: 10_000_000, usage: 0, vapiKeyMasked: "ff52****9bc8" }],
+          }
+        }
+        if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
+        throw new Error(`unexpected portal path ${url}`)
+      },
+    })
+
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "prod_0"
+    try {
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // one failure, then the direct retry (region host) succeeds
+      seen.length = 0
+      await fetchQuotaSnapshot({ providerID: "prod_0" }) // must still try the region host — one strike, not two
+      expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/user/listApiKeys"))).toBe(true)
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous
