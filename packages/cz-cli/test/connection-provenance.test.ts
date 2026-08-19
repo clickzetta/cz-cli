@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { applyClickZettaProfile } from "../src/bootstrap/profile-env"
 import { resolveConnectionConfig } from "../src/connection/config"
-import { ConnectionEnv } from "../src/connection/env"
+import { ConnectionEnv, clearApplyUserTrackingForTest } from "../src/connection/env"
 import { splitConnectionEnv } from "../src/run-cli"
 
 // Two profiles that differ in every field a leak could carry across: `a` pins a
@@ -14,6 +14,7 @@ const HOME = join(tmpdir(), `cz-provenance-${process.pid}-${Date.now()}`)
 const OWNED = ["CZ_PROFILE", "CZ_ENV_DERIVED", "CZ_PAT", "CZ_USERNAME", "CZ_PASSWORD", "CZ_SERVICE", "CZ_PROTOCOL", "CZ_INSTANCE", "CZ_WORKSPACE", "CZ_SCHEMA", "CZ_VCLUSTER", "CZ_ACCOUNTS_URL"]
 
 beforeEach(() => {
+  clearApplyUserTrackingForTest()
   mkdirSync(join(HOME, ".clickzetta"), { recursive: true })
   writeFileSync(
     join(HOME, ".clickzetta", "profiles.toml"),
@@ -205,6 +206,27 @@ describe("run-cli's splitConnectionEnv", () => {
     expect(derivedFields.username).toBe("alice")
     expect(derivedFields.password).toBe("profile-secret")
   })
+
+  // Regression: overrides naming a flag credential is not proof that credential
+  // WON. pickCredential's tier order is flag pat > env pat > profile pat > flag
+  // username/password, so `--username u --password p` against a profile that
+  // also stores a pat resolves to the PROFILE's pat — resolved.pat, not the flag
+  // pair. Checking presence on `overrides` alone (an earlier version of this
+  // split did exactly that) would promote the profile's pat into userFields,
+  // mislabelling it as the user's and making it permanently un-clearable by a
+  // later per-profile apply() for a DIFFERENT profile — the same failure this
+  // whole refactor exists to fix, just reached through a different field.
+  test("a flag username/password pair that LOSES to a profile pat does not promote the profile's pat to userFields", () => {
+    const overrides = { profile: "a", username: "alice", password: "secret" }
+    const resolved = { pat: "profile-a-pat", username: "", password: "" } // profile pat won
+
+    const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+    expect(userFields.pat).toBeUndefined()
+    expect(userFields.username).toBeUndefined()
+    expect(userFields.password).toBeUndefined()
+    expect(derivedFields.pat).toBe("profile-a-pat")
+  })
+
 
   test("a flag pat and a flag username+password pair both count as fully the user's", () => {
     const patOverrides = { pat: "the-pat" }

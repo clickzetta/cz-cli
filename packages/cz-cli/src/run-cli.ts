@@ -599,13 +599,27 @@ export function splitConnectionEnv(
   for (const key of NON_AUTH_CONNECTION_KEYS) {
     if (overrides[key]) userFields[key] = overrides[key]
   }
-  // Only a flag-pat, or a flag pair with BOTH username AND password present on
-  // `overrides`, counts as fully the user's — follows config.ts's own
-  // `explicitCredential` line. A lone `--username` with the password filled
-  // from the profile is still mostly the profile speaking, so it takes the
-  // derived path, same reasoning as why that case does not suppress the OAuth
-  // token store in config.ts.
-  const credentialIsFlag = Boolean(overrides.pat) || Boolean(overrides.username && overrides.password)
+  // A flag being PRESENT on overrides does not mean it WON: pickCredential's
+  // tier order is flag pat > env pat > profile pat > flag username/password
+  // (config.ts), so `--username u --password p` against a profile that also
+  // stores a pat resolves to that profile's pat, not the flag pair — resolved
+  // and overrides can name DIFFERENT kinds. Checking presence on overrides
+  // alone (as an earlier version of this function did) would then promote
+  // resolved.pat — the PROFILE's value — into userFields, mislabelling it as
+  // the user's. Requiring the VALUE to match what overrides supplied, not just
+  // the field being present, is what keeps the two in agreement: only a
+  // flag-pat whose value resolveConnectionConfig actually kept, or a flag pair
+  // whose BOTH values it actually kept, counts as fully the user's. A lone
+  // `--username` with the password filled from the profile is still mostly the
+  // profile speaking (same reasoning as why that case does not suppress the
+  // OAuth token store in config.ts), and now so is any flag credential that
+  // simply lost its priority tier to the profile's own.
+  const credentialIsFlag =
+    (overrides.pat !== undefined && resolved.pat === overrides.pat) ||
+    (overrides.username !== undefined &&
+      overrides.password !== undefined &&
+      resolved.username === overrides.username &&
+      resolved.password === overrides.password)
   if (credentialIsFlag) {
     if (resolved.pat) userFields.pat = resolved.pat
     else if (resolved.username && resolved.password) {

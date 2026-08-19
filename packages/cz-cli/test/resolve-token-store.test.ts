@@ -9,6 +9,7 @@ import { makeProfileTokenStore, saveProfiles } from "../src/connection/profile-s
 const previousTestHome = process.env.CLICKZETTA_TEST_HOME
 const previousEnv = {
   CZ_PROFILE: process.env.CZ_PROFILE,
+  CZ_ENV_DERIVED: process.env.CZ_ENV_DERIVED,
   CZ_PAT: process.env.CZ_PAT,
   CZ_USERNAME: process.env.CZ_USERNAME,
   CZ_PASSWORD: process.env.CZ_PASSWORD,
@@ -20,7 +21,13 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "cz-resolve-token-store-"))
   process.env.CLICKZETTA_TEST_HOME = home
   // Isolate from the host environment so env-derived auth never leaks in.
+  // CZ_ENV_DERIVED especially: a stale value from another test file (or
+  // profile-env.test.ts's applyClickZettaProfile calls, which now route
+  // through ConnectionEnv.apply) would make ConnectionEnv.read() classify a
+  // var this file sets directly as "inherited" instead of "user", changing
+  // which credential/store-attachment tier it lands in.
   delete process.env.CZ_PROFILE
+  delete process.env.CZ_ENV_DERIVED
   delete process.env.CZ_PAT
   delete process.env.CZ_USERNAME
   delete process.env.CZ_PASSWORD

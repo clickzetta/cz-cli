@@ -1,3 +1,4 @@
+//======================== cz-cli change ========================
 // cz_change: unit coverage for the extracted model-selection chain (UPSTREAM-PATCHES.md entry 9)
 import { describe, expect, test } from "bun:test"
 import { parseModelRef, resolveModelSelection, type ModelSelectionProvider } from "@opencode-ai/core/model-selection"

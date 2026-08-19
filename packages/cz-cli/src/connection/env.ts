@@ -47,6 +47,22 @@ const DERIVED = "CZ_ENV_DERIVED"
 const PROFILE = "CZ_PROFILE"
 
 /**
+ * Names `applyUser` itself has written, in THIS process. Not published as a
+ * `CZ_*` var and not inherited by children — it exists only so a later
+ * `applyUser` call can tell "a value this same layer wrote earlier" apart from
+ * "a value the user's shell exported before this process ever ran". Both are
+ * equally the user's for `apply()`'s skip-if-user-owns-it check (`read()`
+ * folds them into one `user` bucket), but only the former is safe for
+ * `applyUser`'s clear-the-other-credential-kind branch to touch — see there.
+ */
+const writtenByApplyUser = new Set<string>()
+
+/** Test-only: clear applyUser's own-write tracking between tests sharing a process. */
+export function clearApplyUserTrackingForTest(): void {
+  writtenByApplyUser.clear()
+}
+
+/**
  * The ambient `CZ_*` layers, split by who set them. `user` outranks the profile,
  * `inherited` loses to it — see the module docblock.
  */
@@ -149,20 +165,40 @@ export function applyUser(fields: Fields): void {
   // --username/--password`).
   const kind = fields.pat !== undefined ? "pat" : fields.username !== undefined || fields.password !== undefined ? "password" : undefined
   for (const [field, name] of FIELDS) {
-    if (kind === "pat" && (field === "username" || field === "password")) {
+    // Only clear the OTHER kind's vars when THIS layer holds them — gated on
+    // `derived.has(name) || writtenByApplyUser.has(name)`: either the var is
+    // currently part of OUR derived layer (left over from an earlier
+    // `apply()` expanding a profile), or a PRIOR `applyUser` call in this same
+    // process wrote it. Without this gate the clear ran unconditionally,
+    // deleting a var regardless of who set it: `CZ_USERNAME=alice
+    // CZ_PASSWORD=secret cz-cli agent --pat X` would unset the user's OWN
+    // CZ_USERNAME/CZ_PASSWORD — set in their shell for reasons that have
+    // nothing to do with this call — for the rest of the process and every
+    // child it spawns (shell tools, LSP, git hooks). cz-cli's own resolution
+    // is unaffected either way (--pat already outranks the env pair in
+    // pickCredential's tier order), so there is nothing to gain from touching
+    // a var neither this function nor a profile expansion ever wrote. A value
+    // this layer itself wrote earlier (e.g. an earlier `applyUser({username,
+    // password})` in the same invocation) is NOT in `derived` — writing here
+    // never marks anything derived — so `writtenByApplyUser` is what still
+    // lets a later `applyUser({pat})` in the same call clear it.
+    if (kind === "pat" && (field === "username" || field === "password") && (derived.has(name) || writtenByApplyUser.has(name))) {
       delete process.env[name]
       derived.delete(name)
+      writtenByApplyUser.delete(name)
       continue
     }
-    if (kind === "password" && field === "pat") {
+    if (kind === "password" && field === "pat" && (derived.has(name) || writtenByApplyUser.has(name))) {
       delete process.env[name]
       derived.delete(name)
+      writtenByApplyUser.delete(name)
       continue
     }
     const value = fields[field]
     if (!value) continue
     process.env[name] = value
     derived.delete(name)
+    writtenByApplyUser.add(name)
   }
   if (derived.size > 0) process.env[DERIVED] = [...derived].join(",")
   else delete process.env[DERIVED]

@@ -72,6 +72,11 @@ test("resolveConnectionConfig honors CZ_PROFILE before falling back to default p
   process.env.HOME = home
   process.env.CLICKZETTA_TEST_HOME = home
   process.env.CZ_PROFILE = "czcli"
+  // A stale CZ_ENV_DERIVED from another file (or this file's own env vars,
+  // which are never applied through ConnectionEnv.apply here) would make
+  // ConnectionEnv.read() classify CZ_USERNAME/CZ_PASSWORD below as "inherited"
+  // rather than "user", changing the priority tier they resolve into.
+  delete process.env.CZ_ENV_DERIVED
   delete process.env.CZ_PAT
   process.env.CZ_USERNAME = "czcli"
   process.env.CZ_PASSWORD = "secret"

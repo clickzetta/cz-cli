@@ -1,6 +1,8 @@
+//======================== cz-cli change ========================
 // cz_change: the TUI's startup model-selection chain, extracted so a CLI command
 // can answer "which model will `cz-cli agent` actually use?" with the same code
-// the TUI runs — not a second copy of the rules that drifts from it.
+// the TUI runs — not a second copy of the rules that drifts from it. Whole file
+// is cz-owned (see UPSTREAM-PATCHES.md entry 9).
 //
 // Previously `cz-cli agent llm show` printed "Default model: automatic (OpenCode
 // selects at runtime)" whenever config.model was unset. That was wrong twice
@@ -99,3 +101,4 @@ export function resolveModelSelection(input: ModelSelectionInput): ResolvedModel
   if (!modelID) return undefined
   return { providerID: provider.id, modelID, source: "first" }
 }
+//======================== cz-cli change ========================
