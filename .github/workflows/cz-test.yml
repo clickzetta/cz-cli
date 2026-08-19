@@ -44,4 +44,14 @@ jobs:
         # task-merge) that expects the REAL module then reads this file's fixture
         # data instead. --isolate gives each file its own global object so a
         # leaked mock cannot reach another file at all.
+        #
+        # analytics-agent-session-commands.test.ts ALSO restores its mocks in its
+        # own afterAll (see the comment there). That is not redundant with
+        # --isolate: it fixes the one suite that leaked, while --isolate is the
+        # unconditional guarantee for every suite that has not been fixed the same
+        # way, or will not remember to be. Keep both — the per-file fix is cheap
+        # insurance against exactly this suite regressing if --isolate is ever
+        # removed for its cost (a fresh global per file is slower, and it can also
+        # hide a REAL cross-file coupling that would still bite in the shipped
+        # binary, where every test file's module cache is shared).
         run: bun run test

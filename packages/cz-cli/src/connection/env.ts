@@ -111,6 +111,29 @@ export function apply(fields: Fields, profile?: string): void {
   if (profile !== undefined) process.env[PROFILE] = profile
 }
 
+/**
+ * Write `fields` as the USER's layer — never marked in `CZ_ENV_DERIVED`.
+ *
+ * Use this when the values themselves already represent the user speaking now
+ * (a `--pat` / `--schema` flag, or a value `resolveConnectionConfig` picked
+ * because a flag won its priority tier), even though the caller is *this*
+ * process rather than a shell. Writing them through `apply()` instead would
+ * label them derived, and a later `apply()` from a profile expansion — the
+ * agent runtime's per-invocation `applyClickZettaProfile` — replaces the
+ * derived set wholesale and does not know these came from a flag, not from
+ * the profile it is currently expanding. That mislabelling both let the
+ * profile outrank a flag it should have lost to, and deleted the flag's value
+ * outright when the profile omitted the same field. `apply()`'s own skip-if-
+ * user-owns-it check (`!derived.has(name)`) is what protects a value written
+ * here from either.
+ */
+export function applyUser(fields: Fields): void {
+  for (const [field, name] of FIELDS) {
+    const value = fields[field]
+    if (value) process.env[name] = value
+  }
+}
+
 /** Pin the profile name without touching the derived values. */
 export function pin(name: string): void {
   process.env[PROFILE] = name
@@ -121,19 +144,3 @@ export function unpin(): void {
   delete process.env[PROFILE]
 }
 
-/**
- * The `CZ_*` a child process should receive: the derived layer plus the pinned
- * profile name. The user's own variables are already in `process.env` and reach
- * the child through normal inheritance, so they are not repeated here.
- */
-export function childEnv(): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const name of (process.env[DERIVED] ?? "").split(",")) {
-    const value = name.length > 0 ? process.env[name] : undefined
-    if (value) result[name] = value
-  }
-  if (Object.keys(result).length > 0) result[DERIVED] = Object.keys(result).join(",")
-  const profile = profileName()
-  if (profile) result[PROFILE] = profile
-  return result
-}

@@ -553,25 +553,35 @@ function connectionOverridesFromArgs(args: string[], agentPath = false): Partial
  * The resolved credential is written as ONE of pat / username+password, never
  * both: they are alternatives, and a leftover from the other kind would win the
  * priority in resolveConnectionConfig and authenticate as a different identity.
- * ConnectionEnv.apply owns the reset and the provenance marker.
+ *
+ * Written via ConnectionEnv.applyUser, not .apply: `resolved` is the expansion
+ * of flags the user passed on THIS invocation — the user speaking now, same as
+ * a hand-set `CZ_SCHEMA=x`. `.apply()` marks its writes CZ_ENV_DERIVED, which
+ * both ranks them below a profile (config.ts's ambient.inherited tier) and
+ * makes bootstrap/runtime.ts's later per-invocation `applyClickZettaProfile`
+ * call — a SEPARATE `.apply()` expanding the profile's own TOML fields —
+ * delete or override them as soon as the profile omits the same field. A flag
+ * outranking the profile is the documented contract (config.ts's own priority
+ * comment); losing to it, or vanishing outright, is neither.
  */
 function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   if (Object.keys(overrides).length === 0) return overrides
   const resolved = resolveConnectionConfig(overrides)
-  ConnectionEnv.apply(
-    {
-      ...(resolved.pat
-        ? { pat: resolved.pat }
-        : { username: resolved.username || undefined, password: resolved.password || undefined }),
-      service: resolved.service || undefined,
-      protocol: resolved.protocol || undefined,
-      instance: resolved.instance || undefined,
-      workspace: resolved.workspace || undefined,
-      schema: resolved.schema || undefined,
-      vcluster: resolved.vcluster || undefined,
-    },
-    overrides.profile,
-  )
+  ConnectionEnv.applyUser({
+    ...(resolved.pat
+      ? { pat: resolved.pat }
+      : { username: resolved.username || undefined, password: resolved.password || undefined }),
+    service: resolved.service || undefined,
+    protocol: resolved.protocol || undefined,
+    instance: resolved.instance || undefined,
+    workspace: resolved.workspace || undefined,
+    schema: resolved.schema || undefined,
+    vcluster: resolved.vcluster || undefined,
+  })
+  // A pinned profile IS derived state — it is what bootstrap/runtime.ts's
+  // middleware later expands via applyClickZettaProfile — unlike the connection
+  // fields above, which the user's own flags already resolved.
+  if (overrides.profile) ConnectionEnv.pin(overrides.profile)
   return overrides
 }
 

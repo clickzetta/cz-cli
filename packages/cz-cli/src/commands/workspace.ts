@@ -94,7 +94,11 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
               // profiles.toml, and Profile.current()'s own contract is that an
               // undefined result means "no profile configured", not "guess one".
               const profileName = argv.profile ?? Profile.current()
-              if (!profileName || !profiles[profileName]) {
+              if (!profileName) {
+                error("PROFILE_NOT_FOUND", "No profile is active. Pass -p <profile> or set default_profile in profiles.toml.", { format })
+                return
+              }
+              if (!profiles[profileName]) {
                 error("PROFILE_NOT_FOUND", `Profile '${profileName}' not found. Create a profile first.`, { format })
                 return
               }
