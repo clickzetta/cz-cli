@@ -181,6 +181,40 @@ test("CZ_USERNAME/CZ_PASSWORD from the environment does NOT suppress the store",
   expect(cfg.tokenStore).toBeDefined()
 })
 
+test("--username/--password that LOSE to a profile pat still attach the store (source, not fields, decides explicitness)", () => {
+  // Confirms the intent behind keying explicitCredential off credential.source
+  // rather than "which fields were set": --pat > CZ_PAT > profile pat >
+  // --username/--password, so a profile pat with no auth_type pin wins over an
+  // explicit --username/--password pair, and pickCredential tags that result
+  // source: "profile" — not "flag". The flags LOST the priority tier, so by the
+  // same reasoning as the profile-level-pat and --username-alone tests above,
+  // they should not suppress the store either: the profile pat is what's
+  // actually speaking here, same as if no credential flag had been passed.
+  saveProfiles({
+    czcli: { pat: "profile-pat", instance: "inst", service: "api.example.com", oauth: "sess" },
+  })
+
+  const cfg = resolveConnectionConfig({ profile: "czcli", username: "alice", password: "secret" })
+  expect(cfg.pat).toBe("profile-pat") // profile pat outranks the flag pair
+  expect(cfg.tokenStore).toBeDefined()
+})
+
+test("a lone CZ_USERNAME (no CZ_PASSWORD) plus --password merges with the env username, not the profile's", () => {
+  // Confirms the intent behind dropping getEnvConfig()'s old gate (return
+  // non-auth fields only unless the env holds CZ_PAT or a COMPLETE
+  // CZ_USERNAME+CZ_PASSWORD pair): ConnectionEnv.read() has no such gate, so a
+  // half-set CZ_USERNAME now participates in the flag-tier merge alongside a
+  // --password flag, consistent with this file's documented env > profile
+  // layering — instead of falling through to the profile's own username the
+  // way the pre-refactor code did.
+  saveProfiles({ czcli: { username: "profileuser", password: "profilepass", instance: "inst", service: "api.example.com" } })
+  process.env.CZ_USERNAME = "envuser"
+
+  const cfg = resolveConnectionConfig({ profile: "czcli", password: "p" })
+  expect(cfg.username).toBe("envuser")
+  expect(cfg.password).toBe("p")
+})
+
 test("a pat-only profile gets no store, with or without an instance", () => {
   // Nothing here is an OAuth login, so there is no section to read and none to
   // create: the PAT-exchanged token stays in memory.

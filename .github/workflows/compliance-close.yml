@@ -56,7 +56,7 @@ jobs:
                 continue;
               }
 
-              const closeMessage = 'This issue has been automatically closed because it was not updated to meet our [contributing guidelines](../blob/dev/CONTRIBUTING.md) within the 2-hour window.\n\nFeel free to open a new issue that follows our issue templates.';
+              const closeMessage = 'This issue has been automatically closed because it was not updated to meet our [contributing guidelines](../blob/main/CONTRIBUTING.md) within the 2-hour window.\n\nFeel free to open a new issue that follows our issue templates.';
 
               await github.rest.issues.createComment({
                 owner: context.repo.owner,

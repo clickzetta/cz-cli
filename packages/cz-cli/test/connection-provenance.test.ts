@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { applyClickZettaProfile } from "../src/bootstrap/profile-env"
 import { resolveConnectionConfig } from "../src/connection/config"
 import { ConnectionEnv } from "../src/connection/env"
+import { splitConnectionEnv } from "../src/run-cli"
 
 // Two profiles that differ in every field a leak could carry across: `a` pins a
 // non-default schema/vcluster and its own identity, `b` omits both and is the
@@ -157,19 +158,22 @@ describe("run-cli's applyAgentConnectionEnv (via runCli's connection flags)", ()
   // resolveConnectionConfig + the same ConnectionEnv calls run-cli.ts makes,
   // since applyAgentConnectionEnv itself is not exported.
   test("a --profile-only resolution is NOT written through applyUser", () => {
-    // Simulates what applyAgentConnectionEnv does for `cz-cli mcp serve --profile a`:
-    // no CliArgs credential/connection flags on `overrides`, only `profile`.
-    // No flag on overrides.schema means the split writes nothing through
-    // applyUser and everything resolveConnectionConfig produced through
-    // apply() instead — mirroring run-cli.ts's actual split, not the earlier,
-    // buggy version that wrote `resolved` wholesale through applyUser.
-    const resolved = resolveConnectionConfig({ profile: "a" })
+    // Exercises run-cli.ts's actual exported split, not a hand-rolled copy of
+    // it — the specific regression this guards against (writing `resolved`
+    // wholesale through applyUser) would not be caught by re-implementing the
+    // split by hand.
+    const overrides = { profile: "a" }
+    const resolved = resolveConnectionConfig(overrides)
     expect(resolved.schema).toBe("sales") // profile a's own field, not a flag
 
-    ConnectionEnv.applyUser({}) // no --schema flag on this invocation
+    const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+    expect(userFields.schema).toBeUndefined() // no --schema flag on this invocation
+    expect(derivedFields.schema).toBe("sales")
+
+    ConnectionEnv.applyUser(userFields)
     expect(process.env.CZ_SCHEMA).toBeUndefined() // nothing written as user's
 
-    ConnectionEnv.apply({ schema: resolved.schema, service: resolved.service, instance: resolved.instance }, "a")
+    ConnectionEnv.apply(derivedFields, overrides.profile)
     expect(process.env.CZ_SCHEMA).toBe("sales")
     expect(process.env.CZ_ENV_DERIVED?.split(",")).toContain("CZ_SCHEMA")
 
@@ -177,5 +181,52 @@ describe("run-cli's applyAgentConnectionEnv (via runCli's connection flags)", ()
     // must actually take effect, not be blocked by a stale user-owned marker.
     applyClickZettaProfile("b")
     expect(resolveConnectionConfig({}).schema).toBe("public")
+  })
+})
+
+describe("run-cli's splitConnectionEnv", () => {
+  test("a flag value is split into userFields, unaffected by what the profile also carries", () => {
+    const overrides = { profile: "a", schema: "flag_schema" }
+    const resolved = resolveConnectionConfig(overrides) // flag wins inside resolveConnectionConfig too
+    expect(resolved.schema).toBe("flag_schema")
+
+    const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+    expect(userFields.schema).toBe("flag_schema")
+    expect(derivedFields.schema).toBeUndefined()
+  })
+
+  test("credentialIsFlag reads overrides, not resolved: a lone --username filled out by the profile's password stays derived", () => {
+    const overrides = { profile: "a", username: "alice" } // no --password flag
+    const resolved = { username: "alice", password: "profile-secret" }
+
+    const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+    expect(userFields.username).toBeUndefined()
+    expect(userFields.password).toBeUndefined()
+    expect(derivedFields.username).toBe("alice")
+    expect(derivedFields.password).toBe("profile-secret")
+  })
+
+  test("a flag pat and a flag username+password pair both count as fully the user's", () => {
+    const patOverrides = { pat: "the-pat" }
+    const { userFields: patUser } = splitConnectionEnv(patOverrides, { pat: "the-pat" })
+    expect(patUser.pat).toBe("the-pat")
+
+    const pairOverrides = { username: "alice", password: "secret" }
+    const { userFields: pairUser } = splitConnectionEnv(pairOverrides, { username: "alice", password: "secret" })
+    expect(pairUser.username).toBe("alice")
+    expect(pairUser.password).toBe("secret")
+  })
+
+  test("non-auth keys not present on overrides always land in derivedFields, never userFields", () => {
+    const overrides = { profile: "a", instance: "flag-inst" } // only instance is a flag
+    const resolved = { instance: "flag-inst", service: "profile-service", workspace: "profile-ws" }
+
+    const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
+    expect(userFields.instance).toBe("flag-inst")
+    expect(userFields.service).toBeUndefined()
+    expect(userFields.workspace).toBeUndefined()
+    expect(derivedFields.instance).toBeUndefined()
+    expect(derivedFields.service).toBe("profile-service")
+    expect(derivedFields.workspace).toBe("profile-ws")
   })
 })

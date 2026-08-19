@@ -215,6 +215,10 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   one wrapping the cz-owned helpers appended after `parseModel`
   (`clickzettaModelsUrl` through `buildClickzettaModel`, ending before the
   untouched `export const node = LayerNode.make(...)`).
+- **Upstream value:** no discovery block in the loader at all, and no
+  `clickzetta*` helpers after `parseModel` — a provider's model list comes
+  entirely from the models.dev catalog, with nothing filled in for a private
+  gateway.
 - **What/why:** ClickZetta is a private gateway, so its models aren't in the
   models.dev catalog. Discovers them at runtime from the gateway's OpenAI-compatible
   `GET {baseURL}/v1/models`, matched on the provider's npm (the file:// specifier the
@@ -238,6 +242,9 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 - **File:** `packages/opencode/src/server/routes/instance/httpapi/handlers/instance.ts`
 - **Marker:** one `//===== cz-cli change =====` banner around the `cfg.invalidate()`
   call in `dispose`.
+- **Upstream value:** `dispose` has no `cfg.invalidate()` call — it disposes the
+  instance's own resources only, and the process-level config cache is
+  untouched.
 - **What/why:** the global config is cached with `Duration.infinity` on the
   PROCESS-level BootstrapRuntime (`config/config.ts` `cachedInvalidateWithTTL`), not
   on the instance, so disposing the instance alone left it in place and a rebuild
@@ -257,6 +264,9 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 - **File:** `packages/tui/src/context/local.tsx`
 - **Marker:** two `//===== cz-cli change =====` banners — one around the
   `resolveModelSelection` import, one around the `fallbackModel` memo body.
+- **Upstream value:** the four-tier chain is inlined directly in `local.tsx`'s
+  `fallbackModel` memo; there is no import of `@opencode-ai/core/model-selection`
+  and no shared implementation for a second caller to reuse.
 - **cz files:** `packages/core/src/model-selection.ts` (new, cz-owned — the four-tier
   provider/model resolution chain, unit-tested).
 - **What/why:** `cz-cli agent llm show` used to print "Default model: automatic

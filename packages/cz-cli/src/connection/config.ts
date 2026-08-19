@@ -143,6 +143,17 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // been treated as explicit here, and there is no flag-style "half from the
   // profile" case to protect for env — so credential.source === "env" is only
   // explicit for a pat.
+  //
+  // Keying off source has one more consequence, confirmed intentional: an
+  // explicit `--username`/`--password` pair that LOSES the priority tier to a
+  // profile pat (no auth_type pin) is tagged source: "profile", not "flag" —
+  // pickCredential picked the profile's credential, the flags did not win.
+  // Consistent with "only the credential that's actually speaking suppresses
+  // the store", that profile pat still attaches the store exactly as it would
+  // with no credential flag at all (see the profile-level-pat test above) —
+  // the flags losing the tier means they are not the ones authenticating, so
+  // they should not be the ones deciding whether a stored OAuth login stays
+  // reachable either.
   const explicitCredential =
     (credential.source === "env" && credential.kind === "pat") ||
     (credential.source === "flag" &&
@@ -212,9 +223,22 @@ type Credential =
  * `CZ_PAT`, profile pat, flag username/password, JDBC, user's `CZ_USERNAME`
  * pair, profile pair — with one tier ADDED at the bottom: a credential we
  * expanded into the environment ourselves ranks below the profile, because it is
- * OUR value rather than the user's (see connection/env.ts). Nothing else about
- * the order changes here; this is a provenance fix, not a re-litigation of
- * flag-versus-profile.
+ * OUR value rather than the user's (see connection/env.ts). This is a
+ * provenance fix, not a re-litigation of flag-versus-profile.
+ *
+ * One precedence change DOES fall out of it, though: the old `getEnvConfig()`
+ * this replaced only populated `username`/`password` at all when the env held
+ * `CZ_PAT` OR a COMPLETE `CZ_USERNAME`+`CZ_PASSWORD` pair — a lone
+ * `CZ_USERNAME` with no `CZ_PASSWORD` returned non-auth fields only, so
+ * `envUsername` in the old flag-tier merge was empty and fell through to the
+ * profile's username. `ConnectionEnv.read()` carries no such gate:
+ * `ambient.user.username` is populated whenever `CZ_USERNAME` is set, whole or
+ * half. So `CZ_USERNAME=envuser` (no `CZ_PASSWORD`) plus `--password p`
+ * against a profile storing `username = "profileuser"` now merges to
+ * `envuser`/`p` instead of falling through to `profileuser`/`p`. Accepted as
+ * more consistent with this file's own documented `env > profile` layering
+ * (the flag tier's username lookup already prefers `ambient.user.username`
+ * over the profile at that same line), not reverted.
  */
 function pickCredential(input: {
   cliArgs: Partial<CliArgs>

@@ -69,24 +69,21 @@ function View(props: {
   activeModel: ActiveModelContext
   sessionID: string
   snapshot: () => QuotaSnapshot | undefined
-  profileInfo: ReturnType<typeof readProfileInfo>
+  profileInfo: () => ReturnType<typeof readProfileInfo>
   userName: () => { profile: string; name: string } | undefined
   onContext: (key: string) => void
 }) {
-  // profileInfo is resolved ONCE per process, in installQuotaIndicator's
-  // `activeProfileInfo` cache, and passed down as a plain value — not re-read
-  // here. readProfileInfo() does two-to-three synchronous readFileSync+TOML-parse
-  // passes with no memoization of its own; doing that inside a createMemo only
-  // LOOKS reactive, since nothing in its body is a signal read — it actually just
-  // repeats the same file I/O on every mount of this component (the sidebar's
-  // ≥120-column toggle, or a resize across that threshold, both remount it), and
-  // would repeat it again on every prop READ if passed as a bare call expression
-  // in JSX, since babel-preset-solid compiles that into a re-invoking getter.
-  // Caching it one level up, outside any component, takes the I/O off the render
-  // path entirely regardless of how the prop compiles, and makes "resolved once,
-  // not live" explicit
-  // in the shape of the code rather than a comment explaining a memo that
-  // doesn't do what a memo implies.
+  // profileInfo is an ACCESSOR over installQuotaIndicator's profileInfoSignal,
+  // read here (`props.profileInfo()`) rather than passed as the resolved value
+  // itself. readProfileInfo() does two-to-three synchronous
+  // readFileSync+TOML-parse passes with no memoization of its own, so it must
+  // not run on every render — but a signal update needs a live subscriber to
+  // reach this component at all. Reading the accessor inside this createMemo IS
+  // that subscription: when installQuotaIndicator's `load()` calls
+  // `setProfileInfoSignal(...)` on a refresh, this memo re-runs and the new
+  // value actually reaches the rendered rows — a bare `let` cache written from
+  // outside any reactive scope would update in memory but never repaint,
+  // since Solid has no way to know a plain mutation happened.
   //
   // userName arrives separately because OAuth profiles need a portal call for
   // it, and is tagged with the profile it was resolved for: if the active
@@ -95,7 +92,7 @@ function View(props: {
   // with the PREVIOUS profile's user — a wrong person attached to the right
   // tenant is worse than a blank row.
   const profile = createMemo(() => {
-    const info = props.profileInfo
+    const info = props.profileInfo()
     if (!info) return undefined
     if (info.userName) return info
     const resolved = props.userName()
@@ -131,26 +128,26 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
   // (guarded by `started`) because the sidebar can mount more than once (the
   // ≥120-column toggle, or a resize across that threshold).
   let started = false
-  // Cached here, not passed as `readProfileInfo()` inline in JSX: a prop whose
-  // value is a call expression compiles (babel-preset-solid) to a getter that
-  // re-invokes the call on every read, and the sole read is inside a createMemo
-  // that also tracks the userName signal — so every settle of that signal would
-  // re-run the file I/O this is meant to take off the render path. Reading it
-  // from a cache, like `started`/`userName` above, is what actually makes
-  // "resolved on refresh, not on render" hold regardless of how the prop
-  // compiles. The controller's `load()` below refreshes this cache on every
-  // busy→idle edge — the same cadence the balance already re-resolves
-  // Profile.current() on — so the two halves of this sidebar cannot disagree
-  // about which profile is active for longer than one refresh cycle.
-  let profileInfoCache: ReturnType<typeof readProfileInfo> | undefined
+  // A signal, not a bare `let`: passing `readProfileInfo()` inline in JSX would
+  // compile (babel-preset-solid) to a getter that re-invokes the call — and re-
+  // runs the file I/O — on every read, but a bare `let` behind a plain function
+  // prop has the opposite problem. `View`'s `profile` memo would read it once at
+  // whatever moment it first runs and then never again, since a `let` mutation
+  // is invisible to Solid's reactivity — `load()` below updating it on every
+  // refresh would never reach the UI at all. Only a signal makes BOTH true at
+  // once: the I/O happens on refresh, not on render, AND an update after that
+  // refresh actually propagates.
+  const [profileInfoSignal, setProfileInfoSignal] = createSignal<ReturnType<typeof readProfileInfo> | undefined>(
+    undefined,
+  )
   const activeProfileInfo = () => {
     // Latched on a DEFINED result, not on attempt: readProfileInfo() returning
     // undefined (no profile resolved yet) must not stick — the same "latch on
     // success" reasoning as startUserNameFetch's `started` below, otherwise a
     // first mount that resolves nothing means the Profile section is gone for
     // the rest of the session even once a profile becomes configured.
-    if (profileInfoCache === undefined) profileInfoCache = readProfileInfo()
-    return profileInfoCache
+    if (profileInfoSignal() === undefined) setProfileInfoSignal(readProfileInfo())
+    return profileInfoSignal()
   }
   const startUserNameFetch = () => {
     if (started) return
@@ -187,7 +184,7 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     // moves from "every render" to "every refresh", which is the same cadence
     // fetchQuotaSnapshot already pays for the network call.
     load: () => {
-      profileInfoCache = readProfileInfo()
+      setProfileInfoSignal(readProfileInfo())
       return fetchQuotaSnapshot({
         providerID: activeModel.providerID(),
         signal: api.lifecycle.signal,
@@ -238,7 +235,7 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
             activeModel={activeModel}
             sessionID={props.session_id}
             snapshot={snapshot}
-            profileInfo={activeProfileInfo()}
+            profileInfo={activeProfileInfo}
             userName={userName}
             onContext={onContext}
           />
