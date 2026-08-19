@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { applyClickZettaProfile } from "../src/bootstrap/profile-env"
 import { resolveConnectionConfig } from "../src/connection/config"
 import { ConnectionEnv, clearApplyUserTrackingForTest } from "../src/connection/env"
-import { splitConnectionEnv } from "../src/run-cli"
+import { splitConnectionEnv, resolveAccountsUrl } from "../src/run-cli"
 
 // Two profiles that differ in every field a leak could carry across: `a` pins a
 // non-default schema/vcluster and its own identity, `b` omits both and is the
@@ -29,6 +29,7 @@ beforeEach(() => {
       `vcluster = "big_vc"`,
       `username = "user_a"`,
       `password = "pw_a"`,
+      `accounts_url = "https://accounts.example.com/a"`,
       ``,
       `[profiles.b]`,
       `service = "b.example.com"`,
@@ -250,5 +251,36 @@ describe("run-cli's splitConnectionEnv", () => {
     expect(derivedFields.instance).toBeUndefined()
     expect(derivedFields.service).toBe("profile-service")
     expect(derivedFields.workspace).toBe("profile-ws")
+  })
+})
+
+describe("run-cli's resolveAccountsUrl", () => {
+  test("reads accounts_url off the named profile", () => {
+    expect(resolveAccountsUrl("a")).toBe("https://accounts.example.com/a")
+  })
+
+  test("returns undefined when the profile has no accounts_url", () => {
+    expect(resolveAccountsUrl("b")).toBeUndefined()
+  })
+
+  test("returns undefined for an unknown profile", () => {
+    expect(resolveAccountsUrl("nonexistent")).toBeUndefined()
+  })
+
+  // Regression: resolveConnectionConfig's output (ConnectionConfig) has no
+  // accountsUrl field at all, so splitConnectionEnv's derivedFields can never
+  // carry it on its own — yet ConnectionEnv.apply deletes every derived name
+  // absent from what it's given. CZ_ACCOUNTS_URL must survive a connection-flag
+  // invocation (applyAgentConnectionEnv's actual call shape), not just a bare
+  // profile switch (applyClickZettaProfile, which DOES map accounts_url).
+  test("CZ_ACCOUNTS_URL survives being folded into derivedFields alongside a connection flag", () => {
+    const overrides = { profile: "a", schema: "flag_schema" }
+    const resolved = resolveConnectionConfig(overrides)
+    const { derivedFields } = splitConnectionEnv(overrides, resolved)
+    const accountsUrl = resolveAccountsUrl(overrides.profile)
+    if (accountsUrl) derivedFields.accountsUrl = accountsUrl
+
+    ConnectionEnv.apply(derivedFields, overrides.profile)
+    expect(process.env.CZ_ACCOUNTS_URL).toBe("https://accounts.example.com/a")
   })
 })
