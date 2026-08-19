@@ -550,38 +550,66 @@ function connectionOverridesFromArgs(args: string[], agentPath = false): Partial
  * agent runtime and any child process it spawns see the same connection the
  * flags selected.
  *
- * The resolved credential is written as ONE of pat / username+password, never
- * both: they are alternatives, and a leftover from the other kind would win the
- * priority in resolveConnectionConfig and authenticate as a different identity.
+ * `resolved` (resolveConnectionConfig's output) is NOT one provenance: most of
+ * it can be the ACTIVE PROFILE's own TOML fields, expanded here only because
+ * `overrides` happened to include `--profile` — e.g. `cz-cli mcp serve
+ * --profile a` resolves entirely from profile a, with no credential flag at
+ * all. Writing that wholesale through ConnectionEnv.applyUser (as an earlier
+ * version of this function did) mislabelled the profile's OWN values as the
+ * user's, making them permanently un-clearable: commands/mcp.ts's per-call
+ * `applyClickZettaProfile("b")` — a `.apply()` expanding a DIFFERENT profile —
+ * skips any name already marked user-owned, so the session kept authenticating
+ * as `a`. That is the exact "`--profile B` authenticates as A" failure
+ * connection/env.ts's module docblock describes.
  *
- * Written via ConnectionEnv.applyUser, not .apply: `resolved` is the expansion
- * of flags the user passed on THIS invocation — the user speaking now, same as
- * a hand-set `CZ_SCHEMA=x`. `.apply()` marks its writes CZ_ENV_DERIVED, which
- * both ranks them below a profile (config.ts's ambient.inherited tier) and
- * makes bootstrap/runtime.ts's later per-invocation `applyClickZettaProfile`
- * call — a SEPARATE `.apply()` expanding the profile's own TOML fields —
- * delete or override them as soon as the profile omits the same field. A flag
- * outranking the profile is the documented contract (config.ts's own priority
- * comment); losing to it, or vanishing outright, is neither.
+ * So the two provenances are split here, not decided by `.apply()`'s
+ * skip-if-user-owns-it check after the fact:
+ *   - a value LITERALLY supplied by a flag on `overrides` — the user speaking
+ *     now, same as a hand-set `CZ_SCHEMA=x` — goes through `.applyUser()`,
+ *     never marked derived, so it survives a later per-profile `.apply()`.
+ *   - everything else `resolved` produced (i.e. from the profile, JDBC, or a
+ *     lower env tier) goes through `.apply()`, marked derived under
+ *     `overrides.profile`, so the SAME later per-profile `.apply()` correctly
+ *     replaces it on a switch instead of leaving it stuck.
+ *
+ * The credential (pat vs. username+password) follows config.ts's own
+ * `explicitCredential` line: only a flag-pat, or a flag pair with BOTH
+ * username AND password present on `overrides`, counts as fully the user's.
+ * A lone `--username` with the password filled from the profile is still
+ * mostly the profile speaking, so it takes the derived path — same reasoning
+ * as why that case does not suppress the OAuth token store in config.ts.
  */
 function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   if (Object.keys(overrides).length === 0) return overrides
   const resolved = resolveConnectionConfig(overrides)
-  ConnectionEnv.applyUser({
-    ...(resolved.pat
-      ? { pat: resolved.pat }
-      : { username: resolved.username || undefined, password: resolved.password || undefined }),
-    service: resolved.service || undefined,
-    protocol: resolved.protocol || undefined,
-    instance: resolved.instance || undefined,
-    workspace: resolved.workspace || undefined,
-    schema: resolved.schema || undefined,
-    vcluster: resolved.vcluster || undefined,
-  })
-  // A pinned profile IS derived state — it is what bootstrap/runtime.ts's
-  // middleware later expands via applyClickZettaProfile — unlike the connection
-  // fields above, which the user's own flags already resolved.
-  if (overrides.profile) ConnectionEnv.pin(overrides.profile)
+
+  const userFields: ConnectionEnv.Fields = {}
+  const nonAuthKeys = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
+  for (const key of nonAuthKeys) {
+    if (overrides[key]) userFields[key] = overrides[key]
+  }
+  const credentialIsFlag = Boolean(overrides.pat) || Boolean(overrides.username && overrides.password)
+  if (credentialIsFlag) {
+    if (resolved.pat) userFields.pat = resolved.pat
+    else if (resolved.username && resolved.password) {
+      userFields.username = resolved.username
+      userFields.password = resolved.password
+    }
+  }
+  ConnectionEnv.applyUser(userFields)
+
+  const derivedFields: ConnectionEnv.Fields = {}
+  for (const key of nonAuthKeys) {
+    if (!overrides[key] && resolved[key]) derivedFields[key] = resolved[key]
+  }
+  if (!credentialIsFlag) {
+    if (resolved.pat) derivedFields.pat = resolved.pat
+    else if (resolved.username && resolved.password) {
+      derivedFields.username = resolved.username
+      derivedFields.password = resolved.password
+    }
+  }
+  ConnectionEnv.apply(derivedFields, overrides.profile)
   return overrides
 }
 

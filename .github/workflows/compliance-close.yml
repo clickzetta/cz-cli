@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: write
 
 jobs:
   # Issues only: the PR half of this mechanism (pr-standards.yml's check-compliance

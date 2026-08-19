@@ -110,3 +110,72 @@ describe("non-auth fields do not survive a profile switch", () => {
     expect(resolveConnectionConfig({}).schema).toBe("user_schema")
   })
 })
+
+describe("ConnectionEnv.applyUser", () => {
+  // A value written here IS the user's own layer — same as a hand-set
+  // `CZ_SCHEMA=x` — so it outranks a later profile apply() exactly like
+  // "non-auth fields do not survive a profile switch"'s user-supplied-env test
+  // above does. What must NOT happen (covered separately below) is a
+  // PROFILE-sourced value getting written here and then mistaken for this.
+  test("a value written here outranks a later profile apply(), like a hand-set env var", () => {
+    ConnectionEnv.applyUser({ schema: "flag_schema" })
+    expect(process.env.CZ_SCHEMA).toBe("flag_schema")
+
+    applyClickZettaProfile("a")
+    expect(process.env.CZ_SCHEMA).toBe("flag_schema")
+    expect(resolveConnectionConfig({}).schema).toBe("flag_schema")
+  })
+
+  test("un-marks a name that was previously derived", () => {
+    applyClickZettaProfile("a")
+    expect(process.env.CZ_ENV_DERIVED?.split(",")).toContain("CZ_SCHEMA")
+
+    ConnectionEnv.applyUser({ schema: "flag_schema" })
+    expect(process.env.CZ_ENV_DERIVED?.split(",") ?? []).not.toContain("CZ_SCHEMA")
+    expect(ConnectionEnv.read().user.schema).toBe("flag_schema")
+  })
+
+  test("writing a pat clears any username/password this layer holds, and vice versa", () => {
+    ConnectionEnv.applyUser({ username: "alice", password: "secret" })
+    expect(process.env.CZ_USERNAME).toBe("alice")
+
+    ConnectionEnv.applyUser({ pat: "the-pat" })
+    expect(process.env.CZ_PAT).toBe("the-pat")
+    expect(process.env.CZ_USERNAME).toBeUndefined()
+    expect(process.env.CZ_PASSWORD).toBeUndefined()
+
+    ConnectionEnv.applyUser({ username: "bob", password: "hunter2" })
+    expect(process.env.CZ_PAT).toBeUndefined()
+    expect(process.env.CZ_USERNAME).toBe("bob")
+  })
+})
+
+describe("run-cli's applyAgentConnectionEnv (via runCli's connection flags)", () => {
+  // Regression for the credential-provenance bug: `--profile a` alone (no
+  // credential flag) must expand ENTIRELY as derived, so a later per-profile
+  // apply() for a DIFFERENT profile can still replace it. Exercised through
+  // resolveConnectionConfig + the same ConnectionEnv calls run-cli.ts makes,
+  // since applyAgentConnectionEnv itself is not exported.
+  test("a --profile-only resolution is NOT written through applyUser", () => {
+    // Simulates what applyAgentConnectionEnv does for `cz-cli mcp serve --profile a`:
+    // no CliArgs credential/connection flags on `overrides`, only `profile`.
+    // No flag on overrides.schema means the split writes nothing through
+    // applyUser and everything resolveConnectionConfig produced through
+    // apply() instead — mirroring run-cli.ts's actual split, not the earlier,
+    // buggy version that wrote `resolved` wholesale through applyUser.
+    const resolved = resolveConnectionConfig({ profile: "a" })
+    expect(resolved.schema).toBe("sales") // profile a's own field, not a flag
+
+    ConnectionEnv.applyUser({}) // no --schema flag on this invocation
+    expect(process.env.CZ_SCHEMA).toBeUndefined() // nothing written as user's
+
+    ConnectionEnv.apply({ schema: resolved.schema, service: resolved.service, instance: resolved.instance }, "a")
+    expect(process.env.CZ_SCHEMA).toBe("sales")
+    expect(process.env.CZ_ENV_DERIVED?.split(",")).toContain("CZ_SCHEMA")
+
+    // A later switch to profile b (mcp.ts's per-call applyClickZettaProfile)
+    // must actually take effect, not be blocked by a stale user-owned marker.
+    applyClickZettaProfile("b")
+    expect(resolveConnectionConfig({}).schema).toBe("public")
+  })
+})
