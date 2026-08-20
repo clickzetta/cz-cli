@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, readFileSync } from "node:fs"
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AuthToken } from "@clickzetta/sdk"
@@ -379,6 +379,7 @@ describe("runLogin", () => {
     }
     expect(first.text()).toContain('"relogin":false')
     expect(first.text()).toContain('"llm_configured":true')
+    expect(first.text()).toContain('"llm_configuration":"written"')
 
     // Stand in for llm/key-provision.ts swapping in a virtual key after the
     // complimentary quota ran out.
@@ -397,9 +398,11 @@ describe("runLogin", () => {
     }
 
     expect(second.text()).toContain('"relogin":true')
-    // The key stays present so a parser never has to interpret its absence; the
-    // value says the write was deliberately not attempted rather than failed.
-    expect(second.text()).toContain('"llm_configured":"not_attempted"')
+    // Stays boolean AND falsy: a consumer doing `if (payload.llm_configured)` must
+    // not be told the LLM is ready by a run that never wrote it. The nuance lives in
+    // its own key.
+    expect(second.text()).toContain('"llm_configured":false')
+    expect(second.text()).toContain('"llm_configuration":"skipped_relogin"')
     expect(makeProfileTokenStore(PROFILE).load()?.token).toBe("access-secret-2")
     expect(readLlmEntries().llm[PROFILE]?.api_key).toBe("virtual-key-after-quota")
     expect(process.exitCode).toBe(0)
@@ -434,6 +437,43 @@ describe("runLogin", () => {
     // Never echo the secret back.
     expect(out.text()).not.toContain("czt_explicit")
     expect(process.exitCode).toBe(2)
+  })
+
+  // `auth logout <name> --keep-profiles` deletes [oauth.<name>] and keeps the rows.
+  // If the next login read only the section it would call itself a FIRST login and
+  // rewrite exactly what --keep-profiles asked to preserve.
+  test("login after `logout --keep-profiles` is still a re-login", async () => {
+    const out1 = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out1.restore()
+    }
+    const llm = readLlmEntries()
+    llm.llm[PROFILE] = { ...llm.llm[PROFILE]!, api_key: "virtual-key-after-quota" }
+    writeLlmEntries({ llm: llm.llm })
+
+    // What runLogout does with --keep-profiles: drop the token section, keep the
+    // profiles (pointer and all).
+    const raw = readFileSync(profilesPath(), "utf-8").replace(/\[oauth\.czcli\][\s\S]*?(?=\n\[|$)/, "")
+    writeFileSync(profilesPath(), raw)
+    expect(readFileSync(profilesPath(), "utf-8")).toContain('oauth = "czcli"')
+
+    const out2 = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out2.restore()
+    }
+
+    expect(out2.text()).toContain('"relogin":true')
+    expect(readLlmEntries().llm[PROFILE]?.api_key).toBe("virtual-key-after-quota")
   })
 
   // Zero llm.json writes on a re-login is deliberate, but a session that never got

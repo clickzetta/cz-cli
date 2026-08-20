@@ -6,7 +6,7 @@ import { error, success } from "../output/index.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
-import { oauthSectionExists, sanitizeOAuthId } from "../connection/profile-store.js"
+import { oauthSessionProvisioned, sanitizeOAuthId } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
 import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
@@ -238,13 +238,14 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // token. The global --profile selects which profile to READ and must not name
     // what login WRITES. When enumeration yields nothing, provisioning falls back
     // to a single profile from userinfo alone.
-    // First login or re-login of this session? The ONLY signal is whether
-    // [oauth.<name>] already exists — see oauthSectionExists. A re-login refreshes
-    // the token and adds newly-appeared instance×workspace profiles; it does not
-    // rewrite existing profiles, default_profile, or llm.json (an api_key there may
-    // be a virtual key the quota flow swapped in). Read BEFORE provisioning, which
-    // writes the section.
-    const relogin = oauthSectionExists(sanitizeOAuthId(sessionName))
+    // First login or re-login of this session? The signal is whether this session
+    // name has state on disk — its token section or profiles pointing at it, see
+    // oauthSessionProvisioned. A re-login refreshes the token and adds newly-appeared
+    // instance×workspace profiles; it does not rewrite existing profiles'
+    // user-owned fields, default_profile, or llm.json (an api_key there may be a
+    // virtual key the quota flow swapped in). Read BEFORE provisioning, which writes
+    // the section.
+    const relogin = oauthSessionProvisioned(sanitizeOAuthId(sessionName))
 
     const { profiles, defaultProfile, llmConfigured, created } = provisionProfilesFromOAuthCombos(
       sessionName,
@@ -298,12 +299,16 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         // number, since the rest were left as the user had them.
         profiles_created: created,
         user_id: token.userId || null,
-        // Tri-state, always present. `false` alone would read as a failure on a
-        // re-login (which never writes llm.json by design), but omitting the key
-        // moves the same ambiguity onto the parser: `jq .llm_configured` would answer
-        // `null` and `== false` would flip meaning between runs. "not_attempted"
-        // says which of the two happened without changing the key set.
-        llm_configured: relogin ? "not_attempted" : llmConfigured,
+        // Stays a plain boolean: a truthy third value ("not_attempted") would make
+        // every `jq -e .llm_configured` / `if payload["llm_configured"]` written
+        // against the old shape answer "LLM ready" for a run that never looked, and
+        // omitting the key moves the ambiguity onto the parser. `false` at least
+        // fails safe. Which KIND of false it is goes in its own key, so no existing
+        // reader changes answer.
+        llm_configured: llmConfigured,
+        llm_configuration: relogin
+          ? "skipped_relogin"
+          : llmConfigured ? "written" : "no_api_key",
         expires_in_ms: token.expireTimeMs,
         ...(warnings.length ? { warnings } : {}),
       },
