@@ -511,7 +511,7 @@ describe("runLogin", () => {
   // A defaulted name must not silently replace an existing `default` profile: the
   // setup flow's non-TTY branch calls saveProfile unconditionally, and --credential
   // refuses the same collision.
-  test("--username/--password with no name refuses to overwrite an existing 'default'", async () => {
+  test("--username/--password with no name refuses to replace a differently-credentialed 'default'", async () => {
     saveProfiles({ default: { pat: "existing-pat", instance: "keep" } })
     let authConfigureCalls = 0
     const out = captureStdout()
@@ -530,6 +530,43 @@ describe("runLogin", () => {
     expect(out.text()).toContain("PROFILE_EXISTS")
     expect(loadProfiles().default).toEqual({ pat: "existing-pat", instance: "keep" })
     expect(process.exitCode).toBe(2)
+  })
+
+  // Re-running the same username/password login to refresh its own profile is the
+  // normal CI shape; refusing that would break pipelines to guard against nothing.
+  test("--username/--password with no name proceeds over its own kind of 'default'", async () => {
+    saveProfiles({ default: { username: "u", password: "old", instance: "keep" } })
+    let seen: unknown
+    await runLogin({ ...makeArgs({ username: "u", password: "new" }), name: undefined }, {
+      loginWithBrowser: async () => KNOWN_RESULT,
+      runAuthConfigure: async (argv) => {
+        seen = argv
+      },
+    })
+
+    expect((seen as { name?: string }).name).toBe("default")
+  })
+
+  // Three keys a working entry can sit under; the raw one is what the zero-combos
+  // fallback wrote before this branch sanitized it. A name that sanitizes differently
+  // is the only way to tell them apart.
+  test("re-login does not warn when the llm entry sits under the raw session name", async () => {
+    const raw = "my.prod"
+    saveProfiles({ [raw]: { oauth: "my_prod", instance: "i1" } })
+    writeLlmEntries({ llm: { [raw]: { provider: "clickzetta", api_key: "still-working" } } })
+
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs({ name: raw }), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain('"relogin":true')
+    expect(out.text()).not.toContain("No LLM entry named")
   })
 
   // A wrapper that forwards --pat alongside the credentials it actually uses had a

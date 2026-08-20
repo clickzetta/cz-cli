@@ -1774,7 +1774,12 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
         })
         .option("login", { type: "string", describe: "Custom login page URL or JDBC connection string" })
         .option("account-name", { type: "string", describe: "Account name for existing ClickZetta users" })
-        .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification" })
+        // Same as on `login`: nothing in this file reads the flag (the only reader is
+        // `profile create`), and these flows authenticate against the server anyway,
+        // so there is no verification step to skip. `setup` runs the identical
+        // runAuthConfigure flow, so its help must not keep the promise `login --help`
+        // just dropped.
+        .option("skip-verify", { type: "boolean", default: false, describe: "Accepted for compatibility, ignored: these flows always authenticate. See `profile create --skip-verify`" })
         .example(
           "$0 setup --login-method clickzetta",
           "Start the ClickZetta login flow",

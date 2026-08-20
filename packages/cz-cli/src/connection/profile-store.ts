@@ -724,16 +724,10 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
 }
 
 /**
- * Does `[oauth.<id>]` already exist?
- *
- * This is the ONLY signal that separates a first login from a re-login of the
- * same session: the section is written by login and by nothing else, so its
- * presence means "this session name has signed in before". Deliberately does not
- * compare the account behind the token — `user_id` may be absent (it comes from
- * userinfo backfill), and a missing field must never be able to reclassify a
- * normal re-login. Best-effort: an unreadable file reads as "no section", i.e.
- * a first login, which is the conservative answer (it provisions rather than
- * skips).
+ * Does `[oauth.<id>]` already exist? One of the two inputs to
+ * {@link oauthSessionProvisioned}, which is what classifies a login — the section
+ * alone is not enough, and that function explains why. Best-effort: an unreadable
+ * file reads as "no section".
  */
 export function oauthSectionExists(id: string): boolean {
   try {

@@ -143,16 +143,23 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // by `undefined`, writing a literal "undefined" profile and making it the
     // default_profile — the credential branch above already defaults the same way.
     const name = argv.name ?? "default"
-    // …but only onto a free name. The setup flow's non-TTY branch calls saveProfile
-    // unconditionally (the TTY branch prompts for another name), so a defaulted name
-    // would silently replace an existing `default` profile and the credential it
-    // holds. The --credential path above refuses the same collision with
-    // PROFILE_EXISTS; refuse it here too rather than have the two disagree. An
-    // explicit --name is the user's call and still reaches the flow's own handling.
-    if (!argv.name && !process.stdin.isTTY && loadProfiles().default) {
+    // …but not over a credential this login cannot replace. The setup flow's non-TTY
+    // branch calls saveProfile unconditionally (the TTY branch prompts for another
+    // name), so a defaulted name would silently overwrite whatever `default` holds.
+    //
+    // Only refuse when that would destroy a DIFFERENT kind of credential — a pat, an
+    // OAuth session pointer, a cookie header. Re-running the same username/password
+    // login to refresh its own profile is the normal CI shape and stays working;
+    // turning that into exit 2 on every run after the first would break pipelines to
+    // guard against nothing. `cz-cli setup` (deprecated) still saves unconditionally;
+    // it is left alone rather than given a third behaviour.
+    const existing = argv.name ? undefined : loadProfiles().default
+    const otherCredential = existing
+      && (existing.pat || existing.oauth || Object.keys(existing.header ?? {}).some((k) => k.toLowerCase() === "cookie"))
+    if (otherCredential && !process.stdin.isTTY) {
       error(
         "PROFILE_EXISTS",
-        "Profile 'default' already exists and no [name] was given, so this login would overwrite it. Pass a name: `cz-cli auth login <name> --username … --password …`.",
+        "Profile 'default' already exists with a different credential (pat / OAuth session / cookie) and no [name] was given, so this login would replace it. Pass a name: `cz-cli auth login <name> --username … --password …`.",
         { format: argv.format, exitCode: 2 },
       )
       return
@@ -263,7 +270,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // the section.
     const relogin = oauthSessionProvisioned(sanitizeOAuthId(sessionName))
 
-    const { profiles, defaultProfile, llmConfigured, created } = provisionProfilesFromOAuthCombos(
+    const { profiles, defaultProfile, llmConfigured, llmAction, created } = provisionProfilesFromOAuthCombos(
       sessionName,
       combos,
       {
@@ -306,7 +313,13 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // so a user still holding the pre-rename entry has a working LLM and must not be
     // told otherwise on every future re-login. A warning that cannot be acted on
     // teaches people to ignore warnings.
-    if (relogin && !llmEntries[llmEntryId] && !llmEntries[`${sessionName}_0`]) {
+    // Three keys a working entry can sit under: this session's id, the `<base>_0`
+    // key the combos path renamed from, and the RAW session name the zero-combos
+    // fallback used before it was sanitized (`my.prod`, not `my_prod`). Both legacy
+    // shapes only migrate inside configureClickzettaLlm, which a re-login skips, so
+    // checking just the current key would warn forever at a user whose LLM works.
+    const llmEntryExists = Boolean(llmEntries[llmEntryId] ?? llmEntries[`${sessionName}_0`] ?? llmEntries[sessionName])
+    if (relogin && !llmEntryExists) {
       warnings.push(
         `No LLM entry named '${llmEntryId}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`.`,
       )
@@ -330,9 +343,10 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         // fails safe. Which KIND of false it is goes in its own key, so no existing
         // reader changes answer.
         llm_configured: llmConfigured,
-        llm_configuration: llmConfigured
-          ? "written"
-          : relogin && !argv["refresh-llm"] ? "skipped_relogin" : "no_api_key",
+        // Reported by the provisioner, not re-derived here: the same rule expressed
+        // twice drifted the moment a provisioning path (the zero-combos early return)
+        // answered differently from what argv alone predicts.
+        llm_configuration: llmAction,
         // The profile bare commands will use after this login. Distinct from
         // `default_profile`, which names THIS session's default: when the user's
         // selection belongs to another session a re-login leaves it alone, so the two
