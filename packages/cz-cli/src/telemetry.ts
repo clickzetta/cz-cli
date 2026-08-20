@@ -24,6 +24,11 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   // the four ways this CLI authenticates, so the whole header value is redacted rather
   // than trying to pick the Cookie key out of it.
   "header",
+  // Same shape: both take a JDBC connection string, and connection/jdbc.ts reads a
+  // `password=` parameter straight out of it. Neither value is a dimension anyone could
+  // act on in analytics, so the whole string goes rather than one parameter of it.
+  "login",
+  "jdbc",
 ])
 
 export function isSensitiveKey(key: string): boolean {
@@ -55,7 +60,7 @@ export function parseTrackingArgs(rawArgs: string[]): {
     const key = arg.replace(/^-+/, "").toLowerCase()
     if (!isSensitiveKey(key)) continue
     const next = rawArgs[i + 1]
-    if (!next || next.startsWith("-")) continue
+    if (!next) continue
     // `--header` is the one sensitive name whose arity depends on the command: a
     // repeatable `KEY=VALUE` on `profile create`, a boolean on `sql` (`--no-header`).
     // Only the KEY=VALUE shape is a value to withhold; treating the boolean's neighbour
@@ -82,8 +87,13 @@ export function parseTrackingArgs(rawArgs: string[]): {
     }
     const next = rawArgs[i + 1]
     const key = arg.replace(/^-+/, "")
-    if (next && !next.startsWith("-")) {
-      args[key] = isSensitiveKey(key) ? "<redacted>" : next
+    // A sensitive flag claims its neighbour even when it starts with `-`: otherwise
+    // `--password -h7Kq…` left the value unclaimed, the next iteration read it as a flag
+    // name, and the secret was recorded as an attribute KEY — harder to scrub downstream
+    // than a value. `secretValues` marks the same index, so it stays out of _positional.
+    const claimsNext = next !== undefined && (!next.startsWith("-") || secretValues.has(i + 1))
+    if (claimsNext) {
+      args[key] = isSensitiveKey(key) ? "<redacted>" : next!
       i++
       continue
     }

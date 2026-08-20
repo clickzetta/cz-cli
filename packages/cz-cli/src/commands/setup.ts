@@ -187,7 +187,14 @@ function saveProfile(profileName: string, profile: ProfileEntry): void {
   const data = loadFullFile()
   const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
   if (profiles[profileName]) {
-    throw new Error(`Profile '${profileName}' already exists. Use --name <other> or delete it first.`)
+    // Coded, so the one authoritative collision check reports the same thing on every
+    // path into this flow. runAuthConfigure's catch used to flatten it to SETUP_FAILED,
+    // which is why the collision looked like two different failures depending on which
+    // entry point reached it.
+    throw new ProvisionError(
+      "PROFILE_EXISTS",
+      `Profile '${profileName}' already exists. Use --name <other> or delete it first.`,
+    )
   }
   saveFullFile({
     ...data,
@@ -1710,7 +1717,10 @@ export async function runAuthConfigure(argv: AuthConfigureArgs): Promise<void> {
             collected: { username: setupValue(rawArgv, "username") || undefined, instance: setupValue(rawArgv, "instance") || undefined, workspace: setupValue(rawArgv, "workspace") || undefined, service: setupValue(rawArgv, "service") || undefined },
             argv: rawArgv,
           })
-          error("SETUP_FAILED", msg, { format })
+          // Keep a structured code when the failure carried one (saveProfile's
+          // PROFILE_EXISTS): flattening every failure to SETUP_FAILED is what made one
+          // collision look like two, depending on which entry point hit it.
+          error(e instanceof ProvisionError ? e.code : "SETUP_FAILED", msg, { format })
         }
         return
       }

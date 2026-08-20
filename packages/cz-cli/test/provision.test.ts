@@ -562,8 +562,9 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(getDefaultProfileName()).toBe("sess_0")
     expect(result.defaultProfile).toBe("sess_0")
     // The bare row is this session's too — it shows up in `profiles`, like
-    // `auth logout` sees it via the same oauth pointer.
-    expect(result.profiles).toEqual(["sess", "sess_0"])
+    // `auth logout` sees it via the same oauth pointer — but AFTER the usable rows, so
+    // `profiles[0]` is not the instance-less one.
+    expect(result.profiles).toEqual(["sess_0", "sess"])
   })
 
   // enumerateOAuthCombos swallows a failed listUserWorkspaces per instance, so a
@@ -656,6 +657,52 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
 
     expect(loadProfiles().sess_0?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+  })
+
+  // Reaching the "provision an instance, then log in again" remedy through the
+  // combo-less branch (userinfo names an instance now, the enumeration still failed) has
+  // to heal the row: filling an EMPTY field is not overwriting a user edit, and without
+  // it login reports success, no warning fires, and every bare command keeps failing.
+  test("a combo-less re-login fills an instance-less row from userinfo", () => {
+    // First login with nothing enumerable: the bare `sess` row, no instance.
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      userInfo: { apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+    expect(String(loadProfiles().sess?.instance ?? "")).toBe("")
+
+    // Instance provisioned, but the workspace listing still fails.
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      userInfo: { instanceName: "i9", workspace: "ws9", apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+
+    const after = loadProfiles().sess!
+    expect(after.instance).toBe("i9")
+    expect(after.workspace).toBe("ws9")
+    expect(after.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+  })
+
+  // The single-profile refresh path must honour the entry-host guard too.
+  test("a single-profile refresh does not overwrite a real service with the entry-host fallback", () => {
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      userInfo: { instanceName: "i1", workspace: "ws1", apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+    expect(loadProfiles().sess?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+    // Drop the pointer so sessionProfiles is empty and the single-profile path runs.
+    const rows = loadProfiles()
+    delete rows.sess!.oauth
+    saveProfiles(rows)
+
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      service: "api.clickzetta.com",
+      serviceIsEntryFallback: true,
+      userInfo: { instanceName: "i1", workspace: "ws1", apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+
+    expect(loadProfiles().sess?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
   })
 
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
