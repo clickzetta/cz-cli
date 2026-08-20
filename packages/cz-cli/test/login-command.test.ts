@@ -436,6 +436,38 @@ describe("runLogin", () => {
     expect(process.exitCode).toBe(2)
   })
 
+  // Zero llm.json writes on a re-login is deliberate, but a session that never got
+  // an entry (its first login carried no apiKey) would otherwise stay entry-less
+  // with nothing in the output saying so — `llm_configured` is omitted on re-login.
+  test("re-login warns when this session has no llm entry, without writing one", async () => {
+    const first = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        // userInfo without an apiKey: nothing to configure on the first login.
+        loginWithBrowser: async () => ({ ...KNOWN_RESULT, userInfo: { ...KNOWN_RESULT.userInfo!, apiKey: undefined } }),
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      first.restore()
+    }
+    expect(readLlmEntries().llm[PROFILE]).toBeUndefined()
+
+    const second = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => ({ ...KNOWN_RESULT, userInfo: { ...KNOWN_RESULT.userInfo!, apiKey: undefined } }),
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      second.restore()
+    }
+
+    expect(second.text()).toContain("No LLM entry named")
+    expect(second.text()).toContain("agent llm add")
+    // Still no write — the warning replaces the write, it does not precede one.
+    expect(readLlmEntries().llm[PROFILE]).toBeUndefined()
+  })
+
   // A wrapper that forwards --pat alongside the credentials it actually uses had a
   // working invocation; the redirect must not turn that into a hard failure. The PAT
   // is still ignored by the flow, so say so on stderr rather than silently.

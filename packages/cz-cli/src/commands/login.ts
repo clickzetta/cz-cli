@@ -7,6 +7,7 @@ import { resolveLoginTarget, type LoginTarget } from "../connection/login-target
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
 import { oauthSectionExists, sanitizeOAuthId } from "../connection/profile-store.js"
+import { readLlmEntries } from "../llm/native-config.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
 import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
 
@@ -269,6 +270,17 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     if (!userInfo?.instanceName && combos.length === 0) {
       warnings.push(
         "Your account has no accessible instance yet, so the profile has no instance set. Provision an instance, then re-run `cz-cli auth login`.",
+      )
+    }
+    // A re-login writes no llm.json — that is the point (its api_key may be a
+    // gateway virtual key the quota flow swapped in). But then a session whose
+    // FIRST login had no apiKey to write, or that predates LLM auto-config, would
+    // silently stay without an entry forever, and the omitted `llm_configured`
+    // hides it. Say so instead: the write is skipped by design, the missing entry
+    // is not.
+    if (relogin && !readLlmEntries().llm[sanitizeOAuthId(sessionName)]) {
+      warnings.push(
+        `No LLM entry named '${sanitizeOAuthId(sessionName)}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`; it may also exist under a different entry name.`,
       )
     }
 

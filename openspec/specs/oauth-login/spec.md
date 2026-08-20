@@ -222,7 +222,7 @@ A second `cz-cli auth login <name>` under a session name that has signed in befo
 
 On a re-login the CLI SHALL rewrite the `[oauth.<name>]` token section, and SHALL leave every other piece of state alone, because each is state the user may have changed since the first login:
 
-- **`llm.json` is not written at all.** Its `api_key` may be the gateway virtual key that the quota-exhaustion flow swapped into the same entry, so overwriting it with userinfo's complimentary key would silently undo that remedy. An entry the user deleted is not recreated either; `agent llm add` / `ai-gateway key` are the ways back.
+- **`llm.json` is not written at all.** Its `api_key` may be the gateway virtual key that the quota-exhaustion flow swapped into the same entry, so overwriting it with userinfo's complimentary key would silently undo that remedy. An entry the user deleted is not recreated either; `agent llm add` / `ai-gateway key create` are the ways back. Because the skip is unconditional, a session that never got an entry (its first login carried no `apiKey`, or it predates LLM auto-config) would stay entry-less silently, so a re-login that finds no entry under its session id SHALL report a warning naming those two commands.
 - **Existing profiles keep their connection fields**, their `header.Cookie`, and everything else on the row; only the `oauth` pointer and (when absent) `auth_type` are re-asserted so the refreshed token resolves.
 - **`default_profile` is not written**, with one exception: a `default_profile` that is absent or names a profile that no longer exists is a dangling pointer rather than a choice, and is repaired to this session's first profile. It is reported only when it names one of this session's profiles; otherwise the session's first profile is reported, since `default_profile` is a single global string with nothing tying it to a session.
 - **Only genuinely new `instance × workspace` combinations are added**, named `<base>_<lowest free N>`. Combinations are matched to existing profiles by connection content rather than by enumeration index, so `<base>_N` does not shift when the server returns the combinations in another order, and a profile pointing at another session's token is never claimed.
@@ -239,6 +239,12 @@ The success output SHALL carry `relogin` and `profiles_created` (what this run c
 
 - **WHEN** a re-login's enumeration returns the existing combinations in a different order plus one new `instance × workspace`
 - **THEN** exactly one profile is created, reported in `profiles_created`, and each existing profile still describes the same connection as before
+
+#### Scenario: Re-login reports a missing LLM entry instead of creating one (boundary)
+
+- **WHEN** a session's first login carried no `apiKey` (so no `llm.json` entry was written) and `cz-cli auth login <same name>` runs again
+- **THEN** `llm.json` is still not written, and the success output carries a warning that no entry exists for this session, naming `cz-cli agent llm add` / `cz-cli ai-gateway key create`
+- **AND** the warning does not fire when the entry exists, whatever its `api_key` currently is
 
 #### Scenario: Re-login that enumerates nothing refreshes only the token (boundary)
 
