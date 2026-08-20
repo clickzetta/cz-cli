@@ -2,7 +2,7 @@ import type { Argv } from "yargs"
 import * as p from "@clack/prompts"
 import { toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { error, success } from "../output/index.js"
+import { error, EXIT_USAGE_ERROR, success } from "../output/index.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
@@ -122,11 +122,13 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // default_profile — the credential branch above already defaults the same way.
     const name = argv.name ?? "default"
     // …but only onto a free name, and say so before touching the network. The shared
-    // writer already refuses this collision — saveProfile throws "Profile 'default'
-    // already exists" (setup.ts) — so nothing can be overwritten either way; what the
-    // pre-check buys is one error code instead of a SETUP_FAILED that arrives after a
-    // full portal round trip, and a message that names the fix. Non-TTY only: with a
-    // terminal the setup flow prompts for another name, which is better than an error.
+    // writer is the authoritative check — saveProfile throws a coded PROFILE_EXISTS
+    // (setup.ts), so every path into the flow reports the same failure and nothing can be
+    // overwritten either way. This is a fast-fail for the credential shapes, not a second
+    // rule: it turns a collision that would otherwise surface after a full portal round
+    // trip into an immediate error naming the fix. Non-TTY only, and not for
+    // --login-method/--login: with a terminal the flow prompts for another name, and the
+    // non-TTY step protocol legitimately has no name at step one.
     // Gated on the CREDENTIAL shapes only. `--login-method` / `--login` drive the
     // non-TTY step protocol, where an agent wrapper re-invokes with more flags and may
     // legitimately not have a name yet; pre-empting that with an error would stop it at
@@ -136,7 +138,7 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
       error(
         "PROFILE_EXISTS",
         "Profile 'default' already exists and no [name] was given. Pass a name: `cz-cli auth login <name> --username … --password …` (or delete the existing profile).",
-        { format: argv.format, exitCode: 2 },
+        { format: argv.format, exitCode: EXIT_USAGE_ERROR },
       )
       return
     }
@@ -168,7 +170,7 @@ function patRefusedOrNoted(argv: LoginArgs): boolean {
       "PAT_NOT_A_LOGIN",
       "`login` does not take --pat. A PAT is a stored profile credential, not a sign-in: "
       + `run \`cz-cli profile create ${profileNameForHint(argv.name)} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
-      { format: argv.format, exitCode: 2 },
+      { format: argv.format, exitCode: EXIT_USAGE_ERROR },
     )
     return true
   }

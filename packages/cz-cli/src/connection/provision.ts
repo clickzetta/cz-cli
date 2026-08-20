@@ -253,7 +253,10 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
     // preference. instance/workspace/schema/vcluster are left alone: unlike the
     // combos path there is no match key pinning them, so an edit here is the user's.
     ? {
-      service,
+      // Same guard as the combo-less branch: when userinfo returned no gatewayMapping,
+      // `service` is the OAuth sign-in host standing in for a region host, and writing it
+      // over a row that already has a real one breaks a working profile.
+      ...(input.serviceIsEntryFallback ? {} : { service }),
       protocol,
       userId: token.userId || undefined,
       accountId: userInfo?.accountId,
@@ -434,10 +437,24 @@ export function provisionProfilesFromOAuthCombos(
         // returned no gatewayMapping, so `input.service` is the sign-in host standing in
         // for one. Writing that over a row that already has a real host would break a
         // working profile — the old zero-combos path never touched these rows at all.
-        const sameInstance = describedInstance.length > 0
-          && String(rows[profileName]?.instance ?? "").toLowerCase() === describedInstance
+        const rowInstance = String(rows[profileName]?.instance ?? "").trim()
+        const sameInstance = describedInstance.length > 0 && rowInstance.toLowerCase() === describedInstance
+        // Filling an EMPTY instance/workspace is not overwriting a user edit, and the row
+        // that has none is the bare `<base>` one a zero-combos first login wrote — the
+        // shape whose documented remedy is "provision an instance, then log in again".
+        // Reaching that remedy through this branch (userinfo names an instance now, the
+        // enumeration still failed) has to heal the row, or login reports success, no
+        // warning fires, and every bare command keeps failing exactly as before.
+        const fillConnection = rowInstance.length === 0 && Boolean(userInfo?.instanceName)
         patchProfileConnection(profileName, {
           ...(sameInstance && !input.serviceIsEntryFallback ? { service: input.service } : {}),
+          ...(fillConnection
+            ? {
+              instance: userInfo?.instanceName,
+              workspace: userInfo?.workspace,
+              ...(input.serviceIsEntryFallback ? {} : { service: input.service }),
+            }
+            : {}),
           protocol,
           userId: token.userId || undefined,
           accountId: userInfo?.accountId,
@@ -702,12 +719,15 @@ function sessionProfileIndex(base: string, profileName: string): number | undefi
 }
 
 /**
- * Sort key for reporting: `<base>_N` by N, and the bare `<base>` row (the
- * zero-combos shape) first, since it predates every numbered row. Never used to
- * allocate a name — only `sessionProfileIndex` feeds `maxIndex`.
+ * Sort key for reporting: `<base>_N` by N, then the bare `<base>` row, then anything
+ * else. The bare row sorts AFTER the numbered ones despite predating them: it is the
+ * zero-combos shape, the one that may carry no `instance`, and callers do read
+ * `profiles[0]` — leaving an unusable row there while `session_default_profile` names a
+ * usable one would be a trap. Never used to allocate a name — only
+ * `sessionProfileIndex` feeds `maxIndex`.
  */
 function reportOrder(base: string, profileName: string): number {
-  if (profileName === base) return -1
+  if (profileName === base) return Number.MAX_SAFE_INTEGER - 1
   // Ownership is decided by the `oauth` pointer, so a session can legitimately include
   // a row named however the user liked; `?? 0` would tie it with `<base>_0`.
   return sessionProfileIndex(base, profileName) ?? Number.MAX_SAFE_INTEGER

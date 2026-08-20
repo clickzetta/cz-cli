@@ -125,3 +125,23 @@ test("parseTrackingArgs keeps the statement when --header is the boolean form", 
 
   expect(positional).toEqual(["sql", "select 1"])
 })
+
+// `--login` / `--jdbc` take a JDBC connection string, and jdbc.ts reads `password=`
+// out of it, so the whole value is a credential.
+test("parseTrackingArgs redacts connection strings", () => {
+  const r = parseTrackingArgs(["auth", "login", "s", "--login", "jdbc:clickzetta://h/ws?password=hunter2"])
+
+  expect(r.args.login).toBe("<redacted>")
+  expect(r.args["_positional"]).toBe("s")
+  expect(JSON.stringify(r)).not.toContain("hunter2")
+})
+
+// A secret starting with `-` used to escape both the filter and the redaction and be
+// recorded as an attribute KEY, which is worse than a value.
+test("parseTrackingArgs claims a sensitive flag's value even when it starts with -", () => {
+  const r = parseTrackingArgs(["auth", "login", "s", "--password", "-h7Kq_secret"])
+
+  expect(r.args.password).toBe("<redacted>")
+  expect(Object.keys(r.args)).not.toContain("h7Kq_secret")
+  expect(JSON.stringify(r)).not.toContain("h7Kq_secret")
+})
