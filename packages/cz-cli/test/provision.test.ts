@@ -483,6 +483,62 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(getDefaultProfileName()).toBe("other_0")
   })
 
+  // Writing `oauth`/`auth_type` onto a hand-made row would switch the credential it
+  // authenticates with — the very thing setAuthTypeIfAbsent's contract prevents — so
+  // a row is only adopted when it explicitly points at THIS session.
+  test("a hand-written <base>_N row with no oauth pointer is never adopted", () => {
+    const combos = [combo("i1", "ws1")]
+    const profiles = loadProfiles()
+    profiles.sess_0 = { instance: "i1", workspace: "ws1", pat: "user-pat" }
+    saveProfiles(profiles)
+
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.profiles).toEqual(["sess_1"])
+    // Untouched: no oauth pointer, no auth_type, pat intact.
+    expect(loadProfiles().sess_0).toEqual({ instance: "i1", workspace: "ws1", pat: "user-pat" })
+  })
+
+  // `service` and `aimeshEndpointBaseUrl` are facts userinfo just re-read, not user
+  // preferences: freezing them at the first login's values would mean a region or
+  // endpoint move could never be picked up by the natural remedy (log in again).
+  test("re-login refreshes server-owned fields while keeping user-owned ones", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const edited = loadProfiles()
+    edited.sess_0 = { ...edited.sess_0, schema: "my_schema", vcluster: "MY_VC", header: { Cookie: "stale" } }
+    saveProfiles(edited)
+
+    const moved = [{ ...combo("i1", "ws1"), service: "us-east-1-aws.api.singdata.com" }]
+    provisionProfilesFromOAuthCombos("sess", moved, input(moved, {
+      userInfo: {
+        instanceName: "i1",
+        workspace: "ws1",
+        apiKey: "free-key",
+        accountId: 8,
+        accountName: "renamed",
+        aimeshEndpointBaseUrl: "https://new-aimesh.example.com/",
+      },
+    }))
+
+    const after = loadProfiles().sess_0!
+    expect(after.service).toBe("us-east-1-aws.api.singdata.com")
+    expect(after.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
+    expect(after.account_name).toBe("renamed")
+    expect(after.schema).toBe("my_schema")
+    expect(after.vcluster).toBe("MY_VC")
+    expect(after.header).toEqual({ Cookie: "stale" })
+  })
+
+  // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
+  test("a repeated combo is reported once", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.profiles).toEqual(["sess_0"])
+    expect(result.created).toEqual(["sess_0"])
+  })
+
   test("re-login does not resurrect an llm entry the user deleted", () => {
     const combos = [combo("i1", "ws1")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))

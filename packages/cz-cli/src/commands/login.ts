@@ -60,11 +60,14 @@ async function defaultPromptSessionName(): Promise<string | undefined> {
 /**
  * `cz-cli login` is the adaptive front door for authentication, dispatching by
  * argv:
- *   --credential <b64>          → new-user credential provisioning
- *   --pat / --username+password → non-interactive setup flow (CI/agents)
- *   --login-method / --login    → portal-discovery setup flow
- *   (default, no credential)    → browser OAuth: create/refresh profile,
- *                                 store the OAuth token, and configure the LLM
+ *   --credential <b64>       → new-user credential provisioning
+ *   --username+password      → non-interactive setup flow (CI/agents)
+ *   --login-method / --login → portal-discovery setup flow
+ *   --pat (alone)            → refused: a PAT is a profile credential, not a
+ *                              sign-in, and no flow here consumes it
+ *   (default, no credential) → browser OAuth: first login provisions profiles +
+ *                              token + LLM; a re-login refreshes only the token
+ *                              (see {@link OAuthProvisionInput.relogin})
  *
  * The non-OAuth branches delegate to the shared {@link runAuthConfigure} so
  * `login` and the deprecated `setup` alias run one implementation. Browser
@@ -295,9 +298,12 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         // number, since the rest were left as the user had them.
         profiles_created: created,
         user_id: token.userId || null,
-        // Only meaningful on a first login: a re-login never writes llm.json, so
-        // reporting `false` would read as a failure rather than "not our business".
-        ...(relogin ? {} : { llm_configured: llmConfigured }),
+        // Tri-state, always present. `false` alone would read as a failure on a
+        // re-login (which never writes llm.json by design), but omitting the key
+        // moves the same ambiguity onto the parser: `jq .llm_configured` would answer
+        // `null` and `== false` would flip meaning between runs. "not_attempted"
+        // says which of the two happened without changing the key set.
+        llm_configured: relogin ? "not_attempted" : llmConfigured,
         expires_in_ms: token.expireTimeMs,
         ...(warnings.length ? { warnings } : {}),
       },
