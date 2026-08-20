@@ -198,12 +198,15 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
     saveProfiles(profiles)
   }
 
-  // A re-login of a profile that already exists refreshes the token and nothing
-  // else: its connection fields, header.Cookie and default_profile are all state
-  // the user may have changed since, and the token is the only thing this login
-  // produced. A profile that does NOT exist yet is provisioned in full even on a
-  // re-login — nothing of the user's can be overwritten by creating it.
-  const refreshOnly = Boolean(input.relogin) && existedBefore
+  // Two different questions, deliberately not one flag (they used to be, and the
+  // pair drifted — see the note on `relogin` below):
+  //   `relogin` alone decides the FILE-WIDE effects — default_profile and llm.json
+  //     are shared by every profile, so a re-login must leave them alone no matter
+  //     which profile row this call happens to be filling.
+  //   `refreshOnly` decides only whether to write THIS row's connection fields:
+  //     an existing row is the user's, a row we just created has nothing to lose.
+  const relogin = Boolean(input.relogin)
+  const refreshOnly = relogin && existedBefore
 
   // Clear residue that would shadow/contradict this fresh login: a stale
   // header.Cookie (consulted before the OAuth token at runtime) and any stale
@@ -247,10 +250,10 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // setAuthTypeIfAbsent: re-login must not repoint a user's explicit choice.
   setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
 
-  if (name && !refreshOnly) setDefaultProfile(name)
+  if (name && !relogin) setDefaultProfile(name)
 
   // llm.json is not a login artifact on a re-login: see OAuthProvisionInput.relogin.
-  const llmConfigured = refreshOnly
+  const llmConfigured = relogin
     ? false
     : configureClickzettaLlm(name ?? finalInstance, {
       apiKey: userInfo?.apiKey,
@@ -286,25 +289,11 @@ export function provisionProfilesFromOAuthCombos(
   const token = input.issuer ? { ...input.token, issuer: input.issuer } : input.token
   const base = baseName ?? "default"
 
-  if (combos.length === 0) {
-    // Nothing enumerated — keep a working profile from userinfo alone.
-    const existedBefore = loadProfiles()[base] !== undefined
-    const single = provisionProfileFromOAuth(base, input)
-    return {
-      profiles: [base],
-      defaultProfile: (input.relogin ? getDefaultProfileName() : undefined) ?? base,
-      llmConfigured: single.llmConfigured,
-      created: existedBefore ? [] : [base],
-    }
-  }
-
   // One shared token section named after the session: [oauth.<base>]. Reusing
   // the session name (not a random id) means re-logging in under the same name
   // refreshes the same section instead of accumulating orphans, and the profile
   // prefix (<base>_N) visibly ties each profile to its login session.
   const oauthId = sanitizeOAuthId(base)
-  saveSharedOAuthToken(oauthId, token)
-
   const relogin = Boolean(input.relogin)
 
   // Index the session's existing profiles by the CONNECTION each describes, so a
@@ -315,19 +304,70 @@ export function provisionProfilesFromOAuthCombos(
   // with any `<base>_N` already on disk.
   let maxIndex = -1
   const byConnection = new Map<string, string>()
+  const sessionProfiles: string[] = []
   for (const [profileName, entry] of Object.entries(loadProfiles())) {
     const index = sessionProfileIndex(base, profileName)
     if (index === undefined) continue
+    // A profile pointing at ANOTHER session's token is not ours to touch, however
+    // its name reads: session "sess" and session "sess_2" both produce a profile
+    // literally named "sess_2" (the zero-combos path below names it after the
+    // session), and `sessionProfileIndex("sess", "sess_2")` cannot tell them apart.
+    const pointer = typeof entry.oauth === "string" ? entry.oauth : undefined
+    if (pointer && pointer !== oauthId) continue
     maxIndex = Math.max(maxIndex, index)
-    byConnection.set(connectionKey(entry.instance, entry.workspace), profileName)
+    sessionProfiles.push(profileName)
+    const key = connectionKey(entry.instance, entry.workspace)
+    // A row with neither instance nor workspace describes no connection, so no
+    // combo can ever match it; indexing it would only let one such row shadow
+    // another under the shared empty key. First write wins for the rest, so a
+    // duplicated connection resolves deterministically to the lowest N.
+    if (key === EMPTY_CONNECTION_KEY || byConnection.has(key)) continue
+    byConnection.set(key, profileName)
   }
+  sessionProfiles.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
+
+  if (combos.length === 0) {
+    // Nothing enumerated. On a re-login of a session that already has profiles the
+    // token is all we have to offer: they share [oauth.<base>], so refreshing the
+    // section reaches all of them. Creating the single bare `<base>` row here (the
+    // first-login shape) would both add a connection-less profile beside `<base>_N`
+    // and — because that row does not exist yet — run a FULL first-login
+    // provisioning, handing default_profile and llm.json back to userinfo. Failing
+    // to enumerate is a transient server condition (oauth-enumerate.ts swallows a
+    // failed listUserWorkspaces per instance), not a reason to rewrite the file.
+    if (relogin && sessionProfiles.length > 0) {
+      saveSharedOAuthToken(oauthId, token)
+      return {
+        profiles: sessionProfiles,
+        defaultProfile: sessionDefaultProfile(relogin, sessionProfiles),
+        llmConfigured: false,
+        created: [],
+      }
+    }
+    // Nothing to refresh — keep a working profile from userinfo alone.
+    const existedBefore = loadProfiles()[base] !== undefined
+    const single = provisionProfileFromOAuth(base, input)
+    return {
+      profiles: [base],
+      defaultProfile: sessionDefaultProfile(relogin, [base]),
+      llmConfigured: single.llmConfigured,
+      created: existedBefore ? [] : [base],
+    }
+  }
+
+  saveSharedOAuthToken(oauthId, token)
 
   const names: string[] = []
   const created: string[] = []
   for (const combo of combos) {
     const key = connectionKey(combo.instance, combo.workspace)
-    const existingName = relogin ? byConnection.get(key) : undefined
-    if (existingName) {
+    // Content matching is NOT gated on `relogin`: `maxIndex` counts every existing
+    // `<base>_N` either way, so skipping the lookup on a first login would append a
+    // second profile for a connection that already has one instead of reusing it.
+    // What `relogin` decides is how much of a matched row may be written.
+    const existingName = byConnection.get(key)
+    const name = existingName ?? `${base}_${++maxIndex}`
+    if (existingName && relogin) {
       // Already provisioned for this connection. Only the two fields that tie it
       // to the token we just refreshed are (re)asserted — both idempotent, and
       // setAuthTypeIfAbsent never overrides an explicit choice. Everything else on
@@ -338,7 +378,6 @@ export function provisionProfilesFromOAuthCombos(
       continue
     }
 
-    const name = `${base}_${++maxIndex}`
     // Materialize the row so patchProfileConnection has somewhere to write.
     const profiles = loadProfiles()
     profiles[name] = profiles[name] ?? {}
@@ -366,7 +405,7 @@ export function provisionProfilesFromOAuthCombos(
     setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
     byConnection.set(key, name)
     names.push(name)
-    created.push(name)
+    if (!existingName) created.push(name)
   }
 
   // Reported in `<base>_N` order, not enumeration order: N is stable across logins
@@ -374,9 +413,7 @@ export function provisionProfilesFromOAuthCombos(
   // sees the profiles line up.
   names.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
 
-  // default_profile is the user's selection once it exists, so a re-login reports
-  // it instead of resetting it to this session's first profile.
-  const defaultProfile = (relogin ? getDefaultProfileName() : undefined) ?? names[0]!
+  const defaultProfile = sessionDefaultProfile(relogin, names)
   if (!relogin) setDefaultProfile(defaultProfile)
 
   // llm.json is untouched on a re-login: see OAuthProvisionInput.relogin.
@@ -391,10 +428,28 @@ export function provisionProfilesFromOAuthCombos(
   return { profiles: names, defaultProfile, llmConfigured, created }
 }
 
+/**
+ * Which of this session's profiles to report as the default.
+ *
+ * A re-login keeps whatever the user selected — but only when that selection is one
+ * of THIS session's profiles. `default_profile` is a single global string with
+ * nothing tying it to a session, so an unvalidated read can name another session's
+ * profile (or one since deleted), and a caller that feeds our `default_profile`
+ * straight back into `--profile` would then target the wrong account. Either way we
+ * do not WRITE it on a re-login; this only decides what to report.
+ */
+function sessionDefaultProfile(relogin: boolean, names: string[]): string {
+  const selected = relogin ? getDefaultProfileName() : undefined
+  return selected && names.includes(selected) ? selected : names[0]!
+}
+
 /** Stable identity of a profile's connection: what a combo is matched against. */
 function connectionKey(instance: unknown, workspace: unknown): string {
   return `${String(instance ?? "").toLowerCase()}\u0000${String(workspace ?? "").toLowerCase()}`
 }
+
+/** What {@link connectionKey} yields for a row carrying neither field. */
+const EMPTY_CONNECTION_KEY = connectionKey(undefined, undefined)
 
 /** The N of a `<base>_N` profile name, or undefined when the name isn't one. */
 function sessionProfileIndex(base: string, profileName: string): number | undefined {

@@ -348,10 +348,10 @@ function inferAgentEndpoint(profile: Record<string, unknown>): string | undefine
  * Record how a profile authenticates — but ONLY when it has no `auth_type` yet.
  *
  * Never overwrites, deliberately, including on re-login. `auth_type` selects which
- * of a profile's credentials is used, so it is a user-owned setting: a `cz-cli auth
- * login --pat` against a profile pinned to `oauth` must not silently repoint it and
- * change which identity every later command runs as. Someone who wants to change it
- * edits profiles.toml.
+ * of a profile's credentials is used, so it is a user-owned setting: a `cz-cli
+ * profile create --pat` (or a hand-added pat) on a profile pinned to `oauth` must
+ * not silently repoint it and change which identity every later command runs as.
+ * Someone who wants to change it edits profiles.toml.
  *
  * Best-effort; never throws (a login must not fail over a bookkeeping field).
  */

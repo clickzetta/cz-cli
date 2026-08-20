@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, readFileSync } from "node:fs"
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { parse as parseToml } from "smol-toml"
@@ -360,6 +360,91 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(profiles.sess_0?.workspace).toBe("ws1")
     expect(profiles.sess_1?.workspace).toBe("ws2")
     expect(profiles.sess_2).toMatchObject({ instance: "i9", workspace: "ws_new", oauth: "sess" })
+  })
+
+  // Enumeration returning nothing is a transient server condition, not a licence to
+  // rewrite the file: the zero-combos fallback provisions a profile named `<base>`
+  // while the normal path names them `<base>_N`, so keying "is this a refresh?" on
+  // that row's existence classified the mixed transition as a first login and
+  // handed llm.json + default_profile back to userinfo.
+  test("re-login that enumerates nothing refreshes only the token", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const llm = readLlmEntries()
+    llm.llm.sess = { ...llm.llm.sess!, api_key: "virtual-key-after-quota" }
+    writeLlmEntries({ llm: llm.llm })
+    setDefaultProfile("sess_1")
+
+    const result = provisionProfilesFromOAuthCombos(
+      "sess",
+      [],
+      input([], { token: { ...TOKEN, token: "access-2" } }),
+    )
+
+    expect(result).toEqual({
+      profiles: ["sess_0", "sess_1"],
+      defaultProfile: "sess_1",
+      llmConfigured: false,
+      created: [],
+    })
+    // No bare `sess` row beside sess_0/sess_1.
+    expect(Object.keys(loadProfiles()).sort()).toEqual(["sess_0", "sess_1"])
+    expect(readLlmEntries().llm.sess?.api_key).toBe("virtual-key-after-quota")
+    expect(getDefaultProfileName()).toBe("sess_1")
+    // The token is still refreshed — every session profile shares [oauth.sess].
+    expect(makeProfileTokenStore("sess_0").load()?.token).toBe("access-2")
+  })
+
+  // default_profile is one global string with nothing tying it to a session, so
+  // reporting it unvalidated can name a profile this login has nothing to do with.
+  test("re-login reports its own default when the on-disk one belongs to another session", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const other = loadProfiles()
+    other.other_0 = { instance: "z1", workspace: "wsz" }
+    saveProfiles(other)
+    setDefaultProfile("other_0")
+
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.defaultProfile).toBe("sess_0")
+    // Reported, not written: the user's selection stands.
+    expect(getDefaultProfileName()).toBe("other_0")
+  })
+
+  // Combo→profile matching is by connection content on BOTH paths. Gating it on
+  // `relogin` while counting indexes unconditionally appended a duplicate profile
+  // for a connection that already had one (reachable when [oauth.<base>] is gone
+  // but the profiles remain, e.g. a hand-repaired file).
+  test("first login with existing <base>_N rows reuses them instead of duplicating", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    // Drop the token section, keeping the profile: the next login is a "first" one.
+    const raw = readFileSync(profilesPath(), "utf-8").replace(/\[oauth\.sess\][\s\S]*?(?=\n\[|$)/, "")
+    writeFileSync(profilesPath(), raw)
+    expect(oauthSectionExists("sess")).toBe(false)
+
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.profiles).toEqual(["sess_0"])
+    expect(result.created).toEqual([])
+    expect(Object.keys(loadProfiles())).toEqual(["sess_0"])
+  })
+
+  // Session "sess" and session "sess_2" both own a profile that `<base>_N` parsing
+  // reads as "index 2 of sess". The oauth pointer is what separates them.
+  test("re-login does not repoint another session's profile that parses as <base>_N", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const profiles = loadProfiles()
+    // What the zero-combos path writes for a session literally named "sess_2".
+    profiles.sess_2 = { instance: "i1", workspace: "ws1", oauth: "sess_2" }
+    saveProfiles(profiles)
+
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.profiles).toEqual(["sess_0"])
+    expect(loadProfiles().sess_2?.oauth).toBe("sess_2")
   })
 
   test("re-login does not resurrect an llm entry the user deleted", () => {
