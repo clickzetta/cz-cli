@@ -308,13 +308,17 @@ export function provisionProfilesFromOAuthCombos(
   for (const [profileName, entry] of Object.entries(loadProfiles())) {
     const index = sessionProfileIndex(base, profileName)
     if (index === undefined) continue
-    // A profile pointing at ANOTHER session's token is not ours to touch, however
-    // its name reads: session "sess" and session "sess_2" both produce a profile
-    // literally named "sess_2" (the zero-combos path below names it after the
-    // session), and `sessionProfileIndex("sess", "sess_2")` cannot tell them apart.
+    // Every name that parses as `<base>_N` bumps maxIndex, INCLUDING one owned by
+    // another session — collision avoidance is about the name being taken, not about
+    // who owns it, and allocating over it would overwrite that profile.
+    maxIndex = Math.max(maxIndex, index)
+    // Ownership, on the other hand, decides whether this login may touch the row.
+    // Session "sess" and session "sess_2" both produce a profile literally named
+    // "sess_2" (the zero-combos path below names it after the session), and
+    // `sessionProfileIndex("sess", "sess_2")` cannot tell those apart — the oauth
+    // pointer can.
     const pointer = typeof entry.oauth === "string" ? entry.oauth : undefined
     if (pointer && pointer !== oauthId) continue
-    maxIndex = Math.max(maxIndex, index)
     sessionProfiles.push(profileName)
     const key = connectionKey(entry.instance, entry.workspace)
     // A row with neither instance nor workspace describes no connection, so no

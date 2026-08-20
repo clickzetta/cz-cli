@@ -447,6 +447,21 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(loadProfiles().sess_2?.oauth).toBe("sess_2")
   })
 
+  // The name `sess_2` being taken by another session is still a name collision:
+  // allocating over it would overwrite that session's profile.
+  test("a new profile never takes a <base>_N name another session already owns", () => {
+    const profiles = loadProfiles()
+    profiles.sess_2 = { instance: "zz", workspace: "wszz", oauth: "sess_2", schema: "keep_me" }
+    saveProfiles(profiles)
+
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2"), combo("i1", "ws3")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.created).toEqual(["sess_3", "sess_4", "sess_5"])
+    // Untouched.
+    expect(loadProfiles().sess_2).toEqual({ instance: "zz", workspace: "wszz", oauth: "sess_2", schema: "keep_me" })
+  })
+
   test("re-login does not resurrect an llm entry the user deleted", () => {
     const combos = [combo("i1", "ws1")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
