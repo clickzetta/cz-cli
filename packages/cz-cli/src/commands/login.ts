@@ -6,6 +6,7 @@ import { error, success } from "../output/index.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
+import { oauthSectionExists, sanitizeOAuthId } from "../connection/profile-store.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
 import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
 
@@ -101,11 +102,31 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     return
   }
 
+  // --pat is a PROFILE credential, not a login: nothing in the setup flow reads
+  // it (it only accepts --credential or username+password+account-name), so a
+  // PAT passed here used to be silently dropped and the user got a confusing
+  // "provide username, password and account_name" error. Redirect instead of
+  // pretending. Checked before the dispatch below so --pat can never reach a
+  // flow that ignores it.
+  if (argv.pat) {
+    error(
+      "PAT_NOT_A_LOGIN",
+      "`login` does not take --pat. A PAT is a stored profile credential, not a sign-in: "
+      + `run \`cz-cli profile create ${argv.name ?? "<name>"} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
+      { format: argv.format, exitCode: 2 },
+    )
+    return
+  }
+
   // Explicit non-interactive credentials or a portal-discovery signal: reuse the
-  // shared setup flow (covers --pat, --username/--password, --login-method,
-  // --login, and the non-TTY step protocol).
-  if (argv.pat || argv.username || argv.password || argv["login-method"] || argv.login) {
-    await authConfigure(argv as AuthConfigureArgs)
+  // shared setup flow (covers --username/--password, --login-method, --login,
+  // and the non-TTY step protocol).
+  if (argv.username || argv.password || argv["login-method"] || argv.login) {
+    // Default the profile name like the deprecated `setup` alias does (its --name
+    // carries `default: "default"`). Without this the setup flow keys the profile
+    // by `undefined`, writing a literal "undefined" profile and making it the
+    // default_profile — the credential branch above already defaults the same way.
+    await authConfigure({ ...argv, name: argv.name ?? "default" } as AuthConfigureArgs)
     return
   }
 
@@ -191,10 +212,19 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // token. The global --profile selects which profile to READ and must not name
     // what login WRITES. When enumeration yields nothing, provisioning falls back
     // to a single profile from userinfo alone.
-    const { profiles, defaultProfile, llmConfigured } = provisionProfilesFromOAuthCombos(
+    // First login or re-login of this session? The ONLY signal is whether
+    // [oauth.<name>] already exists — see oauthSectionExists. A re-login refreshes
+    // the token and adds newly-appeared instance×workspace profiles; it does not
+    // rewrite existing profiles, default_profile, or llm.json (an api_key there may
+    // be a virtual key the quota flow swapped in). Read BEFORE provisioning, which
+    // writes the section.
+    const relogin = oauthSectionExists(sanitizeOAuthId(sessionName))
+
+    const { profiles, defaultProfile, llmConfigured, created } = provisionProfilesFromOAuthCombos(
       sessionName,
       combos,
       {
+        relogin,
         token,
         userInfo,
         service: finalService,
@@ -223,11 +253,17 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     success(
       {
         logged_in: true,
+        relogin,
         default_profile: defaultProfile,
         profiles,
         profile_count: profiles.length,
+        // Which profiles this run actually created — on a re-login the interesting
+        // number, since the rest were left as the user had them.
+        profiles_created: created,
         user_id: token.userId || null,
-        llm_configured: llmConfigured,
+        // Only meaningful on a first login: a re-login never writes llm.json, so
+        // reporting `false` would read as a failure rather than "not our business".
+        ...(relogin ? {} : { llm_configured: llmConfigured }),
         expires_in_ms: token.expireTimeMs,
         ...(warnings.length ? { warnings } : {}),
       },
@@ -306,6 +342,14 @@ function classifyLoginError(msg: string): { code: string; aiMessage: string } {
 }
 
 /**
+ * Help text for the session name, shared by the `[name]` positional and its
+ * `--name` flag spelling — see the comment at the `.option("name")` call below
+ * for why they cannot differ.
+ */
+const SESSION_NAME_DESCRIBE =
+  "Session name (required; prompted in a TTY if omitted). Labels this login: names the shared OAuth token [oauth.<name>] and the profile prefix <name>_0/_1, like an AWS SSO session name. Accepted as the positional or as --name."
+
+/**
  * Register the `login [name]` command (builder + handler) onto the given yargs.
  * Shared by the `auth` group (`cz-cli auth login`) and the top-level back-compat
  * alias (`cz-cli login`), so both paths run one implementation.
@@ -316,10 +360,7 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
     "Sign in (browser OAuth by default) and provision the profile + token + LLM",
     (b) =>
       b
-        .positional("name", {
-          type: "string",
-          describe: "Session name (required for OAuth) — labels this login: names the shared OAuth token [oauth.<name>] and the profile prefix <name>_0/_1, like an AWS SSO session name.",
-        })
+        .positional("name", { type: "string", describe: SESSION_NAME_DESCRIBE })
         .option("browser", {
           // Browser OAuth is now the default; kept as a hidden no-op so existing
           // `login --browser` scripts keep working.
@@ -328,9 +369,13 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
           describe: "Deprecated no-op: browser OAuth is the default",
         })
         .option("credential", { type: "string", describe: "Base64-encoded registration credential (new-user path)" })
-        .option("name", { type: "string", describe: "Session name (same as the positional [name]); names [oauth.<name>] + profile prefix" })
-        .option("oauth-url", { type: "string", describe: "OAuth issuer host (internal envs / custom domains), e.g. uat-api.clickzetta.com. Endpoints are discovered from it; distinct from the business --service." })
-        .option("partition", { type: "string", choices: ["cn", "intl"], describe: "Region to sign in to: cn (clickzetta.com) or intl (singdata.com)" })
+        // `--name` is the flag spelling of the positional. It MUST share the
+        // positional's describe: yargs keys help text by name, so whichever of the
+        // two is registered last wins the Positionals entry, and a hidden option
+        // here would hide the positional as well. Same string on both = no drift.
+        .option("name", { type: "string", describe: SESSION_NAME_DESCRIBE })
+        .option("oauth-url", { type: "string", describe: "OAuth issuer host (internal envs / custom domains), e.g. uat-api.clickzetta.com, used verbatim. Endpoints are discovered from it; distinct from the business --service. Alternative to --partition." })
+        .option("partition", { type: "string", choices: ["cn", "intl"], describe: "Region to sign in to: cn (clickzetta.com) or intl (singdata.com). Prompted in a TTY; non-interactively either this or --oauth-url is required" })
         .option("login-method", {
           type: "string",
           choices: SETUP_LOGIN_METHODS.map((option) => option.value),
@@ -338,7 +383,11 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         })
         .option("login", { type: "string", describe: "Non-OAuth flow: custom login page URL or JDBC connection string" })
         .option("account-name", { type: "string", describe: "Account name for existing ClickZetta users" })
-        .option("skip-verify", { type: "boolean", default: false, describe: "Skip connection verification (non-OAuth flow)" })
+        // Accepted for compatibility (real scripts pass it) but there is nothing to
+        // skip: every non-OAuth flow here authenticates against the server to get a
+        // token, and OAuth is a sign-in by definition. Only `profile create` has a
+        // separate verification step that this flag can turn off.
+        .option("skip-verify", { type: "boolean", default: false, describe: "Accepted for compatibility, ignored: these flows always authenticate. See `profile create --skip-verify`" })
         // These inherited globals are meaningless for `login` (it CREATES the
         // profile/connection, it doesn't read one), so hide them from help.
         // --profile selects which profile to READ; login writes <name>. The
@@ -351,27 +400,37 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         .option("workspace", { hidden: true })
         .option("schema", { hidden: true })
         .option("vcluster", { hidden: true })
-        // pat/username/password ARE login inputs — re-show them (the auth group
-        // hides them by default). --pat is a valid non-OAuth login credential.
-        .option("pat", { type: "string", hidden: false, describe: "Non-OAuth flow: Personal Access Token" })
+        // username/password ARE login inputs — re-show them (the auth group hides
+        // them by default). --pat stays hidden: no login flow consumes it, and
+        // passing it is answered by an explicit PAT_NOT_A_LOGIN redirect to
+        // `profile create`, so advertising it here would promise a flow we do
+        // not have.
+        .option("pat", { type: "string", hidden: true })
         .option("username", { type: "string", hidden: false, describe: "Non-OAuth flow: username (with --password)" })
         .option("password", { type: "string", hidden: false, describe: "Non-OAuth flow: password (with --username)" })
-        .example("cz-cli auth login company-prod", "Browser OAuth (recommended). 'company-prod' names the session; creates a profile per instance×workspace")
-        .example("cz-cli auth login company-prod --partition cn", "OAuth against China (clickzetta.com); skip the region prompt")
+        .example("cz-cli auth login company-prod", "Browser OAuth (recommended), interactive: prompts for the region. 'company-prod' names the session; creates a profile per instance×workspace")
+        .example("cz-cli auth login company-prod --partition cn", "Same, non-interactive: OAuth against China (clickzetta.com), no region prompt")
         .example("cz-cli auth login internal --oauth-url uat-api.clickzetta.com", "OAuth against an internal/self-hosted entry")
         .example("cz-cli auth login my-profile --credential <base64>", "New user: provision a single profile from a registration credential")
         .example("cz-cli auth login my-profile --username <u> --password <p> --account-name <acct>", "Existing account, non-interactive (CI/scripts)")
         .epilogue(
-          "Three ways to sign in:\n" +
-          "  OAuth (default): opens a browser. <name> is the SESSION name — cz-cli\n" +
+          "Three ways to sign in, each independent:\n" +
+          "  OAuth (default):      opens a browser. <name> is the SESSION name — cz-cli\n" +
           "    discovers your instances/workspaces and creates one profile per\n" +
           "    combination (<name>_0, <name>_1, …), all sharing the [oauth.<name>] token.\n" +
-          "  --credential:    provision a single profile named <name> from a token.\n" +
-          "  --username/...:  existing-account flow into a single profile named <name>;\n" +
-          "    cz-cli prompts for any missing step.\n\n" +
+          "    Needs a region: prompted in a TTY, else pass --partition or --oauth-url.\n" +
+          "  --credential <b64>:   provision a single profile named <name> from a\n" +
+          "    registration token. Without <name> the profile is named 'default'.\n" +
+          "  --username/--password: existing account (also needs --account-name),\n" +
+          "    single profile named <name>; cz-cli prompts for any missing step.\n" +
+          "    Without <name> the profile is named 'default' here too.\n" +
+          "  Neither non-OAuth flow sends OAuth parameters or mints a refresh\n" +
+          "  token; only browser OAuth does.\n\n" +
           "Note: <name> is a session name only for OAuth (it backs multiple profiles).\n" +
-          "For --credential / --pat / --username it is just the single profile name.\n\n" +
-          "Cookie auth is not a login: set header.Cookie in a profile directly.",
+          "For --credential / --username it is just the single profile name.\n\n" +
+          "Not logins, they write a profile credential directly:\n" +
+          "  PAT:    cz-cli profile create <name> --pat <token> --service <host> …\n" +
+          "  Cookie: set header.Cookie in a profile (profile create --header Cookie=…).",
         ),
     async (argv) => {
       await runLogin(argv as unknown as LoginArgs)

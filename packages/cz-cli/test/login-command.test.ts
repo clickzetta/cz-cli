@@ -8,7 +8,7 @@ import type { LoginTarget } from "../src/connection/login-target"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
 import { configureClickzettaLlm } from "../src/connection/provision"
 import { makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
-import { readLlmEntries, setActiveModel } from "../src/llm/native-config"
+import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 import { GlobalArgs } from "../src/cli"
 
 const PAT = "pat-secret-123"
@@ -363,22 +363,91 @@ describe("runLogin", () => {
     expect(process.exitCode).toBe(0)
   })
 
-  // Adaptive dispatch: explicit --pat delegates to the shared setup flow rather
-  // than running browser OAuth.
-  test("--pat: delegates to runAuthConfigure and skips the browser flow", async () => {
+  // A second login under the SAME session name is a re-login: the only thing it
+  // owns is the token. The signal is [oauth.<name>] already existing — see
+  // oauthSectionExists — and llm.json in particular must survive untouched,
+  // because its api_key may be the gateway virtual key the quota flow swapped in.
+  test("re-login: refreshes the token, reports relogin, and does not rewrite llm.json", async () => {
+    const first = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      first.restore()
+    }
+    expect(first.text()).toContain('"relogin":false')
+    expect(first.text()).toContain("llm_configured")
+
+    // Stand in for llm/key-provision.ts swapping in a virtual key after the
+    // complimentary quota ran out.
+    const llm = readLlmEntries()
+    llm.llm[PROFILE] = { ...llm.llm[PROFILE]!, api_key: "virtual-key-after-quota" }
+    writeLlmEntries({ llm: llm.llm })
+
+    const second = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => ({ ...KNOWN_RESULT, token: { ...KNOWN_RESULT.token, token: "access-secret-2" } }),
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      second.restore()
+    }
+
+    expect(second.text()).toContain('"relogin":true')
+    // Reporting llm_configured:false here would read as a failure; the field is
+    // simply not applicable to a re-login.
+    expect(second.text()).not.toContain("llm_configured")
+    expect(makeProfileTokenStore(PROFILE).load()?.token).toBe("access-secret-2")
+    expect(readLlmEntries().llm[PROFILE]?.api_key).toBe("virtual-key-after-quota")
+    expect(process.exitCode).toBe(0)
+  })
+
+  // --pat is not a login: no flow behind `login` consumes it (the setup flow only
+  // accepts --credential or username+password+account-name), so it must be
+  // rejected with a pointer to `profile create` instead of being handed to a flow
+  // that would silently drop it and then demand a username.
+  test("--pat: rejected with a pointer to `profile create`, no browser, no setup flow", async () => {
     let browserCalls = 0
-    let authConfigureArgs: unknown
-    await runLogin(makeArgs({ pat: "czt_explicit" }), {
-      loginWithBrowser: async () => {
-        browserCalls++
-        return KNOWN_RESULT
-      },
+    let authConfigureCalls = 0
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs({ name: "myprof", pat: "czt_explicit" }), {
+        loginWithBrowser: async () => {
+          browserCalls++
+          return KNOWN_RESULT
+        },
+        runAuthConfigure: async () => {
+          authConfigureCalls++
+        },
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(browserCalls).toBe(0)
+    expect(authConfigureCalls).toBe(0)
+    expect(out.text()).toContain("PAT_NOT_A_LOGIN")
+    expect(out.text()).toContain("profile create myprof --pat")
+    // Never echo the secret back.
+    expect(out.text()).not.toContain("czt_explicit")
+    expect(process.exitCode).toBe(2)
+  })
+
+  // The non-OAuth setup flow keys the profile by --name; `login` must default it
+  // like the deprecated `setup` alias does, or the flow writes a profile literally
+  // named "undefined" and makes it default_profile.
+  test("--username/--password without a name: profile name defaults to 'default'", async () => {
+    let seen: unknown
+    await runLogin({ ...makeArgs({ username: "u", password: "p" }), name: undefined }, {
+      loginWithBrowser: async () => KNOWN_RESULT,
       runAuthConfigure: async (argv) => {
-        authConfigureArgs = argv
+        seen = argv
       },
     })
 
-    expect(browserCalls).toBe(0)
-    expect((authConfigureArgs as { pat?: string }).pat).toBe("czt_explicit")
+    expect((seen as { name?: string }).name).toBe("default")
   })
 })
