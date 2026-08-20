@@ -250,7 +250,7 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // setAuthTypeIfAbsent: re-login must not repoint a user's explicit choice.
   setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
 
-  if (name && !relogin) setDefaultProfile(name)
+  if (name) ensureDefaultProfile(relogin, name)
 
   // llm.json is not a login artifact on a re-login: see OAuthProvisionInput.relogin.
   const llmConfigured = relogin
@@ -341,6 +341,7 @@ export function provisionProfilesFromOAuthCombos(
     // failed listUserWorkspaces per instance), not a reason to rewrite the file.
     if (relogin && sessionProfiles.length > 0) {
       saveSharedOAuthToken(oauthId, token)
+      ensureDefaultProfile(relogin, sessionProfiles[0]!)
       return {
         profiles: sessionProfiles,
         defaultProfile: sessionDefaultProfile(relogin, sessionProfiles),
@@ -417,8 +418,8 @@ export function provisionProfilesFromOAuthCombos(
   // sees the profiles line up.
   names.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
 
+  ensureDefaultProfile(relogin, names[0]!)
   const defaultProfile = sessionDefaultProfile(relogin, names)
-  if (!relogin) setDefaultProfile(defaultProfile)
 
   // llm.json is untouched on a re-login: see OAuthProvisionInput.relogin.
   const llmConfigured = relogin
@@ -430,6 +431,25 @@ export function provisionProfilesFromOAuthCombos(
     })
 
   return { profiles: names, defaultProfile, llmConfigured, created }
+}
+
+/**
+ * Point `default_profile` at `name` when doing so cannot override a live choice.
+ *
+ * A first login sets it, as it always has. A re-login does not — the selection is
+ * the user's — with one exception: a `default_profile` that is missing or names a
+ * profile that no longer exists is not a choice, it is a dangling pointer, and
+ * leaving it would hand back a file whose only usable profile is not reachable
+ * without `--profile`.
+ */
+function ensureDefaultProfile(relogin: boolean, name: string): void {
+  if (!relogin) {
+    setDefaultProfile(name)
+    return
+  }
+  const current = getDefaultProfileName()
+  if (current && loadProfiles()[current]) return
+  setDefaultProfile(name)
 }
 
 /**
