@@ -52,9 +52,17 @@ export function parseTrackingArgs(rawArgs: string[]): {
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]
     if (!arg || !arg.startsWith("-") || arg.includes("=")) continue
-    if (!isSensitiveKey(arg.replace(/^-+/, ""))) continue
+    const key = arg.replace(/^-+/, "").toLowerCase()
+    if (!isSensitiveKey(key)) continue
     const next = rawArgs[i + 1]
-    if (next && !next.startsWith("-")) secretValues.add(i + 1)
+    if (!next || next.startsWith("-")) continue
+    // `--header` is the one sensitive name whose arity depends on the command: a
+    // repeatable `KEY=VALUE` on `profile create`, a boolean on `sql` (`--no-header`).
+    // Only the KEY=VALUE shape is a value to withhold; treating the boolean's neighbour
+    // as consumed would drop the SQL statement from `_positional`, which is exactly the
+    // loss this scoping avoids elsewhere.
+    if (key === "header" && !next.includes("=")) continue
+    secretValues.add(i + 1)
   }
   const positional = rawArgs.filter((arg, i) => !arg.startsWith("-") && !secretValues.has(i))
   const args: Record<string, string> = {}

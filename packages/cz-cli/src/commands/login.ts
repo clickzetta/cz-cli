@@ -127,7 +127,12 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // pre-check buys is one error code instead of a SETUP_FAILED that arrives after a
     // full portal round trip, and a message that names the fix. Non-TTY only: with a
     // terminal the setup flow prompts for another name, which is better than an error.
-    if (!argv.name && !process.stdin.isTTY && loadProfiles().default) {
+    // Gated on the CREDENTIAL shapes only. `--login-method` / `--login` drive the
+    // non-TTY step protocol, where an agent wrapper re-invokes with more flags and may
+    // legitimately not have a name yet; pre-empting that with an error would stop it at
+    // step one. Those runs still collide at saveProfile if they get that far, with the
+    // flow's own message.
+    if ((argv.username || argv.password) && !argv.name && !process.stdin.isTTY && loadProfiles().default) {
       error(
         "PROFILE_EXISTS",
         "Profile 'default' already exists and no [name] was given. Pass a name: `cz-cli auth login <name> --username … --password …` (or delete the existing profile).",
@@ -279,6 +284,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
       {
         relogin,
         refreshLlm: Boolean(argv["refresh-llm"]),
+        serviceIsEntryFallback,
         token,
         userInfo,
         service: finalService,
@@ -336,7 +342,12 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
       {
         logged_in: true,
         relogin,
-        default_profile: defaultProfile,
+        // Unchanged meaning: what profiles.toml says, i.e. the profile bare commands
+        // will use. A re-login normally does not write it, so it can name another
+        // session's profile — which is why the session-scoped answer is a separate key
+        // rather than a redefinition of this one.
+        default_profile: getDefaultProfileName() ?? defaultProfile,
+        session_default_profile: defaultProfile,
         profiles,
         profile_count: profiles.length,
         // Which profiles this run actually created — on a re-login the interesting
@@ -354,11 +365,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         // twice drifted the moment a provisioning path (the zero-combos early return)
         // answered differently from what argv alone predicts.
         llm_configuration: llmAction,
-        // The profile bare commands will use after this login. Distinct from
-        // `default_profile`, which names THIS session's default: when the user's
-        // selection belongs to another session a re-login leaves it alone, so the two
-        // legitimately differ and a caller should not have to guess which it read.
-        active_profile: getDefaultProfileName() ?? defaultProfile,
+
         expires_in_ms: token.expireTimeMs,
         ...(warnings.length ? { warnings } : {}),
       },

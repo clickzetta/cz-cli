@@ -623,6 +623,41 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(after.sess_0?.schema).toBe("my_schema")
   })
 
+  // The one mechanism that keeps a preserved header.Cookie from shadowing the refreshed
+  // token is the auth_type pin, so every re-login path must re-assert it.
+  test("a re-login that enumerates nothing still pins auth_type and the oauth pointer", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    // A row whose pin the user removed, carrying a stale cookie.
+    const edited = loadProfiles()
+    edited.sess_0 = { ...edited.sess_0, header: { Cookie: "stale" } }
+    delete edited.sess_0.auth_type
+    saveProfiles(edited)
+
+    provisionProfilesFromOAuthCombos("sess", [], input([]))
+
+    const after = loadProfiles().sess_0!
+    expect(after.auth_type).toBe("oauth")
+    expect(after.oauth).toBe("sess")
+    expect(after.header).toEqual({ Cookie: "stale" })
+  })
+
+  // `service` may be the OAuth entry host standing in for a region host (no
+  // gatewayMapping in userinfo); writing that over a real one breaks a working profile.
+  test("a combo-less re-login does not overwrite a real service with the entry-host fallback", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      service: "api.clickzetta.com",
+      serviceIsEntryFallback: true,
+      userInfo: { instanceName: "i1", apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+
+    expect(loadProfiles().sess_0?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+  })
+
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
   test("a repeated combo is reported once", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws1")]
