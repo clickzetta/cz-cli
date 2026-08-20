@@ -462,6 +462,27 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(loadProfiles().sess_2).toEqual({ instance: "zz", workspace: "wszz", oauth: "sess_2", schema: "keep_me" })
   })
 
+  // A default_profile naming a deleted profile is a dangling pointer, not a choice:
+  // leaving it would hand back a file whose only usable profile needs --profile.
+  test("re-login repairs a dangling default_profile but never a live one", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    setDefaultProfile("deleted-profile")
+
+    const repaired = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    expect(repaired.defaultProfile).toBe("sess_0")
+    expect(getDefaultProfileName()).toBe("sess_0")
+
+    // A default that still resolves is left exactly as the user set it, even when it
+    // belongs to another session.
+    const profiles = loadProfiles()
+    profiles.other_0 = { instance: "z1", workspace: "wsz" }
+    saveProfiles(profiles)
+    setDefaultProfile("other_0")
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    expect(getDefaultProfileName()).toBe("other_0")
+  })
+
   test("re-login does not resurrect an llm entry the user deleted", () => {
     const combos = [combo("i1", "ws1")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
