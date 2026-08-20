@@ -121,23 +121,16 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // by `undefined`, writing a literal "undefined" profile and making it the
     // default_profile — the credential branch above already defaults the same way.
     const name = argv.name ?? "default"
-    // …but not over a credential this login cannot replace. The setup flow's non-TTY
-    // branch calls saveProfile unconditionally (the TTY branch prompts for another
-    // name), so a defaulted name would silently overwrite whatever `default` holds.
-    //
-    // Only refuse when that would destroy a DIFFERENT kind of credential — a pat, an
-    // OAuth session pointer, a cookie header. Re-running the same username/password
-    // login to refresh its own profile is the normal CI shape and stays working;
-    // turning that into exit 2 on every run after the first would break pipelines to
-    // guard against nothing. `cz-cli setup` (deprecated) still saves unconditionally;
-    // it is left alone rather than given a third behaviour.
-    const existing = argv.name ? undefined : loadProfiles().default
-    const otherCredential = existing
-      && (existing.pat || existing.oauth || Object.keys(existing.header ?? {}).some((k) => k.toLowerCase() === "cookie"))
-    if (otherCredential && !process.stdin.isTTY) {
+    // …but only onto a free name, and say so before touching the network. The shared
+    // writer already refuses this collision — saveProfile throws "Profile 'default'
+    // already exists" (setup.ts) — so nothing can be overwritten either way; what the
+    // pre-check buys is one error code instead of a SETUP_FAILED that arrives after a
+    // full portal round trip, and a message that names the fix. Non-TTY only: with a
+    // terminal the setup flow prompts for another name, which is better than an error.
+    if (!argv.name && !process.stdin.isTTY && loadProfiles().default) {
       error(
         "PROFILE_EXISTS",
-        "Profile 'default' already exists with a different credential (pat / OAuth session / cookie) and no [name] was given, so this login would replace it. Pass a name: `cz-cli auth login <name> --username … --password …`.",
+        "Profile 'default' already exists and no [name] was given. Pass a name: `cz-cli auth login <name> --username … --password …` (or delete the existing profile).",
         { format: argv.format, exitCode: 2 },
       )
       return

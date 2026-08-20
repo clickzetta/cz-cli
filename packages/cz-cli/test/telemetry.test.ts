@@ -107,3 +107,11 @@ test("parseTrackingArgs redacts --password and --pat=inline forms too", () => {
   // is scoped to values that must never be stored, not to positional accuracy.
   expect(spaced.args["_positional"]).toBe("s u")
 })
+
+// Cookie auth is one of the four credential kinds, so `--header Cookie=…` is a
+// credential in flag clothing — it used to reach OTel verbatim.
+test("parseTrackingArgs redacts --header values", () => {
+  const inline = parseTrackingArgs(["sql", "--header", "Cookie=sess_abc", "select 1"])
+  expect(inline.args.header).toBe("<redacted>")
+  expect(JSON.stringify(inline)).not.toContain("sess_abc")
+})

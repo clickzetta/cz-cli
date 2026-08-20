@@ -20,6 +20,10 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   "access-token",
   "auth",
   "authorization",
+  // `--header Cookie=<session>` is a credential in flag clothing: cookie auth is one of
+  // the four ways this CLI authenticates, so the whole header value is redacted rather
+  // than trying to pick the Cookie key out of it.
+  "header",
 ])
 
 export function isSensitiveKey(key: string): boolean {

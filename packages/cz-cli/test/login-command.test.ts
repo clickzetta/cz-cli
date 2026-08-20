@@ -511,7 +511,7 @@ describe("runLogin", () => {
   // A defaulted name must not silently replace an existing `default` profile: the
   // setup flow's non-TTY branch calls saveProfile unconditionally, and --credential
   // refuses the same collision.
-  test("--username/--password with no name refuses to replace a differently-credentialed 'default'", async () => {
+  test("--username/--password with no name refuses when a 'default' profile exists", async () => {
     saveProfiles({ default: { pat: "existing-pat", instance: "keep" } })
     let authConfigureCalls = 0
     const out = captureStdout()
@@ -532,19 +532,28 @@ describe("runLogin", () => {
     expect(process.exitCode).toBe(2)
   })
 
-  // Re-running the same username/password login to refresh its own profile is the
-  // normal CI shape; refusing that would break pipelines to guard against nothing.
-  test("--username/--password with no name proceeds over its own kind of 'default'", async () => {
+  // Uniform, whatever the existing profile holds: the shared writer (setup.ts's
+  // saveProfile) refuses this collision too, so the pre-check only makes it one error
+  // code that arrives before the network round trip instead of a late SETUP_FAILED.
+  test("--username/--password with no name refuses whatever kind of 'default' exists", async () => {
     saveProfiles({ default: { username: "u", password: "old", instance: "keep" } })
-    let seen: unknown
-    await runLogin({ ...makeArgs({ username: "u", password: "new" }), name: undefined }, {
-      loginWithBrowser: async () => KNOWN_RESULT,
-      runAuthConfigure: async (argv) => {
-        seen = argv
-      },
-    })
+    let authConfigureCalls = 0
+    const out = captureStdout()
+    try {
+      await runLogin({ ...makeArgs({ username: "u", password: "new" }), name: undefined }, {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        runAuthConfigure: async () => {
+          authConfigureCalls++
+        },
+      })
+    } finally {
+      out.restore()
+    }
 
-    expect((seen as { name?: string }).name).toBe("default")
+    expect(authConfigureCalls).toBe(0)
+    expect(out.text()).toContain("PROFILE_EXISTS")
+    expect(loadProfiles().default).toEqual({ username: "u", password: "old", instance: "keep" })
+    expect(process.exitCode).toBe(2)
   })
 
   // Three keys a working entry can sit under; the raw one is what the zero-combos
