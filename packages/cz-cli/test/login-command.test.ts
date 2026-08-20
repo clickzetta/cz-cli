@@ -533,7 +533,8 @@ describe("runLogin", () => {
     expect(authConfigureCalls).toBe(0)
     expect(out.text()).toContain("PROFILE_EXISTS")
     expect(loadProfiles().default).toEqual({ pat: "existing-pat", instance: "keep" })
-    expect(process.exitCode).toBe(2)
+    // Exit 1, matching every other PROFILE_EXISTS: one condition, one status.
+    expect(process.exitCode).toBe(1)
   })
 
   // Uniform, whatever the existing profile holds: the shared writer (setup.ts's
@@ -557,7 +558,7 @@ describe("runLogin", () => {
     expect(authConfigureCalls).toBe(0)
     expect(out.text()).toContain("PROFILE_EXISTS")
     expect(loadProfiles().default).toEqual({ username: "u", password: "old", instance: "keep" })
-    expect(process.exitCode).toBe(2)
+    expect(process.exitCode).toBe(1)
   })
 
   // Three keys a working entry can sit under; the raw one is what the zero-combos
@@ -580,6 +581,43 @@ describe("runLogin", () => {
 
     expect(out.text()).toContain('"relogin":true')
     expect(out.text()).not.toContain("No LLM entry named")
+  })
+
+  // A cookie-pinned row ignores the refreshed token, so the login must say it was a
+  // no-op for that profile rather than reporting a plain success.
+  test("re-login warns about profiles pinned to cookie auth", async () => {
+    saveProfiles({ [PROFILE]: { oauth: PROFILE, instance: "89b94150", auth_type: "cookie", header: { Cookie: "stale" } } })
+
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain('auth_type = \\"cookie\\"')
+    expect(out.text()).toContain(PROFILE)
+    expect(loadProfiles()[PROFILE]?.auth_type).toBe("cookie")
+  })
+
+  // A session name that needs sanitizing shares its token section with any name that
+  // sanitizes the same way, so the user is told rather than silently sharing.
+  test("a session name that needs sanitizing is called out", async () => {
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs({ name: "my.prod" }), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("my_prod")
+    expect(out.text()).toContain("warnings")
   })
 
   // A wrapper that forwards --pat alongside the credentials it actually uses had a

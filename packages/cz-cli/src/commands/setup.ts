@@ -13,6 +13,7 @@ import { setTelemetry, getTelemetry, AUTH_TYPE, type ProfileEntry, patchProfileU
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
+import { patRefusedOrNoted, type PatGuardArgs } from "./pat-guard.js"
 import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
 import { browserOpenCommandForPlatform } from "../util/browser.js"
@@ -1814,6 +1815,10 @@ export function registerSetupCommand(cli: Argv<GlobalArgs>): void {
       // Deprecation notice goes to stderr so it never pollutes the JSON payload
       // on stdout that existing scripts parse.
       process.stderr.write("⚠ 'setup' is deprecated, use 'cz-cli login' instead.\n")
+      // Same --pat answer as `login`: this alias runs the identical flow, which reads no
+      // `pat`, so the same mistake must not get a precise redirect under one spelling and
+      // the old "provide username, password and account_name" under the other.
+      if (patRefusedOrNoted(argv as PatGuardArgs, "setup")) return
       await runAuthConfigure(argv as AuthConfigureArgs)
     },
   )
