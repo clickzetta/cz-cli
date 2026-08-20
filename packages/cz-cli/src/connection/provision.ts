@@ -298,6 +298,21 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   return { instance: finalInstance, llmConfigured }
 }
 
+/** What a login did to llm.json — reported rather than re-derived by the caller. */
+export type LlmAction = "written" | "skipped_relogin" | "no_api_key"
+
+export interface OAuthCombosResult {
+  /** Every profile this session owns, ordered for display. */
+  profiles: string[]
+  /** This session's default profile (see sessionDefaultProfile). */
+  defaultProfile: string
+  llmConfigured: boolean
+  /** Why {@link llmConfigured} is what it is. Only this function knows. */
+  llmAction: LlmAction
+  /** The subset of {@link profiles} this call brought into being. */
+  created: string[]
+}
+
 /**
  * Provision MANY profiles from a single OAuth login — one per (instance ×
  * workspace) combination — all sharing ONE `[oauth.<id>]` token section.
@@ -327,7 +342,7 @@ export function provisionProfilesFromOAuthCombos(
   baseName: string | undefined,
   combos: OAuthConnCombo[],
   input: OAuthProvisionInput,
-): { profiles: string[]; defaultProfile: string; llmConfigured: boolean; created: string[] } {
+): OAuthCombosResult {
   const { userInfo, protocol } = input
   // Stamp the OAuth issuer host onto the token before it's shared across every
   // <base>_N profile, so each one's refresh targets the issuer.
@@ -390,10 +405,22 @@ export function provisionProfilesFromOAuthCombos(
     if (relogin && sessionProfiles.length > 0) {
       saveSharedOAuthToken(oauthId, token)
       ensureDefaultProfile(relogin, sessionProfiles[0]!, sessionProfiles)
+      // --refresh-llm is honoured here too: the api key comes from userinfo, which
+      // this path has, not from the enumeration it lacks. Skipping it would make the
+      // flag silently do nothing exactly when a transient enumeration failure sends
+      // the login down this branch.
+      const llmConfigured = input.refreshLlm
+        ? configureClickzettaLlm(oauthId, {
+          apiKey: userInfo?.apiKey,
+          baseURL: userInfo?.aimeshEndpointBaseUrl,
+          legacyName: `${base}_0`,
+        })
+        : false
       return {
         profiles: sessionProfiles,
         defaultProfile: sessionDefaultProfile(relogin, sessionProfiles),
-        llmConfigured: false,
+        llmConfigured,
+        llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured }),
         created: [],
       }
     }
@@ -404,6 +431,7 @@ export function provisionProfilesFromOAuthCombos(
       profiles: [base],
       defaultProfile: sessionDefaultProfile(relogin, [base]),
       llmConfigured: single.llmConfigured,
+      llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured: single.llmConfigured }),
       created: existedBefore ? [] : [base],
     }
   }
@@ -502,10 +530,34 @@ export function provisionProfilesFromOAuthCombos(
     : configureClickzettaLlm(oauthId, {
       apiKey: userInfo?.apiKey,
       baseURL: userInfo?.aimeshEndpointBaseUrl,
-      legacyName: defaultProfile,
+      // Pinned to the historical key, never to a variable one: legacyName is an
+      // entry configureClickzettaLlm ABSORBS AND DELETES, and the only key the rename
+      // migration was written for is `<base>_0`. Passing `defaultProfile` here would
+      // aim that delete at whatever the user's default happens to be — an unrelated
+      // `agent llm add sess_3` entry would be swallowed.
+      legacyName: `${base}_0`,
     })
 
-  return { profiles: owned, defaultProfile, llmConfigured, created }
+  return {
+    profiles: owned,
+    defaultProfile,
+    llmConfigured,
+    llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured }),
+    created,
+  }
+}
+
+/**
+ * Why llm.json ended up written or not. Lives next to the decision it describes: the
+ * caller used to reconstruct it from argv, which then disagreed with the paths that
+ * expression did not model.
+ */
+function llmActionFor(input: { relogin: boolean; refreshLlm?: boolean; llmConfigured: boolean }): LlmAction {
+  if (input.llmConfigured) return "written"
+  if (input.relogin && !input.refreshLlm) return "skipped_relogin"
+  // Attempted (a first login, or a re-login with --refresh-llm) and userinfo carried
+  // no apiKey — configureClickzettaLlm's only other way to return false.
+  return "no_api_key"
 }
 
 /**

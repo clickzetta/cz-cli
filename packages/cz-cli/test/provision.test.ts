@@ -310,6 +310,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       profiles: ["sess_0", "sess_1"],
       defaultProfile: "sess_0",
       llmConfigured: true,
+      llmAction: "written",
       created: ["sess_0", "sess_1"],
     })
     expect(getDefaultProfileName()).toBe("sess_0")
@@ -386,6 +387,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       profiles: ["sess_0", "sess_1"],
       defaultProfile: "sess_1",
       llmConfigured: false,
+      llmAction: "skipped_relogin",
       created: [],
     })
     // No bare `sess` row beside sess_0/sess_1.
@@ -609,6 +611,43 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const refreshed = provisionProfilesFromOAuthCombos("sess", combos, input(combos, { refreshLlm: true }))
     expect(refreshed.llmConfigured).toBe(true)
     expect(readLlmEntries().llm.sess?.api_key).toBe("free-key")
+  })
+
+  // The caller used to reconstruct llm_configuration from argv, which got this wrong:
+  // the zero-combos early return ignored refreshLlm entirely and the payload then said
+  // "no_api_key" for a run that never looked at the key and had been asked to refresh.
+  test("--refresh-llm works on the zero-combos path and reports the action taken", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const llm = readLlmEntries()
+    llm.llm.sess = { ...llm.llm.sess!, api_key: "revoked-key" }
+    writeLlmEntries({ llm: llm.llm })
+
+    // Enumeration failed this time, and the user asked for the refresh.
+    const result = provisionProfilesFromOAuthCombos("sess", [], input([], { refreshLlm: true }))
+
+    expect(result.llmAction).toBe("written")
+    expect(result.llmConfigured).toBe(true)
+    expect(readLlmEntries().llm.sess?.api_key).toBe("free-key")
+
+    // Without the flag the same run reports the skip, not a missing key.
+    const skipped = provisionProfilesFromOAuthCombos("sess", [], input([]))
+    expect(skipped.llmAction).toBe("skipped_relogin")
+  })
+
+  // legacyName is an entry configureClickzettaLlm absorbs AND DELETES, so it must name
+  // the historical key, never a user-mutable one like the current default profile.
+  test("--refresh-llm does not swallow an unrelated entry named after the default profile", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2"), combo("i1", "ws3")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    setDefaultProfile("sess_2")
+    const llm = readLlmEntries()
+    llm.llm.sess_2 = { provider: "clickzetta", api_key: "unrelated-key" }
+    writeLlmEntries({ llm: llm.llm })
+
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos, { refreshLlm: true }))
+
+    expect(readLlmEntries().llm.sess_2?.api_key).toBe("unrelated-key")
   })
 
   // A session name that needs sanitizing was keyed raw by the single-profile path

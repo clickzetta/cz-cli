@@ -67,6 +67,9 @@ export const profileJobHelpCases: HelpCase[] = [
     args: ["setup", "--help"],
     expectHeader: "cz-cli setup",
     expectOptions: ["--credential", "--login-method", "--login", "--account-name", "--username", "--password"],
+    // `setup` runs the identical runAuthConfigure flow, which never reads
+    // --skip-verify, so its help must not keep the promise `login --help` dropped.
+    expectCommands: ["Accepted for compatibility, ignored"],
     expectCommands: [
       "Choose a login method:",
       "ClickZetta - https://accounts.clickzetta.com/login",
