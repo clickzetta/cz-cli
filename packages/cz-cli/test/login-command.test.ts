@@ -378,7 +378,7 @@ describe("runLogin", () => {
       first.restore()
     }
     expect(first.text()).toContain('"relogin":false')
-    expect(first.text()).toContain("llm_configured")
+    expect(first.text()).toContain('"llm_configured":true')
 
     // Stand in for llm/key-provision.ts swapping in a virtual key after the
     // complimentary quota ran out.
@@ -397,9 +397,9 @@ describe("runLogin", () => {
     }
 
     expect(second.text()).toContain('"relogin":true')
-    // Reporting llm_configured:false here would read as a failure; the field is
-    // simply not applicable to a re-login.
-    expect(second.text()).not.toContain("llm_configured")
+    // The key stays present so a parser never has to interpret its absence; the
+    // value says the write was deliberately not attempted rather than failed.
+    expect(second.text()).toContain('"llm_configured":"not_attempted"')
     expect(makeProfileTokenStore(PROFILE).load()?.token).toBe("access-secret-2")
     expect(readLlmEntries().llm[PROFILE]?.api_key).toBe("virtual-key-after-quota")
     expect(process.exitCode).toBe(0)

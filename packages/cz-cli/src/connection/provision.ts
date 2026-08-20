@@ -224,8 +224,21 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // is stored under its own name — the same field the credential path writes and
   // that clickzetta-rotation / ai-gateway read — so both provisioning paths
   // produce an identical profile shape.
-  if (!refreshOnly) {
-    patchProfileConnection(name, {
+  patchProfileConnection(name, refreshOnly
+    // Refreshing an existing row: only what the server owns. `service` (the region
+    // business host) and `aimeshEndpointBaseUrl` can move server-side, and the
+    // account/user identity is re-read from userinfo — none of them is a user
+    // preference. instance/workspace/schema/vcluster are left alone: unlike the
+    // combos path there is no match key pinning them, so an edit here is the user's.
+    ? {
+      service,
+      protocol,
+      userId: token.userId || undefined,
+      accountId: userInfo?.accountId,
+      accountName: userInfo?.accountName,
+      aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
+    }
+    : {
       service,
       protocol,
       instance: finalInstance,
@@ -237,7 +250,6 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
       accountName: userInfo?.accountName,
       aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
     })
-  }
 
   // Persist the token in a shared [oauth.<id>] section named after the profile
   // and point this profile at it. Passing an explicit id makes save write the
@@ -267,16 +279,26 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
  * Provision MANY profiles from a single OAuth login — one per (instance ×
  * workspace) combination — all sharing ONE `[oauth.<id>]` token section.
  *
- * Profiles are named `<base>_0`, `<base>_1`, … in enumeration order (base
- * defaults to "default"). The first profile is set as the default. The shared
- * token is written once; each profile only carries an `oauth = "<id>"` pointer,
- * so a later `getToken` resolves the same token regardless of which profile is
- * active. LLM is configured once from userinfo (apiKey + aimesh), keyed on the
- * shared OAuth name rather than an arbitrary instance/workspace profile.
+ * Profiles are named `<base>_N` (base defaults to "default"), and a combo is tied
+ * to a profile by the CONNECTION it describes, not by its position in the
+ * enumeration — the server's order is not stable, so an index-derived name would
+ * make the same workspace change profiles between logins. A combo with no owned row
+ * yet gets a fresh `max(N) + 1`; names already on disk stay reserved even when they
+ * belong to another session. The shared token is written once; each profile only
+ * carries an `oauth = "<id>"` pointer, so a later `getToken` resolves the same token
+ * regardless of which profile is active.
  *
- * Falls back to the single-profile path when `combos` is empty (e.g. every
- * instance's workspace listing failed) so a login still yields a usable profile
- * from userinfo alone.
+ * A FIRST login (see {@link OAuthProvisionInput.relogin}) also sets the first
+ * profile as the default and configures the LLM once from userinfo (apiKey +
+ * aimesh), keyed on the shared OAuth name rather than an arbitrary
+ * instance/workspace profile. A RE-login does neither — `llmConfigured` is then
+ * always false — and refreshes only the server-owned fields of rows that already
+ * exist. `created` reports the subset of `profiles` this call brought into being.
+ *
+ * When `combos` is empty (e.g. every instance's workspace listing failed) a first
+ * login falls back to the single-profile path so it still yields a usable profile
+ * from userinfo alone; a re-login with existing session profiles instead refreshes
+ * the shared token and returns, since it has nothing new to write.
  */
 export function provisionProfilesFromOAuthCombos(
   baseName: string | undefined,
@@ -312,13 +334,16 @@ export function provisionProfilesFromOAuthCombos(
     // another session — collision avoidance is about the name being taken, not about
     // who owns it, and allocating over it would overwrite that profile.
     maxIndex = Math.max(maxIndex, index)
-    // Ownership, on the other hand, decides whether this login may touch the row.
-    // Session "sess" and session "sess_2" both produce a profile literally named
-    // "sess_2" (the zero-combos path below names it after the session), and
-    // `sessionProfileIndex("sess", "sess_2")` cannot tell those apart — the oauth
-    // pointer can.
-    const pointer = typeof entry.oauth === "string" ? entry.oauth : undefined
-    if (pointer && pointer !== oauthId) continue
+    // Ownership, on the other hand, decides whether this login may touch the row,
+    // and only an explicit pointer at THIS session counts. Two rows would otherwise
+    // be adopted by name+connection alone: another session's (session "sess" and
+    // session "sess_2" both produce a profile literally named "sess_2", which
+    // `sessionProfileIndex("sess", "sess_2")` cannot tell apart), and a hand-written
+    // row with a pat and no auth_type — writing `oauth`/`auth_type` onto that one
+    // would switch the credential it authenticates with, which is exactly what
+    // setAuthTypeIfAbsent's contract exists to prevent. Unowned rows keep their name
+    // reserved (maxIndex above) and the combo gets a fresh N instead.
+    if (entry.oauth !== oauthId) continue
     sessionProfiles.push(profileName)
     const key = connectionKey(entry.instance, entry.workspace)
     // A row with neither instance nor workspace describes no connection, so no
@@ -373,13 +398,28 @@ export function provisionProfilesFromOAuthCombos(
     const existingName = byConnection.get(key)
     const name = existingName ?? `${base}_${++maxIndex}`
     if (existingName && relogin) {
-      // Already provisioned for this connection. Only the two fields that tie it
-      // to the token we just refreshed are (re)asserted — both idempotent, and
-      // setAuthTypeIfAbsent never overrides an explicit choice. Everything else on
-      // the row is the user's; see OAuthProvisionInput.relogin.
+      // Already provisioned for this connection. Refresh what the SERVER owns and
+      // nothing else. The distinction matters in both directions: `schema`/`vcluster`
+      // and `header.Cookie` are the user's and must survive (that is the point of
+      // the re-login contract), while `service` (the region business host),
+      // `aimeshEndpointBaseUrl` and the account/user identity are facts this login
+      // just re-read from userinfo — freezing them at whatever the first login saw
+      // would mean a region or endpoint move could never be picked up, and no other
+      // command rewrites them. instance/workspace are what this row was MATCHED on,
+      // so writing them back is a no-op.
+      patchProfileConnection(existingName, {
+        service: combo.service,
+        protocol,
+        instance: combo.instance,
+        workspace: combo.workspace,
+        userId: token.userId || undefined,
+        accountId: userInfo?.accountId,
+        accountName: userInfo?.accountName,
+        aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
+      })
       setProfileOAuthPointer(existingName, oauthId)
       setAuthTypeIfAbsent(existingName, AUTH_TYPE.oauth)
-      names.push(existingName)
+      if (!names.includes(existingName)) names.push(existingName)
       continue
     }
 
@@ -409,8 +449,11 @@ export function provisionProfilesFromOAuthCombos(
     setProfileOAuthPointer(name, oauthId)
     setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
     byConnection.set(key, name)
-    names.push(name)
-    if (!existingName) created.push(name)
+    // enumerateOAuthCombos does not dedupe (one row per listUserWorkspaces result
+    // per instance), so the same connection can arrive twice; it must not be
+    // reported twice.
+    if (!names.includes(name)) names.push(name)
+    if (!existingName && !created.includes(name)) created.push(name)
   }
 
   // Reported in `<base>_N` order, not enumeration order: N is stable across logins
