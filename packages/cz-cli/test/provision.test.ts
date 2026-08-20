@@ -539,6 +539,31 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(after.header).toEqual({ Cookie: "stale" })
   })
 
+  // The documented remedy for "your account has no accessible instance yet" is to
+  // provision one and log in again. That transition goes zero-combos (bare `<base>`
+  // row, made default) → combos (`<base>_0`), and the bare row parses as nobody's
+  // `<base>_N`, so it used to stay default and every bare command kept failing.
+  test("zero-combos then combos: the default moves off the instance-less row", () => {
+    // First login, nothing enumerable: the fallback writes the bare `sess` row.
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      userInfo: { apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+    expect(getDefaultProfileName()).toBe("sess")
+    expect(String(loadProfiles().sess?.instance ?? "")).toBe("")
+
+    // Instance provisioned, re-login now enumerates.
+    const combos = [combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.created).toEqual(["sess_0"])
+    expect(getDefaultProfileName()).toBe("sess_0")
+    expect(result.defaultProfile).toBe("sess_0")
+    // The bare row is this session's too — it shows up in `profiles`, like
+    // `auth logout` sees it via the same oauth pointer.
+    expect(result.profiles).toEqual(["sess", "sess_0"])
+  })
+
   // enumerateOAuthCombos swallows a failed listUserWorkspaces per instance, so a
   // re-login routinely enumerates a subset of what the session owns. `profiles` and
   // the reported default must describe the session, not that subset — otherwise
@@ -566,6 +591,38 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
 
     expect(result.profiles).toEqual(["sess_0"])
     expect(result.created).toEqual(["sess_0"])
+  })
+
+  // The skip cannot tell a provisioned gateway key from a revoked complimentary one,
+  // so overwriting is an explicit request rather than an unreachable path.
+  test("--refresh-llm rewrites the entry on a re-login", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const llm = readLlmEntries()
+    llm.llm.sess = { ...llm.llm.sess!, api_key: "revoked-key" }
+    writeLlmEntries({ llm: llm.llm })
+
+    const skipped = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    expect(skipped.llmConfigured).toBe(false)
+    expect(readLlmEntries().llm.sess?.api_key).toBe("revoked-key")
+
+    const refreshed = provisionProfilesFromOAuthCombos("sess", combos, input(combos, { refreshLlm: true }))
+    expect(refreshed.llmConfigured).toBe(true)
+    expect(readLlmEntries().llm.sess?.api_key).toBe("free-key")
+  })
+
+  // A session name that needs sanitizing was keyed raw by the single-profile path
+  // before; renaming without the migration would orphan the entry config.model uses.
+  test("the single-profile path migrates a raw-named llm entry to the sanitized key", () => {
+    const raw = "my.prod"
+    provisionProfilesFromOAuthCombos(raw, [], {
+      ...input([]),
+      userInfo: { instanceName: "i1", workspace: "ws1", apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+
+    const entries = readLlmEntries().llm
+    expect(entries["my_prod"]?.api_key).toBe("free-key")
+    expect(entries[raw]).toBeUndefined()
   })
 
   test("re-login does not resurrect an llm entry the user deleted", () => {

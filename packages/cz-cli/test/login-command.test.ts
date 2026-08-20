@@ -7,7 +7,7 @@ import { runLogin } from "../src/commands/login"
 import type { LoginTarget } from "../src/connection/login-target"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
 import { configureClickzettaLlm } from "../src/connection/provision"
-import { makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
+import { loadProfiles, makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
 import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 import { GlobalArgs } from "../src/cli"
 
@@ -506,6 +506,30 @@ describe("runLogin", () => {
     expect(second.text()).toContain("agent llm add")
     // Still no write — the warning replaces the write, it does not precede one.
     expect(readLlmEntries().llm[PROFILE]).toBeUndefined()
+  })
+
+  // A defaulted name must not silently replace an existing `default` profile: the
+  // setup flow's non-TTY branch calls saveProfile unconditionally, and --credential
+  // refuses the same collision.
+  test("--username/--password with no name refuses to overwrite an existing 'default'", async () => {
+    saveProfiles({ default: { pat: "existing-pat", instance: "keep" } })
+    let authConfigureCalls = 0
+    const out = captureStdout()
+    try {
+      await runLogin({ ...makeArgs({ username: "u", password: "p" }), name: undefined }, {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        runAuthConfigure: async () => {
+          authConfigureCalls++
+        },
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(authConfigureCalls).toBe(0)
+    expect(out.text()).toContain("PROFILE_EXISTS")
+    expect(loadProfiles().default).toEqual({ pat: "existing-pat", instance: "keep" })
+    expect(process.exitCode).toBe(2)
   })
 
   // A wrapper that forwards --pat alongside the credentials it actually uses had a

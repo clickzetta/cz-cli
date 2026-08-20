@@ -5,6 +5,7 @@ import { readLlmEntries, setActiveModel, writeLlmEntries } from "../llm/native-c
 import {
   clearOAuthLoginResidue,
   getDefaultProfileName,
+  oauthSessionProvisioned,
   loadProfiles,
   makeProfileTokenStore,
   patchProfileConnection,
@@ -160,9 +161,23 @@ export interface OAuthProvisionInput {
    * llm.json is not written at all (an api_key there may be a gateway virtual key
    * the quota flow swapped in — see llm/key-provision.ts — and overwriting it
    * would silently undo that remedy). Only genuinely new instance×workspace
-   * combinations are added. Defaults to false = first login = full provisioning.
+   * combinations are added.
+   *
+   * Optional: {@link provisionProfilesFromOAuthCombos} derives it from
+   * {@link oauthSessionProvisioned} when omitted, so the "read the disk before the
+   * first write" ordering lives inside the function rather than in its caller. Pass
+   * it only to state a classification the disk would not give (tests), or from a
+   * caller that already read it for its own output.
    */
   relogin?: boolean
+  /**
+   * Write llm.json even on a re-login (`login --refresh-llm`). The skip protects an
+   * api_key the user may have swapped for a gateway virtual key, which is worth
+   * protecting — but a complimentary key that was revoked or rotated server-side is
+   * then unrecoverable through login, since nothing here can tell the two apart. This
+   * makes the overwrite an explicit request instead of an unreachable path.
+   */
+  refreshLlm?: boolean
 }
 
 /**
@@ -205,7 +220,7 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   //     which profile row this call happens to be filling.
   //   `refreshOnly` decides only whether to write THIS row's connection fields:
   //     an existing row is the user's, a row we just created has nothing to lose.
-  const relogin = Boolean(input.relogin)
+  const relogin = input.relogin ?? oauthSessionProvisioned(sanitizeOAuthId(name ?? (finalInstance || "default")))
   const refreshOnly = relogin && existedBefore
 
   // Clear residue that would shadow/contradict this fresh login: a stale
@@ -265,7 +280,7 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   if (name) ensureDefaultProfile(relogin, name)
 
   // llm.json is not a login artifact on a re-login: see OAuthProvisionInput.relogin.
-  const llmConfigured = relogin
+  const llmConfigured = relogin && !input.refreshLlm
     ? false
     // Keyed like the combos path (sanitizeOAuthId), so one session cannot end up with
     // its entry under two different names depending on which path provisioned it —
@@ -273,6 +288,11 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
     : configureClickzettaLlm(sanitizeOAuthId(name ?? finalInstance), {
       apiKey: userInfo?.apiKey,
       baseURL: userInfo?.aimeshEndpointBaseUrl,
+      // The raw name is what this path used as the entry key before it was
+      // sanitized, so hand it over as the legacy name: without this a session called
+      // e.g. `company.prod` would get a SECOND entry under `company_prod` while
+      // config.model still pointed at the orphaned original.
+      legacyName: name ?? finalInstance,
     })
 
   return { instance: finalInstance, llmConfigured }
@@ -319,7 +339,9 @@ export function provisionProfilesFromOAuthCombos(
   // refreshes the same section instead of accumulating orphans, and the profile
   // prefix (<base>_N) visibly ties each profile to its login session.
   const oauthId = sanitizeOAuthId(base)
-  const relogin = Boolean(input.relogin)
+  // Derived here unless the caller states it, so the "read before the first write"
+  // ordering is a property of this function rather than a comment in its caller.
+  const relogin = input.relogin ?? oauthSessionProvisioned(oauthId)
 
   // Index the session's existing profiles by the CONNECTION each describes, so a
   // re-login can tell an already-provisioned combo from a genuinely new one.
@@ -332,20 +354,18 @@ export function provisionProfilesFromOAuthCombos(
   const sessionProfiles: string[] = []
   for (const [profileName, entry] of Object.entries(loadProfiles())) {
     const index = sessionProfileIndex(base, profileName)
-    if (index === undefined) continue
     // Every name that parses as `<base>_N` bumps maxIndex, INCLUDING one owned by
     // another session — collision avoidance is about the name being taken, not about
     // who owns it, and allocating over it would overwrite that profile.
-    maxIndex = Math.max(maxIndex, index)
-    // Ownership, on the other hand, decides whether this login may touch the row,
-    // and only an explicit pointer at THIS session counts. Two rows would otherwise
-    // be adopted by name+connection alone: another session's (session "sess" and
-    // session "sess_2" both produce a profile literally named "sess_2", which
-    // `sessionProfileIndex("sess", "sess_2")` cannot tell apart), and a hand-written
-    // row with a pat and no auth_type — writing `oauth`/`auth_type` onto that one
-    // would switch the credential it authenticates with, which is exactly what
-    // setAuthTypeIfAbsent's contract exists to prevent. Unowned rows keep their name
-    // reserved (maxIndex above) and the combo gets a fresh N instead.
+    if (index !== undefined) maxIndex = Math.max(maxIndex, index)
+    // Ownership, on the other hand, decides whether this login may touch the row, and
+    // only an explicit pointer at THIS session counts — by pointer alone, not by name
+    // shape. Name shape is not enough in either direction: another session's row can
+    // parse as ours (session "sess" and session "sess_2" both produce a profile
+    // literally named "sess_2"), a hand-written row with a pat and no auth_type would
+    // have its credential switched under it, and OUR OWN bare `<base>` row — what the
+    // zero-combos fallback writes — parses as nobody's, which used to leave it out of
+    // every session-scoped check including the default_profile repair.
     if (entry.oauth !== oauthId) continue
     sessionProfiles.push(profileName)
     const key = connectionKey(entry.instance, entry.workspace)
@@ -356,7 +376,7 @@ export function provisionProfilesFromOAuthCombos(
     if (key === EMPTY_CONNECTION_KEY || byConnection.has(key)) continue
     byConnection.set(key, profileName)
   }
-  sessionProfiles.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
+  sessionProfiles.sort((a, b) => reportOrder(base, a) - reportOrder(base, b))
 
   if (combos.length === 0) {
     // Nothing enumerated. On a re-login of a session that already has profiles the
@@ -369,7 +389,7 @@ export function provisionProfilesFromOAuthCombos(
     // failed listUserWorkspaces per instance), not a reason to rewrite the file.
     if (relogin && sessionProfiles.length > 0) {
       saveSharedOAuthToken(oauthId, token)
-      ensureDefaultProfile(relogin, sessionProfiles[0]!)
+      ensureDefaultProfile(relogin, sessionProfiles[0]!, sessionProfiles)
       return {
         profiles: sessionProfiles,
         defaultProfile: sessionDefaultProfile(relogin, sessionProfiles),
@@ -469,14 +489,15 @@ export function provisionProfilesFromOAuthCombos(
   // Reported in `<base>_N` order, not enumeration order: N is stable across logins
   // while the server's combo order is not, so a caller diffing two logins' output
   // sees the profiles line up.
-  owned.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
-  names.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
+  owned.sort((a, b) => reportOrder(base, a) - reportOrder(base, b))
+  names.sort((a, b) => reportOrder(base, a) - reportOrder(base, b))
 
-  ensureDefaultProfile(relogin, names[0]!)
+  ensureDefaultProfile(relogin, names[0]!, owned)
   const defaultProfile = sessionDefaultProfile(relogin, names, owned)
 
-  // llm.json is untouched on a re-login: see OAuthProvisionInput.relogin.
-  const llmConfigured = relogin
+  // llm.json is untouched on a re-login unless explicitly asked: see
+  // OAuthProvisionInput.relogin / .refreshLlm.
+  const llmConfigured = relogin && !input.refreshLlm
     ? false
     : configureClickzettaLlm(oauthId, {
       apiKey: userInfo?.apiKey,
@@ -496,14 +517,29 @@ export function provisionProfilesFromOAuthCombos(
  * leaving it would hand back a file whose only usable profile is not reachable
  * without `--profile`.
  */
-function ensureDefaultProfile(relogin: boolean, name: string): void {
+function ensureDefaultProfile(relogin: boolean, name: string, owned: string[] = []): void {
   if (!relogin) {
     setDefaultProfile(name)
     return
   }
   const current = getDefaultProfileName()
-  if (current && loadProfiles()[current]) return
-  setDefaultProfile(name)
+  if (!current) {
+    setDefaultProfile(name)
+    return
+  }
+  const entry = loadProfiles()[current]
+  if (!entry) {
+    setDefaultProfile(name)
+    return
+  }
+  // One more case that is not a choice: our OWN row with no instance. The
+  // zero-combos fallback writes a bare `<base>` profile when the account had no
+  // instance yet and makes it the default, and login tells the user to provision an
+  // instance and log in again. That re-login enumerates combos and creates
+  // `<base>_0` — if the instance-less row kept the default, every bare `cz-cli`
+  // command would fail exactly as before and the advertised remedy would not work.
+  const unusableOwnRow = owned.includes(current) && !String(entry.instance ?? "").trim()
+  if (unusableOwnRow) setDefaultProfile(name)
 }
 
 /**
@@ -526,7 +562,14 @@ function sessionDefaultProfile(relogin: boolean, names: string[], owned: string[
   return selected && owned.includes(selected) ? selected : names[0]!
 }
 
-/** Stable identity of a profile's connection: what a combo is matched against. */
+/**
+ * Stable identity of a profile's connection: what a combo is matched against.
+ *
+ * Case-insensitive, so a row stored as `WS1` still matches a combo reported as `ws1`
+ * rather than growing a second profile for one connection. The refresh then writes
+ * the server's casing onto the row — a normalization, not the no-op it would be if
+ * the key were exact.
+ */
 function connectionKey(instance: unknown, workspace: unknown): string {
   return `${String(instance ?? "").toLowerCase()}\u0000${String(workspace ?? "").toLowerCase()}`
 }
@@ -540,4 +583,13 @@ function sessionProfileIndex(base: string, profileName: string): number | undefi
   const suffix = profileName.slice(base.length + 1)
   if (!/^\d+$/.test(suffix)) return undefined
   return Number(suffix)
+}
+
+/**
+ * Sort key for reporting: `<base>_N` by N, and the bare `<base>` row (the
+ * zero-combos shape) first, since it predates every numbered row. Never used to
+ * allocate a name — only `sessionProfileIndex` feeds `maxIndex`.
+ */
+function reportOrder(base: string, profileName: string): number {
+  return profileName === base ? -1 : (sessionProfileIndex(base, profileName) ?? 0)
 }
