@@ -539,6 +539,26 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(after.header).toEqual({ Cookie: "stale" })
   })
 
+  // enumerateOAuthCombos swallows a failed listUserWorkspaces per instance, so a
+  // re-login routinely enumerates a subset of what the session owns. `profiles` and
+  // the reported default must describe the session, not that subset — otherwise
+  // profile_count drops with nothing deleted, and a caller feeding the reported
+  // default_profile into --profile targets a different workspace than bare commands.
+  test("partial enumeration still reports the whole session and the on-disk default", () => {
+    const both = [combo("i1", "ws1"), combo("i2", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", both, input(both))
+    setDefaultProfile("sess_1")
+
+    // Only instance i1 could be enumerated this time.
+    const partial = [combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", partial, input(partial))
+
+    expect(result.profiles).toEqual(["sess_0", "sess_1"])
+    expect(result.created).toEqual([])
+    expect(result.defaultProfile).toBe("sess_1")
+    expect(getDefaultProfileName()).toBe("sess_1")
+  })
+
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
   test("a repeated combo is reported once", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws1")]

@@ -267,7 +267,10 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // llm.json is not a login artifact on a re-login: see OAuthProvisionInput.relogin.
   const llmConfigured = relogin
     ? false
-    : configureClickzettaLlm(name ?? finalInstance, {
+    // Keyed like the combos path (sanitizeOAuthId), so one session cannot end up with
+    // its entry under two different names depending on which path provisioned it —
+    // which is also what the "no entry for this session" warning looks up.
+    : configureClickzettaLlm(sanitizeOAuthId(name ?? finalInstance), {
       apiKey: userInfo?.apiKey,
       baseURL: userInfo?.aimeshEndpointBaseUrl,
     })
@@ -456,13 +459,21 @@ export function provisionProfilesFromOAuthCombos(
     if (!existingName && !created.includes(name)) created.push(name)
   }
 
+  // `profiles` answers "what does this session own", not "what did this run touch" —
+  // `profiles_created` covers the latter. The difference shows up when one instance's
+  // workspace listing fails (oauth-enumerate.ts swallows that per instance): reporting
+  // only the touched rows would shrink `profiles`/`profile_count` with nothing having
+  // been deleted, and would disagree with the zero-combos branch above, which reports
+  // the full set for the same failure at 100%.
+  const owned = [...new Set([...sessionProfiles, ...names])]
   // Reported in `<base>_N` order, not enumeration order: N is stable across logins
   // while the server's combo order is not, so a caller diffing two logins' output
   // sees the profiles line up.
+  owned.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
   names.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
 
   ensureDefaultProfile(relogin, names[0]!)
-  const defaultProfile = sessionDefaultProfile(relogin, names)
+  const defaultProfile = sessionDefaultProfile(relogin, names, owned)
 
   // llm.json is untouched on a re-login: see OAuthProvisionInput.relogin.
   const llmConfigured = relogin
@@ -473,7 +484,7 @@ export function provisionProfilesFromOAuthCombos(
       legacyName: defaultProfile,
     })
 
-  return { profiles: names, defaultProfile, llmConfigured, created }
+  return { profiles: owned, defaultProfile, llmConfigured, created }
 }
 
 /**
@@ -505,9 +516,14 @@ function ensureDefaultProfile(relogin: boolean, name: string): void {
  * straight back into `--profile` would then target the wrong account. Either way we
  * do not WRITE it on a re-login; this only decides what to report.
  */
-function sessionDefaultProfile(relogin: boolean, names: string[]): string {
+function sessionDefaultProfile(relogin: boolean, names: string[], owned: string[] = names): string {
   const selected = relogin ? getDefaultProfileName() : undefined
-  return selected && names.includes(selected) ? selected : names[0]!
+  // `owned` is every row this session has, `names` only the ones THIS run touched.
+  // Validating against the narrower set would report `names[0]` whenever the user's
+  // selection belongs to an instance whose workspace listing failed this time — a
+  // caller feeding that back into --profile would target a different workspace than
+  // every bare `cz-cli` command uses.
+  return selected && owned.includes(selected) ? selected : names[0]!
 }
 
 /** Stable identity of a profile's connection: what a combo is matched against. */

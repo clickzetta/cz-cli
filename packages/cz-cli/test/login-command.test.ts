@@ -478,7 +478,7 @@ describe("runLogin", () => {
 
   // Zero llm.json writes on a re-login is deliberate, but a session that never got
   // an entry (its first login carried no apiKey) would otherwise stay entry-less
-  // with nothing in the output saying so — `llm_configured` is omitted on re-login.
+  // with nothing in the output saying so — `llm_configured` is a bare `false` there.
   test("re-login warns when this session has no llm entry, without writing one", async () => {
     const first = captureStdout()
     try {

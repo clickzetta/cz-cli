@@ -282,9 +282,16 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // silently stay without an entry forever, and the omitted `llm_configured`
     // hides it. Say so instead: the write is skipped by design, the missing entry
     // is not.
-    if (relogin && !readLlmEntries().llm[sanitizeOAuthId(sessionName)]) {
+    const llmEntryId = sanitizeOAuthId(sessionName)
+    const llmEntries = readLlmEntries().llm
+    // The legacy key too: `configureClickzettaLlm`'s legacyName migration renames a
+    // `<base>_0`-keyed entry to the session id, and it only runs on a first login —
+    // so a user still holding the pre-rename entry has a working LLM and must not be
+    // told otherwise on every future re-login. A warning that cannot be acted on
+    // teaches people to ignore warnings.
+    if (relogin && !llmEntries[llmEntryId] && !llmEntries[`${sessionName}_0`]) {
       warnings.push(
-        `No LLM entry named '${sanitizeOAuthId(sessionName)}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`; it may also exist under a different entry name.`,
+        `No LLM entry named '${llmEntryId}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`.`,
       )
     }
 
