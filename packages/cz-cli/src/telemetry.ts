@@ -34,7 +34,25 @@ export function parseTrackingArgs(rawArgs: string[]): {
   positional: string[]
   args: Record<string, string>
 } {
-  const positional = rawArgs.filter((arg) => !arg.startsWith("-"))
+  // The token after a SENSITIVE flag is that flag's value, not a positional. Filtering
+  // purely on "does not start with -" put it in `_positional`, where the flag map's
+  // `<redacted>` no longer protected it: `cz-cli auth login mysession --pat czt_secret`
+  // recorded `_positional = "mysession czt_secret"`.
+  //
+  // Deliberately limited to the sensitive flags rather than every value-taking one:
+  // without a spec of which flags take values, a boolean flag followed by a real
+  // positional (`sql --debug "select 1"`) is indistinguishable by shape, and dropping
+  // those would quietly change what the existing analytics see. Secrets are the part
+  // that must not be recorded at all.
+  const secretValues = new Set<number>()
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i]
+    if (!arg || !arg.startsWith("-") || arg.includes("=")) continue
+    if (!isSensitiveKey(arg.replace(/^-+/, ""))) continue
+    const next = rawArgs[i + 1]
+    if (next && !next.startsWith("-")) secretValues.add(i + 1)
+  }
+  const positional = rawArgs.filter((arg, i) => !arg.startsWith("-") && !secretValues.has(i))
   const args: Record<string, string> = {}
 
   if (positional.length > 2) {

@@ -404,6 +404,23 @@ export function provisionProfilesFromOAuthCombos(
     // failed listUserWorkspaces per instance), not a reason to rewrite the file.
     if (relogin && sessionProfiles.length > 0) {
       saveSharedOAuthToken(oauthId, token)
+      // Server-owned fields refresh here too, so the contract does not depend on
+      // enumeration having succeeded: `service` comes from input and the identity from
+      // userinfo, neither of which needs the combos this branch lacks. Only the
+      // per-combo instance/workspace are unavailable, and this path never writes them.
+      // Without this, a tenant whose region host moved would hit one transient
+      // listUserWorkspaces failure and get a successful login that silently kept the
+      // stale host — with "log in again" as the remedy that had just failed to apply.
+      for (const profileName of sessionProfiles) {
+        patchProfileConnection(profileName, {
+          service: input.service,
+          protocol,
+          userId: token.userId || undefined,
+          accountId: userInfo?.accountId,
+          accountName: userInfo?.accountName,
+          aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
+        })
+      }
       ensureDefaultProfile(relogin, sessionProfiles[0]!, sessionProfiles)
       // --refresh-llm is honoured here too: the api key comes from userinfo, which
       // this path has, not from the enumeration it lacks. Skipping it would make the
@@ -456,8 +473,9 @@ export function provisionProfilesFromOAuthCombos(
       // `aimeshEndpointBaseUrl` and the account/user identity are facts this login
       // just re-read from userinfo — freezing them at whatever the first login saw
       // would mean a region or endpoint move could never be picked up, and no other
-      // command rewrites them. instance/workspace are what this row was MATCHED on,
-      // so writing them back is a no-op.
+      // command rewrites them. instance/workspace are what this row was MATCHED on; writing
+      // them back only normalizes their casing to the server's, since the match key is
+      // case-insensitive (see connectionKey) — not the no-op an exact key would make it.
       patchProfileConnection(existingName, {
         service: combo.service,
         protocol,
@@ -481,7 +499,11 @@ export function provisionProfilesFromOAuthCombos(
 
     // Drop any stale header.Cookie residue that would shadow the OAuth token at
     // runtime. service/instance/workspace are all provided below (combo always
-    // carries them), so they're kept.
+    // carries them), so they're kept. Only on a row this login CREATES: on a matched
+    // row the cookie is user-owned state that survives (see the refresh branch above),
+    // and what keeps it inert there is `auth_type` — setAuthTypeIfAbsent pins "oauth",
+    // and resolveConnectionConfig strips the Cookie header whenever a non-cookie
+    // auth_type is pinned (connection/config.ts).
     clearOAuthLoginResidue(name, { instance: true, workspace: true, service: true })
 
     // Only connection essentials at login: service/instance/workspace. schema
@@ -643,5 +665,8 @@ function sessionProfileIndex(base: string, profileName: string): number | undefi
  * allocate a name — only `sessionProfileIndex` feeds `maxIndex`.
  */
 function reportOrder(base: string, profileName: string): number {
-  return profileName === base ? -1 : (sessionProfileIndex(base, profileName) ?? 0)
+  if (profileName === base) return -1
+  // Ownership is decided by the `oauth` pointer, so a session can legitimately include
+  // a row named however the user liked; `?? 0` would tie it with `<base>_0`.
+  return sessionProfileIndex(base, profileName) ?? Number.MAX_SAFE_INTEGER
 }

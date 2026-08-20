@@ -586,6 +586,36 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(getDefaultProfileName()).toBe("sess_1")
   })
 
+  // The re-login contract must not depend on enumeration succeeding: `service` comes
+  // from input and the identity from userinfo, neither of which needs combos.
+  test("a re-login that enumerates nothing still refreshes server-owned fields", () => {
+    const combos = [combo("i1", "ws1"), combo("i2", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const edited = loadProfiles()
+    edited.sess_0 = { ...edited.sess_0, schema: "my_schema" }
+    saveProfiles(edited)
+
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      service: "us-east-1-aws.api.singdata.com",
+      userInfo: {
+        apiKey: "free-key",
+        accountId: 8,
+        accountName: "renamed",
+        aimeshEndpointBaseUrl: "https://new-aimesh.example.com/",
+      },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+
+    const after = loadProfiles()
+    for (const name of ["sess_0", "sess_1"]) {
+      expect(after[name]?.service).toBe("us-east-1-aws.api.singdata.com")
+      expect(after[name]?.account_name).toBe("renamed")
+      expect(after[name]?.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
+    }
+    // User-owned still survives.
+    expect(after.sess_0?.schema).toBe("my_schema")
+  })
+
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
   test("a repeated combo is reported once", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws1")]
