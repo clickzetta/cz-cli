@@ -110,20 +110,28 @@ test("parseTrackingArgs redacts --password and --pat=inline forms too", () => {
 
 // Cookie auth is one of the four credential kinds, so `--header Cookie=…` is a
 // credential in flag clothing — it used to reach OTel verbatim.
-test("parseTrackingArgs redacts --header values", () => {
-  const inline = parseTrackingArgs(["sql", "--header", "Cookie=sess_abc", "select 1"])
+test("parseTrackingArgs redacts a cookie value whatever flag carries it", () => {
+  const spaced = parseTrackingArgs(["profile", "create", "p", "--header", "Cookie=sess_abc"])
+  expect(spaced.args.header).toBe("<redacted>")
+  expect(JSON.stringify(spaced)).not.toContain("sess_abc")
+
+  const inline = parseTrackingArgs(["profile", "create", "p", "--header=Cookie=sess_abc"])
   expect(inline.args.header).toBe("<redacted>")
   expect(JSON.stringify(inline)).not.toContain("sess_abc")
-  // The KEY=VALUE token is withheld; the statement after it is still a positional.
-  expect(inline.positional).toEqual(["sql", "select 1"])
 })
 
 // `--header` is KEY=VALUE on `profile create` but a boolean on `sql` (--no-header), so
-// the arity cannot be read off the name alone.
-test("parseTrackingArgs keeps the statement when --header is the boolean form", () => {
-  const { positional } = parseTrackingArgs(["sql", "--header", "select 1"])
+// redacting by NAME swallowed the statement next to it — and SQL is full of `=`, which is
+// why the value shape, not the flag name, is the discriminator.
+test("parseTrackingArgs keeps a SQL statement that follows the boolean --header", () => {
+  const plain = parseTrackingArgs(["sql", "--header", "select 1"])
+  expect(plain.positional).toEqual(["sql", "select 1"])
 
-  expect(positional).toEqual(["sql", "select 1"])
+  const withEquals = parseTrackingArgs(["sql", "--header", "select * from t where id=1"])
+  // Kept as a positional (for `sql <stmt>` that is index 1, which run-cli reads as the
+  // subcommand dimension — `_positional` only starts at index 2).
+  expect(withEquals.positional).toEqual(["sql", "select * from t where id=1"])
+  expect(withEquals.args.header).toBe("select * from t where id=1")
 })
 
 // `--login` / `--jdbc` take a JDBC connection string, and jdbc.ts reads `password=`

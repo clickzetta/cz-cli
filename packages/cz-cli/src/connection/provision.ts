@@ -324,7 +324,7 @@ export interface OAuthCombosResult {
   /** Every profile this session owns, ordered for display. */
   profiles: string[]
   /**
-   * Rows this login touched that pin `auth_type = "cookie"`. For those the login is a
+   * Rows of this session that pin `auth_type = "cookie"`. For those the login is a
    * no-op: `setAuthTypeIfAbsent` deliberately leaves an explicit pin alone, and a cookie
    * pin makes resolveConnectionConfig keep the Cookie header AND withhold the OAuth token
    * store — so the token just minted is never read. Both fields are the user's, so the
@@ -638,7 +638,10 @@ export function provisionProfilesFromOAuthCombos(
 
   return {
     profiles: owned,
-    cookiePinned: cookiePinnedRows(names),
+    // `owned`, not `names`: the pin is a static property of the row, not something this
+    // run did, so a partial enumeration failure must not hide a warning that a total one
+    // surfaces (the zero-combos branch reports its whole session).
+    cookiePinned: cookiePinnedRows(owned),
     defaultProfile,
     llmConfigured,
     llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured }),

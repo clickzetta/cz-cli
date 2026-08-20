@@ -20,16 +20,25 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   "access-token",
   "auth",
   "authorization",
-  // `--header Cookie=<session>` is a credential in flag clothing: cookie auth is one of
-  // the four ways this CLI authenticates, so the whole header value is redacted rather
-  // than trying to pick the Cookie key out of it.
-  "header",
-  // Same shape: both take a JDBC connection string, and connection/jdbc.ts reads a
-  // `password=` parameter straight out of it. Neither value is a dimension anyone could
-  // act on in analytics, so the whole string goes rather than one parameter of it.
+  // Both take a JDBC connection string, and connection/jdbc.ts reads a `password=`
+  // parameter straight out of it. Neither value is a dimension anyone could act on in
+  // analytics, so the whole string goes rather than one parameter of it.
   "login",
   "jdbc",
 ])
+
+/**
+ * Values that are credentials whatever flag carries them.
+ *
+ * `--header Cookie=<session>` is a credential in flag clothing — cookie auth is one of
+ * the four ways this CLI authenticates — but `header` cannot be a sensitive NAME: it is
+ * KEY=VALUE on `profile create` and a boolean on `sql` (`--no-header`), so redacting by
+ * name swallowed the neighbouring SQL statement. Matching the value is what the reported
+ * hazard actually needs, and it holds for any flag someone routes a cookie through.
+ */
+function isSensitiveValue(value: string): boolean {
+  return /^\s*cookie\s*=/i.test(value)
+}
 
 export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(key.toLowerCase())
@@ -58,15 +67,9 @@ export function parseTrackingArgs(rawArgs: string[]): {
     const arg = rawArgs[i]
     if (!arg || !arg.startsWith("-") || arg.includes("=")) continue
     const key = arg.replace(/^-+/, "").toLowerCase()
-    if (!isSensitiveKey(key)) continue
     const next = rawArgs[i + 1]
     if (!next) continue
-    // `--header` is the one sensitive name whose arity depends on the command: a
-    // repeatable `KEY=VALUE` on `profile create`, a boolean on `sql` (`--no-header`).
-    // Only the KEY=VALUE shape is a value to withhold; treating the boolean's neighbour
-    // as consumed would drop the SQL statement from `_positional`, which is exactly the
-    // loss this scoping avoids elsewhere.
-    if (key === "header" && !next.includes("=")) continue
+    if (!isSensitiveKey(key) && !isSensitiveValue(next)) continue
     secretValues.add(i + 1)
   }
   const positional = rawArgs.filter((arg, i) => !arg.startsWith("-") && !secretValues.has(i))
@@ -82,7 +85,8 @@ export function parseTrackingArgs(rawArgs: string[]): {
     const eqIdx = arg.indexOf("=")
     if (eqIdx > 0) {
       const key = arg.slice(0, eqIdx).replace(/^-+/, "")
-      args[key] = isSensitiveKey(key) ? "<redacted>" : arg.slice(eqIdx + 1)
+      const inlineValue = arg.slice(eqIdx + 1)
+      args[key] = isSensitiveKey(key) || isSensitiveValue(inlineValue) ? "<redacted>" : inlineValue
       continue
     }
     const next = rawArgs[i + 1]
@@ -93,7 +97,7 @@ export function parseTrackingArgs(rawArgs: string[]): {
     // than a value. `secretValues` marks the same index, so it stays out of _positional.
     const claimsNext = next !== undefined && (!next.startsWith("-") || secretValues.has(i + 1))
     if (claimsNext) {
-      args[key] = isSensitiveKey(key) ? "<redacted>" : next!
+      args[key] = isSensitiveKey(key) || isSensitiveValue(next!) ? "<redacted>" : next!
       i++
       continue
     }

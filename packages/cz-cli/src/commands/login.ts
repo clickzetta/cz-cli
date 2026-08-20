@@ -125,17 +125,18 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // …but only onto a free name, and say so before touching the network. The shared
     // writer is the authoritative check — saveProfile throws a coded PROFILE_EXISTS
     // (setup.ts), so every path into the flow reports the same failure and nothing can be
-    // overwritten either way. This is a fast-fail for the credential shapes, not a second
-    // rule: it turns a collision that would otherwise surface after a full portal round
-    // trip into an immediate error naming the fix. Non-TTY only, and not for
-    // --login-method/--login: with a terminal the flow prompts for another name, and the
-    // non-TTY step protocol legitimately has no name at step one.
-    // Gated on the CREDENTIAL shapes only. `--login-method` / `--login` drive the
-    // non-TTY step protocol, where an agent wrapper re-invokes with more flags and may
-    // legitimately not have a name yet; pre-empting that with an error would stop it at
-    // step one. Those runs still collide at saveProfile if they get that far, with the
-    // flow's own message.
-    if ((argv.username || argv.password) && !argv.name && !process.stdin.isTTY && loadProfiles().default) {
+    // overwritten either way. This is a fast-fail, not a second rule: it turns a collision
+    // that would otherwise surface after a full portal round trip into an immediate error
+    // naming the fix.
+    //
+    // Which means it must only fire when that round trip is the very next thing: a
+    // COMPLETE credential set, non-TTY, no name. An incomplete one is mid-protocol —
+    // runExistingAccountFlowNonTTY answers SETUP_INPUT_REQUIRED for the missing fields and
+    // the wrapper re-invokes with more flags — and neither that protocol nor the
+    // --login-method one has a name step, so pre-empting either would stop it at step one.
+    // With a terminal the flow prompts for another name, which beats an error.
+    const completeCredentials = Boolean(argv.username && argv.password && argv["account-name"])
+    if (completeCredentials && !argv.name && !process.stdin.isTTY && loadProfiles().default) {
       error(
         "PROFILE_EXISTS",
         "Profile 'default' already exists and no [name] was given. Pass a name: `cz-cli auth login <name> --username … --password …` (or delete the existing profile).",
@@ -430,7 +431,7 @@ function classifyLoginError(msg: string): { code: string; aiMessage: string } {
  * for why they cannot differ.
  */
 const SESSION_NAME_DESCRIBE =
-  "Session name (required; prompted in a TTY if omitted). Labels this login: names the shared OAuth token [oauth.<name>] and the profile prefix <name>_0/_1, like an AWS SSO session name. Accepted as the positional or as --name."
+  "Session name — required for browser OAuth (prompted in a TTY if omitted), and 'default' when omitted with --credential/--username. Labels this login: names the shared OAuth token [oauth.<name>] and the profile prefix <name>_0/_1, like an AWS SSO session name. Accepted as the positional or as --name."
 
 /**
  * Register the `login [name]` command (builder + handler) onto the given yargs.
