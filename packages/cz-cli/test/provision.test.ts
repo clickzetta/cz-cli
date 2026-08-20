@@ -726,6 +726,40 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(loadProfiles().sess_1?.header).toEqual({ Cookie: "stale" })
   })
 
+  // A per-instance enumeration failure must not leave its rows staler than a total failure
+  // would: the account-wide fields and the token-binding fields are owed to every row of
+  // the session, matched or not.
+  test("partial enumeration still refreshes the un-enumerated rows' account-wide fields", () => {
+    const both = [combo("i1", "ws1"), combo("i2", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", both, input(both))
+    // The user cleared sess_1's pin and left a cookie behind; i2 stops enumerating.
+    const edited = loadProfiles()
+    edited.sess_1 = { ...edited.sess_1, header: { Cookie: "stale" } }
+    delete edited.sess_1.auth_type
+    saveProfiles(edited)
+
+    provisionProfilesFromOAuthCombos("sess", [combo("i1", "ws1")], input([combo("i1", "ws1")], {
+      userInfo: {
+        instanceName: "i1",
+        workspace: "ws1",
+        apiKey: "free-key",
+        accountId: 9,
+        accountName: "renamed",
+        aimeshEndpointBaseUrl: "https://new-aimesh.example.com/",
+      },
+    }))
+
+    const after = loadProfiles().sess_1!
+    expect(after.account_name).toBe("renamed")
+    expect(after.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
+    // The pin is re-asserted, so the preserved cookie cannot shadow the refreshed token.
+    expect(after.auth_type).toBe("oauth")
+    expect(after.oauth).toBe("sess")
+    // Its per-connection fields are untouched — only a matched combo knows those.
+    expect(after.instance).toBe("i2")
+    expect(after.workspace).toBe("ws2")
+  })
+
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
   test("a repeated combo is reported once", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws1")]

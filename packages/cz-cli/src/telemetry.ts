@@ -20,6 +20,10 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   "access-token",
   "auth",
   "authorization",
+  // Header spellings, for the KEY=VALUE values `--header` carries (see isSensitiveValue).
+  "cookie",
+  "x-api-key",
+  "x-auth-token",
   // Both take a JDBC connection string, and connection/jdbc.ts reads a `password=`
   // parameter straight out of it. Neither value is a dimension anyone could act on in
   // analytics, so the whole string goes rather than one parameter of it.
@@ -34,10 +38,16 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
  * the four ways this CLI authenticates — but `header` cannot be a sensitive NAME: it is
  * KEY=VALUE on `profile create` and a boolean on `sql` (`--no-header`), so redacting by
  * name swallowed the neighbouring SQL statement. Matching the value is what the reported
- * hazard actually needs, and it holds for any flag someone routes a cookie through.
+ * hazard actually needs.
+ *
+ * Keyed off the same SENSITIVE_KEYS list rather than a second, narrower one, because
+ * `--header` is a generic repeatable KEY=VALUE: `Authorization=Bearer …` and
+ * `X-Api-Key=…` are the same hazard as `Cookie=…`. `eqIdx > 0` keeps a SQL statement
+ * intact — in `select * from t where id=1` the part before `=` is not a credential name.
  */
 function isSensitiveValue(value: string): boolean {
-  return /^\s*cookie\s*=/i.test(value)
+  const eqIdx = value.indexOf("=")
+  return eqIdx > 0 && isSensitiveKey(value.slice(0, eqIdx).trim())
 }
 
 export function isSensitiveKey(key: string): boolean {

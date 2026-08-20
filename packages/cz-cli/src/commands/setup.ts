@@ -9,7 +9,7 @@ import { JobStatus, getCurrentUser, DEFAULT_CONNECTION, getToken, listUserWorksp
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { setTelemetry, getTelemetry, AUTH_TYPE, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
+import { setTelemetry, getTelemetry, AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
@@ -1707,6 +1707,27 @@ export async function runAuthConfigure(argv: AuthConfigureArgs): Promise<void> {
         || !!setupValue(rawArgv, "login")
         || !hasLegacySetupArgs(rawArgv)
       if (!process.stdin.isTTY) {
+        // Fast-fail the collision the flow would otherwise hit only AFTER a full portal
+        // round trip (runExistingAccountFlowNonTTY → saveProfile). Both entry points reach
+        // this function, so the check lives here rather than in `login`'s dispatcher, where
+        // `setup` would have been left doing the round trip first.
+        //
+        // Only when the credential set is COMPLETE: an incomplete one is mid-protocol —
+        // this flow answers SETUP_INPUT_REQUIRED for the missing fields and the wrapper
+        // re-invokes — and no protocol here has a name step, so pre-empting it would stop
+        // the wrapper at step one. Keyed on the name the flow will actually use, not on the
+        // literal "default".
+        const completeCredentials = Boolean(
+          setupValue(rawArgv, "username") && setupValue(rawArgv, "password") && setupValue(rawArgv, "account-name"),
+        )
+        if (completeCredentials && loadProfiles()[profileName]) {
+          error(
+            "PROFILE_EXISTS",
+            `Profile '${profileName}' already exists, so this login would replace it. Pass a different name with --name, or delete that profile first.`,
+            { format },
+          )
+          return
+        }
         try {
           if (shouldUseModernFlow) {
             await runModernSetupFlowNonTTY(profileName, format, rawArgv)
@@ -1763,7 +1784,11 @@ export async function runAuthConfigure(argv: AuthConfigureArgs): Promise<void> {
           collected: ttyCollected,
           argv: rawArgv,
         })
-        error("SETUP_FAILED", msg, { format })
+        // Same as the non-TTY catch: keep a structured code when the failure carried one.
+        // The rename prompt above does not re-check the name the user types, so saveProfile's
+        // PROFILE_EXISTS is reachable here too — and reporting it as SETUP_FAILED would make
+        // one collision answer differently depending on whether stdin is a terminal.
+        error(e instanceof ProvisionError ? e.code : "SETUP_FAILED", msg, { format })
       }
 }
 

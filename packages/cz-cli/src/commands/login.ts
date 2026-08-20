@@ -7,7 +7,7 @@ import { patRefusedOrNoted } from "./pat-guard.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
-import { getDefaultProfileName, loadProfiles, oauthSessionProvisioned, sanitizeOAuthId } from "../connection/profile-store.js"
+import { getDefaultProfileName, oauthSessionProvisioned, sanitizeOAuthId } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
 import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
@@ -122,31 +122,11 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // by `undefined`, writing a literal "undefined" profile and making it the
     // default_profile — the credential branch above already defaults the same way.
     const name = argv.name ?? "default"
-    // …but only onto a free name, and say so before touching the network. The shared
-    // writer is the authoritative check — saveProfile throws a coded PROFILE_EXISTS
-    // (setup.ts), so every path into the flow reports the same failure and nothing can be
-    // overwritten either way. This is a fast-fail, not a second rule: it turns a collision
-    // that would otherwise surface after a full portal round trip into an immediate error
-    // naming the fix.
-    //
-    // Which means it must only fire when that round trip is the very next thing: a
-    // COMPLETE credential set, non-TTY, no name. An incomplete one is mid-protocol —
-    // runExistingAccountFlowNonTTY answers SETUP_INPUT_REQUIRED for the missing fields and
-    // the wrapper re-invokes with more flags — and neither that protocol nor the
-    // --login-method one has a name step, so pre-empting either would stop it at step one.
-    // With a terminal the flow prompts for another name, which beats an error.
-    const completeCredentials = Boolean(argv.username && argv.password && argv["account-name"])
-    if (completeCredentials && !argv.name && !process.stdin.isTTY && loadProfiles().default) {
-      error(
-        "PROFILE_EXISTS",
-        "Profile 'default' already exists and no [name] was given. Pass a name: `cz-cli auth login <name> --username … --password …` (or delete the existing profile).",
-        // Exit 1, like every other PROFILE_EXISTS (the authoritative saveProfile throw and
-        // the --credential path): one condition must not report two statuses depending on
-        // which check noticed it first. Only PAT_NOT_A_LOGIN is a usage error.
-        { format: argv.format },
-      )
-      return
-    }
+    // The collision this name can hit (a `default` profile already existing) is checked
+    // inside runAuthConfigure, which both this command and the `setup` alias reach — see
+    // the non-TTY fast-fail there. Duplicating it here would have covered only one of the
+    // two entry points and keyed it on the literal "default" rather than on the name the
+    // flow actually uses.
     await authConfigure({ ...argv, name } as AuthConfigureArgs)
     return
   }
@@ -316,7 +296,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // it" would contradict the `no_api_key` in the same payload.
     if (llmAction === "skipped_relogin" && !llmEntryExists) {
       warnings.push(
-        `No LLM entry named '${llmEntryId}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`.`,
+        `No LLM entry named '${llmEntryId}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`, or re-run this login with --refresh-llm to write it from the account's key.`,
       )
     }
 
@@ -519,7 +499,12 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
           "For --credential / --username it is just the single profile name.\n\n" +
           "Not logins, they write a profile credential directly:\n" +
           "  PAT:    cz-cli profile create <name> --pat <token> --service <host> …\n" +
-          "  Cookie: set header.Cookie in a profile (profile create --header Cookie=…).",
+          "  Cookie: set header.Cookie in a profile (profile create --header Cookie=…).\n\n" +
+          "Re-login (same name) refreshes the token and adds newly-appeared workspaces; it\n" +
+          "leaves your llm.json, edited profile fields and default_profile alone. Use\n" +
+          "--refresh-llm if this account's LLM key itself needs rewriting. The JSON output\n" +
+          "reports default_profile (what profiles.toml says) and session_default_profile\n" +
+          "(this session's) separately — a re-login does not change the former.",
         ),
     async (argv) => {
       await runLogin(argv as unknown as LoginArgs)
