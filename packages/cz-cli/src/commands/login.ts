@@ -2,7 +2,8 @@ import type { Argv } from "yargs"
 import * as p from "@clack/prompts"
 import { toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { error, EXIT_USAGE_ERROR, success } from "../output/index.js"
+import { error, success } from "../output/index.js"
+import { patRefusedOrNoted } from "./pat-guard.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
@@ -138,7 +139,10 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
       error(
         "PROFILE_EXISTS",
         "Profile 'default' already exists and no [name] was given. Pass a name: `cz-cli auth login <name> --username … --password …` (or delete the existing profile).",
-        { format: argv.format, exitCode: EXIT_USAGE_ERROR },
+        // Exit 1, like every other PROFILE_EXISTS (the authoritative saveProfile throw and
+        // the --credential path): one condition must not report two statuses depending on
+        // which check noticed it first. Only PAT_NOT_A_LOGIN is a usage error.
+        { format: argv.format },
       )
       return
     }
@@ -150,48 +154,6 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
   await runBrowserLogin(argv, deps)
 }
 
-/**
- * Handle `--pat`, which no login flow consumes. Returns true when the caller should
- * stop (the PAT was the only credential offered).
- *
- * A PAT is a stored profile credential, not a sign-in: nothing in the setup flow
- * reads it (it accepts --credential or username+password+account-name), so a PAT
- * passed here used to be dropped silently and the user got a confusing "provide
- * username, password and account_name" error. Refuse instead of pretending — but only
- * when the PAT stands alone. A wrapper that forwards `--pat "$CZ_PAT"` alongside the
- * credential it actually authenticates with has a working invocation, and turning
- * that into exit 2 would break it over an argument the flow ignores either way.
- */
-function patRefusedOrNoted(argv: LoginArgs): boolean {
-  if (!argv.pat) return false
-  const alone = !argv.credential && !argv.username && !argv.password && !argv["login-method"] && !argv.login
-  if (alone) {
-    error(
-      "PAT_NOT_A_LOGIN",
-      "`login` does not take --pat. A PAT is a stored profile credential, not a sign-in: "
-      + `run \`cz-cli profile create ${profileNameForHint(argv.name)} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
-      { format: argv.format, exitCode: EXIT_USAGE_ERROR },
-    )
-    return true
-  }
-  // stderr, so a JSON consumer on stdout is unaffected (same channel the `setup`
-  // deprecation notice uses).
-  process.stderr.write(
-    "⚠ --pat is ignored by `login`; signing in with the other credentials given. Use `cz-cli profile create <name> --pat <token>` to store a PAT.\n",
-  )
-  return false
-}
-
-/**
- * A session name safe to embed in the suggested `profile create` command line.
- *
- * The suggestion is copy-pasted (and read by agents — `aiMessage` exists in this
- * file for exactly that), so a name carrying spaces or shell metacharacters must
- * not be interpolated raw into something that reads as runnable.
- */
-function profileNameForHint(name: string | undefined): string {
-  return name && /^[A-Za-z0-9_.-]+$/.test(name) ? name : "<name>"
-}
 
 /**
  * Default browser-OAuth path. The login target (which central OAuth entry to
@@ -280,7 +242,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // the section.
     const relogin = oauthSessionProvisioned(sanitizeOAuthId(sessionName))
 
-    const { profiles, defaultProfile, llmConfigured, llmAction, created } = provisionProfilesFromOAuthCombos(
+    const { profiles, cookiePinned, defaultProfile, llmConfigured, llmAction, created } = provisionProfilesFromOAuthCombos(
       sessionName,
       combos,
       {
@@ -317,6 +279,23 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // silently stay without an entry forever, and the omitted `llm_configured`
     // hides it. Say so instead: the write is skipped by design, the missing entry
     // is not.
+    // A row pinned to cookie auth ignores the token this login just minted: the pin keeps
+    // the Cookie header and withholds the OAuth token store. Both fields are the user's,
+    // so say the login was a no-op for those rows instead of overwriting either.
+    if (cookiePinned.length > 0) {
+      warnings.push(
+        `These profiles pin auth_type = "cookie", so they keep authenticating with their stored cookie and will not use the token this login refreshed: ${cookiePinned.join(", ")}. Clear the pin (\`cz-cli profile set <name> auth_type ""\`) or remove their header.Cookie to switch them to OAuth.`,
+      )
+    }
+    // The session name is stored sanitized ([A-Za-z0-9_-]), so two names differing only in
+    // punctuation share one token section while keeping separate profile prefixes — and
+    // the second one is then classified as a re-login of the first. Say so rather than
+    // silently treating a new session as an old one.
+    if (sanitizeOAuthId(sessionName) !== sessionName) {
+      warnings.push(
+        `Session name '${sessionName}' is stored as '${sanitizeOAuthId(sessionName)}' in the token section (only letters, digits, _ and - are kept), so a name differing from it only in punctuation would share this login's token and be treated as the same session. Prefer a name that needs no rewriting.`,
+      )
+    }
     const llmEntryId = sanitizeOAuthId(sessionName)
     const llmEntries = readLlmEntries().llm
     // The legacy key too: `configureClickzettaLlm`'s legacyName migration renames a

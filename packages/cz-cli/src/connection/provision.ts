@@ -311,12 +311,26 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   return { instance: finalInstance, llmConfigured }
 }
 
+/** Rows among `names` whose explicit `auth_type` is `cookie` — see OAuthCombosResult. */
+function cookiePinnedRows(names: string[]): string[] {
+  const profiles = loadProfiles()
+  return names.filter((name) => String(profiles[name]?.auth_type ?? "").trim().toLowerCase() === "cookie")
+}
+
 /** What a login did to llm.json — reported rather than re-derived by the caller. */
 export type LlmAction = "written" | "skipped_relogin" | "no_api_key"
 
 export interface OAuthCombosResult {
   /** Every profile this session owns, ordered for display. */
   profiles: string[]
+  /**
+   * Rows this login touched that pin `auth_type = "cookie"`. For those the login is a
+   * no-op: `setAuthTypeIfAbsent` deliberately leaves an explicit pin alone, and a cookie
+   * pin makes resolveConnectionConfig keep the Cookie header AND withhold the OAuth token
+   * store — so the token just minted is never read. Both fields are the user's, so the
+   * caller warns rather than either of them being overwritten.
+   */
+  cookiePinned: string[]
   /** This session's default profile (see sessionDefaultProfile). */
   defaultProfile: string
   llmConfigured: boolean
@@ -483,6 +497,7 @@ export function provisionProfilesFromOAuthCombos(
         : false
       return {
         profiles: sessionProfiles,
+        cookiePinned: cookiePinnedRows(sessionProfiles),
         defaultProfile: sessionDefaultProfile(relogin, sessionProfiles),
         llmConfigured,
         llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured }),
@@ -491,16 +506,22 @@ export function provisionProfilesFromOAuthCombos(
     }
     // Nothing to refresh — keep a working profile from userinfo alone.
     //
-    // This path DOES take over a row of the same name that the session does not own,
-    // unlike the `<base>_N` loop above. That is deliberate and long-standing: `login
-    // <name>` superseding `setup` means filling or replacing the profile called <name>,
-    // and test/login-command.test.ts pins a login onto a pre-existing pat profile of
-    // that name. The `<base>_N` rows are different — the user never named those, login
+    // On a FIRST login this path takes over a row of the same name that the session does
+    // not own, unlike the `<base>_N` loop above. That is deliberate and long-standing:
+    // `login <name>` superseding `setup` means filling or replacing the profile called
+    // <name>, and test/login-command.test.ts pins a login onto a pre-existing pat profile
+    // of that name. The `<base>_N` rows are different — the user never named those, login
     // did, so adopting one it did not create would be a surprise rather than the point.
+    //
+    // On a re-login it does NOT take over: `refreshOnly` is relogin && existedBefore, so
+    // an existing row keeps its instance/workspace/schema/vcluster and its cookie, and
+    // only service/protocol/identity are refreshed. That is reachable when the section
+    // survives while nothing points at it (a hand-removed `oauth =` line).
     const existedBefore = loadProfiles()[base] !== undefined
     const single = provisionProfileFromOAuth(base, input)
     return {
       profiles: [base],
+      cookiePinned: cookiePinnedRows([base]),
       defaultProfile: sessionDefaultProfile(relogin, [base]),
       llmConfigured: single.llmConfigured,
       llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured: single.llmConfigured }),
@@ -617,6 +638,7 @@ export function provisionProfilesFromOAuthCombos(
 
   return {
     profiles: owned,
+    cookiePinned: cookiePinnedRows(names),
     defaultProfile,
     llmConfigured,
     llmAction: llmActionFor({ relogin, refreshLlm: input.refreshLlm, llmConfigured }),

@@ -308,6 +308,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
 
     expect(result).toEqual({
       profiles: ["sess_0", "sess_1"],
+      cookiePinned: [],
       defaultProfile: "sess_0",
       llmConfigured: true,
       llmAction: "written",
@@ -385,6 +386,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
 
     expect(result).toEqual({
       profiles: ["sess_0", "sess_1"],
+      cookiePinned: [],
       defaultProfile: "sess_1",
       llmConfigured: false,
       llmAction: "skipped_relogin",
@@ -703,6 +705,25 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
 
     expect(loadProfiles().sess?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+  })
+
+  // A cookie pin makes resolveConnectionConfig keep the Cookie header AND withhold the
+  // OAuth token store, so for that row the login is a no-op — and setAuthTypeIfAbsent
+  // deliberately will not repoint an explicit pin. Both fields are the user's, so the
+  // result reports the rows and the command warns.
+  test("re-login reports rows pinned to cookie auth", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const rows = loadProfiles()
+    rows.sess_1 = { ...rows.sess_1, auth_type: "cookie", header: { Cookie: "stale" } }
+    saveProfiles(rows)
+
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.cookiePinned).toEqual(["sess_1"])
+    // Neither field is overwritten.
+    expect(loadProfiles().sess_1?.auth_type).toBe("cookie")
+    expect(loadProfiles().sess_1?.header).toEqual({ Cookie: "stale" })
   })
 
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
