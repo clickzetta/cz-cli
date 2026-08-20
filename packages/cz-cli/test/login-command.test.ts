@@ -436,6 +436,50 @@ describe("runLogin", () => {
     expect(process.exitCode).toBe(2)
   })
 
+  // A wrapper that forwards --pat alongside the credentials it actually uses had a
+  // working invocation; the redirect must not turn that into a hard failure. The PAT
+  // is still ignored by the flow, so say so on stderr rather than silently.
+  test("--pat alongside --username/--password: proceeds, warns on stderr", async () => {
+    let authConfigureCalls = 0
+    const errs: string[] = []
+    const originalWrite = process.stderr.write.bind(process.stderr)
+    // @ts-expect-error - narrow stub for the single call shape used here
+    process.stderr.write = (chunk: string) => {
+      errs.push(String(chunk))
+      return true
+    }
+    try {
+      await runLogin(makeArgs({ pat: "czt_x", username: "u", password: "p" }), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        runAuthConfigure: async () => {
+          authConfigureCalls++
+        },
+      })
+    } finally {
+      process.stderr.write = originalWrite
+    }
+
+    expect(authConfigureCalls).toBe(1)
+    expect(errs.join("")).toContain("--pat is ignored")
+    expect(process.exitCode).toBe(0)
+  })
+
+  // The suggestion is copy-pasted and read by agents, so a name with shell
+  // metacharacters must not be interpolated into it verbatim.
+  test("--pat: a session name that is not shell-safe falls back to <name> in the hint", async () => {
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs({ name: "my prod; rm -rf x", pat: "czt_x" }), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("profile create <name> --pat")
+    expect(out.text()).not.toContain("rm -rf")
+  })
+
   // The non-OAuth setup flow keys the profile by --name; `login` must default it
   // like the deprecated `setup` alias does, or the flow writes a profile literally
   // named "undefined" and makes it default_profile.

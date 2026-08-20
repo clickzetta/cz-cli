@@ -168,7 +168,8 @@ describe("setAuthTypeIfAbsent", () => {
   })
 
   test("never overwrites an existing value, including on re-login", () => {
-    // The scenario: a profile pinned to oauth, then `auth login --pat` against it.
+    // The scenario: a profile pinned to oauth, then a pat added to it (via `profile
+    // create --pat` or by hand) — `login --pat` no longer reaches this path.
     // Repointing it would silently change which identity every later command uses.
     saveProfiles({ p: { oauth: "p", auth_type: "oauth" } })
     setAuthTypeIfAbsent("p", "pat")

@@ -102,20 +102,31 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     return
   }
 
-  // --pat is a PROFILE credential, not a login: nothing in the setup flow reads
-  // it (it only accepts --credential or username+password+account-name), so a
-  // PAT passed here used to be silently dropped and the user got a confusing
-  // "provide username, password and account_name" error. Redirect instead of
-  // pretending. Checked before the dispatch below so --pat can never reach a
-  // flow that ignores it.
-  if (argv.pat) {
+  // --pat is a PROFILE credential, not a login: nothing in the setup flow reads it
+  // (it only accepts --credential or username+password+account-name), so a PAT
+  // passed here used to be silently dropped and the user got a confusing "provide
+  // username, password and account_name" error. Redirect instead of pretending.
+  //
+  // Only when the PAT is the ONLY credential offered. A wrapper that forwards
+  // `--pat "$CZ_PAT"` alongside the username/password it actually authenticates
+  // with has a working invocation, and turning that into exit 2 would break it for
+  // an argument the flow ignores either way — so warn there instead of failing.
+  const patOnly = Boolean(argv.pat) && !argv.username && !argv.password && !argv["login-method"] && !argv.login
+  if (patOnly) {
     error(
       "PAT_NOT_A_LOGIN",
       "`login` does not take --pat. A PAT is a stored profile credential, not a sign-in: "
-      + `run \`cz-cli profile create ${argv.name ?? "<name>"} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
+      + `run \`cz-cli profile create ${profileNameForHint(argv.name)} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
       { format: argv.format, exitCode: 2 },
     )
     return
+  }
+  if (argv.pat) {
+    // stderr, so a JSON consumer on stdout is unaffected (same channel the `setup`
+    // deprecation notice uses).
+    process.stderr.write(
+      "⚠ --pat is ignored by `login`; signing in with the other credentials given. Use `cz-cli profile create <name> --pat <token>` to store a PAT.\n",
+    )
   }
 
   // Explicit non-interactive credentials or a portal-discovery signal: reuse the
@@ -132,6 +143,17 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
 
   // Default: browser OAuth.
   await runBrowserLogin(argv, deps)
+}
+
+/**
+ * A session name safe to embed in the suggested `profile create` command line.
+ *
+ * The suggestion is copy-pasted (and read by agents — `aiMessage` exists in this
+ * file for exactly that), so a name carrying spaces or shell metacharacters must
+ * not be interpolated raw into something that reads as runnable.
+ */
+function profileNameForHint(name: string | undefined): string {
+  return name && /^[A-Za-z0-9_.-]+$/.test(name) ? name : "<name>"
 }
 
 /**
