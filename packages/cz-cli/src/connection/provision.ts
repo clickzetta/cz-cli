@@ -277,7 +277,10 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // setAuthTypeIfAbsent: re-login must not repoint a user's explicit choice.
   setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
 
-  if (name) ensureDefaultProfile(relogin, name)
+  // `[name]` as the owned set: this path provisions exactly one row, and it is the one
+  // whose instance-less shape the repair exists for (the zero-combos first login writes
+  // it). Omitting it would silently switch that branch off here.
+  if (name) ensureDefaultProfile(relogin, name, [name])
 
   // llm.json is not a login artifact on a re-login: see OAuthProvisionInput.relogin.
   const llmConfigured = relogin && !input.refreshLlm
@@ -404,16 +407,26 @@ export function provisionProfilesFromOAuthCombos(
     // failed listUserWorkspaces per instance), not a reason to rewrite the file.
     if (relogin && sessionProfiles.length > 0) {
       saveSharedOAuthToken(oauthId, token)
-      // Server-owned fields refresh here too, so the contract does not depend on
-      // enumeration having succeeded: `service` comes from input and the identity from
-      // userinfo, neither of which needs the combos this branch lacks. Only the
-      // per-combo instance/workspace are unavailable, and this path never writes them.
-      // Without this, a tenant whose region host moved would hit one transient
-      // listUserWorkspaces failure and get a successful login that silently kept the
-      // stale host — with "log in again" as the remedy that had just failed to apply.
+      // Server-owned fields refresh here too, so the contract does not depend on the
+      // enumeration having succeeded — a tenant whose aimesh endpoint or region host
+      // moved would otherwise hit one transient listUserWorkspaces failure and get a
+      // successful login that silently kept the stale value, with "log in again" as
+      // the remedy that had just failed to apply.
+      //
+      // But `service` is the one field here that is NOT account-wide: it is the region
+      // host OF AN INSTANCE (see OAuthConnCombo.service), and all this branch has is
+      // `input.service` — the DEFAULT instance's host, or, when userinfo carried no
+      // gatewayMapping, the OAuth entry host that login itself warns may not be a data
+      // region at all. Writing that to every row would move another region's profile
+      // onto the wrong host. So it goes only to the row userinfo actually describes;
+      // the identity fields are account-wide and go everywhere.
+      const rows = loadProfiles()
+      const describedInstance = String(userInfo?.instanceName ?? "").toLowerCase()
       for (const profileName of sessionProfiles) {
+        const sameInstance = describedInstance.length > 0
+          && String(rows[profileName]?.instance ?? "").toLowerCase() === describedInstance
         patchProfileConnection(profileName, {
-          service: input.service,
+          ...(sameInstance ? { service: input.service } : {}),
           protocol,
           userId: token.userId || undefined,
           accountId: userInfo?.accountId,
@@ -656,7 +669,11 @@ function sessionProfileIndex(base: string, profileName: string): number | undefi
   if (!profileName.startsWith(`${base}_`)) return undefined
   const suffix = profileName.slice(base.length + 1)
   if (!/^\d+$/.test(suffix)) return undefined
-  return Number(suffix)
+  const index = Number(suffix)
+  // `++maxIndex` must always yield a name nothing holds — past MAX_SAFE_INTEGER the
+  // increment is a no-op in float precision and would hand back an existing row, which
+  // the ownership logic above would then stamp with this session's oauth/auth_type.
+  return Number.isSafeInteger(index) ? index : undefined
 }
 
 /**

@@ -269,4 +269,5 @@ The success output SHALL carry `relogin` and `profiles_created` (what this run c
 - **WHEN** a re-login's workspace enumeration yields no combination at all (a transient per-instance `listUserWorkspaces` failure, which the enumerator swallows by design) while the session already has profiles
 - **THEN** the CLI refreshes `[oauth.<name>]`, creates no profile, and does not write `llm.json` or `default_profile`
 - **AND** it does not fall back to provisioning the single bare `<name>` profile that a first login with no enumerable combination produces
-- **AND** the server-owned fields of the session's profiles are still refreshed, so a region or endpoint move is picked up even when the enumeration failed
+- **AND** the account-wide server-owned fields (`aimeshEndpointBaseUrl`, `account_id`/`account_name`/`user_id`) of the session's profiles are still refreshed, so an endpoint move is picked up even when the enumeration failed
+- **AND (boundary)** `service` is refreshed ONLY on the row userinfo describes, since it is the region host of an instance and this path knows only the default instance's — writing it to every row would move another region's profile onto the wrong host

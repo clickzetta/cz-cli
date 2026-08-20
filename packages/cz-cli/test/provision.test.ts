@@ -599,6 +599,8 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       ...input([]),
       service: "us-east-1-aws.api.singdata.com",
       userInfo: {
+        // userinfo describes the DEFAULT instance only — i1 here, not i2.
+        instanceName: "i1",
         apiKey: "free-key",
         accountId: 8,
         accountName: "renamed",
@@ -607,11 +609,16 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
 
     const after = loadProfiles()
+    // Account-wide facts land on every row.
     for (const name of ["sess_0", "sess_1"]) {
-      expect(after[name]?.service).toBe("us-east-1-aws.api.singdata.com")
       expect(after[name]?.account_name).toBe("renamed")
       expect(after[name]?.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
     }
+    // `service` is per-INSTANCE, and without combos all this path has is the default
+    // instance's host: only the row userinfo describes may take it. Writing it to the
+    // other row would move a second region's profile onto the wrong host.
+    expect(after.sess_0?.service).toBe("us-east-1-aws.api.singdata.com")
+    expect(after.sess_1?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
     // User-owned still survives.
     expect(after.sess_0?.schema).toBe("my_schema")
   })
