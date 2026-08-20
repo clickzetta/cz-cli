@@ -6,7 +6,7 @@ import { error, success } from "../output/index.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
-import { oauthSessionProvisioned, sanitizeOAuthId } from "../connection/profile-store.js"
+import { getDefaultProfileName, loadProfiles, oauthSessionProvisioned, sanitizeOAuthId } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
 import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
@@ -23,6 +23,7 @@ export interface LoginArgs extends GlobalArgs {
   login?: string
   "account-name"?: string
   "skip-verify"?: boolean
+  "refresh-llm"?: boolean
 }
 
 // Dependency seam for tests: the yargs handler always uses the real imports,
@@ -141,7 +142,22 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // carries `default: "default"`). Without this the setup flow keys the profile
     // by `undefined`, writing a literal "undefined" profile and making it the
     // default_profile — the credential branch above already defaults the same way.
-    await authConfigure({ ...argv, name: argv.name ?? "default" } as AuthConfigureArgs)
+    const name = argv.name ?? "default"
+    // …but only onto a free name. The setup flow's non-TTY branch calls saveProfile
+    // unconditionally (the TTY branch prompts for another name), so a defaulted name
+    // would silently replace an existing `default` profile and the credential it
+    // holds. The --credential path above refuses the same collision with
+    // PROFILE_EXISTS; refuse it here too rather than have the two disagree. An
+    // explicit --name is the user's call and still reaches the flow's own handling.
+    if (!argv.name && !process.stdin.isTTY && loadProfiles().default) {
+      error(
+        "PROFILE_EXISTS",
+        "Profile 'default' already exists and no [name] was given, so this login would overwrite it. Pass a name: `cz-cli auth login <name> --username … --password …`.",
+        { format: argv.format, exitCode: 2 },
+      )
+      return
+    }
+    await authConfigure({ ...argv, name } as AuthConfigureArgs)
     return
   }
 
@@ -252,6 +268,7 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
       combos,
       {
         relogin,
+        refreshLlm: Boolean(argv["refresh-llm"]),
         token,
         userInfo,
         service: finalService,
@@ -313,9 +330,14 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         // fails safe. Which KIND of false it is goes in its own key, so no existing
         // reader changes answer.
         llm_configured: llmConfigured,
-        llm_configuration: relogin
-          ? "skipped_relogin"
-          : llmConfigured ? "written" : "no_api_key",
+        llm_configuration: llmConfigured
+          ? "written"
+          : relogin && !argv["refresh-llm"] ? "skipped_relogin" : "no_api_key",
+        // The profile bare commands will use after this login. Distinct from
+        // `default_profile`, which names THIS session's default: when the user's
+        // selection belongs to another session a re-login leaves it alone, so the two
+        // legitimately differ and a caller should not have to guess which it read.
+        active_profile: getDefaultProfileName() ?? defaultProfile,
         expires_in_ms: token.expireTimeMs,
         ...(warnings.length ? { warnings } : {}),
       },
@@ -435,6 +457,11 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         })
         .option("login", { type: "string", describe: "Non-OAuth flow: custom login page URL or JDBC connection string" })
         .option("account-name", { type: "string", describe: "Account name for existing ClickZetta users" })
+        .option("refresh-llm", {
+          type: "boolean",
+          default: false,
+          describe: "On a re-login, also rewrite this session's llm.json entry from the account's key. Off by default: an existing api_key may be a gateway key you provisioned (`ai-gateway key create`), which login must not overwrite",
+        })
         // Accepted for compatibility (real scripts pass it) but there is nothing to
         // skip: every non-OAuth flow here authenticates against the server to get a
         // token, and OAuth is a sign-in by definition. Only `profile create` has a
