@@ -459,7 +459,10 @@ export function provisionProfilesFromOAuthCombos(
         // Reaching that remedy through this branch (userinfo names an instance now, the
         // enumeration still failed) has to heal the row, or login reports success, no
         // warning fires, and every bare command keeps failing exactly as before.
-        const fillConnection = rowInstance.length === 0 && Boolean(userInfo?.instanceName)
+        // Narrowed to the bare `<base>` row the reasoning is about. Applying it to every
+        // instance-less row would give several rows the SAME connection, and byConnection
+        // keeps only the lowest N — the rest would become rows no combo can ever match.
+        const fillConnection = profileName === base && rowInstance.length === 0 && Boolean(userInfo?.instanceName)
         patchProfileConnection(profileName, {
           ...(sameInstance && !input.serviceIsEntryFallback ? { service: input.service } : {}),
           ...(fillConnection
@@ -530,6 +533,27 @@ export function provisionProfilesFromOAuthCombos(
   }
 
   saveSharedOAuthToken(oauthId, token)
+
+  // What a re-login owes EVERY row of the session, whether this run's enumeration reached
+  // its instance or not: the account-wide identity, the aimesh endpoint, and the two fields
+  // that tie the row to the refreshed token. `oauth-enumerate.ts` swallows a failed
+  // listUserWorkspaces per instance, so "some rows unmatched" is the common case — and
+  // leaving them out made a PARTIAL failure worse than a TOTAL one (the combo-less branch
+  // above does exactly this for every row), which is backwards. Per-connection fields
+  // (`service`, `instance`, `workspace`) stay in the combo loop, since only a matched combo
+  // knows them.
+  if (relogin) {
+    for (const profileName of sessionProfiles) {
+      patchProfileConnection(profileName, {
+        userId: token.userId || undefined,
+        accountId: userInfo?.accountId,
+        accountName: userInfo?.accountName,
+        aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
+      })
+      setProfileOAuthPointer(profileName, oauthId)
+      setAuthTypeIfAbsent(profileName, AUTH_TYPE.oauth)
+    }
+  }
 
   const names: string[] = []
   const created: string[] = []
@@ -617,6 +641,9 @@ export function provisionProfilesFromOAuthCombos(
   // sees the profiles line up.
   owned.sort((a, b) => reportOrder(base, a) - reportOrder(base, b))
   names.sort((a, b) => reportOrder(base, a) - reportOrder(base, b))
+  // Same reason as the two above: allocation follows the server's combo order, so without
+  // this two logins that create the same set could report it in different orders.
+  created.sort((a, b) => reportOrder(base, a) - reportOrder(base, b))
 
   ensureDefaultProfile(relogin, names[0]!, owned)
   const defaultProfile = sessionDefaultProfile(relogin, names, owned)

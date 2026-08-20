@@ -7,6 +7,7 @@ import { runLogin } from "../src/commands/login"
 import type { LoginTarget } from "../src/connection/login-target"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
 import { configureClickzettaLlm } from "../src/connection/provision"
+import { runAuthConfigure } from "../src/commands/setup"
 import { loadProfiles, makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
 import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 import { GlobalArgs } from "../src/cli"
@@ -515,50 +516,45 @@ describe("runLogin", () => {
   // A defaulted name must not silently replace an existing `default` profile: the
   // setup flow's non-TTY branch calls saveProfile unconditionally, and --credential
   // refuses the same collision.
-  test("--username/--password with no name refuses when a 'default' profile exists", async () => {
+  // The dispatcher only supplies the default name; the collision itself is the shared
+  // flow's call (see the runAuthConfigure test below).
+  test("--username/--password with no name delegates with name 'default'", async () => {
     saveProfiles({ default: { pat: "existing-pat", instance: "keep" } })
-    let authConfigureCalls = 0
-    const out = captureStdout()
-    try {
-      await runLogin({ ...makeArgs({ username: "u", password: "p", "account-name": "acct" } as never), name: undefined }, {
-        loginWithBrowser: async () => KNOWN_RESULT,
-        runAuthConfigure: async () => {
-          authConfigureCalls++
-        },
-      })
-    } finally {
-      out.restore()
-    }
+    let seen: unknown
+    await runLogin({ ...makeArgs({ username: "u", password: "p", "account-name": "acct" } as never), name: undefined }, {
+      loginWithBrowser: async () => KNOWN_RESULT,
+      runAuthConfigure: async (argv) => {
+        seen = argv
+      },
+    })
 
-    expect(authConfigureCalls).toBe(0)
-    expect(out.text()).toContain("PROFILE_EXISTS")
+    expect((seen as { name?: string }).name).toBe("default")
     expect(loadProfiles().default).toEqual({ pat: "existing-pat", instance: "keep" })
-    // Exit 1, matching every other PROFILE_EXISTS: one condition, one status.
-    expect(process.exitCode).toBe(1)
   })
 
-  // Uniform, whatever the existing profile holds: the shared writer (setup.ts's
-  // saveProfile) refuses this collision too, so the pre-check only makes it one error
-  // code that arrives before the network round trip instead of a late SETUP_FAILED.
-  test("--username/--password with no name refuses whatever kind of 'default' exists", async () => {
-    saveProfiles({ default: { username: "u", password: "old", instance: "keep" } })
-    let authConfigureCalls = 0
+  // The collision check lives in the shared flow (runAuthConfigure), not in this
+  // dispatcher, so both `login` and the `setup` alias fast-fail before the portal round
+  // trip. Driven through the real flow rather than a stub, since the stub is what would
+  // hide a check that moved.
+  test("a complete credential set with no name refuses before any network call", async () => {
+    saveProfiles({ default: { pat: "existing-pat", instance: "keep" } })
+
     const out = captureStdout()
     try {
-      await runLogin({ ...makeArgs({ username: "u", password: "new", "account-name": "acct" } as never), name: undefined }, {
-        loginWithBrowser: async () => KNOWN_RESULT,
-        runAuthConfigure: async () => {
-          authConfigureCalls++
-        },
-      })
+      await runAuthConfigure({
+        format: "json",
+        debug: false,
+        name: "default",
+        username: "u",
+        password: "p",
+        "account-name": "acct",
+      } as never)
     } finally {
       out.restore()
     }
 
-    expect(authConfigureCalls).toBe(0)
     expect(out.text()).toContain("PROFILE_EXISTS")
-    expect(loadProfiles().default).toEqual({ username: "u", password: "old", instance: "keep" })
-    expect(process.exitCode).toBe(1)
+    expect(loadProfiles().default).toEqual({ pat: "existing-pat", instance: "keep" })
   })
 
   // An incomplete credential set is mid-protocol: runExistingAccountFlowNonTTY answers

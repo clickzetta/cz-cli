@@ -153,3 +153,16 @@ test("parseTrackingArgs claims a sensitive flag's value even when it starts with
   expect(Object.keys(r.args)).not.toContain("h7Kq_secret")
   expect(JSON.stringify(r)).not.toContain("h7Kq_secret")
 })
+
+// `--header` is a generic repeatable KEY=VALUE, so a cookie is not the only credential
+// that rides it.
+test("parseTrackingArgs redacts any credential-named header value", () => {
+  for (const value of ["Authorization=Bearer eyJhbGc", "X-Api-Key=k_live_123", "api-key=k_live_123"]) {
+    const r = parseTrackingArgs(["profile", "create", "p", "--header", value])
+    expect(JSON.stringify(r)).not.toContain("eyJhbGc")
+    expect(JSON.stringify(r)).not.toContain("k_live_123")
+  }
+  // A non-credential header name is still recorded — the value is the discriminator.
+  const kept = parseTrackingArgs(["profile", "create", "p", "--header", "X-Trace-Id=abc"])
+  expect(kept.args.header).toBe("X-Trace-Id=abc")
+})
