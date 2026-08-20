@@ -520,7 +520,7 @@ describe("runLogin", () => {
     let authConfigureCalls = 0
     const out = captureStdout()
     try {
-      await runLogin({ ...makeArgs({ username: "u", password: "p" }), name: undefined }, {
+      await runLogin({ ...makeArgs({ username: "u", password: "p", "account-name": "acct" } as never), name: undefined }, {
         loginWithBrowser: async () => KNOWN_RESULT,
         runAuthConfigure: async () => {
           authConfigureCalls++
@@ -545,7 +545,7 @@ describe("runLogin", () => {
     let authConfigureCalls = 0
     const out = captureStdout()
     try {
-      await runLogin({ ...makeArgs({ username: "u", password: "new" }), name: undefined }, {
+      await runLogin({ ...makeArgs({ username: "u", password: "new", "account-name": "acct" } as never), name: undefined }, {
         loginWithBrowser: async () => KNOWN_RESULT,
         runAuthConfigure: async () => {
           authConfigureCalls++
@@ -559,6 +559,22 @@ describe("runLogin", () => {
     expect(out.text()).toContain("PROFILE_EXISTS")
     expect(loadProfiles().default).toEqual({ username: "u", password: "old", instance: "keep" })
     expect(process.exitCode).toBe(1)
+  })
+
+  // An incomplete credential set is mid-protocol: runExistingAccountFlowNonTTY answers
+  // SETUP_INPUT_REQUIRED and the wrapper re-invokes with more flags. Pre-empting that with
+  // PROFILE_EXISTS would stop it at step one, and neither protocol has a name step.
+  test("an incomplete credential set still reaches the flow even when 'default' exists", async () => {
+    saveProfiles({ default: { pat: "existing-pat" } })
+    let authConfigureCalls = 0
+    await runLogin({ ...makeArgs({ username: "u" }), name: undefined }, {
+      loginWithBrowser: async () => KNOWN_RESULT,
+      runAuthConfigure: async () => {
+        authConfigureCalls++
+      },
+    })
+
+    expect(authConfigureCalls).toBe(1)
   })
 
   // Three keys a working entry can sit under; the raw one is what the zero-combos

@@ -47,10 +47,13 @@ function trackSetup(opts: {
   const args: Record<string, string> = {}
   if (opts.argv) {
     for (const [k, v] of Object.entries(opts.argv)) {
-      if (isSensitiveKey(k) || k.startsWith("$") || k === "_" || typeof v === "undefined") continue
-      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-        args[k] = String(v)
-      }
+      if (k.startsWith("$") || k === "_" || typeof v === "undefined") continue
+      if (typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") continue
+      // Redact rather than omit: dropping the key made "was this run given --login?"
+      // unanswerable, because absence and non-sensitivity became indistinguishable here
+      // while parseTrackingArgs keeps the key with <redacted>. The value still never
+      // leaves the machine — `--login`/`--jdbc` carry a JDBC string with `password=`.
+      args[k] = isSensitiveKey(k) ? "<redacted>" : String(v)
     }
   }
   if (opts.telemetry !== undefined) args["telemetry"] = String(opts.telemetry)
