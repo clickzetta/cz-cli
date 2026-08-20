@@ -114,4 +114,14 @@ test("parseTrackingArgs redacts --header values", () => {
   const inline = parseTrackingArgs(["sql", "--header", "Cookie=sess_abc", "select 1"])
   expect(inline.args.header).toBe("<redacted>")
   expect(JSON.stringify(inline)).not.toContain("sess_abc")
+  // The KEY=VALUE token is withheld; the statement after it is still a positional.
+  expect(inline.positional).toEqual(["sql", "select 1"])
+})
+
+// `--header` is KEY=VALUE on `profile create` but a boolean on `sql` (--no-header), so
+// the arity cannot be read off the name alone.
+test("parseTrackingArgs keeps the statement when --header is the boolean form", () => {
+  const { positional } = parseTrackingArgs(["sql", "--header", "select 1"])
+
+  expect(positional).toEqual(["sql", "select 1"])
 })

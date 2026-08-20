@@ -178,6 +178,13 @@ export interface OAuthProvisionInput {
    * makes the overwrite an explicit request instead of an unreachable path.
    */
   refreshLlm?: boolean
+  /**
+   * True when {@link service} is NOT a resolved region host but the OAuth entry host
+   * standing in for one (userinfo returned no gatewayMapping). login warns about this;
+   * provisioning must additionally never write it over a row that already has a real
+   * per-instance host, which would move a working profile onto the sign-in host.
+   */
+  serviceIsEntryFallback?: boolean
 }
 
 /**
@@ -423,16 +430,27 @@ export function provisionProfilesFromOAuthCombos(
       const rows = loadProfiles()
       const describedInstance = String(userInfo?.instanceName ?? "").toLowerCase()
       for (const profileName of sessionProfiles) {
+        // …and only when it IS a region host: `serviceIsEntryFallback` means userinfo
+        // returned no gatewayMapping, so `input.service` is the sign-in host standing in
+        // for one. Writing that over a row that already has a real host would break a
+        // working profile — the old zero-combos path never touched these rows at all.
         const sameInstance = describedInstance.length > 0
           && String(rows[profileName]?.instance ?? "").toLowerCase() === describedInstance
         patchProfileConnection(profileName, {
-          ...(sameInstance ? { service: input.service } : {}),
+          ...(sameInstance && !input.serviceIsEntryFallback ? { service: input.service } : {}),
           protocol,
           userId: token.userId || undefined,
           accountId: userInfo?.accountId,
           accountName: userInfo?.accountName,
           aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
         })
+        // Re-assert the two fields that tie the row to the token just refreshed, as
+        // every other re-login path does. auth_type is what keeps a preserved
+        // header.Cookie from shadowing that token (config.ts drops the Cookie header
+        // when a non-cookie auth_type is pinned), so skipping it here was the one gap
+        // in the mechanism the re-login contract relies on.
+        setProfileOAuthPointer(profileName, oauthId)
+        setAuthTypeIfAbsent(profileName, AUTH_TYPE.oauth)
       }
       ensureDefaultProfile(relogin, sessionProfiles[0]!, sessionProfiles)
       // --refresh-llm is honoured here too: the api key comes from userinfo, which
@@ -455,6 +473,13 @@ export function provisionProfilesFromOAuthCombos(
       }
     }
     // Nothing to refresh — keep a working profile from userinfo alone.
+    //
+    // This path DOES take over a row of the same name that the session does not own,
+    // unlike the `<base>_N` loop above. That is deliberate and long-standing: `login
+    // <name>` superseding `setup` means filling or replacing the profile called <name>,
+    // and test/login-command.test.ts pins a login onto a pre-existing pat profile of
+    // that name. The `<base>_N` rows are different — the user never named those, login
+    // did, so adopting one it did not create would be a surprise rather than the point.
     const existedBefore = loadProfiles()[base] !== undefined
     const single = provisionProfileFromOAuth(base, input)
     return {

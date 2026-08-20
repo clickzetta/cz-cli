@@ -378,6 +378,10 @@ describe("runLogin", () => {
       first.restore()
     }
     expect(first.text()).toContain('"relogin":false')
+    // default_profile keeps its old meaning (what profiles.toml says); the
+    // session-scoped answer has its own key.
+    expect(first.text()).toContain('"default_profile":"czcli"')
+    expect(first.text()).toContain('"session_default_profile":"czcli"')
     expect(first.text()).toContain('"llm_configured":true')
     expect(first.text()).toContain('"llm_configuration":"written"')
 
