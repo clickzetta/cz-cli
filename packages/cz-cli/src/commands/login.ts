@@ -78,6 +78,11 @@ async function defaultPromptSessionName(): Promise<string | undefined> {
 export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promise<void> {
   const authConfigure = deps.runAuthConfigure ?? runAuthConfigure
 
+  // The two --pat checks come FIRST so every branch below is covered by one of them:
+  // --credential returns without reaching the dispatch, so a `--credential … --pat …`
+  // used to drop the PAT with neither the refusal nor the notice.
+  if (patRefusedOrNoted(argv)) return
+
   // --credential: new-user credential path (equivalent to old setup --credential).
   if (argv.credential) {
     let cred: Record<string, unknown>
@@ -105,33 +110,6 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
       { format: argv.format },
     )
     return
-  }
-
-  // --pat is a PROFILE credential, not a login: nothing in the setup flow reads it
-  // (it only accepts --credential or username+password+account-name), so a PAT
-  // passed here used to be silently dropped and the user got a confusing "provide
-  // username, password and account_name" error. Redirect instead of pretending.
-  //
-  // Only when the PAT is the ONLY credential offered. A wrapper that forwards
-  // `--pat "$CZ_PAT"` alongside the username/password it actually authenticates
-  // with has a working invocation, and turning that into exit 2 would break it for
-  // an argument the flow ignores either way — so warn there instead of failing.
-  const patOnly = Boolean(argv.pat) && !argv.username && !argv.password && !argv["login-method"] && !argv.login
-  if (patOnly) {
-    error(
-      "PAT_NOT_A_LOGIN",
-      "`login` does not take --pat. A PAT is a stored profile credential, not a sign-in: "
-      + `run \`cz-cli profile create ${profileNameForHint(argv.name)} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
-      { format: argv.format, exitCode: 2 },
-    )
-    return
-  }
-  if (argv.pat) {
-    // stderr, so a JSON consumer on stdout is unaffected (same channel the `setup`
-    // deprecation notice uses).
-    process.stderr.write(
-      "⚠ --pat is ignored by `login`; signing in with the other credentials given. Use `cz-cli profile create <name> --pat <token>` to store a PAT.\n",
-    )
   }
 
   // Explicit non-interactive credentials or a portal-discovery signal: reuse the
@@ -170,6 +148,38 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
 
   // Default: browser OAuth.
   await runBrowserLogin(argv, deps)
+}
+
+/**
+ * Handle `--pat`, which no login flow consumes. Returns true when the caller should
+ * stop (the PAT was the only credential offered).
+ *
+ * A PAT is a stored profile credential, not a sign-in: nothing in the setup flow
+ * reads it (it accepts --credential or username+password+account-name), so a PAT
+ * passed here used to be dropped silently and the user got a confusing "provide
+ * username, password and account_name" error. Refuse instead of pretending — but only
+ * when the PAT stands alone. A wrapper that forwards `--pat "$CZ_PAT"` alongside the
+ * credential it actually authenticates with has a working invocation, and turning
+ * that into exit 2 would break it over an argument the flow ignores either way.
+ */
+function patRefusedOrNoted(argv: LoginArgs): boolean {
+  if (!argv.pat) return false
+  const alone = !argv.credential && !argv.username && !argv.password && !argv["login-method"] && !argv.login
+  if (alone) {
+    error(
+      "PAT_NOT_A_LOGIN",
+      "`login` does not take --pat. A PAT is a stored profile credential, not a sign-in: "
+      + `run \`cz-cli profile create ${profileNameForHint(argv.name)} --pat <token> --service <host> --instance <inst> --workspace <ws>\` instead.`,
+      { format: argv.format, exitCode: 2 },
+    )
+    return true
+  }
+  // stderr, so a JSON consumer on stdout is unaffected (same channel the `setup`
+  // deprecation notice uses).
+  process.stderr.write(
+    "⚠ --pat is ignored by `login`; signing in with the other credentials given. Use `cz-cli profile create <name> --pat <token>` to store a PAT.\n",
+  )
+  return false
 }
 
 /**
@@ -319,7 +329,11 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // shapes only migrate inside configureClickzettaLlm, which a re-login skips, so
     // checking just the current key would warn forever at a user whose LLM works.
     const llmEntryExists = Boolean(llmEntries[llmEntryId] ?? llmEntries[`${sessionName}_0`] ?? llmEntries[sessionName])
-    if (relogin && !llmEntryExists) {
+    // Gated on what the provisioner DID, not on `relogin`: with --refresh-llm and no
+    // apiKey in userinfo the write was attempted at the user's request and failed for
+    // an unrelated reason, and this message's "a re-login deliberately does not write
+    // it" would contradict the `no_api_key` in the same payload.
+    if (llmAction === "skipped_relogin" && !llmEntryExists) {
       warnings.push(
         `No LLM entry named '${llmEntryId}' in llm.json, and a re-login deliberately does not write it (an existing api_key may be a gateway key you provisioned). If the agent reports NO_LLM_CONFIGURED, add one with \`cz-cli agent llm add\` or \`cz-cli ai-gateway key create\`.`,
       )

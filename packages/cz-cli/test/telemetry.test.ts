@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test"
 import { OTEL_DEFAULTS } from "../src/otel-defaults.ts"
-import { trackCommand } from "../src/telemetry.ts"
+import { parseTrackingArgs, trackCommand } from "../src/telemetry.ts"
 
 const originalFetch = globalThis.fetch
 const originalEndpoint = OTEL_DEFAULTS.endpoint
@@ -72,4 +72,38 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
     { key: "cz_cli.command.response_bytes", value: { intValue: "456" } },
     { key: "cz_cli.command.error", value: { stringValue: "exit_code=1" } },
   ])
+})
+
+// A flag's value must never reach `_positional`: the flag map redacts `pat`, and
+// putting the same token in a second attribute undid that. Measured before the fix:
+// `cz-cli auth login mysession --pat czt_secret` recorded `mysession czt_secret`.
+test("parseTrackingArgs keeps a flag's value out of _positional", () => {
+  const { positional, args } = parseTrackingArgs(["auth", "login", "mysession", "--pat", "czt_secret"])
+
+  expect(positional).toEqual(["auth", "login", "mysession"])
+  expect(args["_positional"]).toBe("mysession")
+  expect(args.pat).toBe("<redacted>")
+  expect(JSON.stringify(args)).not.toContain("czt_secret")
+})
+
+test("parseTrackingArgs leaves non-sensitive flags' neighbours alone", () => {
+  // Only sensitive flags swallow their neighbour. A boolean flag followed by a real
+  // positional is indistinguishable by shape, so the existing analytics keep seeing it.
+  const { positional, args } = parseTrackingArgs(["sql", "--debug", "select 1"])
+
+  expect(positional).toEqual(["sql", "select 1"])
+  expect(args.debug).toBe("select 1")
+})
+
+test("parseTrackingArgs redacts --password and --pat=inline forms too", () => {
+  const inline = parseTrackingArgs(["auth", "login", "s", "--pat=czt_secret"])
+  expect(inline.args.pat).toBe("<redacted>")
+  expect(JSON.stringify(inline.args)).not.toContain("czt_secret")
+
+  const spaced = parseTrackingArgs(["auth", "login", "s", "--username", "u", "--password", "hunter2"])
+  expect(spaced.args.password).toBe("<redacted>")
+  expect(JSON.stringify(spaced.args)).not.toContain("hunter2")
+  // `username` is not in SENSITIVE_KEYS, so its value is recorded as before — the fix
+  // is scoped to values that must never be stored, not to positional accuracy.
+  expect(spaced.args["_positional"]).toBe("s u")
 })
