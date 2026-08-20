@@ -17,6 +17,7 @@ import {
   makeProfileTokenStore,
   getDefaultProfileName,
   oauthSectionExists,
+  oauthSessionProvisioned,
   saveProfiles,
   setDefaultProfile,
 } from "../src/connection/profile-store"
@@ -295,8 +296,8 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       service: "cn-shanghai-alicloud.api.clickzetta.com",
       protocol: "https",
       issuer: "cn-shanghai-alicloud.api.clickzetta.com",
-      // What the command computes from oauthSectionExists.
-      relogin: oauthSectionExists("sess"),
+      // What the command computes from oauthSessionProvisioned.
+      relogin: oauthSessionProvisioned("sess"),
       ...overrides,
     } as Parameters<typeof provisionProfilesFromOAuthCombos>[2]
   }
@@ -416,19 +417,27 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
   // `relogin` while counting indexes unconditionally appended a duplicate profile
   // for a connection that already had one (reachable when [oauth.<base>] is gone
   // but the profiles remain, e.g. a hand-repaired file).
-  test("first login with existing <base>_N rows reuses them instead of duplicating", () => {
+  test("first login reuses an owned <base>_N row instead of duplicating it", () => {
     const combos = [combo("i1", "ws1")]
-    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
-    // Drop the token section, keeping the profile: the next login is a "first" one.
-    const raw = readFileSync(profilesPath(), "utf-8").replace(/\[oauth\.sess\][\s\S]*?(?=\n\[|$)/, "")
-    writeFileSync(profilesPath(), raw)
+    // A row this session owns, with no token section: `relogin` is computed by the
+    // caller, and the pointer alone already makes this a re-login (see
+    // oauthSessionProvisioned) — so pass relogin:false explicitly to exercise the
+    // first-login branch's matching, which is what could duplicate.
+    saveProfiles({ sess_0: { instance: "i1", workspace: "ws1", oauth: "sess" } })
     expect(oauthSectionExists("sess")).toBe(false)
 
-    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos, { relogin: false }))
 
     expect(result.profiles).toEqual(["sess_0"])
     expect(result.created).toEqual([])
     expect(Object.keys(loadProfiles())).toEqual(["sess_0"])
+  })
+
+  // logout --keep-profiles deletes [oauth.<name>] but keeps the rows pointing at it.
+  test("a session with profiles but no token section still counts as provisioned", () => {
+    saveProfiles({ sess_0: { instance: "i1", workspace: "ws1", oauth: "sess" } })
+    expect(oauthSectionExists("sess")).toBe(false)
+    expect(oauthSessionProvisioned("sess")).toBe(true)
   })
 
   // Session "sess" and session "sess_2" both own a profile that `<base>_N` parsing

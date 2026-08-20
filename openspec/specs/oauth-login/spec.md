@@ -218,7 +218,7 @@ After the default browser path successfully obtains a token, the CLI should call
 
 ### Requirement: Re-login owns only the token
 
-A second `cz-cli auth login <name>` under a session name that has signed in before is a re-login, and the only thing it owns is the token. Whether this is a first login or a re-login SHALL be decided solely by whether the `[oauth.<sanitizeOAuthId(name)>]` section already exists — never by comparing the account behind the token: `[oauth.*].user_id` is backfilled from userinfo and may be absent, and a missing field must not be able to reclassify a normal re-login.
+A second `cz-cli auth login <name>` under a session name that has signed in before is a re-login, and the only thing it owns is the token. Whether this is a first login or a re-login SHALL be decided by whether that session name already has state on disk — the `[oauth.<sanitizeOAuthId(name)>]` section, OR any profile whose `oauth` pointer names it, because `auth logout <name> --keep-profiles` deletes the section while keeping those rows and the next login must not rewrite what that flag preserved. It SHALL NOT be decided by comparing the account behind the token: `[oauth.*].user_id` is backfilled from userinfo and may be absent, and a missing field must not be able to reclassify a normal re-login.
 
 On a re-login the CLI SHALL rewrite the `[oauth.<name>]` token section, and SHALL leave every other piece of state alone, because each is state the user may have changed since the first login:
 
@@ -227,18 +227,24 @@ On a re-login the CLI SHALL rewrite the `[oauth.<name>]` token section, and SHAL
 - **`default_profile` is not written**, with one exception: a `default_profile` that is absent or names a profile that no longer exists is a dangling pointer rather than a choice, and is repaired to this session's first profile. It is reported only when it names one of this session's profiles; otherwise the session's first profile is reported, since `default_profile` is a single global string with nothing tying it to a session.
 - **Only genuinely new `instance × workspace` combinations are added**, named `<base>_<max(N) + 1>` (a name freed by `profile delete` is not reused — reusing a deleted profile's name would be surprising). Combinations are matched to existing profiles by connection content rather than by enumeration index, so `<base>_N` does not shift when the server returns the combinations in another order. A row is only matched when its `oauth` pointer names THIS session: a row belonging to another session, or a hand-written row with no pointer, keeps its name reserved but is never written to, since stamping `oauth`/`auth_type` onto it would change the credential it authenticates with. A connection the server reports twice yields one profile, reported once.
 
-The success output SHALL carry `relogin` and `profiles_created` (what this run created, which on a re-login is normally empty). `llm_configured` SHALL always be present and is tri-state — `true`, `false`, or `"not_attempted"` on a re-login: reporting `false` for something deliberately not attempted reads as a failure, while omitting the key would move the same ambiguity onto the parser. `profiles` lists this session's profiles that participated in this login (created or matched), ordered by `N`, not only the ones just created.
+The success output SHALL carry `relogin` and `profiles_created` (what this run created, which on a re-login is normally empty). `llm_configured` SHALL remain a plain boolean and SHALL be `false` on a re-login: a truthy "not attempted" value would tell every consumer written as `if (llm_configured)` that the LLM is ready after a run that never looked, and omitting the key would move the ambiguity onto the parser — `false` fails safe. Which kind of `false` it is SHALL be reported in its own key, `llm_configuration`: `"written"`, `"skipped_relogin"`, or `"no_api_key"`. `profiles` lists this session's profiles that participated in this login (created or matched), ordered by `N`, not only the ones just created.
 
 #### Scenario: Re-login refreshes the token and leaves user state intact
 
 - **WHEN** a session has signed in, the user has since swapped that llm entry's `api_key`, hand-edited a profile's `schema`/`vcluster`, and selected a different `default_profile`, and `cz-cli auth login <same name>` runs again
-- **THEN** `[oauth.<name>]` holds the new token, `relogin` is `true` in the output, and `llm_configured` is absent
+- **THEN** `[oauth.<name>]` holds the new token, `relogin` is `true` in the output, `llm_configured` is `false` and `llm_configuration` is `"skipped_relogin"`
 - **AND** the llm entry's `api_key`, the user-owned profile fields (`schema`/`vcluster`/`header.Cookie`), and `default_profile` are all unchanged on disk, while `service`/`aimeshEndpointBaseUrl`/`account_name` reflect what userinfo reported this time
 
 #### Scenario: Re-login adds a newly appeared workspace without renumbering
 
 - **WHEN** a re-login's enumeration returns the existing combinations in a different order plus one new `instance × workspace`
 - **THEN** exactly one profile is created, reported in `profiles_created`, and each existing profile still describes the same connection as before
+
+#### Scenario: A login after `logout --keep-profiles` is still a re-login (boundary)
+
+- **WHEN** `cz-cli auth logout <name> --keep-profiles` has removed `[oauth.<name>]` while keeping the profiles that point at it, and `cz-cli auth login <name>` runs
+- **THEN** the login is classified as a re-login: the token section is rewritten, and `llm.json`, the surviving rows' user-owned fields and `default_profile` are left as they were
+- **AND** the surviving rows' `oauth` pointers are re-asserted so the new token resolves
 
 #### Scenario: Re-login reports a missing LLM entry instead of creating one (boundary)
 

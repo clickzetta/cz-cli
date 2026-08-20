@@ -747,6 +747,31 @@ export function oauthSectionExists(id: string): boolean {
 }
 
 /**
+ * Has this session name been provisioned before? The signal a login uses to tell a
+ * first login from a re-login.
+ *
+ * Two sources, because either one alone is incomplete. The token section is the
+ * obvious one, but `auth logout <name> --keep-profiles` deletes it while leaving
+ * every `<base>_N` row (pointer, auth_type and the user's edits included), so a
+ * section check alone would call the next login a FIRST login and let it rewrite
+ * llm.json, header.Cookie and default_profile over state the user asked to keep.
+ * Profiles pointing at the session close that gap.
+ *
+ * Still no account comparison: `[oauth.*].user_id` is backfilled from userinfo and
+ * may be absent, and a missing field must never be able to reclassify a re-login.
+ * Best-effort: an unreadable file reads as "not provisioned", which provisions
+ * rather than skips.
+ */
+export function oauthSessionProvisioned(id: string): boolean {
+  if (oauthSectionExists(id)) return true
+  try {
+    return Object.values(loadProfiles()).some((entry) => entry.oauth === id)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Write a shared OAuth token section `[oauth.<id>]` once. Used by provisioning
  * when it creates several profiles from a single login that all point at the
  * same token. Best-effort; never throws.
