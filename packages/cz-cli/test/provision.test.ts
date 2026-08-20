@@ -9,10 +9,18 @@ import {
   decodeCredential,
   provisionProfileFromCredential,
   provisionProfileFromOAuth,
+  provisionProfilesFromOAuthCombos,
   ProvisionError,
 } from "../src/connection/provision"
-import { loadProfiles, makeProfileTokenStore, getDefaultProfileName, saveProfiles } from "../src/connection/profile-store"
-import { readLlmEntries, setActiveModel } from "../src/llm/native-config"
+import {
+  loadProfiles,
+  makeProfileTokenStore,
+  getDefaultProfileName,
+  oauthSectionExists,
+  saveProfiles,
+  setDefaultProfile,
+} from "../src/connection/profile-store"
+import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 
 const previousTestHome = process.env.CLICKZETTA_TEST_HOME
 let home: string
@@ -252,5 +260,116 @@ describe("provisionProfileFromOAuth", () => {
     // No userinfo apiKey → LLM not configured.
     expect(result.llmConfigured).toBe(false)
     expect(getDefaultProfileName()).toBe("czcli")
+  })
+})
+
+// A re-login owns exactly one thing: the token. Everything else in these files is
+// state the user may have changed since the first login — a gateway virtual key
+// swapped into llm.json when the complimentary quota ran out (llm/key-provision.ts),
+// hand-edited schema/vcluster, a deliberately chosen default_profile — so it must
+// survive. The signal is `[oauth.<name>]` existing, nothing else.
+describe("provisionProfilesFromOAuthCombos re-login", () => {
+  const TOKEN: AuthToken = {
+    token: "access-1",
+    refreshToken: "refresh-1",
+    expireTimeMs: 3600 * 1000,
+    obtainedAt: Date.now(),
+    instanceId: 1,
+    userId: 42,
+  }
+  const combo = (instance: string, workspace: string) => ({
+    instance,
+    workspace,
+    service: "cn-shanghai-alicloud.api.clickzetta.com",
+  })
+  function input(combos: ReturnType<typeof combo>[], overrides: Record<string, unknown> = {}) {
+    return {
+      token: TOKEN,
+      userInfo: {
+        instanceName: combos[0]?.instance,
+        workspace: combos[0]?.workspace,
+        apiKey: "free-key",
+        accountId: 7,
+        accountName: "acct",
+      },
+      service: "cn-shanghai-alicloud.api.clickzetta.com",
+      protocol: "https",
+      issuer: "cn-shanghai-alicloud.api.clickzetta.com",
+      // What the command computes from oauthSectionExists.
+      relogin: oauthSectionExists("sess"),
+      ...overrides,
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2]
+  }
+
+  test("first login provisions everything and reports what it created", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result).toEqual({
+      profiles: ["sess_0", "sess_1"],
+      defaultProfile: "sess_0",
+      llmConfigured: true,
+      created: ["sess_0", "sess_1"],
+    })
+    expect(getDefaultProfileName()).toBe("sess_0")
+    expect(readLlmEntries().llm.sess?.api_key).toBe("free-key")
+  })
+
+  test("re-login refreshes the token but leaves llm.json, edited profiles and default_profile alone", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    // What the user does between the two logins.
+    const llm = readLlmEntries()
+    llm.llm.sess = { ...llm.llm.sess!, api_key: "virtual-key-after-quota" }
+    writeLlmEntries({ llm: llm.llm })
+    const edited = loadProfiles()
+    edited.sess_0 = { ...edited.sess_0, schema: "my_schema", vcluster: "MY_VC" }
+    saveProfiles(edited)
+    setDefaultProfile("sess_1")
+
+    const result = provisionProfilesFromOAuthCombos(
+      "sess",
+      combos,
+      input(combos, { token: { ...TOKEN, token: "access-2" } }),
+    )
+
+    expect(result.created).toEqual([])
+    expect(result.defaultProfile).toBe("sess_1")
+    expect(getDefaultProfileName()).toBe("sess_1")
+    // The one thing a re-login does own.
+    expect(makeProfileTokenStore("sess_0").load()?.token).toBe("access-2")
+    // The three things it does not.
+    expect(readLlmEntries().llm.sess?.api_key).toBe("virtual-key-after-quota")
+    expect(loadProfiles().sess_0?.schema).toBe("my_schema")
+    expect(loadProfiles().sess_0?.vcluster).toBe("MY_VC")
+  })
+
+  test("re-login adds a newly appeared workspace without renumbering the existing ones", () => {
+    const first = [combo("i1", "ws1"), combo("i1", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", first, input(first))
+
+    // A new workspace appeared AND the server returns the combos in another order —
+    // matching is by connection, so N must not shift.
+    const second = [combo("i1", "ws2"), combo("i9", "ws_new"), combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", second, input(second))
+
+    expect(result.created).toEqual(["sess_2"])
+    expect(result.profiles).toEqual(["sess_0", "sess_1", "sess_2"])
+    const profiles = loadProfiles()
+    expect(profiles.sess_0?.workspace).toBe("ws1")
+    expect(profiles.sess_1?.workspace).toBe("ws2")
+    expect(profiles.sess_2).toMatchObject({ instance: "i9", workspace: "ws_new", oauth: "sess" })
+  })
+
+  test("re-login does not resurrect an llm entry the user deleted", () => {
+    const combos = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    writeLlmEntries({ llm: {} })
+
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.llmConfigured).toBe(false)
+    expect(readLlmEntries().llm.sess).toBeUndefined()
   })
 })

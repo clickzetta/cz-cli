@@ -4,6 +4,7 @@ import type { OAuthConnCombo } from "./oauth-enumerate.js"
 import { readLlmEntries, setActiveModel, writeLlmEntries } from "../llm/native-config.js"
 import {
   clearOAuthLoginResidue,
+  getDefaultProfileName,
   loadProfiles,
   makeProfileTokenStore,
   patchProfileConnection,
@@ -151,6 +152,17 @@ export interface OAuthProvisionInput {
    * returns invalid_grant for OAuth grants). Distinct from `service` on purpose.
    */
   issuer?: string
+  /**
+   * True when `[oauth.<id>]` already existed, i.e. this session name has signed
+   * in before. A re-login owns exactly one thing — the token — so everything the
+   * user may since have changed is left alone: existing profiles keep their
+   * connection fields, `default_profile` keeps whatever it points at, and
+   * llm.json is not written at all (an api_key there may be a gateway virtual key
+   * the quota flow swapped in — see llm/key-provision.ts — and overwriting it
+   * would silently undo that remedy). Only genuinely new instance×workspace
+   * combinations are added. Defaults to false = first login = full provisioning.
+   */
+  relogin?: boolean
 }
 
 /**
@@ -179,40 +191,50 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // Materialize an empty profile row when absent so patchProfileConnection
   // (a no-op on a missing profile) has somewhere to write. Existing profiles
   // are left untouched here and merged by the patch below.
-  if (name) {
+  const existedBefore = Boolean(name) && loadProfiles()[name!] !== undefined
+  if (name && !existedBefore) {
     const profiles = loadProfiles()
-    if (!profiles[name]) {
-      profiles[name] = {}
-      saveProfiles(profiles)
-    }
+    profiles[name] = {}
+    saveProfiles(profiles)
   }
+
+  // A re-login of a profile that already exists refreshes the token and nothing
+  // else: its connection fields, header.Cookie and default_profile are all state
+  // the user may have changed since, and the token is the only thing this login
+  // produced. A profile that does NOT exist yet is provisioned in full even on a
+  // re-login — nothing of the user's can be overwritten by creating it.
+  const refreshOnly = Boolean(input.relogin) && existedBefore
 
   // Clear residue that would shadow/contradict this fresh login: a stale
   // header.Cookie (consulted before the OAuth token at runtime) and any stale
   // instance/workspace/service the new login won't overwrite (patch only writes
   // non-empty values, so an old `instance="default"` would otherwise survive).
-  clearOAuthLoginResidue(name, {
-    instance: finalInstance.length > 0,
-    workspace: Boolean(userInfo?.workspace),
-    service: service.length > 0,
-  })
+  if (!refreshOnly) {
+    clearOAuthLoginResidue(name, {
+      instance: finalInstance.length > 0,
+      workspace: Boolean(userInfo?.workspace),
+      service: service.length > 0,
+    })
+  }
 
   // Flatten the useful userinfo onto the top-level entry. `aimeshEndpointBaseUrl`
   // is stored under its own name — the same field the credential path writes and
   // that clickzetta-rotation / ai-gateway read — so both provisioning paths
   // produce an identical profile shape.
-  patchProfileConnection(name, {
-    service,
-    protocol,
-    instance: finalInstance,
-    workspace: userInfo?.workspace,
-    schema: userInfo?.schema,
-    vcluster: userInfo?.vcluster,
-    userId: token.userId || undefined,
-    accountId: userInfo?.accountId,
-    accountName: userInfo?.accountName,
-    aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
-  })
+  if (!refreshOnly) {
+    patchProfileConnection(name, {
+      service,
+      protocol,
+      instance: finalInstance,
+      workspace: userInfo?.workspace,
+      schema: userInfo?.schema,
+      vcluster: userInfo?.vcluster,
+      userId: token.userId || undefined,
+      accountId: userInfo?.accountId,
+      accountName: userInfo?.accountName,
+      aimeshEndpointBaseUrl: userInfo?.aimeshEndpointBaseUrl,
+    })
+  }
 
   // Persist the token in a shared [oauth.<id>] section named after the profile
   // and point this profile at it. Passing an explicit id makes save write the
@@ -225,12 +247,15 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // setAuthTypeIfAbsent: re-login must not repoint a user's explicit choice.
   setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
 
-  if (name) setDefaultProfile(name)
+  if (name && !refreshOnly) setDefaultProfile(name)
 
-  const llmConfigured = configureClickzettaLlm(name ?? finalInstance, {
-    apiKey: userInfo?.apiKey,
-    baseURL: userInfo?.aimeshEndpointBaseUrl,
-  })
+  // llm.json is not a login artifact on a re-login: see OAuthProvisionInput.relogin.
+  const llmConfigured = refreshOnly
+    ? false
+    : configureClickzettaLlm(name ?? finalInstance, {
+      apiKey: userInfo?.apiKey,
+      baseURL: userInfo?.aimeshEndpointBaseUrl,
+    })
 
   return { instance: finalInstance, llmConfigured }
 }
@@ -254,7 +279,7 @@ export function provisionProfilesFromOAuthCombos(
   baseName: string | undefined,
   combos: OAuthConnCombo[],
   input: OAuthProvisionInput,
-): { profiles: string[]; defaultProfile: string; llmConfigured: boolean } {
+): { profiles: string[]; defaultProfile: string; llmConfigured: boolean; created: string[] } {
   const { userInfo, protocol } = input
   // Stamp the OAuth issuer host onto the token before it's shared across every
   // <base>_N profile, so each one's refresh targets the issuer.
@@ -263,8 +288,14 @@ export function provisionProfilesFromOAuthCombos(
 
   if (combos.length === 0) {
     // Nothing enumerated — keep a working profile from userinfo alone.
+    const existedBefore = loadProfiles()[base] !== undefined
     const single = provisionProfileFromOAuth(base, input)
-    return { profiles: [base], defaultProfile: base, llmConfigured: single.llmConfigured }
+    return {
+      profiles: [base],
+      defaultProfile: (input.relogin ? getDefaultProfileName() : undefined) ?? base,
+      llmConfigured: single.llmConfigured,
+      created: existedBefore ? [] : [base],
+    }
   }
 
   // One shared token section named after the session: [oauth.<base>]. Reusing
@@ -274,9 +305,40 @@ export function provisionProfilesFromOAuthCombos(
   const oauthId = sanitizeOAuthId(base)
   saveSharedOAuthToken(oauthId, token)
 
+  const relogin = Boolean(input.relogin)
+
+  // Index the session's existing profiles by the CONNECTION each describes, so a
+  // re-login can tell an already-provisioned combo from a genuinely new one.
+  // Matched by content rather than by name: `<base>_N` is positional and N comes
+  // from the server's enumeration order, so the same workspace can land on a
+  // different N between two logins. `maxIndex` then keeps new names from colliding
+  // with any `<base>_N` already on disk.
+  let maxIndex = -1
+  const byConnection = new Map<string, string>()
+  for (const [profileName, entry] of Object.entries(loadProfiles())) {
+    const index = sessionProfileIndex(base, profileName)
+    if (index === undefined) continue
+    maxIndex = Math.max(maxIndex, index)
+    byConnection.set(connectionKey(entry.instance, entry.workspace), profileName)
+  }
+
+  const names: string[] = []
   const created: string[] = []
-  combos.forEach((combo, i) => {
-    const name = `${base}_${i}`
+  for (const combo of combos) {
+    const key = connectionKey(combo.instance, combo.workspace)
+    const existingName = relogin ? byConnection.get(key) : undefined
+    if (existingName) {
+      // Already provisioned for this connection. Only the two fields that tie it
+      // to the token we just refreshed are (re)asserted — both idempotent, and
+      // setAuthTypeIfAbsent never overrides an explicit choice. Everything else on
+      // the row is the user's; see OAuthProvisionInput.relogin.
+      setProfileOAuthPointer(existingName, oauthId)
+      setAuthTypeIfAbsent(existingName, AUTH_TYPE.oauth)
+      names.push(existingName)
+      continue
+    }
+
+    const name = `${base}_${++maxIndex}`
     // Materialize the row so patchProfileConnection has somewhere to write.
     const profiles = loadProfiles()
     profiles[name] = profiles[name] ?? {}
@@ -302,17 +364,42 @@ export function provisionProfilesFromOAuthCombos(
     })
     setProfileOAuthPointer(name, oauthId)
     setAuthTypeIfAbsent(name, AUTH_TYPE.oauth)
+    byConnection.set(key, name)
+    names.push(name)
     created.push(name)
-  })
+  }
 
-  const defaultProfile = created[0]!
-  setDefaultProfile(defaultProfile)
+  // Reported in `<base>_N` order, not enumeration order: N is stable across logins
+  // while the server's combo order is not, so a caller diffing two logins' output
+  // sees the profiles line up.
+  names.sort((a, b) => (sessionProfileIndex(base, a) ?? 0) - (sessionProfileIndex(base, b) ?? 0))
 
-  const llmConfigured = configureClickzettaLlm(oauthId, {
-    apiKey: userInfo?.apiKey,
-    baseURL: userInfo?.aimeshEndpointBaseUrl,
-    legacyName: defaultProfile,
-  })
+  // default_profile is the user's selection once it exists, so a re-login reports
+  // it instead of resetting it to this session's first profile.
+  const defaultProfile = (relogin ? getDefaultProfileName() : undefined) ?? names[0]!
+  if (!relogin) setDefaultProfile(defaultProfile)
 
-  return { profiles: created, defaultProfile, llmConfigured }
+  // llm.json is untouched on a re-login: see OAuthProvisionInput.relogin.
+  const llmConfigured = relogin
+    ? false
+    : configureClickzettaLlm(oauthId, {
+      apiKey: userInfo?.apiKey,
+      baseURL: userInfo?.aimeshEndpointBaseUrl,
+      legacyName: defaultProfile,
+    })
+
+  return { profiles: names, defaultProfile, llmConfigured, created }
+}
+
+/** Stable identity of a profile's connection: what a combo is matched against. */
+function connectionKey(instance: unknown, workspace: unknown): string {
+  return `${String(instance ?? "").toLowerCase()}\u0000${String(workspace ?? "").toLowerCase()}`
+}
+
+/** The N of a `<base>_N` profile name, or undefined when the name isn't one. */
+function sessionProfileIndex(base: string, profileName: string): number | undefined {
+  if (!profileName.startsWith(`${base}_`)) return undefined
+  const suffix = profileName.slice(base.length + 1)
+  if (!/^\d+$/.test(suffix)) return undefined
+  return Number(suffix)
 }

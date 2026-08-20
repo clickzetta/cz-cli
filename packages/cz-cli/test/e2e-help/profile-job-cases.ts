@@ -47,6 +47,21 @@ export const profileJobHelpCases: HelpCase[] = [
     // Adaptive front door: credential + non-interactive setup options surface;
     // --browser is a hidden no-op so it must NOT appear.
     expectOptions: ["--credential", "name", "--login-method", "--login", "--account-name"],
+    expectCommands: [
+      // The [name] positional keeps its own explanation. `--name` shares the key,
+      // so whichever registration wins must still render THIS text, not a
+      // self-referential "same as the positional" stub.
+      "Positionals:",
+      // Fragment kept short: yargs hard-wraps help at the terminal width.
+      "positional or as --name",
+      // OAuth needs a region and there is no default: say so where it is read.
+      "either this or --oauth-url is required",
+    ],
+    forbid: [
+      "same as the positional",
+      // --pat is not a login input; it must not be advertised as one.
+      "Non-OAuth flow: Personal Access Token",
+    ],
   },
   {
     args: ["setup", "--help"],

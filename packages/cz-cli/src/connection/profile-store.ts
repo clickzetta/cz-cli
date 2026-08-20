@@ -724,6 +724,29 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
 }
 
 /**
+ * Does `[oauth.<id>]` already exist?
+ *
+ * This is the ONLY signal that separates a first login from a re-login of the
+ * same session: the section is written by login and by nothing else, so its
+ * presence means "this session name has signed in before". Deliberately does not
+ * compare the account behind the token — `user_id` may be absent (it comes from
+ * userinfo backfill), and a missing field must never be able to reclassify a
+ * normal re-login. Best-effort: an unreadable file reads as "no section", i.e.
+ * a first login, which is the conservative answer (it provisions rather than
+ * skips).
+ */
+export function oauthSectionExists(id: string): boolean {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const shared = data.oauth
+    if (!shared || typeof shared !== "object" || Array.isArray(shared)) return false
+    return (shared as Record<string, unknown>)[id] !== undefined
+  } catch {
+    return false
+  }
+}
+
+/**
  * Write a shared OAuth token section `[oauth.<id>]` once. Used by provisioning
  * when it creates several profiles from a single login that all point at the
  * same token. Best-effort; never throws.
