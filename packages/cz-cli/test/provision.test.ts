@@ -760,6 +760,21 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(after.workspace).toBe("ws2")
   })
 
+  // The entry-host guard protects a REAL host; on a row that has none, skipping the write
+  // leaves the profile unusable for SQL, and the sign-in host beats nothing.
+  test("the entry-host guard still fills a row that has no service", () => {
+    saveProfiles({ sess: { oauth: "sess", instance: "i1" } })
+
+    provisionProfilesFromOAuthCombos("sess", [], {
+      ...input([]),
+      service: "api.clickzetta.com",
+      serviceIsEntryFallback: true,
+      userInfo: { instanceName: "i1", workspace: "ws1", apiKey: "free-key", accountId: 7, accountName: "acct" },
+    } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
+
+    expect(loadProfiles().sess?.service).toBe("api.clickzetta.com")
+  })
+
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
   test("a repeated combo is reported once", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws1")]
