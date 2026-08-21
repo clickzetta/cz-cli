@@ -121,6 +121,14 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     // carries `default: "default"`). Without this the setup flow keys the profile
     // by `undefined`, writing a literal "undefined" profile and making it the
     // default_profile — the credential branch above already defaults the same way.
+    // Applies to every flag in the condition above, not just --username/--password: with
+    // `--login-method`/`--login` and no [name], the profile used to be keyed by the literal
+    // string "undefined" (the bug) and now resolves to `default`. Consequence worth naming:
+    // on a machine that already has a `default` profile, such a run now fails at the end of
+    // the step protocol with PROFILE_EXISTS from saveProfile, where before it "succeeded"
+    // by writing the garbage-named row. The fast-fail in runAuthConfigure deliberately does
+    // not cover this shape — an incomplete credential set is mid-protocol and must keep
+    // getting its SETUP_INPUT_REQUIRED steps — so the failure stays at the end.
     const name = argv.name ?? "default"
     // The collision this name can hit (a `default` profile already existing) is checked
     // inside runAuthConfigure, which both this command and the `setup` alias reach — see

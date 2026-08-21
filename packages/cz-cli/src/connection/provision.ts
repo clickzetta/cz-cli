@@ -229,6 +229,7 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   //     an existing row is the user's, a row we just created has nothing to lose.
   const relogin = input.relogin ?? oauthSessionProvisioned(sanitizeOAuthId(name ?? (finalInstance || "default")))
   const refreshOnly = relogin && existedBefore
+  const existingService = name ? String(loadProfiles()[name]?.service ?? "").trim().length > 0 : false
 
   // Clear residue that would shadow/contradict this fresh login: a stale
   // header.Cookie (consulted before the OAuth token at runtime) and any stale
@@ -255,8 +256,11 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
     ? {
       // Same guard as the combo-less branch: when userinfo returned no gatewayMapping,
       // `service` is the OAuth sign-in host standing in for a region host, and writing it
-      // over a row that already has a real one breaks a working profile.
-      ...(input.serviceIsEntryFallback ? {} : { service }),
+      // over a row that already has a real one breaks a working profile. Only over a real
+      // one though — skipping it on a row with NO service leaves that row unusable for SQL,
+      // and the sign-in host is better than nothing (it is what this path wrote before).
+      // Same rule as `fillConnection` below: filling an empty field is not an overwrite.
+      ...(input.serviceIsEntryFallback && existingService ? {} : { service }),
       protocol,
       userId: token.userId || undefined,
       accountId: userInfo?.accountId,
@@ -452,6 +456,7 @@ export function provisionProfilesFromOAuthCombos(
         // for one. Writing that over a row that already has a real host would break a
         // working profile — the old zero-combos path never touched these rows at all.
         const rowInstance = String(rows[profileName]?.instance ?? "").trim()
+        const rowService = String(rows[profileName]?.service ?? "").trim().length > 0
         const sameInstance = describedInstance.length > 0 && rowInstance.toLowerCase() === describedInstance
         // Filling an EMPTY instance/workspace is not overwriting a user edit, and the row
         // that has none is the bare `<base>` one a zero-combos first login wrote — the
@@ -463,13 +468,19 @@ export function provisionProfilesFromOAuthCombos(
         // instance-less row would give several rows the SAME connection, and byConnection
         // keeps only the lowest N — the rest would become rows no combo can ever match.
         const fillConnection = profileName === base && rowInstance.length === 0 && Boolean(userInfo?.instanceName)
+        // The entry-host guard protects a real host; a row that has NONE is unusable for
+        // SQL, so the sign-in host beats leaving it blank (filling an empty field is not an
+        // overwrite — the same rule `fillConnection` below states).
+        const writeService = sameInstance && (!input.serviceIsEntryFallback || !rowService)
         patchProfileConnection(profileName, {
-          ...(sameInstance && !input.serviceIsEntryFallback ? { service: input.service } : {}),
+          ...(writeService ? { service: input.service } : {}),
           ...(fillConnection
             ? {
               instance: userInfo?.instanceName,
               workspace: userInfo?.workspace,
-              ...(input.serviceIsEntryFallback ? {} : { service: input.service }),
+              // Same "empty is not an overwrite" rule as above: a row with no service is
+              // unusable, so even the sign-in host beats leaving it blank.
+              ...(input.serviceIsEntryFallback && rowService ? {} : { service: input.service }),
             }
             : {}),
           protocol,
