@@ -5,7 +5,7 @@ import { createTraceparent, mergeHeaders } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
-import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR } from "../output/index.js"
+import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR, EXIT_USAGE_ERROR } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
 import { getProfileAgentContext, getStudioContext, type StudioContext } from "./studio-context.js"
 import { logOperation } from "../logger.js"
@@ -256,6 +256,33 @@ function positiveIntegerValue(
 function requiredPositiveIntegerValue(value: unknown, optionName: string, format: string): number {
   if (value === undefined) handledError("USAGE_ERROR", `${optionName} is required`, { format })
   return positiveIntegerValue(value, optionName, format) as number
+}
+
+function normalizeSessionTitle(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim() !== "") return value.trim()
+  return undefined
+}
+
+function resolveSessionCreateTitle(
+  argv: Record<string, unknown>,
+  body: Record<string, unknown>,
+  format: string,
+  fallbackTitle?: string,
+  missingTitleMessage = "Session title is required when no question text is provided. Pass --title or --msg.",
+): string {
+  const title = normalizeSessionTitle(argv.title) ?? normalizeSessionTitle(body.title)
+  if (title) return title
+
+  const question = normalizeSessionTitle(argv.msg) ?? normalizeSessionTitle(body.msg) ?? normalizeSessionTitle(body.question)
+  if (question) return question
+
+  if (fallbackTitle) return fallbackTitle
+
+  handledError(
+    "USAGE_ERROR",
+    missingTitleMessage,
+    { format, exitCode: EXIT_USAGE_ERROR },
+  )
 }
 
 function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
@@ -3251,13 +3278,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               y
                 .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                 .option("title", { type: "string", describe: "Session title" })
+                .option("msg", { type: "string", describe: "Question text used as the session title when --title is omitted" })
                 .option("source-type", { type: "string", describe: "Session sourceType" })
                 .option("source-id", { type: "number", describe: "Session sourceId" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" }),
             async (argv) => {
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const parsedBody = parseJsonObject(argv.body, "--body")
+              const body = mergeBody(parsedBody, {
                 domainId: argv["domain-id"],
-                title: argv.title,
+                title: resolveSessionCreateTitle(argv as Record<string, unknown>, parsedBody, format, "Analytics Agent Session"),
                 sourceType: argv["source-type"],
                 sourceId: argv["source-id"],
               })
@@ -3313,14 +3343,24 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 }),
             async (argv) => {
               const argvRec = argv as Record<string, unknown>
-              const format = typeof argv.format === "string" ? argv.format : undefined
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const parsedBody = parseJsonObject(argv.body, "--body")
               const modelSettings = undefinedIfEmpty(mergeBody({}, {
                 model_name: argv["model-name"],
               }))
               let sessionId: number | undefined = argv["session-id"]
               if (!sessionId) {
                 try {
-                  const createPayload = await requestAnalytics(argvRec, ROUTES.sessionCreate, { domainId: argv["domain-id"] })
+                  const createPayload = await requestAnalytics(argvRec, ROUTES.sessionCreate, {
+                    domainId: argv["domain-id"],
+                    title: resolveSessionCreateTitle(
+                      argvRec,
+                      parsedBody,
+                      format,
+                      undefined,
+                      "Session title is required when auto-creating a session. Pass --msg.",
+                    ),
+                  })
                   const bizErr = extractBusinessError(createPayload)
                   if (bizErr) {
                     error(bizErr.code, bizErr.message, { format })
@@ -3342,7 +3382,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   return
                 }
               }
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const body = mergeBody(parsedBody, {
                 domainId: argv["domain-id"],
                 sessionId,
                 msg: argv.msg,

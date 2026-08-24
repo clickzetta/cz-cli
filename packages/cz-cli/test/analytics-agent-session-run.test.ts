@@ -152,4 +152,105 @@ describe("analytics-agent session run", () => {
     expect(result.output).toContain("同一个 session 内的问答必须串行")
     expect(result.output).toContain("Another question is currently being processed")
   })
+
+  test("uses the first question as title when auto-creating a session", async () => {
+    let createBody: Record<string, unknown> | undefined
+
+    onStudio("/open/session/safe_new", (body) => {
+      createBody = body as Record<string, unknown>
+      return "7"
+    })
+    onStudio("/open/text2insight/query", () => ({ data: { questionId: 123 } }))
+    onStudio("/open/safe_question_poll", () => ({
+      success: true,
+      data: {
+        questionId: 123,
+        responses: [
+          {
+            resGroupId: 1,
+            dataType: "finish",
+            modelRes: { data: { message: "done" } },
+          },
+        ],
+      },
+    }))
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--msg",
+      " 张三买了什么商品 ",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(createBody).toMatchObject({
+      domainId: 195,
+      title: "张三买了什么商品",
+    })
+  })
+
+  test("fails before auto-creating a session when no title or question is available", async () => {
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toContain("Pass --msg")
+  })
+
+  test("uses body message as title when auto-creating a session", async () => {
+    let createBody: Record<string, unknown> | undefined
+    let runBody: Record<string, unknown> | undefined
+
+    onStudio("/open/session/safe_new", (body) => {
+      createBody = body as Record<string, unknown>
+      return "7"
+    })
+    onStudio("/open/text2insight/query", (body) => {
+      runBody = body as Record<string, unknown>
+      return { data: { questionId: 123 } }
+    })
+    onStudio("/open/safe_question_poll", () => ({
+      success: true,
+      data: {
+        questionId: 123,
+        responses: [
+          {
+            resGroupId: 1,
+            dataType: "finish",
+            modelRes: { data: { message: "done" } },
+          },
+        ],
+      },
+    }))
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "run",
+      "--domain-id",
+      "195",
+      "--body",
+      JSON.stringify({ msg: "  客单价是多少  " }),
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(createBody).toMatchObject({
+      domainId: 195,
+      title: "客单价是多少",
+    })
+    expect(runBody).toMatchObject({
+      sessionId: 7,
+      msg: "  客单价是多少  ",
+    })
+  })
 })

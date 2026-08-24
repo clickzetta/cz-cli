@@ -128,7 +128,12 @@ describe("analytics-agent session delete command", () => {
   })
 
   test("session create output warns that follow-up questions must be serial", async () => {
-    globalThis.fetch = mock(async () => jsonResponse({ success: true, data: "123" })) as typeof fetch
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: "123" })
+    }) as typeof fetch
 
     const result = await runAnalyticsCli([
       "analytics-agent",
@@ -141,9 +146,113 @@ describe("analytics-agent session delete command", () => {
     ])
 
     expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      domainId: 195,
+      title: "销售诊断",
+    })
     expect(result.output).toContain("Session created (id=123)")
     expect(result.output).toContain("同一个 session 内的问答必须串行")
     expect(result.output).toContain("Another question is currently being processed")
+  })
+
+  test("session create without title uses the question as title", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: "123" })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+      "--msg",
+      " 李四一共花了多少钱 ",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      domainId: 195,
+      title: "李四一共花了多少钱",
+    })
+  })
+
+  test("session create with blank title uses the question as title", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: "123" })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+      "--title",
+      "   ",
+      "--msg",
+      "张三买的是什么商品",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      domainId: 195,
+      title: "张三买的是什么商品",
+    })
+  })
+
+  test("session create without title or question uses an agent-generated title", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: "123" })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      domainId: 195,
+      title: "Analytics Agent Session",
+    })
+  })
+
+  test("session create body with blank title uses body message as title", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: "123" })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "create",
+      "--domain-id",
+      "195",
+      "--body",
+      JSON.stringify({ title: "   ", msg: "  订单趋势分析  " }),
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      domainId: 195,
+      title: "订单趋势分析",
+    })
   })
 
   test("session run help warns that questions in the same session must be serial", () => {
