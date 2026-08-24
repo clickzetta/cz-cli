@@ -1,129 +1,156 @@
-<p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
-</p>
+# cz-cli
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
-</p>
-
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
-
----
-
-### Installation
+AI-Agent-friendly command-line interface for ClickZetta Lakehouse.
 
 ```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
-
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
+curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
 ```
 
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
+Restart your shell after installation.
 
-### Desktop App (BETA)
+## Features
 
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+- **Data Agent** — Natural-language Lakehouse operations, one-shot or conversational, powered by AI
+- **MCP server** — `cz-cli mcp init` registers cz-cli with Claude Code, Cursor and Codex, so your AI coding assistant can operate on Lakehouse directly
+- **Machine-readable output** — JSON by default; `--format` and `--field` for every command, and one error shape per format
+- **SQL execution** — Run queries directly, with async polling for long-running jobs
+- **Studio task scheduling** — Create, configure, publish and monitor scheduled tasks and flows
+- **Rich command surface** — auth/profile, sql, schema, table, workspace, task, runs, attempts, job, datasource, dqc, analytics-agent, ai-gateway
 
-| Platform              | Download                           |
-| --------------------- | ---------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-mac-arm64.dmg`   |
-| macOS (Intel)         | `opencode-desktop-mac-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe` |
-| Linux                 | `.deb`, `.rpm`, or `.AppImage`     |
+## Quick Start
+
+### Sign in
 
 ```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
+cz-cli login my-company
 ```
 
-#### Installation Directory
+Browser OAuth. `my-company` labels this login; cz-cli discovers your instances and
+workspaces and creates one connection profile per workspace.
 
-The install script respects the following priority order for the installation path:
-
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
+Non-interactive alternatives:
 
 ```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
+cz-cli login my-company --credential <base64_string>
+cz-cli login my-company --username <username> --password <password> --account-name <account_name>
 ```
 
-### Agents
+### Use
 
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
+```bash
+cz-cli agent run "show row counts for all tables in my_schema"
 
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
+cz-cli sql "SELECT * FROM my_schema.my_table LIMIT 10"
 
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
+cz-cli status
+```
 
-Learn more about [agents](https://opencode.ai/docs/agents).
+## Commands
 
-### Documentation
+```bash
+cz-cli <command> [options]
+```
 
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
+| Command | Description |
+| --- | --- |
+| `agent run "<prompt>"` | Run the AI agent with a natural-language prompt |
+| `agent llm` | Register and inspect the LLMs the agent uses |
+| `sql "<query>"` | Execute SQL (`--file`, `--batch`, `--dry-run`, `--async`) |
+| `auth` | Sessions and sign-in: `login`, `logout`, `list`, `status` |
+| `profile` | Connection profiles: `list`, `detail`, `create`, `update`, `use`, `delete` |
+| `status` | Check the active connection (exit 0 only when it works) |
+| `schema` / `table` | Schemas and tables |
+| `workspace` / `workspace-param` | Workspace selection and Studio workspace parameters |
+| `task` / `runs` / `attempts` | Studio tasks, run instances and attempt records |
+| `job` | Job execution details and performance profiles |
+| `datasource` | External data sources |
+| `dqc` | Data quality check rules |
+| `analytics-agent` | Analytics Agent APIs |
+| `ai-gateway` | AIGW virtual keys and available models |
+| `mcp init` / `mcp serve` | Register cz-cli with an AI client, or serve MCP on stdio |
+| `update` / `autoupdate` | Update cz-cli, or configure automatic updates |
 
-### Contributing
+Every command takes `--help`.
 
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
+## Output
 
-### Building on OpenCode
+Output is machine-readable by default: a `{"data": …}` envelope on success, a
+`{"error": {"code", "message"}}` envelope on failure.
 
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
+```bash
+cz-cli sql "SELECT 1 AS n" --format text     # tab-separated rows, no envelope
+cz-cli auth list --field sessions            # one field, bare value
+```
 
----
+| Flag | Values |
+| --- | --- |
+| `--format` | `json` (default), `pretty`, `table`, `csv`, `text`, `jsonl`, `toon` |
+| `--field <path>` | Extract a single field: `data.workspace`, `sessions`, `count` |
 
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+Under the row-oriented formats (`text`, `table`, `csv`, `jsonl`) a failure is a single
+`ERROR <code>: <message>` line rather than JSON, so one parser handles both.
+
+Exit codes: `0` success, `1` business error, `2` usage error.
+
+## Agent sessions
+
+```bash
+# One-shot (scripts, CI)
+cz-cli agent run "create a daily sync task"
+
+# Conversational (reuse context with --session)
+cz-cli agent run "describe the sales table" --session my-session
+cz-cli agent run "add a region column to sales" --session my-session
+```
+
+For unattended use add `--dangerously-skip-permissions`, and `--async` to get a session
+id back immediately instead of waiting.
+
+## Installation options
+
+### Manual install
+
+Download the archive for your platform from
+[Releases](https://github.com/clickzetta/cz-cli/releases), extract, and run:
+
+```bash
+sh setup.sh
+```
+
+### Pin a version
+
+```bash
+CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+```
+
+### Environment variables
+
+Installer:
+
+| Variable | Description |
+| --- | --- |
+| `CZ_VERSION` | Pin a specific version (e.g. `0.1.0`) |
+| `CZ_MIRROR` | Custom mirror base URL for downloads |
+| `NON_INTERACTIVE` | Skip all interactive prompts |
+
+Runtime — these override the active profile, which is what makes cz-cli usable in CI
+without a `profiles.toml`:
+
+| Variable | Description |
+| --- | --- |
+| `CZ_PROFILE` | Which profile to use (overrides `default_profile`) |
+| `CZ_FORMAT` | Default `--format` value |
+| `CZ_PAT` / `CZ_USERNAME` / `CZ_PASSWORD` | Credentials |
+| `CZ_SERVICE` / `CZ_PROTOCOL` / `CZ_INSTANCE` / `CZ_WORKSPACE` / `CZ_SCHEMA` / `CZ_VCLUSTER` | Connection target |
+
+### Supported platforms
+
+| Platform | Architecture |
+| --- | --- |
+| Linux | x64, arm64 |
+| macOS | arm64 (Apple Silicon) |
+| Windows | x64, arm64 |
+
+## License
+
+MIT License.

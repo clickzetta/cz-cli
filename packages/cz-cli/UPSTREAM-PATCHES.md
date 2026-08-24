@@ -289,6 +289,54 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 
 ---
 
+### 10. Repository README — product identity of the landing page
+
+- **Files:** `README.md` (replaced), `README.{ar,bn,br,bs,da,de,es,fr,gr,it,ja,ko,no,pl,ru,th,tr,uk,vi,zh,zht}.md` (deleted)
+- **Upstream value:** opencode's README plus 21 translations, all describing
+  "The open source AI coding agent" and linking to opencode.ai.
+- **What/why:** this repository IS the cz-cli product repo — its landing page and the
+  `clickzetta/cz-cli` install instructions are what a user arrives at. Upstream's README
+  documents a different product, and its language-nav links pointed at the 21
+  translations, which describe that product too, so they go with it. The cz README is
+  restored from the pre-re-baseline lineage (commit `0127bc4358`) and rewritten against
+  the current command surface — the old copy predated `auth`/`login`, the `--format` /
+  `--field` contract, `mcp init`, `ai-gateway`, `analytics-agent` and `dqc`, and still
+  documented `cz-cli setup` (now deprecated) and a `--format a2a` that no longer exists.
+- **Why intrusive (no hook):** a repository has exactly one root README; there is no
+  mechanism for overriding it from a package.
+- **Re-baseline:** upstream's README returns as a conflict on this path. Keep ours;
+  re-delete any translations the new baseline adds. Nothing in the build or the release
+  workflow reads either file.
+
+### 11. Upstream CI workflows removed — they cost minutes and act on this repo
+
+- **Files:** 25 deleted under `.github/workflows/`: `beta`, `build-vscode-extension`,
+  `close-issues`, `close-prs`, `compliance-close`, `containers`, `deploy`,
+  `docs-locale-sync`, `docs-update`, `duplicate-issues`, `generate`, `nix-eval`,
+  `nix-hashes`, `notify-discord`, `opencode`, `publish`, `publish-github-action`,
+  `publish-vscode`, `release-github-action`, `review`, `stats`, `storybook`, `test`,
+  `triage`, `typecheck`.
+- **Kept:** `cz-test.yml`, `claude-review.yml`, `release-cos.yml` — the three cz-owned
+  workflows. `script/github/*.ts` and the other upstream scripts are left in place;
+  they are inert without a workflow to call them.
+- **What/why:** measured over 30 days, the deleted set ran 728 times against 101 for the
+  cz-owned three. `compliance-close` (387 runs, every 30 min) and `beta` (245 runs,
+  hourly) are upstream community/publish machinery with no repo guard. Two of them acted
+  on this repository's data rather than merely wasting a runner: `close-prs` scans all
+  1331 open PRs daily and closes any older than one month with fewer than two positive
+  reactions — including ours — and `close-issues` does the same for issues. The publish /
+  release / docs / nix / storybook / vscode-marketplace workflows target upstream's
+  artifacts and secrets. `test` and `typecheck` request `blacksmith-*` runners that do
+  not exist in this fork, so their jobs queue for 24h and then fail, which is where the
+  permanently-pending `unit (linux)` / `e2e (windows)` checks on cz PRs came from;
+  `cz-test.yml` is the replacement that actually runs.
+- **Why intrusive (no hook):** workflow files are read from the repository by GitHub;
+  there is no configuration that disables one from outside the file.
+- **Precedent:** `b40281f02e` already removed `pr-management.yml` and `pr-standards.yml`
+  for the same reason (they failed on a `dev` ref this fork does not have).
+- **Re-baseline:** all 25 return as additions. Re-delete them, and re-check whether the
+  new baseline added more scheduled workflows before merging.
+
 ## HOOK-based customizations (safe — live entirely in the cz layer)
 
 These do **not** edit upstream files. They are listed so a re-baseline can confirm
