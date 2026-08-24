@@ -722,6 +722,9 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
           }
 
           logOperation("profile list-workspaces", { ok: true })
+          // No rowsKey: `workspaces_by_instance` is what list-workspaces answers, and
+          // projecting `instances` would drop it from every row format. Reshaping to
+          // one row per instance x workspace is the real fix and is out of scope here.
           success({ region: target, instances: targetInstances, workspaces_by_instance: workspacesByInstance }, { format })
         } catch (err) {
           logOperation("profile list-workspaces", { ok: false, errorCode: "BOOTSTRAP_ERROR" })

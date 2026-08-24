@@ -1,15 +1,16 @@
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { createTraceparent } from "@clickzetta/sdk"
+import { InterfaceError, createTraceparent } from "@clickzetta/sdk"
 import { injectAgentMcp } from "./agent-mcp.js"
 import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { ConnectionEnv } from "./connection/env.js"
+import { parseAgentTimeoutMs } from "./bootstrap/runtime-config.js"
 import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
 import { migrateInlineOAuthTokens, pruneOrphanOAuthSections, readProfileEntry } from "./connection/profile-store.js"
 import * as Profile from "./connection/profile-context.js"
-import { parseOutputArgs, renderOutput } from "./output/index.js"
+import { EXIT_BIZ_ERROR, isHandledCliError, parseOutputArgs, renderOutput, renderErrorOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
 import { trackCommand, parseTrackingArgs } from "./telemetry.js"
@@ -339,6 +340,29 @@ export function emitUsageError(runtime: CliRuntime, message: string): never {
   return runtime.exit(2)
 }
 
+/**
+ * `--profile <name>` / `CZ_PROFILE` naming a profile that does not exist.
+ *
+ * resolveConnectionConfig throws PROFILE_NOT_FOUND for this (so programmatic
+ * callers see it classified like any other connection error), but on the CLI path
+ * the first call happens in applyAgentConnectionEnv below — before any command's
+ * try/catch — where a throw would escape as an unhandled exception. Reporting it
+ * here keeps one message for both paths.
+ */
+function emitProfileNotFound(runtime: CliRuntime, name: string, rawArgs: string[]): never {
+  const outputArgs = parseOutputArgs(rawArgs)
+  const payload = {
+    error: {
+      code: "PROFILE_NOT_FOUND",
+      message: `Profile '${name}' not found in ~/.clickzetta/profiles.toml.`,
+      next_step: "cz-cli profile list",
+    },
+    ai_message: `Profile '${name}' does not exist. Run \`cz-cli profile list\` to see the configured profiles, or \`cz-cli auth login <name>\` to create one.`,
+  }
+  runtime.stdout.write(renderErrorOutput(payload, outputArgs.format, outputArgs.field) + "\n")
+  return runtime.exit(1)
+}
+
 async function delegateToAgentRuntime(rawArgs: string[]): Promise<never> {
   // The agent-runtime phase is in-process state. Pass it as an argument rather
   // than via process.env, which would be inherited by child processes (e.g. the
@@ -661,7 +685,19 @@ export function resolveAccountsUrl(profileName: string | undefined): string | un
 
 function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   if (Object.keys(overrides).length === 0) return overrides
-  const resolved = resolveConnectionConfig(overrides)
+  // resolveConnectionConfig rejects a profile name that does not exist. Whether THAT
+  // is an error here has already been decided by the boundary guard in runCli, which
+  // reports every explicitly named missing profile and every inherited one on a
+  // connecting command. What is left for this catch is the cases the guard lets
+  // through on purpose — `--help`, and an inherited CZ_PROFILE on a command that does
+  // not connect — where this call's only job is to mirror values into env.
+  let resolved: ReturnType<typeof resolveConnectionConfig>
+  try {
+    resolved = resolveConnectionConfig(overrides)
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === "PROFILE_NOT_FOUND") return overrides
+    throw err
+  }
   const { userFields, derivedFields } = splitConnectionEnv(overrides, resolved)
   const accountsUrl = resolveAccountsUrl(overrides.profile ?? Profile.current())
   if (accountsUrl) derivedFields.accountsUrl = accountsUrl
@@ -699,6 +735,32 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
   // re-add entries they already had. Idempotent; no-ops without `[llm.*]`.
   await migrateProfilesLlm()
   const normalized = normalizeCliArgs(rawArgs)
+  // Only commands that actually CONNECT are gated on the named profile existing.
+  // Keying it on "did the caller name a profile" instead locked users out of their
+  // own recovery path: a stale CZ_PROFILE (a deleted profile still exported into the
+  // shell) then failed `profile list` — which is the command the error message tells
+  // you to run — plus `profile create`, `profile use`, `auth list` and even
+  // `--version`. Commands that never connect ignore the flag as they always did;
+  // setup/login/auth login are outside this set too, so a name they are about to
+  // CREATE still passes.
+  // Two sources, two rules. A name the caller TYPED (`--profile x`) is a typo wherever
+  // it appears, including on the agent path — where the alternative is what this used
+  // to do: no message on either stream, no connection env applied, and the missing
+  // name pinned anyway. An INHERITED CZ_PROFILE is only fatal for a command that
+  // connects, since an env-only invocation (no profiles.toml, CZ_PROFILE exported as
+  // a label, credentials in CZ_*) legitimately carries a name with no entry behind it.
+  const explicitProfile = profileOverrideFromArgs(normalized.args)
+  const requestedProfile = explicitProfile ?? ConnectionEnv.profileName()
+  const profileMustExist =
+    explicitProfile !== undefined || PROFILE_REQUIRED_COMMANDS.has(normalized.command)
+  if (
+    requestedProfile &&
+    profileMustExist &&
+    !normalized.isHelpRequest &&
+    !readProfileEntry(requestedProfile)
+  ) {
+    emitProfileNotFound(runtime, requestedProfile, rawArgs)
+  }
   // On the agent path, upstream opencode owns several of these short flags; tell
   // the scanner so it does not also read them as cz connection overrides. See
   // AGENT_CONTESTED_FLAGS.
@@ -721,6 +783,25 @@ export async function runCli(rawArgs: string[], runtime: CliRuntime = defaultRun
     const message = runtimeOutputFlagMessage(label)
     const aiMessage = `-o/--output was removed. Replace with --format. Valid choices: ${label.startsWith("agent") ? "default, json" : "json, pretty, table, csv, text, jsonl, toon"}.`
     runtime.stdout.write(JSON.stringify({ error: { code: "USAGE_ERROR", message }, ai_message: aiMessage }) + "\n")
+    return runtime.exit(2)
+  }
+
+  // `--timeout` is cz's own flag on the agent path, and its check used to live past
+  // the gate below in bootstrap/runtime.ts — so on a machine with no LLM registered,
+  // `agent run --timeout abc` answered NO_LLM_CONFIGURED and the bad value was never
+  // mentioned. Same rule as the cz command tree (see parseRegisteredCommands): a
+  // syntactically invalid invocation is reported before any onboarding gate, and in
+  // the same envelope as every other usage error.
+  if (normalized.shouldDelegateToAgentRuntime && parseAgentTimeoutMs(normalized.args) === null) {
+    const outputArgs = parseOutputArgs(rawArgs)
+    const message = "--timeout must be a positive number of seconds"
+    runtime.stdout.write(
+      renderErrorOutput(
+        { error: { code: "USAGE_ERROR", message }, ai_message: `${message}. Pass the LLM first-byte timeout in seconds, e.g. --timeout 150.` },
+        outputArgs.format,
+        outputArgs.field,
+      ) + "\n",
+    )
     return runtime.exit(2)
   }
 
@@ -785,10 +866,45 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
     if (positional[0] !== "setup") {
       await track(!process.exitCode, process.exitCode ? lastError ?? `exit_code=${process.exitCode}` : undefined)
     }
-  } catch (error) {
+  } catch (err) {
     if (positional[0] !== "setup") {
-      await track(false, error instanceof Error ? error.message : `exit_code=${process.exitCode ?? 1}`)
+      await track(false, err instanceof Error ? err.message : `exit_code=${process.exitCode ?? 1}`)
     }
-    if (!process.exitCode) throw error
+    // Last resort. Everything this CLI prints is machine-readable, so an
+    // exception that reaches the entry point must not become a bare stack trace
+    // on stderr with an empty stdout — that is the one failure mode a caller
+    // cannot parse. A reported failure (usage error, error(), a gate) has already
+    // set exitCode; only an UNREPORTED throw lands here.
+    // Two sentinels legitimately reach here with exit 0: a group that rendered its
+    // own help, and an error that error() already printed. Neither is unreported.
+    if (err instanceof SubcommandHelpShown || isHandledCliError(err)) return
+    if (!process.exitCode) {
+      emitInternalError(err, rawArgs)
+      return
+    }
   }
+}
+
+/**
+ * Render an unhandled exception as the standard error envelope. The stack goes to
+ * stderr only under --debug, where a human asked for it.
+ */
+function emitInternalError(err: unknown, rawArgs: string[]): void {
+  const outputArgs = parseOutputArgs(rawArgs)
+  const message = err instanceof Error ? err.message : String(err)
+  // Only an InterfaceError's code enters the envelope: those are ours (INVALID_AUTH_TYPE,
+  // PROFILE_NOT_FOUND, …). A runtime error's `code` is a libuv string like ENOENT or
+  // ECONNREFUSED, which would quietly extend the vocabulary callers switch on.
+  const code = err instanceof InterfaceError && typeof err.code === "string" ? err.code : undefined
+  const payload = {
+    error: {
+      code: code && code.length > 0 ? code : "INTERNAL_ERROR",
+      message,
+    },
+  }
+  process.stdout.write(renderErrorOutput(payload, outputArgs.format, outputArgs.field) + "\n")
+  if (rawArgs.includes("--debug") || rawArgs.includes("-d")) {
+    process.stderr.write((err instanceof Error && err.stack ? err.stack : message) + "\n")
+  }
+  process.exitCode = EXIT_BIZ_ERROR
 }

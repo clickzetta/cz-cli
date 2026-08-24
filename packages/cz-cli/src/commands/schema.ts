@@ -75,7 +75,7 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
             const tableRecords = tableResult ? rowsToRecords(tableResult) : []
             const tables = tableRows.map((row, index) => getShowTableName(row, tableRecords[index] ?? {}))
             logOperation("schema describe", { sql: infoSql, ok: true, timeMs: Date.now() - t0 })
-            success({ name, type: schemaType, table_count: tables.length, tables }, { format, timeMs: Date.now() - t0 })
+            success({ name, type: schemaType, table_count: tables.length, tables }, { format, rowsKey: "tables", timeMs: Date.now() - t0 })
           } catch (err) {
             const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
             error(_ec, _em, { format , ...(_ea && { aiMessage: _ea }) }); return

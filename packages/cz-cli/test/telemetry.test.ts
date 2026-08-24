@@ -86,13 +86,21 @@ test("parseTrackingArgs keeps a flag's value out of _positional", () => {
   expect(JSON.stringify(args)).not.toContain("czt_secret")
 })
 
-test("parseTrackingArgs leaves non-sensitive flags' neighbours alone", () => {
-  // Only sensitive flags swallow their neighbour. A boolean flag followed by a real
-  // positional is indistinguishable by shape, so the existing analytics keep seeing it.
+test("parseTrackingArgs does not let a value-less flag claim the next token", () => {
+  // `--debug` takes no value, so the statement after it is a positional and stays one.
+  // It used to be recorded as `--debug`'s value, which put a whole SQL statement in the
+  // flag map — see VALUELESS_FLAGS.
   const { positional, args } = parseTrackingArgs(["sql", "--debug", "select 1"])
 
   expect(positional).toEqual(["sql", "select 1"])
-  expect(args.debug).toBe("select 1")
+  expect(args.debug).toBe("true")
+})
+
+test("parseTrackingArgs still records the neighbour of a flag that takes a value", () => {
+  // The two names declared BOTH ways stay out of VALUELESS_FLAGS, so their real values
+  // are still captured — and still redacted when they are credentials.
+  expect(parseTrackingArgs(["sql", "--limit", "100", "select 1"]).args.limit).toBe("100")
+  expect(parseTrackingArgs(["profile", "create", "p", "--header", "Cookie=abc"]).args.header).toBe("<redacted>")
 })
 
 test("parseTrackingArgs redacts --password and --pat=inline forms too", () => {
@@ -132,6 +140,26 @@ test("parseTrackingArgs keeps a SQL statement that follows the boolean --header"
   // subcommand dimension — `_positional` only starts at index 2).
   expect(withEquals.positional).toEqual(["sql", "select * from t where id=1"])
   expect(withEquals.args.header).toBe("select * from t where id=1")
+})
+
+// A boolean flag standing right before the statement claims it as its value (see
+// parseTrackingArgs' note), and telemetry LEAVES the machine while the local SQL log
+// does not — so what is recorded goes through the same redactSql the log uses.
+test("a statement behind a value-less flag is not recorded as that flag's value", () => {
+  const r = parseTrackingArgs(["sql", "--debug", "select * from users where email='a@b.c'"])
+  expect(r.args.debug).toBe("true")
+  expect(JSON.stringify(r.args)).not.toContain("select * from users")
+})
+
+test("redactSql still masks what a value-taking flag legitimately captures", () => {
+  // Defence in depth for the flags that DO take a value (`--set`, `--variable`, …).
+  const r = parseTrackingArgs(["sql", "--variable", "email='a@b.c'", "select 1"])
+  expect(r.args.variable).not.toContain("a@b.c")
+})
+
+test("parseTrackingArgs masks literals in _positional too", () => {
+  const r = parseTrackingArgs(["task", "search", "--name", "x", "'13800138000'"])
+  expect(JSON.stringify(r.args)).not.toContain("13800138000")
 })
 
 // `--login` / `--jdbc` take a JDBC connection string, and jdbc.ts reads `password=`

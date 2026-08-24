@@ -410,6 +410,26 @@ the hooks they depend on still exist in the new upstream.
 
 ---
 
+### 6. `cz-cli serve` flag surface
+
+- **cz files:** `packages/cz-cli/src/bootstrap/runtime.ts` (the `serve` branch:
+  `applyServeLogFlags`, `serveInheritedGlobals`).
+- **Mechanism:** `cz-cli serve` runs its own yargs instance around upstream's
+  `ServeCommand`, so it never passes through upstream's ROOT parser. Two things are
+  re-created there: the root parser's logging flags (`--print-logs`, `--log-level`,
+  `--pure`), wired to the same env vars upstream's root middleware sets
+  (`OPENCODE_PRINT_LOGS`, `OPENCODE_LOG_LEVEL`, `OPENCODE_PURE`), and the cz global
+  flags that run-cli has already consumed off the same argv, declared hidden so
+  `.strict()` can reject a real typo without rejecting a working invocation.
+- **Upstream hooks to re-verify:** `packages/opencode/src/cli/index.ts` still declares
+  those three flags on the root parser and its middleware still reads them from those
+  env var names; `packages/opencode/src/cli/cmd/serve.ts` still takes its network
+  options from `withNetworkOptions`.
+- **Failure mode if the hook moves:** the logging flags silently go back to being
+  accepted and doing nothing (an env var rename), or `serve` starts rejecting a flag
+  it should accept (a new global in cli.ts's `KNOWN_GLOBAL_FLAGS` is covered
+  automatically; a new UPSTREAM root flag is not).
+
 ## Re-baseline procedure (quick)
 
 1. Fast-forward upstream packages to the new opencode version.

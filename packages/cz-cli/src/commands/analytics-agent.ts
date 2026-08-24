@@ -1114,6 +1114,9 @@ async function runBatchStatusChange(
     logOperation(name, { ok: failed === 0, timeMs: Date.now() - t0 })
     success(
       { total: targets.length, succeeded, failed, skipped, results },
+      // No rowsKey: total/succeeded/failed/skipped are the summary this command
+      // reports, and a projected list drops its scalar siblings — same reasoning as
+      // `datasource check`.
       { format, timeMs: Date.now() - t0 },
     )
     // success() resets exitCode to EXIT_OK; override AFTER it so a partial

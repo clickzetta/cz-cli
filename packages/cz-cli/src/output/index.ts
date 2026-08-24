@@ -27,6 +27,13 @@ export const outputState = { field: undefined as string | undefined }
 export interface OutputOptions {
   format?: string
   field?: string
+  /**
+   * Name of the field inside `data` that holds the list, for payloads that wrap
+   * a list next to some metadata (`{ tasks: [...] }`, `{ name, tables: [...] }`).
+   * Row-oriented formats (table/csv/text/jsonl) render that field as the rows;
+   * json/pretty/toon are untouched, so declaring it changes no JSON contract.
+   */
+  rowsKey?: string
   aiMessage?: string
   extra?: Record<string, unknown>
   debug?: boolean
@@ -54,7 +61,7 @@ export function success(
   if (opts?.extra) Object.assign(payload, opts.extra)
 
   const field = opts?.field ?? outputState.field
-  const output = renderOutput(payload, opts?.format, field)
+  const output = renderOutput(payload, opts?.format, field, opts?.rowsKey)
   if (output !== "") process.stdout.write(output + "\n")
   writeAiMessageToStderr(opts?.format, field, opts?.aiMessage)
   ;(process as unknown as Record<string, unknown>).responseBytes = Buffer.byteLength(output, "utf-8")
@@ -141,7 +148,7 @@ export function isHandledCliError(err: unknown): err is HandledCliError {
   return err instanceof HandledCliError
 }
 
-export function renderOutput(payload: unknown, format?: string, field?: string): string {
+export function renderOutput(payload: unknown, format?: string, field?: string, rowsKey?: string): string {
   // --field extraction: search top-level → data (dict) → data[0] (list) → rows[0]
   if (field && payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>
@@ -161,19 +168,26 @@ export function renderOutput(payload: unknown, format?: string, field?: string):
     case "toon":
       return formatToon(unwrapToonEnvelope(payload))
     case "table":
-      return emitAsTable(payload)
+      return emitRowFormat(payload, "table", rowsKey)
     case "csv":
-      return emitAsCsv(payload)
+      return emitRowFormat(payload, "csv", rowsKey)
     case "jsonl":
-      return emitAsJsonl(payload)
+      return emitRowFormat(payload, "jsonl", rowsKey)
     case "text":
-      return emitAsText(payload)
+      return emitRowFormat(payload, "text", rowsKey)
     default:
       return formatJson(payload)
   }
 }
 
-function renderErrorOutput(payload: unknown, format?: string, field?: string): string {
+/**
+ * Render an `{ error: … }` envelope. Row-oriented formats get a single
+ * `ERROR <code>: <message>` line instead of JSON, so a `--format text` consumer
+ * reads one shape for every failure. Exported because the yargs fail handlers
+ * (cli.ts, command-group.ts) render usage errors themselves rather than through
+ * error(); they must not diverge from it.
+ */
+export function renderErrorOutput(payload: unknown, format?: string, field?: string): string {
   if (!field && ROW_ONLY_FORMATS.has(format ?? "json") && payload && typeof payload === "object") {
     const err = (payload as Record<string, unknown>).error
     if (err && typeof err === "object") {
@@ -250,85 +264,134 @@ function unwrapToonEnvelope(payload: unknown): unknown {
   return payload
 }
 
-function emitAsTable(payload: unknown): string {
-  if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>
-    const data = obj.data
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null && !Array.isArray(data[0])) {
-      const columns = Object.keys(data[0] as Record<string, unknown>)
-      const rows = (data as Record<string, unknown>[]).map((r) => columns.map((c) => r[c]))
-      return formatTable(columns, rows)
-    }
-    if (Array.isArray(data) && data.length > 0) {
-      const rows = data.map((v) => [v === null || v === undefined ? "" : String(v)])
-      return formatTable(["value"], rows)
-    }
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      const columns = Object.keys(data as Record<string, unknown>)
-      const row = columns.map((c) => (data as Record<string, unknown>)[c])
-      return formatTable(columns, [row])
-    }
-  }
-  return formatPretty(payload)
+/**
+ * Rows projected out of a result envelope for the row-oriented formats
+ * (table/csv/text/jsonl). `items` carries the original array when the rows came
+ * from one, so jsonl can emit those objects verbatim instead of rebuilding them.
+ */
+interface RowProjection {
+  columns: string[]
+  rows: unknown[][]
+  items?: unknown[]
 }
 
-function emitAsCsv(payload: unknown): string {
-  if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>
-    const data = obj.data
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null && !Array.isArray(data[0])) {
-      const columns = Object.keys(data[0] as Record<string, unknown>)
-      const rows = (data as Record<string, unknown>[]).map((r) => columns.map((c) => r[c]))
-      return formatCsv(columns, rows)
-    }
-    if (Array.isArray(data) && data.length > 0) {
-      const rows = data.map((v) => [v === null || v === undefined ? "" : String(v)])
-      return formatCsv(["value"], rows)
-    }
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      const columns = Object.keys(data as Record<string, unknown>)
-      const row = columns.map((c) => (data as Record<string, unknown>)[c])
-      return formatCsv(columns, [row])
-    }
-  }
-  return formatPretty(payload)
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function emitAsJsonl(payload: unknown): string {
-  if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>
-    const rows = obj.rows
-    if (Array.isArray(rows)) {
-      const columns = Array.isArray(obj.columns) ? obj.columns.filter((value): value is string => typeof value === "string") : []
-      return formatJsonl(columns.length > 0 ? rowsToRecords(columns, rows as unknown[][]) : rows)
-    }
-    const data = obj.data
-    if (Array.isArray(data)) {
-      return formatJsonl(data)
+/** Every key seen across the records, in first-appearance order. */
+function unionColumns(records: Record<string, unknown>[]): string[] {
+  const columns: string[] = []
+  const seen = new Set<string>()
+  for (const record of records) {
+    for (const key of Object.keys(record)) {
+      if (seen.has(key)) continue
+      seen.add(key)
+      columns.push(key)
     }
   }
-  return formatJson(payload)
+  return columns
 }
 
-function emitAsText(payload: unknown): string {
-  if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>
-    const data = obj.data
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] !== null && !Array.isArray(data[0])) {
-      const columns = Object.keys(data[0] as Record<string, unknown>)
-      const rows = (data as Record<string, unknown>[]).map((r) => columns.map((c) => r[c]))
-      return formatText(columns, rows)
-    }
-    if (Array.isArray(data) && data.length > 0) {
-      return data.map((v) => (v === null || v === undefined ? "" : String(v))).join("\n")
-    }
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      const columns = Object.keys(data as Record<string, unknown>)
-      const row = columns.map((c) => (data as Record<string, unknown>)[c])
-      return formatText(columns, [row])
-    }
+/** One array → one table. Records become columns; scalars become a single column. */
+function projectArray(items: unknown[], scalarColumn: string): RowProjection {
+  if (items.length > 0 && items.every(isRecordValue)) {
+    const records = items as Record<string, unknown>[]
+    const columns = unionColumns(records)
+    return { columns, rows: records.map((record) => columns.map((column) => record[column])), items }
   }
-  return formatJson(payload)
+  return { columns: items.length > 0 ? [scalarColumn] : [], rows: items.map((value) => [value]), items }
+}
+
+/**
+ * Keys a `columns` + `rows` envelope may carry and still BE that envelope. Anything
+ * else alongside them means the payload is a record that merely contains a grid:
+ * `sql --batch` writes `{ index, sql, columns, rows, count, time_ms, job_id? }` per
+ * statement, and treating that as the table dropped `index`/`sql`/`time_ms` — the
+ * only things telling a consumer which statement a grid belonged to — and rendered a
+ * DDL statement (no columns) as a blank line.
+ */
+const TABULAR_ENVELOPE_KEYS = new Set(["columns", "rows", "count", "time_ms", "ai_message"])
+
+function isTabularEnvelope(payload: Record<string, unknown>): boolean {
+  if (!Array.isArray(payload.columns) || !Array.isArray(payload.rows)) return false
+  return Object.keys(payload).every((key) => TABULAR_ENVELOPE_KEYS.has(key))
+}
+
+/**
+ * The single row-shape decision for every row-oriented format. It lives here,
+ * once, because the failure mode of having it four times over was that a fix
+ * landed in one format and silently missed the others.
+ *
+ * Order matters, and every step is triggered by something the CALLER did — none of
+ * it is inferred from payload shape:
+ *   1. a bare `columns` + `rows` envelope — already a table (successRows).
+ *   2. `data` IS the list — the normal list command.
+ *   3. `data[rowsKey]` — the command declared which field holds the list.
+ *   4. anything else — one object, one row.
+ *
+ * Step 3 is opt-in on purpose. An earlier revision also PROJECTED any object that
+ * happened to hold exactly one array-of-records, which changed the rendering of
+ * commands nobody had looked at: `datasource check` lost `ready`, the verdict it
+ * exists to deliver, because a projected list's scalar siblings are dropped. A
+ * command whose list should be rows now says so.
+ *
+ * Scalar siblings of a projected list (`active_profile`, `table_count`) are not
+ * part of the table; json/pretty/toon still carry them, and `--field` reaches
+ * them directly.
+ */
+function projectRows(payload: unknown, rowsKey?: string): RowProjection | undefined {
+  if (!isRecordValue(payload)) return undefined
+
+  if (isTabularEnvelope(payload)) {
+    const columns = (payload.columns as unknown[]).filter((column): column is string => typeof column === "string")
+    const rows = (payload.rows as unknown[]).map((row) => (Array.isArray(row) ? row : [row]))
+    return { columns, rows }
+  }
+
+  const data = payload.data
+  if (Array.isArray(data)) return projectArray(data, "value")
+  if (!isRecordValue(data)) return undefined
+
+  if (rowsKey) {
+    const declared = data[rowsKey]
+    if (Array.isArray(declared)) return projectArray(declared, rowsKey)
+  }
+
+  const columns = Object.keys(data)
+  return { columns, rows: [columns.map((column) => data[column])] }
+}
+
+type RowFormat = "table" | "csv" | "text" | "jsonl"
+
+/**
+ * Payloads with nothing tabular in them (an `error` envelope reaching a row
+ * format directly, say) keep each format's historical fallback: compact JSON for
+ * the machine-facing text/jsonl, indented JSON for the human-facing table/csv.
+ * `test/e2e-routing.ts` parses the text one as JSON, so this is a contract.
+ */
+const NON_TABULAR_FALLBACK: Record<RowFormat, (payload: unknown) => string> = {
+  table: formatPretty,
+  csv: formatPretty,
+  text: formatJson,
+  jsonl: formatJson,
+}
+
+function emitRowFormat(payload: unknown, format: RowFormat, rowsKey?: string): string {
+  const projection = projectRows(payload, rowsKey)
+  if (!projection) return NON_TABULAR_FALLBACK[format](payload)
+  // An empty list is empty output, not a JSON envelope leaking into a row format.
+  if (projection.columns.length === 0) return ""
+  switch (format) {
+    case "table":
+      return formatTable(projection.columns, projection.rows)
+    case "csv":
+      return formatCsv(projection.columns, projection.rows)
+    case "text":
+      return formatText(projection.columns, projection.rows)
+    case "jsonl":
+      return formatJsonl(projection.items ?? rowsToRecords(projection.columns, projection.rows))
+  }
 }
 
 function rowsToRecords(columns: string[], rows: unknown[][]): Record<string, unknown>[] {

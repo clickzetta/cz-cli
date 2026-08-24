@@ -189,3 +189,37 @@ describe("agent MCP discovery", () => {
     expect(mcp).toEqual({})
   })
 })
+
+describe("a manifest naming a profile that no longer exists", () => {
+  test("skips that entry instead of failing the whole invocation", async () => {
+    // `profile` is a field in a config file on disk. resolveConnectionConfig rejects an
+    // explicitly named missing profile, and nothing between resolveClickZettaRemote and
+    // run-cli's injectAgentMcp catches it — so a profile renamed after the manifest was
+    // written used to abort `cz-cli agent run` with PROFILE_NOT_FOUND.
+    const home = mkdtempSync(join(tmpdir(), "cz-cli-agent-mcp-stale-"))
+    const cwd = mkdtempSync(join(tmpdir(), "cz-cli-agent-mcp-stale-cwd-"))
+    setTestHome(home)
+    writeProfiles(
+      home,
+      ['default_profile = "dev"', "", "[profiles.dev]", 'pat = "pat-123"', 'service = "uat-api.clickzetta.com"', 'instance = "inst"', 'workspace = "ws"', ""].join("\n"),
+    )
+    writeBuiltinManifest(home, JSON.stringify({ kind: "clickzetta_remote", enabled: true, profile: "renamed-away" }))
+
+    const mcp = await discoverAgentMcp({}, cwd)
+    expect(mcp["clickzetta-lakehouse"]).toBeUndefined()
+  })
+
+  test("a manifest naming a profile that DOES exist still resolves", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cz-cli-agent-mcp-named-"))
+    const cwd = mkdtempSync(join(tmpdir(), "cz-cli-agent-mcp-named-cwd-"))
+    setTestHome(home)
+    writeProfiles(
+      home,
+      ['default_profile = "dev"', "", "[profiles.dev]", 'pat = "pat-123"', 'service = "uat-api.clickzetta.com"', 'instance = "inst"', 'workspace = "ws"', "", "[profiles.other]", 'pat = "pat-other"', 'service = "uat-api.clickzetta.com"', 'instance = "inst2"', 'workspace = "ws2"', ""].join("\n"),
+    )
+    writeBuiltinManifest(home, JSON.stringify({ kind: "clickzetta_remote", enabled: true, profile: "other" }))
+
+    const mcp = await discoverAgentMcp({}, cwd)
+    expect(mcp["clickzetta-lakehouse"]).toBeDefined()
+  })
+})

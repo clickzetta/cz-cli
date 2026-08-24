@@ -4,6 +4,7 @@ import { homedir } from "os"
 import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
 import { currentTraceContext } from "./trace.js"
+import { redactSql } from "./logger.js"
 
 /**
  * CLI flag names whose values must never be exfiltrated via telemetry.
@@ -55,8 +56,54 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 /**
+ * Flags that take NO value, so the token after them is a positional rather than
+ * their own — `cz-cli sql --batch "select …"` is the statement, not `--batch`'s
+ * value. Without this the statement was recorded under the flag's key, and the
+ * masking below only covers literals that LOOK like PII, so table names, columns and
+ * predicates still left the machine.
+ *
+ * Enumerated rather than derived because this runs before yargs parses anything, and
+ * generated from the tree's `type: "boolean"` declarations plus the value-less
+ * globals. A flag missing from here degrades to the old behavior (its neighbour is
+ * recorded, masked by redactSql) rather than to a wrong value, so drift is visible
+ * as noise in analytics, not as a leak of the whole statement.
+ */
+export const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
+  // value-less globals (and yargs' own)
+  "debug", "d", "help", "h", "version", "v",
+  // every option declared `type: "boolean"` across the tree, and only those:
+  // `--header` (boolean on sql, KEY=VALUE on profile create) and `--limit`
+  // (boolean via --no-limit, number on sql) are declared BOTH ways, so they stay
+  // out — treating them as value-less would drop a real value, and for --header
+  // that value can be `Authorization=Bearer …`. Same for the alias `-a`: it is
+  // `--all` (boolean) on `agent session list` but `--client` (string) on `mcp init`,
+  // whose own example is `mcp init -a claude -a codex`.
+  "N", "all", "allow-timeout", "async", "auto-lineage", "batch", "B", "browser",
+  "continue", "c", "dangerously-skip-permissions", "dimension", "dry-run", "force",
+  "fork", "global", "hidden", "include-columns", "include-preview", "include-secret",
+  "index", "keep-profiles", "mine", "open", "partitioned", "persist", "raw", "refresh",
+  "refresh-llm", "remove-from-llm", "rerun", "resolve", "reveal", "sanitize",
+  "save-params", "show-secret", "skip-check", "skip-verify", "snapshot", "stdin",
+  "summary", "sync", "thinking", "truncate", "use", "validate-only", "verbose", "wait",
+  "with-detail", "with-downstream", "with-schema", "with-tables", "write", "yes", "y",
+])
+
+function takesNoValue(key: string): boolean {
+  const name = key.toLowerCase()
+  // `--no-x` is yargs' negation and never carries a value, whatever `x` is declared
+  // as — `--no-limit` on a number option yields 0. No declared option in this tree is
+  // literally named `no-…`, so the prefix is unambiguous.
+  return VALUELESS_FLAGS.has(name) || name.startsWith("no-")
+}
+
+/**
  * Parse raw CLI args into positional tokens and a flag map suitable for telemetry.
  * Expects args already sliced to user-visible tokens (i.e. process.argv.slice(2) or hideBin output).
+ *
+ * Recorded values additionally pass through `redactSql`, the same masking the local
+ * SQL history applies — defence in depth, since it only rewrites literals that look
+ * like PII. What keeps a whole statement out of the flag map is VALUELESS_FLAGS
+ * above: a flag that takes no value no longer claims the token after it.
  */
 export function parseTrackingArgs(rawArgs: string[]): {
   positional: string[]
@@ -79,14 +126,19 @@ export function parseTrackingArgs(rawArgs: string[]): {
     const key = arg.replace(/^-+/, "").toLowerCase()
     const next = rawArgs[i + 1]
     if (!next) continue
-    if (!isSensitiveKey(key) && !isSensitiveValue(next)) continue
+    // The VALUE being a credential (`Cookie=…`, `Authorization=Bearer …`) keeps it out
+    // of _positional regardless of which flag precedes it. Only the flag-NAME half of
+    // the test is skipped for a value-less flag, since such a flag has no value to
+    // claim in the first place.
+    const valueIsSecret = isSensitiveValue(next)
+    if (!valueIsSecret && (takesNoValue(key) || !isSensitiveKey(key))) continue
     secretValues.add(i + 1)
   }
   const positional = rawArgs.filter((arg, i) => !arg.startsWith("-") && !secretValues.has(i))
   const args: Record<string, string> = {}
 
   if (positional.length > 2) {
-    args["_positional"] = positional.slice(2).join(" ")
+    args["_positional"] = redactSql(positional.slice(2).join(" "))
   }
 
   for (let i = 0; i < rawArgs.length; i++) {
@@ -96,7 +148,7 @@ export function parseTrackingArgs(rawArgs: string[]): {
     if (eqIdx > 0) {
       const key = arg.slice(0, eqIdx).replace(/^-+/, "")
       const inlineValue = arg.slice(eqIdx + 1)
-      args[key] = isSensitiveKey(key) || isSensitiveValue(inlineValue) ? "<redacted>" : inlineValue
+      args[key] = isSensitiveKey(key) || isSensitiveValue(inlineValue) ? "<redacted>" : redactSql(inlineValue)
       continue
     }
     const next = rawArgs[i + 1]
@@ -105,9 +157,10 @@ export function parseTrackingArgs(rawArgs: string[]): {
     // `--password -h7Kq…` left the value unclaimed, the next iteration read it as a flag
     // name, and the secret was recorded as an attribute KEY — harder to scrub downstream
     // than a value. `secretValues` marks the same index, so it stays out of _positional.
-    const claimsNext = next !== undefined && (!next.startsWith("-") || secretValues.has(i + 1))
+    const claimsNext =
+      !takesNoValue(key) && next !== undefined && (!next.startsWith("-") || secretValues.has(i + 1))
     if (claimsNext) {
-      args[key] = isSensitiveKey(key) || isSensitiveValue(next!) ? "<redacted>" : next!
+      args[key] = isSensitiveKey(key) || isSensitiveValue(next!) ? "<redacted>" : redactSql(next!)
       i++
       continue
     }

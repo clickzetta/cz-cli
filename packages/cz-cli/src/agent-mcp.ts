@@ -196,10 +196,21 @@ function manifestName(relativePath: string) {
 }
 
 function resolveClickZettaRemote(manifest: ClickZettaRemoteManifest, cliArgs: Partial<CliArgs>): RemoteMcpConfig | undefined {
-  const connection = resolveConnectionConfig({
-    ...cliArgs,
-    profile: manifest.profile ?? cliArgs.profile,
-  })
+  // `manifest.profile` is a field in a config file on disk, not something the caller
+  // typed, so a profile that has since been renamed or deleted must skip THIS entry —
+  // the way a manifest with no usable auth already does — rather than abort the whole
+  // invocation. resolveConnectionConfig rejects an explicitly named missing profile,
+  // and nothing between here and run-cli's injectAgentMcp call would catch it.
+  let connection: ReturnType<typeof resolveConnectionConfig>
+  try {
+    connection = resolveConnectionConfig({
+      ...cliArgs,
+      profile: manifest.profile ?? cliArgs.profile,
+    })
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === "PROFILE_NOT_FOUND") return undefined
+    throw err
+  }
   if (!hasLakehouseAuth(connection) && manifest.enabled !== false) return undefined
   return compactEntry({
     type: "remote",

@@ -1,9 +1,10 @@
 import yargs from "yargs"
 import { VERSION } from "./version.js"
-import { defaultFormat, outputState, parseOutputArgs, renderOutput } from "./output/index.js"
+import { HandledCliError, defaultFormat, outputState, parseOutputArgs, renderErrorOutput } from "./output/index.js"
 import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
 import { suggestClosest } from "./suggest.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
+import { UsageError } from "./usage-error.js"
 
 export interface GlobalArgs {
   profile?: string
@@ -38,25 +39,106 @@ const JSON_ARRAY_OPTIONS = new Set(["--output-tables"])
 export const KNOWN_GLOBAL_FLAGS = ["profile", "p", "jdbc", "pat", "username", "password", "service", "protocol", "instance", "workspace", "schema", "s", "vcluster", "format", "field", "debug", "d", "help", "h", "version", "v", "target", "t"]
 export const KNOWN_TOP_COMMANDS = ["sql", "schema", "table", "workspace", "workspace-param", "status", "auth", "login", "profile", "task", "runs", "attempts", "job", "agent", "serve", "setup", "update", "datasource", "ai-gateway", "analytics-agent", "dqc", "mcp"]
 
+/**
+ * Collapse a repeated scalar option to its last occurrence, leaving options
+ * declared `array: true` alone. See the call site in createCli for why.
+ *
+ * Typed loosely and passed as `never`: yargs' published MiddlewareFunction type
+ * takes only argv, while the runtime also hands in the yargs instance — which is
+ * the only way to learn what the CURRENT subcommand declared as an array.
+ */
+function collapseDuplicateScalars(argv: Record<string, unknown>, instance: unknown): void {
+  const declaredArrays = new Set<string>(readDeclaredArrayKeys(instance))
+  for (const [key, value] of Object.entries(argv)) {
+    // `_` and `--` are yargs' operand lists and `$0` is the script name: all three
+    // are arrays by definition, never a repeated option.
+    if (key === "_" || key === "$0" || key === "--") continue
+    if (Array.isArray(value) && !declaredArrays.has(key) && value.length > 1) {
+      argv[key] = value[value.length - 1]
+    }
+  }
+}
+
+/** yargs' list of keys declared `array: true` on the instance in scope. */
+function readDeclaredArrayKeys(instance: unknown): string[] {
+  try {
+    const options = (instance as { getOptions?: () => Record<string, unknown> } | undefined)?.getOptions?.()
+    const keys = options?.array
+    return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : []
+  } catch {
+    return []
+  }
+}
+
+function isNaNValue(value: unknown): boolean {
+  if (typeof value === "number") return Number.isNaN(value)
+  return Array.isArray(value) && value.some((item) => typeof item === "number" && Number.isNaN(item))
+}
+
+/** `pageSize` → `page-size`, so the error names the flag the user typed. */
+function kebab(key: string): string {
+  return key.replace(/[A-Z]/g, (upper) => `-${upper.toLowerCase()}`)
+}
+
+/** Does `text` begin a JSON array/object literal? */
+function startsJson(text: string): boolean {
+  const trimmed = text.trimStart()
+  return trimmed.startsWith("[") || trimmed.startsWith("{")
+}
+
+/**
+ * Is every bracket `text` opened closed again, ending outside a string? Only what
+ * the fragment merging below needs — "is this value still incomplete", not "is this
+ * valid JSON", which JSON.parse decides later in the command.
+ */
+function isClosedJson(text: string): boolean {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (const char of text) {
+    if (escaped) { escaped = false; continue }
+    if (inString) {
+      if (char === "\\") escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') inString = true
+    else if (char === "[" || char === "{") depth++
+    else if (char === "]" || char === "}") depth--
+  }
+  return !inString && depth === 0
+}
+
 export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
   const result: string[] = []
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!
     const isLongForm = JSON_ARRAY_OPTIONS.has(arg)
-    const isEqForm = !isLongForm && [...JSON_ARRAY_OPTIONS].some((name) => arg.startsWith(name + "="))
-    // Long form needs a value token that is not itself a flag; otherwise leave it for yargs.
-    if (!isEqForm && (!isLongForm || args[i + 1] === undefined || args[i + 1]!.startsWith("-"))) {
+    const eqName = isLongForm ? undefined : [...JSON_ARRAY_OPTIONS].find((name) => arg.startsWith(name + "="))
+    if (!isLongForm && !eqName) {
       result.push(arg)
       continue
     }
-    let value = isLongForm ? args[i + 1]! : arg
+    // Long form needs a value token that is not itself a flag; otherwise leave it for yargs.
+    if (isLongForm && (args[i + 1] === undefined || args[i + 1]!.startsWith("-"))) {
+      result.push(arg)
+      continue
+    }
+    const prefix = eqName ? `${eqName}=` : ""
+    let value = eqName ? arg.slice(prefix.length) : args[i + 1]!
     let j = isLongForm ? i + 2 : i + 1
-    while (j < args.length && !args[j]!.startsWith("-")) {
+    // Absorb following tokens only while the value is an UNCLOSED JSON literal.
+    // Merging every non-flag token instead ate the command's own positional:
+    // `--output-tables '[{"a": 1}]' mytask` (quotes stripped by the caller, so the
+    // JSON arrives split on its inner space) swallowed `mytask`, and the command
+    // then failed with "Not enough non-option arguments". A value that never
+    // started a JSON literal absorbs nothing at all.
+    while (j < args.length && !args[j]!.startsWith("-") && startsJson(value) && !isClosedJson(value)) {
       value += args[j]!
       j++
     }
     if (isLongForm) result.push(arg, value)
-    else result.push(value)
+    else result.push(prefix + value)
     i = j - 1
   }
   return result
@@ -158,6 +240,38 @@ export function createCli(args: string[]) {
       hidden: true,
       default: false,
     })
+    // Repeating a scalar option is a user slip, and yargs' answer to it is an
+    // ARRAY: `--field a --field b` reached extractField as ["a","b"] and crashed
+    // on field.replace, `--protocol http --protocol https` crashed in
+    // normalizeProtocol, and `--profile p1 --profile p2` silently resolved to no
+    // profile at all. Collapse to last-wins here — the GNU convention — but only
+    // for options NOT declared `array: true`, of which this CLI has 15 (`--set`,
+    // `--variable`, `--header`, …) that must keep collecting. yargs' global
+    // `duplicate-arguments-array: false` cannot make that distinction: it would
+    // reduce those to their last element too.
+    //
+    // Runs before validation so `choices` sees the scalar, and takes the yargs
+    // instance from the middleware's 2nd argument, which in a subcommand reports
+    // that subcommand's own declarations.
+    .middleware(collapseDuplicateScalars as never, /* applyBeforeValidation */ true)
+    // A `type: "number"` option fed a non-number becomes NaN, and nothing else in
+    // the CLI checks: `task cron-preview '0 0 * * *' --count abc` answered "0
+    // upcoming runs" for a valid cron, and paginated commands sent `null` for a
+    // page. NaN can only originate from a number-typed option, so no schema is
+    // needed here — a NaN in argv IS a rejected value. check() reports through
+    // the fail handler, i.e. USAGE_ERROR with exit 2, like any other bad value.
+    .check((argv) => {
+      const invalid = new Set<string>()
+      for (const [key, value] of Object.entries(argv)) {
+        if (key === "_" || key === "$0" || key === "--") continue
+        if (isNaNValue(value)) invalid.add(kebab(key))
+      }
+      if (invalid.size > 0) {
+        const names = [...invalid].map((name) => `--${name}`).join(", ")
+        throw new UsageError(`Invalid number value for: ${names}`)
+      }
+      return true
+    })
     .middleware((argv) => {
       const rawArgs = args.map(a => String(a))
       const hasExplicitFormat = rawArgs.some(
@@ -168,7 +282,11 @@ export function createCli(args: string[]) {
     }, /* applyBeforeValidation */ true)
     .strict()
     .fail((msg, err, failYargs) => {
-      if (err) throw err
+      // Our own validators (see the check() above) report through UsageError so
+      // they get the USAGE_ERROR envelope; anything else is a real exception and
+      // must keep propagating rather than being relabelled as bad usage.
+      if (err && !(err instanceof UsageError)) throw err
+      if (err instanceof UsageError) msg = err.message
       // Defensive net: a group built with raw `.demandCommand()` (no commandGroup
       // fail handler of its own, e.g. mcp / some agent.ts subtrees) bubbles its
       // "Missing subcommand for 'X'" failure straight up here. Resolve it like
@@ -180,6 +298,10 @@ export function createCli(args: string[]) {
         failYargs.showHelp((help: string) => process.stdout.write(help + "\n"))
         throw new SubcommandHelpShown()
       }
+      // A UsageError carries OUR message, already complete. Running it through the
+      // scan below could append "Did you mean '--limit'?" to a message about a
+      // perfectly valid flag, because the scan only looks at the raw tokens.
+      const selfReported = err instanceof UsageError
       const KNOWN_FLAGS = KNOWN_GLOBAL_FLAGS
       const KNOWN_COMMANDS = KNOWN_TOP_COMMANDS
       const knownFlagSet = new Set(KNOWN_FLAGS)
@@ -190,13 +312,15 @@ export function createCli(args: string[]) {
       let badToken: string | undefined
       let suggestion: string | undefined
       let isFlag = false
-      const unknownFlags = args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => a && !knownFlagSet.has(a))
+      const unknownFlags = selfReported
+        ? []
+        : args.filter((a) => a.startsWith("-")).map((a) => a.replace(/^-+/, "").split("=")[0]).filter((a) => a && !knownFlagSet.has(a))
       if (unknownFlags.length > 0) {
         isFlag = true
         badToken = unknownFlags[0]
         const hit = suggestClosest(badToken!, KNOWN_FLAGS.filter((f) => f.length > 1))
         if (hit) suggestion = `--${hit}`
-      } else {
+      } else if (!selfReported) {
         const topLevelCmd = args.find((a) => !a.startsWith("-"))
         if (topLevelCmd !== undefined && !knownCommandSet.has(topLevelCmd)) {
           badToken = topLevelCmd
@@ -215,12 +339,18 @@ export function createCli(args: string[]) {
       const outputArgs = parseOutputArgs(args)
       const errorObj: Record<string, unknown> = { code: "USAGE_ERROR", message }
       if (suggestion) errorObj.did_you_mean = suggestion
-      const output = renderOutput({
+      // renderErrorOutput, not renderOutput: a usage error must look like every
+      // other error in the chosen format — `ERROR USAGE_ERROR: …` under
+      // text/csv/table/jsonl, JSON under json/pretty/toon.
+      const output = renderErrorOutput({
         error: errorObj,
         ai_message: aiMessage,
       }, outputArgs.format, outputArgs.field)
       process.stdout.write(output + "\n")
       process.exitCode = 2
-      throw new Error(msg ?? "usage error")
+      // HandledCliError, not a bare Error: the envelope above IS the report, and a
+      // catch further out (runCliWithTracking's last-resort envelope, runLlm's
+      // stderr line) must be able to tell "already reported" from a real exception.
+      throw new HandledCliError("USAGE_ERROR", message)
     })
 }
