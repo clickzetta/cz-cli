@@ -578,6 +578,9 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
                     ? `Datasource type ${dsType} does not require CDC prerequisite checks.`
                     : `${ds.name} CDC prerequisites met. Proceed to: cz-cli task create-realtime-sync <name> --folder <folder> --source ${ds.name} --database <db> --target <lakehouse_ds>`)
               : result.message
+            // No rowsKey: `ready` is the verdict this command exists to deliver, and a
+            // projected list drops its scalar siblings. One row carrying the verdict
+            // beats a table of checks with no overall answer.
             success({ datasource: ds.name, ds_type: dsType, checks: result.checks, ready: result.ok }, {
               format, aiMessage: aiMsg,
             })

@@ -27,6 +27,28 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // which is a second, easy-to-miss place that formula could drift from
   // Profile.current()'s (see commands/workspace.ts's history for exactly that).
   const profileName = cliArgs.profile ?? Profile.current()
+  // A profile the caller NAMED but that does not exist is a typo, and it used to
+  // pass silently: the entry read as undefined, every field fell back to env or
+  // defaults, and the user was told "Authentication required. Run cz-cli auth
+  // login" — sending them to re-authenticate over a misspelled name. The
+  // NO_PROFILE gate cannot catch this; it only asks whether profiles.toml has any
+  // [profiles.*] at all. `profile use <name>` has always reported this correctly,
+  // so the connection path now uses the same code.
+  // Deliberately only the EXPLICIT argument, not Profile.current():
+  //   - CZ_PROFILE is the CLI's own channel, and run-cli.ts checks it there for the
+  //     commands that connect. Throwing on it here would also hit the callers that
+  //     merely read a config — the TUI quota sidebar, gateway-prompt, agent-mcp,
+  //     studio-context — where an inherited stale value should degrade, not throw.
+  //   - a stale `default_profile` is the tool's own bookkeeping, not a user typo, and
+  //     wants a different message; it stays out of scope rather than being reported
+  //     as if the caller had named it.
+  const requestedProfile = cliArgs.profile
+  if (requestedProfile && !readProfileEntry(requestedProfile)) {
+    throw new InterfaceError(
+      `Profile '${requestedProfile}' not found in ~/.clickzetta/profiles.toml. Run \`cz-cli profile list\` to see the configured profiles.`,
+      { code: "PROFILE_NOT_FOUND" },
+    )
+  }
   const profileCfg = getProfileConfig(profileName) ?? (profileName ? undefined : getProfileConfig())
   const ambient = ConnectionEnv.read()
   const jdbcCfg = cliArgs.jdbcUrl ? parseJdbcUrl(cliArgs.jdbcUrl) : undefined
@@ -46,7 +68,13 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   const nonAuthKeys = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
   for (const key of nonAuthKeys) {
     const val = cliArgs[key]
-    if (val !== undefined && val !== null) {
+    // An EMPTY value is not a value. `--workspace` with nothing after it (yargs
+    // hands us "") used to overwrite the profile's workspace with "", and the
+    // command then reported "Workspace is required. Provide --workspace or
+    // configure it in your profile" — about the flag the user had just passed.
+    // Treat it as absent, which is what every other CLI does with an empty
+    // operand, and let the profile keep its value.
+    if (val !== undefined && val !== null && String(val).trim() !== "") {
       cfg[key] = val
     }
   }

@@ -2,7 +2,7 @@ import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
 import { splitSql, stripLeadingComment, JobStatus, request, requestRaw, getCurrentUser, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error, parseOutputArgs, renderOutput } from "../output/index.js"
+import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
@@ -24,6 +24,8 @@ const DEFAULT_ROW_LIMIT = 100
 
 interface SqlArgs extends GlobalArgs {
   statement?: string
+  /** yargs' operand list: the command word, then anything after `--`. */
+  _?: unknown[]
   write: boolean
   "with-schema": boolean
   "truncate": boolean
@@ -234,9 +236,33 @@ async function applyUseStatement(
 }
 
 function resolveSql(argv: SqlArgs): string {
-  if (argv.file) return readFileSync(argv.file, "utf-8")
-  if (argv.execute) return argv.execute
+  // Priority is the one this command's own --help documents:
+  //   positional > -e/--execute > -f/--file > --stdin
+  // It used to read --file first, so `cz-cli sql "select 1" -f other.sql` silently
+  // ran the file and ignored the statement the user typed.
   if (argv.statement) return argv.statement
+  // Operands after `--`: the escape hatch for a statement that starts with `-`.
+  // yargs appends them to `_` after the command word, where no declared positional
+  // picks them up — hence reading them here. Deliberately NOT via yargs'
+  // `populate--`, which diverts them into `argv["--"]` for the WHOLE tree and would
+  // stop `cz-cli profile create -- myname` from binding its positional.
+  const operands = Array.isArray(argv._) ? argv._.slice(1).map(String) : []
+  if (operands.length > 0) return operands.join(" ")
+  if (argv.execute) return argv.execute
+  if (argv.file) {
+    try {
+      return readFileSync(argv.file, "utf-8")
+    } catch (err) {
+      // An unreadable path is a user error with a name, not an ENOENT stack: this
+      // read sits outside the handler's try, so the exception used to escape and
+      // print nothing on stdout at all.
+      handledError(
+        "FILE_READ_ERROR",
+        `Cannot read SQL from --file '${argv.file}': ${err instanceof Error ? err.message : String(err)}`,
+        { format: argv.format },
+      )
+    }
+  }
   if (argv.stdin || !process.stdin.isTTY) {
     const chunks: Buffer[] = []
     const fd = openSync("/dev/stdin", "r")
@@ -568,7 +594,9 @@ async function handler(argv: SqlArgs): Promise<void> {
   const sigintHandler = () => {
     const payload: Record<string, unknown> = { error: { code: "ABORTED", message: "Execution interrupted by user." } }
     if (currentJobId) payload.job_id = currentJobId
-    process.stdout.write(renderOutput(payload, format, parseOutputArgs(process.argv.slice(2)).field) + "\n")
+    // renderErrorOutput, like every other failure: under a row format this is
+    // `ERROR ABORTED: …` rather than a JSON blob (see its docstring).
+    process.stdout.write(renderErrorOutput(payload, format, parseOutputArgs(process.argv.slice(2)).field) + "\n")
     process.exit(130)
   }
   process.on("SIGINT", sigintHandler)
@@ -596,7 +624,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           return { sql: stmt, status: "error", error: await formatClassifiedError({ code, message, ctx: dryRunCtx, profileName: argv.profile }) }
         }
       }))
-      success({ statements: results, count: statements.length }, { format })
+      success({ statements: results, count: statements.length }, { format, rowsKey: "statements" })
       return
     }
     ctx = await getExecContext(argv)
@@ -743,7 +771,8 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
                 "  cz-cli sql -f query.sql --no-limit",
                 "  cz-cli sql \"SELECT * FROM huge_table\" --async",
                 "",
-                "SQL input priority: positional > -e/--execute > -f/--file > --stdin",
+                "SQL input priority: positional > `--` operands > -e/--execute > -f/--file > --stdin",
+                "  Use `--` when the statement itself starts with a dash: cz-cli sql -- \"-- note\\nSELECT 1\"",
                 "Default mode is sync (waits for results). Use --async for large/long-running queries.",
                 "",
                 "Statement splitting is on by default. To submit SQL verbatim when a single",

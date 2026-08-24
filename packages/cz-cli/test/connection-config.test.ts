@@ -95,3 +95,93 @@ test("resolveConnectionConfig honors CZ_PROFILE before falling back to default p
   expect(config.instance).toBe("clickzetta")
   expect(config.workspace).toBe("czcli")
 })
+
+/**
+ * A profile the caller NAMED but that is not in profiles.toml. This used to read as
+ * undefined and let every field fall through to env/defaults, so the user got
+ * "Authentication required. Run cz-cli auth login" for what was a misspelled name.
+ * The CLI reports this at its boundary (run-cli.ts); these cover the library path
+ * that programmatic callers — execute(), the MCP server — go through.
+ */
+test("resolveConnectionConfig rejects an explicitly named profile that does not exist", async () => {
+  process.env.HOME = home
+  process.env.CLICKZETTA_TEST_HOME = home
+  delete process.env.CZ_PROFILE
+  delete process.env.CZ_ENV_DERIVED
+
+  const { resolveConnectionConfig } = await import(`../src/connection/config.ts?${Date.now()}`)
+  try {
+    resolveConnectionConfig({ profile: "ghost" })
+    throw new Error("expected PROFILE_NOT_FOUND")
+  } catch (err) {
+    expect((err as { code?: string }).code).toBe("PROFILE_NOT_FOUND")
+    expect((err as Error).message).toContain("ghost")
+  }
+})
+
+/**
+ * A stale CZ_PROFILE is deliberately NOT rejected here. run-cli.ts checks it for the
+ * commands that connect, while this function is also reached by callers that merely
+ * read a config — the TUI quota sidebar, gateway-prompt, agent-mcp, studio-context —
+ * where an inherited value that no longer resolves should degrade, not throw.
+ */
+test("resolveConnectionConfig tolerates a stale CZ_PROFILE (the CLI reports that)", async () => {
+  process.env.HOME = home
+  process.env.CLICKZETTA_TEST_HOME = home
+  process.env.CZ_PROFILE = "ghost"
+  delete process.env.CZ_ENV_DERIVED
+  for (const name of ["CZ_PAT", "CZ_USERNAME", "CZ_PASSWORD", "CZ_SERVICE", "CZ_INSTANCE", "CZ_WORKSPACE", "CZ_SCHEMA", "CZ_VCLUSTER"]) {
+    delete process.env[name]
+  }
+
+  const { resolveConnectionConfig } = await import(`../src/connection/config.ts?${Date.now()}`)
+  expect(() => resolveConnectionConfig({})).not.toThrow()
+  delete process.env.CZ_PROFILE
+})
+
+test("resolveConnectionConfig still accepts an invocation that names no profile", async () => {
+  process.env.HOME = home
+  process.env.CLICKZETTA_TEST_HOME = home
+  delete process.env.CZ_PROFILE
+  delete process.env.CZ_ENV_DERIVED
+  // The first test in this file exports a full CZ_* set; those sit ABOVE the profile
+  // in the priority order, so they have to go before asserting on profile values.
+  for (const name of ["CZ_PAT", "CZ_USERNAME", "CZ_PASSWORD", "CZ_SERVICE", "CZ_INSTANCE", "CZ_WORKSPACE", "CZ_SCHEMA", "CZ_VCLUSTER"]) {
+    delete process.env[name]
+  }
+
+  const { resolveConnectionConfig } = await import(`../src/connection/config.ts?${Date.now()}`)
+  expect(resolveConnectionConfig({}).instance).toBe("test-instance")
+})
+
+/**
+ * An empty value is not a value: `--workspace` with nothing after it arrives here as
+ * "" and used to overwrite the profile, after which the command complained that the
+ * workspace was missing — about the flag the user had just passed.
+ */
+test("resolveConnectionConfig treats an empty override as absent, keeping the profile's value", async () => {
+  process.env.HOME = home
+  process.env.CLICKZETTA_TEST_HOME = home
+  delete process.env.CZ_PROFILE
+  delete process.env.CZ_ENV_DERIVED
+  for (const name of ["CZ_PAT", "CZ_USERNAME", "CZ_PASSWORD", "CZ_SERVICE", "CZ_INSTANCE", "CZ_WORKSPACE", "CZ_SCHEMA", "CZ_VCLUSTER"]) {
+    delete process.env[name]
+  }
+
+  const { resolveConnectionConfig } = await import(`../src/connection/config.ts?${Date.now()}`)
+  const config = resolveConnectionConfig({ workspace: "", instance: "  ", schema: "" })
+  expect(config.workspace).toBe("qa_test_prj01")
+  expect(config.instance).toBe("test-instance")
+  expect(config.schema).toBe("tianzhu")
+})
+
+test("resolveConnectionConfig still applies a non-empty override", async () => {
+  process.env.HOME = home
+  process.env.CLICKZETTA_TEST_HOME = home
+  delete process.env.CZ_PROFILE
+  delete process.env.CZ_ENV_DERIVED
+  for (const name of ["CZ_INSTANCE", "CZ_WORKSPACE", "CZ_SCHEMA"]) delete process.env[name]
+
+  const { resolveConnectionConfig } = await import(`../src/connection/config.ts?${Date.now()}`)
+  expect(resolveConnectionConfig({ workspace: "other_ws" }).workspace).toBe("other_ws")
+})

@@ -200,7 +200,15 @@ function runList(argv: GlobalArgs): void {
       }
     })
 
-    success({ sessions, active_session: activeSession ?? null, active_profile: activeProfile ?? null }, { format })
+    // `rowsKey` tells the row-oriented formats (text/table/csv/jsonl) that the
+    // sessions array is the table, which is what `--format text` used to get wrong
+    // — it printed one row whose first cell was the whole list as JSON. The JSON
+    // shape stays exactly as it was, so `.data.sessions` and `--field sessions`
+    // keep working; reshaping the payload instead would have broken both.
+    success(
+      { sessions, active_session: activeSession ?? null, active_profile: activeProfile ?? null },
+      { format, rowsKey: "sessions" },
+    )
   } catch (err) {
     error("INTERNAL_ERROR", err instanceof Error ? err.message : String(err), { format })
   }

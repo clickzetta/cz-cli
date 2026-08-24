@@ -1,8 +1,9 @@
 import type { Argv } from "yargs"
 import { suggestClosest } from "./suggest.js"
-import { parseOutputArgs, renderOutput } from "./output/index.js"
+import { HandledCliError, parseOutputArgs, renderErrorOutput } from "./output/index.js"
 import { KNOWN_GLOBAL_FLAGS, INVOCATION_ARGS_KEY } from "./cli.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
+import { UsageError } from "./usage-error.js"
 
 // Re-exported so the opencode agent runtime (which imports commandGroup from
 // this module) can catch the sentinel at its own parse boundaries. See
@@ -32,7 +33,10 @@ export function commandGroup<T>(yargs: Argv<T>, commandName: string): Argv<T> {
     .strictCommands()
     .strictOptions()
     .fail((msg, err, failYargs) => {
-      if (err) throw err
+      // See cli.ts's fail handler: UsageError is our own validation speaking, so
+      // it renders as USAGE_ERROR; every other error keeps propagating.
+      if (err && !(err instanceof UsageError)) throw err
+      if (err instanceof UsageError) msg = err.message
 
       // A bare group invocation (`cz-cli ai-gateway`, `cz-cli ai-gateway key`)
       // is not a user error — the caller has not yet chosen a subcommand. Treat
@@ -94,13 +98,16 @@ export function commandGroup<T>(yargs: Argv<T>, commandName: string): Argv<T> {
       const errorObj: Record<string, unknown> = { code: "USAGE_ERROR", message: displayMsg }
       if (suggestion) errorObj.did_you_mean = suggestion
       const outputArgs = parseOutputArgs(outputArgsSource)
-      const output = renderOutput({
+      // Same renderer error() uses, so a usage error and a business error have
+      // one shape per format (see renderErrorOutput's docstring).
+      const output = renderErrorOutput({
         error: errorObj,
         ai_message: finalAi,
       }, outputArgs.format, outputArgs.field)
       process.stdout.write(output + "\n")
       process.exitCode = 2
-      throw new Error(displayMsg)
+      // See cli.ts's fail handler: the marker says "already reported".
+      throw new HandledCliError("USAGE_ERROR", displayMsg)
     })
     .demandCommand(1, humanMsg)
 }

@@ -506,7 +506,7 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
             pageSize: argv["page-size"] as number,
           })
           logOperation("task cdc list", { ok: true })
-          success({ tasks: resp.data }, { format })
+          success({ tasks: resp.data }, { format, rowsKey: "tasks" })
         } catch (err) {
           reportTaskError(err, format)
         }
@@ -535,7 +535,7 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
             pageSize: argv["page-size"] as number,
           })
           logOperation("task cdc tables", { ok: true })
-          success({ task_id: fileId, tables: resp.data }, { format })
+          success({ task_id: fileId, tables: resp.data }, { format, rowsKey: "tables" })
         } catch (err) {
           reportTaskError(err, format)
         }
@@ -4202,6 +4202,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             logOperation("task cron-preview", { ok: true })
             success({ cron: cronExpress, next_runs, count: next_runs.length }, {
               format,
+              rowsKey: "next_runs",
               aiMessage: `Next ${next_runs.length} scheduled run times for cron: ${cronExpress}`,
             })
           } catch (err) {

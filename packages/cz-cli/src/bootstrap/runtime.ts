@@ -7,9 +7,52 @@ import { flushOtel } from "../opencode-plugin/otel/index.js"
 import { flushLangfuse, initLangfuse } from "../langfuse.js"
 import { CLICKZETTA_AGENT_SYSTEM_PROMPT } from "../agent-system-prompt.js"
 import { parseAgentTimeoutMs } from "./runtime-config.js"
+import { KNOWN_GLOBAL_FLAGS } from "../cli.js"
 import { applyBaseOpencodeEnv, applyAgentRuntimeInjection } from "./opencode-injection.js"
 
 let globalHandlersRegistered = false
+
+/**
+ * The cz global flags that reach `cz-cli serve`'s own parser, as hidden no-ops.
+ *
+ * Built from cli.ts's KNOWN_GLOBAL_FLAGS — the single list the top-level parser and
+ * both fail handlers already use — so adding a global there cannot silently start
+ * failing `serve`. `help`/`version` are declared separately above with their real
+ * behavior, and the short aliases are declared as their own entries because they
+ * arrive un-canonicalized on this path.
+ */
+function serveInheritedGlobals(): Record<string, { type: "string" | "boolean"; hidden: true }> {
+  const booleans = new Set(["debug", "d"])
+  const skip = new Set(["help", "h", "version", "v"])
+  const options: Record<string, { type: "string" | "boolean"; hidden: true }> = {}
+  for (const flag of KNOWN_GLOBAL_FLAGS) {
+    if (skip.has(flag)) continue
+    options[flag] = { type: booleans.has(flag) ? "boolean" : "string", hidden: true }
+  }
+  return options
+}
+
+/** The logging flags `cz-cli serve` accepts, mirroring upstream's root parser. */
+export interface ServeLogFlags {
+  "print-logs"?: boolean
+  "log-level"?: string
+  pure?: boolean
+}
+
+/**
+ * cz_change: wire `cz-cli serve`'s logging flags to the env vars opencode reads.
+ *
+ * These three are declared on upstream's ROOT parser (opencode's index.ts), which
+ * `cz-cli serve` never goes through, so before this they were accepted and did
+ * nothing — and could not be rejected either, because turning on .strict() without
+ * declaring them would have failed a documented invocation. Exported so a test can
+ * assert the wiring without starting a server.
+ */
+export function applyServeLogFlags(flags: ServeLogFlags): void {
+  if (flags["print-logs"]) process.env.OPENCODE_PRINT_LOGS = "1"
+  if (flags["log-level"]) process.env.OPENCODE_LOG_LEVEL = String(flags["log-level"])
+  if (flags.pure) process.env.OPENCODE_PURE = "1"
+}
 
 export async function main(args: string[], agentRuntime = false): Promise<number> {
   // cz_change: apply the base opencode env injection (kill upstream auto-updater,
@@ -118,11 +161,35 @@ export async function main(args: string[], agentRuntime = false): Promise<number
     ])
     await yargs(args)
       .scriptName("cz-cli")
+      // cz_change: same invariant as src/cli.ts — yargs' built-in messages must
+      // not localize to the shell's LANG, or a caller parsing them (and
+      // test/robustness.test.ts) sees Chinese on a zh_CN machine.
+      .locale("en")
       .help("help", "show help")
       .alias("help", "h")
       .version("version", "show version number", InstallationVersion)
       .alias("version", "v")
       .command(ServeCommand)
+      // cz_change: these three belong to upstream's ROOT parser (opencode's
+      // index.ts), which `cz-cli serve` never goes through — so they used to be
+      // accepted and do nothing. Declared here, wired to the same env vars
+      // upstream's middleware sets, which is also what lets .strict() below reject
+      // a real typo: `serve --prot 8080` silently started on the default port
+      // (which is 0, i.e. a random one) instead of reporting the flag.
+      .option("print-logs", { type: "boolean", describe: "print logs to stderr" })
+      .option("log-level", { type: "string", choices: ["DEBUG", "INFO", "WARN", "ERROR"], describe: "log level" })
+      .option("pure", { type: "boolean", describe: "run without external plugins" })
+      // cz_change: `serve` is in run-cli.ts's RUNTIME_COMMANDS, so the outer layer has
+      // ALREADY read the cz global flags off this same argv — the connection ones
+      // select the lakehouse the served agent connects as (via ConnectionEnv), and
+      // `--format` is re-inserted after the command word by normalizeCliArgs. They all
+      // still arrive here, so .strict() below would reject invocations that work
+      // today. Declared from the CLI's own list rather than by hand so the two cannot
+      // drift, hidden and unused because the values are consumed before this parser
+      // ever sees them — the same thing runLlm does for `--profile`.
+      .options(serveInheritedGlobals())
+      .middleware((opts) => applyServeLogFlags(opts as ServeLogFlags), true)
+      .strict()
       .demandCommand(1, "")
       .parseAsync()
     return (process.exitCode as number) ?? 0
@@ -291,6 +358,10 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   const cli = yargs(agentArgs)
     .parserConfiguration({ "populate--": true })
     .scriptName("cz-cli agent")
+    // cz_change: pin English, as src/cli.ts does. Without it the agent subtree
+    // answered `agent session list --format csv` with "无效的选项值：…" on a
+    // zh_CN machine while the rest of the CLI stayed English.
+    .locale("en")
     .wrap(100)
     .help("help", "show help")
     .alias("help", "h")

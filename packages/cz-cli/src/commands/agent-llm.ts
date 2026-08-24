@@ -1,6 +1,7 @@
 import type { Argv, CommandModule } from "yargs"
 import { ModelsCommand } from "opencode/cli/cmd/models"
-import { commandGroup } from "../command-group.js"
+import { commandGroup, SubcommandHelpShown } from "../command-group.js"
+import { isHandledCliError } from "../output/index.js"
 import {
   clearActiveModel,
   readLlmEntries,
@@ -857,6 +858,9 @@ export async function runLlm(args: readonly string[]): Promise<never> {
   try {
     await yargs(args)
       .scriptName("cz-cli agent")
+      // cz_change: pin English, as src/cli.ts does — this subtree runs on its own
+      // parser and used to localize its usage errors to the shell's LANG.
+      .locale("en")
       // cz_change: `llm` runs on its own parser (runtime.ts dispatches to it before
       // the main agent yargs is built), so the global --profile/-p must be declared
       // here too or it fails as an unknown option. It is not decorative: the
@@ -890,8 +894,19 @@ export async function runLlm(args: readonly string[]): Promise<never> {
       .help("help", "show help")
       .alias("help", "h")
       .parseAsync()
-  } catch (error) {
-    process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`)
+  } catch (err) {
+    // A bare group (`cz-cli agent llm`) renders its own help and throws this
+    // sentinel: help was SHOWN, so it exits 0 like every other group in the CLI.
+    // It used to land in the generic branch below and print
+    // "Error: subcommand help shown" with exit 1.
+    if (err instanceof SubcommandHelpShown) process.exit(0)
+    // commandGroup's fail handler has already written the USAGE_ERROR envelope and
+    // set the exit code; repeating the message on stderr just double-reports it.
+    // Keyed on the error being MARKED as reported, not on `process.exitCode` being
+    // set — a subcommand that reports one failure through error() and then throws
+    // something unrelated would otherwise exit silently on both streams.
+    if (isHandledCliError(err)) process.exit((process.exitCode as number) || 1)
+    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`)
     process.exit(1)
   }
   process.exit(0)
