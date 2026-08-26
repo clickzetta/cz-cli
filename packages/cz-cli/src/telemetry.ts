@@ -46,7 +46,7 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
  * `X-Api-Key=…` are the same hazard as `Cookie=…`. `eqIdx > 0` keeps a SQL statement
  * intact — in `select * from t where id=1` the part before `=` is not a credential name.
  */
-function isSensitiveValue(value: string): boolean {
+export function isSensitiveValue(value: string): boolean {
   const eqIdx = value.indexOf("=")
   return eqIdx > 0 && isSensitiveKey(value.slice(0, eqIdx).trim())
 }

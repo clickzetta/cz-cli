@@ -1,7 +1,14 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import type { Event } from "@opencode-ai/sdk"
 import { initOtelSdk, type OtelSdk } from "./setup"
-import { handleEvent, initHandlers, shutdown as shutdownHandlers } from "./handlers"
-import { getCurrentSessionTraceparent } from "./context"
+import {
+  handleEvent,
+  initHandlers,
+  recordInputMessages,
+  recordSystemInstructions,
+  shutdown as shutdownHandlers,
+} from "./handlers"
+import { getSessionTraceparent } from "./context"
 import { createTraceparent } from "./traceparent"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Flag } from "@opencode-ai/core/flag/flag"
@@ -50,7 +57,21 @@ export const OtelPlugin: Plugin = Object.assign(
 
     if (sdk) {
       initHandlers(sdk.logger, process.env.OPENCODE_OTEL_RECORD_CONTENT !== "0")
-      const flush = () => sdk!.shutdown().catch(() => {})
+      // End the spans still open before the SDK stops accepting them: without this the
+      // turn, step and tool spans live at exit are dropped rather than exported late.
+      // One-shot: `flush` now wipes handler state as well as stopping the SDK, and
+      // `beforeExit` can fire more than once because this handler itself schedules async
+      // work. A second run would leave spans being created against a shut-down SDK and
+      // silently dropped.
+      let flushed: Promise<void> | undefined
+      const flush = () => {
+        if (flushed) return flushed
+        try {
+          shutdownHandlers()
+        } catch {}
+        flushed = sdk!.shutdown().catch(() => {})
+        return flushed
+      }
       globalFlush = flush
       ;(globalThis as any).__otelFlush = flush
       process.on("beforeExit", flush)
@@ -59,11 +80,33 @@ export const OtelPlugin: Plugin = Object.assign(
     }
 
     return {
-      async event({ event }: { event: { type: string; properties: Record<string, any> } }) {
+      // Typed from the published union rather than widened to `{ type: string }`, which is
+      // what allowed a subscription to a nonexistent event name to compile.
+      async event({ event }: { event: Event }) {
         handleEvent(event)
       },
-      async "shell.env"(_input: unknown, output: { env: Record<string, string> }) {
-        const sessionTp = getCurrentSessionTraceparent()
+      // The prompt as it is about to be sent. Both hooks fire per step, before the LLM
+      // call, so the `chat` span can carry the content from the moment it opens. This is
+      // the channel the pre-rebaseline handler got from an upstream patch on llm.ts; these
+      // hooks make it a cz-layer read instead.
+      async "experimental.chat.messages.transform"(
+        _input: unknown,
+        output: { messages: Array<{ info?: Record<string, any>; parts?: Record<string, any>[] }> },
+      ) {
+        recordInputMessages(output?.messages ?? [])
+      },
+      async "experimental.chat.system.transform"(
+        input: { sessionID?: string; model?: unknown },
+        output: { system: string[] },
+      ) {
+        recordSystemInstructions(input?.sessionID, output?.system ?? [])
+      },
+      async "shell.env"(
+        input: { cwd: string; sessionID?: string; callID?: string },
+        output: { env: Record<string, string> },
+      ) {
+        // The shell and task tools both supply sessionID; only the pty paths omit it.
+        const sessionTp = getSessionTraceparent(input?.sessionID)
         if (sessionTp) output.env.CLICKZETTA_TRACEPARENT = createTraceparent(sessionTp)
       },
     }

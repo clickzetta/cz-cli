@@ -6,6 +6,7 @@ export const ClickzettaOutboundHeadersPlugin: Plugin = async (_input: PluginInpu
   "chat.headers": async (input, output) => {
     const baseURL = typeof input.provider?.options?.["baseURL"] === "string" ? input.provider.options["baseURL"] : undefined
     if (!isClickzettaGatewayUrl(baseURL)) return
-    output.headers.traceparent = currentTraceparent()
+    // `sessionID` is required on this hook, so the header carries this session own trace.
+    output.headers.traceparent = currentTraceparent(input.sessionID)
   },
 })
