@@ -1,12 +1,43 @@
 import { context, trace, TraceFlags, type Span, type SpanContext } from "@opentelemetry/api"
 import { serializeTraceparent } from "./traceparent"
 
+//: Per-session turn spans, so a consumer that knows its sessionID gets its own trace
+//: rather than whichever session happened to fill the single slot below first.
+const sessionSpanContexts = new Map<string, SpanContext>()
 let currentSessionSpanContext: SpanContext | undefined
 let currentLlmSpan: Span | undefined
 let rawRequestCaptureEnabled = true
 
 export function setCurrentSessionSpanContext(spanContext: SpanContext | undefined) {
   currentSessionSpanContext = spanContext
+}
+
+export function setSessionSpanContext(sessionID: string, spanContext: SpanContext | undefined) {
+  if (!sessionID) return
+  if (spanContext) sessionSpanContexts.set(sessionID, spanContext)
+  else sessionSpanContexts.delete(sessionID)
+}
+
+function serialize(spanContext: SpanContext) {
+  return serializeTraceparent({
+    version: "00",
+    traceId: spanContext.traceId,
+    spanId: spanContext.spanId,
+    flags: spanContext.traceFlags === TraceFlags.SAMPLED ? "01" : "00",
+  })
+}
+
+/**
+ * Traceparent for a named session, falling back to the process-wide slot only when the
+ * caller has no sessionID — the pty paths, where a missing parent is the honest answer.
+ * Everything else (`chat.headers`, `shell.env` from the shell and task tools) does know
+ * its session, and handing it another session's trace is worse than handing it none.
+ */
+export function getSessionTraceparent(sessionID?: string): string | undefined {
+  const own = sessionID ? sessionSpanContexts.get(sessionID) : undefined
+  if (own) return serialize(own)
+  if (sessionID) return undefined
+  return currentSessionSpanContext ? serialize(currentSessionSpanContext) : undefined
 }
 
 export function setCurrentLlmSpan(span: Span | undefined) {
@@ -50,14 +81,8 @@ export function getSessionSpanRef(): { traceId: string; spanId: string } | undef
   return { traceId: currentSessionSpanContext.traceId, spanId: currentSessionSpanContext.spanId }
 }
 
-export function getCurrentSessionTraceparent(): string | undefined {
-  if (!currentSessionSpanContext) return undefined
-  return serializeTraceparent({
-    version: "00",
-    traceId: currentSessionSpanContext.traceId,
-    spanId: currentSessionSpanContext.spanId,
-    flags: currentSessionSpanContext.traceFlags === TraceFlags.SAMPLED ? "01" : "00",
-  })
+export function clearSessionSpanContexts() {
+  sessionSpanContexts.clear()
 }
 
 export function getSessionOtelContext() {
