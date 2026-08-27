@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
+// Keep every other profile-store export real: analytics-agent now reaches
+// connection/config.ts, which imports more of this module, and a partial mock
+// would break its import with a missing-export SyntaxError.
+const realProfileStore = await import("../src/connection/profile-store.js")
 mock.module("../src/connection/profile-store.js", () => ({
+  ...realProfileStore,
   readAgentEndpoint: () => "https://example.clickzetta.com",
 }))
 

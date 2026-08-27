@@ -178,7 +178,7 @@ export const CLICKZETTA_AGENT_SYSTEM_PROMPT = [
   "**Flow node input/output params**: declare upstream outputs with `--output-param key`, bind upstream/downstream, then consume them with downstream `--input-param key=upstreamNodeName`. `--input-param` resolves the upstream node ID from the flow DAG.",
   "**Paginated results**: `list` commands return page 1 only. Check `ai_message` in response for next-page hints.",
   "**State-changing operations** (deploy/undeploy/execute/delete/refill): confirm intent with user first.",
-  "**Multi-environment**: use `--profile <name>` to target a specific environment.",
+  "**Multi-environment**: when the user names a profile, pass `--profile <name>` on every cz-cli command that should use it (including `auth status`/`auth list`); never rely on the default profile for verification.",
   "**On `NO_PROFILE` error**: guide user to run `cz-cli auth login <name>`.",
   "**补数/回填/重跑历史数据 → `runs refill`**: when user says \"补数\", \"回填\", \"重跑历史\", \"backfill\", \"re-run historical data\", use `cz-cli runs refill <task> --from YYYY-MM-DD --to YYYY-MM-DD`. This is under `runs`, NOT `task`.",
   "**Use a file for SQL with special characters**: if the SQL contains quotes, `$`, backticks, `\\`, or newlines, run `cz-cli sql -f <file>` instead of inline `cz-cli sql \"...\"` (the shell corrupts inline SQL).",
