@@ -529,21 +529,3 @@ Examples:
 > - `fs rm` 不会执行 `DROP VOLUME`，Volume 对象、权限和配置仍然保留。
 > - 禁止删除本地文件系统根目录、Volume 根目录以及未解析到具体文件/子目录的路径。
 > - 删除目录前建议先执行同一路径的 `fs ls -R` 或 `fs rm -R --dry-run`。
-
-## 代码翻译与落地路径
-
-实现路线已经确定：把 Python Connector 的 `_fsutil` 行为翻译为 TypeScript，落到 `packages/clickzetta-sdk`，再由 `packages/cz-cli` 注册和调用 `fs` 命令。不是扩展或复用 OpenCode 的 `packages/protocol/src/groups/fs.ts`、`packages/server/src/handlers/fs.ts`；那套 `server.fs` 是 Location-scoped 本地文件系统 API，与 Lakehouse Volume 不是同一个边界。
-
-翻译时按以下顺序对齐：
-
-| 路径 | 参考内容 |
-| --- | --- |
-| `/Users/zhanglin/IdeaProjects/clickzetta-java/clickzetta-connector-python/clickzetta/connector/v0/_fsutil/fsutil.py` | `FsUtil` 对外暴露的 `cp`、`head`、`ls`、`mkdirs`、`mv`、`rm` 接口，以及 `recurse` 参数语义 |
-| `/Users/zhanglin/IdeaProjects/clickzetta-java/clickzetta-connector-python/clickzetta/connector/v0/_fsutil/volume_path.py` | `volume://`、`volume:user://`、`volume:table://`、`czfs:/Volumes/` 路径解析；Volume API 的列目录、读写、创建目录和删除逻辑 |
-| `/Users/zhanglin/IdeaProjects/clickzetta-java/clickzetta-connector-python/tests/unit/test_volume_path.py` | 路径格式、User/Named/Table Volume 解析及边界测试 |
-| `/Users/zhanglin/IdeaProjects/clickzetta-java/clickzetta-connector-python/tests/e2e/_fsutil/test_volume_path.py` | 本地与 Volume 互拷、Volume 间复制/移动、递归目录复制、嵌套路径写入等可执行用例 |
-| `/Users/zhanglin/IdeaProjects/cz-cli/packages/clickzetta-sdk/src/sql/volume.ts` | 已有 SQL `GET/PUT` 后处理、预签名 URL 消费和固定重试逻辑；可复用底层能力，但不能代替完整 `FsUtil` 翻译 |
-| `/Users/zhanglin/IdeaProjects/cz-cli/packages/clickzetta-sdk` | TypeScript `FsUtil`、Path 抽象、LocalPath、VolumePath、FileInfo 和 VolumeApi 的目标归属 |
-| `/Users/zhanglin/IdeaProjects/cz-cli/packages/cz-cli/src/commands` | `fs` 命令注册、CLI 扩展参数、输出 envelope、错误码和退出码映射 |
-
-翻译应先保持 Python `_fsutil` 的公开行为和 E2E case，再增加本文明确标注的 CLI 扩展；不能用现有 SQL `GET/PUT` 的行为反向定义 `FsUtil`。Python 单元测试需要移植到 SDK，关键 E2E 需要在 TypeScript SDK 和 `cz-cli fs` 两层各跑通一次。
