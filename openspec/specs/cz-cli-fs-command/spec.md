@@ -144,7 +144,7 @@ cz-cli fs cp volume://vol_a/a.csv volume://vol_b/a.csv
 | `fs mv` | `mv(from_, to, recurse=False)` | CLI 增加本地→本地安全中转及 `overwrite` |
 | `fs rm` | `rm(dir, recurse=False)` | `-R/--recursive` 映射到 `recurse` |
 
-`--limit`、`--force`、`--dry-run`、`--overwrite/--no-overwrite` 等是 CLI 设计扩展，不是 Python `FsUtil` 原生参数。并发、重试、URL 有效期和空闲超时不属于当前契约，本文不为它们设计命令行参数。
+`--limit`、`--force`、`--dry-run`、`--overwrite/--no-overwrite` 等是 CLI 设计扩展，不是 Python `FsUtil` 原生参数。并发、重试、URL 有效期和空闲超时不属于命令行参数；SDK 使用统一的 Volume 传输重试策略处理临时网络错误。
 
 ### 3.2 输出格式、错误码和退出码
 
@@ -267,11 +267,13 @@ Examples:
 
 已存在但为空的 Named/User Volume 根目录返回空 `entries`；不存在的 Volume 仍返回 `FS_NOT_FOUND`。
 
-实现前必须补一组 `ls` 实测矩阵，记录本地、Named Managed、External、User、Table 以及 legacy/czfs 各自对文件、空目录、含子目录目录、递归目录返回的原始字段和顺序。CLI 再根据结果决定是否统一补齐目录记录；在矩阵完成前，本文的目录表格只是目标输出，不是已验证契约。
+`fs ls` 对本地和 Volume 路径都返回文件及目录条目；递归时返回遍历到的目录和文件。Volume 的 `list_directory` 返回顺序由服务端决定，CLI 不承诺跨后端排序一致性。
 
-`--limit` 仍是 CLI 扩展，但 SDK 会把 `limit+1` 追加到 Volume 的 `list_directory` SQL，用于判断 `truncated`；本地路径同样最多读取 `limit+1` 条。`--limit 0` 表示不截断，不代表服务端分页。递归目录的服务端函数仍可能先完成较大范围遍历，`LIMIT` 只限制返回行数。
+`--limit` 仍是 CLI 扩展，但 SDK 会把 `limit+1` 追加到 Volume 的 `list_directory` SQL，用于判断 `truncated`；本地路径同样最多读取 `limit+1` 条。`--limit 0` 表示不截断，不代表服务端分页。递归目录的服务端函数仍可能先完成较大范围遍历，`LIMIT` 只限制返回行数。缺失或无效的修改时间输出为 `null`，不伪装成 Unix epoch 0。
 
 `--limit` 只接受大于等于 `0` 的整数；负数属于参数错误并返回退出码 `2`。
+
+Volume 的预签名 GET/PUT 保留统一的 `x-ms-blob-type: BlockBlob` 请求头。后端云类型不会从 Volume API 暴露；该策略已在 `quick_start.public` Managed Volume 部署中验证，避免按未知云厂商分支处理。
 
 ### 4.3 `cz-cli fs head --help`
 
@@ -493,6 +495,7 @@ Examples:
 - 目录移动到已有 Volume 目录时，会在目标目录下追加源目录名称；例如 `fs mv ./data/ volume://shared_files/archive/` 生成 `volume://shared_files/archive/data/`。
 - 目标目录需要已经存在；仅凭结尾 `/` 不自动创建目录。
 - 已有目标默认覆盖；使用 `--no-overwrite` 时在复制前失败。
+- 本地→本地目录移动到已有目标目录时合并文件，不删除目标中源目录没有的文件；同名文件按覆盖策略处理。
 - 单文件移动按“覆盖复制目标 → 删除源文件”执行；复制失败时保留源文件，删除源文件失败时保留已完成目标并返回 `PARTIAL_FAILED`。
 - 目录移动先覆盖复制全部文件，全部复制成功后才删除源目录；复制阶段失败时不删除任何源文件，但目标端可能已有部分完成文件。
 - 跨本地与 Volume、跨 Volume 的移动不承诺原子性。目录失败时返回 `PARTIAL_FAILED`，逐文件报告已完成目标、失败源文件、未尝试文件以及失败阶段（`COPY` 或 `REMOVE`）。

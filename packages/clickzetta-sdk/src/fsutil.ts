@@ -5,6 +5,8 @@ import { Readable } from "node:stream"
 import { dirname, join, basename, relative, resolve as resolvePath, sep } from "node:path"
 import { randomUUID } from "node:crypto"
 import type { QueryResult } from "./sql/types.js"
+import { quote } from "./sql/literal.js"
+import { executeVolumeTransferWithRetry } from "./sql/volume.js"
 
 export interface FsUtilOptions {
   execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>
@@ -16,7 +18,7 @@ export interface FileInfo {
   path: string
   name: string
   size: number
-  modificationTime: number
+  modificationTime: number | null
   isDir: boolean
 }
 
@@ -62,10 +64,6 @@ interface FsPath {
 
 function quoteIdentifier(value: string): string {
   return "`" + value.replace(/`/g, "``") + "`"
-}
-
-function quoteString(value: string): string {
-  return "'" + value.replace(/'/g, "''") + "'"
 }
 
 function parseVolumePath(input: string): { reference: VolumeReference; relativePath: string } | undefined {
@@ -203,15 +201,56 @@ function contentToReadable(content: AsyncIterable<Uint8Array>): NodeJS.ReadableS
   return Readable.from(content)
 }
 
-function parseModificationTime(value: unknown): number {
-  if (typeof value === "number") return value
+async function collectBytes(content: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for await (const chunk of content) {
+    chunks.push(chunk)
+    total += chunk.byteLength
+  }
+  const result = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    result.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return result
+}
+
+function parseModificationTime(value: unknown): number | null {
+  const maxDateMs = 8.64e15
+  if (typeof value === "number") return Number.isFinite(value) && Math.abs(value) <= maxDateMs ? value : null
   if (typeof value === "string") {
     const numeric = Number(value)
-    if (Number.isFinite(numeric)) return numeric
+    if (Number.isFinite(numeric) && Math.abs(numeric) <= maxDateMs) return numeric
     const parsed = Date.parse(value)
-    if (Number.isFinite(parsed)) return parsed
+    if (Number.isFinite(parsed) && Math.abs(parsed) <= maxDateMs) return parsed
   }
-  return 0
+  return null
+}
+
+function parseVolumeRecord(raw: unknown, description: string, path: string): Record<string, unknown> {
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    } catch {}
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>
+  throw new FsError("FS_TRANSFER_FAILED", `Invalid ${description} for ${path}`)
+}
+
+function httpTransferError(status: number, operation: string, path: string): Error & { status: number } {
+  const error = new Error(`HTTP ${status} while ${operation}: ${path}`) as Error & { status: number }
+  error.status = status
+  return error
+}
+
+function mapHttpTransferFailure(error: unknown, operation: string, path: string): never {
+  if (error && typeof error === "object" && "status" in error && typeof (error as { status?: unknown }).status === "number") {
+    throw mapHttpError((error as { status: number }).status, operation, path)
+  }
+  throw error
 }
 
 class LocalFsPath implements FsPath {
@@ -243,23 +282,27 @@ class LocalFsPath implements FsPath {
     const result: FsPath[] = []
     for (const entry of entries) {
       const child = new LocalFsPath(join(this.path, entry.name), join(this.path, entry.name))
-      if (entry.isDirectory() && recursive) {
+      if (entry.isDirectory()) {
+        result.push(child)
+        if (!recursive) continue
+        if (limit > 0 && result.length >= limit) break
         const remaining = limit > 0 ? Math.max(limit - result.length, 0) : 0
         result.push(...await child.children(true, remaining))
         if (limit > 0 && result.length >= limit) break
       }
-      else if (!entry.isDirectory()) result.push(child)
+      else result.push(child)
       if (limit > 0 && result.length >= limit) break
     }
     return limit > 0 ? result.slice(0, limit) : result
   }
   async read(maxBytes = 65536) {
+    const info = await stat(this.path).catch((error) => { throw mapLocalError(error, this.original) })
     const handle = await open(this.path, "r").catch((error) => { throw mapLocalError(error, this.original) })
     try {
-      const buffer = new Uint8Array(maxBytes)
+      const buffer = new Uint8Array(Math.min(maxBytes, info.size + 1))
       let offset = 0
       while (offset < maxBytes) {
-        const result = await handle.read(buffer, offset, maxBytes - offset, offset).catch((error) => { throw mapLocalError(error, this.original) })
+        const result = await handle.read(buffer, offset, buffer.length - offset, offset).catch((error) => { throw mapLocalError(error, this.original) })
         if (result.bytesRead === 0) break
         offset += result.bytesRead
       }
@@ -315,7 +358,7 @@ class VolumeFsPath implements FsPath {
     return result.rows
   }
   private async url(method: "GET" | "PUT") {
-    const rows = await this.query(`select get_presigned_url(${volumeIdentifier(this.reference)}, ${quoteString(this.relativePath)}, 3600, ${quoteString(method)})`, { "cz.sql.function.get.presigned.url.force.external": "true" })
+    const rows = await this.query(`select get_presigned_url(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, 3600, ${quote(method)})`, { "cz.sql.function.get.presigned.url.force.external": "true" })
     const value = rows[0]?.[0]
     if (typeof value !== "string" || !value) throw new FsError("FS_NOT_FOUND", `Path not found: ${this.original}`)
     return value
@@ -332,11 +375,11 @@ class VolumeFsPath implements FsPath {
   }
   async info(): Promise<FileInfo> {
     if (this.cachedInfo) return this.cachedInfo
-    if (!this.relativePath) return { path: volumeUri(this.reference, ""), name: "", size: 0, modificationTime: 0, isDir: true }
-    const rows = await this.query(`select get_file(${volumeIdentifier(this.reference)}, ${quoteString(this.relativePath)})`)
+    if (!this.relativePath) return { path: volumeUri(this.reference, ""), name: "", size: 0, modificationTime: null, isDir: true }
+    const rows = await this.query(`select get_file(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)})`)
     const raw = rows[0]?.[0]
     if (raw == null) throw new FsError("FS_NOT_FOUND", `Path not found: ${this.original}`)
-    const value = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown> : raw as Record<string, unknown>
+    const value = parseVolumeRecord(raw, "file metadata", this.original)
     const path = String(value.path ?? this.relativePath).replace(/\/+$/, "")
     return { path: volumeUri(this.reference, path), name: basename(path), size: Number(value.size ?? 0), modificationTime: parseModificationTime(value.mtime), isDir: Boolean(value.dir ?? value.is_dir ?? value.isDir) }
   }
@@ -345,7 +388,7 @@ class VolumeFsPath implements FsPath {
     if (!info.isDir) return [this]
     let rows: unknown[][]
     try {
-      rows = await this.query(`select list_directory(${volumeIdentifier(this.reference)}, ${quoteString(this.relativePath)}, ${recursive ? "true" : "false"})${limit > 0 ? ` limit ${limit}` : ""}`)
+      rows = await this.query(`select list_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, ${recursive ? "true" : "false"})${limit > 0 ? ` limit ${limit}` : ""}`)
     } catch (error) {
       if (!this.relativePath && error instanceof FsError && error.code === "FS_NOT_FOUND" && await this.volumeExists()) return []
       throw error
@@ -353,7 +396,7 @@ class VolumeFsPath implements FsPath {
     const seen = new Set<string>()
     const entries = rows.flatMap((row) => {
       const raw = row[0]
-      const value = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown> : raw as Record<string, unknown>
+      const value = parseVolumeRecord(raw, "directory entry", this.original)
       const path = String(value.path ?? "")
       if (!path) return []
       const normalizedPath = validateRelativePath(path, this.original)
@@ -386,25 +429,31 @@ class VolumeFsPath implements FsPath {
     }
   }
   async read(maxBytes = 65536) {
-    const response = await fetch(await this.url("GET"))
-    if (!response.ok) throw mapHttpError(response.status, "reading", this.original)
-    if (!response.body) throw new FsError("FS_TRANSFER_FAILED", `Missing response body while reading: ${this.original}`)
-    const reader = response.body.getReader()
-    const chunks: Uint8Array[] = []
-    let total = 0
-    while (total < maxBytes) {
-      const next = await reader.read()
-      if (next.done) break
-      const chunk = next.value.slice(0, maxBytes - total)
-      chunks.push(chunk)
-      total += chunk.length
-      if (chunk.length < next.value.length) break
+    try {
+      return await executeVolumeTransferWithRetry("GET", this.original, async () => {
+        const response = await fetch(await this.url("GET"))
+        if (!response.ok) throw httpTransferError(response.status, "reading", this.original)
+        if (!response.body) throw new FsError("FS_TRANSFER_FAILED", `Missing response body while reading: ${this.original}`)
+        const reader = response.body.getReader()
+        const chunks: Uint8Array[] = []
+        let total = 0
+        while (total < maxBytes) {
+          const next = await reader.read()
+          if (next.done) break
+          const chunk = next.value.slice(0, maxBytes - total)
+          chunks.push(chunk)
+          total += chunk.length
+          if (chunk.length < next.value.length) break
+        }
+        await reader.cancel()
+        const result = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length }
+        return result
+      })
+    } catch (error) {
+      return mapHttpTransferFailure(error, "reading", this.original)
     }
-    await reader.cancel()
-    const result = new Uint8Array(total)
-    let offset = 0
-    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length }
-    return result
   }
   async write(content: AsyncIterable<Uint8Array> | Uint8Array, overwrite: boolean, contentLength?: number) {
     if (!this.relativePath) throw new FsError("FS_PATH_INVALID", "Cannot write a Volume root")
@@ -414,41 +463,59 @@ class VolumeFsPath implements FsPath {
     })
     if (existing?.isDir) throw new FsError("FS_IS_DIRECTORY", `Target is a directory: ${this.original}`)
     if (existing && !overwrite) throw new FsError("FS_TARGET_EXISTS", `Target already exists: ${this.original}`)
-    const body = content instanceof Uint8Array ? new Blob([content as unknown as BlobPart]) : iterableToReadableStream(content)
+    const data = content instanceof Uint8Array ? content : await collectBytes(content)
+    const body = new Blob([data as unknown as BlobPart])
+    // Keep this header intentionally: the backing cloud is not exposed by the
+    // Volume API, and the quick_start.public Managed Volume path was validated
+    // with it. Deriving provider-specific headers would require another contract.
     const headers: Record<string, string> = { "x-ms-blob-type": "BlockBlob" }
-    if (contentLength !== undefined) headers["content-length"] = String(contentLength)
-    const response = await fetch(await this.url("PUT"), { method: "PUT", body, headers, duplex: "half" } as RequestInit & { duplex: "half" })
-    if (!response.ok) throw mapHttpError(response.status, "writing", this.original)
+    headers["content-length"] = String(contentLength ?? data.byteLength)
+    try {
+      await executeVolumeTransferWithRetry("PUT", this.original, async () => {
+        const response = await fetch(await this.url("PUT"), { method: "PUT", body, headers, duplex: "half" } as RequestInit & { duplex: "half" })
+        if (!response.ok) throw httpTransferError(response.status, "writing", this.original)
+      })
+    } catch (error) {
+      mapHttpTransferFailure(error, "writing", this.original)
+    }
   }
   async mkdirs() {
     if (!this.relativePath) throw new FsError("FS_PATH_INVALID", `Cannot create a Volume root with fs mkdir; create a Named Volume with fs mb or specify a directory path inside an existing Volume: ${this.original}`)
-    const rows = await this.query(`select create_directory(${volumeIdentifier(this.reference)}, ${quoteString(this.relativePath)}, true)`)
+    const rows = await this.query(`select create_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, true)`)
     const raw = rows[0]?.[0]
-    const value = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown> : raw as Record<string, unknown>
+    const value = parseVolumeRecord(raw, "create directory response", this.original)
     if (!value || value.success !== true) throw new FsError("FS_TRANSFER_FAILED", `Failed to create directory: ${this.original}`)
   }
   async copyTo(target: FsPath, recursive: boolean, overwrite: boolean) {
     const info = await this.info()
     if (info.isDir && !recursive) throw new FsError("FS_RECURSIVE_REQUIRED", `Directory copy requires recursive flag: ${this.original}`)
     if (!overwrite && await target.exists()) throw new FsError("FS_TARGET_EXISTS", `Target already exists: ${target.original}`)
-    const response = await fetch(await this.url("GET"))
-    if (!response.ok) throw mapHttpError(response.status, "reading", this.original)
-    if (!response.body) throw new FsError("FS_TRANSFER_FAILED", `Missing response body while reading: ${this.original}`)
     let bytes = 0
-    const stream = (async function* () {
-      const reader = response.body!.getReader()
-      try {
-        while (true) {
-          const next = await reader.read()
-          if (next.done) break
-          bytes += next.value.length
-          yield next.value
-        }
-      } finally {
-        await reader.cancel().catch(() => undefined)
-      }
-    })()
-    await target.write(stream, overwrite, info.size)
+    try {
+      await executeVolumeTransferWithRetry("GET", this.original, async () => {
+        const response = await fetch(await this.url("GET"))
+        if (!response.ok) throw httpTransferError(response.status, "reading", this.original)
+        if (!response.body) throw new FsError("FS_TRANSFER_FAILED", `Missing response body while reading: ${this.original}`)
+        let attemptBytes = 0
+        const stream = (async function* () {
+          const reader = response.body!.getReader()
+          try {
+            while (true) {
+              const next = await reader.read()
+              if (next.done) break
+              attemptBytes += next.value.length
+              yield next.value
+            }
+          } finally {
+            await reader.cancel().catch(() => undefined)
+          }
+        })()
+        await target.write(stream, overwrite, info.size)
+        bytes = attemptBytes
+      })
+    } catch (error) {
+      mapHttpTransferFailure(error, "reading", this.original)
+    }
     return bytes
   }
   async remove(recursive: boolean) {
@@ -456,7 +523,7 @@ class VolumeFsPath implements FsPath {
     const info = await this.info()
     if (info.isDir && !recursive) throw new FsError("FS_RECURSIVE_REQUIRED", `Directory removal requires recursive flag: ${this.original}`)
     const command = info.isDir ? "subdirectory" : "file"
-    await this.query(`remove ${volumeIdentifier(this.reference)} ${command} ${quoteString(this.relativePath)}`)
+    await this.query(`remove ${volumeIdentifier(this.reference)} ${command} ${quote(this.relativePath)}`)
   }
 }
 
@@ -504,11 +571,11 @@ export class FsUtil {
     if (info.isDir && !recurse) throw new FsError("FS_RECURSIVE_REQUIRED", `Directory removal requires recursive flag: ${path}`)
     return info
   }
-  async cp(source: string, destination: string, recurse = false, overwrite = false) {
+  async cp(source: string, destination: string, recurse = false, overwrite = true) {
     await this.copyBytes(source, destination, recurse, overwrite)
     return true
   }
-  async copyBytes(source: string, destination: string, recurse = false, overwrite = false, progress?: CopyProgress) {
+  async copyBytes(source: string, destination: string, recurse = false, overwrite = true, progress?: CopyProgress) {
     const from = this.path(source)
     let to = this.path(destination)
     if (pathIdentity(from) === pathIdentity(to)) throw new FsError("FS_PATH_INVALID", "Source and destination must be different")
@@ -529,17 +596,15 @@ export class FsUtil {
       const files: FsPath[] = []
       for (const child of children) if (!(await child.info()).isDir) files.push(child)
       const copyProgress = progress ?? { completed: [] }
-      if (files.length > 0) {
-        try { await to.mkdirs() }
-        catch (error) {
-          if (!progress) throw error
-          throw new FsError("PARTIAL_FAILED", `Directory copy failed during COPY: ${source}`, {
-            stage: "COPY",
-            completed: copyProgress.completed,
-            failed: { source, destination, error: error instanceof Error ? error.message : String(error) },
-            pending: files.map((pending) => pending.original),
-          })
-        }
+      try { await to.mkdirs() }
+      catch (error) {
+        if (!progress) throw error
+        throw new FsError("PARTIAL_FAILED", `Directory copy failed during COPY: ${source}`, {
+          stage: "COPY",
+          completed: copyProgress.completed,
+          failed: { source, destination, error: error instanceof Error ? error.message : String(error) },
+          pending: files.map((pending) => pending.original),
+        })
       }
       let bytes = 0
       for (const child of files) {
@@ -602,7 +667,6 @@ export class FsUtil {
     if (pathIdentity(from) === pathIdentity(to)) throw new FsError("FS_PATH_INVALID", "Source and destination must be different")
     const info = await from.info()
     if (info.isDir && !recurse) throw new FsError("FS_RECURSIVE_REQUIRED", `Directory move requires recursive flag: ${source}`)
-    if (info.isDir && !from.isLocal && (await from.children(recurse)).length === 0) throw new FsError("FS_TRANSFER_FAILED", `Cannot move an empty directory: ${source}`)
     if (from.isLocal && to.isLocal) return this.moveLocal(from, to, info, recurse, overwrite)
     const progress: CopyProgress = { completed: [] }
     try { await this.copyBytes(source, destination, recurse, overwrite, progress) }
@@ -627,7 +691,6 @@ export class FsUtil {
     return true
   }
   async rm(path: string, recurse = false) {
-    await this.validateRemoval(path, recurse)
     await this.path(path).remove(recurse)
     return true
   }
@@ -640,26 +703,71 @@ export class FsUtil {
     if (destinationLooksLikeDirectory && destinationInfo && !destinationInfo.isDir) throw new FsError("FS_IS_DIRECTORY", `Destination is not a directory: ${to.original}`)
     let target = to
     if (destinationInfo?.isDir) target = to.child(info.name)
-    if (!overwrite && await target.exists()) throw new FsError("FS_TARGET_EXISTS", `Target already exists: ${target.original}`)
+    const targetExists = await target.exists()
+    const targetInfo = targetExists ? await target.info() : undefined
+    if (info.isDir && targetInfo?.isDir) {
+      const progress: CopyProgress = { completed: [] }
+      try {
+        await this.copyBytes(from.original, (destinationInfo?.isDir ? to : target).original, recurse, overwrite, progress)
+      } catch (error) {
+        if (error instanceof FsError && error.code === "FS_TARGET_EXISTS") throw error
+        throw new FsError("PARTIAL_FAILED", `Move failed during COPY: ${from.original}`, {
+          stage: "COPY",
+          completed: progress.completed,
+          failed: { source: from.original, destination: target.original, error: error instanceof Error ? error.message : String(error) },
+          pending: [],
+        })
+      }
+      try {
+        await from.remove(recurse)
+      } catch (error) {
+        throw new FsError("PARTIAL_FAILED", `Move failed during REMOVE: ${from.original}`, {
+          stage: "REMOVE",
+          completed: progress.completed,
+          failed: { source: from.original, destination: target.original, error: error instanceof Error ? error.message : String(error) },
+          pending: [],
+        })
+      }
+      return true
+    }
+    if (!overwrite && targetExists) throw new FsError("FS_TARGET_EXISTS", `Target already exists: ${target.original}`)
     const temporary = this.path(`${target.scopePath}.cz-tmp-${randomUUID()}`)
     const backup = this.path(`${target.scopePath}.cz-backup-${randomUUID()}`)
+    let backupMoved = false
     try {
-      const sourceChildren = info.isDir ? await from.children(true) : []
-      if (info.isDir && sourceChildren.length === 0) await mkdir(temporary.scopePath, { recursive: true })
-      else await this.copyBytes(from.original, temporary.original, recurse, true)
-      const targetExists = await target.exists()
-      if (targetExists) await rename(target.scopePath, backup.scopePath).catch((error) => { throw mapLocalError(error, target.original) })
+      await this.copyBytes(from.original, temporary.original, recurse, true)
+      if (targetExists) {
+        await rename(target.scopePath, backup.scopePath).catch((error) => { throw mapLocalError(error, target.original) })
+        backupMoved = true
+      }
       try {
         await rename(temporary.scopePath, target.scopePath)
       } catch (error) {
-        if (targetExists) await rename(backup.scopePath, target.scopePath).catch(() => undefined)
+        if (backupMoved) {
+          await rename(backup.scopePath, target.scopePath).catch(() => undefined)
+          backupMoved = false
+        }
         throw mapLocalError(error, target.original)
       }
-      await from.remove(recurse)
-      if (targetExists) await removeFile(backup.scopePath, { recursive: true, force: true })
+      try {
+        await from.remove(recurse)
+      } catch (error) {
+        if (backupMoved) {
+          await removeFile(backup.scopePath, { recursive: true, force: true }).catch(() => undefined)
+          backupMoved = false
+        }
+        throw new FsError("PARTIAL_FAILED", `Move failed during REMOVE: ${from.original}`, {
+          stage: "REMOVE",
+          completed: [],
+          failed: { source: from.original, destination: target.original, error: error instanceof Error ? error.message : String(error) },
+          pending: [],
+        })
+      }
+      if (backupMoved) await removeFile(backup.scopePath, { recursive: true, force: true })
       return true
     } catch (error) {
       await removeFile(temporary.scopePath, { recursive: true, force: true }).catch(() => undefined)
+      if (backupMoved) await removeFile(backup.scopePath, { recursive: true, force: true }).catch(() => undefined)
       throw error
     }
   }

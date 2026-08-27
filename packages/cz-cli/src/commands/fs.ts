@@ -40,7 +40,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
             const fs = createFs(args)
             const entries = await fs.ls(args.path, args.recursive, args.limit > 0 ? args.limit + 1 : 0)
             const limited = args.limit === 0 ? entries : entries.slice(0, args.limit)
-            success({ entries: limited.map((entry) => ({ path: entry.path, name: entry.name, type: entry.isDir ? "directory" : "file", size_bytes: entry.size, modified_at: new Date(entry.modificationTime).toISOString() })), truncated: args.limit > 0 && entries.length > args.limit }, { format: args.format, rowsKey: "entries" })
+            success({ entries: limited.map((entry) => ({ path: entry.path, name: entry.name, type: entry.isDir ? "directory" : "file", size_bytes: entry.size, modified_at: formatModifiedAt(entry.modificationTime) })), truncated: args.limit > 0 && entries.length > args.limit }, { format: args.format, rowsKey: "entries" })
           } catch (err) { reportFsError(err, args.format) }
         },
       )
@@ -147,7 +147,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
                 throw err
               }
               const entries = await fs.ls(args.path, args.recursive)
-              success({ path: args.path, entries: entries.map((entry) => ({ path: entry.path, name: entry.name, type: entry.isDir ? "directory" : "file", size_bytes: entry.size, modified_at: new Date(entry.modificationTime).toISOString() })), dry_run: true, status: "WOULD_REMOVE" }, { format: args.format, rowsKey: "entries" })
+              success({ path: args.path, entries: entries.map((entry) => ({ path: entry.path, name: entry.name, type: entry.isDir ? "directory" : "file", size_bytes: entry.size, modified_at: formatModifiedAt(entry.modificationTime) })), dry_run: true, status: "WOULD_REMOVE" }, { format: args.format, rowsKey: "entries" })
               return
             }
             try { await fs.rm(args.path, args.recursive) }
@@ -161,16 +161,22 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
 
 function createFs(args: FsArgs): FsUtil {
   const config = resolveConnectionConfig(args)
+  let context: ReturnType<typeof getExecContext> | undefined
   return new FsUtil({
     workspace: config.workspace,
     schema: config.schema,
     execute: async (sql, hints) => {
-      const ctx = await getExecContext(args)
+      const ctx = await (context ??= getExecContext(args))
       const result = await execSql(ctx, sql, { hints })
       if (!("rows" in result)) throw new FsError("FS_TRANSFER_FAILED", "Unexpected asynchronous SQL result")
       return result
     },
   })
+}
+
+function formatModifiedAt(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value) || Math.abs(value) > 8.64e15) return null
+  return new Date(value).toISOString()
 }
 
 function reportFsError(err: unknown, format: string): void {
