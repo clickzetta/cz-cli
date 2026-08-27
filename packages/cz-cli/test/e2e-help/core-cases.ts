@@ -5,7 +5,7 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["--help"],
     expectHeader: "cz-cli",
-    expectCommands: ["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "agent", "job", "setup"],
+    expectCommands: ["sql", "schema", "table", "workspace", "status", "profile", "task", "runs", "attempts", "agent", "job", "setup", "fs"],
   },
   {
     args: [],
@@ -158,5 +158,47 @@ export const coreHelpCases: HelpCase[] = [
     args: ["status", "--help"],
     expectHeader: "cz-cli status",
     expectOptions: ["--profile"],
+  },
+
+  // filesystem
+  {
+    args: ["fs", "--help"],
+    expectHeader: "cz-cli fs",
+    expectCommands: ["ls", "head", "mb", "mkdir", "cp", "mv", "rm"],
+  },
+  {
+    args: ["fs", "ls", "--help"],
+    expectHeader: "cz-cli fs ls",
+    expectOptions: ["path", "--recursive", "--limit", "volume:user://~/"],
+  },
+  {
+    args: ["fs", "head", "--help"],
+    expectHeader: "cz-cli fs head",
+    expectOptions: ["file", "--bytes"],
+  },
+  {
+    args: ["fs", "mb", "--help"],
+    expectHeader: "cz-cli fs mb",
+    expectOptions: ["volume", "volume://shared_files"],
+  },
+  {
+    args: ["fs", "mkdir", "--help"],
+    expectHeader: "cz-cli fs mkdir",
+    expectOptions: ["path", "existing Volume", "volume:user://~/data/2026/08"],
+  },
+  {
+    args: ["fs", "cp", "--help"],
+    expectHeader: "cz-cli fs cp",
+    expectOptions: ["source", "destination", "--recursive", "--overwrite"],
+  },
+  {
+    args: ["fs", "mv", "--help"],
+    expectHeader: "cz-cli fs mv",
+    expectOptions: ["source", "destination", "--recursive", "--overwrite"],
+  },
+  {
+    args: ["fs", "rm", "--help"],
+    expectHeader: "cz-cli fs rm",
+    expectOptions: ["path", "--recursive", "--force", "--dry-run"],
   },
 ]
