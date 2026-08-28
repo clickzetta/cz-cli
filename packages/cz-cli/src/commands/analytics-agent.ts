@@ -1,13 +1,15 @@
 import { stat } from "node:fs/promises"
 import { basename, posix, resolve } from "node:path"
 import type { Argv } from "yargs"
-import { createTraceparent, mergeHeaders } from "@clickzetta/sdk"
+import { createTraceparent, forceRefreshToken, mergeHeaders, type ConnectionConfig } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
 import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR, EXIT_USAGE_ERROR } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
 import { getProfileAgentContext, getStudioContext, type StudioContext } from "./studio-context.js"
+import { hasCookieToken } from "../connection/cookie-token.js"
+import { resolveConnectionConfig } from "../connection/config.js"
 import { logOperation } from "../logger.js"
 
 const ROUTES = {
@@ -604,6 +606,53 @@ function responseRequestId(text: string): string | undefined {
 interface ResolvedContext {
   endpoint: string
   studio: StudioContext
+  refresh?: () => Promise<void>
+  /** One refresh per context, not per request: a context is shared by whole
+   *  flows (poll loops, pagination, upload handshakes), and a per-request flag
+   *  would let every 401 in a 360 s poll rotate the refresh token again. */
+  refreshed?: boolean
+  /** The tenant a request has already succeeded under. A refresh can swap
+   *  identity (see `refresh` below), which moves the tenant — mid-flow that
+   *  would silently retarget the rest of the flow at a different tenant. */
+  committedTenantId?: number | string
+  /** Set when a refresh moved this context to another tenant mid-flow. Every
+   *  later request on the context fails with it, so a caller that catches
+   *  per-item failures cannot finish the flow under the wrong identity. */
+  abandoned?: AnalyticsHttpError
+}
+
+/**
+ * Whether a refresh has anything to re-exchange: an OAuth token store, a PAT, or
+ * username+password. Gating on "not a cookie" alone is not enough — a profile
+ * carrying only an [agent] block reaches `fetchToken` with empty credentials and
+ * spends ~6 s of login retries to arrive back at the same 401. Mirrors the SDK's
+ * own `hasLoginCredentials` guard, which is private to auth/token.ts.
+ */
+/**
+ * Whether the response says the credential was rejected. The gateway answers an
+ * expired token with HTTP 401, but this backend also reports failures as HTTP 200
+ * with `success: false` and a code in the envelope (see extractBusinessError), so
+ * an envelope code of "401" counts too. Keyed on the structured code only — never
+ * on message prose, which is localized.
+ */
+function authRejected(response: Response, text: string): boolean {
+  if (response.status === 401) return true
+  if (!response.ok || !text) return false
+  try {
+    return extractBusinessError(JSON.parse(text))?.code === "401"
+  } catch {
+    return false
+  }
+}
+
+function canRefreshCredential(config: ConnectionConfig): boolean {
+  if (hasCookieToken(config)) return false
+  // `tokenStore` is attached for any `oauth = "<id>"` pointer, resolvable or not.
+  // A pointer whose [oauth.<id>] section was pruned loads nothing, so acquireToken
+  // finds no candidate, skips the refresh path, and falls through to a login with
+  // empty credentials — the ~6 s dead end token.ts:80-83 warns about. Ask the store
+  // for an actual token (synchronous, file-local) rather than for its existence.
+  return Boolean(config.tokenStore?.load() || config.pat || (config.username && config.password))
 }
 
 async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<ResolvedContext> {
@@ -625,8 +674,32 @@ async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<R
       },
     )
   }
-  const studio = getProfileAgentContext(argv) ?? await getStudioContext(argv, { allowMissingWorkspace: true })
-  return { endpoint: endpoint!, studio }
+  const config = resolveConnectionConfig(argv)
+  const profileAgent = getProfileAgentContext(argv)
+  const context: ResolvedContext = {
+    endpoint: endpoint!,
+    studio: profileAgent ?? (await getStudioContext(argv, { allowMissingWorkspace: true })),
+  }
+  if (canRefreshCredential(config)) {
+    // WHAT the server rejected decides the remedy, and the two cases differ.
+    //
+    // A [profiles.<n>.agent] token is hand-pasted into profiles.toml and is not
+    // the config's SDK credential at all, so the fix is just to authenticate the
+    // way the profile normally does — deliberately swapping identity to the
+    // profile's own login. Forcing there would throw away a still-valid OAuth
+    // access token and spend a refresh-token rotation to replace a token that was
+    // never the problem, turning a transient rotation failure into a hard error.
+    //
+    // When the rejected token IS the SDK's own, the opposite holds: a plain
+    // getToken would hand back the same value the server just refused (it is
+    // cached and not yet expired), so that path has to force a rotation.
+    const rejectedTokenIsSdkOwned = profileAgent === undefined
+    context.refresh = async () => {
+      if (rejectedTokenIsSdkOwned) await forceRefreshToken(config)
+      context.studio = await getStudioContext(argv, { allowMissingWorkspace: true })
+    }
+  }
+  return context
 }
 
 async function requestAnalytics(
@@ -638,47 +711,93 @@ async function requestAnalytics(
 ): Promise<unknown> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   validateAnalyticsIdArgs(argv, format)
-  const { endpoint, studio } = ctx ?? await resolveAnalyticsContext(argv)
-  const headers = mergeHeaders(
-    {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "x-clickzetta-token": studio.token,
-      Authorization: studio.token,
-      traceparent: createTraceparent(),
-      userId: String(studio.userId),
-      instanceId: String(studio.instanceId),
-      accountId: String(studio.tenantId),
-      tenantId: String(studio.tenantId),
-      instanceName: studio.instanceName,
-      workspaceName: studio.workspaceName,
-      workspaceId: String(studio.workspaceId),
-      projectId: String(studio.projectId),
-    },
-    studio.customHeaders,
-  )
-  const url = buildUrl(endpoint, route, argv, query, studio.tenantId)
-  const requestBody = route.openSessionAuth
-    ? mergeBody(body, { tenantId: studio.tenantId, userId: studio.userId, loginToken: studio.token })
-    : body
-  const response = await fetch(url, {
-    method: route.method,
-    headers,
-    ...(route.method === "GET" ? {} : { body: JSON.stringify(requestBody) }),
-    signal: AbortSignal.timeout(300_000),
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    throw new AnalyticsHttpError(
-      `HTTP ${response.status}: ${text.slice(0, 500)}`,
-      requestInfo(url, route, argv, studio.tenantId, response.status, responseRequestId(text)),
+  const context = ctx ?? await resolveAnalyticsContext(argv)
+  const endpoint = context.endpoint
+  if (context.abandoned) throw context.abandoned
+  let refreshError: unknown
+  // One budget for the whole call, not one per attempt: the point of the ceiling
+  // is how long the caller waits. Rebuilding it after a refresh would hand a
+  // single requestAnalytics up to 2x300 s, which session run's poll deadline —
+  // checked only between requests — cannot claw back.
+  const signal = AbortSignal.timeout(300_000)
+  while (true) {
+    const studio = context.studio
+    // Rebuilt per attempt: a refresh replaces `studio` wholesale, tenantId
+    // included, and buildUrl puts that tenant in the query string.
+    const url = buildUrl(endpoint, route, argv, query, studio.tenantId)
+    const headers = mergeHeaders(
+      {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "x-clickzetta-token": studio.token,
+        Authorization: studio.token,
+        traceparent: createTraceparent(),
+        userId: String(studio.userId),
+        instanceId: String(studio.instanceId),
+        accountId: String(studio.tenantId),
+        tenantId: String(studio.tenantId),
+        instanceName: studio.instanceName,
+        workspaceName: studio.workspaceName,
+        workspaceId: String(studio.workspaceId),
+        projectId: String(studio.projectId),
+      },
+      studio.customHeaders,
     )
-  }
-  if (!text) return {}
-  try {
-    return JSON.parse(text)
-  } catch (err) {
-    throw new Error(`Invalid JSON response: ${err instanceof Error ? err.message : String(err)}`)
+    const requestBody = route.openSessionAuth
+      ? mergeBody(body, { tenantId: studio.tenantId, userId: studio.userId, loginToken: studio.token })
+      : body
+    const response = await fetch(url, {
+      method: route.method,
+      headers,
+      ...(route.method === "GET" ? {} : { body: JSON.stringify(requestBody) }),
+      signal,
+    })
+    const text = await response.text()
+    if (authRejected(response, text) && !context.refreshed && context.refresh) {
+      context.refreshed = true
+      try {
+        await context.refresh()
+      } catch (err) {
+        // The refresh itself failed (network, revoked refresh token, workspace
+        // lookup). The 401 stays the primary diagnosis, but the refresh error
+        // carries the recovery step (`auth login`), so report both.
+        refreshError = err
+      }
+      // A refresh that swaps identity mid-flow would send the remaining requests
+      // to a different tenant than the ones already answered — the poll loop
+      // would wait out its deadline on a questionId the new tenant never minted,
+      // and a batch loop would apply writes to whatever holds those ids over
+      // there. Abandoning the CONTEXT (not just this request) is what makes it
+      // safe: callers like runBatchStatusChange catch per-target failures and
+      // keep going, so a throw alone would not stop the flow.
+      if (
+        refreshError === undefined &&
+        context.committedTenantId !== undefined &&
+        context.studio.tenantId !== context.committedTenantId
+      ) {
+        context.abandoned = new AnalyticsHttpError(
+          `HTTP 401: the credential expired mid-flow and the refreshed session belongs to tenant ${context.studio.tenantId}, not ${context.committedTenantId} which this command started under. Re-run the command to continue under the new session.`,
+          requestInfo(url, route, argv, studio.tenantId, response.status, responseRequestId(text)),
+        )
+        context.refresh = undefined
+        throw context.abandoned
+      }
+      if (refreshError === undefined) continue
+    }
+    if (!response.ok) {
+      const detail = refreshError instanceof Error ? refreshError.message : refreshError ? String(refreshError) : undefined
+      throw new AnalyticsHttpError(
+        `HTTP ${response.status}: ${text.slice(0, 500)}${detail ? `\nToken refresh also failed: ${detail}` : ""}`,
+        requestInfo(url, route, argv, studio.tenantId, response.status, responseRequestId(text)),
+      )
+    }
+    context.committedTenantId ??= studio.tenantId
+    if (!text) return {}
+    try {
+      return JSON.parse(text)
+    } catch (err) {
+      throw new Error(`Invalid JSON response: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 }
 

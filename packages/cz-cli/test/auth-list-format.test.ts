@@ -14,11 +14,19 @@ import { join } from "node:path"
  * `.data.sessions` and `--field sessions` for existing callers.
  */
 
+/** CZ_PROFILE selects which profile `auth list`/`status` report on, so an ambient
+ *  one in the runner's environment would steer these assertions. */
+function envFor(home: string, overrides: Record<string, string> = {}): Record<string, string> {
+  const env = { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home, NO_COLOR: "1" } as Record<string, string>
+  delete env.CZ_PROFILE
+  return { ...env, ...overrides }
+}
+
 function run(args: string[], home: string) {
   const result = spawnSync("bun", ["./src/main.ts", ...args], {
     cwd: import.meta.dir + "/..",
     encoding: "utf-8",
-    env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home, NO_COLOR: "1" },
+    env: envFor(home),
     stdio: ["ignore", "pipe", "pipe"],
   })
   return { stdout: (result.stdout ?? "").trim(), exitCode: result.status ?? 1 }
