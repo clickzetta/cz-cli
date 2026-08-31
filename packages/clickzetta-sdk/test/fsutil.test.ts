@@ -496,14 +496,14 @@ describe("FsUtil", () => {
       expect.objectContaining({ name: "@table", isDir: true, path: "czfs:/Volumes/@table" }),
     ]))
     // User namespace roots list workspaces; files require an explicit workspace.
-    expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
+    expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "uploads", isDir: true, path: "czfs:/Volumes/@user/workspace/alice/uploads" })
     expect((await fs.ls("volume:table://"))[0]).toMatchObject({ name: "orders", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders" })
     expect((await fs.ls("czfs:/Volumes/@user"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
     const tableEntries = await fs.ls("czfs:/Volumes/@table/workspace/public/orders/")
     expect(tableEntries[0]).toMatchObject({ name: "sample", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders/sample" })
     // An empty last_modified_time is unknown, not 1970-01-01.
     expect(tableEntries[0]?.modificationTime).toBeNull()
-    expect(statements).toEqual(["SHOW VOLUMES", "SHOW WORKSPACES", "SHOW TABLES", "SHOW WORKSPACES", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
+    expect(statements).toEqual(["SHOW VOLUMES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLES", "SHOW WORKSPACES", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
   })
 
   test("lists partial czfs namespace paths from metadata", async () => {
