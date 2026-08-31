@@ -49,8 +49,8 @@ describe("fs commands", () => {
     expect(JSON.parse(rootRemoval.output).error.code).toBe("FS_PATH_INVALID")
 
     const legacyShortFlag = await execute(`fs head ${quote(file)} -c 2 --format json`)
-    expect(legacyShortFlag.exitCode).toBe(2)
-    expect(JSON.parse(legacyShortFlag.output).error.code).toBe("USAGE_ERROR")
+    expect(legacyShortFlag.exitCode).toBe(1)
+    expect(JSON.parse(legacyShortFlag.output).error.code).toBe("FS_NOT_TEXT")
 
     const rootRecursive = await execute("fs ls czfs:/ -R --format json")
     expect(rootRecursive.exitCode).toBe(2)

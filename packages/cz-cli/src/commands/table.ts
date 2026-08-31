@@ -334,10 +334,10 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           .option("write", { type: "boolean", default: false, describe: "Allow loading data into the target table; required as a safety guard." })
           .epilogue([
             "Examples:",
-            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header",
-            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet",
-            "  cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv",
-            "  cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header --write",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet --write",
+            "  cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv --write",
+            "  cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet --write",
             "",
             "For PURGE, ON_ERROR, PARTITION, transformations, or complex options, use:",
             "  cz-cli sql --write \"COPY INTO ...\"",
