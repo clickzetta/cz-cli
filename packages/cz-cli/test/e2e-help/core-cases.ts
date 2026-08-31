@@ -165,7 +165,7 @@ export const coreHelpCases: HelpCase[] = [
     args: ["fs", "--help"],
     expectHeader: "cz-cli fs",
     expectCommands: ["ls", "head", "mb", "rb", "mkdir", "cp", "mv", "rm"],
-    expectOptions: ["czfs:/Volumes/<workspace>/<schema>/<volume>/", "@user", "@table", "Root metadata queries", "Table Volumes are created automatically"],
+    expectOptions: ["czfs:/Volumes/your_workspace/your_schema/your_volume/", "@user", "@table", "Root metadata queries", "Table Volumes are created automatically"],
     forbid: ["volume://"],
   },
   {
@@ -213,6 +213,6 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["table", "load", "--help"],
     expectHeader: "cz-cli table load",
-    expectOptions: ["name", "source", "--using", "--header", "czfs:/Volumes/ws/sc/v/", "@user", "@table", "COPY INTO ..."],
+    expectOptions: ["name", "source", "--using", "--header", "czfs:/Volumes/your_workspace/your_schema/your_volume/", "@user", "@table", "COPY INTO ..."],
   },
 ]

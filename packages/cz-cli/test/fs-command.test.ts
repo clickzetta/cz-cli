@@ -52,6 +52,10 @@ describe("fs commands", () => {
     const rootRecursive = await execute("fs ls czfs:/ -R --format json")
     expect(rootRecursive.exitCode).toBe(2)
     expect(JSON.parse(rootRecursive.output).error.code).toBe("FS_PATH_INVALID")
+
+    const aliasRootRecursive = await execute("fs ls /Volume -R --format json")
+    expect(aliasRootRecursive.exitCode).toBe(2)
+    expect(JSON.parse(aliasRootRecursive.output).error.code).toBe("FS_PATH_INVALID")
   })
 
   test("limits listings and protects existing targets by default", async () => {

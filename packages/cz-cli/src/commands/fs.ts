@@ -28,7 +28,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "ls <path>",
         "List files or directories",
         (y) => y
-          .positional("path", { type: "string", demandOption: true, describe: "Local path or czfs Volume path" })
+          .positional("path", { type: "string", demandOption: true, describe: "Local path or czfs Volume path (/Volumes aliases accepted)" })
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Include files in all subdirectories." })
           .option("limit", { type: "number", default: 100, describe: "Maximum entries to display; 0 means unlimited" })
           .epilogue(["Examples:", "  cz-cli fs ls czfs:/", "  cz-cli fs ls czfs:/Volumes/@user/your_workspace/your_user/", "  cz-cli fs ls czfs:/Volumes/@table/your_workspace/your_schema/your_table/ -R", "", "Namespace roots do not accept -R; use -R on a specific Volume or directory."].join("\n")),
@@ -74,7 +74,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "mb <volume>",
         "Create a Named Volume (fs mb cannot create User or Table Volumes)",
         (y) => y
-          .positional("volume", { type: "string", demandOption: true, describe: "Named Volume root: czfs:/Volumes/<workspace>/<schema>/<volume>" })
+          .positional("volume", { type: "string", demandOption: true, describe: "Named Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume" })
           .epilogue(["Examples:", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/your_volume", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/raw_files"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
@@ -171,22 +171,23 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .epilogue([
-        "Path formats (czfs:/ is the recommended form):",
-        "  Named/External  czfs:/Volumes/<workspace>/<schema>/<volume>/",
-        "  User            czfs:/Volumes/@user/<workspace>/<user>/",
-        "  Table           czfs:/Volumes/@table/<workspace>/<schema>/<table>/",
+        "Path formats (czfs: is optional; /Volumes, /Volume, and /volume are equivalent):",
+        "  Named/External  czfs:/Volumes/your_workspace/your_schema/your_volume/",
+        "  User            czfs:/Volumes/@user/your_workspace/your_user/",
+        "  Table           czfs:/Volumes/@table/your_workspace/your_schema/your_table/",
+        "  @user and @table are required; @external and @managed are optional.",
         "",
         "Volume workflows:",
         "  fs ls czfs:/                                      List Named/External roots + @user + @table",
         "  fs ls czfs:/Volumes/@table/                      Enumerate Table Volume roots (SHOW TABLES)",
         "  fs ls czfs:/Volumes/@user/                       List current User Volume files (SHOW USER VOLUME DIRECTORY)",
         "  Root metadata queries: SHOW VOLUMES | SHOW TABLES | SHOW USER VOLUME DIRECTORY",
-        "  fs mb czfs:/Volumes/<workspace>/<schema>/<volume> Create a Named Volume only",
-        "  fs rb czfs:/Volumes/<workspace>/<schema>/<volume> Remove an empty Named Volume object",
+        "  fs mb czfs:/Volumes/your_workspace/your_schema/your_volume Create a Named Volume only",
+        "  fs rb czfs:/Volumes/your_workspace/your_schema/your_volume Remove an empty Named Volume object",
         "  Table Volumes are created automatically with tables; User Volumes are system-created.",
         "  Use fs mkdir/cp/ls/rm inside an existing Volume. Files are separate from Volume objects.",
         "  fs rb refuses External Volumes and non-empty Named Volumes; remove files with fs rm first.",
-        "  fs mb/rb require a full czfs:/Volumes/<workspace>/<schema>/<volume> root, not a bare name.",
+        "  fs mb/rb require a qualified root such as czfs:/Volumes/your_workspace/your_schema/your_volume, not a bare name.",
         "  Namespace roots do not accept -R; use -R only on a specific Volume/file tree.",
       ].join("\n")),
   )
@@ -209,7 +210,9 @@ function createFs(args: FsArgs): FsUtil {
 
 function isVolumeNamespaceRoot(path: string): boolean {
   const normalized = path.toLowerCase().replace(/\/+$/, "")
-  return normalized === "czfs:" || normalized === "czfs:/volumes" || normalized === "czfs:/volumes/@table" || normalized === "volume:" || normalized === "volume:table:"
+  const czfsRoot = normalized.startsWith("czfs:") ? normalized.slice(5) : normalized
+  const canonicalCzfsRoot = czfsRoot.replace(/^\/volume(?=\/|$)/, "/volumes")
+  return canonicalCzfsRoot === "" || canonicalCzfsRoot === "/volumes" || canonicalCzfsRoot === "/volumes/@table" || canonicalCzfsRoot === "/volumes/@user" || normalized === "volume:" || normalized === "volume:table:"
 }
 
 function formatModifiedAt(value: number | null): string | null {

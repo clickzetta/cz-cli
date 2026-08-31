@@ -1,12 +1,12 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
-import { JobStatus, request, type QueryResult } from "@clickzetta/sdk"
+import { JobStatus, quote, request, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
-import { parseVolumePath } from "@clickzetta/sdk/fsutil"
+import { parseVolumePath, validateRelativePath } from "@clickzetta/sdk/fsutil"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -333,10 +333,10 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           .option("header", { type: "boolean", default: false, describe: "Treat the first CSV row as column names" })
           .epilogue([
             "Examples:",
-            "  cz-cli table load t czfs:/Volumes/ws/sc/v/ --header",
-            "  cz-cli table load t czfs:/Volumes/ws/sc/v/daily/ --using parquet",
-            "  cz-cli table load t czfs:/Volumes/@user/ws/u/data.csv",
-            "  cz-cli table load t czfs:/Volumes/@table/ws/sc/src/exports/ --using parquet",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet",
+            "  cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv",
+            "  cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet",
             "",
             "For PURGE, ON_ERROR, PARTITION, transformations, or complex options, use:",
             "  cz-cli sql --write \"COPY INTO ...\"",
@@ -346,13 +346,9 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           try {
             const table = validateIdentifier(argv.name as string, "table name")
             const source = String(argv.source)
-            if (!source.toLowerCase().startsWith("czfs:/volumes/")) {
-              error("USAGE_ERROR", "table load requires a czfs:/ Volume path; use SQL for a raw Volume identifier.", { format, exitCode: 2 })
-              return
-            }
             const parsed = parseVolumePath(source)
-            if (!parsed || parsed.reference.identifiers.length === 0) {
-              error("USAGE_ERROR", "Invalid czfs:/ Volume source path.", { format, exitCode: 2 })
+            if (!parsed || parsed.reference.identifiers.length === 0 || parsed.reference.kind === "named" && parsed.reference.identifiers.length !== 3) {
+              error("USAGE_ERROR", "table load requires a qualified czfs Volume path (czfs:/Volumes/... or /Volumes/...).", { format, exitCode: 2 })
               return
             }
             if (parsed.reference.kind === "user" && parsed.reference.identifiers.length !== 2) {
@@ -372,11 +368,11 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             }
             const options = argv.header ? " OPTIONS('header'='true')" : ""
             const sourceIsDirectory = source.endsWith("/")
-            const relativePath = parsed.relativePath.replace(/\/+$/, "")
+            const relativePath = validateRelativePath(parsed.relativePath, source)
             const selector = relativePath
               ? sourceIsDirectory
-                ? ` SUBDIRECTORY '${relativePath.replace(/'/g, "''")}/'`
-                : ` FILES ('${relativePath.replace(/'/g, "''")}')`
+                ? ` SUBDIRECTORY ${quote(`${relativePath}/`)}`
+                : ` FILES (${quote(relativePath)})`
               : ""
             const sql = `COPY INTO ${table} FROM ${volume} USING ${using}${options}${selector}`
             const t0 = Date.now()

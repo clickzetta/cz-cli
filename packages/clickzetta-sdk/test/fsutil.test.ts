@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { FsError, FsUtil } from "../src/fsutil.js"
+import { FsError, FsUtil, parseVolumePath } from "../src/fsutil.js"
 import { quote } from "../src/sql/literal.js"
 import { JobStatus, type QueryResult } from "../src/sql/types.js"
 
@@ -125,6 +125,19 @@ describe("FsUtil", () => {
     expect(() => fs.path("s3://bucket/file")).toThrow(FsError)
     expect(() => fs.path("czfs:/Volumes/demo/public/volume/../secret")).toThrow(FsError)
     await expect(fs.mv(join(root, "source"), join(root, "source"), true)).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
+  })
+
+  test("accepts the canonical czfs aliases and rejects unknown type markers", () => {
+    expect(parseVolumePath("/Volume")).toMatchObject({ reference: { kind: "named", identifiers: [] }, relativePath: "" })
+    expect(parseVolumePath("/Volume/Workspace/Schema/Volume/data.csv")).toMatchObject({
+      reference: { kind: "named", identifiers: ["Workspace", "Schema", "Volume"] },
+      relativePath: "data.csv",
+    })
+    expect(parseVolumePath("CZFS:/VOLUMES/@TABLE/ws/sc/orders/data.csv")).toMatchObject({
+      reference: { kind: "table", identifiers: ["ws", "sc", "orders"] },
+      relativePath: "data.csv",
+    })
+    expect(() => parseVolumePath("/Volumes/@future/ws/sc/name/data.csv")).toThrow(FsError)
   })
 
   test("does not translate Volume network errors into text errors", async () => {
@@ -283,12 +296,8 @@ describe("FsUtil", () => {
       },
     })
 
-    expect(await fs.mb("volume://shared_files/")).toBe(true)
-    expect(await fs.mb("volume://public.shared_files")).toBe(true)
-    expect(statements).toEqual([
-      "create volume `shared_files`",
-      "create volume `public`.`shared_files`",
-    ])
+    await expect(fs.mb("volume://shared_files/")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
+    await expect(fs.mb("volume://public.shared_files")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
     const qualifiedStatements: string[] = []
     const qualified = new FsUtil({ workspace: "workspace", schema: "public", execute: async (sql) => { qualifiedStatements.push(sql); return result([]) } })
     await qualified.mb("czfs:/Volumes/workspace/public/qualified")
@@ -303,11 +312,12 @@ describe("FsUtil", () => {
     await expect(fs.mb("volume://")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
     await expect(fs.mb("volume:user://~/")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
     await expect(fs.mb("./shared_files")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
+    await expect(fs.rb("volume://shared_files")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
 
     const existing = new FsUtil({
       execute: async () => ({ ...result([]), status: JobStatus.FAILED, errorMessage: "AlreadyExist: volume exists" }),
     })
-    await expect(existing.mb("volume://shared_files")).rejects.toMatchObject({ code: "FS_TARGET_EXISTS" })
+    await expect(existing.mb("czfs:/Volumes/workspace/public/shared_files")).rejects.toMatchObject({ code: "FS_TARGET_EXISTS" })
 
     const dropped: string[] = []
     const removable = new FsUtil({ workspace: "workspace", schema: "public", execute: async (sql) => {
@@ -339,6 +349,25 @@ describe("FsUtil", () => {
 
     const invisible = new FsUtil({ workspace: "workspace", schema: "public", execute: async () => result([]) })
     await expect(invisible.rb("czfs:/Volumes/workspace/public/missing")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
+  })
+
+  test("fails closed when SHOW VOLUMES omits type metadata", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => sql.startsWith("SHOW VOLUMES")
+        ? { ...result([["public", "shared_files", "workspace"]]), columns: [{ name: "schema_name", type: "STRING" }, { name: "volume_name", type: "STRING" }, { name: "workspace_name", type: "STRING" }] }
+        : result([]),
+    })
+    await expect(fs.rb("czfs:/Volumes/workspace/public/shared_files")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED" })
+  })
+
+  test("fails when current_user is missing instead of exposing an empty User Volume", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      execute: async (sql) => sql === "SELECT current_user()" ? result([[]]) : result([]),
+    })
+    await expect(fs.ls("czfs:/Volumes/@user")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED" })
   })
 
   test("lists an existing empty Named Volume root as empty", async () => {

@@ -6,7 +6,7 @@
 | 目标命令 | `cz-cli fs` |
 | 设计来源 | Python Connector `FsUtil` |
 | 目标用户 | CLI 用户、数据开发、自动化脚本、AI Agent |
-| 更新时间 | 2026-08-28 |
+| 更新时间 | 2026-08-31 |
 
 > **一句话说明**
 >
@@ -47,25 +47,70 @@ flowchart LR
 
 ## 2. 路径怎么写
 
-### 2.1 支持的路径格式
+### 2.1 `czfs` 路径规范（唯一依据）
+
+以下协议以 Lakehouse Volume 路径规范为准，后续实现、CLI help、Agent system prompt 和测试不得自行推导或修改段数。
+
+#### 2.1.1 规范结构
+
+```text
+czfs:/Volumes/@type/qualifiedname/path
+```
+
+规范示例：
+
+```text
+czfs:/Volumes/workspace1/schema1/volume1/path/data.csv
+/Volumes/workspace1/schema1/volume1/path/data.csv
+/Volumes/@table/workspace1/schema1/table1/path/data.csv
+/Volumes/@user/workspace1/user1/path/data.csv
+```
+
+1. `czfs:` 可以省略，协议大小写不敏感。
+2. `/Volumes`、`/Volume`、`/volume`、`/volumes` 作为路径开头时都视为 `/Volumes`。
+3. `@type` 大小写不敏感：
+   - External Volume：`@external`，可省略；
+   - Managed Volume：`@managed`，可省略；
+   - Table Volume：`@table`，不可省略；
+   - User Volume：`@user`，不可省略；
+   - 其他类型：`@type` 不可省略，由子系统自行定义。
+4. `qualifiedname` 字段不可省略，严格按 Volume 类型使用以下段数：
+
+| Volume 类型 | qualifiedname |
+| --- | --- |
+| External Volume | `workspace_identifier/schema_identifier/volume_identifier` |
+| Managed Volume | `workspace_identifier/schema_identifier/volume_identifier` |
+| Table Volume | `workspace_identifier/schema_identifier/table_identifier` |
+| User Volume | `workspace_identifier/username` |
+| 其他类型 | 由子系统定义 |
+
+> 规范与实现状态：本节是协议契约。若某个实现尚未接受省略 `czfs:` 或 `/Volume` 大小写别名，必须补齐实现或明确标记为未实现，不能通过猜测改变规范。
+
+#### 2.1.2 三种 Volume 的生命周期
+
+- Named/Managed Volume：先使用 `fs mb` 创建，再使用 `fs mkdir/cp/ls/rm` 操作；`fs rb` 删除对象。
+- Table Volume：不能单独创建；先创建表，Lakehouse 自动生成 Table Volume，再使用 `@table` 路径操作。
+- User Volume：系统自动提供，再使用 `@user` 路径操作。User Volume 的 `workspace_identifier/username` 是 `czfs` 协议中的 qualifiedname，不代表服务端支持跨用户寻址；服务端 SQL `USER VOLUME` 仍按当前会话用户语义执行。
+
+### 2.2 兼容路径格式
 
 | 路径类型 | 格式 | 示例 |
 | --- | --- | --- |
 | 本地绝对路径 | `/path/to/file` | `/tmp/orders/a.parquet` |
 | 本地相对路径 | `./path/to/file` | `./data/a.csv` |
 | 本地 URI | `file:/path/to/file` | `file:/tmp/a.csv` |
-| czfs Named / External | `czfs:/Volumes/workspace/schema/volume/path` | `czfs:/Volumes/demo/public/shared_files/a.csv` |
-| czfs User | `czfs:/Volumes/@user/workspace/user/path` | `czfs:/Volumes/@user/demo/alice/a.csv` |
-| czfs Table | `czfs:/Volumes/@table/workspace/schema/table/path` | `czfs:/Volumes/@table/demo/public/orders/a.parquet` |
+| czfs Named / External | `czfs:/Volumes/<workspace>/<schema>/<volume>/path` | `czfs:/Volumes/your_workspace/your_schema/your_volume/data/a.csv` |
+| czfs User | `czfs:/Volumes/@user/<workspace>/<user>/path` | `czfs:/Volumes/@user/your_workspace/your_user/data/a.csv` |
+| czfs Table | `czfs:/Volumes/@table/<workspace>/<schema>/<table>/path` | `czfs:/Volumes/@table/your_workspace/your_schema/your_table/data/a.parquet` |
 | Named / External Volume（兼容） | `volume://[workspace.][schema.]volume/path` | `volume://shared_files/data/a.csv` |
 | User Volume（兼容） | `volume:user://~/path` | `volume:user://~/data/a.csv` |
 | Table Volume（兼容） | `volume:table://workspace.schema.table/path` | `volume:table://demo.public.orders/stage/a.parquet` |
 
 `czfs:/` 是 CLI 主推的规范路径。兼容的 `volume:*://` 形式仍可解析，但不放在 `--help` 的首选示例中。
 
-### 2.1.1 根路径与三种 Volume 用法
+### 2.3 根路径与三种 Volume 用法
 
-`fs ls` 对根路径使用对应的 Lakehouse 元数据命令：
+`fs ls` 对根路径使用对应的 Lakehouse 元数据命令。规范中的 `czfs:/Volumes` 也接受省略 `czfs:` 以及 `/Volume`、`/volume`、`/volumes` 别名：
 
 命名空间根（`czfs:/`、`czfs:/Volumes/`、`czfs:/Volumes/@table/`）只用于列出入口，不接受 `-R/--recursive`；`-R` 只对具体 Volume 或目录树生效。
 
@@ -82,44 +127,17 @@ flowchart LR
 
 `@user`、`@table` 两个虚拟入口排在 `SHOW VOLUMES` 结果之前，保证 Volume 数量超过 `--limit` 时入口不被截断。
 
-三种 Volume 的生命周期不同：
+### 2.4 协议解析与服务端语义边界
 
-- Named Volume：先用 `fs mb` 创建，再用 `fs mkdir/cp/ls/rm` 操作；用 `fs rb` 删除对象。
-- Table Volume：不能单独创建；先创建表，Lakehouse 自动生成 Table Volume，再用 `@table` 路径操作。
-- User Volume：系统自动创建，直接用 `@user` 路径操作。
+客户端负责把规范路径解析为 Volume 类型、qualifiedname 和相对路径，再映射到 Lakehouse 的 SQL 关键字。协议解析单测只证明字符串解析和 SQL 标识符生成，不证明某个账号或引擎版本具备对应的服务端权限。
 
-### 2.1.2 路径格式实测结果
+- `@external`、`@managed`、`@table`、`@user` 的大小写只影响解析，不改变 Volume 类型。
+- External/Managed 的未标记形式按三段 qualifiedname 解析；Table/User 必须带类型标记。
+- User Volume 的 `workspace_identifier/username` 是协议字段。Lakehouse `USER VOLUME` 的权限仍由当前会话用户决定，不能据此推断可以读写其他用户的 Volume。
+- 服务端不接受把完整 `czfs:/...` URI 直接作为 SQL 的 Volume 参数；客户端必须先解析并校验相对路径，再生成 `VOLUME`、`TABLE VOLUME` 或 `USER VOLUME` 语句。
+- 服务端返回的 `relative_path` 必须经过路径校验（拒绝空段、`.`、`..` 和控制字符），再以解码后的相对路径回填 SQL，避免路径穿越和二次编码。
 
-已使用连接器 `tests/unit/test_volume_path.py` 的 25 个单元测试验证以下格式（测试结果：25 passed）：
-
-| 输入格式 | 规范化输出 | 结论 |
-| --- | --- | --- |
-| `volume://workspace.schema.volume/data.txt` | `czfs:/Volumes/workspace/schema/volume/data.txt` | 支持 |
-| `volume://schema.volume/data.txt` | `volume://schema.volume/data.txt` | 支持，但语义是两段 Volume 标识符 |
-| `volume://volume/data.txt` | `volume://volume/data.txt` | 支持，但依赖当前连接上下文 |
-| `volume:table://workspace.schema.table/data.txt` | `czfs:/Volumes/@table/workspace/schema/table/data.txt` | 支持 |
-| `volume:user://~/data.txt` | `volume:user://~/data.txt` | 支持 |
-| `czfs:/Volumes/workspace/schema/volume/data.txt` | 原样规范化 | 支持 |
-| `czfs:/Volumes/@table/workspace/schema/table/data.txt` | 原样规范化 | 支持 |
-| `czfs:/Volumes/@user/workspace/user/data.txt` | 原样规范化 | 支持 |
-
-该单测只验证解析、规范化和 SQL 标识符，不等价于真实 Volume 服务读写。CLI 根目录查询已分别接入 `SHOW VOLUMES`、`SHOW USER VOLUME DIRECTORY` 和 `SHOW TABLE VOLUME DIRECTORY`。
-
-#### 服务端标识符限定实测
-
-czfs 路径总是展开成工作空间限定的三段标识符。以下行为在 dev（`studio_otel_collector`）和 UAT（`quick_start`）两套环境实测确认：
-
-| 语句 | 一段 | 两段 | 三段 |
-| --- | --- | --- | --- |
-| `SHOW VOLUME DIRECTORY` | 支持 | 支持 | 支持 |
-| `CREATE VOLUME` / `DROP VOLUME` | 支持 | 支持 | 支持（`fs mb`/`fs rb` 走此形式） |
-| `SHOW USER VOLUME DIRECTORY` | 裸关键字支持 | — | 带 `<workspace>.<user>` 限定同样支持，返回结果一致 |
-
-`get_file()`、`get_presigned_url()`、`create_directory()`、`remove` 对 `USER VOLUME` 的裸形式与限定形式返回相同结果（实测 `length()` 均为 222）。因此 czfs 与 `volume:*://` 两种写法在服务端等价，CLI 不需要为兼容写法降级。
-
-服务端**不接受**把 czfs 路径直接当作 SQL 参数：`get_file('czfs:/Volumes/...')` 与 `SHOW VOLUME DIRECTORY 'czfs:/...'` 均报错，`get_file(volume x, 'czfs:/...')` 会把整个 URI 当成相对路径并返回 `null`。czfs 到关键字语法的映射必须留在客户端，因此服务端返回的 `relative_path` 一律要经过与 `list_directory` 相同的路径校验（拒绝 `.`、`..`、空段和控制字符），再用**解码后**的相对路径回填 SQL。
-
-### 2.2 `volume://` 的限定规则
+### 2.5 `volume://` 的限定规则
 
 `volume://` 通过点分段数判断 Volume 标识符：
 
@@ -131,13 +149,15 @@ czfs 路径总是展开成工作空间限定的三段标识符。以下行为在
 
 短地址只有在当前连接能够提供缺失的 workspace/schema 时才可用；否则必须返回 `FS_PATH_CONTEXT_REQUIRED`（退出码 `2`），不得猜测默认 workspace/schema。自动化脚本应使用三段全限定形式。
 
+短地址仅保留给兼容的文件操作；`fs mb`/`fs rb` 始终要求三段完整的 Named Volume 根路径。
+
 Volume 标识符每段必须是非空标识符；点号只用于分隔限定名，标识符中的点号、斜杠和控制字符不支持。相对路径按 `/` 分段，客户端先 URL-decode 再检查，拒绝空段、`.`、`..` 和解码后路径穿越；普通空格、Unicode、`%` 和单引号按 URI 规则编码后保留原值。
 
 > **建议**
 >
 > 人工和自动化操作统一优先使用全限定 `czfs:/Volumes/...`；`volume://` 只为兼容已有脚本。
 
-### 2.3 路径方向
+### 2.6 路径方向
 
 `cp` 和 `mv` 都使用统一顺序：
 
@@ -247,9 +267,9 @@ Commands:
 
 Path formats:
   Local                 /tmp/a.csv, ./a.csv, file:/tmp/a.csv
-  Named/External Volume czfs:/Volumes/<workspace>/<schema>/<volume>/
-  User Volume           czfs:/Volumes/@user/<workspace>/<user>/
-  Table Volume          czfs:/Volumes/@table/<workspace>/<schema>/<table>/
+  Named/External Volume czfs:/Volumes/your_workspace/your_schema/your_volume/
+  User Volume           czfs:/Volumes/@user/your_workspace/your_user/
+  Table Volume          czfs:/Volumes/@table/your_workspace/your_schema/your_table/
 
 Options:
       --profile     ClickZetta profile name                         [string]
@@ -368,7 +388,7 @@ cz-cli fs mb <volume>
 Create a Named Volume (fs mb cannot create User or Table Volumes)
 
 Positionals:
-  volume  Named Volume root: czfs:/Volumes/<workspace>/<schema>/<volume>
+  volume  Named Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume
                                                                [string] [required]
 
 Options:
@@ -382,7 +402,7 @@ Examples:
 行为约定：
 
 - 只接受 Named Volume 根路径，不接受子目录、本地路径、User Volume 或 Table Volume。
-- 一段名称使用当前 workspace/schema；两段名称指定 schema；三段名称指定 workspace/schema。
+- Volume 根必须提供完整的 `workspace/schema/volume` qualifiedname；不接受裸名称或省略 workspace/schema 的短地址。
 - 等价于执行带标识符转义的 `CREATE VOLUME`，已有同名 Volume 返回 `FS_TARGET_EXISTS`。
 
 ### 4.5 `cz-cli fs rb --help`
@@ -614,10 +634,10 @@ Examples:
 源路径以 `/` 结尾时按目录处理并生成 `SUBDIRECTORY`；不带尾斜杠时按单文件处理并生成 `FILES`。
 
 ```bash
-cz-cli table load orders czfs:/Volumes/demo/public/QiliangData/data.csv --header
-cz-cli table load orders czfs:/Volumes/demo/public/QiliangData/daily/ --using parquet
-cz-cli table load orders czfs:/Volumes/@user/demo/alice/data.csv
-cz-cli table load orders czfs:/Volumes/@table/demo/public/source/exports/ --using parquet
+cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header
+cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet
+cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv
+cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet
 ```
 
 复杂的 `PURGE`、`ON_ERROR`、`PARTITION`、转换查询或高级格式参数，直接使用：
