@@ -16,7 +16,7 @@ export async function studioRequest<T>(
 ) {
   const opts: ClientOptions = {
     baseUrl: config.baseUrl,
-    token: config.token,
+    tokens: config.tokens,
     customHeaders: {
       instanceName: config.instanceName,
       instanceid: String(config.instanceId),

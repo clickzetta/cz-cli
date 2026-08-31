@@ -25,6 +25,7 @@ import * as Profile from "../connection/profile-context.js"
 import { loadProfiles } from "../connection/profile-store.js"
 import { rewriteClickzettaGatewayError, type GatewayErrorCode } from "../llm/gateway-error.js"
 import { readLlmEntries } from "../llm/native-config.js"
+import { profileTokenSource } from "../connection/token-source.js"
 
 export { browserOpenCommandForPlatform }
 
@@ -151,7 +152,9 @@ async function runtimeAccountName(input: {
     })
     const token = (await getCookieToken(config)) ?? (await getToken(config))
     if (input.signal?.aborted) return undefined
-    const user = await getCurrentUser(toServiceUrl(config.service, config.protocol), token.token)
+    const user = await getCurrentUser(toServiceUrl(config.service, config.protocol), {
+      tokens: profileTokenSource(config),
+    })
     return str(user.accountDisplayName)
   } catch {
     return undefined

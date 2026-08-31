@@ -447,7 +447,7 @@ export async function pollJobResult(
 ): Promise<QueryResult> {
   const startTime = Date.now()
   const { jobTimeoutMs, timezone, maxRetries = Infinity, resubmitFn } = params
-  const serviceInfo = normalizeServiceEndpoint(opts.config?.service ?? opts.baseUrl)
+  const serviceInfo = normalizeServiceEndpoint(opts.context?.service ?? opts.baseUrl)
 
   const requestBody = {
     getResultRequest: {

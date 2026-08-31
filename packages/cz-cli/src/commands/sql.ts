@@ -467,7 +467,7 @@ async function executeSingle(
 
 async function resolveAccountDisplayName(ctx: ExecContext) {
   try {
-    return (await getCurrentUser(ctx.clientOpts.baseUrl, ctx.token.token, ctx.clientOpts.customHeaders)).accountDisplayName
+    return (await getCurrentUser(ctx.clientOpts.baseUrl, { tokens: ctx.clientOpts.tokens, customHeaders: ctx.clientOpts.customHeaders })).accountDisplayName
   } catch {
     return undefined
   }

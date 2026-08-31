@@ -55,6 +55,37 @@ When the cached token is judged expired per `EXPIRED_FACTOR = 0.8` and a `refres
 - **THEN** the CLI clears the invalid cache and performs a full portal login as a fallback
 - **AND** ultimately returns the new token obtained via the fallback login
 
+### Requirement: Credentials are obtained from a TokenSource, never held as a token string
+
+Authentication is a capability of the transport, not data passed around by callers. Every authenticated request MUST obtain its credential from a `TokenSource` (`get()` before the request, `rotate()` once on a 401), and no context, config, or helper may carry a token string for later reuse. `ClientOptions.tokens` and `StudioConfig.tokens` are required, so a request cannot be constructed without naming how it authenticates.
+
+An identity with no rotation path is a *kind of source* — `staticTokenSource` for a token a login flow just minted or a profile `[agent]` block, and cz-cli's `profileTokenSource` for a cookie-pinned profile whose Cookie is the real credential — and its `rotate()` reports that. It is never a flag on individual requests.
+
+This shape is the standard one (`oauth2.TokenSource` in Go, `TokenCredential` in the Azure SDK, `AuthorizedSession` in google-auth) and is adopted for the reason it exists: a token handed to a caller is a snapshot, so each caller then needs its own copy of "how to replace this". That is exactly how `sql` came to self-heal on an expired token while `task`/`job`/`runs`/`schema` surfaced a bare `401 token is invalid`, and why the first fix (PR #84) had to be written a second time inside one more command.
+
+Refresh is proactive first: `get()` rotates a credential already past `EXPIRED_FACTOR`, so an expired token never reaches the wire. The 401 path exists for what the clock cannot predict — early revocation, clock skew, server-side invalidation.
+
+#### Scenario: A stale credential is refreshed before the request
+
+- **WHEN** a Studio request is issued and the persisted token is past its expiry factor
+- **THEN** the source refreshes first and the request carries the rotated token
+- **AND** no 401 round-trip occurs
+
+#### Scenario: A credential the server rejects is rotated once and retried
+
+- **WHEN** the credential is still valid by the clock but the server answers 401
+- **THEN** the transport asks the same source to rotate, retries once with the new credential, and the caller observes success
+
+#### Scenario: A source with no rotation path lets the 401 stand (boundary)
+
+- **WHEN** the request authenticates through a static or cookie-backed source and the server answers 401
+- **THEN** no rotation is attempted, the request is not resent, and the 401 reaches the caller
+
+#### Scenario: A dead session fails before issuing the request (exception)
+
+- **WHEN** the refresh token is dead and no fallback credential exists
+- **THEN** `get()` raises `SESSION_EXPIRED` naming `cz-cli auth login`, and no request is sent
+
 ### Requirement: Query UserInfo
 
 The CLI should be able to call `GET /oauth2/userinfo` with `Authorization: Bearer <access_token>` to obtain the current user's information and parse the returned fields; during processing and display it must not output sensitive fields such as `access_token` or `refresh_token`.

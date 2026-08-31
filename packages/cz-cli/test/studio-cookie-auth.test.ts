@@ -101,7 +101,11 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
     const { getStudioContext } = await import(`../src/commands/studio-context.ts?studio-cookie-${Date.now()}`)
     try {
       const ctx = await getStudioContext({ format: "json" })
-      expect(ctx.token).toBe(token)
+      // The context carries a source; a cookie identity resolves to the cookie
+      // token and reports that it cannot be rotated.
+      const credential = await ctx.tokens.get()
+      expect(credential.token).toBe(token)
+      expect(await ctx.tokens.rotate(credential)).toBeUndefined()
       expect(ctx.userId).toBe(7)
       expect(ctx.instanceId).toBe(86)
       expect(ctx.workspaceId).toBe("wid-1")

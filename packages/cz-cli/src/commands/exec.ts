@@ -1,25 +1,9 @@
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
-import {
-  getToken,
-  clearTokenCache,
-  toServiceUrl,
-  newJobId,
-  submitJob,
-  pollJobResult,
-  parseJobResponse,
-  isRetryableErrorCode,
-  isVolumeSql,
-  processVolumeSql,
-  ClickZettaApiError,
-  type ClientOptions,
-  type ConnectionConfig,
-  type AuthToken,
-  type QueryResult,
-  JobStatus,
-} from "@clickzetta/sdk"
+import { getToken, toServiceUrl, newJobId, submitJob, pollJobResult, parseJobResponse, isRetryableErrorCode, isVolumeSql, processVolumeSql, ClickZettaApiError, type ClientOptions, type ConnectionConfig, type AuthToken, type QueryResult, JobStatus } from "@clickzetta/sdk"
 import { currentTraceContext, defaultQueryTag } from "../trace.js"
 import { patchProfileUserId } from "../connection/profile-store.js"
 import { getCookieToken, hasCookieToken } from "../connection/cookie-token.js"
+import { profileTokenSource } from "../connection/token-source.js"
 
 export interface ExecContext {
   config: ConnectionConfig
@@ -62,9 +46,9 @@ export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContex
   if (token.userId) patchProfileUserId(args.profile, token.userId)
   const clientOpts: ClientOptions = {
     baseUrl: toServiceUrl(config.service, config.protocol),
-    token: token.token,
+    tokens: profileTokenSource(config),
     customHeaders: { ...config.customHeaders, instanceName: config.instance },
-    config,
+    context: { service: config.service, instance: config.instance, username: config.username },
   }
   return { config, token, clientOpts }
 }
@@ -251,11 +235,27 @@ export async function execSqlWithRetry(
     return await execSql(ctx, sql, opts)
   } catch (err) {
     if (!isAuthError(err)) throw err
-    // Clear stale token and re-authenticate
-    clearTokenCache()
-    const freshToken = await getToken(ctx.config)
-    ctx.token = freshToken
-    ctx.clientOpts.token = freshToken.token
+    // The SQL gateway reports some auth failures in the body rather than as a
+    // 401, so the transport's own rotation never sees them; rotate explicitly
+    // and retry once. clientOpts needs no patching: its source re-reads the
+    // rotated token on the next request.
+    //
+    // Rotation goes through the context's OWN source, not forceRefreshToken(config):
+    // a cookie-pinned profile has no rotation path, and handing its config to the
+    // refresh engine drives a full login with empty credentials (no pat, no
+    // username/password, no token store) — ~6s of retries ending in a misleading
+    // "Login failed" that hides the server's actual 401.
+    const source = ctx.clientOpts.tokens
+    const fresh = await source.rotate(await source.get())
+    if (!fresh) throw err
+    // Only the identity ids are carried over; the wire credential itself is read
+    // from the source on each request.
+    ctx.token = {
+      ...ctx.token,
+      token: fresh.token,
+      instanceId: fresh.instanceId || ctx.token.instanceId,
+      userId: fresh.userId || ctx.token.userId,
+    }
     return await execSql(ctx, sql, opts)
   }
 }

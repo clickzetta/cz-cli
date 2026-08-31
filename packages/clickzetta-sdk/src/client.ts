@@ -1,27 +1,35 @@
 import { ClickZettaApiError, type ApiResponse } from "./types/api.js"
-import type { ConnectionConfig } from "./types/index.js"
+import type { Credential, RequestContext, TokenSource } from "./types/index.js"
 import { currentTraceparent } from "./traceparent.js"
 import { getHeader, mergeHeaders } from "./headers.js"
 
 const SDK_VERSION = "0.1.0"
 const MAX_RETRIES = 3
 const NON_RETRYABLE_STATUS = new Set([400, 403, 404, 409, 422])
+/**
+ * Error codes that end the retry loop immediately. A refresh that reported the
+ * session as dead will report it again on every attempt, so retrying only adds
+ * latency (and, for a profile with no credentials, further pointless network
+ * calls) before the same verdict. Transient refresh failures keep retrying.
+ */
+const TERMINAL_ERROR_CODES = new Set(["SESSION_EXPIRED"])
 const AUTH_EXPIRED_STATUS = 401
 const DEFAULT_TIMEOUT_MS = 60_000
 
 export interface ClientOptions {
   baseUrl: string
-  token?: string
+  /**
+   * How this request authenticates. The transport calls `get()` before each
+   * attempt and `rotate()` once on a 401, so a caller never holds a token and
+   * cannot forget to wire recovery. Use `staticTokenSource` for a credential
+   * with no rotation path and `anonymous()` for an unauthenticated endpoint.
+   */
+  tokens: TokenSource
   customHeaders?: Record<string, string>
   traceparent?: string
   timeout?: number
-  /**
-   * Optional connection config. When present, a 401 response will
-   * trigger an automatic `forceRefreshToken(config)` and retry with
-   * the refreshed token. Backwards compatible: when omitted, 401
-   * behaves as before (only the token cache is cleared).
-   */
-  config?: ConnectionConfig
+  /** Non-auth metadata some request bodies embed — see {@link RequestContext}. */
+  context?: RequestContext
 }
 
 /**
@@ -51,16 +59,16 @@ function generateRequestId(): string {
 
 /**
  * Header name of the wire credential. Lower case because {@link mergeHeaders}
- * folds every name that way; the 401 refresh path below rewrites this same key,
- * and using a different casing there would re-introduce a duplicate field.
+ * folds every name that way; after a rotation the headers are rebuilt from the
+ * new credential, and a different casing here would emit a duplicate field.
  */
 const TOKEN_HEADER = "x-clickzetta-token"
 
-function buildHeaders(opts: ClientOptions): Record<string, string> {
+function buildHeaders(opts: ClientOptions, credential: Credential): Record<string, string> {
   const requestId = generateRequestId()
   // Case-insensitive: a profile may spell this `Instancename`, and missing it
-  // here would fall back to config.instance and emit a second, conflicting value.
-  const instanceName = getHeader(opts.customHeaders, "instanceName") ?? opts.config?.instance
+  // here would fall back to the context instance and emit a second, conflicting value.
+  const instanceName = getHeader(opts.customHeaders, "instanceName") ?? opts.context?.instance
   return mergeHeaders(
     {
       "Content-Type": "application/json",
@@ -72,8 +80,11 @@ function buildHeaders(opts: ClientOptions): Record<string, string> {
       "traceparent": opts.traceparent ?? currentTraceparent(),
       ...(instanceName ? { instanceName } : {}),
     },
+    // The credential's own headers sit under the caller's: a Cookie belongs to
+    // the credential, but per-call identity headers still win.
+    credential.headers,
     opts.customHeaders,
-    opts.token ? { [TOKEN_HEADER]: opts.token } : undefined,
+    credential.token ? { [TOKEN_HEADER]: credential.token } : undefined,
   )
 }
 
@@ -82,9 +93,9 @@ function buildHeaders(opts: ClientOptions): Record<string, string> {
  * - parseWrapper=true  → returns parsed JSON as ApiResponse<T>
  * - parseWrapper=false → returns parsed JSON as T
  *
- * On 401, if `opts.config` is provided, we force-refresh the token
- * and retry with the new value written back into `opts.token`
- * (so subsequent attempts in the same loop pick it up too).
+ * Authentication is resolved here and nowhere else: the credential comes from
+ * `opts.tokens` before each attempt, and a 401 asks the same source to rotate
+ * it. A source with no rotation path returns undefined and the 401 stands.
  */
 async function doRequest<T>(
   opts: ClientOptions,
@@ -94,11 +105,27 @@ async function doRequest<T>(
   parseWrapper: boolean,
 ): Promise<T> {
   const url = `${opts.baseUrl}${path}`
-  const headers = buildHeaders(opts)
+  let credential = await opts.tokens.get()
+  let headers = buildHeaders(opts, credential)
+  // Re-resolved at the top of every attempt below: `get()` is cache-backed, so
+  // this costs nothing, and a retry after a multi-second backoff must not
+  // resend a credential that expired while we waited.
+  // A 401 gets exactly one rotation per request, matching RFC 6750's single
+  // re-authentication challenge: a second rejection is the server's answer
+  // about this identity, not a race we should keep re-running.
+  let rotated = false
+  // Set when a 401 cannot be recovered from. The generic retry loop below would
+  // otherwise resend the very credential the server just rejected, which is
+  // never useful and delays the error by three backoffs.
+  let authExhausted = false
 
   let lastError: Error | undefined
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      if (attempt > 0) {
+        credential = await opts.tokens.get()
+        headers = buildHeaders(opts, credential)
+      }
       const resp = await fetch(url, {
         method,
         headers,
@@ -113,20 +140,19 @@ async function doRequest<T>(
           resp.status,
         )
         if (NON_RETRYABLE_STATUS.has(resp.status)) throw apiErr
-        if (resp.status === AUTH_EXPIRED_STATUS && attempt < MAX_RETRIES) {
-          const { clearTokenCache, forceRefreshToken } = await import("./auth/token.js")
-          clearTokenCache()
-          if (opts.config) {
-            try {
-              const fresh = await forceRefreshToken(opts.config)
-              opts.token = fresh.token
-              headers[TOKEN_HEADER] = fresh.token
-            } catch (refreshErr) {
-              // Bubble up the refresh error as the final cause so
-              // callers see why we gave up on this request.
-              throw refreshErr
-            }
+        if (resp.status === AUTH_EXPIRED_STATUS) {
+          // Rotation is offered once; a source that cannot rotate (or a second
+          // rejection) makes this 401 the final answer for this identity.
+          const fresh = rotated || attempt >= MAX_RETRIES
+            ? undefined
+            : await opts.tokens.rotate(credential)
+          if (!fresh) {
+            authExhausted = true
+            throw apiErr
           }
+          rotated = true
+          credential = fresh
+          headers = buildHeaders(opts, credential)
         }
         throw apiErr
       }
@@ -141,6 +167,8 @@ async function doRequest<T>(
       if (err instanceof ClickZettaApiError && (NON_RETRYABLE_STATUS.has(err.statusCode ?? 0) || err.code === "PARSE_ERROR")) {
         throw err
       }
+      if (authExhausted) throw err
+      if (TERMINAL_ERROR_CODES.has(String((err as { code?: unknown }).code ?? ""))) throw err
       if (attempt < MAX_RETRIES) {
         await sleep(retryDelayMs(attempt))
         continue

@@ -725,12 +725,17 @@ async function requestAnalytics(
     // Rebuilt per attempt: a refresh replaces `studio` wholesale, tenantId
     // included, and buildUrl puts that tenant in the query string.
     const url = buildUrl(endpoint, route, argv, query, studio.tenantId)
+    // AIGW is reached with its own fetch (different host and header shape), so the
+    // credential is resolved from the context's source here rather than by the SDK
+    // transport. Asking the source — not caching a token on the context — is what
+    // keeps this path in step with the rest.
+    const credential = await studio.tokens.get()
     const headers = mergeHeaders(
       {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "x-clickzetta-token": studio.token,
-        Authorization: studio.token,
+        "x-clickzetta-token": credential.token,
+        Authorization: credential.token,
         traceparent: createTraceparent(),
         userId: String(studio.userId),
         instanceId: String(studio.instanceId),
@@ -744,7 +749,7 @@ async function requestAnalytics(
       studio.customHeaders,
     )
     const requestBody = route.openSessionAuth
-      ? mergeBody(body, { tenantId: studio.tenantId, userId: studio.userId, loginToken: studio.token })
+      ? mergeBody(body, { tenantId: studio.tenantId, userId: studio.userId, loginToken: credential.token })
       : body
     const response = await fetch(url, {
       method: route.method,

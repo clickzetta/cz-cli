@@ -20,10 +20,10 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { getToken, toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
-import { getCookieToken } from "../connection/cookie-token.js"
 import * as Profile from "../connection/profile-context.js"
 import { deriveAuthType, explicitAuthType, loadProfiles } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
+import { profileTokenSource } from "../connection/token-source.js"
 
 const BILLING_PATH = "/clickzetta-portal/hornhub/account/billing/account"
 const API_KEYS_PATH = "/clickzetta-portal/user/listApiKeys"
@@ -293,8 +293,11 @@ export async function fetchProfileUserName(
       ...(profile.protocol === "http" || profile.protocol === "https" ? { protocol: profile.protocol } : {}),
       ...(typeof profile.instance === "string" ? { instance: profile.instance } : {}),
     })
-    const token = (await getCookieToken(config)) ?? (await getToken(config))
-    const name = await readCurrentUserName(toServiceUrl(config.service, config.protocol), token.token, input.signal)
+    // Resolve through the shared source so an expired token refreshes here too,
+    // instead of the indicator silently going blank (this file kept its own
+    // fetch for host probing and cancellation, but not its own credential).
+    const credential = await profileTokenSource(config).get()
+    const name = await readCurrentUserName(toServiceUrl(config.service, config.protocol), credential.token, input.signal)
     if (!name) return undefined
     userNameCache.set(info.profile, name)
     return { profile: info.profile, name }
@@ -682,7 +685,7 @@ async function fetchProfileSnapshot(input: {
       : {}),
     ...(typeof input.profile.instance === "string" ? { instance: input.profile.instance } : {}),
   })
-  const token = (await getCookieToken(config)) ?? (await getToken(config))
+  const credential = await profileTokenSource(config).get()
   const baseUrl = toServiceUrl(config.service, config.protocol)
   const accountId = num(input.profile.account_id)
   const profileUserName = typeof input.profile.username === "string" ? input.profile.username.trim() : ""
@@ -691,7 +694,7 @@ async function fetchProfileSnapshot(input: {
       ? Promise.resolve(undefined)
       : accountId === undefined
         ? Promise.reject(new Error("profile has no account_id"))
-        : portalRead(baseUrl, `${BILLING_PATH}/${accountId}`, token.token, { signal: input.signal }),
+        : portalRead(baseUrl, `${BILLING_PATH}/${accountId}`, credential.token, { signal: input.signal }),
     (async () => {
       // No key to match against — skip the read rather than spend two portal
       // round-trips on a result nothing can consume.
@@ -700,8 +703,8 @@ async function fetchProfileSnapshot(input: {
       // lets us pass it through, but listApiKeys ignores the userName value and
       // scopes to the token identity regardless, so a failed/empty lookup still
       // returns the caller's keys — fall back to an empty name rather than bail.
-      const userName = profileUserName || (await readCurrentUserName(baseUrl, token.token, input.signal)) || ""
-      return portalRead(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, token.token, {
+      const userName = profileUserName || (await readCurrentUserName(baseUrl, credential.token, input.signal)) || ""
+      return portalRead(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, credential.token, {
         signal: input.signal,
       })
     })(),

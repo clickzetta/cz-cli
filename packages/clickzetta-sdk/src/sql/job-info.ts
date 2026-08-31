@@ -31,7 +31,7 @@ export async function getJobRaw(
   jobId: JobID,
   type: JobRequestTypeValue,
 ): Promise<unknown> {
-  const serviceInfo = normalizeServiceEndpoint(opts.config?.service ?? opts.baseUrl)
+  const serviceInfo = normalizeServiceEndpoint(opts.context?.service ?? opts.baseUrl)
   const body: Record<string, unknown> = {
     [type]: {
       jobId: {

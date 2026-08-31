@@ -66,8 +66,70 @@ export interface AuthToken {
   issuer?: string
 }
 
-export interface StudioConfig {
+/**
+ * One resolved credential, valid at the moment {@link TokenSource.get} returned
+ * it. Nothing outside a TokenSource should store one: hold the source instead.
+ */
+export interface Credential {
+  /** Wire credential for the `x-clickzetta-token` header. */
   token: string
+  instanceId: number
+  userId: number
+  /**
+   * Headers this credential itself requires — a session/cookie credential is
+   * only accepted alongside its `Cookie`. Kept with the credential so the
+   * transport cannot send one without the other.
+   */
+  headers?: Record<string, string>
+}
+
+/**
+ * The single seam through which every authenticated request obtains its
+ * credential. Modeled on `oauth2.TokenSource` (Go) and `TokenCredential`
+ * (Azure SDK): the transport asks for a credential at request time and, on a
+ * 401, asks the same source to rotate it.
+ *
+ * Why this shape rather than passing a token string: a token handed to a caller
+ * is a snapshot, and every caller then needs its own copy of "how to replace
+ * this" — which is how `sql` ended up self-healing on an expired token while
+ * every Studio command surfaced a bare `401 token is invalid`. With a source,
+ * there is nothing for a call site to forget: it cannot obtain a credential
+ * without also holding the means to rotate it.
+ *
+ * An identity that cannot be rotated is a *kind of source*
+ * ({@link staticTokenSource}), not a flag on every request.
+ */
+export interface TokenSource {
+  /** Credential for the next request, refreshed proactively when near expiry. */
+  get(): Promise<Credential>
+  /**
+   * One-shot recovery after the server rejected `rejected` with 401. Returns
+   * the replacement credential, or `undefined` when this identity has no
+   * rotation path (static token, cookie session) — the caller then surfaces the
+   * 401. Throws when rotation was possible but failed for good (a dead refresh
+   * token raises `SESSION_EXPIRED`).
+   */
+  rotate(rejected: Credential): Promise<Credential | undefined>
+}
+
+/**
+ * Non-auth metadata that some request BODIES embed — the SQL job-submit payload
+ * carries the service endpoint and the login name. It exists only because those
+ * payloads need it; authentication never reads this. Deliberately separate from
+ * {@link TokenSource} so the two can't be confused again.
+ */
+export interface RequestContext {
+  service?: string
+  instance?: string
+  username?: string
+}
+
+export interface StudioConfig {
+  /**
+   * How this context authenticates. Ask it for a credential when one is needed
+   * (`await sc.tokens.get()`); never cache the result on the context.
+   */
+  tokens: TokenSource
   instanceId: number
   workspaceId: number
   projectId: number
