@@ -122,7 +122,10 @@ export function parseVolumePath(input: string): { reference: VolumeReference; re
   else if (marker.startsWith("@")) throw new FsError("FS_PATH_INVALID", `Unsupported Volume type '${components[0]}' in ${path}`)
   const kind: VolumeKind = marker === "@table" ? "table" : marker === "@user" ? "user" : "named"
   const count = kind === "user" ? 2 : 3
-  if (values.length < count || values.slice(0, count).some((value) => !value)) throw new FsError("FS_PATH_INVALID", `czfs path requires all volume identifiers: ${path}`)
+  if (values.length < count || values.slice(0, count).some((value) => !value)) {
+    const hint = kind === "table" ? " Use czfs:/Volumes/@table/ to list Table Volume roots." : kind === "user" ? " Use czfs:/Volumes/@user/ to list the current User Volume." : ""
+    throw new FsError("FS_PATH_INVALID", `czfs path requires all volume identifiers: ${path}${hint}`)
+  }
   const identifiers = values.slice(0, count)
   validateIdentifiers(identifiers, path)
   return {

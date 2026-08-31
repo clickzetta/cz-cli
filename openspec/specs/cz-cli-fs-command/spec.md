@@ -90,6 +90,7 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 - Named/Managed Volume：先使用 `fs mb` 创建，再使用 `fs mkdir/cp/ls/rm` 操作；`fs rb` 删除对象。
 - Table Volume：不能单独创建；先创建表，Lakehouse 自动生成 Table Volume，再使用 `@table` 路径操作。
 - User Volume：系统自动提供，再使用 `@user` 路径操作。User Volume 的 `workspace_identifier/username` 是 `czfs` 协议中的 qualifiedname，不代表服务端支持跨用户寻址；服务端 SQL `USER VOLUME` 仍按当前会话用户语义执行。
+- User Volume qualifiedname 中的 `username` 是 Lakehouse 用户名（通常与当前 profile 的 `username` 一致），不是 profile 名称或别名。
 
 ### 2.2 兼容路径格式
 
@@ -116,7 +117,7 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 | 根路径 | 查询 | 含义 |
 | --- | --- | --- |
 | `czfs:/` 或 `czfs:/Volumes/` | `SHOW VOLUMES` + 两个虚拟入口 | 列出 Named/External 根，并提供 `@user`、`@table` 入口 |
-| `czfs:/Volumes/@user/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 列出当前 User Volume 文件 |
+| `czfs:/Volumes/@user/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 列出当前 User Volume 文件；`@user/<workspace>/<username>/` 才是具体 User Volume 根 |
 | `czfs:/Volumes/@table/` | `SHOW TABLES`（按 `is_view`/`is_materialized_view`/`is_external`/`is_dynamic` 过滤） | 列出当前 workspace/schema 下的 Table Volume 根 |
 | `czfs:/Volumes/<workspace>/<schema>/<volume>/` | `SHOW VOLUME DIRECTORY` | 列出 Named/External Volume 文件 |
 | `czfs:/Volumes/@user/<workspace>/<user>/` | `SHOW USER VOLUME DIRECTORY` | 列出 User Volume 文件 |
