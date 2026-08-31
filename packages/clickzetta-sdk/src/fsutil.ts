@@ -949,8 +949,9 @@ export class FsUtil {
     // Route the legacy User Volume root through the same resolver as czfs:/Volumes/@user
     // so both spellings report identical czfs entry paths, matching how volume:table://
     // already normalizes to czfs output.
-    if ((hasCzfsScheme && czfsRoot === "/volumes/@user") || normalized === "volume:user://~") {
-      return this.listVolumeWorkspaceRoots("user", limit)
+    if (hasCzfsScheme && czfsRoot === "/volumes/@user") return this.listVolumeWorkspaceRoots("user", limit)
+    if (normalized === "volume:user://~") {
+      return this.listCurrentUserVolumeFiles(recursive, limit)
     }
     return undefined
   }

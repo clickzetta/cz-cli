@@ -93,7 +93,7 @@ export const CLICKZETTA_AGENT_SYSTEM_PROMPT = [
   "                                              Managed Volume workflow: create with fs mb, then fs mkdir/cp/ls. Table Volume cannot be created separately: create the table first, then use fs commands on its @table path. User Volume is system-created and ready to use.",
   "                                              fs cp/mv refuse an existing destination by default; add --overwrite to replace it. fs mv local→local uses a temporary path for recovery safety.",
   "                                              fs mb/rb require a qualified czfs:/Volumes/your_workspace/your_schema/your_volume Managed Volume root; a bare name is invalid. fs rb never removes files.",
-  "cz-cli table load <table> <czfs-source> [--using csv|parquet|orc|bson] [--header]  Simple append Volume→Table load; source path selects root, directory (must end with /), or file. Use --header for CSV headers; use cz-cli sql --write for COPY OVERWRITE or advanced COPY INTO, PURGE, ON_ERROR, PARTITION, or transforms.",
+  "cz-cli table load <table> <czfs-source> --write [--using csv|parquet|orc|bson] [--header]  Simple append Volume→Table load; source path selects root, directory (must end with /), or file. Use --header for CSV headers; use cz-cli sql --write for COPY OVERWRITE or advanced COPY INTO, PURGE, ON_ERROR, PARTITION, or transforms.",
   "",
   "cz-cli datasource list [--type <type>] [--name <filter>]",
   "                                              List external data sources (type: mysql/kafka/redis/postgresql/...)",

@@ -127,7 +127,7 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 | `czfs:/Volumes/@user/<workspace>/<user>/` | `SHOW USER VOLUME DIRECTORY` | 列出 User Volume 文件 |
 | `czfs:/Volumes/@table/<workspace>/<schema>/<table>/` | `SHOW TABLE VOLUME DIRECTORY` | 列出 Table Volume 文件 |
 | `volume:table://`（兼容） | `SHOW TABLES` | 列出当前 workspace/schema 下的 Table Volume 根 |
-| `volume:user://~/`（兼容） | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 与 `czfs:/Volumes/@user/` 等价，输出同样的 czfs 路径 |
+| `volume:user://~/`（兼容） | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 保留旧行为：直接列出当前 workspace 的当前 User Volume 文件，并输出 czfs 路径 |
 
 `@user`、`@table` 两个虚拟入口排在 `SHOW VOLUMES` 结果之前，保证 Volume 数量超过 `--limit` 时入口不被截断。
 
@@ -638,10 +638,10 @@ Examples:
 源路径以 `/` 结尾时按目录处理并生成 `SUBDIRECTORY`；不带尾斜杠时按单文件处理并生成 `FILES`。
 
 ```bash
-cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header
-cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet
-cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv
-cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet
+cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header --write
+cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet --write
+cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv --write
+cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet --write
 ```
 
 复杂的 `PURGE`、`ON_ERROR`、`PARTITION`、转换查询或高级格式参数，直接使用：

@@ -50,7 +50,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "Print the beginning of a UTF-8 text file",
         (y) => y
           .positional("file", { type: "string", demandOption: true, describe: "Local or Volume file path" })
-          .option("bytes", { type: "number", default: 65536, describe: "Maximum bytes to read" })
+          .option("bytes", { alias: "c", type: "number", default: 65536, describe: "Maximum bytes to read" })
           .epilogue(["Examples:", "  cz-cli fs head czfs:/Volumes/@user/your_workspace/your_user/demo.csv", "  cz-cli fs head ./app.log --bytes 1024"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
