@@ -660,7 +660,11 @@ export class FsUtil {
     const volumes = await this.execute(`SHOW VOLUMES WHERE ${filters.join(" AND ")}`)
     if (volumes.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", volumes.errorMessage ?? "Failed to verify Volume type")
     if (volumes.rows.length === 0) throw new FsError("FS_NOT_FOUND", `Named Volume was not found: ${path}`)
-    if (!volumes.columns.length) throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES returned no metadata columns for '${path}'; refusing to drop it`)
+    const columnNames = new Set(volumes.columns.map((column) => column.name.toLowerCase()))
+    const hasColumn = (...names: string[]) => names.some((name) => columnNames.has(name))
+    if (!hasColumn("volume_name", "name") || !hasColumn("schema_name", "schema") || !hasColumn("workspace_name", "workspace")) {
+      throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES returned incomplete identity metadata for '${path}'; refusing to drop it`)
+    }
     const metadata = volumes.rows.find((row) => {
       const name = String(resultValue(volumes, row, "volume_name", "name") ?? "")
       const schema = String(resultValue(volumes, row, "schema_name", "schema") ?? "")
