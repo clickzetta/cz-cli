@@ -139,7 +139,7 @@ export function isVolumeNamespaceRoot(input: string): boolean {
   const canonical = normalized.startsWith("czfs:") ? `czfs:${normalized.slice(5).replace(/^\/volume(?=\/|$)/, "/volumes")}` : normalized
   if (canonical === "czfs:" || canonical === "czfs:/volumes" || canonical === "volume:" || canonical === "volume:table:") return true
   const namespace = parseCzfsNamespacePath(input)
-  return namespace !== undefined && namespace.kind !== "user"
+  return namespace !== undefined && (namespace.kind !== "user" || namespace.identifiers.length === 0)
 }
 
 interface CzfsNamespacePath {
@@ -930,8 +930,15 @@ export class FsUtil {
     const czfsRoot = hasCzfsScheme ? normalized.slice(5).replace(/^\/volume(?=\/|$)/, "/volumes") : ""
     const partial = parseCzfsNamespacePath(path)
     if (partial) {
-      if (partial.kind === "table") return this.listTableVolumeRoots(limit, partial.identifiers[0], partial.identifiers[1])
-      if (partial.kind === "user") return this.listCurrentUserVolumeFiles(recursive, limit, partial.identifiers[0])
+      if (partial.kind === "table") {
+        if (partial.identifiers.length === 0) return this.listVolumeWorkspaceRoots("table", limit)
+        if (partial.identifiers.length === 1) return this.listTableSchemaRoots(partial.identifiers[0]!, limit)
+        return this.listTableVolumeRoots(limit, partial.identifiers[0], partial.identifiers[1])
+      }
+      if (partial.kind === "user") {
+        if (partial.identifiers.length === 0) return this.listVolumeWorkspaceRoots("user", limit)
+        return this.listCurrentUserVolumeFiles(recursive, limit, partial.identifiers[0])
+      }
       return this.listNamedVolumeRoots(limit, partial.identifiers[0], partial.identifiers[1])
     }
     if (isVolumeNamespaceRoot(path)) {
@@ -944,7 +951,7 @@ export class FsUtil {
     // so both spellings report identical czfs entry paths, matching how volume:table://
     // already normalizes to czfs output.
     if ((hasCzfsScheme && czfsRoot === "/volumes/@user") || normalized === "volume:user://~") {
-      return this.listCurrentUserVolumeFiles(recursive, limit)
+      return this.listVolumeWorkspaceRoots("user", limit)
     }
     return undefined
   }
@@ -975,6 +982,29 @@ export class FsUtil {
     const remaining = limit > 0 ? Math.max(limit - entryPoints.length, 0) : 0
     if (limit > 0 && remaining === 0) return entryPoints.slice(0, limit)
     return [...entryPoints, ...await this.listNamedVolumeRoots(remaining)]
+  }
+
+  private async listVolumeWorkspaceRoots(kind: "user" | "table", limit: number): Promise<FileInfo[]> {
+    const result = await this.execute("SHOW WORKSPACES")
+    if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list workspaces")
+    const marker = kind === "user" ? "@user" : "@table"
+    const rows = result.rows.flatMap((row) => {
+      const workspace = String(resultValue(result, row, "workspace_name", "name") ?? row[0] ?? "")
+      if (!workspace) return []
+      return [{ path: `czfs:/Volumes/${marker}/${encodeURIComponent(workspace)}`, name: workspace, size: 0, modificationTime: null, isDir: true }]
+    })
+    return limit > 0 ? rows.slice(0, limit) : rows
+  }
+
+  private async listTableSchemaRoots(workspace: string, limit: number): Promise<FileInfo[]> {
+    const result = await this.execute(`SHOW SCHEMAS IN ${quoteIdentifier(workspace)}`)
+    if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list schemas")
+    const rows = result.rows.flatMap((row) => {
+      const schema = String(resultValue(result, row, "schema_name", "name") ?? row[0] ?? "")
+      if (!schema) return []
+      return [{ path: `czfs:/Volumes/@table/${encodeURIComponent(workspace)}/${encodeURIComponent(schema)}`, name: schema, size: 0, modificationTime: null, isDir: true }]
+    })
+    return limit > 0 ? rows.slice(0, limit) : rows
   }
 
   private async resolveUserVolumeReference(workspace = this.workspace): Promise<VolumeReference> {

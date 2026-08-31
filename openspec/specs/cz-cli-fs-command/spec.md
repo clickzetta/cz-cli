@@ -117,10 +117,11 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 | 根路径 | 查询 | 含义 |
 | --- | --- | --- |
 | `czfs:/` 或 `czfs:/Volumes/` | `SHOW VOLUMES` + 两个虚拟入口 | 列出 Managed/External 根，并提供 `@user`、`@table` 入口 |
-| `czfs:/Volumes/@user/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 列出当前 User Volume 文件；`@user/<workspace>/<username>/` 才是具体 User Volume 根 |
+| `czfs:/Volumes/@user/` | `SHOW WORKSPACES` | 列出可用 workspace；继续使用 `@user/<workspace>/` 查看文件 |
 | `czfs:/Volumes/@user/<workspace>/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 使用路径中的 workspace，并自动补全当前会话 username |
-| `czfs:/Volumes/@table/` | `SHOW TABLES`（按 `is_view`/`is_materialized_view`/`is_external`/`is_dynamic` 过滤） | 列出当前 workspace/schema 下的 Table Volume 根 |
-| `czfs:/Volumes/@table/<workspace>/` 或 `czfs:/Volumes/@table/<workspace>/<schema>/` | `SHOW TABLES` / `SHOW TABLES IN <schema>` | 按路径前缀列出并拼接 Table Volume 完整路径；路径明确给出 schema 且不同于当前 schema 时使用 `IN` |
+| `czfs:/Volumes/@table/` | `SHOW WORKSPACES` | 列出可用 workspace；继续使用 `@table/<workspace>/` 查看 schema |
+| `czfs:/Volumes/@table/<workspace>/` | `SHOW SCHEMAS IN <workspace>` | 列出 workspace 下的 schema |
+| `czfs:/Volumes/@table/<workspace>/<schema>/` | `SHOW TABLES` / `SHOW TABLES IN <schema>`（按 `is_view`/`is_materialized_view`/`is_external`/`is_dynamic` 过滤） | 按路径前缀列出并拼接 Table Volume 完整路径；路径明确给出 schema 且不同于当前 schema 时使用 `IN` |
 | `czfs:/Volumes/<workspace>/` 或 `czfs:/Volumes/<workspace>/<schema>/` | `SHOW VOLUMES` | 按 workspace/schema 列出并拼接 Managed/External Volume 完整路径 |
 | `czfs:/Volumes/<workspace>/<schema>/<volume>/` | `SHOW VOLUME DIRECTORY` | 列出 Managed/External Volume 文件 |
 | `czfs:/Volumes/@user/<workspace>/<user>/` | `SHOW USER VOLUME DIRECTORY` | 列出 User Volume 文件 |

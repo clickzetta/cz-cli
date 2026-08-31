@@ -386,12 +386,12 @@ describe("FsUtil", () => {
     expect(statements.some((sql) => sql.startsWith("drop volume"))).toBe(false)
   })
 
-  test("fails when current_user is missing instead of exposing an empty User Volume", async () => {
+  test("lists User Volume workspaces without resolving a default user", async () => {
     const fs = new FsUtil({
       workspace: "workspace",
-      execute: async (sql) => sql === "SELECT current_user()" ? result([[]]) : result([]),
+      execute: async (sql) => sql === "SHOW WORKSPACES" ? { ...result([["workspace"]]), columns: [{ name: "workspace_name" }] } : result([]),
     })
-    await expect(fs.ls("czfs:/Volumes/@user")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED" })
+    expect(await fs.ls("czfs:/Volumes/@user")).toEqual([expect.objectContaining({ path: "czfs:/Volumes/@user/workspace", isDir: true })])
   })
 
   test("lists an existing empty Named Volume root as empty", async () => {
@@ -480,6 +480,7 @@ describe("FsUtil", () => {
       execute: async (sql) => {
         statements.push(sql)
         if (sql === "SHOW VOLUMES") return { ...result([["shared_files", "workspace", "public"]]), columns: [{ name: "volume_name", type: "STRING" }, { name: "workspace_name", type: "STRING" }, { name: "schema_name", type: "STRING" }] }
+        if (sql === "SHOW WORKSPACES") return { ...result([["workspace"]]), columns: [{ name: "workspace_name", type: "STRING" }] }
         if (sql === "SELECT current_user()") return result([["alice"]])
         if (sql === "SHOW USER VOLUME DIRECTORY") return { ...result([["uploads/a.csv", "", 3, "2026-08-28T00:00:00Z"]]), columns: [{ name: "relative_path", type: "STRING" }, { name: "url", type: "STRING" }, { name: "size", type: "INT" }, { name: "last_modified_time", type: "STRING" }] }
         if (sql === "SHOW TABLES") return { ...result([["public", "orders"]]), columns: [{ name: "schema_name", type: "STRING" }, { name: "table_name", type: "STRING" }] }
@@ -494,20 +495,15 @@ describe("FsUtil", () => {
       expect.objectContaining({ name: "@user", isDir: true, path: "czfs:/Volumes/@user" }),
       expect.objectContaining({ name: "@table", isDir: true, path: "czfs:/Volumes/@table" }),
     ]))
-    // The legacy spelling resolves through the same [workspace, user] reference as
-    // czfs:/Volumes/@user, so both report identical czfs entry paths.
-    expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "uploads", isDir: true, path: "czfs:/Volumes/@user/workspace/alice/uploads" })
+    // User namespace roots list workspaces; files require an explicit workspace.
+    expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
     expect((await fs.ls("volume:table://"))[0]).toMatchObject({ name: "orders", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders" })
-    expect((await fs.ls("czfs:/Volumes/@user"))[0]).toMatchObject({ name: "uploads", isDir: true, path: "czfs:/Volumes/@user/workspace/alice/uploads" })
-    expect(await fs.ls("czfs:/Volumes/@user", true)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "uploads", isDir: true }),
-      expect.objectContaining({ name: "a.csv", isDir: false }),
-    ]))
+    expect((await fs.ls("czfs:/Volumes/@user"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
     const tableEntries = await fs.ls("czfs:/Volumes/@table/workspace/public/orders/")
     expect(tableEntries[0]).toMatchObject({ name: "sample", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders/sample" })
     // An empty last_modified_time is unknown, not 1970-01-01.
     expect(tableEntries[0]?.modificationTime).toBeNull()
-    expect(statements).toEqual(["SHOW VOLUMES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
+    expect(statements).toEqual(["SHOW VOLUMES", "SHOW WORKSPACES", "SHOW TABLES", "SHOW WORKSPACES", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
   })
 
   test("lists partial czfs namespace paths from metadata", async () => {
@@ -515,6 +511,8 @@ describe("FsUtil", () => {
     const fs = new FsUtil({ workspace: "workspace", schema: "public", execute: async (sql) => {
       statements.push(sql)
       if (sql === "SHOW VOLUMES") return { ...result([["public", "shared", "", false, "workspace"], ["other", "ignored", "", false, "workspace"]]), columns: [{ name: "schema_name", type: "STRING" }, { name: "volume_name", type: "STRING" }, { name: "url", type: "STRING" }, { name: "external", type: "BOOLEAN" }, { name: "workspace_name", type: "STRING" }] }
+      if (sql === "SHOW WORKSPACES") return { ...result([["workspace"]]), columns: [{ name: "workspace_name", type: "STRING" }] }
+      if (sql === "SHOW SCHEMAS IN `workspace`") return { ...result([["public"]]), columns: [{ name: "schema_name", type: "STRING" }] }
       if (sql === "SHOW TABLES") return { ...result([["public", "orders", false, false, false, false]]), columns: [{ name: "schema_name", type: "STRING" }, { name: "table_name", type: "STRING" }, { name: "is_view", type: "BOOLEAN" }, { name: "is_materialized_view", type: "BOOLEAN" }, { name: "is_external", type: "BOOLEAN" }, { name: "is_dynamic", type: "BOOLEAN" }] }
       if (sql === "SELECT current_user()") return result([["alice"]])
       if (sql === "SHOW USER VOLUME DIRECTORY") return { ...result([["data.csv", "", 1, ""]]), columns: [{ name: "relative_path", type: "STRING" }, { name: "url", type: "STRING" }, { name: "size", type: "INT" }, { name: "last_modified_time", type: "STRING" }] }
@@ -522,9 +520,11 @@ describe("FsUtil", () => {
     } })
 
     expect((await fs.ls("czfs:/Volumes/workspace/public/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/workspace/public/shared"])
+    expect((await fs.ls("czfs:/Volumes/@table")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@table/workspace"])
+    expect((await fs.ls("czfs:/Volumes/@table/workspace/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@table/workspace/public"])
     expect((await fs.ls("czfs:/Volumes/@table/workspace/public/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@table/workspace/public/orders"])
     expect((await fs.ls("czfs:/Volumes/@user/workspace/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@user/workspace/alice/data.csv"])
-    expect(statements).toEqual(["SHOW VOLUMES", "SHOW TABLES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY"])
+    expect(statements).toEqual(["SHOW VOLUMES", "SHOW WORKSPACES", "SHOW SCHEMAS IN `workspace`", "SHOW TABLES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY"])
   })
 
   test("sends decoded relative paths to Volume SQL for root listings", async () => {
@@ -601,7 +601,7 @@ describe("FsUtil", () => {
       },
     })
 
-    expect((await fs.ls("czfs:/Volumes/@table")).map((entry) => entry.name)).toEqual(["orders"])
+    expect((await fs.ls("czfs:/Volumes/@table/workspace/public")).map((entry) => entry.name)).toEqual(["orders"])
   })
 
   test("queries an explicitly qualified Table Volume namespace schema", async () => {

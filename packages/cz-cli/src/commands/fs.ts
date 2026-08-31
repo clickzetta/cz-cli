@@ -189,7 +189,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "Volume workflows:",
         "  fs ls czfs:/                                      List Managed/External roots + @user + @table",
         "  fs ls czfs:/Volumes/@table/                      Enumerate Table Volume roots (SHOW TABLES)",
-        "  fs ls czfs:/Volumes/@user/                       List current User Volume files (SHOW USER VOLUME DIRECTORY)",
+        "  fs ls czfs:/Volumes/@user/                       List User Volume workspaces (SHOW WORKSPACES)",
         "  ls also accepts partial namespace paths: @table/workspace/schema/, @user/workspace/, or workspace/schema/; use a full path for file operations.",
         "  Root metadata queries: SHOW VOLUMES | SHOW TABLES | SHOW USER VOLUME DIRECTORY",
         "  fs mb czfs:/Volumes/your_workspace/your_schema/your_volume Create a Managed Volume only",
