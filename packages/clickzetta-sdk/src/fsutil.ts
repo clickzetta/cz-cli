@@ -469,7 +469,6 @@ class VolumeFsPath implements FsPath {
     const result = await this.execute(sql, hints)
     if (result.status === "FAILED") {
       const message = result.errorMessage ?? `Volume SQL failed: ${sql}`
-      if (this.reference.kind === "named" && sql.toLowerCase().startsWith("select list_directory") && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(this.reference, this.execute)) return []
       if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
       throw new FsError("FS_TRANSFER_FAILED", message)
     }
@@ -645,7 +644,7 @@ async function listVolumeDirectory(
     // The engine currently reports an existing empty Managed Volume root as a
     // physical "Path not found" (CZLH-70002). Treat that specific root response
     // as an empty listing, while preserving real missing-volume errors.
-    if (reference.kind === "named" && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(reference, execute)) return []
+    if (reference.kind === "named" && parseVolumePath(original)?.relativePath === "" && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(reference, execute)) return []
     if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
     throw new FsError("FS_TRANSFER_FAILED", message)
   }
@@ -1027,7 +1026,10 @@ export class FsUtil {
 
   private async listTableVolumeRoots(limit: number, workspace = this.workspace, schema = this.schema): Promise<FileInfo[]> {
     if (!workspace || !schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace and schema are required for Table Volume root")
-    const result = await this.execute(schema && schema !== this.schema ? `SHOW TABLES IN ${quoteIdentifier(schema)}` : "SHOW TABLES")
+    const tableListingSql = workspace !== this.workspace || schema !== this.schema
+      ? `SHOW TABLES IN ${quoteIdentifiers([workspace, schema])}`
+      : "SHOW TABLES"
+    const result = await this.execute(tableListingSql)
     if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list tables")
     const rows = result.rows.flatMap((row) => {
       const name = String(resultValue(result, row, "table_name", "name") ?? row[1] ?? row[0] ?? "")

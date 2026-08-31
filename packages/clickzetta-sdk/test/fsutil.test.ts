@@ -434,7 +434,7 @@ describe("FsUtil", () => {
     expect(await fs.ls("czfs:/Volumes/workspace/public/empty")).toEqual([])
   })
 
-  test("treats the same empty-root error from list_directory as an empty listing", async () => {
+  test("does not treat a missing subdirectory as an empty Managed Volume root", async () => {
     const fs = new FsUtil({
       workspace: "workspace",
       schema: "public",
@@ -446,7 +446,7 @@ describe("FsUtil", () => {
       },
     })
 
-    expect(await fs.ls("volume://workspace.public.empty/data")).toEqual([])
+    await expect(fs.ls("volume://workspace.public.empty/data")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
   })
 
   test("does not hide unsupported Volume SQL functions as empty directories", async () => {
@@ -611,7 +611,7 @@ describe("FsUtil", () => {
       schema: "public",
       execute: async (sql) => {
         statements.push(sql)
-        if (sql === "SHOW TABLES IN `default`") {
+        if (sql === "SHOW TABLES IN `workspace`.`default`") {
           return {
             ...result([["default", "orders", false, false, false, false]]),
             columns: [
@@ -629,7 +629,7 @@ describe("FsUtil", () => {
     })
 
     expect((await fs.ls("czfs:/Volumes/@table/workspace/default/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@table/workspace/default/orders"])
-    expect(statements).toEqual(["SHOW TABLES IN `default`"])
+    expect(statements).toEqual(["SHOW TABLES IN `workspace`.`default`"])
   })
 
   test("keeps the @user and @table entry points when the Volume list exceeds the limit", async () => {

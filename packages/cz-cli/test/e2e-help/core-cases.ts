@@ -213,6 +213,6 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["table", "load", "--help"],
     expectHeader: "cz-cli table load",
-    expectOptions: ["name", "source", "--using", "--header", "czfs:/Volumes/your_workspace/your_schema/your_volume/", "@user", "@table", "COPY INTO ..."],
+    expectOptions: ["name", "source", "--using", "--header", "--write", "czfs:/Volumes/your_workspace/your_schema/your_volume/", "@user", "@table", "COPY INTO ..."],
   },
 ]

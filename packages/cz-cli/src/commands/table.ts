@@ -331,6 +331,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           .positional("source", { type: "string", demandOption: true, describe: "czfs:/ Volume root, directory (trailing /), or file path" })
           .option("using", { type: "string", choices: ["csv", "parquet", "orc", "bson"], default: "csv", describe: "Input file format" })
           .option("header", { type: "boolean", default: false, describe: "Treat the first CSV row as column names" })
+          .option("write", { type: "boolean", default: false, describe: "Allow loading data into the target table; required as a safety guard." })
           .epilogue([
             "Examples:",
             "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header",
@@ -346,6 +347,10 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           try {
             const table = validateIdentifier(argv.name as string, "table name")
             const source = String(argv.source)
+            if (!argv.write) {
+              error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format, exitCode: 2 })
+              return
+            }
             const parsed = parseVolumePath(source)
             if (!parsed || parsed.reference.identifiers.length === 0 || parsed.reference.kind === "named" && parsed.reference.identifiers.length !== 3) {
               error("USAGE_ERROR", "table load requires a qualified czfs:/Volumes/... path; use SQL for a raw Volume identifier.", { format, exitCode: 2 })
@@ -356,6 +361,17 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
               return
             }
             const ctx = await getExecContext(argv)
+            if (parsed.reference.kind === "user") {
+              const identity = await execSql(ctx, "SELECT current_user()")
+              if (!isQueryResult(identity) || identity.status === JobStatus.FAILED || String(identity.rows[0]?.[0] ?? "").trim() !== parsed.reference.identifiers[1]) {
+                error("FS_PATH_INVALID", "User Volume path must name the current user.", { format, exitCode: 2 })
+                return
+              }
+              if (parsed.reference.identifiers[0] !== ctx.config.workspace) {
+                error("FS_PATH_INVALID", "User Volume path must use the current workspace.", { format, exitCode: 2 })
+                return
+              }
+            }
             const volume = parsed.reference.kind === "user"
               ? "USER VOLUME"
               : parsed.reference.kind === "table"
