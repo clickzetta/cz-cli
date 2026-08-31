@@ -22,14 +22,42 @@ import { getCookieToken, hasCookieToken } from "./cookie-token.js"
  */
 export function profileTokenSource(config: ConnectionConfig): TokenSource {
   if (!hasCookieToken(config)) return connectionTokenSource(config)
+
+  // Resolved once per source, not per request: `getCookieToken` parses the cookie
+  // AND may resolve the instance id over the network when the JWT lacks it, while
+  // the transport calls `get()` before every attempt of every request on the
+  // premise that it is cache-backed.
+  let resolved: Promise<Credential | undefined> | undefined
+  const fallback = connectionTokenSource(config)
   return {
     async get(): Promise<Credential> {
-      const token = await getCookieToken(config)
-      if (!token) throw new Error("profile cookie token disappeared while resolving credentials")
-      return { token: token.token, instanceId: token.instanceId, userId: token.userId }
+      resolved ??= getCookieToken(config).then((token) =>
+        token
+          ? {
+              token: token.token,
+              instanceId: token.instanceId,
+              userId: token.userId,
+              // The Cookie travels WITH the credential: a session credential is
+              // only accepted alongside it, and the transport merges these.
+              ...(cookieHeader(config) ? { headers: { Cookie: cookieHeader(config)! } } : {}),
+            }
+          : undefined,
+      )
+      // `hasCookieToken` accepts an empty `X-ClickZetta-Token=` value that
+      // `getCookieToken` rejects. That profile still has a pat/OAuth login to fall
+      // back to, exactly as it did before this seam existed.
+      return (await resolved) ?? await fallback.get()
     },
-    rotate: async () => undefined,
+    async rotate(rejected: Credential): Promise<Credential | undefined> {
+      // A cookie is not rotatable; a profile that fell through to pat/OAuth is.
+      return (await resolved) ? undefined : fallback.rotate(rejected)
+    },
   }
+}
+
+function cookieHeader(config: ConnectionConfig): string | undefined {
+  return Object.entries(config.customHeaders ?? {})
+    .find(([key]) => key.toLowerCase() === "cookie")?.[1]
 }
 
 /**

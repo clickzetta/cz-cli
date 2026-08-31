@@ -107,9 +107,12 @@ async function doRequest<T>(
   const url = `${opts.baseUrl}${path}`
   let credential = await opts.tokens.get()
   let headers = buildHeaders(opts, credential)
-  // Re-resolved at the top of every attempt below: `get()` is cache-backed, so
-  // this costs nothing, and a retry after a multi-second backoff must not
-  // resend a credential that expired while we waited.
+  // Credential a rotation just produced, to be used verbatim by the next attempt.
+  // `TokenSource.rotate` is contracted to RETURN the replacement, not to make
+  // `get()` observe it, so re-resolving over it would drop the rotation for any
+  // source that does not also persist (the built-in one happens to, via
+  // forceRefreshToken's cache write — which is exactly what would have hidden this).
+  let rotatedCredential: Credential | undefined
   // A 401 gets exactly one rotation per request, matching RFC 6750's single
   // re-authentication challenge: a second rejection is the server's answer
   // about this identity, not a race we should keep re-running.
@@ -123,7 +126,11 @@ async function doRequest<T>(
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
-        credential = await opts.tokens.get()
+        // Prefer the rotated credential; otherwise re-resolve, because a retry
+        // after a multi-second backoff must not resend one that expired while
+        // we waited. `get()` is cache-backed, so re-resolving costs nothing.
+        credential = rotatedCredential ?? await opts.tokens.get()
+        rotatedCredential = undefined
         headers = buildHeaders(opts, credential)
       }
       const resp = await fetch(url, {
@@ -151,8 +158,7 @@ async function doRequest<T>(
             throw apiErr
           }
           rotated = true
-          credential = fresh
-          headers = buildHeaders(opts, credential)
+          rotatedCredential = fresh
         }
         throw apiErr
       }

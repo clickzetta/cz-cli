@@ -167,6 +167,30 @@ describe("Studio requests authenticate through the context's TokenSource", () =>
     expect(studioTokens).toEqual(["stale-access"])
   })
 
+  test("the retry sends what rotate() returned, not whatever get() resolves", async () => {
+    // A conforming source may only RETURN the replacement — nothing in the
+    // contract says `get()` must observe it. The built-in source happens to
+    // persist via forceRefreshToken's cache write, which is what hid an earlier
+    // bug where the transport re-resolved over the rotated credential and
+    // re-sent the one the server had just rejected.
+    let gets = 0
+    const returnOnly: TokenSource = {
+      get: async () => {
+        gets += 1
+        return { token: "stale-access", instanceId: 9, userId: 7 }
+      },
+      rotate: async () => ({ token: "fresh-access", instanceId: 9, userId: 7 }),
+    }
+    stubFetch({ refreshable: true })
+
+    const resp = await studioRequest(studioConfig(returnOnly), "/studio/anything", {})
+
+    expect(resp.code).toBe(0)
+    expect(studioTokens).toEqual(["stale-access", "fresh-access"])
+    // The retry used the rotated value directly instead of asking again.
+    expect(gets).toBe(1)
+  })
+
   test("a dead session fails before issuing the request", async () => {
     const store = memoryStore(oauthToken(now, { expired: true }))
     stubFetch({ refreshable: false })

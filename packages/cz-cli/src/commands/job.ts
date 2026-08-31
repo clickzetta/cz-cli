@@ -3,7 +3,7 @@ import { commandGroup } from "../command-group.js"
 import { mkdir, stat, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import {
-  requestRaw, pollJobResult, cancelJob,
+  requestRaw, pollJobResult, cancelJob, ClickZettaApiError,
   type ClientOptions, type JobID, type StudioConfig,
   JobStatus,
 } from "@clickzetta/sdk"
@@ -125,6 +125,8 @@ async function requestStudioJobJson(
   // transport so this path gets the same credential resolution and 401 rotation
   // as every other authenticated call. It used to run its own `fetch` with a
   // token string, which is exactly how paths drift apart.
+  // Trailing slash stripped so `${baseUrl}${path}` cannot produce a `//` path.
+  const baseUrl = sc.baseUrl.endsWith("/") ? sc.baseUrl.slice(0, -1) : sc.baseUrl
   const query = new URLSearchParams(
     Object.entries(params).map(([key, value]) => [key, String(value)]),
   ).toString()
@@ -140,7 +142,7 @@ async function requestStudioJobJson(
     ...sc.customHeaders,
   }
   debugJobProfile(debug, "GET", {
-    url: `${sc.baseUrl}${path}?${query}`,
+    url: `${baseUrl}${path}?${query}`,
     headers: {
       instanceId: customHeaders.instanceId,
       instanceName: customHeaders.instanceName,
@@ -154,15 +156,22 @@ async function requestStudioJobJson(
   let payload: unknown
   try {
     payload = await requestRaw<unknown>(
-      { baseUrl: sc.baseUrl, tokens: sc.tokens, customHeaders, timeout: 30_000 },
+      { baseUrl, tokens: sc.tokens, customHeaders, timeout: 30_000 },
       `${path}?${query}`,
       undefined,
       "GET",
     )
-    debugJobProfile(debug, "response", { path, ok: true })
+    debugJobProfile(debug, "response", { path, ok: true, bytes: JSON.stringify(payload ?? null).length })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    debugJobProfile(debug, "response", { path, ok: false, message })
+    // The HTTP status is the field that makes this event worth reading, so it is
+    // pulled off the error rather than dropped with the hand-rolled fetch.
+    const status = err instanceof ClickZettaApiError ? err.statusCode : undefined
+    debugJobProfile(debug, "response", {
+      path,
+      ok: false,
+      ...(status !== undefined ? { status } : {}),
+      message: err instanceof Error ? err.message : String(err),
+    })
     throw err
   }
   debugJobProfile(debug, "payload", {

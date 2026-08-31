@@ -200,12 +200,35 @@ async function acquireToken(config: ConnectionConfig, force: boolean): Promise<A
  * the existing `getToken`/`forceRefreshToken` engine — single-flight and
  * persistence come with them.
  */
+/**
+ * Whether this connection has anything to authenticate or rotate WITH: a persisted
+ * token to refresh, or credentials to log in with. False means every recovery path
+ * would drive a login with empty values — ~6 s of retries ending in a misleading
+ * "Login failed" that hides the error the server actually sent.
+ *
+ * An `oauth = "<id>"` pointer attaches a store whether or not its `[oauth.<id>]`
+ * section still exists, so the store is asked for a token rather than for its
+ * existence. Exported because callers outside the transport (a command deciding
+ * whether a 401 is worth retrying) need the same answer, and a second copy of this
+ * predicate is exactly what drifts.
+ */
+export function isRotatable(config: ConnectionConfig): boolean {
+  return Boolean(config.tokenStore?.load()) || hasLoginCredentials(config)
+}
+
 export function connectionTokenSource(config: ConnectionConfig): TokenSource {
   return {
     async get(): Promise<Credential> {
       return toCredential(await getToken(config))
     },
-    async rotate(): Promise<Credential> {
+    async rotate(rejected: Credential): Promise<Credential | undefined> {
+      if (!isRotatable(config)) return undefined
+      // A concurrent request may already have rotated this connection while this
+      // one was in flight; its 401 is then about a credential we have already
+      // replaced. Hand back the current one instead of rotating again, so N
+      // parallel requests cost one rotation rather than N.
+      const current = toCredential(await getToken(config))
+      if (current.token !== rejected.token) return current
       // Throws SESSION_EXPIRED when the refresh token is dead and there are no
       // credentials to fall back on — a terminal answer, not a missing path.
       return toCredential(await forceRefreshToken(config))

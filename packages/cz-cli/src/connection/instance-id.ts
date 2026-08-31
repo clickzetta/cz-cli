@@ -27,9 +27,10 @@ export async function resolveInstanceIdByName(
   const fallbackId = opts?.fallbackId ?? 0
   try {
     // Goes through the SDK transport like every other authenticated call, so a
-    // rejected credential rotates here too. It used to run its own `fetch` with
-    // a token string, which meant an expired token silently degraded to
-    // `fallbackId` and the failure surfaced later as a wrong instance id.
+    // rejected credential rotates here instead of the request simply failing.
+    // A failure that rotation cannot fix STILL degrades to `fallbackId` (the
+    // catch below) — callers decide what a missing id means, and that contract
+    // predates this change.
     const payload = await requestRaw<{ data?: Array<Record<string, unknown>> }>(
       { baseUrl, tokens, customHeaders: opts?.customHeaders },
       `/clickzetta-portal/service/serviceInstanceList?accountId=${accountId}`,

@@ -26,10 +26,10 @@ interface UserInfo {
  * cookie-authenticated deployments accept this call. Without it the request
  * only proves the token, which a session-authenticating gateway may reject.
  *
- * `auth.config` is required for the reason spelled out on `ClientOptions.config`:
- * this is a preflight call on the same token the command will use, so it must
- * be able to rotate on 401 too, and a caller with nothing to rotate has to say
- * `false` rather than leave it to a default.
+ * `auth.tokens` is required for the reason spelled out on `ClientOptions.tokens`:
+ * this is a preflight call on the same credential the command will use, so it must
+ * be able to rotate on a 401 too. A caller holding only a token string wraps it in
+ * `staticTokenSource`, which states that this identity cannot self-heal.
  */
 export async function getCurrentUser(
   baseUrl: string,

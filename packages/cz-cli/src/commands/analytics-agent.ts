@@ -1,15 +1,14 @@
 import { stat } from "node:fs/promises"
 import { basename, posix, resolve } from "node:path"
 import type { Argv } from "yargs"
-import { createTraceparent, forceRefreshToken, mergeHeaders, type ConnectionConfig } from "@clickzetta/sdk"
+import { createTraceparent, isRotatable, mergeHeaders } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { readAgentEndpoint } from "../connection/profile-store.js"
+import { resolveConnectionConfig } from "../connection/config.js"
 import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR, EXIT_USAGE_ERROR } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
 import { getProfileAgentContext, getStudioContext, type StudioContext } from "./studio-context.js"
-import { hasCookieToken } from "../connection/cookie-token.js"
-import { resolveConnectionConfig } from "../connection/config.js"
 import { logOperation } from "../logger.js"
 
 const ROUTES = {
@@ -645,16 +644,6 @@ function authRejected(response: Response, text: string): boolean {
   }
 }
 
-function canRefreshCredential(config: ConnectionConfig): boolean {
-  if (hasCookieToken(config)) return false
-  // `tokenStore` is attached for any `oauth = "<id>"` pointer, resolvable or not.
-  // A pointer whose [oauth.<id>] section was pruned loads nothing, so acquireToken
-  // finds no candidate, skips the refresh path, and falls through to a login with
-  // empty credentials — the ~6 s dead end token.ts:80-83 warns about. Ask the store
-  // for an actual token (synchronous, file-local) rather than for its existence.
-  return Boolean(config.tokenStore?.load() || config.pat || (config.username && config.password))
-}
-
 async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<ResolvedContext> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const endpoint = readAgentEndpoint(typeof argv.profile === "string" ? argv.profile : undefined)
@@ -674,28 +663,40 @@ async function resolveAnalyticsContext(argv: Record<string, unknown>): Promise<R
       },
     )
   }
-  const config = resolveConnectionConfig(argv)
   const profileAgent = getProfileAgentContext(argv)
   const context: ResolvedContext = {
     endpoint: endpoint!,
     studio: profileAgent ?? (await getStudioContext(argv, { allowMissingWorkspace: true })),
   }
-  if (canRefreshCredential(config)) {
-    // WHAT the server rejected decides the remedy, and the two cases differ.
-    //
-    // A [profiles.<n>.agent] token is hand-pasted into profiles.toml and is not
-    // the config's SDK credential at all, so the fix is just to authenticate the
-    // way the profile normally does — deliberately swapping identity to the
-    // profile's own login. Forcing there would throw away a still-valid OAuth
-    // access token and spend a refresh-token rotation to replace a token that was
-    // never the problem, turning a transient rotation failure into a hard error.
-    //
-    // When the rejected token IS the SDK's own, the opposite holds: a plain
-    // getToken would hand back the same value the server just refused (it is
-    // cached and not yet expired), so that path has to force a rotation.
-    const rejectedTokenIsSdkOwned = profileAgent === undefined
+  // WHAT the server rejected decides the remedy, and the TokenSource already
+  // encodes it: `rotate()` returns undefined for an identity with no rotation path
+  // (a cookie-pinned profile) and rotates for OAuth/PAT/password. Asking the source
+  // replaces a local copy of that policy — which re-implemented the SDK's private
+  // `hasLoginCredentials` and was exactly the kind of second copy this seam exists
+  // to remove.
+  //
+  // A [profiles.<n>.agent] token is hand-pasted into profiles.toml and is not the
+  // profile's SDK credential at all, so its source reports "cannot rotate" and the
+  // remedy is simply to authenticate the way the profile normally does — a
+  // deliberate switch to the profile's own login, without spending a refresh-token
+  // rotation on a token that was never the problem.
+  //
+  // Rebuilding the studio context stays either way: tenantId and workspace are
+  // re-resolved by the login, not by the rotation.
+  //
+  // Both branches need the profile to be able to authenticate at all: the [agent]
+  // remedy is "log in the way this profile normally does", which a profile carrying
+  // no credential and no persisted token cannot do. `isRotatable` is the SDK's own
+  // predicate — the same one `connectionTokenSource.rotate` consults — so this stays
+  // one implementation rather than a local copy of it.
+  const config = resolveConnectionConfig(argv)
+  if (isRotatable(config)) {
+    const tokens = context.studio.tokens
     context.refresh = async () => {
-      if (rejectedTokenIsSdkOwned) await forceRefreshToken(config)
+      if (profileAgent === undefined) {
+        const rejected = await tokens.get()
+        if (!(await tokens.rotate(rejected))) throw new Error("this profile's credential cannot be rotated")
+      }
       context.studio = await getStudioContext(argv, { allowMissingWorkspace: true })
     }
   }
