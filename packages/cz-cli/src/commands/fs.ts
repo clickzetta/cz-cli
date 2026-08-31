@@ -28,7 +28,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "ls <path>",
         "List files or directories",
         (y) => y
-          .positional("path", { type: "string", demandOption: true, describe: "Local path or czfs Volume path (/Volumes aliases accepted)" })
+          .positional("path", { type: "string", demandOption: true, describe: "Local path or czfs Volume path" })
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Include files in all subdirectories." })
           .option("limit", { type: "number", default: 100, describe: "Maximum entries to display; 0 means unlimited" })
           .epilogue(["Examples:", "  cz-cli fs ls czfs:/", "  cz-cli fs ls czfs:/Volumes/@user/your_workspace/your_user/", "  cz-cli fs ls czfs:/Volumes/@table/your_workspace/your_schema/your_table/ -R", "", "Namespace roots do not accept -R; use -R on a specific Volume or directory."].join("\n")),
@@ -171,7 +171,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .epilogue([
-        "Path formats (czfs: is optional; /Volumes, /Volume, and /volume are equivalent):",
+        "Path formats (use the czfs: qualifier for Volume paths):",
         "  Named/External  czfs:/Volumes/your_workspace/your_schema/your_volume/",
         "  User            czfs:/Volumes/@user/your_workspace/your_user/",
         "  Table           czfs:/Volumes/@table/your_workspace/your_schema/your_table/",
@@ -187,7 +187,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "  Table Volumes are created automatically with tables; User Volumes are system-created.",
         "  Use fs mkdir/cp/ls/rm inside an existing Volume. Files are separate from Volume objects.",
         "  fs rb refuses External Volumes and non-empty Named Volumes; remove files with fs rm first.",
-        "  fs mb/rb require a qualified root such as czfs:/Volumes/your_workspace/your_schema/your_volume, not a bare name.",
+        "  fs mb/rb require a qualified czfs:/Volumes/your_workspace/your_schema/your_volume root, not a bare name.",
         "  Namespace roots do not accept -R; use -R only on a specific Volume/file tree.",
       ].join("\n")),
   )
