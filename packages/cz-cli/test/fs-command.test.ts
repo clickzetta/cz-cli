@@ -30,7 +30,10 @@ describe("fs commands", () => {
     expect(JSON.parse(listing.output).data.entries[0].name).toBe("hello.txt")
 
     expect((await execute(`fs cp ${quote(file)} ${quote(copy)}`)).exitCode).toBe(0)
-    expect((await execute(`fs rm ${quote(copy)}`)).exitCode).toBe(0)
+    const guarded = await execute(`fs rm ${quote(copy)}`)
+    expect(guarded.exitCode).toBe(2)
+    expect(JSON.parse(guarded.output).error.code).toBe("WRITE_NOT_ALLOWED")
+    expect((await execute(`fs rm ${quote(copy)} --write`)).exitCode).toBe(0)
   })
 
   test("protects filesystem root and rejects invalid UTF-8 truncation", async () => {
@@ -41,12 +44,21 @@ describe("fs commands", () => {
     expect(invalid.exitCode).toBe(1)
     expect(JSON.parse(invalid.output).error.code).toBe("FS_NOT_TEXT")
 
-    const rootRemoval = await execute("fs rm / -R --format json")
+    const rootRemoval = await execute("fs rm / -R --write --format json")
     expect(rootRemoval.exitCode).toBe(2)
     expect(JSON.parse(rootRemoval.output).error.code).toBe("FS_PATH_INVALID")
+
+    const legacyShortFlag = await execute(`fs head ${quote(file)} -c 2 --format json`)
+    expect(legacyShortFlag.exitCode).toBe(2)
+    expect(JSON.parse(legacyShortFlag.output).error.code).toBe("USAGE_ERROR")
+
+    const rootRecursive = await execute("fs ls czfs:/ -R --format json")
+    expect(rootRecursive.exitCode).toBe(2)
+    expect(JSON.parse(rootRecursive.output).error.code).toBe("FS_PATH_INVALID")
+
   })
 
-  test("limits listings and uses overwrite by default", async () => {
+  test("limits listings and protects existing targets by default", async () => {
     const directory = join(root, "files")
     await mkdir(directory, { recursive: true })
     await Promise.all(["a.txt", "b.txt", "c.txt"].map((name) => writeFile(join(directory, name), name)))
@@ -61,7 +73,11 @@ describe("fs commands", () => {
     const target = join(root, "target.txt")
     await writeFile(source, "new")
     await writeFile(target, "old")
-    expect((await execute(`fs cp ${quote(source)} ${quote(target)}`)).exitCode).toBe(0)
+    const protectedDefault = await execute(`fs cp ${quote(source)} ${quote(target)} --format json`)
+    expect(protectedDefault.exitCode).toBe(1)
+    expect(JSON.parse(protectedDefault.output).error.code).toBe("FS_TARGET_EXISTS")
+    expect(await Bun.file(target).text()).toBe("old")
+    expect((await execute(`fs cp ${quote(source)} ${quote(target)} --overwrite`)).exitCode).toBe(0)
     expect(await Bun.file(target).text()).toBe("new")
 
     await writeFile(source, "newer")
@@ -74,7 +90,10 @@ describe("fs commands", () => {
     const movedTarget = join(root, "move-target.txt")
     await writeFile(movedSource, "moved")
     await writeFile(movedTarget, "old")
-    expect((await execute(`fs mv ${quote(movedSource)} ${quote(movedTarget)}`)).exitCode).toBe(0)
+    const protectedMove = await execute(`fs mv ${quote(movedSource)} ${quote(movedTarget)} --format json`)
+    expect(protectedMove.exitCode).toBe(1)
+    expect(JSON.parse(protectedMove.output).error.code).toBe("FS_TARGET_EXISTS")
+    expect((await execute(`fs mv ${quote(movedSource)} ${quote(movedTarget)} --overwrite`)).exitCode).toBe(0)
     expect(await Bun.file(movedTarget).text()).toBe("moved")
     expect(await Bun.file(movedSource).exists()).toBe(false)
 

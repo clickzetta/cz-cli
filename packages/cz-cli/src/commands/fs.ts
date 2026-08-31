@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { InterfaceError } from "@clickzetta/sdk"
-import { FsError, FsUtil } from "@clickzetta/sdk/fsutil"
+import { FsError, FsUtil, isVolumeNamespaceRoot } from "@clickzetta/sdk/fsutil"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { error, success } from "../output/index.js"
@@ -17,6 +17,7 @@ interface FsArgs extends GlobalArgs {
   force: boolean
   "dry-run": boolean
   overwrite: boolean
+  write: boolean
   bytes: number
   limit: number
 }
@@ -28,15 +29,15 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "ls <path>",
         "List files or directories",
         (y) => y
-          .positional("path", { type: "string", demandOption: true, describe: "Local or Volume path" })
-          .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Include files in all subdirectories" })
+          .positional("path", { type: "string", demandOption: true, describe: "Local path or czfs Volume path" })
+          .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Include files in all subdirectories." })
           .option("limit", { type: "number", default: 100, describe: "Maximum entries to display; 0 means unlimited" })
-          .example("cz-cli fs ls volume:user://~/", "List files in your User Volume")
-          .example("cz-cli fs ls volume:user://~/images -R", "List a User Volume directory recursively"),
+          .epilogue(["Examples:", "  cz-cli fs ls czfs:/", "  cz-cli fs ls czfs:/Volumes/@user/your_workspace/your_user/", "  cz-cli fs ls czfs:/Volumes/@table/your_workspace/your_schema/your_table/ -R", "", "Namespace roots do not accept -R; use -R on a specific Volume or directory."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
             if (!Number.isInteger(args.limit) || args.limit < 0) throw new FsError("FS_LIMIT_INVALID", "--limit must be a non-negative integer")
+            if (args.recursive && isVolumeNamespaceRoot(args.path)) throw new FsError("FS_PATH_INVALID", "--recursive is not supported for a Volume namespace root; list a specific Volume root or directory with -R")
             const fs = createFs(args)
             const entries = await fs.ls(args.path, args.recursive, args.limit > 0 ? args.limit + 1 : 0)
             const limited = args.limit === 0 ? entries : entries.slice(0, args.limit)
@@ -49,7 +50,8 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "Print the beginning of a UTF-8 text file",
         (y) => y
           .positional("file", { type: "string", demandOption: true, describe: "Local or Volume file path" })
-          .option("bytes", { alias: "c", type: "number", default: 65536, describe: "Maximum bytes to read" }),
+          .option("bytes", { type: "number", default: 65536, describe: "Maximum bytes to read" })
+          .epilogue(["Examples:", "  cz-cli fs head czfs:/Volumes/@user/your_workspace/your_user/demo.csv", "  cz-cli fs head ./app.log --bytes 1024"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
@@ -71,11 +73,10 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "mb <volume>",
-        "Create a Named Volume (make bucket)",
+        "Create a Managed Volume (fs mb cannot create User or Table Volumes)",
         (y) => y
-          .positional("volume", { type: "string", demandOption: true, describe: "Named Volume root path, for example volume://shared_files" })
-          .example("cz-cli fs mb volume://shared_files", "Create a Named Volume in the current workspace and schema")
-          .example("cz-cli fs mb volume://public.myvol", "Create a Named Volume in a specific schema"),
+          .positional("volume", { type: "string", demandOption: true, describe: "Managed Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume" })
+          .epilogue(["Examples:", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/your_volume", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/raw_files"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try { await createFs(args).mb(args.volume); success({ path: args.volume, operation: "CREATE_VOLUME", status: "SUCCEEDED" }, { format: args.format }) }
@@ -83,12 +84,28 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "rb <volume>",
+        "Remove an empty Managed Volume object (does not remove files)",
+        (y) => y
+          .positional("volume", { type: "string", demandOption: true, describe: "Managed Volume root" })
+          .option("write", { type: "boolean", default: false, describe: "Allow removing the Volume object; required as a safety guard." })
+          .epilogue(["Examples:", "  cz-cli fs rb czfs:/Volumes/your_workspace/your_schema/your_volume --write", "", "Only empty Managed Volumes can be removed; use fs rm for files first."].join("\n")),
+        async (argv) => {
+          const args = argv as unknown as FsArgs
+          try {
+            if (!args.write) throw new FsError("WRITE_NOT_ALLOWED", "Remove operation detected. Pass --write to confirm.")
+            await createFs(args).rb(args.volume)
+            success({ path: args.volume, operation: "DROP_VOLUME", status: "SUCCEEDED" }, { format: args.format })
+          }
+          catch (err) { reportFsError(err, args.format) }
+        },
+      )
+      .command(
         "mkdir <path>",
         "Create a directory and missing parents inside an existing filesystem or Volume",
         (y) => y
-          .positional("path", { type: "string", demandOption: true, describe: "Local directory or directory path inside an existing Volume" })
-          .example("cz-cli fs mkdir volume://my_volume/data/2026/08", "Create nested directories in an existing Named Volume")
-          .example("cz-cli fs mkdir volume:user://~/data/2026/08", "Create nested directories in your User Volume"),
+          .positional("path", { type: "string", demandOption: true, describe: "Local directory or path inside an existing Volume" })
+          .epilogue(["Examples:", "  cz-cli fs mkdir czfs:/Volumes/your_workspace/your_schema/your_volume/data/2026/08", "  cz-cli fs mkdir czfs:/Volumes/@user/your_workspace/your_user/data/2026/08", "  cz-cli fs mkdir czfs:/Volumes/@table/your_workspace/your_schema/your_table/data/2026/08"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try { await createFs(args).mkdirs(args.path); success({ path: args.path, operation: "MKDIR", status: "SUCCEEDED" }, { format: args.format }) }
@@ -102,13 +119,14 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
           .positional("source", { type: "string", demandOption: true, describe: "Source local or Volume path" })
           .positional("destination", { type: "string", demandOption: true, describe: "Destination local or Volume path" })
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Copy files in all subdirectories" })
-          .option("overwrite", { type: "boolean", default: true, describe: "Replace existing destination files" }),
+          .option("overwrite", { type: "boolean", default: false, describe: "Replace existing destination files (default: refuse existing targets)" })
+          .epilogue(["Examples:", "  cz-cli fs cp ./data.csv \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv", "  cz-cli fs cp \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv \\", "    ./downloads/data.csv", "", "Existing targets are refused by default; add --overwrite to replace."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
             const bytes = await createFs(args).copyBytes(args.source, args.destination, args.recursive, args.overwrite)
             success({ source: args.source, destination: args.destination, bytes, status: "SUCCEEDED" }, { format: args.format })
-          } catch (err) { reportFsError(err, args.format) }
+          } catch (err) { reportFsError(err, args.format, "transfer") }
         },
       )
       .command(
@@ -118,11 +136,12 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
           .positional("source", { type: "string", demandOption: true, describe: "Source local or Volume path" })
           .positional("destination", { type: "string", demandOption: true, describe: "Destination local or Volume path" })
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Move files in all subdirectories" })
-          .option("overwrite", { type: "boolean", default: true, describe: "Replace existing destination files" }),
+          .option("overwrite", { type: "boolean", default: false, describe: "Replace existing destination files (default: refuse existing targets)" })
+          .epilogue(["Examples:", "  cz-cli fs mv \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/inbox.csv \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/archive.csv", "  cz-cli fs mv ./data \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/data -R", "", "Existing targets are refused by default; add --overwrite to replace."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try { await createFs(args).mv(args.source, args.destination, args.recursive, args.overwrite); success({ source: args.source, destination: args.destination, status: "SUCCEEDED" }, { format: args.format }) }
-          catch (err) { reportFsError(err, args.format) }
+          catch (err) { reportFsError(err, args.format, "transfer") }
         },
       )
       .command(
@@ -132,10 +151,13 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
           .positional("path", { type: "string", demandOption: true, describe: "Local or Volume path" })
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Remove a directory and all files below it" })
           .option("force", { alias: "f", type: "boolean", default: false, describe: "Do not fail when the path does not exist" })
-          .option("dry-run", { type: "boolean", default: false, describe: "List matched files without deleting them" }),
+          .option("dry-run", { type: "boolean", default: false, describe: "List matched files without deleting them" })
+          .option("write", { type: "boolean", default: false, describe: "Allow removing files; required as a safety guard." })
+          .epilogue(["Examples:", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/data.csv", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/ -R --dry-run", "", "Deletion is permanent; use --dry-run before recursive removal."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
+            if (!args.write && !args["dry-run"]) throw new FsError("WRITE_NOT_ALLOWED", "Remove operation detected. Pass --write to confirm.")
             const fs = createFs(args)
             if (args["dry-run"]) {
               try { await fs.validateRemoval(args.path, args.recursive) }
@@ -155,7 +177,29 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
             success({ path: args.path, operation: "REMOVE", status: "SUCCEEDED" }, { format: args.format })
           } catch (err) { reportFsError(err, args.format) }
         },
-      ),
+      )
+      .epilogue([
+        "Path formats (use the czfs: qualifier for Volume paths):",
+        "  Managed/External czfs:/Volumes/your_workspace/your_schema/your_volume/",
+        "  User            czfs:/Volumes/@user/your_workspace/your_user/",
+        "  Table           czfs:/Volumes/@table/your_workspace/your_schema/your_table/",
+        "  @user and @table are required; @external and @managed are optional.",
+        "  In @user paths, your_user is the Lakehouse username (usually the profile username), not the profile name.",
+        "",
+        "Volume workflows:",
+        "  fs ls czfs:/                                      List Managed/External roots + @user + @table",
+        "  fs ls czfs:/Volumes/@table/                      Enumerate Table Volume roots (SHOW TABLES)",
+        "  fs ls czfs:/Volumes/@user/                       List User Volume workspaces (SHOW WORKSPACES)",
+        "  ls also accepts partial namespace paths: @table/workspace/schema/, @user/workspace/, or workspace/schema/; use a full path for file operations.",
+        "  Root metadata queries: SHOW VOLUMES | SHOW TABLES | SHOW USER VOLUME DIRECTORY",
+        "  fs mb czfs:/Volumes/your_workspace/your_schema/your_volume Create a Managed Volume only",
+        "  fs rb czfs:/Volumes/your_workspace/your_schema/your_volume Remove an empty Managed Volume object (requires --write)",
+        "  Table Volumes are created automatically with tables; User Volumes are system-created.",
+        "  Use fs mkdir/cp/ls/rm inside an existing Volume. Files are separate from Volume objects.",
+        "  fs rb refuses External Volumes and non-empty Managed Volumes; remove files with fs rm first.",
+        "  fs mb/rb require a qualified czfs:/Volumes/your_workspace/your_schema/your_volume root, not a bare name.",
+        "  Namespace roots do not accept -R; use -R only on a specific Volume/file tree.",
+      ].join("\n")),
   )
 }
 
@@ -166,6 +210,7 @@ function createFs(args: FsArgs): FsUtil {
     workspace: config.workspace,
     schema: config.schema,
     execute: async (sql, hints) => {
+      if (args.debug) process.stderr.write(`[debug] fs sql: ${sql}\n`)
       const ctx = await (context ??= getExecContext(args))
       const result = await execSql(ctx, sql, { hints })
       if (!("rows" in result)) throw new FsError("FS_TRANSFER_FAILED", "Unexpected asynchronous SQL result")
@@ -179,10 +224,13 @@ function formatModifiedAt(value: number | null): string | null {
   return new Date(value).toISOString()
 }
 
-function reportFsError(err: unknown, format: string): void {
+function reportFsError(err: unknown, format: string, operation?: "transfer"): void {
   if (err instanceof FsError) {
-    const invalid = err.code.endsWith("_INVALID") || err.code === "FS_RECURSIVE_REQUIRED" || err.code === "FS_PATH_CONTEXT_REQUIRED"
-    error(err.code, err.message, { format, exitCode: invalid ? 2 : 1, ...(err.details !== undefined ? { extra: { details: err.details } } : {}) })
+    const invalid = err.code.endsWith("_INVALID") || err.code === "FS_RECURSIVE_REQUIRED" || err.code === "FS_PATH_CONTEXT_REQUIRED" || err.code === "WRITE_NOT_ALLOWED"
+    const message = operation === "transfer" && err.code === "FS_TARGET_EXISTS"
+      ? `${err.message}. Use --overwrite to replace it or choose a different destination.`
+      : err.message
+    error(err.code, message, { format, exitCode: invalid ? 2 : 1, ...(err.details !== undefined ? { extra: { details: err.details } } : {}) })
     return
   }
   if (err instanceof InterfaceError && typeof err.code === "string" && err.code) {

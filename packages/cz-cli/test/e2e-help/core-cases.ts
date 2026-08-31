@@ -164,41 +164,55 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["fs", "--help"],
     expectHeader: "cz-cli fs",
-    expectCommands: ["ls", "head", "mb", "mkdir", "cp", "mv", "rm"],
+    expectCommands: ["ls", "head", "mb", "rb", "mkdir", "cp", "mv", "rm"],
+    expectOptions: ["czfs:/Volumes/your_workspace/your_schema/your_volume/", "@user", "@table", "Root metadata queries", "Table Volumes are created automatically"],
+    forbid: ["volume://"],
   },
   {
     args: ["fs", "ls", "--help"],
     expectHeader: "cz-cli fs ls",
-    expectOptions: ["path", "--recursive", "--limit", "volume:user://~/"],
+    expectOptions: ["path", "--recursive", "--limit", "czfs:/", "@table", "@user"],
+    forbid: ["volume://"],
   },
   {
     args: ["fs", "head", "--help"],
     expectHeader: "cz-cli fs head",
-    expectOptions: ["file", "--bytes"],
+    expectOptions: ["file", "--bytes", "czfs:/Volumes/@user/your_workspace/your_user/demo.csv"],
+    forbid: ["-c, --bytes"],
   },
   {
     args: ["fs", "mb", "--help"],
     expectHeader: "cz-cli fs mb",
-    expectOptions: ["volume", "volume://shared_files"],
+    expectOptions: ["volume", "czfs:/Volumes/your_workspace/your_schema/your_volume", "cannot create User or Table Volumes"],
+  },
+  {
+    args: ["fs", "rb", "--help"],
+    expectHeader: "cz-cli fs rb",
+    expectOptions: ["volume", "czfs:/Volumes/your_workspace/your_schema/your_volume", "empty Managed Volume", "--write"],
   },
   {
     args: ["fs", "mkdir", "--help"],
     expectHeader: "cz-cli fs mkdir",
-    expectOptions: ["path", "existing Volume", "volume:user://~/data/2026/08"],
+    expectOptions: ["path", "existing Volume", "@table", "@user"],
   },
   {
     args: ["fs", "cp", "--help"],
     expectHeader: "cz-cli fs cp",
-    expectOptions: ["source", "destination", "--recursive", "--overwrite"],
+    expectOptions: ["source", "destination", "--recursive", "--overwrite", "your_workspace", "Existing targets are refused"],
   },
   {
     args: ["fs", "mv", "--help"],
     expectHeader: "cz-cli fs mv",
-    expectOptions: ["source", "destination", "--recursive", "--overwrite"],
+    expectOptions: ["source", "destination", "--recursive", "--overwrite", "your_workspace", "Existing targets are refused"],
   },
   {
     args: ["fs", "rm", "--help"],
     expectHeader: "cz-cli fs rm",
-    expectOptions: ["path", "--recursive", "--force", "--dry-run"],
+    expectOptions: ["path", "--recursive", "--force", "--dry-run", "--write", "your_workspace", "Deletion is permanent"],
+  },
+  {
+    args: ["table", "load", "--help"],
+    expectHeader: "cz-cli table load",
+    expectOptions: ["name", "source", "--using", "--header", "--write", "czfs:/Volumes/your_workspace/your_schema/your_volume/", "@user", "@table", "COPY INTO ..."],
   },
 ]

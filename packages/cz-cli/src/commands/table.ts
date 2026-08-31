@@ -1,11 +1,12 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
-import { JobStatus, request, type QueryResult } from "@clickzetta/sdk"
+import { JobStatus, quote, request, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
+import { parseVolumePath, quoteIdentifiers, validateRelativePath } from "@clickzetta/sdk/fsutil"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -319,6 +320,90 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           } catch (err) {
             const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
             error(_ec, _em, { format: argv.format , ...(_ea && { aiMessage: _ea }) })
+          }
+        },
+      )
+      .command(
+        "load <name> <source>",
+        "Load a Volume path into a table; use SQL for advanced COPY INTO/OVERWRITE cases",
+        (y) => y
+          .positional("name", { type: "string", demandOption: true, describe: "Target table name" })
+          .positional("source", { type: "string", demandOption: true, describe: "czfs:/ Volume root, directory (trailing /), or file path" })
+          .option("using", { type: "string", choices: ["csv", "parquet", "orc", "bson"], default: "csv", describe: "Input file format" })
+          .option("header", { type: "boolean", default: false, describe: "Treat the first CSV row as column names" })
+          .option("write", { type: "boolean", default: false, describe: "Allow loading data into the target table; required as a safety guard." })
+          .epilogue([
+            "Examples:",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet",
+            "  cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv",
+            "  cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet",
+            "",
+            "For PURGE, ON_ERROR, PARTITION, transformations, or complex options, use:",
+            "  cz-cli sql --write \"COPY INTO ...\"",
+          ].join("\n")),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const table = validateIdentifier(argv.name as string, "table name")
+            const source = String(argv.source)
+            if (!argv.write) {
+              error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format, exitCode: 2 })
+              return
+            }
+            const parsed = parseVolumePath(source)
+            if (!parsed || parsed.reference.identifiers.length === 0 || parsed.reference.kind === "named" && parsed.reference.identifiers.length !== 3) {
+              error("USAGE_ERROR", "table load requires a qualified czfs:/Volumes/... path; use SQL for a raw Volume identifier.", { format, exitCode: 2 })
+              return
+            }
+            if (parsed.reference.kind === "user" && parsed.reference.identifiers.length !== 2) {
+              error("USAGE_ERROR", "User Volume paths must include workspace and user.", { format, exitCode: 2 })
+              return
+            }
+            const ctx = await getExecContext(argv)
+            if (parsed.reference.kind === "user") {
+              const identity = await execSql(ctx, "SELECT current_user()")
+              if (!isQueryResult(identity) || identity.status === JobStatus.FAILED || String(identity.rows[0]?.[0] ?? "").trim() !== parsed.reference.identifiers[1]) {
+                error("FS_PATH_INVALID", "User Volume path must name the current user.", { format, exitCode: 2 })
+                return
+              }
+              if (parsed.reference.identifiers[0] !== ctx.config.workspace) {
+                error("FS_PATH_INVALID", "User Volume path must use the current workspace.", { format, exitCode: 2 })
+                return
+              }
+            }
+            const volume = parsed.reference.kind === "user"
+              ? "USER VOLUME"
+              : parsed.reference.kind === "table"
+                ? `TABLE VOLUME ${quoteIdentifiers(parsed.reference.identifiers)}`
+                : `VOLUME ${quoteIdentifiers(parsed.reference.identifiers)}`
+            const using = String(argv.using ?? "csv").toUpperCase()
+            if (argv.header && using !== "CSV") {
+              error("USAGE_ERROR", "--header is only valid with --using csv.", { format, exitCode: 2 })
+              return
+            }
+            const options = argv.header ? " OPTIONS('header'='true')" : ""
+            const sourceIsDirectory = source.endsWith("/")
+            const relativePath = validateRelativePath(parsed.relativePath, source)
+            const selector = relativePath
+              ? sourceIsDirectory
+                ? ` SUBDIRECTORY ${quote(`${relativePath}/`)}`
+                : ` FILES (${quote(relativePath)})`
+              : ""
+            const sql = `COPY INTO ${table} FROM ${volume} USING ${using}${options}${selector}`
+            const t0 = Date.now()
+            const result = await execSql(ctx, sql)
+            if (!isQueryResult(result) || result.status === JobStatus.FAILED) {
+              const message = isQueryResult(result) ? (result.errorMessage ?? "Query failed") : "Unexpected result"
+              logOperation("table load", { sql, ok: false, timeMs: Date.now() - t0 })
+              error(isQueryResult(result) ? (result.errorCode ?? "SQL_ERROR") : "SQL_ERROR", message, { format })
+              return
+            }
+            logOperation("table load", { sql, ok: true, timeMs: Date.now() - t0 })
+            success({ table, source, mode: "INTO", file_format: using, status: "SUCCEEDED" }, { format, timeMs: Date.now() - t0 })
+          } catch (err) {
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format, exitCode: _ec === "USAGE_ERROR" ? 2 : undefined, ...(_ea && { aiMessage: _ea }) })
           }
         },
       )
