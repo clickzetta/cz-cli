@@ -481,6 +481,23 @@ describe("FsUtil", () => {
     expect(statements).toEqual(["SHOW VOLUMES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
   })
 
+  test("lists partial czfs namespace paths from metadata", async () => {
+    const statements: string[] = []
+    const fs = new FsUtil({ workspace: "workspace", schema: "public", execute: async (sql) => {
+      statements.push(sql)
+      if (sql === "SHOW VOLUMES") return { ...result([["public", "shared", "", false, "workspace"], ["other", "ignored", "", false, "workspace"]]), columns: [{ name: "schema_name", type: "STRING" }, { name: "volume_name", type: "STRING" }, { name: "url", type: "STRING" }, { name: "external", type: "BOOLEAN" }, { name: "workspace_name", type: "STRING" }] }
+      if (sql === "SHOW TABLES") return { ...result([["public", "orders", false, false, false, false]]), columns: [{ name: "schema_name", type: "STRING" }, { name: "table_name", type: "STRING" }, { name: "is_view", type: "BOOLEAN" }, { name: "is_materialized_view", type: "BOOLEAN" }, { name: "is_external", type: "BOOLEAN" }, { name: "is_dynamic", type: "BOOLEAN" }] }
+      if (sql === "SELECT current_user()") return result([["alice"]])
+      if (sql === "SHOW USER VOLUME DIRECTORY") return { ...result([["data.csv", "", 1, ""]]), columns: [{ name: "relative_path", type: "STRING" }, { name: "url", type: "STRING" }, { name: "size", type: "INT" }, { name: "last_modified_time", type: "STRING" }] }
+      throw new Error(`unexpected SQL: ${sql}`)
+    } })
+
+    expect((await fs.ls("czfs:/Volumes/workspace/public/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/workspace/public/shared"])
+    expect((await fs.ls("czfs:/Volumes/@table/workspace/public/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@table/workspace/public/orders"])
+    expect((await fs.ls("czfs:/Volumes/@user/workspace/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@user/workspace/alice/data.csv"])
+    expect(statements).toEqual(["SHOW VOLUMES", "SHOW TABLES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY"])
+  })
+
   test("sends decoded relative paths to Volume SQL for root listings", async () => {
     const statements: string[] = []
     const columns = [{ name: "relative_path", type: "STRING" }, { name: "url", type: "STRING" }, { name: "size", type: "INT" }, { name: "last_modified_time", type: "STRING" }]

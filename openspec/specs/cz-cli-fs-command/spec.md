@@ -112,13 +112,16 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 
 `fs ls` 对带 `czfs:` 的根路径使用对应的 Lakehouse 元数据命令。裸 `/Volumes` 路径不进入该分支，而是保留给本地文件系统：
 
-命名空间根（`czfs:/`、`czfs:/Volumes/`、`czfs:/Volumes/@table/`）只用于列出入口，不接受 `-R/--recursive`；`-R` 只对具体 Volume 或目录树生效。
+命名空间根和部分 qualifiedname 路径（如 `czfs:/Volumes/@table/<workspace>/<schema>/`、`czfs:/Volumes/<workspace>/<schema>/`）只用于列出入口，不接受 `-R/--recursive`；`-R` 只对具体 Volume 或目录树生效。`@user/<workspace>/` 是当前 User Volume 的导航前缀，可用于递归列出当前用户文件。
 
 | 根路径 | 查询 | 含义 |
 | --- | --- | --- |
 | `czfs:/` 或 `czfs:/Volumes/` | `SHOW VOLUMES` + 两个虚拟入口 | 列出 Named/External 根，并提供 `@user`、`@table` 入口 |
 | `czfs:/Volumes/@user/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 列出当前 User Volume 文件；`@user/<workspace>/<username>/` 才是具体 User Volume 根 |
+| `czfs:/Volumes/@user/<workspace>/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 使用路径中的 workspace，并自动补全当前会话 username |
 | `czfs:/Volumes/@table/` | `SHOW TABLES`（按 `is_view`/`is_materialized_view`/`is_external`/`is_dynamic` 过滤） | 列出当前 workspace/schema 下的 Table Volume 根 |
+| `czfs:/Volumes/@table/<workspace>/` 或 `czfs:/Volumes/@table/<workspace>/<schema>/` | `SHOW TABLES` | 按路径前缀列出并拼接 Table Volume 完整路径 |
+| `czfs:/Volumes/<workspace>/` 或 `czfs:/Volumes/<workspace>/<schema>/` | `SHOW VOLUMES` | 按 workspace/schema 列出并拼接 Named/External Volume 完整路径 |
 | `czfs:/Volumes/<workspace>/<schema>/<volume>/` | `SHOW VOLUME DIRECTORY` | 列出 Named/External Volume 文件 |
 | `czfs:/Volumes/@user/<workspace>/<user>/` | `SHOW USER VOLUME DIRECTORY` | 列出 User Volume 文件 |
 | `czfs:/Volumes/@table/<workspace>/<schema>/<table>/` | `SHOW TABLE VOLUME DIRECTORY` | 列出 Table Volume 文件 |

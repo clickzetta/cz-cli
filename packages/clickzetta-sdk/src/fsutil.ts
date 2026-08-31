@@ -137,7 +137,35 @@ export function parseVolumePath(input: string): { reference: VolumeReference; re
 export function isVolumeNamespaceRoot(input: string): boolean {
   const normalized = String(input).toLowerCase().replace(/\/+$/, "")
   const canonical = normalized.startsWith("czfs:") ? `czfs:${normalized.slice(5).replace(/^\/volume(?=\/|$)/, "/volumes")}` : normalized
-  return canonical === "czfs:" || canonical === "czfs:/volumes" || canonical === "czfs:/volumes/@table" || canonical === "volume:" || canonical === "volume:table:"
+  if (canonical === "czfs:" || canonical === "czfs:/volumes" || canonical === "volume:" || canonical === "volume:table:") return true
+  const namespace = parseCzfsNamespacePath(input)
+  return namespace !== undefined && namespace.kind !== "user"
+}
+
+interface CzfsNamespacePath {
+  kind: VolumeKind
+  identifiers: string[]
+}
+
+function parseCzfsNamespacePath(input: string): CzfsNamespacePath | undefined {
+  const path = String(input)
+  if (!path.toLowerCase().startsWith("czfs:")) return undefined
+  const rest = path.slice(5)
+  if (!/^\/volumes?(?:\/|$)/i.test(rest)) return undefined
+  const raw = rest.split("/")
+  while (raw.length > 0 && raw[raw.length - 1] === "") raw.pop()
+  const components = raw.slice(2).map((value) => decodeUriComponent(value, path))
+  if (components.length === 0) return undefined
+  const marker = components[0]?.toLowerCase() ?? ""
+  const kind: VolumeKind = marker === "@table" ? "table" : marker === "@user" ? "user" : "named"
+  const values = marker.startsWith("@") ? components.slice(1) : components
+  if (marker.startsWith("@") && !["@external", "@managed", "@table", "@user"].includes(marker)) {
+    throw new FsError("FS_PATH_INVALID", `Unsupported Volume type '${components[0]}' in ${path}`)
+  }
+  const required = kind === "user" ? 2 : 3
+  if (values.length >= required) return undefined
+  validateIdentifiers(values, path)
+  return { kind, identifiers: values }
 }
 
 export function validateRelativePath(path: string, original: string): string {
@@ -874,6 +902,12 @@ export class FsUtil {
     const normalized = path.toLowerCase().replace(/\/+$/, "")
     const hasCzfsScheme = normalized.startsWith("czfs:")
     const czfsRoot = hasCzfsScheme ? normalized.slice(5).replace(/^\/volume(?=\/|$)/, "/volumes") : ""
+    const partial = parseCzfsNamespacePath(path)
+    if (partial) {
+      if (partial.kind === "table") return this.listTableVolumeRoots(limit, partial.identifiers[0], partial.identifiers[1])
+      if (partial.kind === "user") return this.listCurrentUserVolumeFiles(recursive, limit, partial.identifiers[0])
+      return this.listNamedVolumeRoots(limit, partial.identifiers[0], partial.identifiers[1])
+    }
     if (isVolumeNamespaceRoot(path)) {
       if (normalized === "volume:") return this.listNamedVolumeRoots(limit)
       if (normalized === "volume:table:") return this.listTableVolumeRoots(limit)
@@ -889,13 +923,14 @@ export class FsUtil {
     return undefined
   }
 
-  private async listNamedVolumeRoots(limit: number): Promise<FileInfo[]> {
+  private async listNamedVolumeRoots(limit: number, workspaceFilter?: string, schemaFilter?: string): Promise<FileInfo[]> {
     const result = await this.execute("SHOW VOLUMES")
     if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list Volumes")
     const rows = result.rows.flatMap((row) => {
       const name = String(resultValue(result, row, "volume_name", "name") ?? row[0] ?? "")
       const workspace = String(resultValue(result, row, "workspace_name", "workspace") ?? this.workspace ?? "")
       const schema = String(resultValue(result, row, "schema_name", "schema") ?? this.schema ?? "")
+      if (workspaceFilter && workspace !== workspaceFilter || schemaFilter && schema !== schemaFilter) return []
       if (!name || !workspace || !schema) return []
       const reference: VolumeReference = { kind: "named", identifiers: [workspace, schema, name], czfsBase: buildCzfsBase("named", [workspace, schema, name]) }
       return [volumeEntry(reference, "", { create_time: resultValue(result, row, "create_time", "created_at") }, true)]
@@ -916,26 +951,26 @@ export class FsUtil {
     return [...entryPoints, ...await this.listNamedVolumeRoots(remaining)]
   }
 
-  private async resolveUserVolumeReference(): Promise<VolumeReference> {
-    if (!this.workspace) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace is required for User Volume root")
+  private async resolveUserVolumeReference(workspace = this.workspace): Promise<VolumeReference> {
+    if (!workspace) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace is required for User Volume root")
     const identity = await this.execute("SELECT current_user()")
     if (identity.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", identity.errorMessage ?? "Failed to resolve current user")
     const user = String(identity.rows[0]?.[0] ?? "").trim()
     if (!user) throw new FsError("FS_TRANSFER_FAILED", "SELECT current_user() returned no user; refusing to access User Volume")
-    const identifiers = [this.workspace, user]
+    const identifiers = [workspace, user]
     return { kind: "user", identifiers, czfsBase: buildCzfsBase("user", identifiers) }
   }
 
-  private async listCurrentUserVolumeFiles(recursive: boolean, limit: number): Promise<FileInfo[]> {
+  private async listCurrentUserVolumeFiles(recursive: boolean, limit: number, workspace?: string): Promise<FileInfo[]> {
     // Use the resolved [workspace, user] pair directly. Re-deriving it by slicing the
     // czfs URI dropped the user segment and left identifiers=[workspace].
-    const reference = await this.resolveUserVolumeReference()
+    const reference = await this.resolveUserVolumeReference(workspace)
     const entries = await listVolumeDirectory(reference, reference.czfsBase ?? "czfs:/Volumes/@user", this.execute, recursive, limit)
     return Promise.all(entries.map((entry) => entry.info()))
   }
 
-  private async listTableVolumeRoots(limit: number): Promise<FileInfo[]> {
-    if (!this.workspace || !this.schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace and schema are required for Table Volume root")
+  private async listTableVolumeRoots(limit: number, workspace = this.workspace, schema = this.schema): Promise<FileInfo[]> {
+    if (!workspace || !schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace and schema are required for Table Volume root")
     const result = await this.execute("SHOW TABLES")
     if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list tables")
     const rows = result.rows.flatMap((row) => {
@@ -946,7 +981,8 @@ export class FsUtil {
       // roots would advertise paths that SHOW TABLE VOLUME DIRECTORY rejects.
       const record = resultRecord(result, row)
       if (["is_view", "is_materialized_view", "is_external", "is_dynamic"].some((flag) => record[flag] === true)) return []
-      const identifiers = [this.workspace!, this.schema!, name]
+      if (record.schema_name !== undefined && String(record.schema_name) !== schema) return []
+      const identifiers = [workspace, schema, name]
       const reference: VolumeReference = { kind: "table", identifiers, czfsBase: buildCzfsBase("table", identifiers) }
       return [volumeEntry(reference, "", {}, true)]
     })
