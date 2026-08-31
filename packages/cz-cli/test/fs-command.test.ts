@@ -30,7 +30,10 @@ describe("fs commands", () => {
     expect(JSON.parse(listing.output).data.entries[0].name).toBe("hello.txt")
 
     expect((await execute(`fs cp ${quote(file)} ${quote(copy)}`)).exitCode).toBe(0)
-    expect((await execute(`fs rm ${quote(copy)}`)).exitCode).toBe(0)
+    const guarded = await execute(`fs rm ${quote(copy)}`)
+    expect(guarded.exitCode).toBe(2)
+    expect(JSON.parse(guarded.output).error.code).toBe("WRITE_NOT_ALLOWED")
+    expect((await execute(`fs rm ${quote(copy)} --write`)).exitCode).toBe(0)
   })
 
   test("protects filesystem root and rejects invalid UTF-8 truncation", async () => {
@@ -41,7 +44,7 @@ describe("fs commands", () => {
     expect(invalid.exitCode).toBe(1)
     expect(JSON.parse(invalid.output).error.code).toBe("FS_NOT_TEXT")
 
-    const rootRemoval = await execute("fs rm / -R --format json")
+    const rootRemoval = await execute("fs rm / -R --write --format json")
     expect(rootRemoval.exitCode).toBe(2)
     expect(JSON.parse(rootRemoval.output).error.code).toBe("FS_PATH_INVALID")
 

@@ -20,8 +20,8 @@
 | --- | --- | --- |
 | `fs ls` | `ls()` + CLI 侧递归/截断 | 查看文件或目录；默认最多显示 100 条 |
 | `fs head` | `head()` | 读取文件开头的文本内容 |
-| `fs mb` | CLI 扩展 | 创建 Named Volume 对象 |
-| `fs rb` | CLI 扩展 | 删除 Named Volume 对象 |
+| `fs mb` | CLI 扩展 | 创建 Managed Volume 对象 |
+| `fs rb` | CLI 扩展 | 删除 Managed Volume 对象 |
 | `fs mkdir` | `mkdirs()` | 递归创建目录 |
 | `fs cp` | `cp()` | 本地与 Volume 双向复制，也支持本地或 Volume 内部复制 |
 | `fs mv` | `mv()` | 移动文件或目录 |
@@ -33,8 +33,8 @@
 flowchart LR
     FS[cz-cli fs] --> LS[ls 查看]
     FS --> HEAD[head 预览]
-    FS --> MB[mb 创建 Named Volume]
-    FS --> RB[rb 删除 Named Volume]
+    FS --> MB[mb 创建 Managed Volume]
+    FS --> RB[rb 删除 Managed Volume]
     FS --> MKDIR[mkdir 建目录]
     FS --> CP[cp 复制]
     FS --> MV[mv 移动]
@@ -116,13 +116,13 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 
 | 根路径 | 查询 | 含义 |
 | --- | --- | --- |
-| `czfs:/` 或 `czfs:/Volumes/` | `SHOW VOLUMES` + 两个虚拟入口 | 列出 Named/External 根，并提供 `@user`、`@table` 入口 |
+| `czfs:/` 或 `czfs:/Volumes/` | `SHOW VOLUMES` + 两个虚拟入口 | 列出 Managed/External 根，并提供 `@user`、`@table` 入口 |
 | `czfs:/Volumes/@user/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 列出当前 User Volume 文件；`@user/<workspace>/<username>/` 才是具体 User Volume 根 |
 | `czfs:/Volumes/@user/<workspace>/` | `SELECT current_user()` + `SHOW USER VOLUME DIRECTORY` | 使用路径中的 workspace，并自动补全当前会话 username |
 | `czfs:/Volumes/@table/` | `SHOW TABLES`（按 `is_view`/`is_materialized_view`/`is_external`/`is_dynamic` 过滤） | 列出当前 workspace/schema 下的 Table Volume 根 |
-| `czfs:/Volumes/@table/<workspace>/` 或 `czfs:/Volumes/@table/<workspace>/<schema>/` | `SHOW TABLES` | 按路径前缀列出并拼接 Table Volume 完整路径 |
-| `czfs:/Volumes/<workspace>/` 或 `czfs:/Volumes/<workspace>/<schema>/` | `SHOW VOLUMES` | 按 workspace/schema 列出并拼接 Named/External Volume 完整路径 |
-| `czfs:/Volumes/<workspace>/<schema>/<volume>/` | `SHOW VOLUME DIRECTORY` | 列出 Named/External Volume 文件 |
+| `czfs:/Volumes/@table/<workspace>/` 或 `czfs:/Volumes/@table/<workspace>/<schema>/` | `SHOW TABLES` / `SHOW TABLES IN <schema>` | 按路径前缀列出并拼接 Table Volume 完整路径；路径明确给出 schema 且不同于当前 schema 时使用 `IN` |
+| `czfs:/Volumes/<workspace>/` 或 `czfs:/Volumes/<workspace>/<schema>/` | `SHOW VOLUMES` | 按 workspace/schema 列出并拼接 Managed/External Volume 完整路径 |
+| `czfs:/Volumes/<workspace>/<schema>/<volume>/` | `SHOW VOLUME DIRECTORY` | 列出 Managed/External Volume 文件 |
 | `czfs:/Volumes/@user/<workspace>/<user>/` | `SHOW USER VOLUME DIRECTORY` | 列出 User Volume 文件 |
 | `czfs:/Volumes/@table/<workspace>/<schema>/<table>/` | `SHOW TABLE VOLUME DIRECTORY` | 列出 Table Volume 文件 |
 | `volume:table://`（兼容） | `SHOW TABLES` | 列出当前 workspace/schema 下的 Table Volume 根 |
@@ -152,7 +152,7 @@ czfs:/Volumes/@user/workspace1/user1/path/data.csv
 
 短地址只有在当前连接能够提供缺失的 workspace/schema 时才可用；否则必须返回 `FS_PATH_CONTEXT_REQUIRED`（退出码 `2`），不得猜测默认 workspace/schema。自动化脚本应使用三段全限定形式。
 
-短地址仅保留给兼容的文件操作；`fs mb`/`fs rb` 始终要求三段完整的 Named Volume 根路径。
+短地址仅保留给兼容的文件操作；`fs mb`/`fs rb` 始终要求三段完整的 Managed Volume 根路径。
 
 Volume 标识符每段必须是非空标识符；点号只用于分隔限定名，标识符中的点号、斜杠和控制字符不支持。相对路径按 `/` 分段，客户端先 URL-decode 再检查，拒绝空段、`.`、`..` 和解码后路径穿越；普通空格、Unicode、`%` 和单引号按 URI 规则编码后保留原值。
 
@@ -188,12 +188,12 @@ cz-cli fs cp volume://vol_a/a.csv volume://vol_b/a.csv
 | --- | --- | --- | --- |
 | `fs ls` | `<path>` | `-R, --recursive`、`--limit`（CLI 扩展） | 当前层，最多显示 100 条 |
 | `fs head` | `<file>` | `--bytes` | 读取前 65536 字节并按 UTF-8 输出 |
-| `fs mb` | `<volume>` | 无 | 创建 Named Volume；只接受 Named Volume 根路径 |
-| `fs rb` | `<volume>` | 无 | 删除 Named Volume 对象；不删除文件 |
+| `fs mb` | `<volume>` | 无 | 创建 Managed Volume；只接受 Managed Volume 根路径 |
+| `fs rb` | `<volume>` | `--write` | 删除 Managed Volume 对象；不删除文件 |
 | `fs mkdir` | `<path>` | 无 | 自动创建所有父目录 |
 | `fs cp` | `<source> <destination>` | `-R`、`--overwrite/--no-overwrite` | 单向复制；默认拒绝已有目标 |
 | `fs mv` | `<source> <destination>` | `-R`、`--overwrite/--no-overwrite` | 目标完成后删除源；默认拒绝已有目标 |
-| `fs rm` | `<path>` | `-R`、`-f`（CLI 扩展）、`--dry-run`（CLI 扩展） | 删除单文件；目录必须显式递归 |
+| `fs rm` | `<path>` | `-R`、`-f`（CLI 扩展）、`--dry-run`（CLI 扩展）、`--write` | 删除单文件；实际删除必须显式确认 `--write`，目录必须显式递归 |
 | `table load` | `<table> <czfs-source>` | `--using`、`--header` | 仅做追加式 Volume → Table 导入；`COPY OVERWRITE` 和复杂场景使用 SQL |
 
 ### 3.1 FsUtil 参数对齐与 CLI 扩展
@@ -204,8 +204,8 @@ cz-cli fs cp volume://vol_a/a.csv volume://vol_b/a.csv
 | --- | --- | --- |
 | `fs ls` | `ls(dir)` | 无递归、limit 或分页参数；`-R` 和 `--limit` 都是 CLI 扩展 |
 | `fs head` | `head(file, maxBytes=65536)` | `--bytes` 映射到 `maxBytes` |
-| `fs mb` | CLI 扩展 | 将 Named Volume 根路径转换为 `CREATE VOLUME` DDL |
-| `fs rb` | CLI 扩展 | 将 Named Volume 根路径转换为 `DROP VOLUME` DDL |
+| `fs mb` | CLI 扩展 | 将 Managed Volume 根路径转换为 `CREATE VOLUME` DDL |
+| `fs rb` | CLI 扩展 | 将 Managed Volume 根路径转换为 `DROP VOLUME` DDL |
 | `fs mkdir` | `mkdirs(dir)` | 创建目录及父目录 |
 | `fs cp` | `cp(from_, to, recurse=False)` | CLI 默认 `overwrite=false`，用 `--overwrite` 显式覆盖 |
 | `fs mv` | `mv(from_, to, recurse=False)` | CLI 默认 `overwrite=false`，用 `--overwrite` 显式覆盖 |
@@ -261,8 +261,8 @@ Manage local files and Lakehouse Volume files
 Commands:
   cz-cli fs ls <path>                      List files or directories
   cz-cli fs head <file>                    Print the beginning of a UTF-8 text file, default bytes is 65536
-  cz-cli fs mb <volume>                    Create a Named Volume
-  cz-cli fs rb <volume>                    Remove a Named Volume object
+  cz-cli fs mb <volume>                    Create a Managed Volume
+  cz-cli fs rb <volume>                    Remove a Managed Volume object (requires --write)
   cz-cli fs mkdir <path>                   Create directories inside an existing filesystem or Volume
   cz-cli fs cp <source> <destination>      Copy a file or directory
   cz-cli fs mv <source> <destination>      Move a file or directory
@@ -270,7 +270,7 @@ Commands:
 
 Path formats:
   Local                 /tmp/a.csv, ./a.csv, file:/tmp/a.csv
-  Named/External Volume czfs:/Volumes/your_workspace/your_schema/your_volume/
+  Managed/External Volume czfs:/Volumes/your_workspace/your_schema/your_volume/
   User Volume           czfs:/Volumes/@user/your_workspace/your_user/
   Table Volume          czfs:/Volumes/@table/your_workspace/your_schema/your_table/
 
@@ -388,10 +388,10 @@ Examples:
 ```text
 cz-cli fs mb <volume>
 
-Create a Named Volume (fs mb cannot create User or Table Volumes)
+Create a Managed Volume (fs mb cannot create User or Table Volumes)
 
 Positionals:
-  volume  Named Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume
+  volume  Managed Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume
                                                                [string] [required]
 
 Options:
@@ -404,7 +404,7 @@ Examples:
 
 行为约定：
 
-- 只接受 Named Volume 根路径，不接受子目录、本地路径、User Volume 或 Table Volume。
+- 只接受 Managed Volume 根路径，不接受子目录、本地路径、User Volume 或 Table Volume。
 - `czfs:/Volumes/...` 根必须提供完整的 `workspace/schema/volume` qualifiedname；兼容的 `volume://name` / `volume://schema.name` 可在连接上下文完整时使用，客户端会补齐 workspace/schema。
 - 等价于执行带标识符转义的 `CREATE VOLUME`，已有同名 Volume 返回 `FS_TARGET_EXISTS`。
 
@@ -413,16 +413,16 @@ Examples:
 ```text
 cz-cli fs rb <volume>
 
-Remove a Named Volume object
+Remove a Managed Volume object
 
 Positionals:
-  volume  Named Volume root                              [string] [required]
+  volume  Managed Volume root                              [string] [required]
 
 Examples:
   cz-cli fs rb czfs:/Volumes/your_workspace/your_schema/your_volume
 ```
 
-`fs rb` 只删除空的 Named Volume 对象，不删除其中文件；External、User、Table Volume 不能使用 `fs rb`。User Volume 由系统自动提供，Table Volume 随表自动创建。
+`fs rb` 只删除空的 Managed Volume 对象，不删除其中文件；External、User、Table Volume 不能使用 `fs rb`。User Volume 由系统自动提供，Table Volume 随表自动创建。
 
 ### 4.6 `cz-cli fs mkdir --help`
 
@@ -448,7 +448,7 @@ Examples:
 - 等价于 `mkdir -p`，父目录不存在时一并创建。
 - 目录已存在时返回成功。
 - 只能创建已有 Volume 内的目录，不能创建 Volume 对象。
-- 对 Named Volume 根路径执行 `fs mb` 创建对象；User/Table Volume 由 Lakehouse 自动提供，不能用 `fs mb` 创建。
+- 对 Managed Volume 根路径执行 `fs mb` 创建对象；User/Table Volume 由 Lakehouse 自动提供，不能用 `fs mb` 创建。
 
 ### 4.7 `cz-cli fs cp --help`
 

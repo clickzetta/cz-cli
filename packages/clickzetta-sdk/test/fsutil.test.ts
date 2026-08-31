@@ -313,7 +313,7 @@ describe("FsUtil", () => {
     await expect(fs.mb("volume://shared_files/data")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
     await expect(fs.mb("zhanglin_test2")).rejects.toMatchObject({
       code: "FS_PATH_INVALID",
-      message: "fs mb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received 'zhanglin_test2'.",
+      message: "fs mb expects a Managed Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received 'zhanglin_test2'.",
     })
     await expect(fs.mb("volume://")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
     await expect(fs.mb("volume:user://~/")).rejects.toMatchObject({ code: "FS_PATH_INVALID" })
@@ -418,6 +418,35 @@ describe("FsUtil", () => {
     })
 
     await expect(fs.ls("volume://missing")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
+  })
+
+  test("treats the engine's empty Managed Volume root Path not found as an empty listing", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => {
+        if (sql.startsWith("SHOW VOLUME DIRECTORY")) return { ...result([]), status: JobStatus.FAILED, errorMessage: "CZLH-70002:Path not found:1/workspaces/workspace/volumes/empty_123/." }
+        if (sql === "SHOW VOLUMES") return { ...result([["public", "empty", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
+        return result([])
+      },
+    })
+
+    expect(await fs.ls("czfs:/Volumes/workspace/public/empty")).toEqual([])
+  })
+
+  test("treats the same empty-root error from list_directory as an empty listing", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => {
+        if (sql.startsWith("select get_file")) return result([[JSON.stringify({ path: "", dir: true })]])
+        if (sql.startsWith("select list_directory")) return { ...result([]), status: JobStatus.FAILED, errorMessage: "CZLH-70002:Path not found:1/workspaces/workspace/volumes/empty_123/." }
+        if (sql === "SHOW VOLUMES") return { ...result([["public", "empty", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
+        return result([])
+      },
+    })
+
+    expect(await fs.ls("volume://workspace.public.empty/data")).toEqual([])
   })
 
   test("does not hide unsupported Volume SQL functions as empty directories", async () => {
@@ -573,6 +602,34 @@ describe("FsUtil", () => {
     })
 
     expect((await fs.ls("czfs:/Volumes/@table")).map((entry) => entry.name)).toEqual(["orders"])
+  })
+
+  test("queries an explicitly qualified Table Volume namespace schema", async () => {
+    const statements: string[] = []
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => {
+        statements.push(sql)
+        if (sql === "SHOW TABLES IN `default`") {
+          return {
+            ...result([["default", "orders", false, false, false, false]]),
+            columns: [
+              { name: "schema_name", type: "STRING" },
+              { name: "table_name", type: "STRING" },
+              { name: "is_view", type: "BOOLEAN" },
+              { name: "is_materialized_view", type: "BOOLEAN" },
+              { name: "is_external", type: "BOOLEAN" },
+              { name: "is_dynamic", type: "BOOLEAN" },
+            ],
+          }
+        }
+        throw new Error(`unexpected SQL: ${sql}`)
+      },
+    })
+
+    expect((await fs.ls("czfs:/Volumes/@table/workspace/default/")).map((entry) => entry.path)).toEqual(["czfs:/Volumes/@table/workspace/default/orders"])
+    expect(statements).toEqual(["SHOW TABLES IN `default`"])
   })
 
   test("keeps the @user and @table entry points when the Volume list exceeds the limit", async () => {

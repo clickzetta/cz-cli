@@ -188,7 +188,7 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["fs", "rb", "--help"],
     expectHeader: "cz-cli fs rb",
-    expectOptions: ["volume", "czfs:/Volumes/your_workspace/your_schema/your_volume", "empty Named Volume"],
+    expectOptions: ["volume", "czfs:/Volumes/your_workspace/your_schema/your_volume", "empty Managed Volume", "--write"],
   },
   {
     args: ["fs", "mkdir", "--help"],
@@ -208,7 +208,7 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["fs", "rm", "--help"],
     expectHeader: "cz-cli fs rm",
-    expectOptions: ["path", "--recursive", "--force", "--dry-run", "your_workspace", "Deletion is permanent"],
+    expectOptions: ["path", "--recursive", "--force", "--dry-run", "--write", "your_workspace", "Deletion is permanent"],
   },
   {
     args: ["table", "load", "--help"],

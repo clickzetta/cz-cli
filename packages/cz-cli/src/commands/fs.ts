@@ -17,6 +17,7 @@ interface FsArgs extends GlobalArgs {
   force: boolean
   "dry-run": boolean
   overwrite: boolean
+  write: boolean
   bytes: number
   limit: number
 }
@@ -72,9 +73,9 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "mb <volume>",
-        "Create a Named Volume (fs mb cannot create User or Table Volumes)",
+        "Create a Managed Volume (fs mb cannot create User or Table Volumes)",
         (y) => y
-          .positional("volume", { type: "string", demandOption: true, describe: "Named Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume" })
+          .positional("volume", { type: "string", demandOption: true, describe: "Managed Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume" })
           .epilogue(["Examples:", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/your_volume", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/raw_files"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
@@ -84,13 +85,18 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
       )
       .command(
         "rb <volume>",
-        "Remove an empty Named Volume object (does not remove files)",
+        "Remove an empty Managed Volume object (does not remove files)",
         (y) => y
-          .positional("volume", { type: "string", demandOption: true, describe: "Named Volume root" })
-          .epilogue(["Examples:", "  cz-cli fs rb czfs:/Volumes/your_workspace/your_schema/your_volume", "", "Only empty Named Volumes can be removed; use fs rm for files first."].join("\n")),
+          .positional("volume", { type: "string", demandOption: true, describe: "Managed Volume root" })
+          .option("write", { type: "boolean", default: false, describe: "Allow removing the Volume object; required as a safety guard." })
+          .epilogue(["Examples:", "  cz-cli fs rb czfs:/Volumes/your_workspace/your_schema/your_volume --write", "", "Only empty Managed Volumes can be removed; use fs rm for files first."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
-          try { await createFs(args).rb(args.volume); success({ path: args.volume, operation: "DROP_VOLUME", status: "SUCCEEDED" }, { format: args.format }) }
+          try {
+            if (!args.write) throw new FsError("WRITE_NOT_ALLOWED", "Remove operation detected. Pass --write to confirm.")
+            await createFs(args).rb(args.volume)
+            success({ path: args.volume, operation: "DROP_VOLUME", status: "SUCCEEDED" }, { format: args.format })
+          }
           catch (err) { reportFsError(err, args.format) }
         },
       )
@@ -146,10 +152,12 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Remove a directory and all files below it" })
           .option("force", { alias: "f", type: "boolean", default: false, describe: "Do not fail when the path does not exist" })
           .option("dry-run", { type: "boolean", default: false, describe: "List matched files without deleting them" })
+          .option("write", { type: "boolean", default: false, describe: "Allow removing files; required as a safety guard." })
           .epilogue(["Examples:", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/data.csv", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/ -R --dry-run", "", "Deletion is permanent; use --dry-run before recursive removal."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
+            if (!args.write && !args["dry-run"]) throw new FsError("WRITE_NOT_ALLOWED", "Remove operation detected. Pass --write to confirm.")
             const fs = createFs(args)
             if (args["dry-run"]) {
               try { await fs.validateRemoval(args.path, args.recursive) }
@@ -172,23 +180,23 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
       )
       .epilogue([
         "Path formats (use the czfs: qualifier for Volume paths):",
-        "  Named/External  czfs:/Volumes/your_workspace/your_schema/your_volume/",
+        "  Managed/External czfs:/Volumes/your_workspace/your_schema/your_volume/",
         "  User            czfs:/Volumes/@user/your_workspace/your_user/",
         "  Table           czfs:/Volumes/@table/your_workspace/your_schema/your_table/",
         "  @user and @table are required; @external and @managed are optional.",
         "  In @user paths, your_user is the Lakehouse username (usually the profile username), not the profile name.",
         "",
         "Volume workflows:",
-        "  fs ls czfs:/                                      List Named/External roots + @user + @table",
+        "  fs ls czfs:/                                      List Managed/External roots + @user + @table",
         "  fs ls czfs:/Volumes/@table/                      Enumerate Table Volume roots (SHOW TABLES)",
         "  fs ls czfs:/Volumes/@user/                       List current User Volume files (SHOW USER VOLUME DIRECTORY)",
         "  ls also accepts partial namespace paths: @table/workspace/schema/, @user/workspace/, or workspace/schema/; use a full path for file operations.",
         "  Root metadata queries: SHOW VOLUMES | SHOW TABLES | SHOW USER VOLUME DIRECTORY",
-        "  fs mb czfs:/Volumes/your_workspace/your_schema/your_volume Create a Named Volume only",
-        "  fs rb czfs:/Volumes/your_workspace/your_schema/your_volume Remove an empty Named Volume object",
+        "  fs mb czfs:/Volumes/your_workspace/your_schema/your_volume Create a Managed Volume only",
+        "  fs rb czfs:/Volumes/your_workspace/your_schema/your_volume Remove an empty Managed Volume object (requires --write)",
         "  Table Volumes are created automatically with tables; User Volumes are system-created.",
         "  Use fs mkdir/cp/ls/rm inside an existing Volume. Files are separate from Volume objects.",
-        "  fs rb refuses External Volumes and non-empty Named Volumes; remove files with fs rm first.",
+        "  fs rb refuses External Volumes and non-empty Managed Volumes; remove files with fs rm first.",
         "  fs mb/rb require a qualified czfs:/Volumes/your_workspace/your_schema/your_volume root, not a bare name.",
         "  Namespace roots do not accept -R; use -R only on a specific Volume/file tree.",
       ].join("\n")),
@@ -202,6 +210,7 @@ function createFs(args: FsArgs): FsUtil {
     workspace: config.workspace,
     schema: config.schema,
     execute: async (sql, hints) => {
+      if (args.debug) process.stderr.write(`[debug] fs sql: ${sql}\n`)
       const ctx = await (context ??= getExecContext(args))
       const result = await execSql(ctx, sql, { hints })
       if (!("rows" in result)) throw new FsError("FS_TRANSFER_FAILED", "Unexpected asynchronous SQL result")
@@ -217,7 +226,7 @@ function formatModifiedAt(value: number | null): string | null {
 
 function reportFsError(err: unknown, format: string, operation?: "transfer"): void {
   if (err instanceof FsError) {
-    const invalid = err.code.endsWith("_INVALID") || err.code === "FS_RECURSIVE_REQUIRED" || err.code === "FS_PATH_CONTEXT_REQUIRED"
+    const invalid = err.code.endsWith("_INVALID") || err.code === "FS_RECURSIVE_REQUIRED" || err.code === "FS_PATH_CONTEXT_REQUIRED" || err.code === "WRITE_NOT_ALLOWED"
     const message = operation === "transfer" && err.code === "FS_TARGET_EXISTS"
       ? `${err.message}. Use --overwrite to replace it or choose a different destination.`
       : err.message

@@ -311,6 +311,27 @@ function isMissingVolumePathError(message: string): boolean {
   return /\b(?:path|file|directory|subdirectory|volume)\b[^\n]*(?:not found|does not exist|unknown)/i.test(message)
 }
 
+function isEmptyManagedVolumeRootError(message: string): boolean {
+  return /CZLH-70002\s*:\s*Path not found:[\s\S]*\/volumes\/[^\n]*\/\.$/i.test(message.trim())
+}
+
+async function managedVolumeExists(
+  reference: VolumeReference,
+  execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>,
+): Promise<boolean> {
+  const result = await execute("SHOW VOLUMES")
+  if (result.status === "FAILED") return false
+  const expectedWorkspace = reference.identifiers[0]
+  const expectedSchema = reference.identifiers[1]
+  const expectedName = reference.identifiers[2]
+  return result.rows.some((row) => {
+    const name = String(resultValue(result, row, "volume_name", "name") ?? "")
+    const schema = String(resultValue(result, row, "schema_name", "schema") ?? "")
+    const workspace = String(resultValue(result, row, "workspace_name", "workspace") ?? "")
+    return name === expectedName && schema === expectedSchema && workspace === expectedWorkspace
+  })
+}
+
 function resultRecord(result: QueryResult, row: unknown[]): Record<string, unknown> {
   return Object.fromEntries(result.columns.map((column, index) => [column.name.toLowerCase(), row[index]]))
 }
@@ -448,6 +469,7 @@ class VolumeFsPath implements FsPath {
     const result = await this.execute(sql, hints)
     if (result.status === "FAILED") {
       const message = result.errorMessage ?? `Volume SQL failed: ${sql}`
+      if (this.reference.kind === "named" && sql.toLowerCase().startsWith("select list_directory") && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(this.reference, this.execute)) return []
       if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
       throw new FsError("FS_TRANSFER_FAILED", message)
     }
@@ -557,7 +579,7 @@ class VolumeFsPath implements FsPath {
     }
   }
   async mkdirs() {
-    if (!this.relativePath) throw new FsError("FS_PATH_INVALID", `Cannot create a Volume root with fs mkdir; create a Named Volume with fs mb or specify a directory path inside an existing Volume: ${this.original}`)
+    if (!this.relativePath) throw new FsError("FS_PATH_INVALID", `Cannot create a Volume root with fs mkdir; create a Managed Volume with fs mb or specify a directory path inside an existing Volume: ${this.original}`)
     const rows = await this.query(`select create_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, true)`)
     const raw = rows[0]?.[0]
     const value = parseVolumeRecord(raw, "create directory response", this.original)
@@ -620,6 +642,10 @@ async function listVolumeDirectory(
   const result = await execute(sql)
   if (result.status === "FAILED") {
     const message = result.errorMessage ?? `Volume directory query failed: ${original}`
+    // The engine currently reports an existing empty Managed Volume root as a
+    // physical "Path not found" (CZLH-70002). Treat that specific root response
+    // as an empty listing, while preserving real missing-volume errors.
+    if (reference.kind === "named" && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(reference, execute)) return []
     if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
     throw new FsError("FS_TRANSFER_FAILED", message)
   }
@@ -686,12 +712,12 @@ export class FsUtil {
   async mb(path: string) {
     const volume = parseVolumePath(path)
     if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length === 0 || volume.relativePath) {
-      throw new FsError("FS_PATH_INVALID", `fs mb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
+      throw new FsError("FS_PATH_INVALID", `fs mb expects a Managed Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
     }
     const reference = qualifyNamedVolume(volume.reference, this.workspace, this.schema, path)
     const result = await this.execute(`create volume ${volumeDefinitionIdentifier(reference)}`)
     if (result.status === "FAILED") {
-      const message = result.errorMessage ?? `Failed to create Named Volume: ${path}`
+      const message = result.errorMessage ?? `Failed to create Managed Volume: ${path}`
       if (/already\s*exist/i.test(message)) throw new FsError("FS_TARGET_EXISTS", message)
       throw new FsError("FS_TRANSFER_FAILED", message)
     }
@@ -700,7 +726,7 @@ export class FsUtil {
   async rb(path: string) {
     const volume = parseVolumePath(path)
     if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length === 0 || volume.relativePath) {
-      throw new FsError("FS_PATH_INVALID", `fs rb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
+      throw new FsError("FS_PATH_INVALID", `fs rb expects a Managed Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
     }
     const reference = qualifyNamedVolume(volume.reference, this.workspace, this.schema, path)
     const volumeName = reference.identifiers.at(-1)!
@@ -713,7 +739,7 @@ export class FsUtil {
     ]
     const volumes = await this.execute(`SHOW VOLUMES WHERE ${filters.join(" AND ")}`)
     if (volumes.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", volumes.errorMessage ?? "Failed to verify Volume type")
-    if (volumes.rows.length === 0) throw new FsError("FS_NOT_FOUND", `Named Volume was not found: ${path}`)
+    if (volumes.rows.length === 0) throw new FsError("FS_NOT_FOUND", `Managed Volume was not found: ${path}`)
     const columnNames = new Set(volumes.columns.map((column) => column.name.toLowerCase()))
     const hasColumn = (...names: string[]) => names.some((name) => columnNames.has(name))
     if (!hasColumn("volume_name", "name") || !hasColumn("schema_name", "schema") || !hasColumn("workspace_name", "workspace")) {
@@ -725,25 +751,25 @@ export class FsUtil {
       const workspace = String(resultValue(volumes, row, "workspace_name", "workspace") ?? "")
       return name === volumeName && (!volumeSchema || schema === volumeSchema) && (!volumeWorkspace || workspace === volumeWorkspace)
     })
-    if (!metadata) throw new FsError("FS_NOT_FOUND", `Named Volume was not found: ${path}`)
+    if (!metadata) throw new FsError("FS_NOT_FOUND", `Managed Volume was not found: ${path}`)
     const external = resultValue(volumes, metadata, "external", "is_external", "volume_type", "type")
     if (external === undefined) {
       throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES did not return a volume type for '${path}'; refusing to drop it`)
     }
     const externalText = String(external).trim().toLowerCase()
     if (external === true || external === 1 || externalText === "true" || externalText === "external" || externalText === "external_volume" || externalText === "1") {
-      throw new FsError("FS_PATH_INVALID", `fs rb only removes Named Volumes; '${path}' is an External Volume`)
+      throw new FsError("FS_PATH_INVALID", `fs rb only removes Managed Volumes; '${path}' is an External Volume`)
     }
     if (external !== false && externalText !== "false" && externalText !== "managed" && externalText !== "named" && externalText !== "managed_volume" && externalText !== "named_volume" && externalText !== "0") {
       throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES returned an unknown volume type for '${path}'; refusing to drop it`)
     }
     const entries = await listVolumeDirectory(reference, path, this.execute, false, 1)
     if (entries.length > 0) {
-      throw new FsError("FS_NOT_EMPTY", `Named Volume is not empty: ${path}. Remove its files explicitly before running fs rb.`)
+      throw new FsError("FS_NOT_EMPTY", `Managed Volume is not empty: ${path}. Remove its files explicitly before running fs rb.`)
     }
     const result = await this.execute(`drop volume ${volumeDefinitionIdentifier(reference)}`)
     if (result.status === "FAILED") {
-      const message = result.errorMessage ?? `Failed to drop Named Volume: ${path}`
+      const message = result.errorMessage ?? `Failed to drop Managed Volume: ${path}`
       if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
       throw new FsError("FS_TRANSFER_FAILED", message)
     }
@@ -971,7 +997,7 @@ export class FsUtil {
 
   private async listTableVolumeRoots(limit: number, workspace = this.workspace, schema = this.schema): Promise<FileInfo[]> {
     if (!workspace || !schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace and schema are required for Table Volume root")
-    const result = await this.execute("SHOW TABLES")
+    const result = await this.execute(schema && schema !== this.schema ? `SHOW TABLES IN ${quoteIdentifier(schema)}` : "SHOW TABLES")
     if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list tables")
     const rows = result.rows.flatMap((row) => {
       const name = String(resultValue(result, row, "table_name", "name") ?? row[1] ?? row[0] ?? "")
