@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import { InterfaceError } from "@clickzetta/sdk"
-import { FsError, FsUtil } from "@clickzetta/sdk/fsutil"
+import { FsError, FsUtil, isVolumeNamespaceRoot } from "@clickzetta/sdk/fsutil"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
 import { error, success } from "../output/index.js"
@@ -206,13 +206,6 @@ function createFs(args: FsArgs): FsUtil {
       return result
     },
   })
-}
-
-function isVolumeNamespaceRoot(path: string): boolean {
-  const normalized = path.toLowerCase().replace(/\/+$/, "")
-  const czfsRoot = normalized.startsWith("czfs:") ? normalized.slice(5) : normalized
-  const canonicalCzfsRoot = czfsRoot.replace(/^\/volume(?=\/|$)/, "/volumes")
-  return canonicalCzfsRoot === "" || canonicalCzfsRoot === "/volumes" || canonicalCzfsRoot === "/volumes/@table" || canonicalCzfsRoot === "/volumes/@user" || normalized === "volume:" || normalized === "volume:table:"
 }
 
 function formatModifiedAt(value: number | null): string | null {

@@ -66,16 +66,19 @@ function quoteIdentifier(value: string): string {
   return "`" + value.replace(/`/g, "``") + "`"
 }
 
+export function quoteIdentifiers(identifiers: string[]): string {
+  return identifiers.map(quoteIdentifier).join(".")
+}
+
 function volumeDefinitionIdentifier(reference: VolumeReference): string {
-  return reference.identifiers.map(quoteIdentifier).join(".")
+  return quoteIdentifiers(reference.identifiers)
 }
 
 export function parseVolumePath(input: string): { reference: VolumeReference; relativePath: string } | undefined {
   const path = String(input)
   const lower = path.toLowerCase()
-  const czfsPath = lower.startsWith("czfs:") ? path.slice(5) : path
-  const isCzfsVolumePath = /^\/volumes?(?:\/|$)/i.test(czfsPath)
-  if (!(lower.startsWith("volume://") || lower.startsWith("volume:table://") || lower.startsWith("volume:user://") || isCzfsVolumePath)) return undefined
+  const czfsPath = lower.startsWith("czfs:") ? path.slice(5) : undefined
+  if (!(lower.startsWith("volume://") || lower.startsWith("volume:table://") || lower.startsWith("volume:user://") || /^\/volumes?(?:\/|$)/i.test(czfsPath ?? ""))) return undefined
 
   const separator = path.indexOf("://")
   if (separator >= 0) {
@@ -105,7 +108,7 @@ export function parseVolumePath(input: string): { reference: VolumeReference; re
     return { reference: { kind, identifiers, czfsBase }, relativePath }
   }
 
-  const rawComponents = czfsPath.split("/")
+  const rawComponents = czfsPath!.split("/")
   while (rawComponents.length > 0 && rawComponents[rawComponents.length - 1] === "") rawComponents.pop()
   if (rawComponents.length < 2 || rawComponents[0] !== "" || !/^volumes?$/i.test(rawComponents[1]!)) {
     throw new FsError("FS_PATH_INVALID", `Invalid czfs path: ${path}`)
@@ -126,6 +129,12 @@ export function parseVolumePath(input: string): { reference: VolumeReference; re
     reference: { kind, identifiers, czfsBase: buildCzfsBase(kind, identifiers) },
     relativePath: values.slice(count).join("/"),
   }
+}
+
+export function isVolumeNamespaceRoot(input: string): boolean {
+  const normalized = String(input).toLowerCase().replace(/\/+$/, "")
+  const canonical = normalized.startsWith("czfs:") ? `czfs:${normalized.slice(5).replace(/^\/volume(?=\/|$)/, "/volumes")}` : normalized
+  return canonical === "czfs:" || canonical === "czfs:/volumes" || canonical === "czfs:/volumes/@table" || canonical === "volume:" || canonical === "volume:table:"
 }
 
 export function validateRelativePath(path: string, original: string): string {
@@ -176,6 +185,15 @@ function volumeIdentifier(reference: VolumeReference): string {
 function volumeUri(reference: VolumeReference, path: string): string {
   const base = reference.czfsBase ?? `${reference.kind === "table" ? "volume:table" : reference.kind === "user" ? "volume:user" : "volume"}://${reference.identifiers.length ? reference.identifiers.map(encodeURIComponent).join(".") : "~"}`
   return path ? `${base}/${path.split("/").map(encodeURIComponent).join("/")}` : base
+}
+
+function qualifyNamedVolume(reference: VolumeReference, workspace: string | undefined, schema: string | undefined, original: string): VolumeReference {
+  if (reference.identifiers.length === 3) return reference
+  if (!workspace || !schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", `Workspace and schema are required for short Volume path: ${original}`)
+  const identifiers = reference.identifiers.length === 1
+    ? [workspace, schema, reference.identifiers[0]!]
+    : [workspace, ...reference.identifiers]
+  return { ...reference, identifiers, czfsBase: buildCzfsBase(reference.kind, identifiers) }
 }
 
 function parseLocalPath(path: string): string {
@@ -258,6 +276,7 @@ function isMissingVolumePathError(message: string): boolean {
   if (/\bfunction\b[^\n]*(?:not found|does not exist|not registered)/i.test(message)) return false
   const normalized = message.trim()
   if (/^(?:not found|does not exist)$/i.test(normalized)) return true
+  if (/\bunknown\s+volume\b/i.test(message)) return true
   return /\b(?:path|file|directory|subdirectory|volume)\b[^\n]*(?:not found|does not exist|unknown)/i.test(message)
 }
 
@@ -575,9 +594,11 @@ async function listVolumeDirectory(
   }
 
   const entries = new Map<string, FileInfo>()
+  const hasPathColumn = result.columns.some((column) => ["relative_path", "path", "file"].includes(column.name.toLowerCase()))
+  if (result.rows.length > 0 && !hasPathColumn) throw new FsError("FS_TRANSFER_FAILED", `Volume directory query returned no path column: ${original}`)
   for (const row of result.rows) {
     const rawPath = resultValue(result, row, "relative_path", "path", "file")
-    if (rawPath === undefined || rawPath === null || String(rawPath).trim() === "") continue
+    if (rawPath === undefined || rawPath === null || String(rawPath).trim() === "") throw new FsError("FS_TRANSFER_FAILED", `Volume directory query returned an invalid path row: ${original}`)
     const rowPath = String(rawPath).replace(/^\/+/, "")
     // Apply the same guard as the list_directory branch: a server-supplied "../.."
     // must never become a local write target during `fs cp <volume root> ./out -R`.
@@ -633,10 +654,11 @@ export class FsUtil {
   async info(path: string) { return this.path(path).info() }
   async mb(path: string) {
     const volume = parseVolumePath(path)
-    if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length !== 3 || volume.relativePath) {
+    if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length === 0 || volume.relativePath) {
       throw new FsError("FS_PATH_INVALID", `fs mb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
     }
-    const result = await this.execute(`create volume ${volumeDefinitionIdentifier(volume.reference)}`)
+    const reference = qualifyNamedVolume(volume.reference, this.workspace, this.schema, path)
+    const result = await this.execute(`create volume ${volumeDefinitionIdentifier(reference)}`)
     if (result.status === "FAILED") {
       const message = result.errorMessage ?? `Failed to create Named Volume: ${path}`
       if (/already\s*exist/i.test(message)) throw new FsError("FS_TARGET_EXISTS", message)
@@ -646,12 +668,13 @@ export class FsUtil {
   }
   async rb(path: string) {
     const volume = parseVolumePath(path)
-    if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length !== 3 || volume.relativePath) {
+    if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length === 0 || volume.relativePath) {
       throw new FsError("FS_PATH_INVALID", `fs rb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
     }
-    const volumeName = volume.reference.identifiers.at(-1)!
-    const volumeSchema = volume.reference.identifiers[1]
-    const volumeWorkspace = volume.reference.identifiers[0]
+    const reference = qualifyNamedVolume(volume.reference, this.workspace, this.schema, path)
+    const volumeName = reference.identifiers.at(-1)!
+    const volumeSchema = reference.identifiers[1]
+    const volumeWorkspace = reference.identifiers[0]
     const filters = [
       `volume_name = ${quote(volumeName)}`,
       ...(volumeSchema ? [`schema_name = ${quote(volumeSchema)}`] : []),
@@ -683,11 +706,11 @@ export class FsUtil {
     if (external !== false && externalText !== "false" && externalText !== "managed" && externalText !== "named" && externalText !== "managed_volume" && externalText !== "named_volume" && externalText !== "0") {
       throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES returned an unknown volume type for '${path}'; refusing to drop it`)
     }
-    const entries = await listVolumeDirectory(volume.reference, path, this.execute, false, 1)
+    const entries = await listVolumeDirectory(reference, path, this.execute, false, 1)
     if (entries.length > 0) {
       throw new FsError("FS_NOT_EMPTY", `Named Volume is not empty: ${path}. Remove its files explicitly before running fs rb.`)
     }
-    const result = await this.execute(`drop volume ${volumeDefinitionIdentifier(volume.reference)}`)
+    const result = await this.execute(`drop volume ${volumeDefinitionIdentifier(reference)}`)
     if (result.status === "FAILED") {
       const message = result.errorMessage ?? `Failed to drop Named Volume: ${path}`
       if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
@@ -798,7 +821,7 @@ export class FsUtil {
       catch (error) {
         // Ignore dangling symlinks and files removed during enumeration; one
         // unreadable entry must not make `fs ls /` fail as a whole.
-        if (error instanceof FsError && error.code === "FS_NOT_FOUND") return undefined
+        if (item.isLocal && error instanceof FsError && error.code === "FS_NOT_FOUND") return undefined
         throw error
       }
     }))
@@ -846,21 +869,18 @@ export class FsUtil {
 
   private async listVirtualRoot(path: string, recursive: boolean, limit: number): Promise<FileInfo[] | undefined> {
     const normalized = path.toLowerCase().replace(/\/+$/, "")
-    const czfsRoot = normalized.startsWith("czfs:") ? normalized.slice(5) : normalized
-    const canonicalCzfsRoot = czfsRoot.replace(/^\/volume(?=\/|$)/, "/volumes")
-    if (canonicalCzfsRoot === "" || canonicalCzfsRoot === "/volumes") {
+    const hasCzfsScheme = normalized.startsWith("czfs:")
+    const czfsRoot = hasCzfsScheme ? normalized.slice(5).replace(/^\/volume(?=\/|$)/, "/volumes") : ""
+    if (isVolumeNamespaceRoot(path)) {
+      if (normalized === "volume:") return this.listNamedVolumeRoots(limit)
+      if (normalized === "volume:table:") return this.listTableVolumeRoots(limit)
+      if (hasCzfsScheme && czfsRoot === "/volumes/@table") return this.listTableVolumeRoots(limit)
       return this.listVolumeNamespaceRoots(limit)
-    }
-    if (normalized === "volume:") {
-      return this.listNamedVolumeRoots(limit)
-    }
-    if (canonicalCzfsRoot === "/volumes/@table" || normalized === "volume:table:") {
-      return this.listTableVolumeRoots(limit)
     }
     // Route the legacy User Volume root through the same resolver as czfs:/Volumes/@user
     // so both spellings report identical czfs entry paths, matching how volume:table://
     // already normalizes to czfs output.
-    if (canonicalCzfsRoot === "/volumes/@user" || normalized === "volume:user://~") {
+    if ((hasCzfsScheme && czfsRoot === "/volumes/@user") || normalized === "volume:user://~") {
       return this.listCurrentUserVolumeFiles(recursive, limit)
     }
     return undefined
@@ -893,7 +913,7 @@ export class FsUtil {
     return [...entryPoints, ...await this.listNamedVolumeRoots(remaining)]
   }
 
-  private async resolveUserVolumeReference(): Promise<VolumeReference | undefined> {
+  private async resolveUserVolumeReference(): Promise<VolumeReference> {
     if (!this.workspace) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace is required for User Volume root")
     const identity = await this.execute("SELECT current_user()")
     if (identity.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", identity.errorMessage ?? "Failed to resolve current user")
@@ -907,7 +927,6 @@ export class FsUtil {
     // Use the resolved [workspace, user] pair directly. Re-deriving it by slicing the
     // czfs URI dropped the user segment and left identifiers=[workspace].
     const reference = await this.resolveUserVolumeReference()
-    if (!reference) return []
     const entries = await listVolumeDirectory(reference, reference.czfsBase ?? "czfs:/Volumes/@user", this.execute, recursive, limit)
     return Promise.all(entries.map((entry) => entry.info()))
   }
@@ -988,7 +1007,10 @@ export class FsUtil {
       try {
         await from.remove(recurse)
       } catch (error) {
-        throw new FsError("PARTIAL_FAILED", `Move failed during REMOVE: ${from.original}`, {
+        const message = backupMoved
+          ? `Move failed during REMOVE: ${from.original}. The previous target was preserved at ${backup.original}.`
+          : `Move failed during REMOVE: ${from.original}`
+        throw new FsError("PARTIAL_FAILED", message, {
           stage: "REMOVE",
           completed: [],
           failed: { source: from.original, destination: target.original, error: error instanceof Error ? error.message : String(error) },

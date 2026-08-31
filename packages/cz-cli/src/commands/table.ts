@@ -6,7 +6,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
-import { parseVolumePath, validateRelativePath } from "@clickzetta/sdk/fsutil"
+import { parseVolumePath, quoteIdentifiers, validateRelativePath } from "@clickzetta/sdk/fsutil"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -348,7 +348,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             const source = String(argv.source)
             const parsed = parseVolumePath(source)
             if (!parsed || parsed.reference.identifiers.length === 0 || parsed.reference.kind === "named" && parsed.reference.identifiers.length !== 3) {
-              error("USAGE_ERROR", "table load requires a qualified czfs Volume path (czfs:/Volumes/... or /Volumes/...).", { format, exitCode: 2 })
+              error("USAGE_ERROR", "table load requires a qualified czfs:/Volumes/... path; use SQL for a raw Volume identifier.", { format, exitCode: 2 })
               return
             }
             if (parsed.reference.kind === "user" && parsed.reference.identifiers.length !== 2) {
@@ -449,8 +449,4 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
       )
     return commandGroup(yargs, "table")
   })
-}
-
-function quoteIdentifiers(identifiers: string[]): string {
-  return identifiers.map((identifier) => `\`${identifier.replace(/`/g, "``")}\``).join(".")
 }

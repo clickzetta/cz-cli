@@ -61,13 +61,12 @@ czfs:/Volumes/@type/qualifiedname/path
 
 ```text
 czfs:/Volumes/workspace1/schema1/volume1/path/data.csv
-/Volumes/workspace1/schema1/volume1/path/data.csv
-/Volumes/@table/workspace1/schema1/table1/path/data.csv
-/Volumes/@user/workspace1/user1/path/data.csv
+czfs:/Volumes/@table/workspace1/schema1/table1/path/data.csv
+czfs:/Volumes/@user/workspace1/user1/path/data.csv
 ```
 
-1. `czfs:` 可以省略，协议大小写不敏感。
-2. `/Volumes`、`/Volume`、`/volume`、`/volumes` 作为路径开头时都视为 `/Volumes`。
+1. `czfs:` 是必填协议限定符，协议大小写不敏感。
+2. Volume 根固定为 `/Volumes`（带 `czfs:` 时 `/Volume`、`/volume`、`/volumes` 作为大小写别名接受）；未带 `czfs:` 的 `/Volumes/...` 一律按本地路径处理，避免与 macOS 挂载目录冲突。
 3. `@type` 大小写不敏感：
    - External Volume：`@external`，可省略；
    - Managed Volume：`@managed`，可省略；
@@ -84,7 +83,7 @@ czfs:/Volumes/workspace1/schema1/volume1/path/data.csv
 | User Volume | `workspace_identifier/username` |
 | 其他类型 | 由子系统定义 |
 
-> 规范与实现状态：本节是协议契约。若某个实现尚未接受省略 `czfs:` 或 `/Volume` 大小写别名，必须补齐实现或明确标记为未实现，不能通过猜测改变规范。
+> 规范与实现状态：本节是协议契约。客户端不得通过猜测省略 `czfs:`，也不得把裸 `/Volumes/...` 当成 Lakehouse Volume。
 
 #### 2.1.2 三种 Volume 的生命周期
 
@@ -106,11 +105,11 @@ czfs:/Volumes/workspace1/schema1/volume1/path/data.csv
 | User Volume（兼容） | `volume:user://~/path` | `volume:user://~/data/a.csv` |
 | Table Volume（兼容） | `volume:table://workspace.schema.table/path` | `volume:table://demo.public.orders/stage/a.parquet` |
 
-`czfs:/` 是 CLI 主推的规范路径。兼容的 `volume:*://` 形式仍可解析，但不放在 `--help` 的首选示例中。
+`czfs:/` 是 CLI 主推且必需的规范路径。兼容的 `volume:*://` 形式仍可解析，但不放在 `--help` 的首选示例中。
 
 ### 2.3 根路径与三种 Volume 用法
 
-`fs ls` 对根路径使用对应的 Lakehouse 元数据命令。规范中的 `czfs:/Volumes` 也接受省略 `czfs:` 以及 `/Volume`、`/volume`、`/volumes` 别名：
+`fs ls` 对带 `czfs:` 的根路径使用对应的 Lakehouse 元数据命令。裸 `/Volumes` 路径不进入该分支，而是保留给本地文件系统：
 
 命名空间根（`czfs:/`、`czfs:/Volumes/`、`czfs:/Volumes/@table/`）只用于列出入口，不接受 `-R/--recursive`；`-R` 只对具体 Volume 或目录树生效。
 
@@ -402,7 +401,7 @@ Examples:
 行为约定：
 
 - 只接受 Named Volume 根路径，不接受子目录、本地路径、User Volume 或 Table Volume。
-- Volume 根必须提供完整的 `workspace/schema/volume` qualifiedname；不接受裸名称或省略 workspace/schema 的短地址。
+- `czfs:/Volumes/...` 根必须提供完整的 `workspace/schema/volume` qualifiedname；兼容的 `volume://name` / `volume://schema.name` 可在连接上下文完整时使用，客户端会补齐 workspace/schema。
 - 等价于执行带标识符转义的 `CREATE VOLUME`，已有同名 Volume 返回 `FS_TARGET_EXISTS`。
 
 ### 4.5 `cz-cli fs rb --help`
