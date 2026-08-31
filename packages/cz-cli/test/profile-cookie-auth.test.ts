@@ -106,8 +106,59 @@ test("getExecContext uses X-ClickZetta-Token from profile Cookie header", async 
     expect(ctx.token.token).toBe(token)
     expect(ctx.token.instanceId).toBe(86)
     expect(ctx.token.userId).toBe(7)
-    expect(ctx.clientOpts.token).toBe(token)
+    // The context carries a SOURCE, not a token: it must resolve to the cookie
+    // credential and report that this identity cannot be rotated (rotating would
+    // mint an OAuth token the cookie-authenticating server never issued).
+    const credential = await ctx.clientOpts.tokens.get()
+    expect(credential.token).toBe(token)
+    expect(await ctx.clientOpts.tokens.rotate(credential)).toBeUndefined()
     expect(ctx.clientOpts.customHeaders.Cookie).toContain(token)
     expect(ctx.clientOpts.customHeaders.instanceName).toBe("inst")
   })
 })
+
+test("a 401 on a cookie profile surfaces, and never attempts a credential-less login", async () => {
+  await withHome("cz-profile-cookie-401-", async (home) => {
+    const token = jwt({ userId: 7, accountId: 3, instanceId: 86, exp: 4_102_444_800 })
+    writeFileSync(
+      join(home, ".clickzetta", "profiles.toml"),
+      [
+        'default_profile = "cookie"',
+        "",
+        "[profiles.cookie]",
+        'service = "api.example.com"',
+        'protocol = "https"',
+        'instance = "inst"',
+        'workspace = "ws"',
+        "",
+        "[profiles.cookie.header]",
+        `"Cookie" = "theme=light; X-ClickZetta-Token=${token}"`,
+        "",
+      ].join("\n"),
+    )
+
+    const { getExecContext, execSqlWithRetry } = await import(`../src/commands/exec.ts?cookie-401-${Date.now()}`)
+    const ctx = await getExecContext({})
+
+    // `execSqlWithRetry` used to recover by calling forceRefreshToken(ctx.config).
+    // A cookie profile has no pat, no username/password and no token store, so that
+    // drove a full portal login with EMPTY credentials: several seconds of retries
+    // ending in a misleading "Login failed" that hid the server's actual 401.
+    const originalFetch = globalThis.fetch
+    const urls: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response("token is invalid", { status: 401 })
+    }) as typeof fetch
+
+    try {
+      await expect(execSqlWithRetry(ctx, "select 1")).rejects.toThrow(/401/)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
+    expect(urls.some((u) => u.includes("/lh/submitJob"))).toBe(true)
+    expect(urls.some((u) => u.includes("loginSingle"))).toBe(false)
+    expect(urls.some((u) => u.includes("oauth2/token"))).toBe(false)
+  })
+}, 30_000)

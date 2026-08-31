@@ -80,7 +80,7 @@ async function portalGet<T>(sc: StudioConfig, path: string): Promise<ApiResponse
   return request<T>(
     {
       baseUrl: sc.baseUrl,
-      token: sc.token,
+      tokens: sc.tokens,
       customHeaders: {
         instanceName: sc.instanceName,
         userId: String(sc.userId),

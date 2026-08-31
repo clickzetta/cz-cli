@@ -1,4 +1,4 @@
-import type { AuthToken, ConnectionConfig } from "../types/index.js"
+import type { AuthToken, ConnectionConfig, Credential, TokenSource } from "../types/index.js"
 import { loginWithPat, loginWithPassword } from "./login.js"
 import { refreshAccessToken } from "./oauth.js"
 import { toServiceUrl } from "../config/region.js"
@@ -192,6 +192,48 @@ async function acquireToken(config: ConnectionConfig, force: boolean): Promise<A
   })()
   pendingFetches.set(key, fetch)
   return fetch
+}
+
+/**
+ * The standard source: an OAuth/PAT/password connection whose token is cached,
+ * refreshed proactively when stale, and rotated on demand. `get`/`rotate` are
+ * the existing `getToken`/`forceRefreshToken` engine — single-flight and
+ * persistence come with them.
+ */
+export function connectionTokenSource(config: ConnectionConfig): TokenSource {
+  return {
+    async get(): Promise<Credential> {
+      return toCredential(await getToken(config))
+    },
+    async rotate(): Promise<Credential> {
+      // Throws SESSION_EXPIRED when the refresh token is dead and there are no
+      // credentials to fall back on — a terminal answer, not a missing path.
+      return toCredential(await forceRefreshToken(config))
+    },
+  }
+}
+
+/**
+ * A credential supplied verbatim by the caller: a token minted moments ago by a
+ * login flow, a profile `[agent]` block, or a cookie session. There is no
+ * rotation path, so `rotate` reports that rather than pretending — which is how
+ * "this identity cannot self-heal" is expressed now that no request carries a
+ * flag for it.
+ */
+export function staticTokenSource(credential: Credential): TokenSource {
+  return {
+    get: async () => credential,
+    rotate: async () => undefined,
+  }
+}
+
+/** Unauthenticated endpoint (health probes, public metadata). */
+export function anonymous(): TokenSource {
+  return staticTokenSource({ token: "", instanceId: 0, userId: 0 })
+}
+
+function toCredential(token: AuthToken): Credential {
+  return { token: token.token, instanceId: token.instanceId, userId: token.userId }
 }
 
 export function clearTokenCache(): void {

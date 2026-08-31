@@ -1,4 +1,5 @@
 import { request, type ClientOptions } from "../client.js"
+import type { CallAuth } from "../auth/user.js"
 import { ClickZettaApiError } from "../types/api.js"
 
 export interface WorkspaceInfo {
@@ -14,17 +15,16 @@ export interface WorkspaceInfo {
  */
 export async function listUserWorkspaces(
   baseUrl: string,
-  token: string,
   userId: number,
   tenantId: number,
   instanceId: number,
   instanceName: string,
-  debug?: boolean,
-  customHeaders?: Record<string, string>,
+  auth: CallAuth & { debug?: boolean },
 ): Promise<WorkspaceInfo[]> {
+  const { debug, customHeaders } = auth
   const opts: ClientOptions = {
     baseUrl,
-    token,
+    tokens: auth.tokens,
     customHeaders: {
       ...customHeaders,
       instanceid: String(instanceId),
@@ -59,24 +59,20 @@ export async function listUserWorkspaces(
 
 export async function getWorkspaceByName(
   baseUrl: string,
-  token: string,
   userId: number,
   tenantId: number,
   instanceId: number,
   instanceName: string,
   workspaceName: string,
-  debug?: boolean,
-  customHeaders?: Record<string, string>,
+  auth: CallAuth & { debug?: boolean },
 ): Promise<WorkspaceInfo | undefined> {
   const all = await listUserWorkspaces(
     baseUrl,
-    token,
     userId,
     tenantId,
     instanceId,
     instanceName,
-    debug,
-    customHeaders,
+    auth,
   )
   return all.find((w) => {
     const raw = w as unknown as Record<string, unknown>

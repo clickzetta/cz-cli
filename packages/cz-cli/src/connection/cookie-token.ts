@@ -1,4 +1,4 @@
-import { toServiceUrl, type AuthToken, type ConnectionConfig } from "@clickzetta/sdk"
+import { staticTokenSource, toServiceUrl, type AuthToken, type ConnectionConfig } from "@clickzetta/sdk"
 import { resolveInstanceIdByName } from "./instance-id.js"
 
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
@@ -65,7 +65,7 @@ export async function getCookieToken(config: ConnectionConfig): Promise<AuthToke
     || numeric(getHeader(config.customHeaders, "Instanceid"))
     || await resolveInstanceIdByName(
       toServiceUrl(config.service, config.protocol),
-      token,
+      staticTokenSource({ token, instanceId: 0, userId }),
       accountId,
       config.instance,
       { customHeaders: config.customHeaders },

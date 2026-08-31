@@ -121,54 +121,50 @@ async function requestStudioJobJson(
   params: Record<string, string | number | boolean>,
   debug?: boolean,
 ): Promise<unknown> {
-  // new URL(path, base) discards base's path when path starts with "/", so concatenate manually
-  const base = sc.baseUrl.endsWith("/") ? sc.baseUrl.slice(0, -1) : sc.baseUrl
-  const url = new URL(base + path)
-  Object.entries(params).forEach((entry) => url.searchParams.set(entry[0], String(entry[1])))
-  const headers = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/plain, */*",
-    "X-Clickzetta-Token": sc.token,
-    "userId": String(sc.userId),
-    "instanceId": String(sc.instanceId),
-    "accountId": String(sc.tenantId),
-    "tenantId": String(sc.tenantId),
-    "instanceName": sc.instanceName,
-    "workspaceName": sc.workspaceName,
-    "workspaceId": String(sc.workspaceId),
-    "projectId": String(sc.projectId),
+  // Query string is built here, but the request itself goes through the SDK
+  // transport so this path gets the same credential resolution and 401 rotation
+  // as every other authenticated call. It used to run its own `fetch` with a
+  // token string, which is exactly how paths drift apart.
+  const query = new URLSearchParams(
+    Object.entries(params).map(([key, value]) => [key, String(value)]),
+  ).toString()
+  const customHeaders = {
+    userId: String(sc.userId),
+    instanceId: String(sc.instanceId),
+    accountId: String(sc.tenantId),
+    tenantId: String(sc.tenantId),
+    instanceName: sc.instanceName,
+    workspaceName: sc.workspaceName,
+    workspaceId: String(sc.workspaceId),
+    projectId: String(sc.projectId),
     ...sc.customHeaders,
   }
   debugJobProfile(debug, "GET", {
-    url: url.toString(),
+    url: `${sc.baseUrl}${path}?${query}`,
     headers: {
-      instanceId: headers.instanceId,
-      instanceName: headers.instanceName,
-      workspaceName: headers.workspaceName,
-      workspaceId: headers.workspaceId,
-      projectId: headers.projectId,
-      userId: headers.userId,
-      tenantId: headers.tenantId,
+      instanceId: customHeaders.instanceId,
+      instanceName: customHeaders.instanceName,
+      workspaceName: customHeaders.workspaceName,
+      workspaceId: customHeaders.workspaceId,
+      projectId: customHeaders.projectId,
+      userId: customHeaders.userId,
+      tenantId: customHeaders.tenantId,
     },
   })
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-  const text = await response.text()
-  debugJobProfile(debug, "response", {
-    path,
-    status: response.status,
-    ok: response.ok,
-    bytes: Buffer.byteLength(text, "utf-8"),
-  })
-  if (!response.ok) {
-    debugJobProfile(debug, "http_error", {
-      path,
-      status: response.status,
-      statusText: response.statusText,
-      bodyPreview: text.slice(0, 500),
-    })
-    throw new Error(`HTTP ${response.status} ${response.statusText}: ${text.slice(0, 500)}`)
+  let payload: unknown
+  try {
+    payload = await requestRaw<unknown>(
+      { baseUrl: sc.baseUrl, tokens: sc.tokens, customHeaders, timeout: 30_000 },
+      `${path}?${query}`,
+      undefined,
+      "GET",
+    )
+    debugJobProfile(debug, "response", { path, ok: true })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    debugJobProfile(debug, "response", { path, ok: false, message })
+    throw err
   }
-  const payload = JSON.parse(text) as unknown
   debugJobProfile(debug, "payload", {
     path,
     topLevelKeys: payloadKeys(payload),

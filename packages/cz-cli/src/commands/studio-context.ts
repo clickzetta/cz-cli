@@ -1,8 +1,8 @@
 import type { StudioConfig } from "@clickzetta/sdk"
-import { getToken, toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv } from "@clickzetta/sdk"
+import { toServiceUrl, getCurrentUser, getWorkspaceByName, detectEnv } from "@clickzetta/sdk"
 import { resolveConnectionConfig, type CliArgs } from "../connection/config.js"
 import { readAgentProfile } from "../connection/profile-store.js"
-import { getCookieToken } from "../connection/cookie-token.js"
+import { profileTokenSource, verbatimTokenSource } from "../connection/token-source.js"
 import { resolveInstanceIdByName } from "../connection/instance-id.js"
 import { handledError } from "../output/index.js"
 
@@ -22,20 +22,21 @@ export interface StudioContext extends StudioConfig {
 export async function getGatewayContext(args: Partial<CliArgs> & { format?: string; debug?: boolean }): Promise<GatewayContext> {
   const debug = !!args.debug
   const config = resolveConnectionConfig(args)
-  const token = await getCookieToken(config) ?? await getToken(config)
+  const tokens = profileTokenSource(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
-  const user = await getCurrentUser(baseUrl, token.token, config.customHeaders)
-  const instanceId = await resolveInstanceIdByName(baseUrl, token.token, user.accountId, config.instance, {
+  const user = await getCurrentUser(baseUrl, { tokens, customHeaders: config.customHeaders })
+  const credential = await tokens.get()
+  const instanceId = await resolveInstanceIdByName(baseUrl, tokens, user.accountId, config.instance, {
     customHeaders: config.customHeaders,
-    fallbackId: token.instanceId,
+    fallbackId: credential.instanceId,
     debug,
   })
   return {
-    token: token.token,
+    tokens,
     instanceId,
     workspaceId: 0,
     projectId: 0,
-    userId: token.userId,
+    userId: credential.userId,
     tenantId: user.accountId,
     instanceName: config.instance,
     workspaceName: config.workspace ?? "",
@@ -64,17 +65,18 @@ export async function getStudioContext(
   const format = args.format ?? "json"
   const debug = !!args.debug
   const config = resolveConnectionConfig(args)
-  const token = await getCookieToken(config) ?? await getToken(config)
+  const tokens = profileTokenSource(config)
   const baseUrl = toServiceUrl(config.service, config.protocol)
 
-  const user = await getCurrentUser(baseUrl, token.token, config.customHeaders)
+  const user = await getCurrentUser(baseUrl, { tokens, customHeaders: config.customHeaders })
+  const credential = await tokens.get()
   const tenantId = user.accountId
 
-  if (debug) process.stderr.write(`[debug] studio-context: baseUrl=${baseUrl} userId=${token.userId} tenantId=${tenantId} instanceId=${token.instanceId} instance=${config.instance} workspace=${config.workspace}\n`)
+  if (debug) process.stderr.write(`[debug] studio-context: baseUrl=${baseUrl} userId=${credential.userId} tenantId=${tenantId} instanceId=${credential.instanceId} instance=${config.instance} workspace=${config.workspace}\n`)
 
-  const instanceId = await resolveInstanceIdByName(baseUrl, token.token, tenantId, config.instance, {
+  const instanceId = await resolveInstanceIdByName(baseUrl, tokens, tenantId, config.instance, {
     customHeaders: config.customHeaders,
-    fallbackId: token.instanceId,
+    fallbackId: credential.instanceId,
     debug,
   })
 
@@ -85,14 +87,12 @@ export async function getStudioContext(
   const ws = config.workspace
     ? await getWorkspaceByName(
         baseUrl,
-        token.token,
-        token.userId,
+        credential.userId,
         tenantId,
         instanceId,
         config.instance,
         config.workspace,
-        debug,
-        config.customHeaders,
+        { tokens, debug, customHeaders: config.customHeaders },
       )
     : undefined
 
@@ -107,11 +107,11 @@ export async function getStudioContext(
   if (!ws && debug) process.stderr.write(`[debug] studio-context: workspace '${config.workspace}' unresolved, falling back to workspaceId=0 projectId=0 (allowMissingWorkspace)\n`)
 
   return {
-    token: token.token,
+    tokens,
     instanceId,
     workspaceId: ws?.workspaceId ?? 0,
     projectId: ws?.projectId ?? 0,
-    userId: token.userId,
+    userId: credential.userId,
     tenantId,
     instanceName: config.instance,
     workspaceName: config.workspace ?? "",
@@ -134,7 +134,11 @@ export function getProfileAgentContext(args: Partial<CliArgs> & { format?: strin
   if (!agent?.token || agent.tenantId === undefined || agent.userId === undefined) return undefined
   const config = resolveConnectionConfig(args)
   return {
-    token: agent.token,
+    // The [agent] block's token is its OWN identity, unrelated to the profile's
+    // OAuth login: rotating that login would not replace this token, so this
+    // source reports "cannot rotate" and callers wanting recovery re-resolve
+    // via getStudioContext (analytics-agent.ts).
+    tokens: verbatimTokenSource(agent.token, { instanceId: agent.instanceId, userId: agent.userId }),
     instanceId: agent.instanceId ?? 0,
     workspaceId: 0,
     projectId: 0,

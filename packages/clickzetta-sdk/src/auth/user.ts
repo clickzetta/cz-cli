@@ -1,5 +1,17 @@
 import { request, type ClientOptions } from "../client.js"
 import { ClickZettaApiError } from "../types/api.js"
+import type { TokenSource } from "../types/index.js"
+
+/**
+ * Auth context for a one-off portal call: the source to authenticate with, plus
+ * any profile headers the endpoint needs. There is no token field — a caller
+ * that only has a token string wraps it in `staticTokenSource`, which states
+ * that this identity cannot self-heal.
+ */
+export interface CallAuth {
+  tokens: TokenSource
+  customHeaders?: Record<string, string>
+}
 
 interface UserInfo {
   id: number
@@ -13,13 +25,17 @@ interface UserInfo {
  * `customHeaders` carries the profile's own headers (notably `Cookie`) so
  * cookie-authenticated deployments accept this call. Without it the request
  * only proves the token, which a session-authenticating gateway may reject.
+ *
+ * `auth.config` is required for the reason spelled out on `ClientOptions.config`:
+ * this is a preflight call on the same token the command will use, so it must
+ * be able to rotate on 401 too, and a caller with nothing to rotate has to say
+ * `false` rather than leave it to a default.
  */
 export async function getCurrentUser(
   baseUrl: string,
-  token: string,
-  customHeaders?: Record<string, string>,
+  auth: CallAuth,
 ): Promise<UserInfo> {
-  const opts: ClientOptions = { baseUrl, token, customHeaders }
+  const opts: ClientOptions = { baseUrl, tokens: auth.tokens, customHeaders: auth.customHeaders }
   const resp = await request<UserInfo>(
     opts,
     "/clickzetta-portal/user/getCurrentUser",
@@ -33,10 +49,10 @@ export async function getCurrentUser(
 
 export async function getInstanceByName(
   baseUrl: string,
-  token: string,
   instanceName: string,
+  auth: CallAuth,
 ): Promise<number> {
-  const opts: ClientOptions = { baseUrl, token }
+  const opts: ClientOptions = { baseUrl, tokens: auth.tokens, customHeaders: auth.customHeaders }
   const resp = await request<{ id: number }>(
     opts,
     `/clickzetta-portal/service/getInstanceByName?instanceName=${encodeURIComponent(instanceName)}`,

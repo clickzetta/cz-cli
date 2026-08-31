@@ -7,6 +7,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { loginByAccountSite } from "./account-login.js"
+import { verbatimTokenSource } from "../connection/token-source.js"
 
 // ---------------------------------------------------------------------------
 // Data interfaces
@@ -306,7 +307,7 @@ async function loginByInstance(
 
   if (!tenantId) {
     try {
-      const user = await getCurrentUser(baseUrl, jwt)
+      const user = await getCurrentUser(baseUrl, { tokens: verbatimTokenSource(jwt) })
       userId = userId || coerceInt(user.id)
       tenantId = coerceInt(user.accountId)
       userName = user.name || userName
@@ -552,7 +553,7 @@ async function ensureIdentity(auth: AuthResult): Promise<AuthResult> {
   if (auth.userId && auth.tenantId) return auth
   const baseUrl = (auth.serviceUrl || "").replace(/\/$/, "")
   if (!baseUrl) throw new Error("failed to resolve tenant/account id")
-  const user = await getCurrentUser(baseUrl, auth.token)
+  const user = await getCurrentUser(baseUrl, { tokens: verbatimTokenSource(auth.token) })
   const userId = auth.userId || coerceInt(user.id)
   const tenantId = auth.tenantId || coerceInt(user.accountId)
   if (!tenantId) throw new Error("failed to resolve tenant/account id")
@@ -566,8 +567,9 @@ async function listWorkspacesForInstance(
 ): Promise<{ workspace_name: string; workspace_id: string; project_id: number }[]> {
   const fixed = await ensureIdentity(auth)
   const rows = await listUserWorkspaces(
-    fixed.serviceUrl, fixed.token, fixed.userId, fixed.tenantId,
+    fixed.serviceUrl, fixed.userId, fixed.tenantId,
     instanceId, instanceName,
+    { tokens: verbatimTokenSource(fixed.token) }, // minted by the login flow moments ago
   )
   return (rows || [])
     .map((row) => {

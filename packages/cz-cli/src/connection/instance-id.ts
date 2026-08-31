@@ -1,3 +1,4 @@
+import { requestRaw, type TokenSource } from "@clickzetta/sdk"
 function numeric(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value !== "string") return 0
@@ -18,18 +19,23 @@ function numeric(value: unknown): number {
  */
 export async function resolveInstanceIdByName(
   baseUrl: string,
-  token: string,
+  tokens: TokenSource,
   accountId: number,
   instanceName: string,
   opts?: { customHeaders?: Record<string, string>; fallbackId?: number; debug?: boolean },
 ): Promise<number> {
   const fallbackId = opts?.fallbackId ?? 0
   try {
-    const response = await fetch(`${baseUrl}/clickzetta-portal/service/serviceInstanceList?accountId=${accountId}`, {
-      headers: { ...opts?.customHeaders, "x-clickzetta-token": token, Accept: "application/json" },
-    })
-    if (!response.ok) return fallbackId
-    const payload = await response.json() as { data?: Array<Record<string, unknown>> }
+    // Goes through the SDK transport like every other authenticated call, so a
+    // rejected credential rotates here too. It used to run its own `fetch` with
+    // a token string, which meant an expired token silently degraded to
+    // `fallbackId` and the failure surfaced later as a wrong instance id.
+    const payload = await requestRaw<{ data?: Array<Record<string, unknown>> }>(
+      { baseUrl, tokens, customHeaders: opts?.customHeaders },
+      `/clickzetta-portal/service/serviceInstanceList?accountId=${accountId}`,
+      undefined,
+      "GET",
+    )
     const match = (payload.data ?? []).find((row) =>
       String(row.name ?? row.instanceName ?? "") === instanceName
       && numeric(row.serviceId ?? 1) === 1,
