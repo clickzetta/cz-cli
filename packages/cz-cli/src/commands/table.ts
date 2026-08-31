@@ -6,6 +6,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
+import { parseVolumePath } from "@clickzetta/sdk/fsutil"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -323,6 +324,78 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         },
       )
       .command(
+        "load <name> <source>",
+        "Load a Volume path into a table; use SQL for advanced COPY INTO/OVERWRITE cases",
+        (y) => y
+          .positional("name", { type: "string", demandOption: true, describe: "Target table name" })
+          .positional("source", { type: "string", demandOption: true, describe: "czfs:/ Volume root, directory (trailing /), or file path" })
+          .option("using", { type: "string", choices: ["csv", "parquet", "orc", "bson"], default: "csv", describe: "Input file format" })
+          .option("header", { type: "boolean", default: false, describe: "Treat the first CSV row as column names" })
+          .epilogue([
+            "Examples:",
+            "  cz-cli table load t czfs:/Volumes/ws/sc/v/ --header",
+            "  cz-cli table load t czfs:/Volumes/ws/sc/v/daily/ --using parquet",
+            "  cz-cli table load t czfs:/Volumes/@user/ws/u/data.csv",
+            "  cz-cli table load t czfs:/Volumes/@table/ws/sc/src/exports/ --using parquet",
+            "",
+            "For PURGE, ON_ERROR, PARTITION, transformations, or complex options, use:",
+            "  cz-cli sql --write \"COPY INTO ...\"",
+          ].join("\n")),
+        async (argv) => {
+          const format = argv.format
+          try {
+            const table = validateIdentifier(argv.name as string, "table name")
+            const source = String(argv.source)
+            if (!source.toLowerCase().startsWith("czfs:/volumes/")) {
+              error("USAGE_ERROR", "table load requires a czfs:/ Volume path; use SQL for a raw Volume identifier.", { format, exitCode: 2 })
+              return
+            }
+            const parsed = parseVolumePath(source)
+            if (!parsed || parsed.reference.identifiers.length === 0) {
+              error("USAGE_ERROR", "Invalid czfs:/ Volume source path.", { format, exitCode: 2 })
+              return
+            }
+            if (parsed.reference.kind === "user" && parsed.reference.identifiers.length !== 2) {
+              error("USAGE_ERROR", "User Volume paths must include workspace and user.", { format, exitCode: 2 })
+              return
+            }
+            const ctx = await getExecContext(argv)
+            const volume = parsed.reference.kind === "user"
+              ? "USER VOLUME"
+              : parsed.reference.kind === "table"
+                ? `TABLE VOLUME ${quoteIdentifiers(parsed.reference.identifiers)}`
+                : `VOLUME ${quoteIdentifiers(parsed.reference.identifiers)}`
+            const using = String(argv.using ?? "csv").toUpperCase()
+            if (argv.header && using !== "CSV") {
+              error("USAGE_ERROR", "--header is only valid with --using csv.", { format, exitCode: 2 })
+              return
+            }
+            const options = argv.header ? " OPTIONS('header'='true')" : ""
+            const sourceIsDirectory = source.endsWith("/")
+            const relativePath = parsed.relativePath.replace(/\/+$/, "")
+            const selector = relativePath
+              ? sourceIsDirectory
+                ? ` SUBDIRECTORY '${relativePath.replace(/'/g, "''")}/'`
+                : ` FILES ('${relativePath.replace(/'/g, "''")}')`
+              : ""
+            const sql = `COPY INTO ${table} FROM ${volume} USING ${using}${options}${selector}`
+            const t0 = Date.now()
+            const result = await execSql(ctx, sql)
+            if (!isQueryResult(result) || result.status === JobStatus.FAILED) {
+              const message = isQueryResult(result) ? (result.errorMessage ?? "Query failed") : "Unexpected result"
+              logOperation("table load", { sql, ok: false, timeMs: Date.now() - t0 })
+              error(isQueryResult(result) ? (result.errorCode ?? "SQL_ERROR") : "SQL_ERROR", message, { format })
+              return
+            }
+            logOperation("table load", { sql, ok: true, timeMs: Date.now() - t0 })
+            success({ table, source, mode: "INTO", file_format: using, status: "SUCCEEDED" }, { format, timeMs: Date.now() - t0 })
+          } catch (err) {
+            const { code: _ec, message: _em, aiMessage: _ea } = classifyExecError(err)
+            error(_ec, _em, { format, exitCode: _ec === "USAGE_ERROR" ? 2 : undefined, ...(_ea && { aiMessage: _ea }) })
+          }
+        },
+      )
+      .command(
         "create [ddl]",
         "Create a table from DDL statement",
         (y) =>
@@ -380,4 +453,8 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
       )
     return commandGroup(yargs, "table")
   })
+}
+
+function quoteIdentifiers(identifiers: string[]): string {
+  return identifiers.map((identifier) => `\`${identifier.replace(/`/g, "``")}\``).join(".")
 }

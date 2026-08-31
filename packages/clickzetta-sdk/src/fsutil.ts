@@ -32,13 +32,13 @@ export class FsError extends Error {
   }
 }
 
-type VolumeKind = "named" | "table" | "user"
+export type VolumeKind = "named" | "table" | "user"
 
 interface CopyProgress {
   completed: Array<{ source: string; destination: string; bytes: number }>
 }
 
-interface VolumeReference {
+export interface VolumeReference {
   kind: VolumeKind
   identifiers: string[]
   czfsBase?: string
@@ -66,7 +66,11 @@ function quoteIdentifier(value: string): string {
   return "`" + value.replace(/`/g, "``") + "`"
 }
 
-function parseVolumePath(input: string): { reference: VolumeReference; relativePath: string } | undefined {
+function volumeDefinitionIdentifier(reference: VolumeReference): string {
+  return reference.identifiers.map(quoteIdentifier).join(".")
+}
+
+export function parseVolumePath(input: string): { reference: VolumeReference; relativePath: string } | undefined {
   const path = String(input)
   const lower = path.toLowerCase()
   if (!(lower.startsWith("volume://") || lower.startsWith("volume:table://") || lower.startsWith("volume:user://") || lower.startsWith("czfs:/volumes/"))) return undefined
@@ -75,6 +79,9 @@ function parseVolumePath(input: string): { reference: VolumeReference; relativeP
   if (separator >= 0) {
     const scheme = path.slice(0, separator).toLowerCase()
     const rest = path.slice(separator + 3)
+    if ((scheme === "volume" || scheme === "volume:table") && rest.replace(/\/+$/, "") === "") {
+      return { reference: { kind: scheme === "volume:table" ? "table" : "named", identifiers: [] }, relativePath: "" }
+    }
     const slash = rest.indexOf("/")
     const netloc = slash < 0 ? rest : rest.slice(0, slash)
     const relativePath = slash < 0 ? "" : decodeUriComponent(rest.slice(slash + 1), path)
@@ -221,6 +228,9 @@ function parseModificationTime(value: unknown): number | null {
   const maxDateMs = 8.64e15
   if (typeof value === "number") return Number.isFinite(value) && Math.abs(value) <= maxDateMs ? value : null
   if (typeof value === "string") {
+    // SHOW ... DIRECTORY returns "" for rows with no timestamp. Number("") is 0, which
+    // would otherwise be reported as 1970-01-01 instead of "unknown".
+    if (value.trim() === "") return null
     const numeric = Number(value)
     if (Number.isFinite(numeric) && Math.abs(numeric) <= maxDateMs) return numeric
     const parsed = Date.parse(value)
@@ -238,6 +248,42 @@ function parseVolumeRecord(raw: unknown, description: string, path: string): Rec
   }
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>
   throw new FsError("FS_TRANSFER_FAILED", `Invalid ${description} for ${path}`)
+}
+
+// A missing path must map to FS_NOT_FOUND, but a missing SQL *function* means the
+// engine lacks the capability and must surface as FS_TRANSFER_FAILED — reporting it
+// as "not found" would let `fs ls` claim a populated directory is empty.
+function isMissingVolumePathError(message: string): boolean {
+  if (/\b(?:unknown|unresolved|undefined) function\b/i.test(message)) return false
+  if (/\bfunction\b[^\n]*(?:not found|does not exist|not registered)/i.test(message)) return false
+  const normalized = message.trim()
+  if (/^(?:not found|does not exist)$/i.test(normalized)) return true
+  return /\b(?:path|file|directory|subdirectory|volume)\b[^\n]*(?:not found|does not exist|unknown)/i.test(message)
+}
+
+function resultRecord(result: QueryResult, row: unknown[]): Record<string, unknown> {
+  return Object.fromEntries(result.columns.map((column, index) => [column.name.toLowerCase(), row[index]]))
+}
+
+function resultValue(result: QueryResult, row: unknown[], ...names: string[]): unknown {
+  const record = resultRecord(result, row)
+  for (const name of names) {
+    const value = record[name.toLowerCase()]
+    if (value !== undefined && value !== null && value !== "") return value
+  }
+  return undefined
+}
+
+function volumeEntry(reference: VolumeReference, relativePath: string, value: Record<string, unknown>, isDir?: boolean): FileInfo {
+  const directory = isDir ?? relativePath.endsWith("/")
+  const normalized = relativePath.replace(/^\/+|\/+$/g, "")
+  return {
+    path: volumeUri(reference, normalized),
+    name: normalized ? basename(normalized) : (reference.identifiers.at(-1) ?? ""),
+    size: Number(value.size ?? value.size_bytes ?? 0),
+    modificationTime: parseModificationTime(value.last_modified_time ?? value.modified_at ?? value.mtime ?? value.create_time),
+    isDir: directory,
+  }
 }
 
 function httpTransferError(status: number, operation: string, path: string): Error & { status: number } {
@@ -352,7 +398,7 @@ class VolumeFsPath implements FsPath {
     const result = await this.execute(sql, hints)
     if (result.status === "FAILED") {
       const message = result.errorMessage ?? `Volume SQL failed: ${sql}`
-      if (/not found|does not exist|unknown volume/i.test(message)) throw new FsError("FS_NOT_FOUND", message)
+      if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
       throw new FsError("FS_TRANSFER_FAILED", message)
     }
     return result.rows
@@ -386,13 +432,9 @@ class VolumeFsPath implements FsPath {
   async children(recursive: boolean, limit = 0): Promise<FsPath[]> {
     const info = await this.info()
     if (!info.isDir) return [this]
-    let rows: unknown[][]
-    try {
-      rows = await this.query(`select list_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, ${recursive ? "true" : "false"})${limit > 0 ? ` limit ${limit}` : ""}`)
-    } catch (error) {
-      if (!this.relativePath && error instanceof FsError && error.code === "FS_NOT_FOUND" && await this.volumeExists()) return []
-      throw error
-    }
+    if (!this.relativePath) return listVolumeDirectory(this.reference, this.original, this.execute, recursive, limit)
+    // Volume roots are handled above, so relativePath is always non-empty here.
+    const rows = await this.query(`select list_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, ${recursive ? "true" : "false"})${limit > 0 ? ` limit ${limit}` : ""}`)
     const seen = new Set<string>()
     const entries = rows.flatMap((row) => {
       const raw = row[0]
@@ -412,21 +454,6 @@ class VolumeFsPath implements FsPath {
       return [new VolumeFsPath(info.path, this.reference, normalizedPath, this.execute, info)]
     })
     return limit > 0 ? entries.slice(0, limit) : entries
-  }
-  private async volumeExists(): Promise<boolean> {
-    const identifier = this.reference.identifiers.map(quoteIdentifier).join(".")
-    const statement = this.reference.kind === "user"
-      ? "list user volume"
-      : this.reference.kind === "table"
-        ? `list table volume ${identifier}`
-        : `list volume ${identifier}`
-    try {
-      await this.query(statement)
-      return true
-    } catch (error) {
-      if (error instanceof FsError && error.code === "FS_NOT_FOUND") return false
-      throw error
-    }
   }
   async read(maxBytes = 65536) {
     try {
@@ -527,6 +554,58 @@ class VolumeFsPath implements FsPath {
   }
 }
 
+async function listVolumeDirectory(
+  reference: VolumeReference,
+  original: string,
+  execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>,
+  recursive: boolean,
+  limit: number,
+): Promise<FsPath[]> {
+  const identifier = reference.identifiers.map(quoteIdentifier).join(".")
+  const sql = reference.kind === "user"
+    ? "SHOW USER VOLUME DIRECTORY"
+    : reference.kind === "table"
+      ? `SHOW TABLE VOLUME DIRECTORY ${identifier}`
+      : `SHOW VOLUME DIRECTORY ${identifier}`
+  const result = await execute(sql)
+  if (result.status === "FAILED") {
+    const message = result.errorMessage ?? `Volume directory query failed: ${original}`
+    if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
+    throw new FsError("FS_TRANSFER_FAILED", message)
+  }
+
+  const entries = new Map<string, FileInfo>()
+  for (const row of result.rows) {
+    const rawPath = resultValue(result, row, "relative_path", "path", "file")
+    if (rawPath === undefined || rawPath === null || String(rawPath).trim() === "") continue
+    const rowPath = String(rawPath).replace(/^\/+/, "")
+    // Apply the same guard as the list_directory branch: a server-supplied "../.."
+    // must never become a local write target during `fs cp <volume root> ./out -R`.
+    const normalized = validateRelativePath(rowPath, original)
+    if (!normalized) continue
+    const parts = normalized.split("/")
+    const value = resultRecord(result, row)
+    const rowIsDir = Boolean(value.dir ?? value.is_dir ?? value.isdir) || rowPath.endsWith("/")
+    const add = (relativePath: string, metadata: Record<string, unknown>, isDir: boolean) => {
+      if (!entries.has(relativePath)) entries.set(relativePath, volumeEntry(reference, relativePath, metadata, isDir))
+    }
+    if (recursive) {
+      for (let index = 1; index < parts.length; index++) add(parts.slice(0, index).join("/"), {}, true)
+      add(normalized, value, rowIsDir)
+    } else {
+      // Key on the normalized first segment so a "logs/" marker row and a
+      // "logs/app.txt" row collapse into one directory entry.
+      add(parts[0]!, parts.length === 1 ? value : {}, parts.length > 1 || rowIsDir)
+    }
+    // SHOW ... DIRECTORY takes no LIMIT clause, so stop scanning past the cap.
+    if (limit > 0 && entries.size > limit) break
+  }
+  // Carry the decoded map key as the SQL relative path. info.path is percent-encoded
+  // for display, and slicing it would send "a%20b.csv" to get_presigned_url/get_file.
+  const paths = [...entries].map(([relativePath, info]) => new VolumeFsPath(info.path, reference, relativePath, execute, info))
+  return limit > 0 ? paths.slice(0, limit) : paths
+}
+
 export class FsUtil {
   private readonly execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>
   private readonly workspace?: string
@@ -539,6 +618,7 @@ export class FsUtil {
   path(input: string): FsPath {
     const volume = parseVolumePath(input)
     if (volume) {
+      if (volume.reference.kind !== "user" && volume.reference.identifiers.length === 0) throw new FsError("FS_PATH_INVALID", `Volume root is only valid for fs ls: ${input}`)
       if (volume.reference.kind === "named" && volume.reference.identifiers.length < 3) {
         if (!this.workspace || !this.schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", `Workspace and schema are required for short Volume path: ${input}`)
         volume.reference.identifiers = volume.reference.identifiers.length === 1
@@ -553,13 +633,49 @@ export class FsUtil {
   async info(path: string) { return this.path(path).info() }
   async mb(path: string) {
     const volume = parseVolumePath(path)
-    if (!volume || volume.reference.kind !== "named" || volume.relativePath) {
-      throw new FsError("FS_PATH_INVALID", `fs mb requires a Named Volume root path, for example volume://shared_files: ${path}`)
+    if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length === 0 || volume.relativePath) {
+      throw new FsError("FS_PATH_INVALID", `fs mb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
     }
-    const result = await this.execute(`create volume ${volume.reference.identifiers.map(quoteIdentifier).join(".")}`)
+    const result = await this.execute(`create volume ${volumeDefinitionIdentifier(volume.reference)}`)
     if (result.status === "FAILED") {
       const message = result.errorMessage ?? `Failed to create Named Volume: ${path}`
       if (/already\s*exist/i.test(message)) throw new FsError("FS_TARGET_EXISTS", message)
+      throw new FsError("FS_TRANSFER_FAILED", message)
+    }
+    return true
+  }
+  async rb(path: string) {
+    const volume = parseVolumePath(path)
+    if (!volume || volume.reference.kind !== "named" || volume.reference.identifiers.length === 0 || volume.relativePath) {
+      throw new FsError("FS_PATH_INVALID", `fs rb expects a Named Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
+    }
+    const volumeName = volume.reference.identifiers.at(-1)!
+    const volumeSchema = volume.reference.identifiers.length >= 2 ? volume.reference.identifiers.at(-2) : this.schema
+    const volumeWorkspace = volume.reference.identifiers.length >= 3 ? volume.reference.identifiers.at(-3) : this.workspace
+    const filters = [
+      `volume_name = ${quote(volumeName)}`,
+      ...(volumeSchema ? [`schema_name = ${quote(volumeSchema)}`] : []),
+      ...(volumeWorkspace ? [`workspace_name = ${quote(volumeWorkspace)}`] : []),
+    ]
+    const volumes = await this.execute(`SHOW VOLUMES WHERE ${filters.join(" AND ")}`)
+    if (volumes.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", volumes.errorMessage ?? "Failed to verify Volume type")
+    const metadata = volumes.rows.find((row) => {
+      const name = String(resultValue(volumes, row, "volume_name", "name") ?? row[1] ?? row[0] ?? "")
+      const schema = String(resultValue(volumes, row, "schema_name", "schema") ?? row[0] ?? "")
+      const workspace = String(resultValue(volumes, row, "workspace_name", "workspace") ?? row[4] ?? "")
+      return name === volumeName && (!volumeSchema || schema === volumeSchema) && (!volumeWorkspace || workspace === volumeWorkspace)
+    })
+    if (!metadata) throw new FsError("FS_NOT_FOUND", `Named Volume was not found: ${path}`)
+    const external = resultValue(volumes, metadata, "external", "is_external") ?? metadata[3]
+    if (external === true || String(external).toLowerCase() === "true") throw new FsError("FS_PATH_INVALID", `fs rb only removes Named Volumes; '${path}' is an External Volume`)
+    const entries = await listVolumeDirectory(volume.reference, path, this.execute, false, 1)
+    if (entries.length > 0) {
+      throw new FsError("FS_NOT_EMPTY", `Named Volume is not empty: ${path}. Remove its files explicitly before running fs rb.`)
+    }
+    const result = await this.execute(`drop volume ${volumeDefinitionIdentifier(volume.reference)}`)
+    if (result.status === "FAILED") {
+      const message = result.errorMessage ?? `Failed to drop Named Volume: ${path}`
+      if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
       throw new FsError("FS_TRANSFER_FAILED", message)
     }
     return true
@@ -571,11 +687,12 @@ export class FsUtil {
     if (info.isDir && !recurse) throw new FsError("FS_RECURSIVE_REQUIRED", `Directory removal requires recursive flag: ${path}`)
     return info
   }
-  async cp(source: string, destination: string, recurse = false, overwrite = true) {
-    await this.copyBytes(source, destination, recurse, overwrite)
+  async cp(source: string, destination: string, recurse = false, overwrite = false) {
+    const progress: CopyProgress = { completed: [] }
+    await this.copyBytes(source, destination, recurse, overwrite, progress)
     return true
   }
-  async copyBytes(source: string, destination: string, recurse = false, overwrite = true, progress?: CopyProgress) {
+  async copyBytes(source: string, destination: string, recurse = false, overwrite = false, progress?: CopyProgress) {
     const from = this.path(source)
     let to = this.path(destination)
     if (pathIdentity(from) === pathIdentity(to)) throw new FsError("FS_PATH_INVALID", "Source and destination must be different")
@@ -596,6 +713,12 @@ export class FsUtil {
       const files: FsPath[] = []
       for (const child of children) if (!(await child.info()).isDir) files.push(child)
       const copyProgress = progress ?? { completed: [] }
+      if (!overwrite) {
+        for (const child of files) {
+          const childTarget = to.child(relativeChildPath(source, child.original))
+          if (await childTarget.exists()) throw new FsError("FS_TARGET_EXISTS", `Target already exists: ${childTarget.original}`)
+        }
+      }
       try { await to.mkdirs() }
       catch (error) {
         if (!progress) throw error
@@ -652,8 +775,19 @@ export class FsUtil {
     catch { throw new FsError("FS_NOT_TEXT", `File is not valid UTF-8 text: ${file}`) }
   }
   async ls(path: string, recurse = false, limit = 0) {
+    const virtual = await this.listVirtualRoot(path, recurse, limit)
+    if (virtual !== undefined) return virtual
     const items = await this.path(path).children(recurse, limit)
-    return Promise.all(items.map((item) => item.info()))
+    const infos = await Promise.all(items.map(async (item) => {
+      try { return await item.info() }
+      catch (error) {
+        // Ignore dangling symlinks and files removed during enumeration; one
+        // unreadable entry must not make `fs ls /` fail as a whole.
+        if (error instanceof FsError && error.code === "FS_NOT_FOUND") return undefined
+        throw error
+      }
+    }))
+    return infos.filter((item): item is FileInfo => item !== undefined)
   }
   async mkdirs(path: string) { await this.path(path).mkdirs(); return true }
   async put(file: string, contents: string, overwrite = false) {
@@ -661,7 +795,7 @@ export class FsUtil {
     await this.path(file).write(data, overwrite, data.byteLength)
     return true
   }
-  async mv(source: string, destination: string, recurse = false, overwrite = true) {
+  async mv(source: string, destination: string, recurse = false, overwrite = false) {
     const from = this.path(source)
     const to = this.path(destination)
     if (pathIdentity(from) === pathIdentity(to)) throw new FsError("FS_PATH_INVALID", "Source and destination must be different")
@@ -693,6 +827,91 @@ export class FsUtil {
   async rm(path: string, recurse = false) {
     await this.path(path).remove(recurse)
     return true
+  }
+
+  private async listVirtualRoot(path: string, recursive: boolean, limit: number): Promise<FileInfo[] | undefined> {
+    const normalized = path.toLowerCase().replace(/\/+$/, "")
+    if (normalized === "czfs:" || normalized === "czfs:/volumes") {
+      return this.listVolumeNamespaceRoots(limit)
+    }
+    if (normalized === "volume:") {
+      return this.listNamedVolumeRoots(limit)
+    }
+    if (normalized === "volume:table:" || normalized === "czfs:/volumes/@table") {
+      return this.listTableVolumeRoots(limit)
+    }
+    // Route the legacy User Volume root through the same resolver as czfs:/Volumes/@user
+    // so both spellings report identical czfs entry paths, matching how volume:table://
+    // already normalizes to czfs output.
+    if (normalized === "czfs:/volumes/@user" || normalized === "volume:user://~") {
+      return this.listCurrentUserVolumeFiles(recursive, limit)
+    }
+    return undefined
+  }
+
+  private async listNamedVolumeRoots(limit: number): Promise<FileInfo[]> {
+    const result = await this.execute("SHOW VOLUMES")
+    if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list Volumes")
+    const rows = result.rows.flatMap((row) => {
+      const name = String(resultValue(result, row, "volume_name", "name") ?? row[0] ?? "")
+      const workspace = String(resultValue(result, row, "workspace_name", "workspace") ?? this.workspace ?? "")
+      const schema = String(resultValue(result, row, "schema_name", "schema") ?? this.schema ?? "")
+      if (!name || !workspace || !schema) return []
+      const reference: VolumeReference = { kind: "named", identifiers: [workspace, schema, name], czfsBase: buildCzfsBase("named", [workspace, schema, name]) }
+      return [volumeEntry(reference, "", { create_time: resultValue(result, row, "create_time", "created_at") }, true)]
+    })
+    return limit > 0 ? rows.slice(0, limit) : rows
+  }
+
+  private async listVolumeNamespaceRoots(limit: number): Promise<FileInfo[]> {
+    // Put the virtual entry points first: they are the only documented way to reach
+    // User and Table Volumes, so a workspace with more Volumes than --limit must not
+    // truncate them away.
+    const entryPoints: FileInfo[] = [
+      { path: "czfs:/Volumes/@user", name: "@user", size: 0, modificationTime: null, isDir: true },
+      { path: "czfs:/Volumes/@table", name: "@table", size: 0, modificationTime: null, isDir: true },
+    ]
+    const remaining = limit > 0 ? Math.max(limit - entryPoints.length, 0) : 0
+    if (limit > 0 && remaining === 0) return entryPoints.slice(0, limit)
+    return [...entryPoints, ...await this.listNamedVolumeRoots(remaining)]
+  }
+
+  private async resolveUserVolumeReference(): Promise<VolumeReference | undefined> {
+    if (!this.workspace) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace is required for User Volume root")
+    const identity = await this.execute("SELECT current_user()")
+    if (identity.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", identity.errorMessage ?? "Failed to resolve current user")
+    const user = String(identity.rows[0]?.[0] ?? "")
+    if (!user) return undefined
+    const identifiers = [this.workspace, user]
+    return { kind: "user", identifiers, czfsBase: buildCzfsBase("user", identifiers) }
+  }
+
+  private async listCurrentUserVolumeFiles(recursive: boolean, limit: number): Promise<FileInfo[]> {
+    // Use the resolved [workspace, user] pair directly. Re-deriving it by slicing the
+    // czfs URI dropped the user segment and left identifiers=[workspace].
+    const reference = await this.resolveUserVolumeReference()
+    if (!reference) return []
+    const entries = await listVolumeDirectory(reference, reference.czfsBase ?? "czfs:/Volumes/@user", this.execute, recursive, limit)
+    return Promise.all(entries.map((entry) => entry.info()))
+  }
+
+  private async listTableVolumeRoots(limit: number): Promise<FileInfo[]> {
+    if (!this.workspace || !this.schema) throw new FsError("FS_PATH_CONTEXT_REQUIRED", "Workspace and schema are required for Table Volume root")
+    const result = await this.execute("SHOW TABLES")
+    if (result.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", result.errorMessage ?? "Failed to list tables")
+    const rows = result.rows.flatMap((row) => {
+      const name = String(resultValue(result, row, "table_name", "name") ?? row[1] ?? row[0] ?? "")
+      if (!name) return []
+      // Only a real table owns a Table Volume. SHOW TABLES also returns views,
+      // materialized views, external and dynamic tables; listing those as Volume
+      // roots would advertise paths that SHOW TABLE VOLUME DIRECTORY rejects.
+      const record = resultRecord(result, row)
+      if (["is_view", "is_materialized_view", "is_external", "is_dynamic"].some((flag) => record[flag] === true)) return []
+      const identifiers = [this.workspace!, this.schema!, name]
+      const reference: VolumeReference = { kind: "table", identifiers, czfsBase: buildCzfsBase("table", identifiers) }
+      return [volumeEntry(reference, "", {}, true)]
+    })
+    return limit > 0 ? rows.slice(0, limit) : rows
   }
 
   private async moveLocal(from: FsPath, to: FsPath, info: FileInfo, recurse: boolean, overwrite: boolean) {
@@ -752,22 +971,20 @@ export class FsUtil {
       try {
         await from.remove(recurse)
       } catch (error) {
-        if (backupMoved) {
-          await removeFile(backup.scopePath, { recursive: true, force: true }).catch(() => undefined)
-          backupMoved = false
-        }
         throw new FsError("PARTIAL_FAILED", `Move failed during REMOVE: ${from.original}`, {
           stage: "REMOVE",
           completed: [],
           failed: { source: from.original, destination: target.original, error: error instanceof Error ? error.message : String(error) },
           pending: [],
+          ...(backupMoved ? { recovery: { backup: backup.original, source: from.original, destination: target.original } } : {}),
         })
       }
       if (backupMoved) await removeFile(backup.scopePath, { recursive: true, force: true })
       return true
     } catch (error) {
       await removeFile(temporary.scopePath, { recursive: true, force: true }).catch(() => undefined)
-      if (backupMoved) await removeFile(backup.scopePath, { recursive: true, force: true }).catch(() => undefined)
+      // Preserve the backup on any failed move so a caller can recover the
+      // original target even when the process or cleanup path fails.
       throw error
     }
   }
