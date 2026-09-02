@@ -337,6 +337,63 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 - **Re-baseline:** all 25 return as additions. Re-delete them, and re-check whether the
   new baseline added more scheduled workflows before merging.
 
+### 12. `<spinner>` registration — backport of upstream #35292
+
+- **Files:** `packages/tui/src/component/register-spinner.ts` (new),
+  `packages/tui/package.json` (export map), and a `registerOpencodeSpinner()` call at
+  five sites: `packages/tui/src/app.tsx`,
+  `packages/tui/src/component/spinner.tsx`,
+  `packages/tui/src/component/prompt/index.tsx`,
+  `packages/opencode/src/cli/cmd/run/footer.subagent.tsx`,
+  `packages/opencode/src/cli/cmd/run/footer.view.tsx`
+- **Upstream:** https://github.com/anomalyco/opencode/pull/35292 ("tui: preserve
+  spinner registration"), merged 2026-07-04 as `7a8e7c88f4`. Our baseline v1.17.11 is
+  dated 2026-06-25 — nine days earlier, so it predates the fix. Upstream v1.18.9 and
+  later carry it.
+- **Bug:** each of those five sites used to register `<spinner>` with a bare
+  side-effect import, `import "opentui-spinner/solid"`. `opentui-spinner` declares a
+  whitelist `sideEffects` (`["./dist/react.mjs", "./dist/solid.mjs"]`), so the module
+  survives tree-shaking only while the bundler matches those POSIX patterns against
+  the resolved path. Our release build compiles the win32 target ON a
+  `windows-latest` runner (`release-cos.yml`: `runner: windows-latest` +
+  `OPENCODE_HOST_ONLY=1`); there the match fails, `minify` drops an import that binds
+  nothing, `extend({ spinner })` never runs, and the first spinner render kills the
+  session with `[Reconciler] Unknown component type: spinner`. Reported on cz-cli
+  2.0.3 (Windows). Upstream never saw it: its `build-cli` job bundles every target,
+  Windows included, on `blacksmith-4vcpu-ubuntu-2404` (the `windows-2025` runner only
+  signs), and dev `bun run` does not tree-shake at all.
+- **Measured:** forcing the match to fail (`sideEffects: false` on the installed
+  package) collapses a bare-import bundle from 935,609 bytes to 27 — registration and
+  all. Cross-compiling with `--target=bun-windows-x64` from macOS keeps it, which is
+  why the build host, not the target, is what matters.
+- **Why intrusive (no hook):** the catalogue is module-level state inside
+  `@opentui/solid`, and these are the modules that render `<spinner>`.
+- **No `cz-cli change` banner, deliberately — grep for the call instead:** the edit is
+  byte-identical to upstream's, so wrapping it in a banner would make the file differ
+  from the fixed upstream file and turn a clean fast-forward into a conflict. The cost
+  is that the ledger's usual `rg -n "cz-cli change"` sweep cannot see this patch, so it
+  is the one entry that could be reverted by a baseline bump without the sweep noticing.
+  The substitute check, added to the re-baseline procedure below, is:
+
+  ```sh
+  rg -n 'registerOpencodeSpinner' packages/tui packages/opencode   # 11 hits: 1 definition + import+call at each of the 5 sites
+  rg -n 'import "opentui-spinner/solid"' packages/tui packages/opencode   # expect none
+  ```
+
+  The silent-revert window is exactly v1.17.11 → v1.18.9: before it the patch does not
+  exist, from v1.18.9 on upstream provides it and this entry is deleted.
+- **Verify:** `packages/opencode/test/cli/run/footer.view.test.tsx` asserts a spinner
+  renders in the `run` footer (`expect(spinner).toBeDefined()`); it goes RED if the
+  registration is gone from that path. Run it plus `packages/tui`'s suite after any
+  baseline bump. Neither is in `cz-test.yml`, so this is a manual step. Pins that must
+  keep exporting what the fix calls: `opentui-spinner@0.0.7` (`registerSpinner`) and
+  `@opentui/solid@0.3.4` (`getComponentCatalogue`).
+- **Re-baseline:** once the baseline is at v1.18.9 or newer, upstream provides all of
+  this — take upstream's version wholesale and **delete this entry**. Until then, the
+  bare imports return on every baseline bump; re-apply from #35292 rather than by
+  hand, and check for new `<spinner>` call sites with
+  `rg -n 'opentui-spinner|<spinner' packages/tui packages/opencode`.
+
 ## HOOK-based customizations (safe — live entirely in the cz layer)
 
 These do **not** edit upstream files. They are listed so a re-baseline can confirm
@@ -482,7 +539,10 @@ the hooks they depend on still exist in the new upstream.
 
 1. Fast-forward upstream packages to the new opencode version.
 2. `rg -n "cz-cli change" packages/core packages/opencode packages/tui` — expect the
-   INTRUSIVE patches above. If any is missing, re-apply it from this ledger.
+   INTRUSIVE patches above. If any is missing, re-apply it from this ledger. This sweep
+   does NOT cover entry 12, which carries no banner on purpose; check it separately with
+   `rg -n 'registerOpencodeSpinner' packages/tui packages/opencode` (expect 11 hits) until
+   the baseline reaches v1.18.9, at which point entry 12 is deleted.
 3. For each HOOK customization, confirm its "upstream hook to re-verify" still holds.
 4. `cd packages/cz-cli && bun run typecheck && bun test`.
 5. Update this file if the set of patches changed.
