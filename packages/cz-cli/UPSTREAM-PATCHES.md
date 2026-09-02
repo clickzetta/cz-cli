@@ -378,7 +378,15 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   ```sh
   rg -n 'registerOpencodeSpinner' packages/tui packages/opencode   # 11 hits: 1 definition + import+call at each of the 5 sites
   rg -n 'import "opentui-spinner/solid"' packages/tui packages/opencode   # expect none
+  rg -n 'component/register-spinner' packages/tui/package.json     # the export map entry
   ```
+
+  The third check is not redundant: the two `packages/opencode` sites import
+  `@opencode-ai/tui/component/register-spinner`, which only resolves while
+  `packages/tui/package.json`'s `exports` publishes it — and a baseline bump will almost
+  certainly overwrite that file, since upstream touches versions and deps in it constantly.
+  Both `.ts`-level greps would still pass with the export map reverted, leaving two imports
+  of an unpublished subpath.
 
   The silent-revert window is exactly v1.17.11 → v1.18.9: before it the patch does not
   exist, from v1.18.9 on upstream provides it and this entry is deleted.
@@ -567,7 +575,8 @@ the hooks they depend on still exist in the new upstream.
 2. `rg -n "cz-cli change" packages/core packages/opencode packages/tui` — expect the
    INTRUSIVE patches above. If any is missing, re-apply it from this ledger. This sweep
    does NOT cover entry 12, which carries no banner on purpose; check it separately with
-   `rg -n 'registerOpencodeSpinner' packages/tui packages/opencode` (expect 11 hits) until
+   `rg -n 'registerOpencodeSpinner' packages/tui packages/opencode` (expect 11 hits) plus
+   `rg -n 'component/register-spinner' packages/tui/package.json` for the export map, until
    the baseline reaches v1.18.9, at which point entry 12 is deleted.
 3. For each HOOK customization, confirm its "upstream hook to re-verify" still holds.
 4. `cd packages/cz-cli && bun run typecheck && bun test`.
