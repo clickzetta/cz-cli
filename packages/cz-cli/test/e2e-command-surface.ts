@@ -56,7 +56,6 @@ function withProfileButNoAnalysisEndpoint() {
       "",
       "[profiles.default]",
       'pat = "test-pat"',
-      'service = "cn-shanghai-alicloud.api.clickzetta.com"',
       'instance = "test-instance"',
       'workspace = "test-workspace"',
       'schema = "public"',
@@ -102,9 +101,9 @@ const noProfileCases = [
   ["datasource", "list"],
   ["datasource", "catalogs", "ds"],
   ["analytics-agent", "datasource", "list"],
-  ["analytics-agent", "metric", "list", "--domain-id", "1"],
+  ["analytics-agent", "metric", "list", "--domain-ids", "[1]"],
   ["analytics-agent", "metric", "detail", "1"],
-  ["analytics-agent", "metric", "validate", "--domain-id", "1", "--datasource-id", "1", "--table-name", "t1", "--name", "m1", "--expression", "count(1)"],
+  ["analytics-agent", "metric", "validate", "--domain-ids", "[1]", "--datasource-id", "1", "--table-name", "t1", "--name", "m1", "--expression", "count(1)"],
   ["analytics-agent", "metric", "enable", "1"],
   ["analytics-agent", "metric", "disable", "1"],
   ["analytics-agent", "answer-builder", "list"],
@@ -216,7 +215,7 @@ const tests: TestCase[] = [
         const result = run(["serve", "--help"], { HOME: home, CLICKZETTA_TEST_HOME: home })
         const combined = result.stdout + result.stderr
         if (result.exitCode !== 0) return { pass: false, detail: `exit=${result.exitCode} output=${combined.slice(0, 160)}` }
-        if (!combined.includes("starts a headless cz-cli agent server")) {
+        if (!combined.includes("starts a headless opencode server")) {
           return { pass: false, detail: `missing serve description: ${combined.slice(0, 200)}` }
         }
         if (combined.includes("NO_PROFILE") || combined.includes("NO_LLM_CONFIGURED")) {
