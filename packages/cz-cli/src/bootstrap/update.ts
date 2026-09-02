@@ -305,7 +305,16 @@ function repairMacOSBinary(binaryPath: string) {
 export async function ensureRestartBinaryAtPath(target: string, restartPath = process.execPath, env: NodeJS.ProcessEnv = process.env) {
   repairMacOSBinary(restartPath)
   if (binaryVersion(restartPath, env) === target) return
-  const candidate = path.join(homeDirectory(undefined, env), ".local", "bin", "cz-cli")
+  // .exe on Windows: install.sh now installs Git Bash / MSYS2 / Cygwin hosts (see
+  // scripts/cos-release.mjs's platform mapping), and what it puts in ~/.local/bin is
+  // cz-cli.exe. Hardcoding the extensionless name meant this candidate could never
+  // exist there, so every auto-update on such an install ended at the throw below.
+  const candidate = path.join(
+    homeDirectory(undefined, env),
+    ".local",
+    "bin",
+    process.platform === "win32" ? "cz-cli.exe" : "cz-cli",
+  )
   if (candidate === restartPath || binaryVersion(candidate, env) !== target) {
     throw new Error(`Updated cz-cli binary is not available at ${restartPath}; clean stale PATH entries and reinstall cz-cli`)
   }
