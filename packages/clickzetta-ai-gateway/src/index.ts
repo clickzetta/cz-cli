@@ -9,8 +9,12 @@ import type {
   LanguageModelV3CallOptions,
   LanguageModelV3GenerateResult,
   LanguageModelV3StreamResult,
+  SharedV3Headers,
+  SharedV3ProviderMetadata,
 } from "@ai-sdk/provider"
 import { rewriteClickzettaGatewayError } from "./gateway-error"
+import { parseClickzettaQuota, type ClickzettaQuota } from "./quota"
+import { recordGatewayQuota } from "./quota-store"
 import { normalizeClickzettaGatewayUrl } from "./url"
 
 /**
@@ -18,10 +22,17 @@ import { normalizeClickzettaGatewayUrl } from "./url"
  * ClickZetta AI gateway.
  *
  * ClickZetta speaks the OpenAI-compatible wire protocol, so the base SDK does
- * all the real work. This shell adds one behaviour: when the gateway returns a
- * billing / quota error, the raw APICallError is rewritten into an actionable,
- * user-facing message and marked non-retryable — so the retry loop stops and the
- * user sees a clear next step instead of a raw 429/402 body.
+ * all the real work. This shell adds two behaviours:
+ *
+ *  - when the gateway returns a billing / quota error, the raw APICallError is
+ *    rewritten into an actionable, user-facing message and marked non-retryable —
+ *    so the retry loop stops and the user sees a clear next step instead of a raw
+ *    429/402 body;
+ *  - the key's remaining token quota, which the gateway reports on every
+ *    successful completion's headers, is published as
+ *    `providerMetadata.clickzetta.quota` and cached for out-of-process readers,
+ *    so a caller can show it without a second request or portal credentials.
+ *    See quota.ts and quota-store.ts.
  *
  * Everything else (model listing, streaming, tool calls, prompt caching) passes
  * straight through.
@@ -123,14 +134,69 @@ function withClickzettaPromptCaching(options: LanguageModelV3CallOptions, modelI
 }
 
 /**
+ * The endpoint/key a wrapped model answers for, so a quota reading can be filed
+ * against the credential it describes. Absent when the provider was built without
+ * an apiKey, in which case only the in-band metadata is published.
+ */
+type QuotaTarget = { baseURL: string; apiKey: string } | undefined
+
+/**
+ * Read the quota off a response's headers and cache it for the sidebar indicator,
+ * which reads it from another process (quota-store.ts).
+ *
+ * Called as soon as the headers exist — for a stream that is when it opens, not when
+ * it finishes. Caching at `finish` would throw away a reading already in hand
+ * whenever the turn is aborted or errors mid-stream, and the numbers describe the
+ * request's admission, so waiting adds nothing.
+ *
+ * Total: an HTTP call that already succeeded must not fail over a local cache. The
+ * guard is HERE rather than at the two call sites so neither can forget it, and so a
+ * third can't: `recordGatewayQuota` swallows its own write errors, but the parse and
+ * the read-modify-write around it can still throw (a truncated store from a racing
+ * writer, a homedir that resolves somewhere unreadable). In doStream that would
+ * escape uncaught; in doGenerate it would be worse — `mapThrown` would dress a local
+ * cache problem up as a ClickZetta gateway error.
+ */
+function recordQuota(headers: SharedV3Headers | undefined, target: QuotaTarget) {
+  try {
+    const quota = parseClickzettaQuota(headers)
+    if (quota && target) recordGatewayQuota({ ...target, quotas: quota })
+    return quota
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Publish the quota on a result's provider metadata, leaving any metadata the base
+ * provider already set untouched. Returns the input unchanged when there is nothing
+ * to add, so a response the wrapper has nothing to say about stays identical.
+ */
+function withQuota(
+  metadata: SharedV3ProviderMetadata | undefined,
+  quota: ClickzettaQuota[] | undefined,
+): SharedV3ProviderMetadata | undefined {
+  if (!quota) return metadata
+  return {
+    ...metadata,
+    clickzetta: { ...metadata?.clickzetta, quota },
+  }
+}
+
+/**
  * Wrap a LanguageModelV3 so doGenerate/doStream errors run through the rewriter.
  * Delegates every other member to the underlying model via prototype so future
  * SDK additions keep working without changes here.
  */
-function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
+function wrapModel(model: LanguageModelV3, modelId: string, target?: QuotaTarget): LanguageModelV3 {
   const doGenerate = async (options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> => {
     try {
-      return await model.doGenerate(withClickzettaPromptCaching(options, modelId))
+      const result = await model.doGenerate(withClickzettaPromptCaching(options, modelId))
+      const quota = recordQuota(result.response?.headers, target)
+      const providerMetadata = withQuota(result.providerMetadata, quota)
+      // Same object back when the gateway reported no quota, so a response the
+      // wrapper has nothing to add to stays byte-identical.
+      return providerMetadata === result.providerMetadata ? result : { ...result, providerMetadata }
     } catch (error) {
       throw mapThrown(error)
     }
@@ -143,6 +209,11 @@ function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
     } catch (error) {
       throw mapThrown(error)
     }
+    // Response headers are already available here — they arrive before the body — so
+    // the cache is written now, while the reading cannot be lost to an aborted turn.
+    // Only the in-band publication waits for the "finish" part, because that is where
+    // consumers read per-step metadata.
+    const quota = recordQuota(result.response?.headers, target)
     // HTTP errors usually reject doStream above, but the SDK can also surface a
     // late error as an in-stream "error" part — rewrite those too.
     const stream = result.stream.pipeThrough(
@@ -150,6 +221,11 @@ function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
         transform(chunk, controller) {
           if (chunk?.type === "error") {
             controller.enqueue({ ...chunk, error: mapThrown(chunk.error) })
+            return
+          }
+          if (chunk?.type === "finish") {
+            const providerMetadata = withQuota(chunk.providerMetadata, quota)
+            controller.enqueue(providerMetadata === chunk.providerMetadata ? chunk : { ...chunk, providerMetadata })
             return
           }
           controller.enqueue(chunk)
@@ -192,11 +268,14 @@ export function createClickzetta(options: ClickzettaProviderSettings): OpenAICom
     baseURL: normalizeClickzettaGatewayUrl(options.baseURL),
   })
 
-  const languageModel = (modelId: string): LanguageModelV3 => wrapModel(base.languageModel(modelId), modelId)
+  // Recorded against the normalized URL so a reader that resolved the same endpoint
+  // from llm.json's raw form lands on the same cache key.
+  const target = options.apiKey ? { baseURL: normalizeClickzettaGatewayUrl(options.baseURL), apiKey: options.apiKey } : undefined
+  const languageModel = (modelId: string): LanguageModelV3 => wrapModel(base.languageModel(modelId), modelId, target)
 
   const provider = ((modelId: string) => languageModel(modelId)) as OpenAICompatibleProvider
   provider.languageModel = languageModel
-  provider.chatModel = (modelId: string) => wrapModel(base.chatModel(modelId), modelId)
+  provider.chatModel = (modelId: string) => wrapModel(base.chatModel(modelId), modelId, target)
   provider.completionModel = base.completionModel.bind(base)
   provider.embeddingModel = base.embeddingModel.bind(base)
   provider.textEmbeddingModel = base.textEmbeddingModel.bind(base)
@@ -206,6 +285,18 @@ export function createClickzetta(options: ClickzettaProviderSettings): OpenAICom
 
 export { createClickzetta as createOpenAICompatible }
 export { normalizeClickzettaGatewayUrl } from "./url"
+export {
+  parseClickzettaQuota,
+  formatClickzettaQuota,
+  type ClickzettaQuota,
+  type ClickzettaQuotaPeriod,
+} from "./quota"
+export {
+  gatewayQuotaCacheKey,
+  readGatewayQuota,
+  recordGatewayQuota,
+  type GatewayQuotaEntry,
+} from "./quota-store"
 export {
   rewriteClickzettaGatewayError,
   clickzettaGatewayCode,

@@ -1,14 +1,22 @@
 // cz_change: data source for the TUI quota indicator (see tui-quota.tsx).
 //
-// Two portal endpoints, both authenticated with the profile's portal token:
-//   - cash balance: /clickzetta-portal/hornhub/account/billing/account/{accountId}
-//   - token quota:  /clickzetta-portal/user/listApiKeys?userName=<name>
+// Two halves, from two places, on two cadences:
 //
-// The quota half MUST come from the portal route, not the gateway-admin route
-// (/llm-gateway-admin/v2/virtual-key/listWithAuth) that `cz-cli ai-gateway key
-// list` uses: the complimentary `cz-code_auto_*` key — the one a fresh login
-// actually writes into llm.json — is absent from the admin listing but present
-// here. Querying the admin route would report "no key" for most users.
+//   - cash balance, from the portal:
+//     /clickzetta-portal/hornhub/account/billing/account/{accountId}, authenticated
+//     with the current profile's portal token. Money moves slowly, so this is read
+//     on the busy -> idle edge of a turn.
+//   - token quota, from the AI gateway's own response headers, cached by the
+//     provider into ~/.clickzetta/gateway-quota.json (see quota-store.ts in
+//     @clickzetta/ai-gateway). Read synchronously, once per LLM request.
+//
+// The quota half used to be a second portal call, /clickzetta-portal/user/listApiKeys.
+// It was retired because the header source is strictly better for this display: it
+// needs no portal token and no ownership of the key, it reports EVERY configured
+// period rather than one, and it is current as of the request that just finished
+// instead of whenever the last poll landed. The one thing it cannot do is answer for
+// a gateway that does not send the headers (cn-shanghai-alicloud, as of 2026-09-01),
+// where the token rows are simply absent and the balance row still paints.
 //
 // Lives in a plain .ts module (no JSX, no @opentui, no solid-js) for two reasons:
 // it stays unit-testable under `bun test`, and it can be pre-bundled into a
@@ -23,10 +31,16 @@ import { resolveConnectionConfig } from "../connection/config.js"
 import * as Profile from "../connection/profile-context.js"
 import { deriveAuthType, explicitAuthType, loadProfiles } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
+// Re-exported, not redefined: tui-quota-runtime.ts publishes these to the .tsx renderer,
+// and commands/ai-gateway.ts needs the same answer — see llm/clickzetta-entry.ts.
+import { classifyClickzettaEntry, resolveClickzettaEntry } from "../llm/clickzetta-entry.js"
+export { classifyClickzettaEntry, resolveClickzettaEntry } from "../llm/clickzetta-entry.js"
+export type { ClickzettaEntryResolution } from "../llm/clickzetta-entry.js"
+import { readGatewayQuota, type ClickzettaQuota, type ClickzettaQuotaPeriod } from "../llm/gateway-error.js"
+import { CLICKZETTA_DEFAULT_GATEWAY_URL, normalizeClickzettaGatewayUrl } from "../llm/clickzetta-provider.js"
 import { profileTokenSource } from "../connection/token-source.js"
 
 const BILLING_PATH = "/clickzetta-portal/hornhub/account/billing/account"
-const API_KEYS_PATH = "/clickzetta-portal/user/listApiKeys"
 const CURRENT_USER_PATH = "/clickzetta-portal/user/getCurrentUser"
 
 /**
@@ -80,29 +94,19 @@ export function readRecentProviders(statePath: string): Array<{ providerID?: unk
   }
 }
 
-/** Quota window a virtual key is rate-limited on. */
-export type QuotaPeriod = "daily" | "weekly" | "monthly" | "total"
-
-const RATE_LIMIT_PERIOD: Record<string, QuotaPeriod> = {
-  quota_pdo: "daily",
-  quota_pwo: "weekly",
-  quota_pmo: "monthly",
-  quota_total: "total",
-}
+/** Quota window a virtual key is rate-limited on. The gateway's own vocabulary. */
+export type QuotaPeriod = ClickzettaQuotaPeriod
 
 export interface QuotaSnapshot {
   /** Account cash balance, in CNY. */
   cash?: number
   /** Outstanding amount owed, in CNY. Non-zero means requests are at risk. */
   owe?: number
-  /** Tokens consumed on the active virtual key within its quota window. */
-  used?: number
-  /** Token ceiling for that window. */
-  limit?: number
-  /** Which window `used`/`limit` describe. */
-  period?: QuotaPeriod
-  /** Alias of the matched virtual key, for diagnostics. */
-  alias?: string
+  /**
+   * Token allowance per configured period, newest reading from the gateway's
+   * response headers. A key with both a lifetime and a daily cap reports both.
+   */
+  quotas?: ClickzettaQuota[]
 }
 
 /**
@@ -313,132 +317,81 @@ export function isPortalOk(code: unknown): boolean {
   return code === 0 || code === "0" || code === 200 || code === "200"
 }
 
-/**
- * Mask an API key the way the portal reports it: first four and last four
- * characters around a literal `****`. Keys are 32 chars, so this is stable —
- * and it means we never send or log the plaintext key to match on.
- */
-export function maskApiKey(apiKey: string): string | undefined {
-  if (apiKey.length < 8) return undefined
-  return `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}`
-}
 
 /**
- * Pick the virtual key matching `apiKey` out of a listApiKeys payload and
- * project the fields the indicator needs.
+ * The token quota the gateway last reported for the selected entry's key.
  *
- * Exported for tests: the shape here (`vapiKeyMasked` / `rateLimitValue` /
- * `usage`, lowercase-a spelling) is the portal's, and differs from the
- * gateway-admin route's `vApiKeyMasked`, so both spellings are accepted.
+ * Synchronous and local — no network, no portal token — so the caller can run it on
+ * every `step-finish` part, i.e. once per LLM request, which is the whole point of
+ * sourcing this from headers instead of a poll.
+ *
+ * `undefined` covers every "nothing to show" case alike: a foreign provider, a
+ * ClickZetta entry with no key or no base_url, a gateway that sends no quota headers,
+ * and a reading left over from an earlier session. Callers keep whatever they had.
  */
-export function matchKeyUsage(
-  payload: unknown,
-  apiKey: string,
-): Pick<QuotaSnapshot, "used" | "limit" | "period" | "alias"> {
-  const masked = maskApiKey(apiKey)
-  if (!masked || !isRecord(payload) || !Array.isArray(payload.data)) return {}
-  const hit = payload.data.filter(isRecord).find((key) => (key.vapiKeyMasked ?? key.vApiKeyMasked) === masked)
-  if (!hit) return {}
-  const rateLimitType = typeof hit.rateLimitType === "string" ? hit.rateLimitType : undefined
-  const alias = hit.vapiKeyAlias ?? hit.vApiKeyAlias
-  return {
-    used: num(hit.usage),
-    limit: num(hit.rateLimitValue),
-    period: rateLimitType ? RATE_LIMIT_PERIOD[rateLimitType] : undefined,
-    alias: typeof alias === "string" ? alias : undefined,
-  }
-}
-
-/**
- * Resolve which ClickZetta LLM entry the indicator should report on.
- *
- * LLM entries and connection Profiles are independent configuration domains.
- * This resolver only selects the LLM/API key; fetchQuotaSnapshot separately uses
- * Profiles as Portal credentials and never treats the entry name as a Profile.
- *
- * Candidates, most to least specific:
- *   1. `providerID` — what the TUI currently has selected, when known.
- *   2. `config.model`'s provider prefix — set by `cz-cli agent llm use`. Often
- *      absent: with no pinned model the TUI auto-selects, so this cannot be the
- *      only source or the indicator stays blank for everyone who never ran `use`.
- *   3. The sole ClickZetta entry, if there is exactly one. Unambiguous by
- *      definition; skipped when several exist rather than guessing a tenant.
- *
- * Returns undefined when nothing resolves to a ClickZetta entry (the user is on
- * anthropic/openai/…), which is the signal to render nothing at all.
- */
-export function resolveClickzettaEntry(providerID?: string): { name: string; apiKey: string } | undefined {
+export function readHeaderQuota(providerID?: string, now = Date.now()): ClickzettaQuota[] | undefined {
   const resolved = classifyClickzettaEntry(providerID)
-  return resolved.kind === "clickzetta" ? { name: resolved.name, apiKey: resolved.apiKey } : undefined
+  if (resolved.kind !== "clickzetta") return undefined
+  // The SAME default the writer applies. providerFromInput (native-config.ts) fills an
+  // absent baseURL with CLICKZETTA_DEFAULT_GATEWAY_URL, so a hand-written llm.json entry
+  // with no base_url still chats — and the provider still files a real reading, under the
+  // default endpoint's key. Bailing out here on a missing base_url meant the sidebar could
+  // never find that reading and the token rows stayed blank with nothing to explain why.
+  const baseUrl = resolved.baseUrl ?? CLICKZETTA_DEFAULT_GATEWAY_URL
+  // Freshness is decided here, in full: the store hands back whatever it has plus the
+  // timestamp, and one `now` governs both rules below, which also lets a test pin it.
+  const entry = readGatewayQuota({
+    baseURL: normalizeClickzettaGatewayUrl(baseUrl),
+    apiKey: resolved.apiKey,
+  })
+  if (!entry || now - entry.updated_at > HEADER_QUOTA_MAX_AGE_MS) return undefined
+  const fresh = entry.quotas.filter((quota) => !periodResetSince(quota.period, entry.updated_at, now))
+  return fresh.length > 0 ? fresh : undefined
 }
 
 /**
- * Why this is a three-way answer and not `entry | undefined`.
+ * Has this period's counter reset since the reading was taken?
  *
- * Cash balance belongs to the connection Profile; token quota belongs to the LLM
- * key. Collapsing "not a ClickZetta key" with "user is on another provider" into
- * one `undefined` made fetchQuotaSnapshot bail before it read profiles at all, so
- * ANY failure to pin an LLM entry also silently removed the cash balance — a
- * reading that never depended on the LLM entry in the first place.
+ * Only `daily` can be answered. A fixed duration cannot express this — ANY window
+ * shorter than a day still straddles a reset, so a 23:00 reading shown at 04:00 would
+ * report yesterday's near-exhausted spend against today's fresh limit. That is the
+ * worst direction to be wrong in: it tells a user with a full day's allowance that they
+ * are out.
  *
- *   - `clickzetta` — a specific ClickZetta key. Report balance and quota.
- *   - `foreign`    — the session is demonstrably on a non-ClickZetta provider
- *                    (anthropic/openai/…), or there is no ClickZetta entry at all.
- *                    Report nothing; a ¥ figure next to a Claude model would name
- *                    money that model is not spending. This is the case the
- *                    original `undefined` was meant for.
- *   - `ambiguous`  — this IS a ClickZetta user, but which key is in play cannot be
- *                    pinned (several entries, none selected or pinned; or the
- *                    matched entry carries no api_key). Report the balance, skip
- *                    the quota — guessing a tenant's key would misreport usage.
+ * The gateway does not say which zone its day rolls over in, so both are treated as
+ * boundaries: a different calendar date in EITHER local or UTC time counts as reset.
+ * Deliberately conservative — dropping a still-valid reading costs one blank paint
+ * until the next request refreshes it, while keeping a reset one misinforms.
+ *
+ * `weekly`/`monthly` are left to the duration bound: their boundaries are the gateway's
+ * own (and a week's start is a convention), so a guess here could discard good readings
+ * for days. `total` never resets.
  */
-export type ClickzettaEntryResolution =
-  | { kind: "clickzetta"; name: string; apiKey: string }
-  | { kind: "foreign" }
-  | { kind: "ambiguous" }
-
-export function classifyClickzettaEntry(providerID?: string): ClickzettaEntryResolution {
-  const { llm, model } = readLlmEntries()
-  const isClickzetta = (name: string | undefined) => (name ? llm[name]?.provider === "clickzetta" : false)
-  const usable = (name: string | undefined): ClickzettaEntryResolution | undefined => {
-    if (!name) return undefined
-    const entry = llm[name]
-    if (entry?.provider !== "clickzetta") return undefined
-    // A ClickZetta entry with no key is still a ClickZetta user — quota is
-    // unknowable, the balance is not.
-    if (!entry.api_key) return { kind: "ambiguous" }
-    return { kind: "clickzetta", name, apiKey: entry.api_key }
-  }
-
-  const selected = usable(providerID)
-  if (selected) return selected
-
-  // An explicit selection that is not a ClickZetta entry ends the search: the
-  // provider may come from environment/plugin discovery and need not appear in
-  // llm.json, and falling through would report the sole ClickZetta key while the
-  // prompt visibly names a different provider.
-  if (providerID) return { kind: "foreign" }
-
-  const configured = typeof model === "string" && model.includes("/") ? model.slice(0, model.indexOf("/")) : undefined
-  const inferred = usable(configured)
-  if (inferred) return inferred
-
-  const clickzetta = Object.entries(llm).filter(([, entry]) => entry.provider === "clickzetta" && entry.api_key)
-  if (clickzetta.length === 1) {
-    const [name, entry] = clickzetta[0]!
-    return { kind: "clickzetta", name, apiKey: entry.api_key! }
-  }
-  // Several ClickZetta entries and nothing to choose between them is ambiguous,
-  // not foreign — as is a pinned model naming a ClickZetta entry we could not use.
-  if (clickzetta.length > 1 || isClickzetta(configured)) return { kind: "ambiguous" }
-  return { kind: "foreign" }
+function periodResetSince(period: QuotaPeriod | undefined, readAt: number, now: number): boolean {
+  if (period !== "daily") return false
+  const then = new Date(readAt)
+  const current = new Date(now)
+  return (
+    then.toDateString() !== current.toDateString() ||
+    then.toISOString().slice(0, 10) !== current.toISOString().slice(0, 10)
+  )
 }
+
+/**
+ * Upper bound on how old a cached reading may be, whatever its period.
+ *
+ * Long enough that a session sitting idle keeps showing the figure from its last
+ * request. It does NOT by itself keep yesterday's daily figure off today's screen —
+ * no fixed duration can, since any window under a day still straddles a reset. That
+ * job belongs to periodResetSince above; this is only the coarse ceiling.
+ */
+const HEADER_QUOTA_MAX_AGE_MS = 6 * 60 * 60 * 1000
 
 // The portal is method-sensitive per endpoint, and gets them backwards from what
 // the URLs suggest: `getCurrentUser` only answers to POST (GET returns error
-// code 8888), while `listApiKeys` and the billing account route only answer to
-// GET (POST returns 8888). Callers pass the method each endpoint actually wants;
-// the default stays GET so the two read routes need no change.
+// code 8888), while the billing account route only answers to GET (POST returns
+// 8888). Callers pass the method each endpoint actually wants; the default stays
+// GET so the billing read needs no change.
 async function portalCall(
   baseUrl: string,
   path: string,
@@ -508,10 +461,10 @@ export function centralPortalHost(baseUrl: string): string | undefined {
  * busy→idle edge — once per agent turn — so without this a session on such a
  * profile pays double the portal requests for as long as it runs, not once
  * while the fallback is discovered. Keyed per-route rather than per-host
- * because the three routes this module reads (billing, listApiKeys,
- * getCurrentUser) are independent endpoints — a region host observed to fail
- * one is not proof it fails the other two, and a coarser host-wide key would
- * stop asking a route that host actually serves.
+ * because the two routes this module reads (billing, getCurrentUser) are
+ * independent endpoints — a region host observed to fail one is not proof it
+ * fails the other, and a coarser host-wide key would stop asking a route that
+ * host actually serves.
  *
  * Promotion requires TWO CONSECUTIVE proven business-code failures on that
  * route, never a bare transport/auth error. One such response is not enough:
@@ -598,16 +551,20 @@ async function portalRead(
 }
 
 /**
- * Fetch balance + quota for the given provider selection without coupling the
- * selected LLM entry to a same-named connection Profile.
+ * Fetch the account cash balance for the current connection Profile.
  *
- * Cash belongs to the current CLI Profile. Token quota belongs to the selected
- * LLM/API key; Profiles are only credentials for querying Portal, so all locally
- * available Profiles may be checked until the key is found.
+ * Only the balance: token quota comes from readHeaderQuota, off the gateway's own
+ * response headers. That split removed a whole mechanism from this function — it
+ * used to walk every locally configured Profile hunting the one whose portal knew
+ * the selected virtual key, because an LLM entry and a Profile are independent
+ * configuration domains and only some Profile's portal could answer for the key.
+ * The headers answer for the key directly, so the balance needs exactly one
+ * Profile: the current one, which is whose money it is.
  *
- * Returns undefined when the selection is not a ClickZetta entry. Throws on
- * transport/auth failure so the caller can keep showing the previous value
- * rather than replacing a good reading with an error.
+ * Returns undefined when the selection is a demonstrably foreign provider, so the
+ * whole indicator stays out of a non-ClickZetta user's sidebar. Throws on
+ * transport/auth failure so the caller can keep showing the previous value rather
+ * than replacing a good reading with an error.
  *
  * Token handling goes through the SDK's `getToken`, which owns cache/expiry/
  * refresh/persist. Reading `access_token` out of profiles.toml directly would
@@ -620,63 +577,31 @@ export async function fetchQuotaSnapshot(
   } = {},
 ): Promise<QuotaSnapshot | undefined> {
   // cz_change: only a demonstrably foreign provider suppresses the whole
-  // indicator. "Could not pin a ClickZetta key" used to take this same exit,
-  // which silently removed the cash balance too — see classifyClickzettaEntry.
-  const resolved = classifyClickzettaEntry(input.providerID)
-  if (resolved.kind === "foreign") return undefined
-  const entry = resolved.kind === "clickzetta" ? resolved : undefined
+  // indicator. "Could not pin a ClickZetta key" must not take this exit — that
+  // would silently remove the cash balance too, which does not depend on the key.
+  if (classifyClickzettaEntry(input.providerID).kind === "foreign") return undefined
 
   const profiles = loadProfiles()
   const current = Profile.current()
-  const ordered =
-    current && profiles[current]
-      ? [current, ...Object.keys(profiles).filter((name) => name !== current)]
-      : Object.keys(profiles)
-  // Scanning past the current profile only ever serves the quota read (hunting the
-  // profile whose portal knows this key). With no key there is nothing to hunt, and
-  // continuing would be actively harmful: a later profile returns an empty-but-
-  // successful snapshot, which lands in `loaded` and swallows the current profile's
-  // real error — turning "the balance read failed" into a silent blank that the
-  // caller cannot distinguish from "nothing to show".
-  const names = entry ? ordered : ordered.slice(0, 1)
-  if (names.length === 0) return {}
+  // Same policy as readProfileInfo, and for the same reason: substitute the first
+  // TOML profile ONLY when nothing is pinned (genuinely unconfigured). A `current`
+  // that names a profile absent from the file — stale CZ_PROFILE, or a
+  // default_profile pointing at a deleted profile — must report no balance rather
+  // than silently bill a DIFFERENT tenant's account to the user. The pre-header
+  // version of this function got that right by a different route (it gated the
+  // billing read on `name === current` in two places); collapsing the profile walk
+  // dropped both gates, so it is spelled out here.
+  const name = current === undefined ? Object.keys(profiles)[0] : profiles[current] ? current : undefined
+  if (!name) return {}
 
-  const loaded: Array<{ name: string; billing: Pick<QuotaSnapshot, "cash" | "owe">; usage: Pick<QuotaSnapshot, "used" | "limit" | "period" | "alias"> }> = []
-  const errors: unknown[] = []
-  for (const name of names) {
-    try {
-      const snapshot = await fetchProfileSnapshot({
-        name,
-        profile: profiles[name]!,
-        // No pinned key: skip the quota read entirely rather than scan profiles
-        // for a key we cannot name. The balance below still resolves.
-        apiKey: entry?.apiKey,
-        includeBilling: name === current,
-        signal: input.signal,
-      })
-      loaded.push({ name, ...snapshot })
-      if (Object.keys(snapshot.usage).length > 0) break
-    } catch (error) {
-      if (input.signal?.aborted) throw error
-      errors.push(error)
-    }
-  }
-  if (loaded.length === 0) throw errors[0]
-
-  return {
-    ...(loaded.find((item) => item.name === current)?.billing ?? {}),
-    ...(loaded.map((item) => item.usage).find((usage) => Object.keys(usage).length > 0) ?? {}),
-  }
+  return fetchProfileSnapshot({ name, profile: profiles[name]!, signal: input.signal })
 }
 
 async function fetchProfileSnapshot(input: {
   name: string
   profile: Record<string, unknown>
-  /** Undefined when no ClickZetta key could be pinned — billing still applies. */
-  apiKey?: string
-  includeBilling: boolean
   signal?: AbortSignal
-}) {
+}): Promise<QuotaSnapshot> {
   const config = resolveConnectionConfig({
     profile: input.name,
     ...(typeof input.profile.service === "string" ? { service: input.profile.service } : {}),
@@ -685,53 +610,24 @@ async function fetchProfileSnapshot(input: {
       : {}),
     ...(typeof input.profile.instance === "string" ? { instance: input.profile.instance } : {}),
   })
-  const credential = await profileTokenSource(config).get()
-  const baseUrl = toServiceUrl(config.service, config.protocol)
   const accountId = num(input.profile.account_id)
-  const profileUserName = typeof input.profile.username === "string" ? input.profile.username.trim() : ""
-  const [billing, keys] = await Promise.allSettled([
-    !input.includeBilling
-      ? Promise.resolve(undefined)
-      : accountId === undefined
-        ? Promise.reject(new Error("profile has no account_id"))
-        : portalRead(baseUrl, `${BILLING_PATH}/${accountId}`, credential.token, { signal: input.signal }),
-    (async () => {
-      // No key to match against — skip the read rather than spend two portal
-      // round-trips on a result nothing can consume.
-      if (!input.apiKey) return undefined
-      // getCurrentUser is a POST route (see portalCall). Resolving the user name
-      // lets us pass it through, but listApiKeys ignores the userName value and
-      // scopes to the token identity regardless, so a failed/empty lookup still
-      // returns the caller's keys — fall back to an empty name rather than bail.
-      const userName = profileUserName || (await readCurrentUserName(baseUrl, credential.token, input.signal)) || ""
-      return portalRead(baseUrl, `${API_KEYS_PATH}?userName=${encodeURIComponent(userName)}`, credential.token, {
-        signal: input.signal,
-      })
-    })(),
-  ])
-  // Surface a failure only when nothing usable came back. With no api_key the
-  // quota half resolves to undefined rather than rejecting, so this reduces to
-  // "the billing read failed", which the caller reports by keeping the last value.
-  if (keys.status === "rejected" && (!input.includeBilling || billing.status === "rejected")) throw keys.reason
-  if (!input.apiKey && input.includeBilling && billing.status === "rejected") throw billing.reason
-
-  const billingData =
-    billing.status === "fulfilled" &&
-    isRecord(billing.value) &&
-    isPortalOk(billing.value.code) &&
-    isRecord(billing.value.data)
-      ? billing.value.data
-      : undefined
-  const cash = num(billingData?.cashAmount)
-  const owe = num(billingData?.oweAmount)
+  // No account_id means the profile cannot name whose balance to read. Report
+  // nothing rather than throwing: the caller treats a rejection as "keep the last
+  // good value", which for a profile that can never answer would pin a stale
+  // balance from a different account forever.
+  if (accountId === undefined) return {}
+  const credential = await profileTokenSource(config).get()
+  const payload = await portalRead(
+    toServiceUrl(config.service, config.protocol),
+    `${BILLING_PATH}/${accountId}`,
+    credential.token,
+    { signal: input.signal },
+  )
+  const data = isRecord(payload) && isPortalOk(payload.code) && isRecord(payload.data) ? payload.data : undefined
+  const cash = num(data?.cashAmount)
+  const owe = num(data?.oweAmount)
   return {
-    billing: {
-      ...(cash !== undefined ? { cash } : {}),
-      ...(owe !== undefined ? { owe } : {}),
-    },
-    usage:
-      input.apiKey && keys.status === "fulfilled" && isRecord(keys.value) && isPortalOk(keys.value.code)
-        ? matchKeyUsage(keys.value, input.apiKey)
-        : {},
+    ...(cash !== undefined ? { cash } : {}),
+    ...(owe !== undefined ? { owe } : {}),
   }
 }
