@@ -14,7 +14,7 @@
  *   - pruneOrphanOAuthSections sweeps sections no profile references
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, readFileSync } from "node:fs"
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AuthToken } from "@clickzetta/sdk"
@@ -45,12 +45,16 @@ const readProfiles = () => readFileSync(profilesPath(), "utf-8")
 const oauthIds = () =>
   Array.from(readProfiles().matchAll(/^\[oauth\.([^\]]+)\]/gm)).map((m) => m[1]!)
 
+/**
+ * No instanceId. It is a property of the CONNECTION, not the credential — a shared
+ * `[oauth.<id>]` cannot hold one id for profiles on different instances — so it is neither
+ * written nor read here any more. See ConnectionConfig.instanceId.
+ */
 const TOKEN: AuthToken = {
   token: "access-abc",
   refreshToken: "refresh-xyz",
   expireTimeMs: 3_600_000,
   obtainedAt: 1_700_000_000_000,
-  instanceId: 42,
   userId: 7,
 }
 
@@ -204,5 +208,50 @@ describe("pruneOrphanOAuthSections", () => {
     pruneOrphanOAuthSections()
 
     expect(readProfiles()).toBe(before)
+  })
+})
+
+/**
+ * The instance id moving off the credential has to be safe in BOTH directions on one
+ * disk: a section written by an older version still carries `instance_id`, and a reader
+ * that demanded it — as this one used to — would have judged every newly written section
+ * invalid and silently signed the user out.
+ */
+describe("[oauth.*] and the instance id", () => {
+  test("a section written now carries no instance_id, even from a token that has one", () => {
+    saveProfiles({ robert_0: { instance: "i", service: "s" } })
+    // A standalone SDK login still puts an id on the token (the login response is its only
+    // source), so the token being SAVED is the one shape that can regress this. Asserting
+    // with a token that has no instanceId proves nothing: the write would serialize
+    // `undefined` and TOML would drop the key either way.
+    makeProfileTokenStore("robert_0", "robert").save({ ...TOKEN, instanceId: 271502 })
+    expect(readProfiles()).not.toContain("instance_id")
+    expect(readProfiles()).not.toContain("271502")
+    // Everything else still round-trips — and the id does not come back.
+    expect(makeProfileTokenStore("robert_0").load()).toEqual(TOKEN)
+  })
+
+  test("a section written by an older version still loads, its instance_id ignored", () => {
+    saveProfiles({ robert_0: { instance: "i", service: "s", oauth: "robert" } })
+    // Exactly what the buggy version wrote: the shared section carrying one instance id.
+    writeFileSync(
+      profilesPath(),
+      [
+        readProfiles().trimEnd(),
+        "",
+        "[oauth.robert]",
+        `access_token = "${TOKEN.token}"`,
+        `refresh_token = "${TOKEN.refreshToken}"`,
+        `expire_time_ms = ${TOKEN.expireTimeMs}`,
+        `obtained_at = ${TOKEN.obtainedAt}`,
+        "instance_id = 271502",
+        `user_id = ${TOKEN.userId}`,
+        "",
+      ].join("\n"),
+      "utf-8",
+    )
+    const loaded = makeProfileTokenStore("robert_0").load()
+    expect(loaded).toEqual(TOKEN)
+    expect(loaded && "instanceId" in loaded).toBe(false)
   })
 })

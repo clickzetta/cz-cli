@@ -591,6 +591,9 @@ export function provisionProfilesFromOAuthCombos(
         service: combo.service,
         protocol,
         instance: combo.instance,
+        // The enumeration already carries it (oauth-enumerate.ts), so a login never needs
+        // the name→id lookup getExecContext does for older profiles.
+        instanceId: combo.instanceId,
         workspace: combo.workspace,
         userId: token.userId || undefined,
         accountId: userInfo?.accountId,
@@ -624,6 +627,7 @@ export function provisionProfilesFromOAuthCombos(
       service: combo.service,
       protocol,
       instance: combo.instance,
+      instanceId: combo.instanceId,
       workspace: combo.workspace,
       userId: token.userId || undefined,
       accountId: userInfo?.accountId,

@@ -355,6 +355,7 @@ function renderShellPlatformCase(platforms) {
       ARCHIVE_NAME=${shellQuote(info.archive)}
       ARCHIVE_FORMAT=${shellQuote(info.format)}
       ARCHIVE_CHECKSUM=${shellQuote(info.checksum)}
+      DEFAULT_BINARY_NAME=${shellQuote(info.binary ?? platformBinary(platform))}
       ;;`,
     )
     .join("\n")
@@ -404,15 +405,22 @@ extract_zip() {
   if tar -xf "$1" -C "$2" 2>/dev/null; then
     return
   fi
-  if command -v powershell > /dev/null 2>&1 && command -v cygpath > /dev/null 2>&1; then
+  # \`powershell\` is the 5.1 stub; PowerShell 7 installs as \`pwsh\` and provides NO
+  # \`powershell\` alias, so probing only the old name made a pwsh-only host fall through to
+  # the error below even though Expand-Archive was right there.
+  PS_EXE=""
+  for candidate in powershell pwsh; do
+    if command -v "$candidate" > /dev/null 2>&1; then PS_EXE="$candidate"; break; fi
+  done
+  if [ -n "$PS_EXE" ] && command -v cygpath > /dev/null 2>&1; then
     # Both paths come from mktemp, which honours \$TMPDIR — so they are environment-supplied,
     # and a \`'\` in one would close the PowerShell single-quoted string early and let the
     # rest parse as commands. PowerShell escapes a literal quote by doubling it.
     PS_SRC=$(cygpath -w "$1" | sed "s/'/''/g")
     PS_DST=$(cygpath -w "$2" | sed "s/'/''/g")
-    powershell -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '$PS_SRC' -DestinationPath '$PS_DST' -Force" && return
+    "$PS_EXE" -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '$PS_SRC' -DestinationPath '$PS_DST' -Force" && return
   fi
-  print_error "extracting $1 needs one of: unzip, a tar that reads zip (Windows 10+ tar.exe), or powershell"
+  print_error "extracting $1 needs one of: unzip, a tar that reads zip (Windows 10+ tar.exe), or powershell/pwsh"
   exit 1
 }
 
@@ -551,10 +559,9 @@ ${renderShellPlatformCase(platforms)}
   #
   # Keyed off $PLATFORM, not $OS: platform() runs inside a command substitution, so the
   # OS it assigns lives and dies in that subshell and reads empty here.
-  case "$PLATFORM" in
-    win32-*) DEFAULT_BINARY_NAME="cz-cli.exe" ;;
-    *) DEFAULT_BINARY_NAME="cz-cli" ;;
-  esac
+  # DEFAULT_BINARY_NAME comes from the per-platform case above, which the generator writes
+  # from platformBinary() — the same function that decided what to put IN the archive. A
+  # second copy of the win32→.exe rule in shell could disagree with it.
   # \${BINARY_NAME:-…}: setup.sh reads BINARY_NAME as an override, so an environment that
   # already set it keeps winning. For every POSIX platform the default below is the same
   # name setup.sh would have chosen on its own, which makes this line a no-op there.
