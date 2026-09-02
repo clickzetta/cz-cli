@@ -319,7 +319,7 @@ async function loginByInstance(
     token: jwt,
     userId,
     tenantId,
-    instanceId: loginData.instanceId,
+    instanceId: loginData.instanceId ?? 0,
     username: userName,
     accountDisplayName: info.accountDisplayName,
     serviceUrl: baseUrl,

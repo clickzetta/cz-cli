@@ -256,7 +256,10 @@ export function anonymous(): TokenSource {
 }
 
 function toCredential(token: AuthToken): Credential {
-  return { token: token.token, instanceId: token.instanceId, userId: token.userId }
+  // 0 when the token carries none: the connection is the authoritative source now (see
+  // ConnectionConfig.instanceId), and a Credential's copy is only a convenience for the
+  // standalone-SDK login path that still has one.
+  return { token: token.token, instanceId: token.instanceId ?? 0, userId: token.userId }
 }
 
 export function clearTokenCache(): void {

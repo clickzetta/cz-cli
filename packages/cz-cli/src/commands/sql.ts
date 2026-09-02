@@ -5,7 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
+import { type ExecContext, classifyExecError, execInstanceId, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
 import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
@@ -562,7 +562,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     const jobId: JobID = {
       id: argv["job-profile"],
       workspace: ctx.config.workspace,
-      instanceId: ctx.token.instanceId,
+      instanceId: execInstanceId(ctx),
     }
     const body = {
       get_result_request: {
@@ -677,10 +677,15 @@ async function handler(argv: SqlArgs): Promise<void> {
           }
         } else if (i < statements.length - 1) {
           // Non-batch: silently execute intermediate statements
+          const started = Date.now()
           const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
           if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-            logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
-            error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format, ...(r.jobId ? { extra: { job_id: r.jobId } } : {}) })
+            // Through the shared helper, like every other failure path. Adding job_id
+            // inline here is what the single-statement branch used to do, and folding that
+            // one in is the reason this file has one failure reporter: an inline copy gets
+            // job_id but not the schema hint, the ai_message or the timing, so the two
+            // paths drift apart again the moment either gains something.
+            await handleFailure(r, stmt, ctx, format, started, argv.profile)
             return
           }
         } else {
@@ -716,7 +721,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               const jobId: JobID = {
                 id: argv["job-id"] as string,
                 workspace: ctx.config.workspace,
-                instanceId: ctx.token.instanceId,
+                instanceId: execInstanceId(ctx),
               }
               const body = {
                 get_result_request: {

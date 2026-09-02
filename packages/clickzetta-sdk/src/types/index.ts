@@ -5,6 +5,23 @@ export interface ConnectionConfig {
   service: string
   protocol: string
   instance: string
+  /**
+   * Numeric id of {@link instance}, which is what the wire actually carries (every
+   * JobID is built from it).
+   *
+   * It belongs HERE, on the connection, and not on the credential. It used to live on
+   * AuthToken, where it was wrong twice over: an OAuth token is deliberately SHARED by
+   * every profile one login can reach — `[oauth.<id>]` in profiles.toml, many profiles
+   * pointing at it — so one token carried one id for profiles on different instances in
+   * different regions; and the value it carried came from userinfo's "default" instance,
+   * which is not necessarily the Lakehouse one the profile names. Measured on a real
+   * profiles.toml: a token holding 160812 (`serviceId` 2) while its profile named the
+   * instance whose id is 160813 (`serviceId` 1).
+   *
+   * Optional because a profile written before this existed has no `instance_id`; cz-cli
+   * resolves it by name on first use and writes it back (see getExecContext).
+   */
+  instanceId?: number
   workspace: string
   schema: string
   vcluster: string
@@ -49,7 +66,19 @@ export const DEFAULT_CONNECTION: ConnectionConfig = {
 
 export interface AuthToken {
   token: string
-  instanceId: number
+  /**
+   * NOT a source of truth for a profile-backed connection — use
+   * {@link ConnectionConfig.instanceId}.
+   *
+   * It survives only for a standalone SDK login, where the portal's login response is the
+   * only place an instance id comes from. cz-cli never reads it: an OAuth token is SHARED
+   * by every profile one login reaches (`[oauth.<id>]` in profiles.toml), so a single id
+   * here is wrong for every profile but one, and the value the portal puts here is its
+   * "default" instance, which need not be the Lakehouse instance the profile names. It is
+   * no longer persisted; sections written by older versions still carry one and it is
+   * ignored on read.
+   */
+  instanceId?: number
   userId: number
   expireTimeMs: number
   obtainedAt: number

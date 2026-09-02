@@ -225,8 +225,12 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     // One step-finish part per LLM request, which is exactly when the gateway has
     // reported a new quota — and the only response-adjacent signal a TUI plugin can
     // observe (the plugin API exposes no response hook, and opencode's processor
-    // drops the finish metadata). Reading the cache here is local and synchronous,
-    // so it costs nothing to do per request instead of per turn.
+    // drops the finish metadata). The read is local and synchronous, but not free: it parses
+    // llm.json to resolve the entry and then gateway-quota.json, so two file reads per LLM
+    // request on the TUI's own thread. Cheap enough for once-per-request, and deliberately
+    // NOT session-scoped like its two siblings above: readHeaderQuota keys on the ACTIVE
+    // provider, so a step-finish from another session costs this read and cannot produce
+    // wrong data. Scoping it would trade that cost for a way to miss a refresh.
     api.event.on("message.part.updated", (event) => {
       if (event.properties.part?.type !== "step-finish") return
       refreshHeaderQuota()

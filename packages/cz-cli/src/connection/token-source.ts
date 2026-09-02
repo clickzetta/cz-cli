@@ -35,7 +35,7 @@ export function profileTokenSource(config: ConnectionConfig): TokenSource {
         token
           ? {
               token: token.token,
-              instanceId: token.instanceId,
+              instanceId: token.instanceId ?? 0,
               userId: token.userId,
               // The Cookie travels WITH the credential: a session credential is
               // only accepted alongside it, and the transport merges these.
