@@ -203,7 +203,14 @@ export const agentGatewayHelpCases: HelpCase[] = [
   {
     args: ["ai-gateway", "--help"],
     expectHeader: "cz-cli ai-gateway",
-    expectCommands: ["key", "model"],
+    expectCommands: ["quota", "key", "model"],
+  },
+  {
+    args: ["ai-gateway", "quota", "--help"],
+    expectHeader: "cz-cli ai-gateway quota",
+    expectOptions: ["--model"],
+    // Prose from the epilogue, not a subcommand — `quota` has none.
+    expectText: ["x-czgw-ratelimit-api-key-token-*"],
   },
   {
     args: ["ai-gateway", "key", "--help"],

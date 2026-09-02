@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { onFetch, onPath } from "./support/fetch-boundary"
 import { requireTestHome } from "./support/cz-fixtures"
 import { clearTokenCache } from "@clickzetta/sdk"
 import { setActiveModel, writeLlmEntries } from "../src/llm/native-config"
+import { CLICKZETTA_DEFAULT_GATEWAY_URL } from "../src/llm/clickzetta-provider"
+import { gatewayQuotaCacheKey, recordGatewayQuota, type ClickzettaQuota } from "../src/llm/gateway-error"
 import {
   centralPortalHost,
   clearUnservedHostForTest,
@@ -12,8 +14,7 @@ import {
   fetchProfileUserName,
   fetchQuotaSnapshot,
   isPortalOk,
-  maskApiKey,
-  matchKeyUsage,
+  readHeaderQuota,
   readProfileInfo,
   readRecentProviders,
   resolveClickzettaEntry,
@@ -95,48 +96,9 @@ function stubPortal() {
           data: { id: dev ? 4 : 2, accountId: dev ? 112407 : 228044, name: dev ? "wynptmks" : "pdiaxzjq", instanceId: 1 },
         }
       }
-      if (url.includes("/user/listApiKeys")) {
-        const userName = new URL(url).searchParams.get("userName")
-        if (userName !== (dev ? "wynptmks" : "pdiaxzjq")) throw new Error(`wrong userName ${userName}`)
-        return {
-          code,
-          data: dev
-            ? [
-                {
-                  id: 10018,
-                  status: 1,
-                  type: "free",
-                  rateLimitType: "quota_pdo",
-                  rateLimitValue: 10_000_000,
-                  usage: 0,
-                  vapiKeyAlias: "cz-code_auto_wynptmks",
-                  vapiKeyMasked: "dfce****18e4",
-                },
-              ]
-            : [
-                {
-                  id: 1256,
-                  status: 1,
-                  type: "standard",
-                  rateLimitType: "quota_total",
-                  rateLimitValue: 10_000_000,
-                  usage: 68_131,
-                  vapiKeyAlias: "my-key",
-                  vapiKeyMasked: "9367****a9cf",
-                },
-                {
-                  id: 587,
-                  status: 1,
-                  type: "free",
-                  rateLimitType: "quota_total",
-                  rateLimitValue: 10_000_000,
-                  usage: 10_082_801,
-                  vapiKeyAlias: "cz-code_auto_pdiaxzjq",
-                  vapiKeyMasked: "ff52****9bc8",
-                },
-              ],
-        }
-      }
+      // listApiKeys is deliberately NOT stubbed: the token quota now comes from the
+      // gateway's response headers, and any call to this route would be a regression
+      // back to the retired portal poll. Reaching the throw below is the assertion.
       throw new Error(`unexpected portal path ${url}`)
     },
   })
@@ -156,6 +118,9 @@ beforeEach(() => {
   clearUnservedHostForTest()
   // Same reasoning as above, for fetchProfileUserName's per-profile name cache.
   clearUserNameCacheForTest()
+  // The header-quota cache is a file under the same test home, so a reading left by
+  // one test would otherwise answer another test's "nothing recorded" case.
+  rmSync(join(requireTestHome(), ".clickzetta", "gateway-quota.json"), { force: true })
 })
 
 describe("isPortalOk", () => {
@@ -167,62 +132,6 @@ describe("isPortalOk", () => {
 
   test("rejects business error codes", () => {
     for (const code of [500, 8888, "7777", undefined, null]) expect(isPortalOk(code)).toBe(false)
-  })
-})
-
-describe("maskApiKey", () => {
-  test("produces the portal's masked form", () => {
-    expect(maskApiKey(PROD_KEY)).toBe("ff52****9bc8")
-  })
-
-  test("declines to mask a key too short to disambiguate", () => {
-    expect(maskApiKey("abc")).toBeUndefined()
-  })
-})
-
-describe("matchKeyUsage", () => {
-  const payload = {
-    code: 0,
-    data: [
-      {
-        rateLimitType: "quota_total",
-        rateLimitValue: 10_000_000,
-        usage: 68_131,
-        vapiKeyAlias: "my-key",
-        vapiKeyMasked: "9367****a9cf",
-      },
-      {
-        rateLimitType: "quota_pdo",
-        rateLimitValue: 1_000,
-        usage: 7,
-        vapiKeyAlias: "free",
-        vapiKeyMasked: "ff52****9bc8",
-      },
-    ],
-  }
-
-  test("picks the entry matching the active key, not merely the first", () => {
-    expect(matchKeyUsage(payload, PROD_KEY)).toEqual({ used: 7, limit: 1_000, period: "daily", alias: "free" })
-  })
-
-  test("returns nothing when no key matches", () => {
-    expect(matchKeyUsage(payload, "0000aaaaaaaaaaaaaaaaaaaaaaaa0000")).toEqual({})
-  })
-
-  // The gateway-admin route spells it vApiKeyMasked; accept both so a caller
-  // switching sources doesn't silently stop matching.
-  test("accepts the gateway-admin capitalisation", () => {
-    const admin = {
-      data: [
-        { rateLimitType: "quota_total", rateLimitValue: 5, usage: 1, vApiKeyAlias: "a", vApiKeyMasked: "ff52****9bc8" },
-      ],
-    }
-    expect(matchKeyUsage(admin, PROD_KEY)).toEqual({ used: 1, limit: 5, period: "total", alias: "a" })
-  })
-
-  test("tolerates a malformed payload", () => {
-    expect(matchKeyUsage(undefined, PROD_KEY)).toEqual({})
-    expect(matchKeyUsage({ code: 0, data: null }, PROD_KEY)).toEqual({})
   })
 })
 
@@ -364,35 +273,25 @@ describe("readRecentProviders", () => {
 })
 
 describe("fetchQuotaSnapshot", () => {
-  test("reports current Profile balance and the selected LLM key's usage independently", async () => {
+  test("reports the current Profile's balance", async () => {
     stubPortal()
-    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
-    expect(snapshot).toEqual({
-      cash: 0,
-      owe: 0,
-      used: 10_082_801,
-      limit: 10_000_000,
-      period: "total",
-      alias: "cz-code_auto_pdiaxzjq",
-    })
+    expect(await fetchQuotaSnapshot({ providerID: "prod_0" })).toEqual({ cash: 0, owe: 0 })
   })
 
-  test("finds an LLM key even when no same-named Profile exists", async () => {
+  /**
+   * The balance belongs to the current Profile and to nothing else. This used to walk
+   * every configured Profile hunting the portal that knew the selected virtual key —
+   * a search that existed only for the token quota, which now arrives on the
+   * gateway's own response headers. One Profile, one read.
+   */
+  test("reads only the current Profile, whatever LLM entry is selected", async () => {
     const seen = stubPortal()
-    const snapshot = await fetchQuotaSnapshot({ providerID: "cc-sh" })
+    await fetchQuotaSnapshot({ providerID: "prod_0" })
     expect(seen.some((url) => url.includes("dev-api.clickzetta.com"))).toBe(true)
-    expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com"))).toBe(true)
-    expect(snapshot).toMatchObject({ cash: 0, alias: "cz-code_auto_pdiaxzjq", used: 10_082_801 })
-  })
-
-  test("handles the dev portal's 200 success code and daily window", async () => {
-    const seen = stubPortal()
-    const snapshot = await fetchQuotaSnapshot({ providerID: "dev_0" })
-    expect(snapshot).toMatchObject({ cash: 0, used: 0, limit: 10_000_000, period: "daily" })
     expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com"))).toBe(false)
   })
 
-  test("honors CZ_PROFILE for balance without changing which LLM key is measured", async () => {
+  test("honors CZ_PROFILE for which account's balance is read", async () => {
     const previous = {
       profile: process.env.CZ_PROFILE,
       service: process.env.CZ_SERVICE,
@@ -403,10 +302,8 @@ describe("fetchQuotaSnapshot", () => {
     process.env.CZ_INSTANCE = "inst-prod"
     try {
       const seen = stubPortal()
-      const snapshot = await fetchQuotaSnapshot({ providerID: "dev_0" })
-      expect(seen.some((url) => url.includes("dev-api.clickzetta.com"))).toBe(true)
+      expect(await fetchQuotaSnapshot({ providerID: "dev_0" })).toMatchObject({ cash: 51.2772 })
       expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com"))).toBe(true)
-      expect(snapshot).toMatchObject({ cash: 51.2772, alias: "cz-code_auto_wynptmks", used: 0 })
     } finally {
       for (const [key, value] of [
         ["CZ_PROFILE", previous.profile],
@@ -416,6 +313,34 @@ describe("fetchQuotaSnapshot", () => {
         if (value === undefined) delete process.env[key]
         else process.env[key] = value
       }
+    }
+  })
+
+  /**
+   * A `current` that names a profile absent from profiles.toml — stale CZ_PROFILE, or a
+   * default_profile pointing at a deleted profile — must not fall back to whichever
+   * profile happens to be first in the file: that paints ANOTHER TENANT'S cash balance
+   * under the user's own Profile section, which readProfileInfo (same file) already
+   * refuses to do for the identity rows. No request either — there is no account to ask
+   * about.
+   */
+  test("a current profile absent from the file reports no balance, and sends no request", async () => {
+    const previous = process.env.CZ_PROFILE
+    process.env.CZ_PROFILE = "deleted_profile"
+    try {
+      const seen: string[] = []
+      onFetch({
+        match: (url) => {
+          seen.push(url)
+          return false
+        },
+        respond: () => ({}),
+      })
+      expect(await fetchQuotaSnapshot({ providerID: "prod_0" })).toEqual({})
+      expect(seen).toEqual([])
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
     }
   })
 
@@ -432,103 +357,84 @@ describe("fetchQuotaSnapshot", () => {
     expect(seen).toEqual([])
   })
 
-  // Independent reads: an account with no billing record still has a usable quota.
-  test("still reports quota when the billing read fails", async () => {
+  // A rejection is what tells the caller to keep the last good reading instead of
+  // replacing it with an empty one.
+  test("throws when the billing read fails", async () => {
     onFetch({
       match: (url) => url.includes("/hornhub/account/billing/"),
       respond: () => new Response("nope", { status: 500 }),
     })
     stubPortal()
-    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
-    expect(snapshot?.cash).toBeUndefined()
-    expect(snapshot?.used).toBe(10_082_801)
-  })
-
-  test("still reports balance when the key listing fails", async () => {
-    onFetch({
-      match: (url) => url.includes("/user/listApiKeys"),
-      respond: () => new Response("nope", { status: 500 }),
-    })
-    stubPortal()
-    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
-    expect(snapshot?.cash).toBe(0)
-    expect(snapshot?.used).toBeUndefined()
-  })
-
-  // A total outage must surface as a rejection so the caller keeps the last good
-  // reading instead of replacing it with an empty one.
-  test("throws when both reads fail", async () => {
-    onPath("/clickzetta-portal/user/loginSingle", () => ({
-      code: 0,
-      data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
-    }))
-    onFetch({
-      match: (url) => url.includes("/clickzetta-portal/"),
-      respond: () => new Response("nope", { status: 503 }),
-    })
     await expect(fetchQuotaSnapshot({ providerID: "prod_0" })).rejects.toThrow()
+  })
+
+  /**
+   * A profile with no account_id can never name whose balance to read. Resolving to
+   * nothing is right; throwing would make the caller pin the previous profile's
+   * balance — someone else's money — for the rest of the session.
+   */
+  /**
+   * Nothing pinned at all — no CZ_PROFILE, no default_profile — is the one input where the
+   * old code showed no balance: it gated billing on `name === current`, and with `current`
+   * undefined that was false for every profile. Now the first TOML profile's balance is
+   * read, which is deliberate: readProfileInfo already names that same profile as the
+   * session's identity, so a figure beside it belongs to the account being shown. Pinned
+   * here because it is the one place old and new differ.
+   */
+  test("with nothing pinned, the first profile's balance is read", async () => {
+    const previous = process.env.CZ_PROFILE
+    delete process.env.CZ_PROFILE
+    writeFileSync(
+      join(requireTestHome(), ".clickzetta", "profiles.toml"),
+      [
+        "[profiles.first]",
+        "pat = 'pat-first'",
+        "service = 'dev-api.clickzetta.com'",
+        "instance = 'i'",
+        "account_id = 112407",
+        "",
+      ].join("\n"),
+    )
+    try {
+      const seen = stubPortal()
+      expect(await fetchQuotaSnapshot({ providerID: "prod_0" })).toMatchObject({ cash: 0 })
+      expect(seen.some((url) => url.includes("dev-api.clickzetta.com"))).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.CZ_PROFILE
+      else process.env.CZ_PROFILE = previous
+    }
+  })
+
+  test("resolves to nothing, without a request, when the profile has no account_id", async () => {
+    writeFileSync(
+      join(requireTestHome(), ".clickzetta", "profiles.toml"),
+      ["default_profile = 'bare'", "", "[profiles.bare]", "pat = 'pat-bare'", "service = 'dev-api.clickzetta.com'", "instance = 'i'", ""].join("\n"),
+    )
+    const seen = stubPortal()
+    expect(await fetchQuotaSnapshot({ providerID: "prod_0" })).toEqual({})
+    expect(seen).toEqual([])
   })
 })
 
-// The live portal is method-sensitive and inverts what the URLs imply:
-// getCurrentUser only answers to POST, while listApiKeys and the billing route
-// only answer to GET; the wrong verb yields code 8888 with data:null. The
-// original stubPortal ignores method, so it could not catch a read issued with
-// the wrong verb — the exact defect that left the quota indicator blank.
+// The live portal is method-sensitive and inverts what the URLs imply: getCurrentUser
+// only answers to POST while the billing route only answers to GET; the wrong verb
+// yields code 8888 with data:null. stubPortal ignores method, so it cannot catch a
+// read issued with the wrong verb — the exact defect that left the indicator blank.
 describe("fetchQuotaSnapshot — portal method sensitivity", () => {
-  function stubMethodStrictPortal(opts: { currentUserPostFails?: boolean } = {}) {
+  test("reads billing with the verb it requires", async () => {
     onPath("/clickzetta-portal/user/loginSingle", () => ({
       code: 0,
       data: { token: "portal-token", instanceId: 1, userId: 2, expireTime: 3_600_000 },
     }))
-    const err8888 = { code: 8888, message: "unknown error", data: null }
     onFetch({
       match: (url) => url.includes("/clickzetta-portal/"),
       respond: (url, method) => {
-        if (url.includes("/user/getCurrentUser")) {
-          if (method !== "POST") return err8888
-          if (opts.currentUserPostFails) return err8888
-          return { code: 0, data: { id: 2, accountId: 228044, name: "pdiaxzjq", instanceId: 1 } }
-        }
-        if (url.includes("/hornhub/account/billing/account/")) {
-          if (method !== "GET") return err8888
-          return { code: 0, data: { cashAmount: 51.2772, oweAmount: 0, accountName: "pdiaxzjq" } }
-        }
-        if (url.includes("/user/listApiKeys")) {
-          if (method !== "GET") return err8888
-          return {
-            code: 0,
-            data: [
-              {
-                id: 587,
-                status: 1,
-                type: "free",
-                rateLimitType: "quota_total",
-                rateLimitValue: 10_000_000,
-                usage: 10_082_801,
-                vapiKeyAlias: "cz-code_auto_pdiaxzjq",
-                vapiKeyMasked: "ff52****9bc8",
-              },
-            ],
-          }
-        }
-        throw new Error(`unexpected portal path ${url}`)
+        if (!url.includes("/hornhub/account/billing/account/")) throw new Error(`unexpected portal path ${url}`)
+        if (method !== "GET") return { code: 8888, message: "unknown error", data: null }
+        return { code: 0, data: { cashAmount: 51.2772, oweAmount: 0, accountName: "pdiaxzjq" } }
       },
     })
-  }
-
-  test("resolves usage when each endpoint is called with the verb it requires", async () => {
-    stubMethodStrictPortal()
-    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
-    expect(snapshot).toMatchObject({ used: 10_082_801, limit: 10_000_000, period: "total" })
-  })
-
-  // listApiKeys scopes to the token identity and ignores the userName value, so
-  // a failed getCurrentUser must not sink the whole quota read.
-  test("falls back to an empty userName when getCurrentUser fails", async () => {
-    stubMethodStrictPortal({ currentUserPostFails: true })
-    const snapshot = await fetchQuotaSnapshot({ providerID: "prod_0" })
-    expect(snapshot).toMatchObject({ used: 10_082_801, limit: 10_000_000 })
+    expect(await fetchQuotaSnapshot({ providerID: "prod_0" })).toMatchObject({ cash: 51.2772 })
   })
 })
 
@@ -545,20 +451,14 @@ describe("balance survives an unresolvable LLM entry", () => {
     // key can be named. Pre-fix this returned undefined and skipped every read.
     setActiveModel("")
     stubPortal()
-    const snapshot = await fetchQuotaSnapshot({})
-    expect(snapshot).toMatchObject({ cash: 0 })
-    // Quota is genuinely unknowable here — absent, not guessed from another tenant.
-    expect(snapshot?.used).toBeUndefined()
-    expect(snapshot?.limit).toBeUndefined()
+    expect(await fetchQuotaSnapshot({})).toMatchObject({ cash: 0 })
   })
 
   test("reports the balance when the pinned ClickZetta entry has no api_key", async () => {
     writeLlmEntries({ llm: { keyless: { provider: "clickzetta", base_url: "https://aimesh.example.com/gateway/v1" } } })
     setActiveModel("keyless/deepseek-v3.2")
     stubPortal()
-    const snapshot = await fetchQuotaSnapshot({})
-    expect(snapshot).toMatchObject({ cash: 0 })
-    expect(snapshot?.used).toBeUndefined()
+    expect(await fetchQuotaSnapshot({})).toMatchObject({ cash: 0 })
   })
 
   // The one case that SHOULD hide everything: a ¥ figure next to a Claude model
@@ -574,27 +474,126 @@ describe("balance survives an unresolvable LLM entry", () => {
     stubPortal()
     expect(await fetchQuotaSnapshot({})).toBeUndefined()
   })
+})
+
+/**
+ * The token half. No portal, no network, no credentials — just what the gateway
+ * already told the provider, read back out of ~/.clickzetta/gateway-quota.json.
+ */
+/**
+ * Write the cache directly so both `updated_at` and the `now` it is read against are
+ * fixed. recordGatewayQuota stamps the real clock, which cannot express "taken at 23:00
+ * and read at 04:00" — the gap the reset rule exists for.
+ */
+function seedQuotaCache(input: { baseURL: string; apiKey: string; updatedAt: number; quotas: ClickzettaQuota[] }) {
+  const home = requireTestHome()
+  mkdirSync(join(home, ".clickzetta"), { recursive: true })
+  writeFileSync(
+    join(home, ".clickzetta", "gateway-quota.json"),
+    JSON.stringify({
+      entries: { [gatewayQuotaCacheKey(input.baseURL, input.apiKey)]: { updated_at: input.updatedAt, quotas: input.quotas } },
+    }),
+    "utf-8",
+  )
+}
+
+/** 23:00 local on an arbitrary fixed day, and 04:00 the next morning — five hours apart. */
+const BEFORE_RESET = new Date(2026, 5, 15, 23, 0, 0).getTime()
+const AFTER_RESET = new Date(2026, 5, 16, 4, 0, 0).getTime()
+
+const DAILY = { period: "daily" as const, periodCode: "PDO", limit: 10_000_000, used: 9_999_000, remaining: 1_000, scope: "api-key" }
+const TOTAL = { period: "total" as const, periodCode: "PTO", limit: 1_000_000_000, used: 21_306_417, remaining: 978_693_583, scope: "api-key" }
+
+describe("readHeaderQuota", () => {
+  const QUOTAS = [
+    { period: "daily" as const, periodCode: "PDO", limit: 10_000_000, used: 238, remaining: 9_999_762, scope: "api-key" },
+  ]
+
+  test("reads back what the provider recorded for the selected entry", () => {
+    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
+    expect(readHeaderQuota("prod_0")).toEqual(QUOTAS)
+  })
 
   /**
-   * Walking past the current profile only serves the quota hunt (finding the portal
-   * that knows this key). With no key there is nothing to hunt, and continuing hides
-   * failures: a later profile's empty-but-successful snapshot lands in `loaded` and
-   * swallows the current profile's real error, so a broken balance read renders as a
-   * silent blank indistinguishable from "nothing to show". Caught on a live config
-   * where the default profile's host was unreachable and the result was `{}`.
+   * llm.json may hold the endpoint in its bare form (`https://host/`) while the
+   * provider recorded against the normalized `/gateway/v1` one. Both sides run the
+   * same normalizer, so the two still meet — without this the indicator silently
+   * reported nothing for every entry written by `agent llm add`.
    */
-  test("surfaces the balance error instead of masking it with another profile", async () => {
-    // dev_0 is the default profile; make only ITS billing read fail. prod_0 would
-    // otherwise answer successfully and hide it.
-    onFetch({
-      match: (url) => url.includes("dev-api.clickzetta.com") && url.includes("/hornhub/account/billing/"),
-      respond: () => {
-        throw new Error("billing unreachable")
-      },
+  test("an un-normalized base_url resolves to the same reading", () => {
+    writeLlmEntries({
+      llm: { prod_0: { provider: "clickzetta", api_key: PROD_KEY, base_url: "https://aimesh.example.com/" } },
     })
-    stubPortal()
-    setActiveModel("")
-    await expect(fetchQuotaSnapshot({})).rejects.toThrow("billing unreachable")
+    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
+    expect(readHeaderQuota("prod_0")).toEqual(QUOTAS)
+  })
+
+  test("the reading is per key, so another entry's quota is not borrowed", () => {
+    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
+    expect(readHeaderQuota("dev_0")).toBeUndefined()
+  })
+
+  /**
+   * A daily figure from before the reset is worse than no figure: it reports yesterday's
+   * near-exhausted spend against today's fresh limit, i.e. "you are out" to a user who
+   * has a full day. A duration bound cannot catch this — 23:00 to 04:00 is five hours.
+   */
+  test("a daily reading taken before the reset is dropped, a total one survives it", () => {
+    seedQuotaCache({
+      baseURL: "https://aimesh.example.com/gateway/v1",
+      apiKey: PROD_KEY,
+      updatedAt: BEFORE_RESET,
+      quotas: [DAILY, TOTAL],
+    })
+    expect(readHeaderQuota("prod_0", AFTER_RESET)?.map((quota) => quota.period)).toEqual(["total"])
+  })
+
+  test("both periods survive a five-hour gap inside one day", () => {
+    seedQuotaCache({
+      baseURL: "https://aimesh.example.com/gateway/v1",
+      apiKey: PROD_KEY,
+      updatedAt: new Date(2026, 5, 16, 9, 0, 0).getTime(),
+      quotas: [DAILY, TOTAL],
+    })
+    expect(readHeaderQuota("prod_0", new Date(2026, 5, 16, 14, 0, 0).getTime())?.map((quota) => quota.period)).toEqual([
+      "daily",
+      "total",
+    ])
+  })
+
+  test("a reading past the coarse ceiling is gone whatever its period", () => {
+    seedQuotaCache({
+      baseURL: "https://aimesh.example.com/gateway/v1",
+      apiKey: PROD_KEY,
+      updatedAt: BEFORE_RESET,
+      quotas: [TOTAL],
+    })
+    expect(readHeaderQuota("prod_0", BEFORE_RESET + 7 * 60 * 60 * 1000)).toBeUndefined()
+  })
+
+  test("nothing recorded reads as nothing, not zero", () => {
+    expect(readHeaderQuota("prod_0")).toBeUndefined()
+  })
+
+  // A gateway that sends no quota headers, a foreign provider, and an entry with no
+  // base_url all reduce to the same "no token rows" outcome.
+  test("resolves to nothing for a foreign provider", () => {
+    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
+    expect(readHeaderQuota("claude")).toBeUndefined()
+  })
+
+  /**
+   * An entry with no base_url still reaches a gateway — providerFromInput fills the absent
+   * baseURL with the default, so the provider files its reading under THAT endpoint's key.
+   * The reader has to apply the same default or it looks in the wrong place and the token
+   * rows stay blank on an entry that demonstrably works.
+   */
+  test("an entry with no base_url finds the reading filed under the default endpoint", () => {
+    writeLlmEntries({ llm: { bare: { provider: "clickzetta", api_key: PROD_KEY } } })
+    setActiveModel("bare/whatever")
+    expect(readHeaderQuota()).toBeUndefined()
+    recordGatewayQuota({ baseURL: CLICKZETTA_DEFAULT_GATEWAY_URL, apiKey: PROD_KEY, quotas: QUOTAS })
+    expect(readHeaderQuota()?.map((quota) => quota.periodCode)).toEqual(QUOTAS.map((quota) => quota.periodCode))
   })
 })
 
@@ -811,7 +810,6 @@ describe("portal reads fall back to the central host", () => {
         if (url.includes("/hornhub/account/billing/account/")) {
           return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
         }
-        if (url.includes("/user/listApiKeys")) return { code: 0, data: [] }
         if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
         throw new Error(`unexpected portal path ${url}`)
       },
@@ -845,7 +843,6 @@ describe("portal reads fall back to the central host", () => {
         if (url.includes("/hornhub/account/billing/account/")) {
           return { code: 0, data: { cashAmount: 7, oweAmount: 0 } }
         }
-        if (url.includes("/user/listApiKeys")) return { code: 0, data: [] }
         if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
         throw new Error(`unexpected portal path ${url}`)
       },
@@ -918,14 +915,6 @@ describe("portal reads fall back to the central host", () => {
         if (url.includes("/hornhub/account/billing/account/")) {
           return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
         }
-        // A key matching PROD_KEY, so the scan stops at prod_0 (usage found) rather
-        // than continuing to dev_0's host and polluting `seen` with an unrelated call.
-        if (url.includes("/user/listApiKeys")) {
-          return {
-            code: 0,
-            data: [{ rateLimitType: "quota_total", rateLimitValue: 10_000_000, usage: 0, vapiKeyMasked: "ff52****9bc8" }],
-          }
-        }
         if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
         throw new Error(`unexpected portal path ${url}`)
       },
@@ -969,12 +958,6 @@ describe("portal reads fall back to the central host", () => {
         if (url.includes("/hornhub/account/billing/account/")) {
           return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
         }
-        if (url.includes("/user/listApiKeys")) {
-          return {
-            code: 0,
-            data: [{ rateLimitType: "quota_total", rateLimitValue: 10_000_000, usage: 0, vapiKeyMasked: "ff52****9bc8" }],
-          }
-        }
         if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
         throw new Error(`unexpected portal path ${url}`)
       },
@@ -986,7 +969,9 @@ describe("portal reads fall back to the central host", () => {
       await fetchQuotaSnapshot({ providerID: "prod_0" }) // one failure, then the direct retry (region host) succeeds
       seen.length = 0
       await fetchQuotaSnapshot({ providerID: "prod_0" }) // must still try the region host — one strike, not two
-      expect(seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/user/listApiKeys"))).toBe(true)
+      expect(
+        seen.some((url) => url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/hornhub/account/billing/")),
+      ).toBe(true)
     } finally {
       if (previous === undefined) delete process.env.CZ_PROFILE
       else process.env.CZ_PROFILE = previous
@@ -994,9 +979,10 @@ describe("portal reads fall back to the central host", () => {
   })
 
   // unservedHost is keyed by baseUrl + path, not by host alone: a region host
-  // that fails ONE route (listApiKeys, business code 8888) must not stop being
-  // asked for a DIFFERENT route (getCurrentUser) it actually serves. A host-wide
-  // key would make the first failure redirect every later call for every route.
+  // that fails ONE route (the billing account read, business code 8888) must not
+  // stop being asked for a DIFFERENT route (getCurrentUser) it actually serves. A
+  // host-wide key would make the first failure redirect every later call for every
+  // route.
   test("marking one route unserved does not redirect a different route on the same host", async () => {
     const seen: string[] = []
     onPath("/clickzetta-portal/user/loginSingle", () => ({
@@ -1007,17 +993,11 @@ describe("portal reads fall back to the central host", () => {
       match: (url) => url.includes("/clickzetta-portal/"),
       respond: (url) => {
         seen.push(url)
-        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/user/listApiKeys")) {
+        if (url.includes("cn-shanghai-alicloud.api.clickzetta.com") && url.includes("/hornhub/account/billing/")) {
           return { code: 8888, message: "未知异常", data: null }
         }
         if (url.includes("/hornhub/account/billing/account/")) {
           return { code: 0, data: { cashAmount: 12.5, oweAmount: 0 } }
-        }
-        if (url.includes("/user/listApiKeys")) {
-          return {
-            code: 0,
-            data: [{ rateLimitType: "quota_total", rateLimitValue: 10_000_000, usage: 0, vapiKeyMasked: "ff52****9bc8" }],
-          }
         }
         if (url.includes("/user/getCurrentUser")) return { code: 0, data: { name: "who" } }
         throw new Error(`unexpected portal path ${url}`)
@@ -1027,7 +1007,7 @@ describe("portal reads fall back to the central host", () => {
     const previous = process.env.CZ_PROFILE
     process.env.CZ_PROFILE = "prod_0"
     try {
-      // First call: listApiKeys against the region host fails (8888), promotes
+      // First call: the billing read against the region host fails (8888), promotes
       // that ROUTE to unserved and falls back to central for it.
       await fetchQuotaSnapshot({ providerID: "prod_0" })
 
