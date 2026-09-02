@@ -56,6 +56,18 @@ exec "${TARGET_BINARY}" agent "\$@"
 EOF
 chmod +x "${INSTALL_DIR}/cz-agent"
 
+# On Windows the wrapper above only works from a POSIX shell (Git Bash / MSYS2 /
+# Cygwin), because cmd.exe and PowerShell cannot execute an extensionless sh script.
+# The .cmd shim covers them, so `cz-agent` means the same thing in every Windows shell
+# once INSTALL_DIR is on PATH. `cz-cli` itself needs no shim: MSYS bash appends .exe
+# when resolving a command, and cmd/PowerShell do the same via PATHEXT.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    WIN_TARGET=$(cygpath -w "$TARGET_BINARY" 2>/dev/null || echo "$TARGET_BINARY")
+    printf '@echo off\r\n"%s" agent %%*\r\n' "$WIN_TARGET" > "${INSTALL_DIR}/cz-agent.cmd"
+    ;;
+esac
+
 SKILLS_SRC="${SCRIPT_DIR}/skills"
 BUILTIN_DEST="${HOME}/.clickzetta/skills/.builtin"
 rm -rf "$BUILTIN_DEST"
@@ -99,6 +111,24 @@ EOF
 echo "✓ cz-cli installed to $TARGET_BINARY"
 if ! printf '%s' ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
   echo "Add $INSTALL_DIR to PATH if cz-cli is not found in a new shell."
+  # $PATH here is the POSIX one this shell sees. On Windows that is Git Bash's view, and
+  # adding the directory to it does NOT make cz-cli resolvable from cmd.exe or
+  # PowerShell — those read the Windows PATH, which is a separate list. Say so, since
+  # otherwise "already on PATH" and "command not found" are both true at once.
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      WIN_DIR=$(cygpath -w "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+      echo "  For cmd.exe / PowerShell, add the Windows form too:"
+      # Deliberately NOT `setx PATH "%PATH%;…"`. PowerShell does not expand %PATH%, so
+      # pasted there it writes the literal string and the user PATH becomes one bogus
+      # entry — worse than the problem this hint addresses. In cmd.exe %PATH% is the
+      # COMBINED machine+user value while setx writes the USER one, so it permanently
+      # copies the machine PATH into the user PATH, and setx truncates at 1024 chars.
+      # The form below reads and writes only the User scope and has no length cap.
+      echo "    [Environment]::SetEnvironmentVariable('PATH', [Environment]::GetEnvironmentVariable('PATH','User') + ';$WIN_DIR', 'User')"
+      echo "  (or add $WIN_DIR via Settings > Edit environment variables for your account)"
+      ;;
+  esac
 fi
 
 # Offer MCP onboarding for external AI clients (Claude Code / Cursor / Codex).
