@@ -28,7 +28,10 @@ export async function getGatewayContext(args: Partial<CliArgs> & { format?: stri
   const credential = await tokens.get()
   const instanceId = await resolveInstanceIdByName(baseUrl, tokens, user.accountId, config.instance, {
     customHeaders: config.customHeaders,
-    fallbackId: credential.instanceId,
+    // The connection's own id first: it is the authoritative one now (see
+    // ConnectionConfig.instanceId), and for an OAuth profile the credential's is 0 —
+    // `[oauth.<id>]` no longer stores one, so it cannot be a fallback for anything.
+    fallbackId: config.instanceId ?? credential.instanceId,
     debug,
   })
   return {
@@ -76,7 +79,10 @@ export async function getStudioContext(
 
   const instanceId = await resolveInstanceIdByName(baseUrl, tokens, tenantId, config.instance, {
     customHeaders: config.customHeaders,
-    fallbackId: credential.instanceId,
+    // The connection's own id first: it is the authoritative one now (see
+    // ConnectionConfig.instanceId), and for an OAuth profile the credential's is 0 —
+    // `[oauth.<id>]` no longer stores one, so it cannot be a fallback for anything.
+    fallbackId: config.instanceId ?? credential.instanceId,
     debug,
   })
 

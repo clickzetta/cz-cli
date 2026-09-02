@@ -21,7 +21,7 @@
  * falls back to what it showed before.
  */
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { ClickzettaQuota } from "./quota"
@@ -72,12 +72,26 @@ export function recordGatewayQuota(input: { baseURL: string; apiKey: string; quo
     entries[gatewayQuotaCacheKey(input.baseURL, input.apiKey)] = { updated_at: now, quotas: input.quotas }
     const body = JSON.stringify({ entries }, null, 2)
     try {
-      writeFileSync(file, body, "utf-8")
+      writeFileSync(file, body, { encoding: "utf-8", mode: 0o600 })
     } catch {
-      // Only the first write of a fresh install needs the directory; paying mkdirSync on
-      // every request to create something that already exists is a syscall per LLM call.
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, body, "utf-8")
+      // Only the first write of a fresh install needs the directory. Skipping it on the happy
+      // path is a small saving next to what this function already pays per request (read,
+      // parse, retention sweep, stringify, write, chmod) — the reason to do it this way is
+      // that mkdirSync's mode only applies on creation, so the branch that CREATES the
+      // directory is the one that has to set 0700.
+      //
+      // 0700/0600 to match llm/native-config.ts. It matters which writer gets there first:
+      // mkdirSync does not tighten a directory that already exists, so if this one creates
+      // ~/.clickzetta at the default 0755, llm.json — which holds api_key in plaintext — is
+      // later created inside a world-readable directory. chmod after the write because an
+      // existing file keeps its old mode.
+      mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+      writeFileSync(file, body, { encoding: "utf-8", mode: 0o600 })
+    }
+    try {
+      chmodSync(file, 0o600)
+    } catch {
+      // An unwritable mode is not worth failing a cache write over.
     }
   } catch {
     // An unwritable home, a full disk, a racing writer: the indicator goes stale,

@@ -29,7 +29,13 @@ const KNOWN_TOKEN: AuthToken = {
 // After login, provisioning stamps the OAuth issuer (the login entry host,
 // api.example.com per makeTarget) onto the persisted token so refresh can
 // target /oauth2/token there. That's what load() returns.
-const PERSISTED_TOKEN: AuthToken = { ...KNOWN_TOKEN, issuer: "api.example.com" }
+//
+// Without instanceId, though KNOWN_TOKEN has one: a browser login does learn an instance
+// id, but `[oauth.<id>]` is SHARED by every profile the login provisions — one section
+// cannot hold a per-profile fact — so it is not persisted there. It goes on each profile
+// instead (see the instance_id assertions below).
+const { instanceId: _loginInstanceId, ...KNOWN_TOKEN_WITHOUT_INSTANCE } = KNOWN_TOKEN
+const PERSISTED_TOKEN: AuthToken = { ...KNOWN_TOKEN_WITHOUT_INSTANCE, issuer: "api.example.com" }
 
 const KNOWN_RESULT: BrowserLoginResult = {
   token: KNOWN_TOKEN,
@@ -235,6 +241,10 @@ describe("runLogin", () => {
     expect(text).toContain(`[profiles.${PROFILE}_2]`)
     // Each combo's workspace landed on its profile.
     expect(text).toContain('workspace = "analytics"')
+    // Each profile carries its OWN instance_id, from the combo — the whole point of moving
+    // it off the shared token. Two of these combos are one instance, the third another.
+    expect(text.match(/^instance_id = 159973$/gm)?.length).toBe(2)
+    expect(text.match(/^instance_id = 271876$/gm)?.length).toBe(1)
     // A single shared section named after the session, and every profile points at it.
     expect(text).toContain(`[oauth.${PROFILE}]`)
     const oauthSections = text.match(/\[oauth\.[^\]]+\]/g) ?? []

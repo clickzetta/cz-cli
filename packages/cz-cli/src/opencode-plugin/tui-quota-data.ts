@@ -26,11 +26,10 @@
 // tui-title-brand.ts.
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { getToken, toServiceUrl } from "@clickzetta/sdk"
+import { toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
 import * as Profile from "../connection/profile-context.js"
 import { deriveAuthType, explicitAuthType, loadProfiles } from "../connection/profile-store.js"
-import { readLlmEntries } from "../llm/native-config.js"
 // Re-exported, not redefined: tui-quota-runtime.ts publishes these to the .tsx renderer,
 // and commands/ai-gateway.ts needs the same answer — see llm/clickzetta-entry.ts.
 import { classifyClickzettaEntry, resolveClickzettaEntry } from "../llm/clickzetta-entry.js"
@@ -185,6 +184,27 @@ function knownRegion(service: string): string | undefined {
 }
 
 /**
+ * Which profile a session-scoped panel may speak for — the ONE place that rule lives.
+ *
+ * Substitute the first TOML profile only when NOTHING is pinned (`current === undefined`,
+ * which Profile.current() documents as "no profile configured"). A `current` that names a
+ * profile absent from the file — a stale CZ_PROFILE, a deleted default_profile — resolves to
+ * undefined, because silently swapping in another row would attribute one tenant's identity,
+ * and one tenant's MONEY, to a session pointed somewhere else.
+ *
+ * Extracted because it was stated twice, byte for byte, in readProfileInfo and
+ * fetchQuotaSnapshot — and collapsing the profile walk had already dropped it from the
+ * balance half once, which is exactly how a rule with a security consequence goes missing.
+ */
+function panelProfileName(
+  current: string | undefined,
+  profiles: Record<string, unknown>,
+): string | undefined {
+  if (current === undefined) return Object.keys(profiles)[0]
+  return profiles[current] ? current : undefined
+}
+
+/**
  * Read the active profile's identity and connection target from profiles.toml.
  *
  * Synchronous and network-free on purpose: this is the half of the sidebar that
@@ -202,7 +222,7 @@ export function readProfileInfo(): ProfileInfo | undefined {
   // from the file (stale CZ_PROFILE, deleted profile) must render nothing rather
   // than silently swap in a different tenant's identity — this panel's whole job
   // is telling the user which lakehouse they're pointed at.
-  const name = current === undefined ? Object.keys(profiles)[0] : profiles[current] ? current : undefined
+  const name = panelProfileName(current, profiles)
   if (!name) return undefined
   const profile = profiles[name]!
   const str = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
@@ -242,9 +262,10 @@ export function clearUserNameCacheForTest(): void {
  * covered by `accountName` elsewhere. Nothing else from this payload is used — it
  * also carries a phone number and an email, which have no place in a status panel.
  *
- * The one call site both `fetchProfileUserName` and `fetchProfileSnapshot` share,
- * so the envelope check (four-part: record / isPortalOk / record data / string
- * name) is written once rather than kept in sync by hand in two places.
+ * `fetchProfileUserName`'s only caller now — fetchProfileSnapshot stopped needing a user
+ * name when the token half moved to response headers. The four-part envelope check (record /
+ * isPortalOk / record data / string name) stays here rather than inline because that shape
+ * is the portal's, not this function's, and it was written once for two callers.
  */
 async function readCurrentUserName(
   baseUrl: string,
@@ -566,9 +587,10 @@ async function portalRead(
  * transport/auth failure so the caller can keep showing the previous value rather
  * than replacing a good reading with an error.
  *
- * Token handling goes through the SDK's `getToken`, which owns cache/expiry/
- * refresh/persist. Reading `access_token` out of profiles.toml directly would
- * work for at most an hour (60-minute OAuth TTL) and then start 401-ing.
+ * The credential comes from `profileTokenSource(config).get()`, the one seam that owns
+ * cache/expiry/refresh/persist — reading `access_token` out of profiles.toml directly
+ * would bypass all four — good for at most an hour (the 60-minute OAuth TTL) and 401 after
+ * that (fetchProfileUserName's note says the same).
  */
 export async function fetchQuotaSnapshot(
   input: {
@@ -591,7 +613,7 @@ export async function fetchQuotaSnapshot(
   // version of this function got that right by a different route (it gated the
   // billing read on `name === current` in two places); collapsing the profile walk
   // dropped both gates, so it is spelled out here.
-  const name = current === undefined ? Object.keys(profiles)[0] : profiles[current] ? current : undefined
+  const name = panelProfileName(current, profiles)
   if (!name) return {}
 
   return fetchProfileSnapshot({ name, profile: profiles[name]!, signal: input.signal })

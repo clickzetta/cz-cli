@@ -39,6 +39,17 @@ export interface AgentProfileEntry {
   instanceId?: number
 }
 
+/**
+ * Numeric coercion for a raw TOML value; undefined when it is not a finite number.
+ *
+ * Exported as `numericField` so callers outside this module stop growing their own copies —
+ * exec.ts had a third one whose docstring described THIS behaviour while its body returned
+ * 0 and accepted whitespace-only strings.
+ */
+export function numericField(val: unknown): number | undefined {
+  return num(val)
+}
+
 function num(val: unknown): number | undefined {
   if (typeof val === "number" && Number.isFinite(val)) return val
   if (typeof val === "string" && val.trim() !== "") {
@@ -278,6 +289,9 @@ export function getProfileConfig(profileName?: string): Partial<ConnectionConfig
     service: str(profileData.service, DEFAULT_CONNECTION.service),
     protocol: normalizeProtocol(str(profileData.protocol, undefined)),
     instance: str(profileData.instance, ""),
+    // Absent on profiles written before instance_id moved off the token; getExecContext
+    // resolves it by name and writes it back, so this fills in on first use.
+    ...(num(profileData.instance_id) !== undefined ? { instanceId: num(profileData.instance_id) } : {}),
     workspace: str(profileData.workspace, ""),
     schema: str(profileData.schema, DEFAULT_CONNECTION.schema),
     vcluster: str(profileData.vcluster, DEFAULT_CONNECTION.vcluster),
@@ -424,6 +438,35 @@ export function patchProfileUserId(profileName: string | undefined, userId: numb
 }
 
 /**
+ * Backfill a profile's numeric `instance_id`, resolved from its instance NAME.
+ *
+ * Only for profiles written before the id moved off the token — a login now records it
+ * from the enumeration it already has (see provisionOAuthProfiles), so this runs once
+ * per stale profile and then never again. Best-effort like patchProfileUserId: the CLI
+ * has the value in hand either way, and failing to cache it must not fail the command.
+ *
+ * Writes only when absent, so it can never overwrite a value the server told a login.
+ */
+export function patchProfileInstanceId(profileName: string | undefined, instanceId: number): void {
+  if (!Number.isFinite(instanceId) || instanceId <= 0) return
+  try {
+    const text = readFileSync(profilesFile(), "utf-8")
+    const data = parseTOML(text) as Record<string, unknown>
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const name = profileName
+      ?? (typeof data.default_profile === "string" ? data.default_profile : undefined)
+      ?? Object.keys(profiles)[0]
+    if (!name || !profiles[name]) return
+    if (profiles[name]["instance_id"] != null) return
+    profiles[name]["instance_id"] = instanceId
+    data.profiles = profiles
+    writeProfilesFile(stringifyTOML(data))
+  } catch {
+    // best-effort: never block the CLI
+  }
+}
+
+/**
  * Merge logged-in connection context into the active profile entry so a later
  * `resolveConnectionConfig` picks up the instance/workspace/schema/etc. the
  * user actually authenticated against (requirement 11.6/11.7). Resolves the
@@ -439,6 +482,8 @@ export function patchProfileConnection(
     service?: string
     protocol?: string
     instance?: string
+    /** Numeric id of `instance`. A login already knows it; see ConnectionConfig.instanceId. */
+    instanceId?: number
     workspace?: string
     schema?: string
     vcluster?: string
@@ -468,6 +513,10 @@ export function patchProfileConnection(
     assign("account_name", fields.accountName)
     assign("aimeshEndpointBaseUrl", fields.aimeshEndpointBaseUrl)
     if (typeof fields.userId === "number" && fields.userId > 0) profile["user_id"] = fields.userId
+    // Written unconditionally, unlike patchProfileInstanceId's write-only-if-absent: this
+    // is a login reporting what the server just said, so it also CORRECTS a value an older
+    // version cached from the wrong source.
+    if (typeof fields.instanceId === "number" && fields.instanceId > 0) profile["instance_id"] = fields.instanceId
     if (typeof fields.accountId === "number" && fields.accountId > 0) profile["account_id"] = fields.accountId
 
     data.profiles = profiles
@@ -577,32 +626,60 @@ export function sanitizeOAuthId(name: string): string {
   return cleaned.length > 0 ? cleaned : "default"
 }
 
+/**
+ * The `instance_id` an OLDER version wrote into `[oauth.<id>]`, read on purpose.
+ *
+ * parseOAuthEntry deliberately ignores that field — it is per-profile data in a section
+ * shared across profiles, which is the whole defect. This reader exists for exactly one
+ * case: the profile has no `instance_id` yet and the portal cannot be reached, so the only
+ * number on disk is the one this change stopped trusting. Using it keeps a command working
+ * offline where it used to work; the caller must say out loud that it may belong to a
+ * different instance. Not a source of truth, and never cached forward.
+ */
+export function legacyOAuthInstanceId(profileName: string | undefined): number | undefined {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const name = resolveProfileName(data, profileName)
+    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    const id = name ? profileOAuthPointer(profiles[name]) : undefined
+    if (!id) return undefined
+    const shared = (data.oauth ?? {}) as Record<string, Record<string, unknown> | undefined>
+    return num(shared[id]?.instance_id)
+  } catch {
+    return undefined
+  }
+}
+
 /** Parse a raw `[oauth.<id>]` entry into an AuthToken, or undefined if invalid. */
 function parseOAuthEntry(entry: Record<string, unknown> | undefined): AuthToken | undefined {
   if (!entry) return undefined
   const token = str(entry.access_token, undefined)
   const expireTimeMs = num(entry.expire_time_ms)
   const obtainedAt = num(entry.obtained_at)
-  const instanceId = num(entry.instance_id)
   const userId = num(entry.user_id)
+  // entry.instance_id is deliberately NOT read. Older versions wrote one here and REQUIRED
+  // it, which is why dropping it needs this to change in the same commit: a reader that
+  // still demanded it would treat every newly written section as invalid.
   if (token === undefined || expireTimeMs === undefined || obtainedAt === undefined) return undefined
-  if (instanceId === undefined || userId === undefined) return undefined
+  if (userId === undefined) return undefined
   const refreshToken = str(entry.refresh_token, undefined)
   // OAuth issuer host — required to target `/oauth2/token` on refresh (the
   // region business host in the profile's `service` returns invalid_grant).
   const issuer = str(entry.issuer, undefined)
-  const result: AuthToken = { token, instanceId, userId, expireTimeMs, obtainedAt }
+  const result: AuthToken = { token, userId, expireTimeMs, obtainedAt }
   if (refreshToken !== undefined) result.refreshToken = refreshToken
   if (issuer !== undefined) result.issuer = issuer
   return result
 }
 
 function tokenToEntry(token: AuthToken): Record<string, unknown> {
+  // No instance_id: this section is SHARED by every profile the login can reach, and an
+  // instance is per-profile — see ConnectionConfig.instanceId. Sections written by older
+  // versions still carry one; parseOAuthEntry ignores it.
   const entry: Record<string, unknown> = {
     access_token: token.token,
     expire_time_ms: token.expireTimeMs,
     obtained_at: token.obtainedAt,
-    instance_id: token.instanceId,
     user_id: token.userId,
   }
   if (token.refreshToken !== undefined) entry.refresh_token = token.refreshToken
