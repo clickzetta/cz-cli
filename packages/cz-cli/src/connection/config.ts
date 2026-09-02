@@ -75,7 +75,15 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
     // Treat it as absent, which is what every other CLI does with an empty
     // operand, and let the profile keep its value.
     if (val !== undefined && val !== null && String(val).trim() !== "") {
+      // Read BEFORE the write. Comparing against cfg[key] afterwards is comparing val to
+      // itself, which is how the first version of this guard never fired once — and the
+      // symptom was silent: `--instance other` kept the profile's cached id and submitted
+      // the job against the profile's instance.
+      const previous = cfg[key]
       cfg[key] = val
+      // An id resolved for one instance is meaningless for another, so naming a different
+      // instance drops it and getExecContext resolves the right one.
+      if (key === "instance" && val !== previous) cfg.instanceId = undefined
     }
   }
   cfg.protocol = normalizeProtocol(cfg.protocol)
@@ -329,7 +337,25 @@ function applyNonAuth(target: ConnectionConfig, src: Partial<ConnectionConfig> |
   if (!src) return
   if (src.service) target.service = src.service
   if (src.protocol) target.protocol = normalizeProtocol(src.protocol)
-  if (src.instance) target.instance = src.instance
+  if (src.instance) {
+    // The id travels WITH the name. A layer that carries its own id wins; a layer that
+    // names the SAME instance without one leaves the id alone; only a layer naming a
+    // DIFFERENT instance clears it, because a numeric id is meaningless for another
+    // instance and getExecContext must resolve the right one.
+    //
+    // The distinction is not academic: ConnectionEnv has no CZ_INSTANCE_ID, so an exported
+    // CZ_INSTANCE arrives with instanceId undefined. Clearing unconditionally meant anyone
+    // who exports CZ_INSTANCE — even naming the profile's own instance — paid a
+    // serviceInstanceList round trip on every single command, forever.
+    const changed = src.instance !== target.instance
+    target.instance = src.instance
+    if (src.instanceId !== undefined) target.instanceId = src.instanceId
+    else if (changed) target.instanceId = undefined
+  }
+  // Deliberately no `else if (src.instanceId)`: an id without a name is not a state worth
+  // carrying. Every path that reaches a job requires config.instance first (exec.ts), so the
+  // id would be unusable, and the only way to produce the combination is hand-editing a
+  // profile that already cannot run a command.
   if (src.workspace) target.workspace = src.workspace
   if (src.schema) target.schema = src.schema
   if (src.vcluster) target.vcluster = src.vcluster

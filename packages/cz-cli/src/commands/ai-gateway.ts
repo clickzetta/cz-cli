@@ -356,11 +356,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
             // be listed, so buildLlmProbeRequest falls back to a hardcoded id this tenant
             // may not serve. That distinction decides how a 404 is reported below.
             const probeModel = argv.model ?? (await firstClickzettaModel(baseUrl, entry.api_key))
-            const probe = buildLlmProbeRequest("clickzetta", baseUrl, entry.api_key, probeModel)
-            if (!probe) {
-              error("MISSING_BASE_URL", `Agent LLM '${entry.name}' needs a base_url before its quota can be read.`, { format, exitCode: 2 })
-              return
-            }
+            // No MISSING_BASE_URL guard: baseUrl is defaulted just above, and
+            // normalizeLlmBaseUrl only returns undefined for a falsy url, so the request
+            // cannot fail to build here. The guard that used to sit here named a condition
+            // the default had already handled.
+            const probe = buildLlmProbeRequest("clickzetta", baseUrl, entry.api_key, probeModel)!
             if (_debug) process.stderr.write(`[debug] → ${probe.method} ${probe.url}\n`)
             const response = await fetch(probe.url, { method: probe.method, headers: probe.headers, body: probe.body })
             const body = await response.text()

@@ -5,7 +5,7 @@ import { JobStatus, request, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
+import { classifyExecError, execInstanceId, execSql, getExecContext, isQueryResult, rowsToRecords, validateIdentifier } from "./exec.js"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
@@ -246,7 +246,7 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
                 const body = {
                   get_summary_request: {
                     account: { user_id: 0 },
-                    job_id: { id: r.jobId, workspace: ctx.config.workspace, instance_id: ctx.token.instanceId },
+                    job_id: { id: r.jobId, workspace: ctx.config.workspace, instance_id: execInstanceId(ctx) },
                     offset: 0,
                     user_agent: "",
                   },

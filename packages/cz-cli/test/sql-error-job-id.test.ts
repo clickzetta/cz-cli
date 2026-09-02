@@ -71,3 +71,27 @@ describe("sql emits job_id on failure", () => {
     expect(json.job_id).toBe(submittedJobId!)
   })
 })
+
+/**
+ * An intermediate statement of a multi-statement run now reports through the same helper as
+ * every other failure, so it gains what that helper does: job_id, the schema hint when one
+ * is available, ai_message, and timeMs on the telemetry record. Before this it had its own
+ * inline reporter and got none of them — which is what made the two failure paths drift.
+ *
+ * Pinned because the change is observable: a new stderr line for row formats, a new key for
+ * json, and one extra query on the failure path.
+ */
+describe("multi-statement intermediate failure", () => {
+  test("reports through the shared helper, carrying job_id", async () => {
+    stubSubmit(() => sqlFailure("CZLH-42000", "CZLH-42000:[1,8] Semantic analysis exception - cannot resolve column 'aaaa'"))
+
+    // Two statements: the FIRST fails, so it takes the intermediate path rather than
+    // executeSingle (which handles only the last one).
+    const result = await execute('sql "select aaaa from t1; select 1" --sync')
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json.error?.code).toBe("CZLH-42000")
+    expect(json.job_id).toBe(submittedJobId!)
+  })
+})

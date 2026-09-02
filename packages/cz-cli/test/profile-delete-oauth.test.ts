@@ -46,7 +46,7 @@ const TOKEN: AuthToken = {
   refreshToken: "refresh-xyz",
   expireTimeMs: 3_600_000,
   obtainedAt: 1_700_000_000_000,
-  instanceId: 42,
+  // No instanceId: it belongs to the profile, not the shared token (ConnectionConfig.instanceId).
   userId: 7,
 }
 
