@@ -415,7 +415,7 @@ the hooks they depend on still exist in the new upstream.
 - **Mechanism:** registers on the public `sidebar_content` slot
   (`packages/plugin/src/tui.ts`'s `TuiHostSlotMap`), rendering a "Profile" section
   (which profile/account/env/instance/workspace the session is connected as) and a
-  "Quota" section (balance + token usage) at `order: 150` — directly after
+  "Quota" section (cash balance + per-period token allowance) at `order: 150` — directly after
   upstream's own Context section (`order: 100`) and ahead of MCP/LSP/Todo/Files
   (200/300/400/500).
 - **Why:** the readout used to share the prompt's top-right corner with the
@@ -446,6 +446,32 @@ the hooks they depend on still exist in the new upstream.
     on parent and child. Expected/accepted: a subagent turn still spends the
     parent's quota and the user returns to the parent session to see it, but this
     is upstream's policy, not cz's, and worth re-verifying it still holds.
+  - **Two upstream event shapes this feature reads** (recorded with the header-quota
+    change; the older `session.status` subscription had gone unrecorded too):
+    - `session.status` — `properties.sessionID` / `properties.status`, driving the
+      busy→idle edge that triggers the balance read.
+    - `message.part.updated` — `properties.part.type === "step-finish"`. This is the
+      only response-adjacent signal a TUI plugin can observe, and the token half of the
+      section refreshes on it, once per LLM request. If upstream renames that part type,
+      stops publishing it through this event, or moves `part` out of `properties`, the
+      token rows silently stop updating — they do not error, because the read is a cache
+      lookup that simply never runs. No test covers the live event shape;
+      `packages/cz-cli/test/tui-quota-data.test.ts` covers the reader only.
+- **On-disk path this feature owns:** `~/.clickzetta/gateway-quota.json`, written by
+  `@clickzetta/ai-gateway`'s `quota-store.ts` inside the opencode SERVER process and read
+  by the sidebar in the TUI process. It exists because those are different processes and
+  no plugin hook carries a response header between them: `chat.headers` is outbound only,
+  the event bus is a fixed set with no way to publish a new event, and upstream's
+  `packages/opencode/src/session/processor.ts` hands `step-finish` metadata to
+  `Session.getUsage` and then drops it. Patching that processor was the alternative and
+  was rejected — the de-opencode invariant is worth more than saving the file. The file is
+  a cache with a 7-day retention and a reader-side freshness window; a miss, a stale entry
+  or an unwritable home all mean "no header quota", never "zero".
+- **Token quota no longer comes from Portal.** It used to be a second portal call,
+  `/clickzetta-portal/user/listApiKeys`, matched against the key by its masked form. That
+  route, `maskApiKey`/`matchKeyUsage`, and the walk over every configured profile hunting
+  the one whose portal knew the selected key are all deleted. Only the cash balance is a
+  portal read now, and only for the CURRENT profile.
 - **Also new on this feature's network path:** `centralPortalHost`/`portalRead`
   (`tui-quota-data.ts`) send the profile's portal token to `api.clickzetta.com`/
   `api.singdata.com` when the profile's own regional host answers an unusable

@@ -9,6 +9,15 @@ import { pinAlicloudAdminHost } from "../llm/clickzetta-gateway-host.js"
 import * as Profile from "../connection/profile-context.js"
 import { readProfileEntry } from "../connection/profile-store.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
+import { classifyClickzettaEntry } from "../llm/clickzetta-entry.js"
+import { CLICKZETTA_DEFAULT_GATEWAY_URL } from "../llm/clickzetta-provider.js"
+import { buildLlmProbeRequest, firstClickzettaModel, normalizeLlmBaseUrl } from "../llm/probe.js"
+import {
+  formatClickzettaQuota,
+  parseClickzettaQuota,
+  recordGatewayQuota,
+  rewriteClickzettaGatewayError,
+} from "../llm/gateway-error.js"
 
 // ── AIGW admin API paths ────────────────────────────────────────────────────
 // Portal-proxied endpoints (standard portal token auth):
@@ -68,6 +77,40 @@ function resolveDefaultKey(): string | undefined {
   }
   const firstClickzetta = Object.values(llm).find((e) => e.provider === "clickzetta" && e.api_key)
   return firstClickzetta?.api_key
+}
+
+/**
+ * The ClickZetta llm.json entry a quota read should speak to.
+ *
+ * A name the user typed is answered directly — nothing is being guessed there. With no
+ * name, the question becomes "which entry is this session spending?", and that is
+ * classifyClickzettaEntry's to answer, not this command's: an earlier version of this
+ * function ran its own chain and picked the FIRST ClickZetta entry where the classifier
+ * deliberately refuses to choose, so `ai-gateway quota` reported one tenant's allowance
+ * while the sidebar showed nothing for the same llm.json. Ambiguity now asks the user to
+ * name one instead of picking for them.
+ */
+function resolveQuotaEntry(name?: string) {
+  const { llm } = readLlmEntries()
+  if (name) {
+    const entry = llm[name]
+    if (!entry) throw new Error(`No agent LLM named '${name}' in ~/.clickzetta/llm.json. List them with \`cz-cli agent llm list\`.`)
+    if (entry.provider !== "clickzetta")
+      throw new Error(`Agent LLM '${name}' is a ${entry.provider} entry; token quota is only reported by the ClickZetta AI gateway.`)
+    return { name, ...entry }
+  }
+  const resolved = classifyClickzettaEntry()
+  if (resolved.kind === "clickzetta") return { name: resolved.name, ...llm[resolved.name]! }
+  const candidates = Object.entries(llm)
+    .filter(([, entry]) => entry.provider === "clickzetta")
+    .map(([entryName]) => entryName)
+  if (candidates.length === 0)
+    throw new Error("No ClickZetta agent LLM configured in ~/.clickzetta/llm.json. Add one with `cz-cli ai-gateway key create <alias> --add-to-llm <alias>`.")
+  throw new Error(
+    `Could not tell which ClickZetta agent LLM this session is using, so naming one is required: ` +
+      `\`cz-cli ai-gateway quota <${candidates.join("|")}>\`. ` +
+      `Pin one instead with \`cz-cli agent llm use <entry>/<model>\`.`,
+  )
 }
 
 function reportError(err: unknown, format: string | undefined): void {
@@ -280,6 +323,106 @@ function buildRoutingRule(argv: Dict): Dict | undefined {
 export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
   cli.command("ai-gateway", "Manage ClickZetta AIGW virtual keys and list available models", (yargs) => {
     yargs
+      // ── quota ──────────────────────────────────────────────────────────────
+      .command(
+        "quota [llm]",
+        "Show the token quota left on a ClickZetta agent LLM's key, read from the gateway's response headers",
+        (y) =>
+          y
+            .positional("llm", { type: "string", describe: "Agent LLM entry name in ~/.clickzetta/llm.json (defaults to the active one)" })
+            .option("model", { type: "string", describe: "Model to send the probe to (defaults to the first model the key serves)" })
+            .epilogue(
+              [
+                "The gateway reports quota only on a completion, so this sends a 1-token chat request and reads",
+                "x-czgw-ratelimit-api-key-token-* off the response. Unlike `ai-gateway key list` it needs no portal",
+                "credentials and no ownership of the key — just the key itself.",
+              ].join("\n"),
+            ),
+        async (argv) => {
+          const format = argv.format
+          setGatewayDebug(!!argv.debug)
+          const t0 = Date.now()
+          try {
+            const entry = resolveQuotaEntry(argv.llm)
+            if (!entry.api_key) {
+              error("MISSING_API_KEY", `Agent LLM '${entry.name}' has no api_key. Set one with \`cz-cli agent llm add ${entry.name} --api-key <API_KEY>\`.`, { format, exitCode: 2 })
+              return
+            }
+            // The same default the provider applies (providerFromInput, native-config.ts):
+            // an entry with no base_url still chats, through the default gateway, so
+            // refusing to read its quota would report a problem the entry does not have.
+            const baseUrl = entry.base_url ?? CLICKZETTA_DEFAULT_GATEWAY_URL
+            // Undefined here means NEITHER the user named a model nor the catalog could
+            // be listed, so buildLlmProbeRequest falls back to a hardcoded id this tenant
+            // may not serve. That distinction decides how a 404 is reported below.
+            const probeModel = argv.model ?? (await firstClickzettaModel(baseUrl, entry.api_key))
+            const probe = buildLlmProbeRequest("clickzetta", baseUrl, entry.api_key, probeModel)
+            if (!probe) {
+              error("MISSING_BASE_URL", `Agent LLM '${entry.name}' needs a base_url before its quota can be read.`, { format, exitCode: 2 })
+              return
+            }
+            if (_debug) process.stderr.write(`[debug] → ${probe.method} ${probe.url}\n`)
+            const response = await fetch(probe.url, { method: probe.method, headers: probe.headers, body: probe.body })
+            const body = await response.text()
+            const quotas = parseClickzettaQuota(response.headers)
+
+            // A key with nothing left 429s, and that response carries no quota
+            // headers at all — the error body is the only account of the ceiling,
+            // so it is reported rather than swallowed as "quota unknown".
+            if (!response.ok) {
+              const rewrite = rewriteClickzettaGatewayError({ statusCode: response.status, message: response.statusText, responseBody: body })
+              logOperation("gateway quota", { ok: false, timeMs: Date.now() - t0 })
+              // A 404 on a model nobody asked for says nothing about the quota — it says
+              // the probe guessed an id this tenant does not serve. Reporting that as
+              // GATEWAY_QUOTA_UNAVAILABLE is the same "two surfaces, two verdicts" defect
+              // probe.ts:14-30 documents, so it gets its own code and names the remedy.
+              if (response.status === 404 && !probeModel) {
+                // buildLlmProbeRequest picks the fallback id itself and does not report
+                // it back, so read it out of the request we just sent.
+                const attempted = (() => {
+                  try { return String((JSON.parse(probe.body) as { model?: unknown }).model ?? "") } catch { return "" }
+                })()
+                error(
+                  "GATEWAY_PROBE_MODEL_UNAVAILABLE",
+                  `Could not read the quota for '${entry.name}': the gateway does not serve the fallback probe model${attempted ? ` '${attempted}'` : ""} (HTTP 404), and its model catalog could not be listed to pick one instead. This says nothing about the quota itself — retry with \`--model <id>\` naming a model this key can use.`,
+                  { format, extra: { llm: entry.name, status: response.status, ...(attempted ? { probe_model: attempted } : {}) } },
+                )
+                return
+              }
+              error(
+                "GATEWAY_QUOTA_UNAVAILABLE",
+                `Could not read the quota for '${entry.name}': the gateway answered HTTP ${response.status}.\n${rewrite?.message ?? body.slice(0, 500)}`,
+                { format, extra: { llm: entry.name, status: response.status, ...(rewrite ? { gateway_code: rewrite.code } : {}) } },
+              )
+              return
+            }
+
+            // Same cache the provider fills, so this command and the TUI sidebar never
+            // disagree about the same key — this reading is simply the fresher one. The
+            // "same key" half of that is what resolveQuotaEntry delegating to
+            // classifyClickzettaEntry buys: a shared cache is not agreement if the two
+            // sides can pick different entries to look up.
+            if (quotas) {
+              recordGatewayQuota({ baseURL: normalizeLlmBaseUrl("clickzetta", baseUrl)!, apiKey: entry.api_key, quotas })
+            }
+            logOperation("gateway quota", { ok: true, timeMs: Date.now() - t0 })
+            success(
+              { llm: entry.name, ...(probeModel ? { model: probeModel } : {}), ...(quotas ? { quotas } : {}) },
+              {
+                format,
+                timeMs: Date.now() - t0,
+                aiMessage: quotas
+                  ? quotas.map(formatClickzettaQuota).join("\n")
+                  : `The gateway at ${baseUrl} reported no quota headers, so the quota for '${entry.name}' is unknown.\n` +
+                    "Not every deployment sends them yet (cn-shanghai-alicloud does not, as of 2026-09-01) — fall back to `cz-cli ai-gateway key list`.",
+              },
+            )
+          } catch (err) {
+            logOperation("gateway quota", { ok: false, timeMs: Date.now() - t0 })
+            reportError(err, format)
+          }
+        },
+      )
       .command("key", "Manage AIGW virtual keys", (k) => {
         k
           // ── list ───────────────────────────────────────────────────────

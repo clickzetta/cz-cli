@@ -28,6 +28,12 @@ export interface HelpCase {
   expectHeader: string
   expectOptions?: string[]
   expectCommands?: string[]
+  /**
+   * Prose the help text must contain — epilogue wording, an example, a warning. Kept
+   * separate from expectCommands so a failure says "missing help text", not "missing
+   * subcommand", and so expectCommands keeps meaning "this is a subcommand".
+   */
+  expectText?: string[]
   forbid?: string[]
   issues?: string
 }
@@ -48,6 +54,12 @@ function check(c: HelpCase): { pass: boolean; detail?: string } {
   for (const cmd of c.expectCommands ?? []) {
     if (!combined.includes(cmd)) {
       return { pass: false, detail: `missing subcommand "${cmd}" in help output` }
+    }
+  }
+
+  for (const text of c.expectText ?? []) {
+    if (!combined.includes(text)) {
+      return { pass: false, detail: `missing help text "${text}" in help output` }
     }
   }
 
