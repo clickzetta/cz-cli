@@ -402,9 +402,7 @@ async function executeSingle(
     }
     if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
     if (r.status === JobStatus.FAILED) {
-      const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
-      logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-      error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format, extra: hint ? { schema: hint } : undefined })
+      await handleFailure(r, sql, ctx, format, t0, argv.profile)
       return
     }
     if (r.rowCount > rowLimit) {
@@ -504,9 +502,12 @@ async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, form
   const aiMessage = hint
     ? `SQL failed. Available schema info attached in the 'schema' field — check table/column names and retry.`
     : undefined
+  // job_id travels on failures too, so a failed query can still be traced via
+  // `cz-cli job profile <id>` the same way a successful one can.
+  const extra = { ...(hint ? { schema: hint } : {}), ...(r.jobId ? { job_id: r.jobId } : {}) }
   error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, profileName), {
     format,
-    extra: hint ? { schema: hint } : undefined,
+    extra: Object.keys(extra).length > 0 ? extra : undefined,
     ...(aiMessage && { aiMessage }),
   })
 }
@@ -679,7 +680,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
           if (isQueryResult(r) && r.status === JobStatus.FAILED) {
             logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
-            error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format })
+            error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format, ...(r.jobId ? { extra: { job_id: r.jobId } } : {}) })
             return
           }
         } else {
