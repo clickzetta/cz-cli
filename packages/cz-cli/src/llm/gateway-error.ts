@@ -34,9 +34,3 @@ export {
   type ClickzettaQuotaPeriod,
 } from "@clickzetta/ai-gateway/quota"
 
-export {
-  readGatewayQuota,
-  recordGatewayQuota,
-  gatewayQuotaCacheKey,
-  type GatewayQuotaEntry,
-} from "@clickzetta/ai-gateway/quota-store"

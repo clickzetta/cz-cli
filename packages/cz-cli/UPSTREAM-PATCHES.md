@@ -402,6 +402,47 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
   hand, and check for new `<spinner>` call sites with
   `rg -n 'opentui-spinner|<spinner' packages/tui packages/opencode`.
 
+### 13. `step-finish` provider metadata reaches the part
+
+- **Files:** `packages/schema/src/session-v1.ts` (`StepFinishPart`),
+  `packages/opencode/src/session/processor.ts` (the `step-finish` `updatePart` call).
+- **Marker:** `//======================== cz-cli change ========================` at both.
+- **Upstream value:** `StepFinishPart` has no `metadata` field, and the processor builds the
+  part without one.
+- **What/why:** upstream feeds the step's `providerMetadata` to `Session.getUsage`, which
+  normalizes the fields it knows (anthropic/vertex/bedrock/venice cache tokens, copilot
+  `totalNanoAiu` → cost) and drops the rest. So a provider-specific number upstream does not
+  normalize cannot leave the server at all. ClickZetta's per-key token quota is one: the AI
+  gateway reports it on every response's headers and `@clickzetta/ai-gateway` publishes it as
+  `providerMetadata.clickzetta.quota`, with no consumer able to see it. Two additive lines put
+  it on the part, after which it rides the exact path `tokens` and `cost` ride — part →
+  `message.part.updated` → the TUI's state store → a memo in the sidebar.
+- **Why intrusive (no hook):** `TuiEventBus` (`packages/plugin/src/tui.ts`) is subscribe-only
+  over a closed event union, and the server-side plugin hooks can neither publish an event nor
+  add a route (`chat.headers` is outbound only). No hook carries a response-derived value from
+  the server to the TUI.
+- **Why this shape:** it is what upstream itself does for the same kind of data.
+  `TextPart`/`ReasoningPart`/`ToolPart` already carry `metadata`; `step-finish` was the only
+  part that dropped it. The alternative — a cz-owned side channel — was built first (a JSON
+  file under `~/.clickzetta`, then a `BroadcastChannel` between the TUI thread and the server
+  worker) and both were rejected: they add a mechanism this repo has no other precedent for,
+  and the file version needed a freshness window plus a daily-reset heuristic that in-band
+  delivery makes unnecessary.
+- **Blast radius if lost to a re-baseline:** the token rows go blank. No error, no crash — the
+  reader simply finds no `metadata` on the part. Patch 1's history shows an intrusive patch HAS
+  been silently lost this way before, so verify by looking at the sidebar after a baseline
+  bump, not only by grepping for the marker.
+- **Not applied to the v2 path.** `packages/core/src/session/runner/publish-llm-event.ts`
+  builds its step settlement as `{ finish, tokens }` and `Step.Ended`
+  (`packages/schema/src/session-event.ts`) has no metadata field either, so the same drop
+  happens there. It does not matter today: the native runtime is opt-in behind
+  `flags.experimentalNativeLlm` (`packages/opencode/src/session/llm.ts`) and the live path is
+  ai-sdk. If that flag becomes the default, the token rows go blank until the same two lines
+  are added on that surface.
+- **Verify:** run a gateway-backed turn against a deployment that sends `x-czgw-ratelimit-*`
+  (uat-aimesh does; cn-shanghai-alicloud does not, as of 2026-09-01) and confirm the Quota
+  section paints token rows.
+
 ## HOOK-based customizations (safe — live entirely in the cz layer)
 
 These do **not** edit upstream files. They are listed so a re-baseline can confirm
@@ -515,23 +556,23 @@ the hooks they depend on still exist in the new upstream.
     change; the older `session.status` subscription had gone unrecorded too):
     - `session.status` — `properties.sessionID` / `properties.status`, driving the
       busy→idle edge that triggers the balance read.
-    - `message.part.updated` — `properties.part.type === "step-finish"`. This is the
-      only response-adjacent signal a TUI plugin can observe, and the token half of the
-      section refreshes on it, once per LLM request. If upstream renames that part type,
-      stops publishing it through this event, or moves `part` out of `properties`, the
-      token rows silently stop updating — they do not error, because the read is a cache
-      lookup that simply never runs. No test covers the live event shape;
-      `packages/cz-cli/test/tui-quota-data.test.ts` covers the reader only.
-- **On-disk path this feature owns:** `~/.clickzetta/gateway-quota.json`, written by
-  `@clickzetta/ai-gateway`'s `quota-store.ts` inside the opencode SERVER process and read
-  by the sidebar in the TUI process. It exists because those are different processes and
-  no plugin hook carries a response header between them: `chat.headers` is outbound only,
-  the event bus is a fixed set with no way to publish a new event, and upstream's
-  `packages/opencode/src/session/processor.ts` hands `step-finish` metadata to
-  `Session.getUsage` and then drops it. Patching that processor was the alternative and
-  was rejected — the de-opencode invariant is worth more than saving the file. The file is
-  a cache with a 7-day retention and a reader-side freshness window; a miss, a stale entry
-  or an unwritable home all mean "no header quota", never "zero".
+    - `message.part.updated` — `properties.part.type === "step-finish"`, whose `metadata`
+      carries the token quota (see intrusive patch 13). The sidebar reads it from the TUI's
+      state store rather than from the event, exactly as upstream's Context section reads
+      `tokens`, so a rename of that part type or a move of `metadata` shows up as blank
+      token rows with no error. `packages/cz-cli/test/tui-quota-data.test.ts` covers the
+      reader against a hand-built store; nothing covers the live shape.
+- **How the token half travels:** the provider publishes it as
+  `providerMetadata.clickzetta.quota` (on the doGenerate result, on the doStream "finish"
+  part), opencode carries it onto the step-finish part via patch 13, and the part reaches
+  the TUI through the ordinary message pipeline. No cache, no side channel, no persistence
+  of cz's own: a reading is attached to the assistant message that produced it, so
+  reopening a session shows that session's last reading and a turn aborted before
+  step-finish reports nothing. Attribution needs no credential — the message names its own
+  `providerID`, which is what the reader filters on.
+  - A reading printed by `cz-cli ai-gateway quota` in another terminal does not reach a
+    running TUI (it did when this was a file). Both sides still resolve the same entry
+    through `classifyClickzettaEntry`, so they can never describe different keys.
 - **Token quota no longer comes from Portal.** It used to be a second portal call,
   `/clickzetta-portal/user/listApiKeys`, matched against the key by its masked form. That
   route, `maskApiKey`/`matchKeyUsage`, and the walk over every configured profile hunting

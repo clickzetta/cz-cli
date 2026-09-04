@@ -38,7 +38,6 @@ import {
   readHeaderQuota,
   readProfileInfo,
   type ActiveModelContext,
-  type ClickzettaQuota,
   type QuotaRow,
   type QuotaSnapshot,
 } from "./tui-quota-runtime.js"
@@ -121,25 +120,6 @@ function View(props: {
 
 export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveModelContext) {
   const [snapshot, setSnapshot] = createSignal<QuotaSnapshot | undefined>(undefined)
-  // Token quota is tracked apart from the balance because the two arrive on
-  // different cadences: the balance costs a portal round-trip and is read on the
-  // busy→idle edge, while this is a local file read the gateway refreshes on every
-  // response, so it updates once per LLM request. Merged for display below.
-  const [headerQuota, setHeaderQuota] = createSignal<ClickzettaQuota[] | undefined>(undefined)
-  // Two readers, because "nothing cached" means different things at different moments.
-  // Per REQUEST (step-finish) it usually means this gateway sends no quota headers, so
-  // blanking a live figure would be wrong — keep the last reading.
-  const refreshHeaderQuota = () => {
-    const quotas = readHeaderQuota(activeModel.providerID())
-    if (quotas) setHeaderQuota(quotas)
-  }
-  // Per CONTEXT (mount, session switch, provider switch — all of which route through
-  // onContext -> controller.refresh -> load) it means the figure on screen belongs to a
-  // credential that is no longer the active one, so it must go. Without this the sticky
-  // reader alone would carry a ClickZetta reading into a session running a foreign
-  // provider, where the balance is undefined and the merge below would still paint the
-  // stale token rows.
-  const syncHeaderQuota = () => setHeaderQuota(readHeaderQuota(activeModel.providerID()))
   const [userName, setUserName] = createSignal<{ profile: string; name: string } | undefined>(undefined)
   // Deferred until the sidebar section first mounts, not fired at install: a
   // portal round-trip (token acquisition included) here would run on every TUI
@@ -206,10 +186,6 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     // fetchQuotaSnapshot already pays for the network call.
     load: () => {
       setProfileInfoSignal(readProfileInfo())
-      // Paint whatever the last request already cached, so a fresh mount is not
-      // blank until the next LLM call — and drop it when the now-active credential
-      // has nothing cached.
-      syncHeaderQuota()
       return fetchQuotaSnapshot({
         providerID: activeModel.providerID(),
         signal: api.lifecycle.signal,
@@ -222,27 +198,13 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     api.event.on("session.status", (event) => {
       controller.observeStatus(event.properties.sessionID, event.properties.status)
     }),
-    // One step-finish part per LLM request, which is exactly when the gateway has
-    // reported a new quota — and the only response-adjacent signal a TUI plugin can
-    // observe (the plugin API exposes no response hook, and opencode's processor
-    // drops the finish metadata). The read is local and synchronous, but not free: it parses
-    // llm.json to resolve the entry and then gateway-quota.json, so two file reads per LLM
-    // request on the TUI's own thread. Cheap enough for once-per-request, and deliberately
-    // NOT session-scoped like its two siblings above: readHeaderQuota keys on the ACTIVE
-    // provider, so a step-finish from another session costs this read and cannot produce
-    // wrong data. Scoping it would trade that cost for a way to miss a refresh.
-    api.event.on("message.part.updated", (event) => {
-      if (event.properties.part?.type !== "step-finish") return
-      refreshHeaderQuota()
-    }),
     // Which provider is active is tracked by the shared context (see active-model
     // .ts); this only reacts to it. Quota is charged to the active provider's key,
     // so a change means the reading is for the wrong key until refreshed.
     activeModel.onChange(({ sessionID }) => {
       if (sessionID !== currentSessionID(api)) return
-      // The cache is keyed by endpoint+key, so a provider switch means the figure on
-      // screen belongs to the wrong credential until re-read.
-      setHeaderQuota(undefined)
+      // The quota read below is scoped to the active provider, so the switch itself
+      // re-attributes the rows; this only refreshes the balance half.
       controller.refresh()
     }),
   ]
@@ -276,8 +238,15 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
             activeModel={activeModel}
             sessionID={props.session_id}
             snapshot={() => {
-              const quotas = headerQuota()
               const balance = snapshot()
+              // Read inside this closure, which View evaluates from a memo: that is what
+              // subscribes to the message/part store, so a new step-finish repaints the
+              // rows. Same pattern as upstream's Context section reading `tokens`.
+              const quotas = readHeaderQuota({
+                messages: api.state.session.messages(props.session_id),
+                parts: (messageID) => api.state.part(messageID),
+                providerID: activeModel.providerID(props.session_id),
+              })
               if (!quotas) return balance
               return { ...balance, quotas }
             }}

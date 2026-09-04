@@ -6,9 +6,11 @@
 //     /clickzetta-portal/hornhub/account/billing/account/{accountId}, authenticated
 //     with the current profile's portal token. Money moves slowly, so this is read
 //     on the busy -> idle edge of a turn.
-//   - token quota, from the AI gateway's own response headers, cached by the
-//     provider into ~/.clickzetta/gateway-quota.json (see quota-store.ts in
-//     @clickzetta/ai-gateway). Read synchronously, once per LLM request.
+//   - token quota, from the AI gateway's own response headers: the provider publishes it
+//     on the step's provider metadata, opencode carries it onto the step-finish part
+//     (see UPSTREAM-PATCHES.md patch 13), and readHeaderQuota below reads it back out of
+//     the TUI's state store. Nothing to poll and nothing to age — a reading is attached
+//     to the assistant message that produced it.
 //
 // The quota half used to be a second portal call, /clickzetta-portal/user/listApiKeys.
 // It was retired because the header source is strictly better for this display: it
@@ -35,8 +37,7 @@ import { deriveAuthType, explicitAuthType, loadProfiles } from "../connection/pr
 import { classifyClickzettaEntry, resolveClickzettaEntry } from "../llm/clickzetta-entry.js"
 export { classifyClickzettaEntry, resolveClickzettaEntry } from "../llm/clickzetta-entry.js"
 export type { ClickzettaEntryResolution } from "../llm/clickzetta-entry.js"
-import { readGatewayQuota, type ClickzettaQuota, type ClickzettaQuotaPeriod } from "../llm/gateway-error.js"
-import { CLICKZETTA_DEFAULT_GATEWAY_URL, normalizeClickzettaGatewayUrl } from "../llm/clickzetta-provider.js"
+import type { ClickzettaQuota, ClickzettaQuotaPeriod } from "../llm/gateway-error.js"
 import { profileTokenSource } from "../connection/token-source.js"
 
 const BILLING_PATH = "/clickzetta-portal/hornhub/account/billing/account"
@@ -339,74 +340,56 @@ export function isPortalOk(code: unknown): boolean {
 }
 
 
-/**
- * The token quota the gateway last reported for the selected entry's key.
- *
- * Synchronous and local — no network, no portal token — so the caller can run it on
- * every `step-finish` part, i.e. once per LLM request, which is the whole point of
- * sourcing this from headers instead of a poll.
- *
- * `undefined` covers every "nothing to show" case alike: a foreign provider, a
- * ClickZetta entry with no key or no base_url, a gateway that sends no quota headers,
- * and a reading left over from an earlier session. Callers keep whatever they had.
- */
-export function readHeaderQuota(providerID?: string, now = Date.now()): ClickzettaQuota[] | undefined {
-  const resolved = classifyClickzettaEntry(providerID)
-  if (resolved.kind !== "clickzetta") return undefined
-  // The SAME default the writer applies. providerFromInput (native-config.ts) fills an
-  // absent baseURL with CLICKZETTA_DEFAULT_GATEWAY_URL, so a hand-written llm.json entry
-  // with no base_url still chats — and the provider still files a real reading, under the
-  // default endpoint's key. Bailing out here on a missing base_url meant the sidebar could
-  // never find that reading and the token rows stayed blank with nothing to explain why.
-  const baseUrl = resolved.baseUrl ?? CLICKZETTA_DEFAULT_GATEWAY_URL
-  // Freshness is decided here, in full: the store hands back whatever it has plus the
-  // timestamp, and one `now` governs both rules below, which also lets a test pin it.
-  const entry = readGatewayQuota({
-    baseURL: normalizeClickzettaGatewayUrl(baseUrl),
-    apiKey: resolved.apiKey,
-  })
-  if (!entry || now - entry.updated_at > HEADER_QUOTA_MAX_AGE_MS) return undefined
-  const fresh = entry.quotas.filter((quota) => !periodResetSince(quota.period, entry.updated_at, now))
-  return fresh.length > 0 ? fresh : undefined
-}
+/** Just enough of an assistant message and a step-finish part to find a quota reading. */
+export type QuotaMessage = { role?: unknown; id?: unknown; providerID?: unknown }
+export type QuotaPart = { type?: unknown; metadata?: unknown }
 
 /**
- * Has this period's counter reset since the reading was taken?
+ * The token quota the gateway last reported, read out of the TUI's own state store.
  *
- * Only `daily` can be answered. A fixed duration cannot express this — ANY window
- * shorter than a day still straddles a reset, so a 23:00 reading shown at 04:00 would
- * report yesterday's near-exhausted spend against today's fresh limit. That is the
- * worst direction to be wrong in: it tells a user with a full day's allowance that they
- * are out.
+ * The provider publishes it as `providerMetadata.clickzetta.quota`, opencode carries that
+ * onto the step-finish part, and the part reaches this process through the same event
+ * pipeline every message travels — so the reading is simply attached to the assistant
+ * message that produced it. Same shape as upstream's Context section, which finds the last
+ * assistant message and reads `tokens` off it
+ * (packages/tui/src/feature-plugins/sidebar/context.tsx).
  *
- * The gateway does not say which zone its day rolls over in, so both are treated as
- * boundaries: a different calendar date in EITHER local or UTC time counts as reset.
- * Deliberately conservative — dropping a still-valid reading costs one blank paint
- * until the next request refreshes it, while keeping a reset one misinforms.
+ * Attribution needs no credential: quota is charged to the key that served the request, and
+ * the message names its own `providerID`. Passing `providerID` restricts the search to the
+ * provider on screen, so a reading from a model the user has since switched away from is
+ * not painted under the new one.
  *
- * `weekly`/`monthly` are left to the duration bound: their boundaries are the gateway's
- * own (and a week's start is a convention), so a guess here could discard good readings
- * for days. `total` never resets.
+ * Newest first, and only a step that FINISHED reports — a turn aborted mid-stream has no
+ * step-finish part, which is the honest answer rather than a stale one.
  */
-function periodResetSince(period: QuotaPeriod | undefined, readAt: number, now: number): boolean {
-  if (period !== "daily") return false
-  const then = new Date(readAt)
-  const current = new Date(now)
-  return (
-    then.toDateString() !== current.toDateString() ||
-    then.toISOString().slice(0, 10) !== current.toISOString().slice(0, 10)
+export function readHeaderQuota(input: {
+  messages: ReadonlyArray<QuotaMessage>
+  parts: (messageID: string) => ReadonlyArray<QuotaPart>
+  providerID?: string
+}): ClickzettaQuota[] | undefined {
+  for (let i = input.messages.length - 1; i >= 0; i--) {
+    const message = input.messages[i]
+    if (!message || message.role !== "assistant" || typeof message.id !== "string") continue
+    if (input.providerID !== undefined && message.providerID !== input.providerID) continue
+    const parts = input.parts(message.id)
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const quota = quotaFromPart(parts[j])
+      if (quota) return quota
+    }
+  }
+  return undefined
+}
+
+/** `metadata.clickzetta.quota` off a step-finish part, validated: it crossed a wire as JSON. */
+function quotaFromPart(part: QuotaPart | undefined): ClickzettaQuota[] | undefined {
+  if (!part || part.type !== "step-finish" || !isRecord(part.metadata)) return undefined
+  const clickzetta = part.metadata.clickzetta
+  if (!isRecord(clickzetta) || !Array.isArray(clickzetta.quota)) return undefined
+  const quotas = clickzetta.quota.filter(
+    (item): item is ClickzettaQuota => isRecord(item) && typeof item.periodCode === "string",
   )
+  return quotas.length > 0 ? quotas : undefined
 }
-
-/**
- * Upper bound on how old a cached reading may be, whatever its period.
- *
- * Long enough that a session sitting idle keeps showing the figure from its last
- * request. It does NOT by itself keep yesterday's daily figure off today's screen —
- * no fixed duration can, since any window under a day still straddles a reset. That
- * job belongs to periodResetSince above; this is only the coarse ceiling.
- */
-const HEADER_QUOTA_MAX_AGE_MS = 6 * 60 * 60 * 1000
 
 // The portal is method-sensitive per endpoint, and gets them backwards from what
 // the URLs suggest: `getCurrentUser` only answers to POST (GET returns error

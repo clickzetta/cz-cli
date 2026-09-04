@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { onFetch, onPath } from "./support/fetch-boundary"
 import { requireTestHome } from "./support/cz-fixtures"
 import { clearTokenCache } from "@clickzetta/sdk"
 import { setActiveModel, writeLlmEntries } from "../src/llm/native-config"
-import { CLICKZETTA_DEFAULT_GATEWAY_URL } from "../src/llm/clickzetta-provider"
-import { gatewayQuotaCacheKey, recordGatewayQuota, type ClickzettaQuota } from "../src/llm/gateway-error"
 import {
   centralPortalHost,
   clearUnservedHostForTest,
@@ -118,9 +116,6 @@ beforeEach(() => {
   clearUnservedHostForTest()
   // Same reasoning as above, for fetchProfileUserName's per-profile name cache.
   clearUserNameCacheForTest()
-  // The header-quota cache is a file under the same test home, so a reading left by
-  // one test would otherwise answer another test's "nothing recorded" case.
-  rmSync(join(requireTestHome(), ".clickzetta", "gateway-quota.json"), { force: true })
 })
 
 describe("isPortalOk", () => {
@@ -477,123 +472,86 @@ describe("balance survives an unresolvable LLM entry", () => {
 })
 
 /**
- * The token half. No portal, no network, no credentials — just what the gateway
- * already told the provider, read back out of ~/.clickzetta/gateway-quota.json.
+ * The token half. No portal, no network, no credentials, and no cache — the provider puts
+ * the reading on the step's provider metadata, opencode carries it onto the step-finish
+ * part, and this reads it back off the TUI's own state store.
  */
-/**
- * Write the cache directly so both `updated_at` and the `now` it is read against are
- * fixed. recordGatewayQuota stamps the real clock, which cannot express "taken at 23:00
- * and read at 04:00" — the gap the reset rule exists for.
- */
-function seedQuotaCache(input: { baseURL: string; apiKey: string; updatedAt: number; quotas: ClickzettaQuota[] }) {
-  const home = requireTestHome()
-  mkdirSync(join(home, ".clickzetta"), { recursive: true })
-  writeFileSync(
-    join(home, ".clickzetta", "gateway-quota.json"),
-    JSON.stringify({
-      entries: { [gatewayQuotaCacheKey(input.baseURL, input.apiKey)]: { updated_at: input.updatedAt, quotas: input.quotas } },
-    }),
-    "utf-8",
-  )
-}
-
-/** 23:00 local on an arbitrary fixed day, and 04:00 the next morning — five hours apart. */
-const BEFORE_RESET = new Date(2026, 5, 15, 23, 0, 0).getTime()
-const AFTER_RESET = new Date(2026, 5, 16, 4, 0, 0).getTime()
-
-const DAILY = { period: "daily" as const, periodCode: "PDO", limit: 10_000_000, used: 9_999_000, remaining: 1_000, scope: "api-key" }
-const TOTAL = { period: "total" as const, periodCode: "PTO", limit: 1_000_000_000, used: 21_306_417, remaining: 978_693_583, scope: "api-key" }
-
 describe("readHeaderQuota", () => {
-  const QUOTAS = [
+  const QUOTA = [
     { period: "daily" as const, periodCode: "PDO", limit: 10_000_000, used: 238, remaining: 9_999_762, scope: "api-key" },
   ]
+  const step = (quota?: unknown) => ({
+    type: "step-finish",
+    ...(quota === undefined ? {} : { metadata: { clickzetta: { quota } } }),
+  })
+  /** One assistant message with the given parts, as the state store would hand them over. */
+  const store = (input: { providerID: string; parts: unknown[] }) => ({
+    messages: [{ role: "assistant", id: "msg_1", providerID: input.providerID }],
+    parts: () => input.parts as never,
+  })
 
-  test("reads back what the provider recorded for the selected entry", () => {
-    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
-    expect(readHeaderQuota("prod_0")).toEqual(QUOTAS)
+  test("reads the quota off the step-finish part of an assistant message", () => {
+    expect(readHeaderQuota(store({ providerID: "prod_0", parts: [step(QUOTA)] }))).toEqual(QUOTA)
+  })
+
+  test("the newest reading wins", () => {
+    const later = [{ ...QUOTA[0]!, used: 500, remaining: 9_999_500 }]
+    expect(readHeaderQuota(store({ providerID: "prod_0", parts: [step(QUOTA), step(later)] }))).toEqual(later)
   })
 
   /**
-   * llm.json may hold the endpoint in its bare form (`https://host/`) while the
-   * provider recorded against the normalized `/gateway/v1` one. Both sides run the
-   * same normalizer, so the two still meet — without this the indicator silently
-   * reported nothing for every entry written by `agent llm add`.
+   * Quota is charged to the key that served the request, and the message names its own
+   * provider — so a reading from a model the user has since switched away from must not be
+   * painted under the new one.
    */
-  test("an un-normalized base_url resolves to the same reading", () => {
-    writeLlmEntries({
-      llm: { prod_0: { provider: "clickzetta", api_key: PROD_KEY, base_url: "https://aimesh.example.com/" } },
-    })
-    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
-    expect(readHeaderQuota("prod_0")).toEqual(QUOTAS)
+  test("a reading from another provider is not borrowed", () => {
+    expect(
+      readHeaderQuota({ ...store({ providerID: "dev_0", parts: [step(QUOTA)] }), providerID: "prod_0" }),
+    ).toBeUndefined()
   })
 
-  test("the reading is per key, so another entry's quota is not borrowed", () => {
-    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
-    expect(readHeaderQuota("dev_0")).toBeUndefined()
+  test("without a provider filter any reading answers", () => {
+    expect(readHeaderQuota(store({ providerID: "dev_0", parts: [step(QUOTA)] }))).toEqual(QUOTA)
   })
 
-  /**
-   * A daily figure from before the reset is worse than no figure: it reports yesterday's
-   * near-exhausted spend against today's fresh limit, i.e. "you are out" to a user who
-   * has a full day. A duration bound cannot catch this — 23:00 to 04:00 is five hours.
-   */
-  test("a daily reading taken before the reset is dropped, a total one survives it", () => {
-    seedQuotaCache({
-      baseURL: "https://aimesh.example.com/gateway/v1",
-      apiKey: PROD_KEY,
-      updatedAt: BEFORE_RESET,
-      quotas: [DAILY, TOTAL],
-    })
-    expect(readHeaderQuota("prod_0", AFTER_RESET)?.map((quota) => quota.period)).toEqual(["total"])
+  /** An older message still answers once the newest one has nothing to say. */
+  test("walks back past a message that reported nothing", () => {
+    const parts: Record<string, unknown[]> = { msg_1: [step(QUOTA)], msg_2: [step()] }
+    expect(
+      readHeaderQuota({
+        messages: [
+          { role: "assistant", id: "msg_1", providerID: "prod_0" },
+          { role: "assistant", id: "msg_2", providerID: "prod_0" },
+        ],
+        parts: (id) => (parts[id] ?? []) as never,
+      }),
+    ).toEqual(QUOTA)
   })
 
-  test("both periods survive a five-hour gap inside one day", () => {
-    seedQuotaCache({
-      baseURL: "https://aimesh.example.com/gateway/v1",
-      apiKey: PROD_KEY,
-      updatedAt: new Date(2026, 5, 16, 9, 0, 0).getTime(),
-      quotas: [DAILY, TOTAL],
-    })
-    expect(readHeaderQuota("prod_0", new Date(2026, 5, 16, 14, 0, 0).getTime())?.map((quota) => quota.period)).toEqual([
-      "daily",
-      "total",
-    ])
+  /** A turn aborted mid-stream has no step-finish part: absent, not stale. */
+  test("a step that never finished reports nothing", () => {
+    expect(readHeaderQuota(store({ providerID: "prod_0", parts: [{ type: "text", text: "hi" }] }))).toBeUndefined()
   })
 
-  test("a reading past the coarse ceiling is gone whatever its period", () => {
-    seedQuotaCache({
-      baseURL: "https://aimesh.example.com/gateway/v1",
-      apiKey: PROD_KEY,
-      updatedAt: BEFORE_RESET,
-      quotas: [TOTAL],
-    })
-    expect(readHeaderQuota("prod_0", BEFORE_RESET + 7 * 60 * 60 * 1000)).toBeUndefined()
+  test("a gateway that sends no quota headers leaves the part bare", () => {
+    expect(readHeaderQuota(store({ providerID: "prod_0", parts: [step()] }))).toBeUndefined()
   })
 
-  test("nothing recorded reads as nothing, not zero", () => {
-    expect(readHeaderQuota("prod_0")).toBeUndefined()
+  test("user messages are skipped", () => {
+    expect(
+      readHeaderQuota({ messages: [{ role: "user", id: "msg_1" }], parts: () => [step(QUOTA)] as never }),
+    ).toBeUndefined()
   })
 
-  // A gateway that sends no quota headers, a foreign provider, and an entry with no
-  // base_url all reduce to the same "no token rows" outcome.
-  test("resolves to nothing for a foreign provider", () => {
-    recordGatewayQuota({ baseURL: "https://aimesh.example.com/gateway/v1", apiKey: PROD_KEY, quotas: QUOTAS })
-    expect(readHeaderQuota("claude")).toBeUndefined()
+  /** The metadata crossed a wire as JSON, so a malformed payload must read as nothing. */
+  test("a malformed payload reads as nothing, not as a row", () => {
+    for (const bad of [null, "PDO", 42, [], [{ noPeriodCode: true }]]) {
+      expect(readHeaderQuota(store({ providerID: "prod_0", parts: [step(bad)] }))).toBeUndefined()
+    }
   })
 
-  /**
-   * An entry with no base_url still reaches a gateway — providerFromInput fills the absent
-   * baseURL with the default, so the provider files its reading under THAT endpoint's key.
-   * The reader has to apply the same default or it looks in the wrong place and the token
-   * rows stay blank on an entry that demonstrably works.
-   */
-  test("an entry with no base_url finds the reading filed under the default endpoint", () => {
-    writeLlmEntries({ llm: { bare: { provider: "clickzetta", api_key: PROD_KEY } } })
-    setActiveModel("bare/whatever")
-    expect(readHeaderQuota()).toBeUndefined()
-    recordGatewayQuota({ baseURL: CLICKZETTA_DEFAULT_GATEWAY_URL, apiKey: PROD_KEY, quotas: QUOTAS })
-    expect(readHeaderQuota()?.map((quota) => quota.periodCode)).toEqual(QUOTAS.map((quota) => quota.periodCode))
+  test("nothing in the session reads as nothing", () => {
+    expect(readHeaderQuota({ messages: [], parts: () => [] })).toBeUndefined()
   })
 })
 

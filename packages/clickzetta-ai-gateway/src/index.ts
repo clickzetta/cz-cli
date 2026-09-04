@@ -14,7 +14,6 @@ import type {
 } from "@ai-sdk/provider"
 import { rewriteClickzettaGatewayError } from "./gateway-error"
 import { parseClickzettaQuota, type ClickzettaQuota } from "./quota"
-import { recordGatewayQuota } from "./quota-store"
 import { normalizeClickzettaGatewayUrl } from "./url"
 
 /**
@@ -30,9 +29,10 @@ import { normalizeClickzettaGatewayUrl } from "./url"
  *    429/402 body;
  *  - the key's remaining token quota, which the gateway reports on every
  *    successful completion's headers, is published as
- *    `providerMetadata.clickzetta.quota` and cached for out-of-process readers,
- *    so a caller can show it without a second request or portal credentials.
- *    See quota.ts and quota-store.ts.
+ *    `providerMetadata.clickzetta.quota` — on the result for doGenerate, on the
+ *    "finish" part for doStream, which is where per-step metadata is read. From
+ *    there opencode carries it onto the step-finish part and the sidebar reads it
+ *    off its own state store. See quota.ts.
  *
  * Everything else (model listing, streaming, tool calls, prompt caching) passes
  * straight through.
@@ -134,34 +134,15 @@ function withClickzettaPromptCaching(options: LanguageModelV3CallOptions, modelI
 }
 
 /**
- * The endpoint/key a wrapped model answers for, so a quota reading can be filed
- * against the credential it describes. Absent when the provider was built without
- * an apiKey, in which case only the in-band metadata is published.
- */
-type QuotaTarget = { baseURL: string; apiKey: string } | undefined
-
-/**
- * Read the quota off a response's headers and cache it for the sidebar indicator,
- * which reads it from another process (quota-store.ts).
+ * Parse the quota off a response's headers.
  *
- * Called as soon as the headers exist — for a stream that is when it opens, not when
- * it finishes. Caching at `finish` would throw away a reading already in hand
- * whenever the turn is aborted or errors mid-stream, and the numbers describe the
- * request's admission, so waiting adds nothing.
- *
- * Total: an HTTP call that already succeeded must not fail over a local cache. The
- * guard is HERE rather than at the two call sites so neither can forget it, and so a
- * third can't: `recordGatewayQuota` swallows its own write errors, but the parse and
- * the read-modify-write around it can still throw (a truncated store from a racing
- * writer, a homedir that resolves somewhere unreadable). In doStream that would
- * escape uncaught; in doGenerate it would be worse — `mapThrown` would dress a local
- * cache problem up as a ClickZetta gateway error.
+ * Guarded because an HTTP call that already succeeded must not fail over a defect in
+ * quota reporting: in doStream a throw here would escape uncaught, and in doGenerate
+ * `mapThrown` would dress it up as a ClickZetta gateway error.
  */
-function recordQuota(headers: SharedV3Headers | undefined, target: QuotaTarget) {
+function quotaFromHeaders(headers: SharedV3Headers | undefined): ClickzettaQuota[] | undefined {
   try {
-    const quota = parseClickzettaQuota(headers)
-    if (quota && target) recordGatewayQuota({ ...target, quotas: quota })
-    return quota
+    return parseClickzettaQuota(headers)
   } catch {
     return undefined
   }
@@ -188,11 +169,11 @@ function withQuota(
  * Delegates every other member to the underlying model via prototype so future
  * SDK additions keep working without changes here.
  */
-function wrapModel(model: LanguageModelV3, modelId: string, target?: QuotaTarget): LanguageModelV3 {
+function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
   const doGenerate = async (options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> => {
     try {
       const result = await model.doGenerate(withClickzettaPromptCaching(options, modelId))
-      const quota = recordQuota(result.response?.headers, target)
+      const quota = quotaFromHeaders(result.response?.headers)
       const providerMetadata = withQuota(result.providerMetadata, quota)
       // Same object back when the gateway reported no quota, so a response the
       // wrapper has nothing to add to stays byte-identical.
@@ -209,11 +190,11 @@ function wrapModel(model: LanguageModelV3, modelId: string, target?: QuotaTarget
     } catch (error) {
       throw mapThrown(error)
     }
-    // Response headers are already available here — they arrive before the body — so
-    // the cache is written now, while the reading cannot be lost to an aborted turn.
-    // Only the in-band publication waits for the "finish" part, because that is where
-    // consumers read per-step metadata.
-    const quota = recordQuota(result.response?.headers, target)
+    // Headers are already available here — they arrive before the body — but the quota is
+    // published on the "finish" part below, because that is where per-step metadata is read.
+    // A turn aborted before finish reports no quota, which is correct: the sidebar shows
+    // what a completed step reported.
+    const quota = quotaFromHeaders(result.response?.headers)
     // HTTP errors usually reject doStream above, but the SDK can also surface a
     // late error as an in-stream "error" part — rewrite those too.
     const stream = result.stream.pipeThrough(
@@ -268,14 +249,14 @@ export function createClickzetta(options: ClickzettaProviderSettings): OpenAICom
     baseURL: normalizeClickzettaGatewayUrl(options.baseURL),
   })
 
-  // Recorded against the normalized URL so a reader that resolved the same endpoint
-  // from llm.json's raw form lands on the same cache key.
-  const target = options.apiKey ? { baseURL: normalizeClickzettaGatewayUrl(options.baseURL), apiKey: options.apiKey } : undefined
-  const languageModel = (modelId: string): LanguageModelV3 => wrapModel(base.languageModel(modelId), modelId, target)
+  // No endpoint/key attribution here: the quota rides the assistant message that
+  // reported it, and that message already names the provider it was served by — so the
+  // sidebar matches on providerID rather than on a credential the provider had to carry.
+  const languageModel = (modelId: string): LanguageModelV3 => wrapModel(base.languageModel(modelId), modelId)
 
   const provider = ((modelId: string) => languageModel(modelId)) as OpenAICompatibleProvider
   provider.languageModel = languageModel
-  provider.chatModel = (modelId: string) => wrapModel(base.chatModel(modelId), modelId, target)
+  provider.chatModel = (modelId: string) => wrapModel(base.chatModel(modelId), modelId)
   provider.completionModel = base.completionModel.bind(base)
   provider.embeddingModel = base.embeddingModel.bind(base)
   provider.textEmbeddingModel = base.textEmbeddingModel.bind(base)
@@ -291,12 +272,6 @@ export {
   type ClickzettaQuota,
   type ClickzettaQuotaPeriod,
 } from "./quota"
-export {
-  gatewayQuotaCacheKey,
-  readGatewayQuota,
-  recordGatewayQuota,
-  type GatewayQuotaEntry,
-} from "./quota-store"
 export {
   rewriteClickzettaGatewayError,
   clickzettaGatewayCode,

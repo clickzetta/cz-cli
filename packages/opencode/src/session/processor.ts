@@ -725,6 +725,14 @@ export const layer = Layer.effect(
               type: "step-finish",
               tokens: usage.tokens,
               cost: usage.cost,
+              //======================== cz-cli change ========================
+              // Carry the step's provider metadata onto the part, as text/reasoning/tool
+              // parts already do. Without it `value.providerMetadata` dies here: getUsage
+              // above takes the fields it normalizes (anthropic cache tokens, copilot AIU)
+              // and everything else is dropped, so a provider-specific number has no route
+              // to a consumer. See the field's rationale in packages/schema/src/session-v1.ts.
+              metadata: value.providerMetadata,
+              //====================== end cz-cli change ======================
             })
             yield* session.updateMessage(ctx.assistantMessage)
             if (ctx.snapshot) {
