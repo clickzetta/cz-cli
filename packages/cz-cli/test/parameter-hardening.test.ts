@@ -453,19 +453,19 @@ describe("the numeric guard's edges", () => {
     expect(errorOf(r.stdout).code).not.toBe("USAGE_ERROR")
   }, SLOW_SPAWN)
 
-  test("one bad element rejects a repeatable numeric option", () => {
+  test("one bad element rejects a numeric JSON array option", () => {
     const r = run([
       "analytics-agent", "knowledge", "update", "1",
-      "--domain-id", "7", "--domain-id", "seven",
+      "--domain-ids", "[7,\"seven\"]",
     ])
     expect(errorOf(r.stdout).code).toBe("USAGE_ERROR")
-    expect(errorOf(r.stdout).message).toContain("--domain-id")
+    expect(errorOf(r.stdout).message).toContain("--domain-ids")
   }, SLOW_SPAWN)
 
-  test("all-numeric elements pass through as a list", () => {
+  test("all-numeric JSON array elements pass through as a list", () => {
     const r = run([
       "analytics-agent", "knowledge", "update", "1",
-      "--domain-id", "7", "--domain-id", "8",
+      "--domain-ids", "[7,8]",
     ])
     expect(errorOf(r.stdout).code).not.toBe("USAGE_ERROR")
   }, SLOW_SPAWN)

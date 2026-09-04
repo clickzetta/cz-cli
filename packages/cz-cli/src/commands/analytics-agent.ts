@@ -320,6 +320,23 @@ function optionalPositiveIntegerJsonArray(raw: string | undefined, optionName: s
   return optionalPositiveIntegerArray(parsed, optionName, format)
 }
 
+function requiredPositiveIntegerJsonArray(raw: string | undefined, optionName: string, format: string): number[] {
+  if (raw === undefined || raw.trim() === "") {
+    handledError("USAGE_ERROR", `${optionName} is required and must be a JSON array of positive integers`, {
+      format,
+      exitCode: EXIT_USAGE_ERROR,
+    })
+  }
+  const values = optionalPositiveIntegerJsonArray(raw, optionName, format)
+  if (!values) {
+    handledError("USAGE_ERROR", `${optionName} is required and must be a JSON array of positive integers`, {
+      format,
+      exitCode: EXIT_USAGE_ERROR,
+    })
+  }
+  return values
+}
+
 const POSITIVE_ID_ARG_NAMES = new Set([
   "analysis-id",
   "attr-id",
@@ -1644,6 +1661,17 @@ async function knowledgeCreateBody(argv: Record<string, unknown>, domainIds: num
   })
 }
 
+function resolveKnowledgeFolderSortNodeIds(argv: Record<string, unknown>, format: string): number[] {
+  const rawNodeIds = typeof argv.nodeIds === "string" ? argv.nodeIds : undefined
+  if (rawNodeIds !== undefined) {
+    return requiredPositiveIntegerJsonArray(rawNodeIds, "--nodeIds", format)
+  }
+  handledError("USAGE_ERROR", "--nodeIds is required and must be a JSON array of positive integers", {
+    format,
+    exitCode: EXIT_USAGE_ERROR,
+  })
+}
+
 function normalizedRemotePath(pathValue: string | undefined): string {
   if (!pathValue) return ""
   const normalized = pathValue.replaceAll("\\", "/").split("/").filter(Boolean).join("/")
@@ -1785,7 +1813,7 @@ async function executeKnowledgeFileUploadCommand(argv: Record<string, unknown>):
     const file = await collectKnowledgeLocalFile(localFile)
     const targetPath = normalizedRemotePath(typeof argv["target-path"] === "string" ? argv["target-path"] : undefined)
     const remoteName = normalizedRemotePath(typeof argv.name === "string" ? argv.name : undefined) || file.filename
-    const domainIds = optionalPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+    const domainIds = optionalPositiveIntegerJsonArray(typeof argv["domain-ids"] === "string" ? argv["domain-ids"] : undefined, "--domain-ids", format)
     const ctx = await resolveAnalyticsContext(argv)
     const folderCache = new Map<string, Record<string, unknown>>()
     const createdFolders: string[] = []
@@ -1915,10 +1943,18 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("path", { type: "string", describe: "Browse path, for example workspace:w/schema:s" })
+                .option("path", { type: "string", describe: "Browse path, for example workspace:default/schema:public" })
                 .option("name", { type: "string", describe: "Filter child names" })
                 .option("page-num", { type: "number", describe: "Page number" })
-                .option("page-size", { type: "number", describe: "Page size" }),
+                .option("page-size", { type: "number", describe: "Page size" })
+                .epilogue(
+                  [
+                    "Examples:",
+                    "  cz-cli analytics-agent datasource browse 3",
+                    "    --path workspace:default/schema:public",
+                    "  如果当前工作区是 default、schema 是 public，就这样写。",
+                  ].join("\n"),
+                ),
             async (argv) => {
               await executeAnalyticsCommand("analytics-agent datasource browse", argv as Record<string, unknown>, ROUTES.datasourceBrowse, {}, {
                 path: argv.path,
@@ -2026,9 +2062,18 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("table-name", { type: "string", describe: "Table name" })
                 .option("display-name", { type: "string", describe: "Dataset display name" })
                 .option("description", { type: "string", describe: "Dataset description" })
-                .option("domain-ids", { type: "string", describe: "Domain IDs JSON array" })
+                .option("domain-ids", { type: "string", describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("mode", { type: "number", describe: "Dataset mode" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .epilogue(
+                  [
+                    "Examples:",
+                    "  cz-cli analytics-agent datasource load 3 --path workspace:default/schema:public/table:orders --domain-ids '[5]'",
+                    "  如果当前工作区是 default、schema 是 public、表名是 orders，而且只导入一个域，就这样写。",
+                    "  cz-cli analytics-agent datasource load 3 --path workspace:default/schema:public/table:orders --domain-ids '[5,6]'",
+                    "  如果当前工作区是 default、schema 是 public、表名是 orders，而且要导入多个域，就这样写。",
+                  ].join("\n"),
+                ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
@@ -2065,7 +2110,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("description", { type: "string", describe: "Domain description" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("sample-questions", { type: "string", describe: "Sample questions JSON array" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent domain create --sample-questions '[\"Q1\"]'", "Create a domain with sample questions"),
             async (argv) => {
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 name: argv.name,
@@ -2086,7 +2132,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("description", { type: "string", describe: "Domain description" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("sample-questions", { type: "string", describe: "Sample questions JSON array" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent domain update 27 --sample-questions '[\"Q1\"]'", "Update a domain's sample questions"),
             async (argv) => {
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 name: argv.name,
@@ -2209,7 +2256,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     .option("table-name", { type: "string", describe: "Table name" })
                     .option("display-name", { type: "string", describe: "Dataset display name" })
                     .option("description", { type: "string", describe: "Dataset description" })
-                    .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                    .option("body", { type: "string", describe: "Full request body as JSON object" })
+                    .epilogue(
+                      [
+                        "Examples:",
+                        "  cz-cli analytics-agent domain table add 27",
+                        "    --path workspace:default/schema:public/table:orders",
+                        "  如果当前工作区是 default、schema 是 public、表名是 orders，就这样写。",
+                      ].join("\n"),
+                    ),
                 async (argv) => {
                   const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                     datasourceId: argv["datasource-id"],
@@ -2641,15 +2696,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "List metrics for one or more domains",
             (y) =>
               y
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("table-name", { type: "string", describe: "Filter by table name" })
                 .option("page-num", { type: "number", describe: "Page number" })
                 .option("page-size", { type: "number", describe: "Page size" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent metric list --domain-ids '[5]'", "如果只查一个域，就这样写。")
+                .example("cz-cli analytics-agent metric list --domain-ids '[5,6]'", "如果要同时查多个域，就这样写。"),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 domainIds,
                 datasourceId: argv["datasource-id"],
@@ -2665,17 +2722,25 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "Create a simple metric",
             (y) =>
               y
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
                 .option("description", { type: "string", describe: "Metric description" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example(
+                  "cz-cli analytics-agent metric create --domain-ids '[5]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
+                  "如果只创建到一个域，就这样写。",
+                )
+                .example(
+                  "cz-cli analytics-agent metric create --domain-ids '[5,6]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
+                  "如果要同时绑定多个域，就这样写。",
+                ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
@@ -2694,17 +2759,25 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" })
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
                 .option("description", { type: "string", describe: "Metric description" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example(
+                  "cz-cli analytics-agent metric update 9 --domain-ids '[5]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
+                  "如果只更新一个域，就这样写。",
+                )
+                .example(
+                  "cz-cli analytics-agent metric update 9 --domain-ids '[5,6]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
+                  "如果要同时更新多个域，就这样写。",
+                ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 id: argv["metric-id"],
                 datasourceId: argv["datasource-id"],
@@ -2733,17 +2806,25 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "Validate a metric definition",
             (y) =>
               y
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
                 .option("description", { type: "string", describe: "Metric description" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example(
+                  "cz-cli analytics-agent metric validate --domain-ids '[5]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
+                  "如果只校验一个域，就这样写。",
+                )
+                .example(
+                  "cz-cli analytics-agent metric validate --domain-ids '[5,6]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
+                  "如果要同时校验多个域，就这样写。",
+                ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
@@ -2863,14 +2944,22 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example(
+                  "cz-cli analytics-agent answer-builder create --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
+                  "如果只创建到一个域，就这样写。",
+                )
+                .example(
+                  "cz-cli analytics-agent answer-builder create --analysis-name total-sales --datasource-id 824 --domain-ids '[5,6]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
+                  "如果要同时创建到多个域，就这样写。",
+                )
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 analysisName: argv["analysis-name"],
@@ -2891,14 +2980,22 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example(
+                  "cz-cli analytics-agent answer-builder update 9 --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
+                  "如果只更新一个域，就这样写。",
+                )
+                .example(
+                  "cz-cli analytics-agent answer-builder update 9 --analysis-name total-sales --datasource-id 824 --domain-ids '[5,6]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
+                  "如果要同时更新多个域，就这样写。",
+                )
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 id: argv["analysis-id"],
@@ -3021,14 +3118,16 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "List answer builders",
             (y) =>
               y
-                .option("domain-id", { type: "number", array: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("page-num", { type: "number", describe: "Page number" })
                 .option("page-size", { type: "number", describe: "Page size" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent answer-builder list --domain-ids '[5]'", "如果只查一个域，就这样写。")
+                .example("cz-cli analytics-agent answer-builder list --domain-ids '[5,6]'", "如果要同时查多个域，就这样写。"),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = optionalPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = optionalPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 domainIds,
                 datasourceId: argv["datasource-id"],
@@ -3046,14 +3145,22 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("domain-id", { type: "number", array: true, demandOption: true, describe: "Domain ID, can be repeated" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example(
+                  "cz-cli analytics-agent answer-builder validate --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
+                  "如果只校验一个域，就这样写。",
+                )
+                .example(
+                  "cz-cli analytics-agent answer-builder validate --analysis-name total-sales --datasource-id 824 --domain-ids '[5,6]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
+                  "如果要同时校验多个域，就这样写。",
+                )
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 analysisName: argv["analysis-name"],
@@ -3107,12 +3214,14 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("file", { type: "string", describe: "Local file path to load as text knowledge content" })
                 .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
                 .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID (required), can be repeated" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Bound domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent knowledge create --domain-ids '[5]' --content \"hello\"", "如果只绑定一个域，就这样写。")
+                .example("cz-cli analytics-agent knowledge create --domain-ids '[5,6]' --content \"hello\"", "如果要同时绑定多个域，就这样写。"),
             async (argv) => {
               const type = typeof argv.type === "string" ? argv.type : "text"
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               if (type === "dictionary" && !argv.dictionary) {
                 handledError("USAGE_ERROR", "dictionary knowledge requires --dictionary", { format })
               }
@@ -3140,11 +3249,13 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("content", { type: "string", describe: "Text knowledge content" })
                 .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
                 .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("domain-id", { type: "number", array: true, describe: "Bound domain ID (required), can be repeated" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Bound domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent knowledge update 42 --domain-ids '[5]' --content \"hello\"", "如果只绑定一个域，就这样写。")
+                .example("cz-cli analytics-agent knowledge update 42 --domain-ids '[5,6]' --content \"hello\"", "如果要同时绑定多个域，就这样写。"),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerArray(argv["domain-id"], "--domain-id", format)
+              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
               await executeAnalyticsCommand(
                 "analytics-agent knowledge update",
                 argv as Record<string, unknown>,
@@ -3200,12 +3311,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   (y) =>
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
-                      .option("name", { type: "string", demandOption: true, describe: "New space name" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("name", { type: "string", demandOption: true, describe: "New space name" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      name: argv.name,
-                    })
+                    const body = { name: argv.name }
                     await executeAnalyticsCommand("analytics-agent knowledge space rename", argv as Record<string, unknown>, ROUTES.knowledgeSpaceRename, body)
                   },
                 )
@@ -3282,14 +3390,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   (y) =>
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
-                      .option("node-id", { type: "number", array: true, demandOption: true, describe: "Ordered child node ID, repeat for each node" })
                       .option("parent-id", { type: "number", describe: "Parent folder node ID, use 0 for root" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("nodeIds", { type: "string", demandOption: true, describe: "Ordered child node IDs JSON array, e.g. '[1,2]'" })
+                      .example("cz-cli analytics-agent knowledge folder sort 1 --parent-id 0 --nodeIds '[1,2]'", "Reorder root children"),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                    const format = typeof argv.format === "string" ? argv.format : "json"
+                    const body = {
                       parentId: argv["parent-id"],
-                      nodeIds: numberArray(argv["node-id"]),
-                    })
+                      nodeIds: resolveKnowledgeFolderSortNodeIds(argv as Record<string, unknown>, format),
+                    }
                     await executeAnalyticsCommand("analytics-agent knowledge folder sort", argv as Record<string, unknown>, ROUTES.knowledgeNodeSort, body)
                   },
                 )
@@ -3311,12 +3420,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
-                      .option("name", { type: "string", demandOption: true, describe: "New folder name" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("name", { type: "string", demandOption: true, describe: "New folder name" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      name: argv.name,
-                    })
+                    const body = { name: argv.name }
                     await executeAnalyticsCommand("analytics-agent knowledge folder rename", argv as Record<string, unknown>, ROUTES.knowledgeNodeRename, body)
                   },
                 )
@@ -3327,12 +3433,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
-                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      parentId: argv["parent-id"],
-                    })
+                    const body = { parentId: argv["parent-id"] }
                     await executeAnalyticsCommand("analytics-agent knowledge folder move", argv as Record<string, unknown>, ROUTES.knowledgeNodeMove, body)
                   },
                 )
@@ -3343,12 +3446,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge folder node ID" })
-                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      parentId: argv["parent-id"],
-                    })
+                    const body = { parentId: argv["parent-id"] }
                     await executeAnalyticsCommand("analytics-agent knowledge folder copy", argv as Record<string, unknown>, ROUTES.knowledgeNodeCopy, body)
                   },
                 )
@@ -3406,12 +3506,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
-                      .option("name", { type: "string", demandOption: true, describe: "New file name" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("name", { type: "string", demandOption: true, describe: "New file name" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      name: argv.name,
-                    })
+                    const body = { name: argv.name }
                     await executeAnalyticsCommand("analytics-agent knowledge file rename", argv as Record<string, unknown>, ROUTES.knowledgeNodeRename, body)
                   },
                 )
@@ -3422,12 +3519,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
-                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      parentId: argv["parent-id"],
-                    })
+                    const body = { parentId: argv["parent-id"] }
                     await executeAnalyticsCommand("analytics-agent knowledge file move", argv as Record<string, unknown>, ROUTES.knowledgeNodeMove, body)
                   },
                 )
@@ -3438,12 +3532,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
                       .positional("node-id", { type: "number", demandOption: true, describe: "Knowledge file node ID" })
-                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("parent-id", { type: "number", demandOption: true, describe: "Target parent folder node ID, use 0 for root" }),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-                      parentId: argv["parent-id"],
-                    })
+                    const body = { parentId: argv["parent-id"] }
                     await executeAnalyticsCommand("analytics-agent knowledge file copy", argv as Record<string, unknown>, ROUTES.knowledgeNodeCopy, body)
                   },
                 )
@@ -3456,7 +3547,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .positional("local-file", { type: "string", demandOption: true, describe: "Local file path" })
                       .option("target-path", { type: "string", describe: "Remote target folder path" })
                       .option("name", { type: "string", describe: "Remote file name override" })
-                      .option("domain-id", { type: "number", array: true, describe: "Bound domain ID, can be repeated" }),
+                      .option("domain-ids", { type: "string", describe: "Bound domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                      .example("cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-ids '[5]'", "如果只绑定一个域，就这样写。")
+                      .example("cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-ids '[5,6]'", "如果要同时绑定多个域，就这样写。"),
                   async (argv) => {
                     await executeKnowledgeFileUploadCommand(argv as Record<string, unknown>)
                   },
@@ -3532,7 +3625,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("msg", { type: "string", describe: "Question text used as the session title when --title is omitted" })
                 .option("source-type", { type: "string", describe: "Session sourceType" })
                 .option("source-id", { type: "number", describe: "Session sourceId" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent session create --domain-id 195 --msg \"Q1\"", "Create a session and use the first question as the title"),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const parsedBody = parseJsonObject(argv.body, "--body")
@@ -3585,6 +3679,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("timeout-ms", { type: "number", describe: "Polling timeout in milliseconds" })
                 .option("summary", { type: "boolean", default: false, describe: "Show the final answer instead of the full poll payload" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent session run --domain-id 195 --msg \"Q1\"", "Ask a question and auto-create the session when needed")
                 .epilogue(SESSION_SERIAL_CONCURRENCY_WARNING)
                 .check((argv) => {
                   if (argv["session-id"] === undefined && argv["domain-id"] === undefined) {

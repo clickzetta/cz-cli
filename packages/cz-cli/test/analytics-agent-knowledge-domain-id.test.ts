@@ -81,7 +81,7 @@ async function runAnalyticsCli(args: string[]): Promise<{ exitCode: number; outp
   return { exitCode, output: chunks.join("") }
 }
 
-describe("analytics-agent knowledge domain-id conversion", () => {
+describe("analytics-agent knowledge domain-ids conversion", () => {
   beforeEach(() => {
     process.exitCode = 0
   })
@@ -93,7 +93,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     process.exitCode = 0
   })
 
-  test("knowledge create maps --domain-id into domainIds", async () => {
+  test("knowledge create maps --domain-ids into domainIds", async () => {
     let requestBody: Record<string, unknown> | undefined
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -105,8 +105,8 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "knowledge",
       "create",
-      "--domain-id",
-      "5",
+      "--domain-ids",
+      "[5]",
       "--content",
       "hello",
       "--body",
@@ -124,7 +124,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     })
   })
 
-  test("knowledge create maps repeated --domain-id into domainIds", async () => {
+  test("knowledge create maps multiple --domain-ids into domainIds", async () => {
     let requestBody: Record<string, unknown> | undefined
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -136,10 +136,8 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "knowledge",
       "create",
-      "--domain-id",
-      "5",
-      "--domain-id",
-      "6",
+      "--domain-ids",
+      "[5,6]",
       "--content",
       "hello",
       "--body",
@@ -153,7 +151,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     })
   })
 
-  test("knowledge update maps --domain-id into domainIds", async () => {
+  test("knowledge update maps --domain-ids into domainIds", async () => {
     let requestBody: Record<string, unknown> | undefined
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -166,8 +164,8 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "knowledge",
       "update",
       "42",
-      "--domain-id",
-      "5",
+      "--domain-ids",
+      "[5]",
       "--body",
       JSON.stringify({
         content: "body-content",
@@ -182,7 +180,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     })
   })
 
-  test("knowledge create rejects missing --domain-id", async () => {
+  test("knowledge create rejects missing --domain-ids", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -198,10 +196,10 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     expect(result.exitCode).toBe(2)
     const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("domain-ids")
   })
 
-  test("knowledge create rejects invalid --domain-id before sending request", async () => {
+  test("knowledge create rejects invalid --domain-ids before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -210,7 +208,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "knowledge",
       "create",
-      "--domain-id",
+      "--domain-ids",
       "abc",
       "--content",
       "hello",
@@ -219,10 +217,10 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     expect(result.exitCode).toBe(2)
     const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("--domain-ids")
   })
 
-  test("metric create maps repeated --domain-id into domainIds", async () => {
+  test("metric create maps --domain-ids into domainIds", async () => {
     let requestBody: Record<string, unknown> | undefined
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -234,10 +232,8 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "metric",
       "create",
-      "--domain-id",
-      "5",
-      "--domain-id",
-      "6",
+      "--domain-ids",
+      "[5,6]",
       "--datasource-id",
       "8",
       "--table-name",
@@ -260,7 +256,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     })
   })
 
-  test("metric create rejects invalid --domain-id before sending request", async () => {
+  test("metric create rejects invalid --domain-ids before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -269,7 +265,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "metric",
       "create",
-      "--domain-id",
+      "--domain-ids",
       "0",
       "--datasource-id",
       "8",
@@ -284,10 +280,10 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     expect(result.exitCode).toBe(2)
     const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("--domain-ids")
   })
 
-  test("answer-builder list maps repeated --domain-id into domainIds", async () => {
+  test("answer-builder list maps --domain-ids into domainIds", async () => {
     let requestBody: Record<string, unknown> | undefined
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -299,10 +295,8 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "answer-builder",
       "list",
-      "--domain-id",
-      "5",
-      "--domain-id",
-      "6",
+      "--domain-ids",
+      "[5,6]",
       "--body",
       JSON.stringify({ domainIds: [9] }),
     ])
@@ -313,7 +307,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     })
   })
 
-  test("answer-builder list rejects dangling --domain-id before sending request", async () => {
+  test("answer-builder list rejects invalid --domain-ids before sending request", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
@@ -322,16 +316,17 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "analytics-agent",
       "answer-builder",
       "list",
-      "--domain-id",
+      "--domain-ids",
+      "abc",
     ])
 
     expect(result.exitCode).toBe(2)
     const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("--domain-ids")
   })
 
-  test("knowledge file upload maps repeated --domain-id into upload domainIds", async () => {
+  test("knowledge file upload maps --domain-ids into upload domainIds", async () => {
     let uploadRequestBody: Record<string, unknown> | undefined
     const localFile = join(tmpdir(), `cz-cli-knowledge-${Date.now()}.txt`)
     writeFileSync(localFile, "hello")
@@ -361,10 +356,8 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "upload",
       "1",
       localFile,
-      "--domain-id",
-      "5",
-      "--domain-id",
-      "6",
+      "--domain-ids",
+      "[5,6]",
     ])
 
     expect(result.exitCode).toBe(0)
@@ -373,7 +366,7 @@ describe("analytics-agent knowledge domain-id conversion", () => {
     })
   })
 
-  test("knowledge file upload rejects dangling --domain-id before sending request", async () => {
+  test("knowledge file upload rejects invalid --domain-ids before sending request", async () => {
     const localFile = join(tmpdir(), `cz-cli-knowledge-${Date.now()}-dangling.txt`)
     writeFileSync(localFile, "hello")
     globalThis.fetch = mock(async () => {
@@ -387,12 +380,86 @@ describe("analytics-agent knowledge domain-id conversion", () => {
       "upload",
       "1",
       localFile,
-      "--domain-id",
+      "--domain-ids",
+      "abc",
     ])
 
     expect(result.exitCode).toBe(2)
     const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
     expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("--domain-id")
+    expect(parsed.error.message).toContain("--domain-ids")
+  })
+
+  test("knowledge folder sort maps --nodeIds JSON array into nodeIds", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: {} })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "sort",
+      "1",
+      "--parent-id",
+      "0",
+      "--nodeIds",
+      "[1,2]",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      parentId: 0,
+      nodeIds: [1, 2],
+    })
+  })
+
+  test("knowledge folder sort rejects repeated --node-id", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "sort",
+      "1",
+      "--parent-id",
+      "0",
+      "--node-id",
+      "1",
+      "--node-id",
+      "2",
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    expect(result.output).toContain("nodeIds")
+  })
+
+  test("knowledge folder rename uses explicit name", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: {} })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "knowledge",
+      "folder",
+      "rename",
+      "1",
+      "2",
+      "--name",
+      "new-folder",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({ name: "new-folder" })
   })
 })
