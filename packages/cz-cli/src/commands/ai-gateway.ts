@@ -12,12 +12,7 @@ import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { classifyClickzettaEntry } from "../llm/clickzetta-entry.js"
 import { CLICKZETTA_DEFAULT_GATEWAY_URL } from "../llm/clickzetta-provider.js"
 import { buildLlmProbeRequest, firstClickzettaModel, normalizeLlmBaseUrl } from "../llm/probe.js"
-import {
-  formatClickzettaQuota,
-  parseClickzettaQuota,
-  recordGatewayQuota,
-  rewriteClickzettaGatewayError,
-} from "../llm/gateway-error.js"
+import { formatClickzettaQuota, parseClickzettaQuota, rewriteClickzettaGatewayError } from "../llm/gateway-error.js"
 
 // ── AIGW admin API paths ────────────────────────────────────────────────────
 // Portal-proxied endpoints (standard portal token auth):
@@ -397,14 +392,11 @@ export function registerGatewayCommand(cli: Argv<GlobalArgs>): void {
               return
             }
 
-            // Same cache the provider fills, so this command and the TUI sidebar never
-            // disagree about the same key — this reading is simply the fresher one. The
-            // "same key" half of that is what resolveQuotaEntry delegating to
-            // classifyClickzettaEntry buys: a shared cache is not agreement if the two
-            // sides can pick different entries to look up.
-            if (quotas) {
-              recordGatewayQuota({ baseURL: normalizeLlmBaseUrl("clickzetta", baseUrl)!, apiKey: entry.api_key, quotas })
-            }
+            // Reported, not shared: the TUI sidebar reads its own readings off the messages
+            // in its session (see readHeaderQuota in opencode-plugin/tui-quota-data.ts), so a
+            // figure printed by this command does not travel to a running TUI. Both sides
+            // still resolve the same entry — resolveQuotaEntry delegates to
+            // classifyClickzettaEntry — so they can never describe different keys.
             logOperation("gateway quota", { ok: true, timeMs: Date.now() - t0 })
             success(
               { llm: entry.name, ...(probeModel ? { model: probeModel } : {}), ...(quotas ? { quotas } : {}) },

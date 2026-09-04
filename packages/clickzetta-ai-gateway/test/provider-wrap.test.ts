@@ -12,12 +12,9 @@
  *
  * No network: a fake LanguageModelV3 throws or emits whatever each case needs.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { describe, expect, test } from "bun:test"
 import { APICallError } from "@ai-sdk/provider"
-import { createClickzetta, readGatewayQuota, wrapModelForTest as wrap } from "../src/index"
+import { createClickzetta, wrapModelForTest as wrap } from "../src/index"
 
 const BASE_URL = "https://cn-shanghai-alicloud-aimesh.api.clickzetta.com/"
 const PROMPT = [{ role: "user", content: [{ type: "text", text: "hi" }] }]
@@ -406,53 +403,5 @@ describe("quota metadata", () => {
       (await wrap(fakeModel({ streamParts: [finish] })).doStream({ prompt: PROMPT } as any)).stream,
     )
     expect(parts[0]).toEqual(finish)
-  })
-})
-
-/**
- * The cache the sidebar reads is written as soon as the headers exist, which for a
- * stream is when it opens. Writing it at the "finish" part instead would discard a
- * reading already in hand whenever the turn is aborted or errors mid-stream — and the
- * numbers describe the request's admission, so waiting buys nothing.
- */
-describe("quota cache", () => {
-  const TARGET = { baseURL: "https://uat-aimesh.clickzetta.com/gateway/v1", apiKey: "k".repeat(32) }
-  let home: string
-  let previous: string | undefined
-
-  beforeEach(() => {
-    previous = process.env.CLICKZETTA_TEST_HOME
-    home = mkdtempSync(join(tmpdir(), "cz-quota-cache-"))
-    process.env.CLICKZETTA_TEST_HOME = home
-  })
-  afterEach(() => {
-    if (previous === undefined) delete process.env.CLICKZETTA_TEST_HOME
-    else process.env.CLICKZETTA_TEST_HOME = previous
-    rmSync(home, { recursive: true, force: true })
-  })
-
-  test("doStream records the reading without the stream ever reaching finish", async () => {
-    const model = fakeModel({
-      responseHeaders: QUOTA_HEADERS,
-      // No "finish" part at all: the turn ends early, as an abort would.
-      streamParts: [{ type: "text-delta", id: "1", delta: "hi" }],
-    })
-    const result = await wrap(model, "deepseek/deepseek-v3.2", TARGET).doStream({ prompt: PROMPT } as any)
-    await collect(result.stream)
-    expect(readGatewayQuota(TARGET)?.quotas).toEqual(QUOTA)
-  })
-
-  test("doGenerate records it too", async () => {
-    await wrap(fakeModel({ responseHeaders: QUOTA_HEADERS }), "deepseek/deepseek-v3.2", TARGET).doGenerate({
-      prompt: PROMPT,
-    } as any)
-    expect(readGatewayQuota(TARGET)?.quotas).toEqual(QUOTA)
-  })
-
-  test("a response with no quota headers writes nothing", async () => {
-    await wrap(fakeModel({ responseHeaders: { "content-type": "application/json" } }), "m", TARGET).doGenerate({
-      prompt: PROMPT,
-    } as any)
-    expect(readGatewayQuota(TARGET)).toBeUndefined()
   })
 })
