@@ -27,7 +27,7 @@
 // unit-tested behind one bundling entry, tui-quota-runtime.ts: tui-quota-data.ts
 // (fetch), tui-quota-format.ts (presentation), tui-quota-controller.ts (refresh).
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { createEffect, createSignal, createMemo, For, Show } from "solid-js"
+import { createEffect, createSignal, createMemo, Show } from "solid-js"
 import {
   createQuotaController,
   currentSessionID,
@@ -53,13 +53,11 @@ function Section(props: { api: TuiPluginApi; title: string; rows: () => QuotaRow
         <text fg={theme().text}>
           <b>{props.title}</b>
         </text>
-        <For each={props.rows()}>
-          {(row) => (
-            <text fg={theme()[row.tone]} selectable={false}>
-              {row.text}
-            </text>
-          )}
-        </For>
+        {props.rows().map((row) => (
+          <text fg={theme()[row.tone]} selectable={true}>
+            {row.text}
+          </text>
+        ))}
       </box>
     </Show>
   )
