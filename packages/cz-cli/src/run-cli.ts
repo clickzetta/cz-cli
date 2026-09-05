@@ -702,7 +702,7 @@ function applyAgentConnectionEnv(overrides: Partial<CliArgs>) {
   const accountsUrl = resolveAccountsUrl(overrides.profile ?? Profile.current())
   if (accountsUrl) derivedFields.accountsUrl = accountsUrl
   ConnectionEnv.applyUser(userFields)
-  ConnectionEnv.apply(derivedFields, overrides.profile)
+  ConnectionEnv.applyInherited(derivedFields, overrides.profile)
   return overrides
 }
 

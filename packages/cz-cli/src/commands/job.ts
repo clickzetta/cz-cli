@@ -11,7 +11,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { execInstanceId, getExecContext } from "./exec.js"
+import { getExecContext } from "./exec.js"
 import { getStudioContext } from "./studio-context.js"
 import { buildJobProfileRows } from "./job-profile.js"
 
@@ -238,7 +238,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             const jobId: JobID = {
               id: argv["job-id"] as string,
               workspace: ctx.config.workspace,
-              instanceId: execInstanceId(ctx),
+              instanceId: ctx.instanceId(),
             }
             const raw = await getJobStatus(ctx.clientOpts, jobId)
             const state = raw.status?.state ?? "UNKNOWN"
@@ -276,7 +276,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             const jobId: JobID = {
               id: argv["job-id"] as string,
               workspace: ctx.config.workspace,
-              instanceId: execInstanceId(ctx),
+              instanceId: ctx.instanceId(),
             }
             const t0 = Date.now()
             const timeoutMs = (argv.timeout as number) * 1000
@@ -394,7 +394,7 @@ export function registerJobCommand(cli: Argv<GlobalArgs>): void {
             const jobId: JobID = {
               id: argv["job-id"] as string,
               workspace: ctx.config.workspace,
-              instanceId: execInstanceId(ctx),
+              instanceId: ctx.instanceId(),
             }
             await cancelJob(ctx.clientOpts, jobId)
             logOperation("job cancel", { ok: true })

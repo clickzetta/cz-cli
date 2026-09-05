@@ -1,6 +1,8 @@
 /**
- * getExecContext resolves the instance id from the CONNECTION, and does it for the profile
- * the connection actually came from.
+ * The connection context resolves the instance id from the CONNECTION, for the profile the
+ * connection actually came from. Driven through getExecContext, which is one of its three
+ * entry points (getStudioContext and getGatewayContext are the others, covered in
+ * studio-context-instance-id.test.ts) — the chain itself lives in connection/context.ts.
  * Run: bun test test/exec-instance-id.test.ts
  *
  * Both cases here are review findings on the commit that moved the id off the shared OAuth
@@ -22,7 +24,8 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { onFetch, onStudio, requireTestHome, studioOk, stubStudioContext } from "./support/cz-fixtures"
 
-const { getExecContext, execInstanceId } = await import("../src/commands/exec.ts")
+const { getExecContext } = await import("../src/commands/exec.ts")
+const { clearConnectionContextForTest } = await import("../src/connection/context.ts")
 
 const previousProfile = process.env.CZ_PROFILE
 
@@ -66,6 +69,10 @@ function writeOneProfile(extra: string[]) {
 beforeEach(() => {
   delete process.env.CZ_PROFILE
   delete process.env.CZ_INSTANCE
+  // The context memoises per profile+service+instance for the life of the process, so a
+  // reading from one case would answer the next one's lookup — and the cases here differ
+  // only in what the portal returns.
+  clearConnectionContextForTest()
 })
 
 /**
@@ -118,7 +125,7 @@ test("resolves and caches against the profile the connection came from, not defa
   stubInstances([{ id: 160813, name: "wanted-inst", serviceId: 1 }])
 
   const ctx = await getExecContext({})
-  expect(execInstanceId(ctx)).toBe(160813)
+  expect(ctx.instanceId()).toBe(160813)
   // Looked up with the CZ_PROFILE profile's account, not default_profile's 999.
   expect(seen.some((url) => url.includes("accountId=124213"))).toBe(true)
   expect(seen.some((url) => url.includes("accountId=999"))).toBe(false)
@@ -143,10 +150,33 @@ test("an unresolvable instance id is an error, never a silent zero", async () =>
   await expect(getExecContext({})).rejects.toThrow(/does not list it for this account/)
 })
 
-test("a profile with no account_id says so rather than looking nothing up", async () => {
+/**
+ * A profile written before `account_id` was recorded still resolves: the account comes from
+ * getCurrentUser, and the lookup runs. It used to give up here — no cached account meant no
+ * lookup, and the id then came from the shared OAuth section (which may name another
+ * instance) or not at all.
+ */
+test("no cached account_id asks the portal who we are, then looks up", async () => {
   writeOAuthProfile([])
+  const seen: string[] = []
+  onFetch({ match: (url) => { seen.push(url); return false }, respond: () => ({}) })
+  stubInstances([{ id: 160813, name: "wanted-inst", serviceId: 1 }])
+
+  const ctx = await getExecContext({})
+  expect(ctx.instanceId()).toBe(160813)
+  // The account came from getCurrentUser, and the lookup used it.
+  expect(seen.some((url) => url.includes("getCurrentUser"))).toBe(true)
+  expect(seen.some((url) => url.includes("/serviceInstanceList"))).toBe(true)
+})
+
+/** And when even that cannot answer, it still refuses rather than inventing an id. */
+test("an account the portal will not name is an error, not a zero", async () => {
+  writeOAuthProfile([])
+  onStudio("/clickzetta-portal/user/getCurrentUser", () => {
+    throw new Error("portal unreachable")
+  })
   stubInstances([{ id: 271502, name: "whatever", serviceId: 1 }])
-  await expect(getExecContext({})).rejects.toThrow(/no account_id/)
+  await expect(getExecContext({})).rejects.toThrow(/Could not determine the instance id/)
 })
 
 test("an instance_id already on the profile is used as-is, with no lookup", async () => {
@@ -155,7 +185,7 @@ test("an instance_id already on the profile is used as-is, with no lookup", asyn
   onFetch({ match: (url) => { seen.push(url); return false }, respond: () => ({}) })
   stubStudioContext()
   const ctx = await getExecContext({})
-  expect(execInstanceId(ctx)).toBe(160813)
+  expect(ctx.instanceId()).toBe(160813)
   expect(seen.some((url) => url.includes("/serviceInstanceList"))).toBe(false)
 })
 
@@ -172,7 +202,7 @@ test("--instance naming a different instance discards the profile's cached id", 
   stubInstances([{ id: 271502, name: "other-inst", serviceId: 1 }])
 
   const ctx = await getExecContext({ instance: "other-inst" })
-  expect(execInstanceId(ctx)).toBe(271502)
+  expect(ctx.instanceId()).toBe(271502)
   expect(seen.some((url) => url.includes("/serviceInstanceList"))).toBe(true)
 })
 
@@ -184,7 +214,7 @@ test("CZ_INSTANCE naming the profile's own instance keeps the cached id and asks
   stubStudioContext()
   try {
     const ctx = await getExecContext({})
-    expect(execInstanceId(ctx)).toBe(160813)
+    expect(ctx.instanceId()).toBe(160813)
     expect(seen.some((url) => url.includes("/serviceInstanceList"))).toBe(false)
   } finally {
     delete process.env.CZ_INSTANCE
@@ -203,7 +233,7 @@ test("--instance resolves for this run but never caches onto the profile", async
   stubInstances([{ id: 271502, name: "other-inst", serviceId: 1 }])
 
   const ctx = await getExecContext({ instance: "other-inst" })
-  expect(execInstanceId(ctx)).toBe(271502)
+  expect(ctx.instanceId()).toBe(271502)
   // The profile still names "i" and must not have acquired the override's id.
   const toml = readFileSync(profilesPath(), "utf-8")
   expect(toml).not.toContain("instance_id")
@@ -215,7 +245,7 @@ test("resolving the profile's own name does cache it", async () => {
   stubInstances([{ id: 160813, name: "i", serviceId: 1 }])
 
   const ctx = await getExecContext({})
-  expect(execInstanceId(ctx)).toBe(160813)
+  expect(ctx.instanceId()).toBe(160813)
   expect(readFileSync(profilesPath(), "utf-8")).toContain("instance_id = 160813")
 })
 
@@ -264,15 +294,20 @@ test("a cookie credential's definitive id survives a lookup that lists nothing m
   stubInstances([{ id: 160813, name: "something-else", serviceId: 1 }])
 
   const ctx = await getExecContext({})
-  expect(execInstanceId(ctx)).toBe(445566)
+  expect(ctx.instanceId()).toBe(445566)
 })
 
 /**
- * The legacy read: an OAuth profile with no cached id and no usable lookup falls back to the
- * id an older version wrote into the SHARED `[oauth.<id>]` section. Wrong shape, but it is
- * the number that used to answer offline, so a portal outage does not block the command.
+ * The legacy read is GONE, and this pins that.
+ *
+ * An older version wrote an `instance_id` into the SHARED `[oauth.<id>]` section, and the
+ * first version of this chain read it as a last resort so a portal outage would not block a
+ * command. But one login reaches many profiles on many instances, so that id is wrong for
+ * all but one of them — the command would then run against a DIFFERENT instance than the
+ * profile names, behind a warning. A stated failure with a way out (`cz-cli auth login`
+ * records a per-profile id) beats a wrong answer the user cannot see.
  */
-test("an OAuth profile falls back to the legacy shared-section id rather than failing", async () => {
+test("the legacy shared-section id is not a fallback: an unreachable portal fails", async () => {
   writeFileSync(
     profilesPath(),
     [
@@ -293,8 +328,8 @@ test("an OAuth profile falls back to the legacy shared-section id rather than fa
   })
   stubStudioContext()
 
-  const ctx = await getExecContext({})
-  expect(execInstanceId(ctx)).toBe(271502)
+  // The id is right there in [oauth.sess], and is deliberately not consulted.
+  await expect(getExecContext({})).rejects.toThrow(/lookup against .* failed/)
 })
 
 /** A PAT credential keeps working through a portal outage, and says that it could not verify. */
@@ -307,5 +342,5 @@ test("a failed lookup warns and proceeds on the credential's id", async () => {
 
   const ctx = await getExecContext({})
   // stubStudioContext's login response carries the id.
-  expect(execInstanceId(ctx)).toBeGreaterThan(0)
+  expect(ctx.instanceId()).toBeGreaterThan(0)
 })

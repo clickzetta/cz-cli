@@ -5,7 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { type ExecContext, classifyExecError, execInstanceId, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
+import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
 import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
@@ -562,7 +562,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     const jobId: JobID = {
       id: argv["job-profile"],
       workspace: ctx.config.workspace,
-      instanceId: execInstanceId(ctx),
+      instanceId: ctx.instanceId(),
     }
     const body = {
       get_result_request: {
@@ -721,7 +721,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               const jobId: JobID = {
                 id: argv["job-id"] as string,
                 workspace: ctx.config.workspace,
-                instanceId: execInstanceId(ctx),
+                instanceId: ctx.instanceId(),
               }
               const body = {
                 get_result_request: {

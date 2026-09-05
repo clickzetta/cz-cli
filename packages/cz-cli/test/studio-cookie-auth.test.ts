@@ -116,8 +116,12 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
       // just the token extracted from it — deployments that authenticate the
       // session cookie reject these calls otherwise.
       expect(cookies["/clickzetta-portal/user/getCurrentUser"]).toBe(cookie)
-      expect(cookies["/clickzetta-portal/service/serviceInstanceList"]).toBe(cookie)
       expect(cookies["/ide-authority/v1/workspace/listUserWorkspaces"]).toBe(cookie)
+      // No instance lookup at all: a cookie is issued FOR one instance and its JWT names it,
+      // so the chain answers from the credential and never asks (connection/context.ts step 2).
+      // It used to ask — with the account id from getCurrentUser — and the answer could only
+      // ever agree with the cookie or contradict the instance the cookie is scoped to.
+      expect(hits.some((url) => url.includes("/serviceInstanceList"))).toBe(false)
       // Cookie token must never trigger a login exchange.
       expect(hits).not.toContain("/clickzetta-portal/user/loginSingle")
     } finally {

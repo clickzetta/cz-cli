@@ -886,6 +886,9 @@ async function listSchemas(
           customHeaders: { instanceName: config.instance },
           context: { service: config.service, instance: config.instance, username: config.username },
         },
+        // Setup runs this before the profile is written, so no instance id has been resolved
+        // for its JobID. Declared here rather than reached by a `?? 0` inside execSql.
+        instanceId: () => 0,
       },
       "SHOW SCHEMAS",
       { timeoutMs: 20_000 },
