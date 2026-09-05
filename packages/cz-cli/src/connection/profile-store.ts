@@ -1,4 +1,5 @@
 import { readFileSync, mkdirSync, writeFileSync, renameSync, chmodSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
@@ -6,6 +7,32 @@ import { DEFAULT_CONNECTION, toServiceUrl, type ConnectionConfig, type TokenStor
 
 function profilesFile() {
   return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
+}
+
+/**
+ * A fingerprint of the profile store: its path plus the bytes at that path.
+ *
+ * Anything caching a profile-derived answer must key on this rather than on the profile NAME
+ * (see connection/context.ts). Two reasons, and the second is the load-bearing one:
+ *
+ *  - two homes are two different profile universes, so the same name in each is a different
+ *    account, instance and credential;
+ *  - profiles.toml can change UNDER a long-lived process — a user editing it, or
+ *    `cz-cli profile use` in another terminal, between two turns of an agent session. Every
+ *    other read of it goes through the file on each call, so a cache that ignored the content
+ *    would be the one place still answering with the previous file.
+ *
+ * Cheap next to what it guards: one read of a small file, against a portal round trip.
+ */
+export function profileStoreFingerprint(): string {
+  const file = profilesFile()
+  try {
+    return `${file}#${createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16)}`
+  } catch {
+    // Absent or unreadable is itself a state worth keying on: a context derived with no
+    // profiles.toml must not answer for one that appears later.
+    return `${file}#none`
+  }
 }
 
 /**
@@ -624,30 +651,6 @@ export function generateOAuthId(): string {
 export function sanitizeOAuthId(name: string): string {
   const cleaned = name.trim().replace(/[^A-Za-z0-9_-]/g, "_")
   return cleaned.length > 0 ? cleaned : "default"
-}
-
-/**
- * The `instance_id` an OLDER version wrote into `[oauth.<id>]`, read on purpose.
- *
- * parseOAuthEntry deliberately ignores that field — it is per-profile data in a section
- * shared across profiles, which is the whole defect. This reader exists for exactly one
- * case: the profile has no `instance_id` yet and the portal cannot be reached, so the only
- * number on disk is the one this change stopped trusting. Using it keeps a command working
- * offline where it used to work; the caller must say out loud that it may belong to a
- * different instance. Not a source of truth, and never cached forward.
- */
-export function legacyOAuthInstanceId(profileName: string | undefined): number | undefined {
-  try {
-    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    const name = resolveProfileName(data, profileName)
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const id = name ? profileOAuthPointer(profiles[name]) : undefined
-    if (!id) return undefined
-    const shared = (data.oauth ?? {}) as Record<string, Record<string, unknown> | undefined>
-    return num(shared[id]?.instance_id)
-  } catch {
-    return undefined
-  }
 }
 
 /** Parse a raw `[oauth.<id>]` entry into an AuthToken, or undefined if invalid. */

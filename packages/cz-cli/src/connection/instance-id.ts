@@ -7,15 +7,18 @@ function numeric(value: unknown): number {
 }
 
 /**
- * Resolve a Lakehouse instance id by name via `serviceInstanceList`.
+ * Look up a Lakehouse instance id by name via `serviceInstanceList`.
  *
  * Single implementation shared by the cookie-token path and the studio /
  * gateway contexts — they used to carry two copies and only one of them
  * forwarded `customHeaders`, so cookie-authenticated profiles silently lost
  * their `Cookie` on the studio path.
  *
- * Returns `fallbackId` (default 0) when the instance cannot be resolved,
- * including on network errors: callers decide what a missing id means.
+ * Returns `undefined` when the instance cannot be resolved, including on network errors.
+ * Deliberately no `fallbackId` parameter: this is a lookup, not a decision, and a caller
+ * that wants a number no matter what would be asking it to invent one. Whether a missing
+ * id is fatal belongs to the caller — see resolveInstance in context.ts, which is the only
+ * place that decides.
  */
 export async function resolveInstanceIdByName(
   baseUrl: string,
@@ -24,31 +27,27 @@ export async function resolveInstanceIdByName(
   instanceName: string,
   opts?: {
     customHeaders?: Record<string, string>
-    fallbackId?: number
     debug?: boolean
     /**
-     * Called when the lookup FAILED, as opposed to succeeding with no match. Without it
-     * both collapse into `fallbackId` and a caller cannot tell "this account does not have
-     * that instance" from "the portal was unreachable" — so a transient blip silently
-     * looked like a definitive answer.
+     * Called when the lookup FAILED, as opposed to succeeding with no match. Without it both
+     * collapse into `undefined` and a caller cannot tell "this account does not have that
+     * instance" from "the portal was unreachable" — so a transient blip would read as a
+     * definitive answer.
      */
     onError?: (err: unknown) => void
     /**
-     * Called when the lookup SUCCEEDED and no row matched the name. Distinct from onError
-     * on purpose: "this account does not own an instance by that name" is a definitive
-     * answer and the more serious one, while a failed request says nothing at all. Folding
-     * both into `fallbackId` let the definitive case be the quiet one.
+     * Called when the lookup SUCCEEDED and no row matched the name. Distinct from onError on
+     * purpose: "this account does not own an instance by that name" is a definitive answer
+     * and the more serious one, while a failed request says nothing at all.
      */
     onNotFound?: () => void
   },
-): Promise<number> {
-  const fallbackId = opts?.fallbackId ?? 0
+): Promise<number | undefined> {
   try {
     // Goes through the SDK transport like every other authenticated call, so a
     // rejected credential rotates here instead of the request simply failing.
-    // A failure that rotation cannot fix STILL degrades to `fallbackId` (the
-    // catch below) — callers decide what a missing id means, and that contract
-    // predates this change.
+    // A failure that rotation cannot fix STILL returns `undefined` (the catch below) —
+    // callers decide what a missing id means.
     const payload = await requestRaw<{ data?: Array<Record<string, unknown>> }>(
       { baseUrl, tokens, customHeaders: opts?.customHeaders },
       `/clickzetta-portal/service/serviceInstanceList?accountId=${accountId}`,
@@ -69,11 +68,11 @@ export async function resolveInstanceIdByName(
     if (!match) opts?.onNotFound?.()
     const resolved = numeric(match?.id ?? match?.instanceId)
     if (opts?.debug) {
-      process.stderr.write(`[debug] resolveInstanceIdByName: name=${instanceName} matched=${resolved || "none"} fallback=${fallbackId}\n`)
+      process.stderr.write(`[debug] resolveInstanceIdByName: name=${instanceName} matched=${resolved || "none"}\n`)
     }
-    return resolved || fallbackId
+    return resolved || undefined
   } catch (err) {
     opts?.onError?.(err)
-    return fallbackId
+    return undefined
   }
 }

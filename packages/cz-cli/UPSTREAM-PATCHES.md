@@ -3,7 +3,8 @@
 cz-cli is built as a ClickZetta customization layer on top of **pristine upstream
 opencode** (currently baselined at v1.17.11). The guiding invariant is:
 
-> **Keep `packages/opencode`, `packages/tui`, and `packages/core` pristine.**
+> **Keep `packages/opencode`, `packages/tui`, `packages/core` and `packages/schema`
+> pristine.**
 > Put ClickZetta behavior in `packages/cz-cli/` and reach into upstream through
 > the public hooks it exposes (plugin APIs, env flags, config injection).
 
@@ -33,7 +34,7 @@ Intrusive edits are wrapped with a scannable banner so they can be found with gr
 Find every intrusive patch:
 
 ```sh
-rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/**'
+rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/schema -g '!**/dist/**'
 ```
 
 ---
@@ -613,7 +614,7 @@ the hooks they depend on still exist in the new upstream.
 ## Re-baseline procedure (quick)
 
 1. Fast-forward upstream packages to the new opencode version.
-2. `rg -n "cz-cli change" packages/core packages/opencode packages/tui` — expect the
+2. `rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/schema` — expect the
    INTRUSIVE patches above. If any is missing, re-apply it from this ledger. This sweep
    does NOT cover entry 12, which carries no banner on purpose; check it separately with
    `rg -n 'registerOpencodeSpinner' packages/tui packages/opencode` (expect 11 hits) plus

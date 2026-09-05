@@ -367,7 +367,11 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                   customHeaders: { instanceName: verifyCfg.instance },
                   context: { service: verifyCfg.service, instance: verifyCfg.instance, username: verifyCfg.username },
                 }
-                const r = await execSql({ config: verifyCfg, token, clientOpts }, "SELECT 1", { timeoutMs: 30000 })
+                  // A verification query on a profile that does not exist yet, so there is no
+                  // resolved instance id to give its JobID — declared here rather than reached
+                  // by a `?? 0` inside execSql, which is what hid it before. Nothing looks this
+                  // job up afterwards.
+                const r = await execSql({ config: verifyCfg, token, clientOpts, instanceId: () => 0 }, "SELECT 1", { timeoutMs: 30000 })
                 if (isQueryResult(r) && r.status === JobStatus.FAILED) {
                   return error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
                 }

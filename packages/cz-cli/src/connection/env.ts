@@ -104,7 +104,7 @@ export function profileName(): string | undefined {
  * are written when both exist; choosing between them is the resolver's job
  * (`auth_type`, then the tier order in connection/config.ts), not this layer's.
  */
-export function apply(fields: Fields, profile?: string): void {
+export function applyInherited(fields: Fields, profile?: string): void {
   const derived = new Set((process.env[DERIVED] ?? "").split(",").filter((name) => name.length > 0))
   const written: string[] = []
   for (const [field, name] of FIELDS) {
@@ -126,6 +126,12 @@ export function apply(fields: Fields, profile?: string): void {
   else delete process.env[DERIVED]
   if (profile !== undefined) process.env[PROFILE] = profile
 }
+
+/**
+ * @deprecated Use applyInherited. Kept temporarily for consumers of the small connection
+ * utility surface; it has the same semantics and never represents an explicit CLI override.
+ */
+export const apply = applyInherited
 
 /**
  * Write `fields` as the USER's layer — never marked in `CZ_ENV_DERIVED`, and
@@ -213,4 +219,3 @@ export function pin(name: string): void {
 export function unpin(): void {
   delete process.env[PROFILE]
 }
-
