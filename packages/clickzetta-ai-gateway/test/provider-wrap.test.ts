@@ -33,8 +33,12 @@ function fakeModel(behaviour: {
   onGenerate?: () => never | Promise<never>
   streamParts?: unknown[]
   onStream?: () => never
+  /** Response headers the base SDK would have lifted off the HTTP response. */
+  responseHeaders?: Record<string, string>
+  providerMetadata?: Record<string, Record<string, unknown>>
   extras?: Record<string, unknown>
 }) {
+  const response = behaviour.responseHeaders ? { headers: behaviour.responseHeaders } : undefined
   return {
     specificationVersion: "v3",
     provider: "clickzetta.chat",
@@ -42,7 +46,14 @@ function fakeModel(behaviour: {
     supportedUrls: {},
     async doGenerate() {
       if (behaviour.onGenerate) return behaviour.onGenerate()
-      return { content: [{ type: "text", text: "ok" }], finishReason: "stop", usage: {}, warnings: [] }
+      return {
+        content: [{ type: "text", text: "ok" }],
+        finishReason: "stop",
+        usage: {},
+        warnings: [],
+        ...(behaviour.providerMetadata ? { providerMetadata: behaviour.providerMetadata } : {}),
+        ...(response ? { response } : {}),
+      }
     },
     async doStream() {
       if (behaviour.onStream) return behaviour.onStream()
@@ -54,11 +65,23 @@ function fakeModel(behaviour: {
             controller.close()
           },
         }),
+        ...(response ? { response } : {}),
       }
     },
     ...behaviour.extras,
   } as any
 }
+
+/** What a live single-period key reports on a completion. */
+const QUOTA_HEADERS = {
+  "x-czgw-ratelimit-api-key-token-period": "PDO",
+  "x-czgw-ratelimit-api-key-token-limit": "10000000",
+  "x-czgw-ratelimit-api-key-token-used": "238",
+  "x-czgw-ratelimit-api-key-token-remaining": "9999762",
+}
+const QUOTA = [
+  { period: "daily", periodCode: "PDO", limit: 10000000, used: 238, remaining: 9999762, scope: "api-key" },
+]
 
 async function collect(stream: ReadableStream) {
   const out: any[] = []
@@ -323,5 +346,62 @@ describe("Proxy delegation", () => {
   test("a successful doGenerate is untouched", async () => {
     const result = await wrap(fakeModel({})).doGenerate({ prompt: PROMPT } as any)
     expect(result.content).toEqual([{ type: "text", text: "ok" }])
+  })
+})
+
+/**
+ * The quota only helps if it survives the trip out of the provider. doGenerate
+ * publishes it on the result; doStream publishes it on the "finish" part, because
+ * that is where consumers read per-step metadata even though the headers were
+ * available the moment the stream opened.
+ */
+describe("quota metadata", () => {
+  test("doGenerate publishes the quota the headers reported", async () => {
+    const result = await wrap(fakeModel({ responseHeaders: QUOTA_HEADERS })).doGenerate({ prompt: PROMPT } as any)
+    expect(result.providerMetadata?.clickzetta?.quota).toEqual(QUOTA)
+  })
+
+  test("metadata the base provider already set is preserved alongside it", async () => {
+    const model = fakeModel({
+      responseHeaders: QUOTA_HEADERS,
+      providerMetadata: { openaiCompatible: { fingerprint: "fp_1" }, clickzetta: { requestId: "req-1" } },
+    })
+    const result = await wrap(model).doGenerate({ prompt: PROMPT } as any)
+    expect(result.providerMetadata).toEqual({
+      openaiCompatible: { fingerprint: "fp_1" },
+      clickzetta: { requestId: "req-1", quota: QUOTA },
+    })
+  })
+
+  test("doStream publishes it on the finish part", async () => {
+    const model = fakeModel({
+      responseHeaders: QUOTA_HEADERS,
+      streamParts: [
+        { type: "text-delta", id: "1", delta: "hi" },
+        { type: "finish", finishReason: "stop", usage: {} },
+      ],
+    })
+    const parts = await collect((await wrap(model).doStream({ prompt: PROMPT } as any)).stream)
+    expect(parts.find((p) => p.type === "finish")?.providerMetadata?.clickzetta?.quota).toEqual(QUOTA)
+    // Only the finish part is touched; content parts pass through untouched.
+    expect(parts[0]).toEqual({ type: "text-delta", id: "1", delta: "hi" })
+  })
+
+  /**
+   * A 429 carries no quota headers at all, so there is nothing to publish and the
+   * result must come back exactly as the base provider built it — the error body,
+   * which gateway-error.ts classifies, stays the only signal.
+   */
+  test("a response without quota headers is handed back unchanged", async () => {
+    const model = fakeModel({ responseHeaders: { "content-type": "application/json" } })
+    const wrapped = wrap(model)
+    const result = await wrapped.doGenerate({ prompt: PROMPT } as any)
+    expect("providerMetadata" in result).toBe(false)
+
+    const finish = { type: "finish", finishReason: "stop", usage: {} }
+    const parts = await collect(
+      (await wrap(fakeModel({ streamParts: [finish] })).doStream({ prompt: PROMPT } as any)).stream,
+    )
+    expect(parts[0]).toEqual(finish)
   })
 })

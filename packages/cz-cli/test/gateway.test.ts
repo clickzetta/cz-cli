@@ -214,3 +214,148 @@ describe("ai-gateway key add-to-llm", () => {
     expect(readLlmEntries().llm["demo-key"]).toBeUndefined()
   })
 })
+
+/**
+ * `ai-gateway quota` reads the allowance off a completion's response headers, so its
+ * whole contract is "what the gateway said", including when the gateway said something
+ * that is not about the quota at all.
+ */
+describe("ai-gateway quota", () => {
+  const BASE = "https://uat-aimesh.clickzetta.com/gateway/v1"
+  const KEY = "k".repeat(32)
+
+  function withClickzettaEntry() {
+    writeLlmEntries({ llm: { cz: { provider: "clickzetta", api_key: KEY, base_url: BASE } } })
+  }
+
+  /** Answer the model catalog, then the probe, with whatever the case needs. */
+  function stubGateway(input: { models?: unknown; completion: () => Response }) {
+    onFetch({
+      match: (url) => url.startsWith(BASE),
+      respond: (url) => {
+        if (url.endsWith("/models")) {
+          return input.models === undefined ? new Response("nope", { status: 503 }) : input.models
+        }
+        return input.completion()
+      },
+    })
+  }
+
+  test("reports every period the headers carried", async () => {
+    withClickzettaEntry()
+    stubGateway({
+      models: { object: "list", data: [{ id: "deepseek/deepseek-v4-pro" }] },
+      completion: () =>
+        new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-czgw-ratelimit-api-key-token-period": "PTO, PDO",
+            "x-czgw-ratelimit-api-key-token-limit": "1000000000, 10000000",
+            "x-czgw-ratelimit-api-key-token-used": "21306417, 238",
+            "x-czgw-ratelimit-api-key-token-remaining": "978693583, 9999762",
+          },
+        }),
+    })
+
+    const result = await execute("ai-gateway quota cz")
+    const json = firstJson(result.output)
+    expect(result.exitCode).toBe(0)
+    const data = json.data as { quotas?: Array<{ period?: string }> }
+    expect(data.quotas?.map((quota) => quota.period)).toEqual(["total", "daily"])
+  })
+
+  /**
+   * A 404 for a model nobody asked for says nothing about the quota — the catalog could
+   * not be listed, so the probe fell back to a hardcoded id this tenant does not serve.
+   * Collapsing that into GATEWAY_QUOTA_UNAVAILABLE is the "two surfaces, two verdicts"
+   * defect probe.ts documents, so it gets its own code and names the remedy.
+   */
+  test("a 404 on a fallback probe model is not reported as an unreadable quota", async () => {
+    withClickzettaEntry()
+    stubGateway({
+      completion: () => new Response(JSON.stringify({ error: { message: "model not found" } }), { status: 404 }),
+    })
+
+    const result = await execute("ai-gateway quota cz")
+    const json = firstJson(result.output)
+    const error = json.error as { code?: string; message?: string }
+    expect(error.code).toBe("GATEWAY_PROBE_MODEL_UNAVAILABLE")
+    expect(error.message).toContain("--model")
+    expect(error.message).toContain("says nothing about the quota")
+  })
+
+  test("a 404 on a model the caller named IS reported as an unreadable quota", async () => {
+    withClickzettaEntry()
+    stubGateway({
+      completion: () => new Response(JSON.stringify({ error: { message: "model not found" } }), { status: 404 }),
+    })
+
+    const result = await execute("ai-gateway quota cz --model mine/does-not-exist")
+    const json = firstJson(result.output)
+    expect((json.error as { code?: string }).code).toBe("GATEWAY_QUOTA_UNAVAILABLE")
+  })
+
+  /**
+   * Two ClickZetta entries and nothing pinned is exactly where this command used to guess
+   * the first one while the sidebar refused to choose — same llm.json, two answers. It now
+   * asks for a name and lists the candidates.
+   */
+  test("with two candidates and nothing pinned it asks for a name instead of guessing", async () => {
+    writeLlmEntries({
+      llm: {
+        prod: { provider: "clickzetta", api_key: KEY, base_url: BASE },
+        staging: { provider: "clickzetta", api_key: "s".repeat(32), base_url: BASE },
+      },
+    })
+    const result = await execute("ai-gateway quota")
+    const message = ((firstJson(result.output).error as { message?: string }) ?? {}).message ?? ""
+    expect(message).toContain("naming one is required")
+    expect(message).toContain("prod")
+    expect(message).toContain("staging")
+  })
+
+  test("naming one of several is answered directly", async () => {
+    writeLlmEntries({
+      llm: {
+        prod: { provider: "clickzetta", api_key: KEY, base_url: BASE },
+        staging: { provider: "clickzetta", api_key: "s".repeat(32), base_url: BASE },
+      },
+    })
+    stubGateway({
+      models: { object: "list", data: [{ id: "deepseek/deepseek-v4-pro" }] },
+      completion: () =>
+        new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-czgw-ratelimit-api-key-token-period": "PDO",
+            "x-czgw-ratelimit-api-key-token-limit": "10000000",
+            "x-czgw-ratelimit-api-key-token-used": "238",
+            "x-czgw-ratelimit-api-key-token-remaining": "9999762",
+          },
+        }),
+    })
+    const result = await execute("ai-gateway quota prod")
+    expect(result.exitCode).toBe(0)
+    expect((firstJson(result.output).data as { llm?: string }).llm).toBe("prod")
+  })
+
+  test("a gateway that sends no quota headers is not reported as zero", async () => {
+    withClickzettaEntry()
+    stubGateway({
+      models: { object: "list", data: [{ id: "deepseek/deepseek-v4-pro" }] },
+      completion: () =>
+        new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    })
+
+    const result = await execute("ai-gateway quota cz")
+    const json = firstJson(result.output)
+    expect(result.exitCode).toBe(0)
+    expect((json.data as Record<string, unknown>).quotas).toBeUndefined()
+    expect(String(json.ai_message)).toContain("reported no quota headers")
+  })
+})

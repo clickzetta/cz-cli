@@ -34,7 +34,7 @@ const sampleToken: AuthToken = {
   refreshToken: "refresh-xyz",
   expireTimeMs: 3600_000,
   obtainedAt: 1_700_000_000_000,
-  instanceId: 42,
+  // No instanceId: it belongs to the profile, not the shared token (ConnectionConfig.instanceId).
   userId: 7,
 }
 
@@ -72,7 +72,6 @@ test("legacy token without refreshToken round-trips without the field", () => {
     token: "legacy-token",
     expireTimeMs: 1_000,
     obtainedAt: 1_700_000_000_000,
-    instanceId: 1,
     userId: 2,
   }
   makeProfileTokenStore("czcli").save(legacy)

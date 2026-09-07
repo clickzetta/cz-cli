@@ -181,7 +181,7 @@ describe("provisionProfileFromOAuth", () => {
     refreshToken: "refresh-xyz",
     expireTimeMs: 3600 * 1000,
     obtainedAt: Date.now(),
-    instanceId: 159973,
+  // No instanceId: it belongs to the profile, not the shared token (ConnectionConfig.instanceId).
     userId: 110000011361,
   }
   const USERINFO = {
@@ -275,7 +275,6 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     refreshToken: "refresh-1",
     expireTimeMs: 3600 * 1000,
     obtainedAt: Date.now(),
-    instanceId: 1,
     userId: 42,
   }
   const combo = (instance: string, workspace: string) => ({

@@ -112,9 +112,9 @@ async function resolveTenantNameRemotely(profile: ProfileEntry): Promise<{ tenan
   if (!pat && !(username && password)) {
     throw new Error("profile must contain PAT or username/password to resolve tenant name")
   }
-  const { getCurrentUser, getToken, toServiceUrl } = await import("@clickzetta/sdk")
+  const { getCurrentUser, getToken, toServiceUrl, connectionTokenSource } = await import("@clickzetta/sdk")
   const baseUrl = toServiceUrl(service, protocol)
-  const token = await getToken({
+  const resolveConfig = {
     pat,
     username,
     password,
@@ -124,8 +124,9 @@ async function resolveTenantNameRemotely(profile: ProfileEntry): Promise<{ tenan
     workspace: String(profile.workspace ?? ""),
     schema: String(profile.schema ?? "public"),
     vcluster: String(profile.vcluster ?? "default"),
-  })
-  const user = await getCurrentUser(baseUrl, token.token)
+  }
+  const token = await getToken(resolveConfig)
+  const user = await getCurrentUser(baseUrl, { tokens: connectionTokenSource(resolveConfig) })
   const tenantName = String((user as unknown as Record<string, unknown>).accountDisplayName ?? "").trim()
   if (!tenantName) throw new Error("accountDisplayName not found from current user")
   return { tenantName, source: pat ? "resolved_pat" : "resolved_password" }
@@ -358,14 +359,19 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                   schema: String(profileObj.schema ?? "public"),
                   vcluster: String(profileObj.vcluster ?? "default"),
                 }
-                const { getToken: getTokenSdk, toServiceUrl: toSvcUrl } = await import("@clickzetta/sdk")
+                const { getToken: getTokenSdk, toServiceUrl: toSvcUrl, connectionTokenSource: connectionTokenSourceSdk } = await import("@clickzetta/sdk")
                 const token = await getTokenSdk(verifyCfg)
                 const clientOpts = {
                   baseUrl: toSvcUrl(verifyCfg.service, verifyCfg.protocol),
-                  token: token.token,
+                  tokens: connectionTokenSourceSdk(verifyCfg),
                   customHeaders: { instanceName: verifyCfg.instance },
+                  context: { service: verifyCfg.service, instance: verifyCfg.instance, username: verifyCfg.username },
                 }
-                const r = await execSql({ config: verifyCfg, token, clientOpts }, "SELECT 1", { timeoutMs: 30000 })
+                  // A verification query on a profile that does not exist yet, so there is no
+                  // resolved instance id to give its JobID — declared here rather than reached
+                  // by a `?? 0` inside execSql, which is what hid it before. Nothing looks this
+                  // job up afterwards.
+                const r = await execSql({ config: verifyCfg, token, clientOpts, instanceId: () => 0 }, "SELECT 1", { timeoutMs: 30000 })
                 if (isQueryResult(r) && r.status === JobStatus.FAILED) {
                   return error("CONNECTION_FAILED", `Verification failed: ${r.errorMessage ?? "Query failed"}`, { format })
                 }

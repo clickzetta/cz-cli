@@ -355,6 +355,7 @@ function renderShellPlatformCase(platforms) {
       ARCHIVE_NAME=${shellQuote(info.archive)}
       ARCHIVE_FORMAT=${shellQuote(info.format)}
       ARCHIVE_CHECKSUM=${shellQuote(info.checksum)}
+      DEFAULT_BINARY_NAME=${shellQuote(info.binary ?? platformBinary(platform))}
       ;;`,
     )
     .join("\n")
@@ -388,6 +389,38 @@ download() {
     return
   fi
   print_error "curl or wget is required"
+  exit 1
+}
+
+# Git Bash ships no \`unzip\`, and the win32 archives are zips — so the one tool the old
+# precheck demanded is the one a Windows user is least likely to have. Try, in order:
+# unzip; bsdtar, which Windows 10 1803+ ships as tar.exe and which reads zip (GNU tar
+# does not, hence discard-on-failure rather than a version test); PowerShell's
+# Expand-Archive, whose arguments must be Windows paths, so cygpath does the translating.
+extract_zip() {
+  if command -v unzip > /dev/null 2>&1; then
+    unzip -qo "$1" -d "$2"
+    return
+  fi
+  if tar -xf "$1" -C "$2" 2>/dev/null; then
+    return
+  fi
+  # \`powershell\` is the 5.1 stub; PowerShell 7 installs as \`pwsh\` and provides NO
+  # \`powershell\` alias, so probing only the old name made a pwsh-only host fall through to
+  # the error below even though Expand-Archive was right there.
+  PS_EXE=""
+  for candidate in powershell pwsh; do
+    if command -v "$candidate" > /dev/null 2>&1; then PS_EXE="$candidate"; break; fi
+  done
+  if [ -n "$PS_EXE" ] && command -v cygpath > /dev/null 2>&1; then
+    # Both paths come from mktemp, which honours \$TMPDIR — so they are environment-supplied,
+    # and a \`'\` in one would close the PowerShell single-quoted string early and let the
+    # rest parse as commands. PowerShell escapes a literal quote by doubling it.
+    PS_SRC=$(cygpath -w "$1" | sed "s/'/''/g")
+    PS_DST=$(cygpath -w "$2" | sed "s/'/''/g")
+    "$PS_EXE" -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '$PS_SRC' -DestinationPath '$PS_DST' -Force" && return
+  fi
+  print_error "extracting $1 needs one of: unzip, a tar that reads zip (Windows 10+ tar.exe), or powershell/pwsh"
   exit 1
 }
 
@@ -432,6 +465,18 @@ platform() {
   case "$ARCH" in
     x86_64|amd64) ARCH="x64" ;;
     aarch64|arm64) ARCH="arm64" ;;
+  esac
+
+  # Git Bash / MSYS2 / Cygwin answer \`uname -s\` with MINGW64_NT-10.0-26200, MSYS_NT-…
+  # or CYGWIN_NT-… — a POSIX shell on a Windows host, which is exactly what this script
+  # runs in when a Windows user pipes it to bash. The win32 archives are built and
+  # published like every other platform, so map onto them instead of letting the raw
+  # uname string fall through to "unsupported platform", which read as "no Windows build
+  # exists". Deliberately matching install.ps1's \`win32-$Arch\`, baseline included: it
+  # does not select the -baseline build either, so a pre-AVX2 Windows CPU is an open gap
+  # in BOTH installers rather than a new one here.
+  case "$OS" in
+    mingw*|msys*|cygwin*) OS="win32" ;;
   esac
 
   SUFFIX=""
@@ -484,10 +529,7 @@ ${renderShellPlatformCase(platforms)}
       }
       ;;
     zip)
-      command -v unzip > /dev/null 2>&1 || {
-        print_error "unzip is required"
-        exit 1
-      }
+      # extract_zip picks between unzip / bsdtar / powershell, so nothing to require here.
       ;;
   esac
 
@@ -503,7 +545,7 @@ ${renderShellPlatformCase(platforms)}
   echo "Extracting..."
   case "$ARCHIVE_FORMAT" in
     tar.gz) tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR" ;;
-    zip) unzip -qo "$ARCHIVE_PATH" -d "$EXTRACT_DIR" ;;
+    zip) extract_zip "$ARCHIVE_PATH" "$EXTRACT_DIR" ;;
   esac
 
   if [ ! -f "$EXTRACT_DIR/setup.sh" ]; then
@@ -512,6 +554,19 @@ ${renderShellPlatformCase(platforms)}
   fi
 
   chmod +x "$EXTRACT_DIR/setup.sh"
+  # The win32 archives carry cz-cli.exe. setup.sh already takes the name as an env
+  # var, so this is the whole of what it needs to install a Windows build.
+  #
+  # Keyed off $PLATFORM, not $OS: platform() runs inside a command substitution, so the
+  # OS it assigns lives and dies in that subshell and reads empty here.
+  # DEFAULT_BINARY_NAME comes from the per-platform case above, which the generator writes
+  # from platformBinary() — the same function that decided what to put IN the archive. A
+  # second copy of the win32→.exe rule in shell could disagree with it.
+  # \${BINARY_NAME:-…}: setup.sh reads BINARY_NAME as an override, so an environment that
+  # already set it keeps winning. For every POSIX platform the default below is the same
+  # name setup.sh would have chosen on its own, which makes this line a no-op there.
+  BINARY_NAME="\${BINARY_NAME:-$DEFAULT_BINARY_NAME}"
+  BINARY_NAME="$BINARY_NAME" \
   INSTALL_DIR="$INSTALL_DIR" \
   CZ_VERSION="$VERSION" \
   CZ_CHANNEL="$CHANNEL" \

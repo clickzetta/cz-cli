@@ -253,6 +253,22 @@ export const StepFinishPart = Schema.Struct({
       write: Schema.Finite,
     }),
   }),
+  //======================== cz-cli change ========================
+  // The step's provider metadata, as TextPart/ReasoningPart/ToolPart already carry it.
+  //
+  // Upstream hands `step-finish` provider metadata to Session.getUsage and then drops it
+  // (packages/opencode/src/session/processor.ts), so anything getUsage does not normalize
+  // into `tokens`/`cost` has no way out of the server. ClickZetta's per-key token quota is
+  // one: the AI gateway reports it on every response's headers and the provider publishes
+  // it as `providerMetadata.clickzetta.quota`, but no consumer could see it.
+  //
+  // With this field it travels the same path tokens and cost do — part →
+  // `message.part.updated` → the TUI's own state store — and the sidebar reads it from
+  // `api.state` exactly as upstream's Context section reads tokens
+  // (packages/tui/src/feature-plugins/sidebar/context.tsx). Additive and optional, so an
+  // upstream part without it validates unchanged.
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  //====================== end cz-cli change ======================
 }).annotate({ identifier: "StepFinishPart" })
 export type StepFinishPart = Types.DeepMutable<Schema.Schema.Type<typeof StepFinishPart>>
 

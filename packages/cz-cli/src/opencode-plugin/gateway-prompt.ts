@@ -16,15 +16,15 @@
 // intact (rewriteApiCallError keeps it, parseAPICallError forwards it), so the
 // classifier is simply run a second time here — same function, same verdict, no
 // schema change and no private field smuggled through the event.
-import { getCurrentUser, getToken, toServiceUrl } from "@clickzetta/sdk"
+import { getCurrentUser, toServiceUrl } from "@clickzetta/sdk"
 import { browserOpenCommandForPlatform } from "../util/browser.js"
 import { resolveAccountsUrl } from "../commands/billing-error.js"
 import { resolveConnectionConfig } from "../connection/config.js"
-import { getCookieToken } from "../connection/cookie-token.js"
 import * as Profile from "../connection/profile-context.js"
 import { loadProfiles } from "../connection/profile-store.js"
 import { rewriteClickzettaGatewayError, type GatewayErrorCode } from "../llm/gateway-error.js"
 import { readLlmEntries } from "../llm/native-config.js"
+import { profileTokenSource } from "../connection/token-source.js"
 
 export { browserOpenCommandForPlatform }
 
@@ -149,9 +149,10 @@ async function runtimeAccountName(input: {
         : {}),
       ...(instance ? { instance } : {}),
     })
-    const token = (await getCookieToken(config)) ?? (await getToken(config))
     if (input.signal?.aborted) return undefined
-    const user = await getCurrentUser(toServiceUrl(config.service, config.protocol), token.token)
+    const user = await getCurrentUser(toServiceUrl(config.service, config.protocol), {
+      tokens: profileTokenSource(config),
+    })
     return str(user.accountDisplayName)
   } catch {
     return undefined

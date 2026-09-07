@@ -5,7 +5,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
-import { getExecContext, execSql, execSqlWithRetry, isQueryResult, validateIdentifier, classifyExecError, type ExecContext } from "./exec.js"
+import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
 import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
@@ -16,6 +16,8 @@ const SHOW_RE = /^\s*SHOW\b/i
 const TABLE_NOT_FOUND_RE = /Table.*?not found/i
 const COLUMN_NOT_FOUND_RE = /(Unknown column|Column.*?not found)/i
 const TABLE_FROM_SQL_RE = /\b(?:FROM|INTO|UPDATE|TABLE)\s+(?:[\w.]+\.)?(\w+)/i
+const SQL_DIALECT_ERROR_RE = /\b(?:syntax error|parse error|parser error|unexpected token)\b/i
+const COPY_FILE_FORMAT_ERROR_RE = /\bfile format not specified\b/i
 const DANGEROUS_WRITE_RE = /^\s*(DELETE|UPDATE)\b/i
 const WHERE_RE = /\bWHERE\b/i
 
@@ -402,9 +404,7 @@ async function executeSingle(
     }
     if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
     if (r.status === JobStatus.FAILED) {
-      const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
-      logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-      error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format, extra: hint ? { schema: hint } : undefined })
+      await handleFailure(r, sql, ctx, format, t0, argv.profile)
       return
     }
     if (r.rowCount > rowLimit) {
@@ -467,7 +467,7 @@ async function executeSingle(
 
 async function resolveAccountDisplayName(ctx: ExecContext) {
   try {
-    return (await getCurrentUser(ctx.clientOpts.baseUrl, ctx.token.token, ctx.clientOpts.customHeaders)).accountDisplayName
+    return (await getCurrentUser(ctx.clientOpts.baseUrl, { tokens: ctx.clientOpts.tokens, customHeaders: ctx.clientOpts.customHeaders })).accountDisplayName
   } catch {
     return undefined
   }
@@ -498,15 +498,27 @@ async function formatClassifiedError(input: {
   })
 }
 
+function sqlDialectHint(sql: string, errorMessage: string): string | undefined {
+  const copyInto = /\bCOPY\s+(?:INTO|OVERWRITE)\b/i.test(sql)
+  if (!SQL_DIALECT_ERROR_RE.test(errorMessage) && !(copyInto && COPY_FILE_FORMAT_ERROR_RE.test(errorMessage))) return undefined
+  const reference = copyInto ? " For COPY INTO, read the lakehouse-doc-en skill's references/copy-into-table.md." : ""
+  return `If this is a SQL syntax or dialect issue, consider loading the lakehouse-doc-en skill and reading the relevant reference before retrying.${reference} This match is heuristic, not an engine classification.`
+}
+
 async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number, profileName?: string): Promise<void> {
   const hint = await fetchSchemaHint(ctx, sql, r.errorMessage ?? "")
   logOperation("sql", { sql, ok: false, errorCode: r.errorCode, timeMs: Date.now() - t0 })
-  const aiMessage = hint
-    ? `SQL failed. Available schema info attached in the 'schema' field — check table/column names and retry.`
-    : undefined
+  const messages = [
+    ...(hint ? [`SQL failed. Available schema info attached in the 'schema' field — check table/column names and retry.`] : []),
+    sqlDialectHint(sql, r.errorMessage ?? ""),
+  ].filter((message): message is string => message !== undefined)
+  const aiMessage = messages.length > 0 ? messages.join(" ") : undefined
+  // job_id travels on failures too, so a failed query can still be traced via
+  // `cz-cli job profile <id>` the same way a successful one can.
+  const extra = { ...(hint ? { schema: hint } : {}), ...(r.jobId ? { job_id: r.jobId } : {}) }
   error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, profileName), {
     format,
-    extra: hint ? { schema: hint } : undefined,
+    extra: Object.keys(extra).length > 0 ? extra : undefined,
     ...(aiMessage && { aiMessage }),
   })
 }
@@ -561,7 +573,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     const jobId: JobID = {
       id: argv["job-profile"],
       workspace: ctx.config.workspace,
-      instanceId: ctx.token.instanceId,
+      instanceId: ctx.instanceId(),
     }
     const body = {
       get_result_request: {
@@ -676,10 +688,15 @@ async function handler(argv: SqlArgs): Promise<void> {
           }
         } else if (i < statements.length - 1) {
           // Non-batch: silently execute intermediate statements
+          const started = Date.now()
           const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
           if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-            logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
-            error(r.errorCode ?? "SQL_ERROR", await formatQueryError(r, ctx, argv.profile), { format })
+            // Through the shared helper, like every other failure path. Adding job_id
+            // inline here is what the single-statement branch used to do, and folding that
+            // one in is the reason this file has one failure reporter: an inline copy gets
+            // job_id but not the schema hint, the ai_message or the timing, so the two
+            // paths drift apart again the moment either gains something.
+            await handleFailure(r, stmt, ctx, format, started, argv.profile)
             return
           }
         } else {
@@ -715,7 +732,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               const jobId: JobID = {
                 id: argv["job-id"] as string,
                 workspace: ctx.config.workspace,
-                instanceId: ctx.token.instanceId,
+                instanceId: ctx.instanceId(),
               }
               const body = {
                 get_result_request: {

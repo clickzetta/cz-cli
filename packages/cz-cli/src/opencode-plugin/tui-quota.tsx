@@ -27,7 +27,7 @@
 // unit-tested behind one bundling entry, tui-quota-runtime.ts: tui-quota-data.ts
 // (fetch), tui-quota-format.ts (presentation), tui-quota-controller.ts (refresh).
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { createEffect, createSignal, createMemo, For, Show } from "solid-js"
+import { createEffect, createSignal, createMemo, Show } from "solid-js"
 import {
   createQuotaController,
   currentSessionID,
@@ -35,6 +35,7 @@ import {
   fetchQuotaSnapshot,
   profileRows,
   quotaRows,
+  readHeaderQuota,
   readProfileInfo,
   type ActiveModelContext,
   type QuotaRow,
@@ -52,13 +53,11 @@ function Section(props: { api: TuiPluginApi; title: string; rows: () => QuotaRow
         <text fg={theme().text}>
           <b>{props.title}</b>
         </text>
-        <For each={props.rows()}>
-          {(row) => (
-            <text fg={theme()[row.tone]} selectable={false}>
-              {row.text}
-            </text>
-          )}
-        </For>
+        {props.rows().map((row) => (
+          <text fg={theme()[row.tone]} selectable={true}>
+            {row.text}
+          </text>
+        ))}
       </box>
     </Show>
   )
@@ -202,6 +201,8 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
     // so a change means the reading is for the wrong key until refreshed.
     activeModel.onChange(({ sessionID }) => {
       if (sessionID !== currentSessionID(api)) return
+      // The quota read below is scoped to the active provider, so the switch itself
+      // re-attributes the rows; this only refreshes the balance half.
       controller.refresh()
     }),
   ]
@@ -234,7 +235,19 @@ export function installQuotaIndicator(api: TuiPluginApi, activeModel: ActiveMode
             api={api}
             activeModel={activeModel}
             sessionID={props.session_id}
-            snapshot={snapshot}
+            snapshot={() => {
+              const balance = snapshot()
+              // Read inside this closure, which View evaluates from a memo: that is what
+              // subscribes to the message/part store, so a new step-finish repaints the
+              // rows. Same pattern as upstream's Context section reading `tokens`.
+              const quotas = readHeaderQuota({
+                messages: api.state.session.messages(props.session_id),
+                parts: (messageID) => api.state.part(messageID),
+                providerID: activeModel.providerID(props.session_id),
+              })
+              if (!quotas) return balance
+              return { ...balance, quotas }
+            }}
             profileInfo={activeProfileInfo}
             userName={userName}
             onContext={onContext}

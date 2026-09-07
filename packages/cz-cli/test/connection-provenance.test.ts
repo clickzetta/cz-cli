@@ -175,7 +175,7 @@ describe("run-cli's applyAgentConnectionEnv (via runCli's connection flags)", ()
     ConnectionEnv.applyUser(userFields)
     expect(process.env.CZ_SCHEMA).toBeUndefined() // nothing written as user's
 
-    ConnectionEnv.apply(derivedFields, overrides.profile)
+    ConnectionEnv.applyInherited(derivedFields, overrides.profile)
     expect(process.env.CZ_SCHEMA).toBe("sales")
     expect(process.env.CZ_ENV_DERIVED?.split(",")).toContain("CZ_SCHEMA")
 
@@ -187,6 +187,25 @@ describe("run-cli's applyAgentConnectionEnv (via runCli's connection flags)", ()
 })
 
 describe("run-cli's splitConnectionEnv", () => {
+  test("an explicit child profile replaces inherited agent defaults", () => {
+    // The agent shell exports profile A as a derived default. A nested CLI command
+    // naming profile B must promote only B's explicitly selected profile and let
+    // resolveConnectionConfig rebuild all connection fields from B.
+    process.env.CZ_PROFILE = "a"
+    process.env.CZ_ENV_DERIVED = "CZ_SERVICE,CZ_INSTANCE,CZ_WORKSPACE,CZ_PAT"
+    process.env.CZ_SERVICE = "service-a"
+    process.env.CZ_INSTANCE = "instance-a"
+    process.env.CZ_WORKSPACE = "workspace-a"
+    process.env.CZ_PAT = "pat-a"
+
+    const resolved = resolveConnectionConfig({ profile: "b" })
+    expect(resolved.service).toBe("b.example.com")
+    expect(resolved.instance).toBe("inst-b")
+    expect(resolved.workspace).toBe("ws_b")
+    expect(resolved.username).toBe("user_b")
+    expect(resolved.password).toBe("pw_b")
+  })
+
   test("a flag value is split into userFields, unaffected by what the profile also carries", () => {
     const overrides = { profile: "a", schema: "flag_schema" }
     const resolved = resolveConnectionConfig(overrides) // flag wins inside resolveConnectionConfig too
@@ -280,7 +299,7 @@ describe("run-cli's resolveAccountsUrl", () => {
     const accountsUrl = resolveAccountsUrl(overrides.profile)
     if (accountsUrl) derivedFields.accountsUrl = accountsUrl
 
-    ConnectionEnv.apply(derivedFields, overrides.profile)
+    ConnectionEnv.applyInherited(derivedFields, overrides.profile)
     expect(process.env.CZ_ACCOUNTS_URL).toBe("https://accounts.example.com/a")
   })
 })

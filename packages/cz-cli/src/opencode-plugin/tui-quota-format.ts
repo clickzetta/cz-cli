@@ -15,6 +15,9 @@ export type QuotaTone = "text" | "textMuted" | "success" | "warning" | "error"
 export function abbreviate(value: number): string {
   if (!Number.isFinite(value)) return "?"
   const abs = Math.abs(value)
+  // A lifetime (PTO) ceiling is routinely 1e9+, and without this tier it renders as
+  // `1000.0M` — six characters of noise in a 42-column sidebar.
+  if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`
   return String(Math.round(value))
@@ -93,23 +96,53 @@ export interface QuotaRow {
  */
 export function quotaRows(snapshot: QuotaSnapshot | undefined): QuotaRow[] {
   if (!snapshot) return []
-  const rows: QuotaRow[] = []
+  const cash =
+    snapshot.cash === undefined
+      ? []
+      : [{ text: `${formatCash(snapshot.cash)} balance`, tone: cashTone(snapshot.cash, snapshot.owe ?? 0) }]
 
-  if (snapshot.cash !== undefined) {
-    rows.push({ text: `${formatCash(snapshot.cash)} balance`, tone: cashTone(snapshot.cash, snapshot.owe ?? 0) })
-  }
+  // A key can cap several periods at once (a lifetime grant plus a daily rate, say),
+  // and the binding one is whichever runs out first — so each gets its own pair of
+  // rows rather than picking one to show. Shortest period first, because that is the
+  // one a user is most likely to hit inside this session.
+  // Both numbers required, deliberately narrower than formatClickzettaQuota's one-line
+  // CLI form, which will report a spend with no ceiling or a ceiling with no spend. The
+  // sidebar's two rows are a ratio and a percentage; with either half missing there is
+  // no ratio to draw, and a lone figure in this column would read as one.
+  const usable = [...(snapshot.quotas ?? [])].filter(
+    (quota) => quota.used !== undefined && quota.limit !== undefined && quota.limit > 0,
+  )
+  // parseClickzettaQuota captures whatever limiter the header named, not just `api-key`,
+  // so a deployment reporting a tenant-wide cap alongside the key's own would produce two
+  // identical-looking pairs in an order set by header arrival — a duplicated figure with
+  // no way to tell which ceiling binds. Name the scope only when there is more than one,
+  // so the common single-scope case stays clean.
+  const scopes = new Set(usable.map((quota) => quota.scope))
+  const label = (quota: (typeof usable)[number]) =>
+    `${periodSuffix(quota.period)}${scopes.size > 1 ? ` (${quota.scope})` : ""}`
 
-  const { used, limit } = snapshot
-  if (used !== undefined && limit !== undefined && limit > 0) {
-    const tone = quotaTone(remainingRatio(used, limit))
-    // Both numbers, not just a percentage: seeing the ceiling is what tells you
-    // whether the percentage is worth acting on.
-    rows.push({ text: `${abbreviate(used)} / ${abbreviate(limit)} tokens${periodSuffix(snapshot.period)}`, tone })
-    rows.push({ text: `${formatPercentLeft(remainingRatio(used, limit))} left`, tone })
-  }
+  const quotas = usable
+    // Sort by scope too, so the pairs group stably instead of following header order.
+    .sort(
+      (a, b) =>
+        PERIOD_ORDER.indexOf(a.period) - PERIOD_ORDER.indexOf(b.period) || a.scope.localeCompare(b.scope),
+    )
+    .flatMap((quota) => {
+      const ratio = remainingRatio(quota.used!, quota.limit!)
+      const tone = quotaTone(ratio)
+      // Both numbers, not just a percentage: seeing the ceiling is what tells you
+      // whether the percentage is worth acting on.
+      return [
+        { text: `${abbreviate(quota.used!)} / ${abbreviate(quota.limit!)} tokens${label(quota)}`, tone },
+        { text: `${formatPercentLeft(ratio)} left${label(quota)}`, tone },
+      ]
+    })
 
-  return rows
+  return [...cash, ...quotas]
 }
+
+/** Shortest window first; an unknown period code sorts last rather than ahead of everything. */
+const PERIOD_ORDER: Array<QuotaPeriod | undefined> = ["daily", "weekly", "monthly", "total", undefined]
 
 /**
  * Percentage still available, floored so a nearly-spent quota never rounds up to a

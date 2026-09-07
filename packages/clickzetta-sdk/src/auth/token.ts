@@ -1,4 +1,4 @@
-import type { AuthToken, ConnectionConfig } from "../types/index.js"
+import type { AuthToken, ConnectionConfig, Credential, TokenSource } from "../types/index.js"
 import { loginWithPat, loginWithPassword } from "./login.js"
 import { refreshAccessToken } from "./oauth.js"
 import { toServiceUrl } from "../config/region.js"
@@ -192,6 +192,74 @@ async function acquireToken(config: ConnectionConfig, force: boolean): Promise<A
   })()
   pendingFetches.set(key, fetch)
   return fetch
+}
+
+/**
+ * The standard source: an OAuth/PAT/password connection whose token is cached,
+ * refreshed proactively when stale, and rotated on demand. `get`/`rotate` are
+ * the existing `getToken`/`forceRefreshToken` engine — single-flight and
+ * persistence come with them.
+ */
+/**
+ * Whether this connection has anything to authenticate or rotate WITH: a persisted
+ * token to refresh, or credentials to log in with. False means every recovery path
+ * would drive a login with empty values — ~6 s of retries ending in a misleading
+ * "Login failed" that hides the error the server actually sent.
+ *
+ * An `oauth = "<id>"` pointer attaches a store whether or not its `[oauth.<id>]`
+ * section still exists, so the store is asked for a token rather than for its
+ * existence. Exported because callers outside the transport (a command deciding
+ * whether a 401 is worth retrying) need the same answer, and a second copy of this
+ * predicate is exactly what drifts.
+ */
+export function isRotatable(config: ConnectionConfig): boolean {
+  return Boolean(config.tokenStore?.load()) || hasLoginCredentials(config)
+}
+
+export function connectionTokenSource(config: ConnectionConfig): TokenSource {
+  return {
+    async get(): Promise<Credential> {
+      return toCredential(await getToken(config))
+    },
+    async rotate(rejected: Credential): Promise<Credential | undefined> {
+      if (!isRotatable(config)) return undefined
+      // A concurrent request may already have rotated this connection while this
+      // one was in flight; its 401 is then about a credential we have already
+      // replaced. Hand back the current one instead of rotating again, so N
+      // parallel requests cost one rotation rather than N.
+      const current = toCredential(await getToken(config))
+      if (current.token !== rejected.token) return current
+      // Throws SESSION_EXPIRED when the refresh token is dead and there are no
+      // credentials to fall back on — a terminal answer, not a missing path.
+      return toCredential(await forceRefreshToken(config))
+    },
+  }
+}
+
+/**
+ * A credential supplied verbatim by the caller: a token minted moments ago by a
+ * login flow, a profile `[agent]` block, or a cookie session. There is no
+ * rotation path, so `rotate` reports that rather than pretending — which is how
+ * "this identity cannot self-heal" is expressed now that no request carries a
+ * flag for it.
+ */
+export function staticTokenSource(credential: Credential): TokenSource {
+  return {
+    get: async () => credential,
+    rotate: async () => undefined,
+  }
+}
+
+/** Unauthenticated endpoint (health probes, public metadata). */
+export function anonymous(): TokenSource {
+  return staticTokenSource({ token: "", instanceId: 0, userId: 0 })
+}
+
+function toCredential(token: AuthToken): Credential {
+  // 0 when the token carries none: the connection is the authoritative source now (see
+  // ConnectionConfig.instanceId), and a Credential's copy is only a convenience for the
+  // standalone-SDK login path that still has one.
+  return { token: token.token, instanceId: token.instanceId ?? 0, userId: token.userId }
 }
 
 export function clearTokenCache(): void {

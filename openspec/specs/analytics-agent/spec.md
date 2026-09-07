@@ -27,47 +27,53 @@ Analytics Agent 命令 MUST 在 active profile 未显式配置 `analysis_agent_e
 - **THEN** CLI MUST 使用 `https://legacy.example/agent`
 - **AND** 不使用 service 推导结果
 
-### Requirement: knowledge create/update MUST bind domain-id to domainIds
+### Requirement: knowledge create/update MUST bind domainIds from --domain-ids JSON arrays
 
-`cz-cli analytics-agent knowledge create` 和 `cz-cli analytics-agent knowledge update` MUST 将命令行 `--domain-id` 规范化为请求体中的 `domainIds` 数组，并在缺少或传入非正整数时本地报错，避免创建出未绑定任何域的 knowledge。
+`cz-cli analytics-agent knowledge create` 和 `cz-cli analytics-agent knowledge update` MUST 将命令行 `--domain-ids` 规范化为请求体中的 `domainIds` 数组，并在缺少或传入非 JSON 数组、非正整数时本地报错，避免创建出未绑定任何域的 knowledge。单域示例 MUST 使用 `--domain-ids '[5]'`；多域示例 MUST 使用 `--domain-ids '[5,6]'`。
 
-#### Scenario: knowledge create 使用 --domain-id 绑定 domainIds
+#### Scenario: knowledge create 使用单个 --domain-ids 绑定 domainIds
 
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --domain-id 5 --content hello`
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --domain-ids '[5]' --content hello`
 - **THEN** CLI 调用 knowledge create open API
 - **AND** 请求体包含 `domainIds=[5]`
 
-#### Scenario: knowledge update 使用 --domain-id 绑定 domainIds
+#### Scenario: knowledge update 使用多个 --domain-ids 绑定 domainIds
 
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge update 42 --domain-id 5`
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge update 42 --domain-ids '[5,6]'`
 - **THEN** CLI 调用 knowledge update open API
-- **AND** 请求体包含 `domainIds=[5]`
+- **AND** 请求体包含 `domainIds=[5,6]`
 
-#### Scenario: knowledge create 缺少 --domain-id 时本地报错
+#### Scenario: knowledge create 缺少 --domain-ids 时本地报错
 
 - **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --content hello`
 - **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
-- **AND** 错误信息 MUST 明确说明需要 `--domain-id`
+- **AND** 错误信息 MUST 明确说明需要 `--domain-ids`
 
-### Requirement: body domainIds commands MUST validate domain-id arrays
+### Requirement: body domainIds commands MUST validate --domain-ids JSON arrays
 
-所有通过请求体字段 `domainIds` 绑定分析域的 Analytics Agent 命令 MUST 将命令行 `--domain-id` 规范化为正整数数组；重复传入 `--domain-id` MUST 保留为多个数组元素；传入缺值、非数字、非整数或非正数时 MUST 在发请求前返回 `USAGE_ERROR`。路径参数或查询过滤使用的 `domainId` 不属于本规则，MUST 保持单值 `domainId`。
+所有通过请求体字段 `domainIds` 绑定分析域的 Analytics Agent 命令 MUST 将命令行 `--domain-ids` 规范化为正整数 JSON 数组；传入缺值、非 JSON 数组、非数字、非整数或非正数时 MUST 在发请求前返回 `USAGE_ERROR`。路径参数或查询过滤使用的 `domainId` 不属于本规则，MUST 保持单值 `domainId`。
 
-#### Scenario: metric create 使用重复 --domain-id 绑定多个 domainIds
+#### Scenario: metric create 使用单个 --domain-ids 绑定 domainIds
 
-- **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-id 5 --domain-id 6 ...`
+- **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-ids '[5]' ...`
+- **THEN** CLI 调用 metric create open API
+- **AND** 请求体包含 `domainIds=[5]`
+
+#### Scenario: metric create 使用多个 --domain-ids 绑定 domainIds
+
+- **WHEN** 用户执行 `cz-cli analytics-agent metric create --domain-ids '[5,6]' ...`
 - **THEN** CLI 调用 metric create open API
 - **AND** 请求体包含 `domainIds=[5,6]`
 
-#### Scenario: answer-builder list 使用重复 --domain-id 过滤多个 domainIds
+#### Scenario: answer-builder list 使用 --domain-ids 过滤多个 domainIds
 
-- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder list --domain-id 5 --domain-id 6`
+- **WHEN** 用户执行 `cz-cli analytics-agent answer-builder list --domain-ids '[5,6]'`
 - **THEN** CLI 调用 answer-builder list open API
 - **AND** 请求体包含 `domainIds=[5,6]`
 
-#### Scenario: knowledge file upload 使用重复 --domain-id 绑定上传文件
+#### Scenario: knowledge file upload 使用 --domain-ids 绑定上传文件
 
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-id 5 --domain-id 6`
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-ids '[5,6]'`
 - **THEN** CLI 调用 knowledge upload-url open API
 - **AND** 请求体包含 `domainIds=[5,6]`
 
@@ -100,8 +106,27 @@ Analytics Agent 命令中以 `-id` 结尾且代表数字 ID 的参数 MUST 在�
 - **THEN** CLI MUST 接受 `parent-id=0`
 - **AND** 请求体包含 `parentId=0`
 
+### Requirement: knowledge folder maintenance commands MUST use explicit flags
+
+`cz-cli analytics-agent knowledge space rename`、`knowledge folder sort`、`knowledge folder rename/move/copy`、`knowledge file rename/move/copy` MUST 使用显式参数组装请求体，且这些简单场景不再依赖 `--body`。`knowledge folder sort` MUST 只接受 `--nodeIds` JSON 数组，不再接受重复 `--node-id`。
+
+#### Scenario: knowledge folder sort 使用显式 nodeIds
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder sort 1 --parent-id 0 --nodeIds "[1,2]"`
+- **THEN** CLI 调用 knowledge folder sort open API
+- **AND** 请求体包含 `parentId=0`
+- **AND** 请求体包含 `nodeIds=[1,2]`
+
+#### Scenario: knowledge folder rename 使用显式 name
+
+- **WHEN** 用户执行 `cz-cli analytics-agent knowledge folder rename 1 2 --name new-name`
+- **THEN** CLI 调用 knowledge folder rename open API
+- **AND** 请求体包含 `name="new-name"`
+
 #### Scenario: datasource load 校验 --domain-ids JSON 数组
 
-- **WHEN** 用户执行 `cz-cli analytics-agent datasource load 3 --domain-ids "[5,6]"`
+- **WHEN** 用户执行 `cz-cli analytics-agent datasource load 3 --domain-ids "[5]"`
+- **THEN** 请求体包含 `domainIds=[5]`
+- **AND** 用户执行 `cz-cli analytics-agent datasource load 3 --domain-ids "[5,6]"`
 - **THEN** 请求体包含 `domainIds=[5,6]`
 - **AND** 如果数组中存在非正整数或非整数，CLI MUST 在发请求前返回 `USAGE_ERROR`

@@ -3,7 +3,8 @@
 cz-cli is built as a ClickZetta customization layer on top of **pristine upstream
 opencode** (currently baselined at v1.17.11). The guiding invariant is:
 
-> **Keep `packages/opencode`, `packages/tui`, and `packages/core` pristine.**
+> **Keep `packages/opencode`, `packages/tui`, `packages/core` and `packages/schema`
+> pristine.**
 > Put ClickZetta behavior in `packages/cz-cli/` and reach into upstream through
 > the public hooks it exposes (plugin APIs, env flags, config injection).
 
@@ -33,7 +34,7 @@ Intrusive edits are wrapped with a scannable banner so they can be found with gr
 Find every intrusive patch:
 
 ```sh
-rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/**'
+rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/schema -g '!**/dist/**'
 ```
 
 ---
@@ -337,6 +338,112 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui -g '!**/dist/
 - **Re-baseline:** all 25 return as additions. Re-delete them, and re-check whether the
   new baseline added more scheduled workflows before merging.
 
+### 12. `<spinner>` registration — backport of upstream #35292
+
+- **Files:** `packages/tui/src/component/register-spinner.ts` (new),
+  `packages/tui/package.json` (export map), and a `registerOpencodeSpinner()` call at
+  five sites: `packages/tui/src/app.tsx`,
+  `packages/tui/src/component/spinner.tsx`,
+  `packages/tui/src/component/prompt/index.tsx`,
+  `packages/opencode/src/cli/cmd/run/footer.subagent.tsx`,
+  `packages/opencode/src/cli/cmd/run/footer.view.tsx`
+- **Upstream:** https://github.com/anomalyco/opencode/pull/35292 ("tui: preserve
+  spinner registration"), merged 2026-07-04 as `7a8e7c88f4`. Our baseline v1.17.11 is
+  dated 2026-06-25 — nine days earlier, so it predates the fix. Upstream v1.18.9 and
+  later carry it.
+- **Bug:** each of those five sites used to register `<spinner>` with a bare
+  side-effect import, `import "opentui-spinner/solid"`. `opentui-spinner` declares a
+  whitelist `sideEffects` (`["./dist/react.mjs", "./dist/solid.mjs"]`), so the module
+  survives tree-shaking only while the bundler matches those POSIX patterns against
+  the resolved path. Our release build compiles the win32 target ON a
+  `windows-latest` runner (`release-cos.yml`: `runner: windows-latest` +
+  `OPENCODE_HOST_ONLY=1`); there the match fails, `minify` drops an import that binds
+  nothing, `extend({ spinner })` never runs, and the first spinner render kills the
+  session with `[Reconciler] Unknown component type: spinner`. Reported on cz-cli
+  2.0.3 (Windows). Upstream never saw it: its `build-cli` job bundles every target,
+  Windows included, on `blacksmith-4vcpu-ubuntu-2404` (the `windows-2025` runner only
+  signs), and dev `bun run` does not tree-shake at all.
+- **Measured:** forcing the match to fail (`sideEffects: false` on the installed
+  package) collapses a bare-import bundle from 935,609 bytes to 27 — registration and
+  all. Cross-compiling with `--target=bun-windows-x64` from macOS keeps it, which is
+  why the build host, not the target, is what matters.
+- **Why intrusive (no hook):** the catalogue is module-level state inside
+  `@opentui/solid`, and these are the modules that render `<spinner>`.
+- **No `cz-cli change` banner, deliberately — grep for the call instead:** the edit is
+  byte-identical to upstream's, so wrapping it in a banner would make the file differ
+  from the fixed upstream file and turn a clean fast-forward into a conflict. The cost
+  is that the ledger's usual `rg -n "cz-cli change"` sweep cannot see this patch, so it
+  is the one entry that could be reverted by a baseline bump without the sweep noticing.
+  The substitute check, added to the re-baseline procedure below, is:
+
+  ```sh
+  rg -n 'registerOpencodeSpinner' packages/tui packages/opencode   # 11 hits: 1 definition + import+call at each of the 5 sites
+  rg -n 'import "opentui-spinner/solid"' packages/tui packages/opencode   # expect none
+  rg -n 'component/register-spinner' packages/tui/package.json     # the export map entry
+  ```
+
+  The third check is not redundant: the two `packages/opencode` sites import
+  `@opencode-ai/tui/component/register-spinner`, which only resolves while
+  `packages/tui/package.json`'s `exports` publishes it — and a baseline bump will almost
+  certainly overwrite that file, since upstream touches versions and deps in it constantly.
+  Both `.ts`-level greps would still pass with the export map reverted, leaving two imports
+  of an unpublished subpath.
+
+  The silent-revert window is exactly v1.17.11 → v1.18.9: before it the patch does not
+  exist, from v1.18.9 on upstream provides it and this entry is deleted.
+- **Verify:** `packages/opencode/test/cli/run/footer.view.test.tsx` asserts a spinner
+  renders in the `run` footer (`expect(spinner).toBeDefined()`); it goes RED if the
+  registration is gone from that path. Run it plus `packages/tui`'s suite after any
+  baseline bump. Neither is in `cz-test.yml`, so this is a manual step. Pins that must
+  keep exporting what the fix calls: `opentui-spinner@0.0.7` (`registerSpinner`) and
+  `@opentui/solid@0.3.4` (`getComponentCatalogue`).
+- **Re-baseline:** once the baseline is at v1.18.9 or newer, upstream provides all of
+  this — take upstream's version wholesale and **delete this entry**. Until then, the
+  bare imports return on every baseline bump; re-apply from #35292 rather than by
+  hand, and check for new `<spinner>` call sites with
+  `rg -n 'opentui-spinner|<spinner' packages/tui packages/opencode`.
+
+### 13. `step-finish` provider metadata reaches the part
+
+- **Files:** `packages/schema/src/session-v1.ts` (`StepFinishPart`),
+  `packages/opencode/src/session/processor.ts` (the `step-finish` `updatePart` call).
+- **Marker:** `//======================== cz-cli change ========================` at both.
+- **Upstream value:** `StepFinishPart` has no `metadata` field, and the processor builds the
+  part without one.
+- **What/why:** upstream feeds the step's `providerMetadata` to `Session.getUsage`, which
+  normalizes the fields it knows (anthropic/vertex/bedrock/venice cache tokens, copilot
+  `totalNanoAiu` → cost) and drops the rest. So a provider-specific number upstream does not
+  normalize cannot leave the server at all. ClickZetta's per-key token quota is one: the AI
+  gateway reports it on every response's headers and `@clickzetta/ai-gateway` publishes it as
+  `providerMetadata.clickzetta.quota`, with no consumer able to see it. Two additive lines put
+  it on the part, after which it rides the exact path `tokens` and `cost` ride — part →
+  `message.part.updated` → the TUI's state store → a memo in the sidebar.
+- **Why intrusive (no hook):** `TuiEventBus` (`packages/plugin/src/tui.ts`) is subscribe-only
+  over a closed event union, and the server-side plugin hooks can neither publish an event nor
+  add a route (`chat.headers` is outbound only). No hook carries a response-derived value from
+  the server to the TUI.
+- **Why this shape:** it is what upstream itself does for the same kind of data.
+  `TextPart`/`ReasoningPart`/`ToolPart` already carry `metadata`; `step-finish` was the only
+  part that dropped it. The alternative — a cz-owned side channel — was built first (a JSON
+  file under `~/.clickzetta`, then a `BroadcastChannel` between the TUI thread and the server
+  worker) and both were rejected: they add a mechanism this repo has no other precedent for,
+  and the file version needed a freshness window plus a daily-reset heuristic that in-band
+  delivery makes unnecessary.
+- **Blast radius if lost to a re-baseline:** the token rows go blank. No error, no crash — the
+  reader simply finds no `metadata` on the part. Patch 1's history shows an intrusive patch HAS
+  been silently lost this way before, so verify by looking at the sidebar after a baseline
+  bump, not only by grepping for the marker.
+- **Not applied to the v2 path.** `packages/core/src/session/runner/publish-llm-event.ts`
+  builds its step settlement as `{ finish, tokens }` and `Step.Ended`
+  (`packages/schema/src/session-event.ts`) has no metadata field either, so the same drop
+  happens there. It does not matter today: the native runtime is opt-in behind
+  `flags.experimentalNativeLlm` (`packages/opencode/src/session/llm.ts`) and the live path is
+  ai-sdk. If that flag becomes the default, the token rows go blank until the same two lines
+  are added on that surface.
+- **Verify:** run a gateway-backed turn against a deployment that sends `x-czgw-ratelimit-*`
+  (uat-aimesh does; cn-shanghai-alicloud does not, as of 2026-09-01) and confirm the Quota
+  section paints token rows.
+
 ## HOOK-based customizations (safe — live entirely in the cz layer)
 
 These do **not** edit upstream files. They are listed so a re-baseline can confirm
@@ -415,7 +522,7 @@ the hooks they depend on still exist in the new upstream.
 - **Mechanism:** registers on the public `sidebar_content` slot
   (`packages/plugin/src/tui.ts`'s `TuiHostSlotMap`), rendering a "Profile" section
   (which profile/account/env/instance/workspace the session is connected as) and a
-  "Quota" section (balance + token usage) at `order: 150` — directly after
+  "Quota" section (cash balance + per-period token allowance) at `order: 150` — directly after
   upstream's own Context section (`order: 100`) and ahead of MCP/LSP/Todo/Files
   (200/300/400/500).
 - **Why:** the readout used to share the prompt's top-right corner with the
@@ -446,6 +553,32 @@ the hooks they depend on still exist in the new upstream.
     on parent and child. Expected/accepted: a subagent turn still spends the
     parent's quota and the user returns to the parent session to see it, but this
     is upstream's policy, not cz's, and worth re-verifying it still holds.
+  - **Two upstream event shapes this feature reads** (recorded with the header-quota
+    change; the older `session.status` subscription had gone unrecorded too):
+    - `session.status` — `properties.sessionID` / `properties.status`, driving the
+      busy→idle edge that triggers the balance read.
+    - `message.part.updated` — `properties.part.type === "step-finish"`, whose `metadata`
+      carries the token quota (see intrusive patch 13). The sidebar reads it from the TUI's
+      state store rather than from the event, exactly as upstream's Context section reads
+      `tokens`, so a rename of that part type or a move of `metadata` shows up as blank
+      token rows with no error. `packages/cz-cli/test/tui-quota-data.test.ts` covers the
+      reader against a hand-built store; nothing covers the live shape.
+- **How the token half travels:** the provider publishes it as
+  `providerMetadata.clickzetta.quota` (on the doGenerate result, on the doStream "finish"
+  part), opencode carries it onto the step-finish part via patch 13, and the part reaches
+  the TUI through the ordinary message pipeline. No cache, no side channel, no persistence
+  of cz's own: a reading is attached to the assistant message that produced it, so
+  reopening a session shows that session's last reading and a turn aborted before
+  step-finish reports nothing. Attribution needs no credential — the message names its own
+  `providerID`, which is what the reader filters on.
+  - A reading printed by `cz-cli ai-gateway quota` in another terminal does not reach a
+    running TUI (it did when this was a file). Both sides still resolve the same entry
+    through `classifyClickzettaEntry`, so they can never describe different keys.
+- **Token quota no longer comes from Portal.** It used to be a second portal call,
+  `/clickzetta-portal/user/listApiKeys`, matched against the key by its masked form. That
+  route, `maskApiKey`/`matchKeyUsage`, and the walk over every configured profile hunting
+  the one whose portal knew the selected key are all deleted. Only the cash balance is a
+  portal read now, and only for the CURRENT profile.
 - **Also new on this feature's network path:** `centralPortalHost`/`portalRead`
   (`tui-quota-data.ts`) send the profile's portal token to `api.clickzetta.com`/
   `api.singdata.com` when the profile's own regional host answers an unusable
@@ -481,8 +614,12 @@ the hooks they depend on still exist in the new upstream.
 ## Re-baseline procedure (quick)
 
 1. Fast-forward upstream packages to the new opencode version.
-2. `rg -n "cz-cli change" packages/core packages/opencode packages/tui` — expect the
-   INTRUSIVE patches above. If any is missing, re-apply it from this ledger.
+2. `rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/schema` — expect the
+   INTRUSIVE patches above. If any is missing, re-apply it from this ledger. This sweep
+   does NOT cover entry 12, which carries no banner on purpose; check it separately with
+   `rg -n 'registerOpencodeSpinner' packages/tui packages/opencode` (expect 11 hits) plus
+   `rg -n 'component/register-spinner' packages/tui/package.json` for the export map, until
+   the baseline reaches v1.18.9, at which point entry 12 is deleted.
 3. For each HOOK customization, confirm its "upstream hook to re-verify" still holds.
 4. `cd packages/cz-cli && bun run typecheck && bun test`.
 5. Update this file if the set of patches changed.

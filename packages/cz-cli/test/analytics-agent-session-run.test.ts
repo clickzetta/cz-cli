@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { onFetch, onStudio, stubStudioContext } from "./support/cz-fixtures.js"
+import { clearTokenCache } from "@clickzetta/sdk"
 
 // Network-boundary test: no mock.module of our own src. The real analytics-agent session run
 // command runs (registerAnalyticsAgentCommand → resolveAnalyticsContext →
@@ -62,6 +63,11 @@ describe("analytics-agent session run", () => {
       ].join("\n"),
     )
     stubStudioContext()
+    // The SDK token cache is process-global, and these cases assert what a refresh
+    // does — a token another suite left cached under the same key makes the
+    // assertion depend on file order. Sibling suites (main-sync-ports, task-merge,
+    // task-condition-flow, tui-quota-data) already reset it.
+    clearTokenCache()
   })
 
   afterEach(() => {

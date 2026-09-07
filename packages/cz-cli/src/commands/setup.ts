@@ -18,6 +18,7 @@ import { execSql, isQueryResult } from "./exec.js"
 import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
 import { browserOpenCommandForPlatform } from "../util/browser.js"
 import { trackCommand, isSensitiveKey } from "../telemetry.js"
+import { profileTokenSource, verbatimTokenSource } from "../connection/token-source.js"
 
 const setupStartMs = Date.now()
 
@@ -601,7 +602,7 @@ async function loginWithInstanceCandidate(
   let resolvedUsername = String(jwt.userName ?? username)
 
   if (!tenantId) {
-    const user = await getCurrentUser(serviceUrl, login.token)
+    const user = await getCurrentUser(serviceUrl, { tokens: verbatimTokenSource(login.token) })
     userId = userId || coerceInt(user.id)
     tenantId = coerceInt(user.accountId)
     resolvedUsername = user.name || resolvedUsername
@@ -717,11 +718,11 @@ async function listWorkspaces(
 ): Promise<WorkspaceOption[]> {
   const rows = await listUserWorkspaces(
     auth.serviceUrl,
-    auth.token,
     auth.userId,
     auth.tenantId,
     instance.instanceId,
     instance.instanceName,
+    { tokens: verbatimTokenSource(auth.token) }, // minted by the login flow moments ago
   )
   return rows
     .map((row) => {
@@ -881,9 +882,13 @@ async function listSchemas(
         token,
         clientOpts: {
           baseUrl: toServiceUrl(config.service, config.protocol),
-          token: token.token,
+          tokens: profileTokenSource(config),
           customHeaders: { instanceName: config.instance },
+          context: { service: config.service, instance: config.instance, username: config.username },
         },
+        // Setup runs this before the profile is written, so no instance id has been resolved
+        // for its JobID. Declared here rather than reached by a `?? 0` inside execSql.
+        instanceId: () => 0,
       },
       "SHOW SCHEMAS",
       { timeoutMs: 20_000 },

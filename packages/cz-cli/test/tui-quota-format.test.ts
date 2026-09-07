@@ -10,12 +10,20 @@ import {
   quotaTone,
   remainingRatio,
 } from "../src/opencode-plugin/tui-quota-format"
+import type { ClickzettaQuota } from "../src/llm/gateway-error"
 
 describe("abbreviate", () => {
   test("abbreviates millions and thousands like the prompt's context counter", () => {
     expect(abbreviate(10_082_801)).toBe("10.1M")
     expect(abbreviate(10_000_000)).toBe("10.0M")
     expect(abbreviate(1_500)).toBe("1.5K")
+  })
+
+  /** Header-reported lifetime (PTO) ceilings run to 1e9+, where an M tier reads badly. */
+  test("abbreviates billions rather than emitting a four-digit M", () => {
+    expect(abbreviate(1_000_000_000)).toBe("1.0B")
+    expect(abbreviate(978_693_583)).toBe("978.7M")
+    expect(abbreviate(21_306_417_000)).toBe("21.3B")
   })
 
   test("leaves small counts exact", () => {
@@ -156,9 +164,14 @@ describe("profileRows", () => {
   })
 })
 
+/** A quota as the gateway's headers report it, which is what the snapshot now carries. */
+function quota(input: Partial<ClickzettaQuota> & { used: number; limit: number }): ClickzettaQuota {
+  return { periodCode: "PTO", period: "total", scope: "api-key", ...input }
+}
+
 describe("quotaRows", () => {
   test("renders balance, used/total and remaining for a healthy account", () => {
-    expect(quotaRows({ cash: 51.2772, owe: 0, used: 1_000_000, limit: 10_000_000, period: "total" })).toEqual([
+    expect(quotaRows({ cash: 51.2772, owe: 0, quotas: [quota({ used: 1_000_000, limit: 10_000_000 })] })).toEqual([
       { text: "¥51.28 balance", tone: "textMuted" },
       { text: "1.0M / 10.0M tokens", tone: "textMuted" },
       { text: "90% left", tone: "textMuted" },
@@ -166,21 +179,85 @@ describe("quotaRows", () => {
   })
 
   test("marks an over-quota key red while keeping both numbers visible", () => {
-    expect(quotaRows({ cash: 51.2772, used: 10_082_801, limit: 10_000_000, period: "total" }).slice(1)).toEqual([
+    expect(
+      quotaRows({ cash: 51.2772, quotas: [quota({ used: 10_082_801, limit: 10_000_000 })] }).slice(1),
+    ).toEqual([
       { text: "10.1M / 10.0M tokens", tone: "error" },
       { text: "0% left", tone: "error" },
     ])
   })
 
   test("distinguishes a daily cap from a lifetime one", () => {
-    expect(quotaRows({ used: 0, limit: 10_000_000, period: "daily" })[0]).toEqual({
-      text: "0 / 10.0M tokens today",
-      tone: "textMuted",
-    })
-    expect(quotaRows({ used: 0, limit: 10_000_000, period: "total" })[0]).toEqual({
+    expect(quotaRows({ quotas: [quota({ used: 0, limit: 10_000_000, period: "daily", periodCode: "PDO" })] })).toEqual([
+      { text: "0 / 10.0M tokens today", tone: "textMuted" },
+      { text: "100% left today", tone: "textMuted" },
+    ])
+    expect(quotaRows({ quotas: [quota({ used: 0, limit: 10_000_000 })] })[0]).toEqual({
       text: "0 / 10.0M tokens",
       tone: "textMuted",
     })
+  })
+
+  /**
+   * The reason the snapshot carries a list instead of one period: a key can cap a
+   * lifetime grant and a daily rate at once, and the binding one is whichever runs
+   * out first. Showing only one would hide the limit actually about to stop the user,
+   * so both are rendered — shortest window first, and each labelled, or two bare
+   * "N% left" rows would be unattributable.
+   */
+  test("renders every configured period, shortest window first", () => {
+    expect(
+      quotaRows({
+        quotas: [
+          quota({ used: 21_306_657, limit: 1_000_000_000 }),
+          quota({ used: 875, limit: 1_000, period: "daily", periodCode: "PDO" }),
+        ],
+      }),
+    ).toEqual([
+      { text: "875 / 1.0K tokens today", tone: "warning" },
+      { text: "12% left today", tone: "warning" },
+      { text: "21.3M / 1.0B tokens", tone: "textMuted" },
+      { text: "97% left", tone: "textMuted" },
+    ])
+  })
+
+  /**
+   * parseClickzettaQuota captures whatever limiter the header named, so a deployment can
+   * report a tenant-wide cap next to the key's own. Unnamed, the two produce identical
+   * rows in header order and the user cannot tell which ceiling binds.
+   */
+  test("names the scope only when more than one limiter reports", () => {
+    expect(
+      quotaRows({
+        quotas: [
+          quota({ used: 3, limit: 4, period: "daily", periodCode: "PDO", scope: "tenant" }),
+          quota({ used: 1, limit: 4, period: "daily", periodCode: "PDO", scope: "api-key" }),
+        ],
+      }).map((row) => row.text),
+    ).toEqual([
+      "1 / 4 tokens today (api-key)",
+      "75% left today (api-key)",
+      "3 / 4 tokens today (tenant)",
+      "25% left today (tenant)",
+    ])
+  })
+
+  test("a single limiter keeps the rows unqualified", () => {
+    expect(
+      quotaRows({ quotas: [quota({ used: 1, limit: 4, period: "daily", periodCode: "PDO" })] }).map((row) => row.text),
+    ).toEqual(["1 / 4 tokens today", "75% left today"])
+  })
+
+  /** An unrecognised period code still reports its numbers, just without a phrase. */
+  test("an unmapped period sorts last and renders unlabelled", () => {
+    expect(
+      quotaRows({
+        quotas: [
+          quota({ used: 1, limit: 10, period: undefined, periodCode: "PYO" }),
+          quota({ used: 2, limit: 10, period: "monthly", periodCode: "PMO" }),
+        ],
+      }).map((row) => row.text),
+    ).toEqual(["2 / 10 tokens this month", "80% left this month", "1 / 10 tokens", "90% left"])
   })
 
   // No rows means the renderer draws no section — better than a "Quota" heading
@@ -189,16 +266,23 @@ describe("quotaRows", () => {
     expect(quotaRows(undefined)).toEqual([])
   })
 
-  test("renders nothing when the key could not be matched and billing is absent", () => {
+  test("renders nothing when neither the gateway nor billing reported anything", () => {
     expect(quotaRows({})).toEqual([])
+    expect(quotaRows({ quotas: [] })).toEqual([])
   })
 
-  // The observed real case: balance resolves, the virtual key does not.
-  test("still shows the balance when the key could not be matched", () => {
+  // The observed real case: balance resolves, the gateway sends no quota headers
+  // (cn-shanghai-alicloud, as of 2026-09-01).
+  test("still shows the balance when the gateway reported no quota", () => {
     expect(quotaRows({ cash: 51.2772 })).toEqual([{ text: "¥51.28 balance", tone: "textMuted" }])
   })
 
-  test("omits the quota rows when the ceiling is unusable", () => {
-    expect(quotaRows({ cash: 1, used: 5, limit: 0 })).toEqual([{ text: "¥1.00 balance", tone: "warning" }])
+  test("omits a quota whose ceiling is unusable, or whose usage is unknown", () => {
+    expect(quotaRows({ cash: 1, quotas: [quota({ used: 5, limit: 0 })] })).toEqual([
+      { text: "¥1.00 balance", tone: "warning" },
+    ])
+    expect(quotaRows({ cash: 1, quotas: [{ periodCode: "PTO", period: "total", scope: "api-key", limit: 10 }] })).toEqual([
+      { text: "¥1.00 balance", tone: "warning" },
+    ])
   })
 })

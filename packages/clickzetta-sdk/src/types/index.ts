@@ -5,6 +5,23 @@ export interface ConnectionConfig {
   service: string
   protocol: string
   instance: string
+  /**
+   * Numeric id of {@link instance}, which is what the wire actually carries (every
+   * JobID is built from it).
+   *
+   * It belongs HERE, on the connection, and not on the credential. It used to live on
+   * AuthToken, where it was wrong twice over: an OAuth token is deliberately SHARED by
+   * every profile one login can reach — `[oauth.<id>]` in profiles.toml, many profiles
+   * pointing at it — so one token carried one id for profiles on different instances in
+   * different regions; and the value it carried came from userinfo's "default" instance,
+   * which is not necessarily the Lakehouse one the profile names. Measured on a real
+   * profiles.toml: a token holding 160812 (`serviceId` 2) while its profile named the
+   * instance whose id is 160813 (`serviceId` 1).
+   *
+   * Optional because a profile written before this existed has no `instance_id`; cz-cli
+   * resolves it by name on first use and writes it back (see getExecContext).
+   */
+  instanceId?: number
   workspace: string
   schema: string
   vcluster: string
@@ -49,7 +66,19 @@ export const DEFAULT_CONNECTION: ConnectionConfig = {
 
 export interface AuthToken {
   token: string
-  instanceId: number
+  /**
+   * NOT a source of truth for a profile-backed connection — use
+   * {@link ConnectionConfig.instanceId}.
+   *
+   * It survives only for a standalone SDK login, where the portal's login response is the
+   * only place an instance id comes from. cz-cli never reads it: an OAuth token is SHARED
+   * by every profile one login reaches (`[oauth.<id>]` in profiles.toml), so a single id
+   * here is wrong for every profile but one, and the value the portal puts here is its
+   * "default" instance, which need not be the Lakehouse instance the profile names. It is
+   * no longer persisted; sections written by older versions still carry one and it is
+   * ignored on read.
+   */
+  instanceId?: number
   userId: number
   expireTimeMs: number
   obtainedAt: number
@@ -66,8 +95,70 @@ export interface AuthToken {
   issuer?: string
 }
 
-export interface StudioConfig {
+/**
+ * One resolved credential, valid at the moment {@link TokenSource.get} returned
+ * it. Nothing outside a TokenSource should store one: hold the source instead.
+ */
+export interface Credential {
+  /** Wire credential for the `x-clickzetta-token` header. */
   token: string
+  instanceId: number
+  userId: number
+  /**
+   * Headers this credential itself requires — a session/cookie credential is
+   * only accepted alongside its `Cookie`. Kept with the credential so the
+   * transport cannot send one without the other.
+   */
+  headers?: Record<string, string>
+}
+
+/**
+ * The single seam through which every authenticated request obtains its
+ * credential. Modeled on `oauth2.TokenSource` (Go) and `TokenCredential`
+ * (Azure SDK): the transport asks for a credential at request time and, on a
+ * 401, asks the same source to rotate it.
+ *
+ * Why this shape rather than passing a token string: a token handed to a caller
+ * is a snapshot, and every caller then needs its own copy of "how to replace
+ * this" — which is how `sql` ended up self-healing on an expired token while
+ * every Studio command surfaced a bare `401 token is invalid`. With a source,
+ * there is nothing for a call site to forget: it cannot obtain a credential
+ * without also holding the means to rotate it.
+ *
+ * An identity that cannot be rotated is a *kind of source*
+ * ({@link staticTokenSource}), not a flag on every request.
+ */
+export interface TokenSource {
+  /** Credential for the next request, refreshed proactively when near expiry. */
+  get(): Promise<Credential>
+  /**
+   * One-shot recovery after the server rejected `rejected` with 401. Returns
+   * the replacement credential, or `undefined` when this identity has no
+   * rotation path (static token, cookie session) — the caller then surfaces the
+   * 401. Throws when rotation was possible but failed for good (a dead refresh
+   * token raises `SESSION_EXPIRED`).
+   */
+  rotate(rejected: Credential): Promise<Credential | undefined>
+}
+
+/**
+ * Non-auth metadata that some request BODIES embed — the SQL job-submit payload
+ * carries the service endpoint and the login name. It exists only because those
+ * payloads need it; authentication never reads this. Deliberately separate from
+ * {@link TokenSource} so the two can't be confused again.
+ */
+export interface RequestContext {
+  service?: string
+  instance?: string
+  username?: string
+}
+
+export interface StudioConfig {
+  /**
+   * How this context authenticates. Ask it for a credential when one is needed
+   * (`await sc.tokens.get()`); never cache the result on the context.
+   */
+  tokens: TokenSource
   instanceId: number
   workspaceId: number
   projectId: number

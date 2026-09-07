@@ -11,7 +11,7 @@ import {
   type LlmEntryView,
 } from "../llm/native-config.js"
 import { buildLlmProbeRequest, firstClickzettaModel, normalizeLlmBaseUrl } from "../llm/probe.js"
-import { rewriteClickzettaGatewayError } from "../llm/gateway-error.js"
+import { formatClickzettaQuota, parseClickzettaQuota, rewriteClickzettaGatewayError } from "../llm/gateway-error.js"
 import { describeSelectionSource, resolveDefaultModel } from "../llm/default-model.js"
 
 const VALID_PROVIDERS = [
@@ -684,11 +684,18 @@ const LlmTestCommand = cmd({
 
     const body = safeJson(text)
     const completion = completionSummary(body) ?? anthropicSummary(body) ?? googleSummary(body)
+    // cz_change: the ClickZetta gateway reports the key's remaining token quota on
+    // every completion's headers, and this probe just made one — so the test that
+    // proves the key works can also say how much of it is left, at no extra call.
+    // Absent for other providers, and absent on a gateway error (which never
+    // carries these headers), so it only ever adds a line.
+    const quotas = parseClickzettaQuota(response.headers)
     const ttyOut = [
       `\n  Agent LLM '${target.name}' test passed`,
       `    provider: ${target.provider}`,
       `    url:      ${displayUrl}`,
       `    response: ${completion ?? "(endpoint reachable; completion returned)"}`,
+      ...(quotas ?? []).map((quota, index) => `    ${index === 0 ? "quota:   " : "         "} ${formatClickzettaQuota(quota)}`),
       "",
       "",
     ].join("\n")
@@ -702,6 +709,7 @@ const LlmTestCommand = cmd({
       probe: "chat.completions",
       sample_response: completion,
       source: target.source,
+      ...(quotas ? { quotas } : {}),
     })
   },
 })

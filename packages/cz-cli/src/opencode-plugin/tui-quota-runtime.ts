@@ -12,9 +12,8 @@
 export {
   fetchQuotaSnapshot,
   isPortalOk,
-  maskApiKey,
   fetchProfileUserName,
-  matchKeyUsage,
+  readHeaderQuota,
   readProfileInfo,
   readRecentProviders,
   resolveClickzettaEntry,
@@ -23,6 +22,11 @@ export {
   type QuotaPeriod,
   type QuotaSnapshot,
 } from "./tui-quota-data.js"
+
+// Re-exported through this bundle rather than imported from @clickzetta/ai-gateway by
+// the renderer: tui-quota.tsx ships as raw .tsx next to the bundle and can only
+// resolve `./tui-quota-runtime.js`.
+export type { ClickzettaQuota } from "../llm/gateway-error.js"
 
 export {
   abbreviate,

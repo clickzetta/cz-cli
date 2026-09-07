@@ -1,4 +1,5 @@
 import { request, type ClientOptions } from "../client.js"
+import { anonymous, staticTokenSource } from "../auth/token.js"
 
 export interface AgentIdentity {
   user_id: string
@@ -15,8 +16,8 @@ export async function agentHealth(baseUrl: string, token?: string): Promise<Reco
   try {
     const opts: ClientOptions = {
       baseUrl,
+      tokens: token ? staticTokenSource({ token, instanceId: 0, userId: 0 }) : anonymous(),
       timeout: 10000,
-      ...(token ? { customHeaders: { "x-clickzetta-token": token } } : {}),
     }
     const resp = await request<Record<string, unknown>>(opts, "/ai/health", undefined, "GET")
     return resp.data ?? (resp as unknown as Record<string, unknown>)
@@ -33,7 +34,7 @@ export async function createConversation(
 ): Promise<string> {
   const opts: ClientOptions = {
     baseUrl,
-    customHeaders: { "x-clickzetta-token": token },
+    tokens: staticTokenSource({ token, instanceId: 0, userId: 0 }),
     timeout: 300000,
   }
   const payload: Record<string, unknown> = { identity }
@@ -55,7 +56,7 @@ export async function chat(
 ): Promise<string> {
   const opts: ClientOptions = {
     baseUrl,
-    customHeaders: { "x-clickzetta-token": token },
+    tokens: staticTokenSource({ token, instanceId: 0, userId: 0 }),
     timeout: 300000,
   }
   const resp = await request<{ answer: string }>(

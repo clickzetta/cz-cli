@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
+import { staticTokenSource } from "../src/auth/token.js"
+
+/** Every authenticated request now names its credential source explicitly. */
+const tokens = staticTokenSource({ token: "tok", instanceId: 1, userId: 2 })
 
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = []
 
@@ -31,6 +35,7 @@ describe("traceparent propagation", () => {
     await requestRaw(
       {
         baseUrl: "https://example.invalid",
+        tokens,
       },
       "/lh/getJob",
       { id: 1 },
@@ -48,6 +53,7 @@ describe("traceparent propagation", () => {
     await requestRaw(
       {
         baseUrl: "https://example.invalid",
+        tokens,
       },
       "/lh/getJob",
       { id: 2 },
@@ -66,7 +72,7 @@ describe("traceparent propagation", () => {
     await studioRequest(
       {
         baseUrl: "https://studio.invalid",
-        token: "tok",
+        tokens,
         workspaceId: 1,
         projectId: 2,
         instanceName: "inst",
@@ -98,7 +104,7 @@ describe("traceparent propagation", () => {
       await studioRequest(
         {
           baseUrl: "https://studio.invalid",
-          token: "tok",
+          tokens,
           workspaceId: 1,
           projectId: 2,
           instanceName: "inst",
@@ -128,17 +134,10 @@ describe("traceparent propagation", () => {
     await submitJob(
       {
         baseUrl: "https://example.invalid/api",
-        config: {
-          pat: "",
-          username: "alice",
-          password: "",
-          service: "example.invalid/api",
-          protocol: "https",
-          instance: "inst",
-          workspace: "ws",
-          schema: "public",
-          vcluster: "vw",
-        },
+        tokens,
+        // Payload metadata only — the submit body embeds the endpoint and login
+        // name. Authentication comes from `tokens` and nothing else.
+        context: { service: "example.invalid/api", instance: "inst", username: "alice" },
       },
       {
         sql: "select 1;",

@@ -14,7 +14,7 @@
  *   - utils.py:212-227    strip_leading_comment  → stripLeadingComment
  */
 
-import { getToken } from "../auth/token.js"
+import { getToken, connectionTokenSource } from "../auth/token.js"
 import type { ClientOptions } from "../client.js"
 import { toServiceUrl } from "../config/region.js"
 import { InterfaceError, ProgrammingError } from "../types/errors.js"
@@ -625,19 +625,31 @@ export class SqlSession {
     }
   }
 
-  /** Resolve JobID using cached auth token, matching cz-cli exec.ts. */
+  /**
+   * Resolve JobID from the CONNECTION's instance id, not the credential's.
+   *
+   * `config.instanceId` is the connection's own (see ConnectionConfig.instanceId); a
+   * shared OAuth token's id can belong to a different instance. The token remains the
+   * fallback for callers that construct a config without one — a standalone SDK user
+   * doing a password login, where the login response is the only source.
+   */
   private async newJobId(): Promise<JobID> {
+    if (this.config.instanceId) return newJobId(this.workspace, this.config.instanceId)
     const token = await getToken(this.config)
-    return newJobId(this.workspace, token.instanceId)
+    return newJobId(this.workspace, token.instanceId ?? 0)
   }
 
   private async toClientOptions(): Promise<ClientOptions> {
     const token = await getToken(this.config)
     return {
       baseUrl: toServiceUrl(this.config.service, this.config.protocol),
-      token: token.token,
+      tokens: connectionTokenSource(this.config),
       customHeaders: this.clientHeaders ?? this.config.customHeaders,
-      config: this.config,
+      context: {
+        service: this.config.service,
+        instance: this.config.instance,
+        username: this.config.username,
+      },
     }
   }
 }

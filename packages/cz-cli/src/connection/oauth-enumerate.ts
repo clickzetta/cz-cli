@@ -1,6 +1,7 @@
 import { listUserWorkspaces, toServiceUrl } from "@clickzetta/sdk"
 import type { AuthToken } from "@clickzetta/sdk"
 import type { OAuthInstance } from "../commands/login-browser.js"
+import { verbatimTokenSource } from "./token-source.js"
 
 /**
  * One (instance × workspace) connection combination discovered after an OAuth
@@ -50,11 +51,11 @@ export async function enumerateOAuthCombos(input: {
     try {
       const rows = await listUserWorkspaces(
         toServiceUrl(inst.service),
-        token.token,
         userId,
         tenantId,
         inst.instanceId,
         inst.instanceName,
+        { tokens: verbatimTokenSource(token.token) }, // the token the login just minted
       )
       for (const row of rows) {
         const raw = row as unknown as Record<string, unknown>

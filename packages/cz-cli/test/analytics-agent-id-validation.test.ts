@@ -12,7 +12,9 @@ mock.module("../src/connection/profile-store.js", () => ({
 mock.module("../src/commands/studio-context.js", () => ({
   getProfileAgentContext: () => undefined,
   getStudioContext: async () => ({
-    token: "studio-token",
+    // Contexts carry a TokenSource now: the transport asks it per request, so
+    // a fixture supplies a source rather than a token string.
+    tokens: { get: async () => ({ token: "studio-token", instanceId: 11, userId: 44 }), rotate: async () => undefined },
     instanceId: 11,
     workspaceId: 22,
     projectId: 33,

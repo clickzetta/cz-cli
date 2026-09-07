@@ -39,7 +39,7 @@ export function applyClickZettaProfile(profile?: string) {
     const value = entry?.[key]
     if (typeof value === "string" && value.length > 0) fields[field] = value
   }
-  ConnectionEnv.apply(fields, target)
+  ConnectionEnv.applyInherited(fields, target)
 }
 
 function readProfiles(file: string): Record<string, unknown> | undefined {

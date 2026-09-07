@@ -121,9 +121,9 @@ export async function submitJob(
     traceparent,
     maxRetries = 1,
   } = params
-  const serviceInfo = normalizeServiceEndpoint(opts.config?.service ?? opts.baseUrl)
+  const serviceInfo = normalizeServiceEndpoint(opts.context?.service ?? opts.baseUrl)
   const resolvedHost = host ?? serviceInfo.endpoint ?? serviceInfo.host
-  const resolvedUser = (user ?? opts.config?.username) || null
+  const resolvedUser = (user ?? opts.context?.username) || null
   const resolvedContextJson = contextJson ? { ...contextJson } : {}
   if (resolvedContextJson.host == null) resolvedContextJson.host = resolvedHost
   if (resolvedContextJson.instance == null) resolvedContextJson.instance = instanceName ?? null

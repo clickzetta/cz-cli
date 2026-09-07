@@ -133,7 +133,7 @@ describe("analytics-agent answer-builder — --sql wrapping (#63)", () => {
 
     const dsl = JSON.stringify({ outputColumns: [{ name: "amt", metricName: "sales", type: "decimal" }] })
     const result = await execute(
-      `analytics-agent answer-builder validate --analysis-name ab --datasource-id 8 --domain-id 27 --content '${dsl}' --sql 'SELECT sum(x) AS amt FROM t'`,
+      `analytics-agent answer-builder validate --analysis-name ab --datasource-id 8 --domain-ids '[27]' --content '${dsl}' --sql 'SELECT sum(x) AS amt FROM t'`,
     )
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -147,11 +147,10 @@ describe("analytics-agent answer-builder — --sql wrapping (#63)", () => {
   test("rejects outputColumns with empty metricName", async () => {
     const dsl = JSON.stringify({ outputColumns: [{ name: "amt", metricName: "" }] })
     const result = await execute(
-      `analytics-agent answer-builder validate --analysis-name ab --datasource-id 8 --domain-id 27 --content '${dsl}' --sql 'SELECT 1 AS amt'`,
+      `analytics-agent answer-builder validate --analysis-name ab --datasource-id 8 --domain-ids '[27]' --content '${dsl}' --sql 'SELECT 1 AS amt'`,
     )
     expect(result.exitCode).not.toBe(0)
     const j = JSON.parse(result.output.trim().split("\n")[0]) as Record<string, unknown>
     expect((j.error as Record<string, unknown>).code).toBe("USAGE_ERROR")
   })
 })
-

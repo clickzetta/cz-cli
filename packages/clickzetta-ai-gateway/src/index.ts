@@ -9,8 +9,11 @@ import type {
   LanguageModelV3CallOptions,
   LanguageModelV3GenerateResult,
   LanguageModelV3StreamResult,
+  SharedV3Headers,
+  SharedV3ProviderMetadata,
 } from "@ai-sdk/provider"
 import { rewriteClickzettaGatewayError } from "./gateway-error"
+import { parseClickzettaQuota, type ClickzettaQuota } from "./quota"
 import { normalizeClickzettaGatewayUrl } from "./url"
 
 /**
@@ -18,10 +21,18 @@ import { normalizeClickzettaGatewayUrl } from "./url"
  * ClickZetta AI gateway.
  *
  * ClickZetta speaks the OpenAI-compatible wire protocol, so the base SDK does
- * all the real work. This shell adds one behaviour: when the gateway returns a
- * billing / quota error, the raw APICallError is rewritten into an actionable,
- * user-facing message and marked non-retryable — so the retry loop stops and the
- * user sees a clear next step instead of a raw 429/402 body.
+ * all the real work. This shell adds two behaviours:
+ *
+ *  - when the gateway returns a billing / quota error, the raw APICallError is
+ *    rewritten into an actionable, user-facing message and marked non-retryable —
+ *    so the retry loop stops and the user sees a clear next step instead of a raw
+ *    429/402 body;
+ *  - the key's remaining token quota, which the gateway reports on every
+ *    successful completion's headers, is published as
+ *    `providerMetadata.clickzetta.quota` — on the result for doGenerate, on the
+ *    "finish" part for doStream, which is where per-step metadata is read. From
+ *    there opencode carries it onto the step-finish part and the sidebar reads it
+ *    off its own state store. See quota.ts.
  *
  * Everything else (model listing, streaming, tool calls, prompt caching) passes
  * straight through.
@@ -123,6 +134,37 @@ function withClickzettaPromptCaching(options: LanguageModelV3CallOptions, modelI
 }
 
 /**
+ * Parse the quota off a response's headers.
+ *
+ * Guarded because an HTTP call that already succeeded must not fail over a defect in
+ * quota reporting: in doStream a throw here would escape uncaught, and in doGenerate
+ * `mapThrown` would dress it up as a ClickZetta gateway error.
+ */
+function quotaFromHeaders(headers: SharedV3Headers | undefined): ClickzettaQuota[] | undefined {
+  try {
+    return parseClickzettaQuota(headers)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Publish the quota on a result's provider metadata, leaving any metadata the base
+ * provider already set untouched. Returns the input unchanged when there is nothing
+ * to add, so a response the wrapper has nothing to say about stays identical.
+ */
+function withQuota(
+  metadata: SharedV3ProviderMetadata | undefined,
+  quota: ClickzettaQuota[] | undefined,
+): SharedV3ProviderMetadata | undefined {
+  if (!quota) return metadata
+  return {
+    ...metadata,
+    clickzetta: { ...metadata?.clickzetta, quota },
+  }
+}
+
+/**
  * Wrap a LanguageModelV3 so doGenerate/doStream errors run through the rewriter.
  * Delegates every other member to the underlying model via prototype so future
  * SDK additions keep working without changes here.
@@ -130,7 +172,12 @@ function withClickzettaPromptCaching(options: LanguageModelV3CallOptions, modelI
 function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
   const doGenerate = async (options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> => {
     try {
-      return await model.doGenerate(withClickzettaPromptCaching(options, modelId))
+      const result = await model.doGenerate(withClickzettaPromptCaching(options, modelId))
+      const quota = quotaFromHeaders(result.response?.headers)
+      const providerMetadata = withQuota(result.providerMetadata, quota)
+      // Same object back when the gateway reported no quota, so a response the
+      // wrapper has nothing to add to stays byte-identical.
+      return providerMetadata === result.providerMetadata ? result : { ...result, providerMetadata }
     } catch (error) {
       throw mapThrown(error)
     }
@@ -143,6 +190,11 @@ function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
     } catch (error) {
       throw mapThrown(error)
     }
+    // Headers are already available here — they arrive before the body — but the quota is
+    // published on the "finish" part below, because that is where per-step metadata is read.
+    // A turn aborted before finish reports no quota, which is correct: the sidebar shows
+    // what a completed step reported.
+    const quota = quotaFromHeaders(result.response?.headers)
     // HTTP errors usually reject doStream above, but the SDK can also surface a
     // late error as an in-stream "error" part — rewrite those too.
     const stream = result.stream.pipeThrough(
@@ -150,6 +202,11 @@ function wrapModel(model: LanguageModelV3, modelId: string): LanguageModelV3 {
         transform(chunk, controller) {
           if (chunk?.type === "error") {
             controller.enqueue({ ...chunk, error: mapThrown(chunk.error) })
+            return
+          }
+          if (chunk?.type === "finish") {
+            const providerMetadata = withQuota(chunk.providerMetadata, quota)
+            controller.enqueue(providerMetadata === chunk.providerMetadata ? chunk : { ...chunk, providerMetadata })
             return
           }
           controller.enqueue(chunk)
@@ -192,6 +249,9 @@ export function createClickzetta(options: ClickzettaProviderSettings): OpenAICom
     baseURL: normalizeClickzettaGatewayUrl(options.baseURL),
   })
 
+  // No endpoint/key attribution here: the quota rides the assistant message that
+  // reported it, and that message already names the provider it was served by — so the
+  // sidebar matches on providerID rather than on a credential the provider had to carry.
   const languageModel = (modelId: string): LanguageModelV3 => wrapModel(base.languageModel(modelId), modelId)
 
   const provider = ((modelId: string) => languageModel(modelId)) as OpenAICompatibleProvider
@@ -206,6 +266,12 @@ export function createClickzetta(options: ClickzettaProviderSettings): OpenAICom
 
 export { createClickzetta as createOpenAICompatible }
 export { normalizeClickzettaGatewayUrl } from "./url"
+export {
+  parseClickzettaQuota,
+  formatClickzettaQuota,
+  type ClickzettaQuota,
+  type ClickzettaQuotaPeriod,
+} from "./quota"
 export {
   rewriteClickzettaGatewayError,
   clickzettaGatewayCode,

@@ -101,7 +101,11 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
     const { getStudioContext } = await import(`../src/commands/studio-context.ts?studio-cookie-${Date.now()}`)
     try {
       const ctx = await getStudioContext({ format: "json" })
-      expect(ctx.token).toBe(token)
+      // The context carries a source; a cookie identity resolves to the cookie
+      // token and reports that it cannot be rotated.
+      const credential = await ctx.tokens.get()
+      expect(credential.token).toBe(token)
+      expect(await ctx.tokens.rotate(credential)).toBeUndefined()
       expect(ctx.userId).toBe(7)
       expect(ctx.instanceId).toBe(86)
       expect(ctx.workspaceId).toBe("wid-1")
@@ -112,8 +116,12 @@ test("getStudioContext resolves via profile Cookie token without hitting loginSi
       // just the token extracted from it — deployments that authenticate the
       // session cookie reject these calls otherwise.
       expect(cookies["/clickzetta-portal/user/getCurrentUser"]).toBe(cookie)
-      expect(cookies["/clickzetta-portal/service/serviceInstanceList"]).toBe(cookie)
       expect(cookies["/ide-authority/v1/workspace/listUserWorkspaces"]).toBe(cookie)
+      // No instance lookup at all: a cookie is issued FOR one instance and its JWT names it,
+      // so the chain answers from the credential and never asks (connection/context.ts step 2).
+      // It used to ask — with the account id from getCurrentUser — and the answer could only
+      // ever agree with the cookie or contradict the instance the cookie is scoped to.
+      expect(hits.some((url) => url.includes("/serviceInstanceList"))).toBe(false)
       // Cookie token must never trigger a login exchange.
       expect(hits).not.toContain("/clickzetta-portal/user/loginSingle")
     } finally {

@@ -194,8 +194,8 @@ cz-cli fs cp volume://vol_a/a.csv volume://vol_b/a.csv
 | `fs mkdir` | `<path>` | 无 | 自动创建所有父目录 |
 | `fs cp` | `<source> <destination>` | `-R`、`--overwrite/--no-overwrite` | 单向复制；默认拒绝已有目标 |
 | `fs mv` | `<source> <destination>` | `-R`、`--overwrite/--no-overwrite` | 目标完成后删除源；默认拒绝已有目标 |
-| `fs rm` | `<path>` | `-R`、`-f`（CLI 扩展）、`--dry-run`（CLI 扩展）、`--write` | 删除单文件；实际删除必须显式确认 `--write`，目录必须显式递归 |
-| `table load` | `<table> <czfs-source>` | `--using`、`--header`、`--write` | 仅做追加式 Volume → Table 导入；实际写入必须显式确认 `--write`；`COPY OVERWRITE` 和复杂场景使用 SQL |
+| `fs rm` | `<path>` | `-R`、`-f`（CLI 扩展）、`--dry-run`（CLI 扩展）、`--write` | 删除文件或目录；实际删除必须显式确认 `--write`，目录必须显式递归 |
+| `table load` | `<table> <czfs-source>` | `--using`、`--header`、`--write` | 仅做追加式 Volume → Table 导入；实际导入必须显式确认 `--write`；`COPY OVERWRITE` 和复杂场景使用 SQL |
 
 ### 3.1 FsUtil 参数对齐与 CLI 扩展
 

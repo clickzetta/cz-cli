@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./gateway-error": "./src/gateway-error.ts",
-    "./url": "./src/url.ts"
+    "./url": "./src/url.ts",
+    "./quota": "./src/quota.ts"
   },
   "scripts": {
     "test": "bun test",
