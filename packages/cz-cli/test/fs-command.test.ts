@@ -57,9 +57,10 @@ describe("fs commands", () => {
     expect(rootRemoval.exitCode).toBe(2)
     expect(JSON.parse(rootRemoval.output).error.code).toBe("FS_PATH_INVALID")
 
-    const unsupportedShortFlag = await execute(`fs head ${quote(file)} -c 2 --format json`)
-    expect(unsupportedShortFlag.exitCode).toBe(2)
-    expect(JSON.parse(unsupportedShortFlag.output).error.code).toBe("USAGE_ERROR")
+    // Keep GNU head -c compatibility explicit: assert the alias reaches the byte limit.
+    const legacyShortFlag = await execute(`fs head ${quote(file)} -c 1 --format json`)
+    expect(legacyShortFlag.exitCode).toBe(0)
+    expect(JSON.parse(legacyShortFlag.output).data).toMatchObject({ content: "a", bytes: 1, truncated: true })
 
     const rootRecursive = await execute("fs ls czfs:/ -R --format json")
     expect(rootRecursive.exitCode).toBe(2)

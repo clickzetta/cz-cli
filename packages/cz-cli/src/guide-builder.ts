@@ -275,7 +275,7 @@ export function registerStaticCommands(): void {
       examples: [{ cmd: "cz-cli fs ls czfs:/", desc: "List Managed/External roots and @user/@table entry points" }, { cmd: "cz-cli fs ls czfs:/Volumes/@user/your_workspace/your_user/", desc: "List files in a User Volume" }, { cmd: "cz-cli fs ls czfs:/Volumes/@table/your_workspace/your_schema/your_table/ -R", desc: "List files in a Table Volume recursively" }] },
     { name: "fs head", kind: "command", description: "Read the beginning of a UTF-8 text file",
       arguments: [{ name: "file", required: true }],
-      options: [{ flags: "--bytes", required: false, takes_value: true, help: "Maximum bytes" }],
+      options: [{ flags: "-c, --bytes", required: false, takes_value: true, help: "Maximum bytes" }],
       examples: [{ cmd: "cz-cli fs head czfs:/Volumes/@user/your_workspace/your_user/demo.csv", desc: "Read a User Volume CSV" }, { cmd: "cz-cli fs head ./app.log --bytes 1024", desc: "Read a local file" }] },
     { name: "fs mb", kind: "command", description: "Create a Managed Volume only; cannot create User or Table Volumes",
       arguments: [{ name: "volume", required: true }],
