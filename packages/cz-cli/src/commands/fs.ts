@@ -152,7 +152,7 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Remove a directory and all files below it" })
           .option("force", { alias: "f", type: "boolean", default: false, describe: "Do not fail when the path does not exist" })
           .option("dry-run", { type: "boolean", default: false, describe: "List matched files without deleting them" })
-          .option("write", { type: "boolean", default: false, describe: "Allow removing files; required as a safety guard." })
+          .option("write", { type: "boolean", default: false, describe: "Allow removing files or directories; required as a safety guard." })
           .epilogue(["Examples:", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/data.csv", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/ -R --dry-run", "", "Deletion is permanent; use --dry-run before recursive removal."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs

@@ -34,6 +34,15 @@ describe("fs commands", () => {
     expect(guarded.exitCode).toBe(2)
     expect(JSON.parse(guarded.output).error.code).toBe("WRITE_NOT_ALLOWED")
     expect((await execute(`fs rm ${quote(copy)} --write`)).exitCode).toBe(0)
+
+    const directory = join(root, "to-remove")
+    await mkdir(directory)
+    const guardedDirectory = await execute(`fs rm ${quote(directory)} -R --format json`)
+    expect(guardedDirectory.exitCode).toBe(2)
+    expect(JSON.parse(guardedDirectory.output).error.code).toBe("WRITE_NOT_ALLOWED")
+    expect((await stat(directory)).isDirectory()).toBe(true)
+    expect((await execute(`fs rm ${quote(directory)} -R --write`)).exitCode).toBe(0)
+    expect(await Bun.file(directory).exists()).toBe(false)
   })
 
   test("protects filesystem root and rejects invalid UTF-8 truncation", async () => {
@@ -48,9 +57,9 @@ describe("fs commands", () => {
     expect(rootRemoval.exitCode).toBe(2)
     expect(JSON.parse(rootRemoval.output).error.code).toBe("FS_PATH_INVALID")
 
-    const legacyShortFlag = await execute(`fs head ${quote(file)} -c 2 --format json`)
-    expect(legacyShortFlag.exitCode).toBe(2)
-    expect(JSON.parse(legacyShortFlag.output).error.code).toBe("USAGE_ERROR")
+    const unsupportedShortFlag = await execute(`fs head ${quote(file)} -c 2 --format json`)
+    expect(unsupportedShortFlag.exitCode).toBe(2)
+    expect(JSON.parse(unsupportedShortFlag.output).error.code).toBe("USAGE_ERROR")
 
     const rootRecursive = await execute("fs ls czfs:/ -R --format json")
     expect(rootRecursive.exitCode).toBe(2)

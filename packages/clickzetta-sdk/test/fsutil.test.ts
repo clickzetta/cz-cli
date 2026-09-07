@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FsError, FsUtil, parseVolumePath } from "../src/fsutil.js"
@@ -99,6 +99,27 @@ describe("FsUtil", () => {
     await mkdir(emptySource)
     await fs.cp(emptySource, emptyCopy, true)
     expect((await stat(emptyCopy)).isDirectory()).toBe(true)
+  })
+
+  test.skipIf(process.platform === "win32")("ignores a dangling directory entry while listing its parent", async () => {
+    const fs = new FsUtil({ execute: async () => { throw new Error("unexpected SQL") } })
+    const parent = join(root, "parent")
+    const deleted = join(parent, "deleted")
+    await mkdir(parent)
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+    await symlink(deleted, join(parent, "deleted-link"), "dir")
+
+    await expect(fs.ls(parent)).resolves.toEqual([])
+  })
+
+  test("reports a deleted directory path as not found", async () => {
+    const fs = new FsUtil({ execute: async () => { throw new Error("unexpected SQL") } })
+    const deleted = join(root, "deleted")
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+
+    await expect(fs.ls(deleted)).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
   })
 
   test("merges a local directory move into an existing directory", async () => {
@@ -400,6 +421,7 @@ describe("FsUtil", () => {
       schema: "public",
       execute: async (sql) => {
         if (sql.startsWith("SHOW VOLUME DIRECTORY")) return result([])
+        if (sql.startsWith("SHOW VOLUMES")) return { ...result([["public", "volume", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
         throw new Error(`unexpected SQL: ${sql}`)
       },
     })
@@ -420,13 +442,51 @@ describe("FsUtil", () => {
     await expect(fs.ls("volume://missing")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
   })
 
+  test("does not treat a deleted Named Volume with an empty directory response as empty", async () => {
+    const statements: string[] = []
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => {
+        statements.push(sql)
+        if (sql.startsWith("SHOW VOLUME DIRECTORY")) return result([])
+        return { ...result([]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "workspace_name" }] }
+      },
+    })
+
+    await expect(fs.ls("volume://deleted")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
+    expect(statements).toEqual(["SHOW VOLUME DIRECTORY `workspace`.`public`.`deleted`", "SHOW VOLUMES WHERE volume_name = 'deleted' AND schema_name = 'public' AND workspace_name = 'workspace'"])
+  })
+
+  test("does not report an existence-probe failure as a missing Named Volume", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => sql.startsWith("SHOW VOLUME DIRECTORY")
+        ? result([])
+        : { ...result([]), status: JobStatus.FAILED, errorMessage: "permission denied" },
+    })
+
+    await expect(fs.ls("volume://volume")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED", message: "permission denied" })
+  })
+
+  test("does not report incomplete existence metadata as a missing Named Volume", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => sql.startsWith("SHOW VOLUME DIRECTORY") ? result([]) : result([["volume"]]),
+    })
+
+    await expect(fs.ls("volume://volume")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED", message: "SHOW VOLUMES returned incomplete identity metadata" })
+  })
+
   test("treats the engine's empty Managed Volume root Path not found as an empty listing", async () => {
     const fs = new FsUtil({
       workspace: "workspace",
       schema: "public",
       execute: async (sql) => {
         if (sql.startsWith("SHOW VOLUME DIRECTORY")) return { ...result([]), status: JobStatus.FAILED, errorMessage: "CZLH-70002:Path not found:1/workspaces/workspace/volumes/empty_123/." }
-        if (sql === "SHOW VOLUMES") return { ...result([["public", "empty", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
+        if (sql.startsWith("SHOW VOLUMES")) return { ...result([["public", "empty", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
         return result([])
       },
     })
@@ -496,14 +556,14 @@ describe("FsUtil", () => {
       expect.objectContaining({ name: "@table", isDir: true, path: "czfs:/Volumes/@table" }),
     ]))
     // User namespace roots list workspaces; files require an explicit workspace.
-    expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
+    expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "uploads", isDir: true, path: "czfs:/Volumes/@user/workspace/alice/uploads" })
     expect((await fs.ls("volume:table://"))[0]).toMatchObject({ name: "orders", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders" })
     expect((await fs.ls("czfs:/Volumes/@user"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
     const tableEntries = await fs.ls("czfs:/Volumes/@table/workspace/public/orders/")
     expect(tableEntries[0]).toMatchObject({ name: "sample", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders/sample" })
     // An empty last_modified_time is unknown, not 1970-01-01.
     expect(tableEntries[0]?.modificationTime).toBeNull()
-    expect(statements).toEqual(["SHOW VOLUMES", "SHOW WORKSPACES", "SHOW TABLES", "SHOW WORKSPACES", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
+    expect(statements).toEqual(["SHOW VOLUMES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLES", "SHOW WORKSPACES", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
   })
 
   test("lists partial czfs namespace paths from metadata", async () => {
