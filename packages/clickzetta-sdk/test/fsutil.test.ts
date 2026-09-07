@@ -101,7 +101,7 @@ describe("FsUtil", () => {
     expect((await stat(emptyCopy)).isDirectory()).toBe(true)
   })
 
-  test("reports a dangling directory entry instead of an empty listing", async () => {
+  test("ignores a dangling directory entry while listing its parent", async () => {
     const fs = new FsUtil({ execute: async () => { throw new Error("unexpected SQL") } })
     const parent = join(root, "parent")
     const deleted = join(parent, "deleted")
@@ -110,7 +110,16 @@ describe("FsUtil", () => {
     await rm(deleted, { recursive: true })
     await symlink(deleted, join(parent, "deleted-link"), "dir")
 
-    await expect(fs.ls(parent)).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
+    await expect(fs.ls(parent)).resolves.toEqual([])
+  })
+
+  test("reports a deleted directory path as not found", async () => {
+    const fs = new FsUtil({ execute: async () => { throw new Error("unexpected SQL") } })
+    const deleted = join(root, "deleted")
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+
+    await expect(fs.ls(deleted)).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
   })
 
   test("merges a local directory move into an existing directory", async () => {
@@ -440,12 +449,35 @@ describe("FsUtil", () => {
       schema: "public",
       execute: async (sql) => {
         statements.push(sql)
-        return result([])
+        if (sql.startsWith("SHOW VOLUME DIRECTORY")) return result([])
+        return { ...result([]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "workspace_name" }] }
       },
     })
 
     await expect(fs.ls("volume://deleted")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
     expect(statements).toEqual(["SHOW VOLUME DIRECTORY `workspace`.`public`.`deleted`", "SHOW VOLUMES"])
+  })
+
+  test("does not report an existence-probe failure as a missing Named Volume", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => sql.startsWith("SHOW VOLUME DIRECTORY")
+        ? result([])
+        : { ...result([]), status: JobStatus.FAILED, errorMessage: "permission denied" },
+    })
+
+    await expect(fs.ls("volume://volume")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED", message: "permission denied" })
+  })
+
+  test("does not report incomplete existence metadata as a missing Named Volume", async () => {
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async () => result([]),
+    })
+
+    await expect(fs.ls("volume://volume")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED", message: "SHOW VOLUMES returned incomplete identity metadata" })
   })
 
   test("treats the engine's empty Managed Volume root Path not found as an empty listing", async () => {

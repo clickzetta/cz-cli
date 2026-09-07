@@ -315,21 +315,32 @@ function isEmptyManagedVolumeRootError(message: string): boolean {
   return /CZLH-70002\s*:\s*Path not found:[\s\S]*\/volumes\/[^\n]*\/\.$/i.test(message.trim())
 }
 
+type VolumeExistence =
+  | { state: "exists" }
+  | { state: "missing" }
+  | { state: "unknown"; message: string }
+
 async function managedVolumeExists(
   reference: VolumeReference,
   execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>,
-): Promise<boolean> {
+): Promise<VolumeExistence> {
   const result = await execute("SHOW VOLUMES")
-  if (result.status === "FAILED") return false
+  if (result.status === "FAILED") return { state: "unknown", message: result.errorMessage ?? "Failed to verify Volume existence" }
+  const columns = new Set(result.columns.map((column) => column.name.toLowerCase()))
+  const hasColumn = (...names: string[]) => names.some((name) => columns.has(name))
+  if (!hasColumn("volume_name", "name") || !hasColumn("schema_name", "schema") || !hasColumn("workspace_name", "workspace")) {
+    return { state: "unknown", message: "SHOW VOLUMES returned incomplete identity metadata" }
+  }
   const expectedWorkspace = reference.identifiers[0]
   const expectedSchema = reference.identifiers[1]
   const expectedName = reference.identifiers[2]
-  return result.rows.some((row) => {
+  const exists = result.rows.some((row) => {
     const name = String(resultValue(result, row, "volume_name", "name") ?? "")
     const schema = String(resultValue(result, row, "schema_name", "schema") ?? "")
     const workspace = String(resultValue(result, row, "workspace_name", "workspace") ?? "")
     return name === expectedName && schema === expectedSchema && workspace === expectedWorkspace
   })
+  return exists ? { state: "exists" } : { state: "missing" }
 }
 
 function resultRecord(result: QueryResult, row: unknown[]): Record<string, unknown> {
@@ -645,7 +656,11 @@ async function listVolumeDirectory(
     // The engine currently reports an existing empty Managed Volume root as a
     // physical "Path not found" (CZLH-70002). Treat that specific root response
     // as an empty listing, while preserving real missing-volume errors.
-    if (reference.kind === "named" && parseVolumePath(original)?.relativePath === "" && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(reference, execute)) return []
+    if (reference.kind === "named" && parseVolumePath(original)?.relativePath === "" && isEmptyManagedVolumeRootError(message)) {
+      const existence = await managedVolumeExists(reference, execute)
+      if (existence.state === "exists") return []
+      if (existence.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", existence.message)
+    }
     if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
     throw new FsError("FS_TRANSFER_FAILED", message)
   }
@@ -654,8 +669,10 @@ async function listVolumeDirectory(
   // empty result is only valid when metadata still contains the Volume object;
   // otherwise this is a missing path and must not look like an empty listing.
   const isNamedVolumeRoot = verifyNamedRoot && reference.kind === "named" && parseVolumePath(original)?.relativePath === ""
-  if (isNamedVolumeRoot && result.rows.length === 0 && !(await managedVolumeExists(reference, execute))) {
-    throw new FsError("FS_NOT_FOUND", `Path not found: ${original}`)
+  if (isNamedVolumeRoot && result.rows.length === 0) {
+    const existence = await managedVolumeExists(reference, execute)
+    if (existence.state === "missing") throw new FsError("FS_NOT_FOUND", `Path not found: ${original}`)
+    if (existence.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", existence.message)
   }
 
   const entries = new Map<string, FileInfo>()
@@ -881,10 +898,16 @@ export class FsUtil {
     const virtual = await this.listVirtualRoot(path, recurse, limit)
     if (virtual !== undefined) return virtual
     const items = await this.path(path).children(recurse, limit)
-    // A path disappearing between enumeration and stat is an actual missing
-    // target, not an empty directory. Let FS_NOT_FOUND reach the caller so the
-    // CLI does not report a successful empty listing for deleted directories.
-    return Promise.all(items.map((item) => item.info()))
+    const infos = await Promise.all(items.map(async (item) => {
+      try { return await item.info() }
+      catch (error) {
+        // Ignore dangling symlinks and files removed during enumeration; one
+        // unreadable entry must not make `fs ls /` fail as a whole.
+        if (item.isLocal && error instanceof FsError && error.code === "FS_NOT_FOUND") return undefined
+        throw error
+      }
+    }))
+    return infos.filter((item): item is FileInfo => item !== undefined)
   }
   async mkdirs(path: string) { await this.path(path).mkdirs(); return true }
   async put(file: string, contents: string, overwrite = false) {
@@ -949,9 +972,8 @@ export class FsUtil {
       if (hasCzfsScheme && czfsRoot === "/volumes/@table") return this.listTableVolumeRoots(limit)
       return this.listVolumeNamespaceRoots(limit)
     }
-    // Route the legacy User Volume root through the same resolver as czfs:/Volumes/@user
-    // so both spellings report identical czfs entry paths, matching how volume:table://
-    // already normalizes to czfs output.
+    // The canonical namespace root lists workspaces; the legacy spelling keeps
+    // its original behavior and lists files for the current workspace/user.
     if (hasCzfsScheme && czfsRoot === "/volumes/@user") return this.listVolumeWorkspaceRoots("user", limit)
     if (normalized === "volume:user://~") {
       return this.listCurrentUserVolumeFiles(recursive, limit)

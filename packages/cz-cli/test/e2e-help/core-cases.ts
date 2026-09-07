@@ -177,7 +177,8 @@ export const coreHelpCases: HelpCase[] = [
   {
     args: ["fs", "head", "--help"],
     expectHeader: "cz-cli fs head",
-    expectOptions: ["file", "-c, --bytes", "czfs:/Volumes/@user/your_workspace/your_user/demo.csv"],
+    expectOptions: ["file", "--bytes", "czfs:/Volumes/@user/your_workspace/your_user/demo.csv"],
+    forbid: ["-c, --bytes"],
   },
   {
     args: ["fs", "mb", "--help"],

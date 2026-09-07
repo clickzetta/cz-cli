@@ -16,7 +16,8 @@ const SHOW_RE = /^\s*SHOW\b/i
 const TABLE_NOT_FOUND_RE = /Table.*?not found/i
 const COLUMN_NOT_FOUND_RE = /(Unknown column|Column.*?not found)/i
 const TABLE_FROM_SQL_RE = /\b(?:FROM|INTO|UPDATE|TABLE)\s+(?:[\w.]+\.)?(\w+)/i
-const SQL_DIALECT_ERROR_RE = /(syntax|parse|parser|unexpected token|unsupported|not supported|invalid syntax|file format not specified)/i
+const SQL_DIALECT_ERROR_RE = /\b(?:syntax error|parse error|parser error|unexpected token)\b/i
+const COPY_FILE_FORMAT_ERROR_RE = /\bfile format not specified\b/i
 const DANGEROUS_WRITE_RE = /^\s*(DELETE|UPDATE)\b/i
 const WHERE_RE = /\bWHERE\b/i
 
@@ -498,10 +499,10 @@ async function formatClassifiedError(input: {
 }
 
 function sqlDialectHint(sql: string, errorMessage: string): string | undefined {
-  if (!SQL_DIALECT_ERROR_RE.test(errorMessage)) return undefined
   const copyInto = /\bCOPY\s+(?:INTO|OVERWRITE)\b/i.test(sql)
-  const reference = copyInto ? " For COPY INTO, read references/copy-into-table.md." : ""
-  return `If this is a SQL syntax or dialect issue, consider loading the lakehouse-doc-en skill and reading the relevant reference before retrying.${reference} This is a suggestion only; the error has not been classified as a syntax error.`
+  if (!SQL_DIALECT_ERROR_RE.test(errorMessage) && !(copyInto && COPY_FILE_FORMAT_ERROR_RE.test(errorMessage))) return undefined
+  const reference = copyInto ? " For COPY INTO, read the lakehouse-doc-en skill's references/copy-into-table.md." : ""
+  return `If this is a SQL syntax or dialect issue, consider loading the lakehouse-doc-en skill and reading the relevant reference before retrying.${reference} This match is heuristic, not an engine classification.`
 }
 
 async function handleFailure(r: QueryResult, sql: string, ctx: ExecContext, format: string, t0: number, profileName?: string): Promise<void> {

@@ -73,9 +73,9 @@ describe("sql emits job_id on failure", () => {
     expect(result.exitCode).toBe(1)
     expect(json.ai_message).toContain("If this is a SQL syntax or dialect issue")
     expect(json.ai_message).toContain("lakehouse-doc-en")
-    expect(json.ai_message).toContain("references/copy-into-table.md")
-    expect(json.ai_message).toContain("suggestion only")
-    expect(json.ai_message).not.toContain("This is a SQL syntax error")
+    expect(json.ai_message).toContain("lakehouse-doc-en skill's references/copy-into-table.md")
+    expect(json.ai_message).toContain("heuristic")
+    expect(json.ai_message).toContain("not an engine classification")
   })
 
   test("non-dialect SQL failures do not add the documentation suggestion", async () => {
@@ -86,6 +86,14 @@ describe("sql emits job_id on failure", () => {
 
     expect(result.exitCode).toBe(1)
     expect(json.ai_message ?? "").not.toContain("lakehouse-doc-en")
+  })
+
+  test("data parsing and unsupported-operation failures do not add the documentation suggestion", async () => {
+    for (const message of ["Failed to parse '2026-13-01' as DATE", "DELETE is not supported on a view"]) {
+      stubSubmit(() => sqlFailure("CZLH-42000", message))
+      const result = await execute('sql "DELETE FROM orders WHERE id = 1" --sync --write')
+      expect(firstJson(result.output).ai_message ?? "").not.toContain("lakehouse-doc-en")
+    }
   })
 
   test("a successful job still carries the same job_id shape", async () => {
