@@ -59,6 +59,7 @@ describe("fs commands", () => {
 
     const unsupportedShortFlag = await execute(`fs head ${quote(file)} -c 2 --format json`)
     expect(unsupportedShortFlag.exitCode).toBe(2)
+    expect(JSON.parse(unsupportedShortFlag.output).error.code).toBe("USAGE_ERROR")
 
     const rootRecursive = await execute("fs ls czfs:/ -R --format json")
     expect(rootRecursive.exitCode).toBe(2)

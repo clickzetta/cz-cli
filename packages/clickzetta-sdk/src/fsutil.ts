@@ -315,32 +315,36 @@ function isEmptyManagedVolumeRootError(message: string): boolean {
   return /CZLH-70002\s*:\s*Path not found:[\s\S]*\/volumes\/[^\n]*\/\.$/i.test(message.trim())
 }
 
-type VolumeExistence =
-  | { state: "exists" }
+type VolumeMetadataLookup =
+  | { state: "found"; result: QueryResult; row: unknown[] }
   | { state: "missing" }
   | { state: "unknown"; message: string }
 
-async function managedVolumeExists(
+async function findManagedVolumeMetadata(
   reference: VolumeReference,
   execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>,
-): Promise<VolumeExistence> {
-  const result = await execute("SHOW VOLUMES")
+): Promise<VolumeMetadataLookup> {
+  const [expectedWorkspace, expectedSchema, expectedName] = reference.identifiers
+  const filters = [
+    `volume_name = ${quote(expectedName!)}`,
+    `schema_name = ${quote(expectedSchema!)}`,
+    `workspace_name = ${quote(expectedWorkspace!)}`,
+  ]
+  const result = await execute(`SHOW VOLUMES WHERE ${filters.join(" AND ")}`)
   if (result.status === "FAILED") return { state: "unknown", message: result.errorMessage ?? "Failed to verify Volume existence" }
+  if (result.rows.length === 0) return { state: "missing" }
   const columns = new Set(result.columns.map((column) => column.name.toLowerCase()))
   const hasColumn = (...names: string[]) => names.some((name) => columns.has(name))
   if (!hasColumn("volume_name", "name") || !hasColumn("schema_name", "schema") || !hasColumn("workspace_name", "workspace")) {
     return { state: "unknown", message: "SHOW VOLUMES returned incomplete identity metadata" }
   }
-  const expectedWorkspace = reference.identifiers[0]
-  const expectedSchema = reference.identifiers[1]
-  const expectedName = reference.identifiers[2]
-  const exists = result.rows.some((row) => {
+  const row = result.rows.find((row) => {
     const name = String(resultValue(result, row, "volume_name", "name") ?? "")
     const schema = String(resultValue(result, row, "schema_name", "schema") ?? "")
     const workspace = String(resultValue(result, row, "workspace_name", "workspace") ?? "")
     return name === expectedName && schema === expectedSchema && workspace === expectedWorkspace
   })
-  return exists ? { state: "exists" } : { state: "missing" }
+  return row ? { state: "found", result, row } : { state: "missing" }
 }
 
 function resultRecord(result: QueryResult, row: unknown[]): Record<string, unknown> {
@@ -514,7 +518,15 @@ class VolumeFsPath implements FsPath {
   async children(recursive: boolean, limit = 0): Promise<FsPath[]> {
     const info = await this.info()
     if (!info.isDir) return [this]
-    if (!this.relativePath) return listVolumeDirectory(this.reference, this.original, this.execute, recursive, limit, true)
+    if (!this.relativePath) {
+      const entries = await listVolumeDirectory(this.reference, this.original, this.execute, recursive, limit)
+      if (this.reference.kind === "named" && entries.length === 0) {
+        const metadata = await findManagedVolumeMetadata(this.reference, this.execute)
+        if (metadata.state === "missing") throw new FsError("FS_NOT_FOUND", `Path not found: ${this.original}`)
+        if (metadata.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", metadata.message)
+      }
+      return entries
+    }
     // Volume roots are handled above, so relativePath is always non-empty here.
     const rows = await this.query(`select list_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, ${recursive ? "true" : "false"})${limit > 0 ? ` limit ${limit}` : ""}`)
     const seen = new Set<string>()
@@ -642,7 +654,6 @@ async function listVolumeDirectory(
   execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>,
   recursive: boolean,
   limit: number,
-  verifyNamedRoot = false,
 ): Promise<FsPath[]> {
   const identifier = reference.identifiers.map(quoteIdentifier).join(".")
   const sql = reference.kind === "user"
@@ -657,22 +668,12 @@ async function listVolumeDirectory(
     // physical "Path not found" (CZLH-70002). Treat that specific root response
     // as an empty listing, while preserving real missing-volume errors.
     if (reference.kind === "named" && parseVolumePath(original)?.relativePath === "" && isEmptyManagedVolumeRootError(message)) {
-      const existence = await managedVolumeExists(reference, execute)
-      if (existence.state === "exists") return []
-      if (existence.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", existence.message)
+      const metadata = await findManagedVolumeMetadata(reference, execute)
+      if (metadata.state === "found") return []
+      if (metadata.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", `${message} (Volume existence check failed: ${metadata.message})`)
     }
     if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
     throw new FsError("FS_TRANSFER_FAILED", message)
-  }
-
-  // A deleted Named Volume can report a successful empty directory query. An
-  // empty result is only valid when metadata still contains the Volume object;
-  // otherwise this is a missing path and must not look like an empty listing.
-  const isNamedVolumeRoot = verifyNamedRoot && reference.kind === "named" && parseVolumePath(original)?.relativePath === ""
-  if (isNamedVolumeRoot && result.rows.length === 0) {
-    const existence = await managedVolumeExists(reference, execute)
-    if (existence.state === "missing") throw new FsError("FS_NOT_FOUND", `Path not found: ${original}`)
-    if (existence.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", existence.message)
   }
 
   const entries = new Map<string, FileInfo>()
@@ -754,30 +755,10 @@ export class FsUtil {
       throw new FsError("FS_PATH_INVALID", `fs rb expects a Managed Volume root in the form czfs:/Volumes/<workspace>/<schema>/<volume>; received '${path}'.`)
     }
     const reference = qualifyNamedVolume(volume.reference, this.workspace, this.schema, path)
-    const volumeName = reference.identifiers.at(-1)!
-    const volumeSchema = reference.identifiers[1]
-    const volumeWorkspace = reference.identifiers[0]
-    const filters = [
-      `volume_name = ${quote(volumeName)}`,
-      ...(volumeSchema ? [`schema_name = ${quote(volumeSchema)}`] : []),
-      ...(volumeWorkspace ? [`workspace_name = ${quote(volumeWorkspace)}`] : []),
-    ]
-    const volumes = await this.execute(`SHOW VOLUMES WHERE ${filters.join(" AND ")}`)
-    if (volumes.status === "FAILED") throw new FsError("FS_TRANSFER_FAILED", volumes.errorMessage ?? "Failed to verify Volume type")
-    if (volumes.rows.length === 0) throw new FsError("FS_NOT_FOUND", `Managed Volume was not found: ${path}`)
-    const columnNames = new Set(volumes.columns.map((column) => column.name.toLowerCase()))
-    const hasColumn = (...names: string[]) => names.some((name) => columnNames.has(name))
-    if (!hasColumn("volume_name", "name") || !hasColumn("schema_name", "schema") || !hasColumn("workspace_name", "workspace")) {
-      throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES returned incomplete identity metadata for '${path}'; refusing to drop it`)
-    }
-    const metadata = volumes.rows.find((row) => {
-      const name = String(resultValue(volumes, row, "volume_name", "name") ?? "")
-      const schema = String(resultValue(volumes, row, "schema_name", "schema") ?? "")
-      const workspace = String(resultValue(volumes, row, "workspace_name", "workspace") ?? "")
-      return name === volumeName && (!volumeSchema || schema === volumeSchema) && (!volumeWorkspace || workspace === volumeWorkspace)
-    })
-    if (!metadata) throw new FsError("FS_NOT_FOUND", `Managed Volume was not found: ${path}`)
-    const external = resultValue(volumes, metadata, "external", "is_external", "volume_type", "type")
+    const metadata = await findManagedVolumeMetadata(reference, this.execute)
+    if (metadata.state === "missing") throw new FsError("FS_NOT_FOUND", `Managed Volume was not found: ${path}`)
+    if (metadata.state === "unknown") throw new FsError("FS_TRANSFER_FAILED", `${metadata.message} for '${path}'; refusing to drop it`)
+    const external = resultValue(metadata.result, metadata.row, "external", "is_external", "volume_type", "type")
     if (external === undefined) {
       throw new FsError("FS_TRANSFER_FAILED", `SHOW VOLUMES did not return a volume type for '${path}'; refusing to drop it`)
     }

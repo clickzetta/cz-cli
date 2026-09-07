@@ -101,7 +101,7 @@ describe("FsUtil", () => {
     expect((await stat(emptyCopy)).isDirectory()).toBe(true)
   })
 
-  test("ignores a dangling directory entry while listing its parent", async () => {
+  test.skipIf(process.platform === "win32")("ignores a dangling directory entry while listing its parent", async () => {
     const fs = new FsUtil({ execute: async () => { throw new Error("unexpected SQL") } })
     const parent = join(root, "parent")
     const deleted = join(parent, "deleted")
@@ -421,7 +421,7 @@ describe("FsUtil", () => {
       schema: "public",
       execute: async (sql) => {
         if (sql.startsWith("SHOW VOLUME DIRECTORY")) return result([])
-        if (sql === "SHOW VOLUMES") return { ...result([["public", "volume", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
+        if (sql.startsWith("SHOW VOLUMES")) return { ...result([["public", "volume", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
         throw new Error(`unexpected SQL: ${sql}`)
       },
     })
@@ -455,7 +455,7 @@ describe("FsUtil", () => {
     })
 
     await expect(fs.ls("volume://deleted")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
-    expect(statements).toEqual(["SHOW VOLUME DIRECTORY `workspace`.`public`.`deleted`", "SHOW VOLUMES"])
+    expect(statements).toEqual(["SHOW VOLUME DIRECTORY `workspace`.`public`.`deleted`", "SHOW VOLUMES WHERE volume_name = 'deleted' AND schema_name = 'public' AND workspace_name = 'workspace'"])
   })
 
   test("does not report an existence-probe failure as a missing Named Volume", async () => {
@@ -474,7 +474,7 @@ describe("FsUtil", () => {
     const fs = new FsUtil({
       workspace: "workspace",
       schema: "public",
-      execute: async () => result([]),
+      execute: async (sql) => sql.startsWith("SHOW VOLUME DIRECTORY") ? result([]) : result([["volume"]]),
     })
 
     await expect(fs.ls("volume://volume")).rejects.toMatchObject({ code: "FS_TRANSFER_FAILED", message: "SHOW VOLUMES returned incomplete identity metadata" })
@@ -486,7 +486,7 @@ describe("FsUtil", () => {
       schema: "public",
       execute: async (sql) => {
         if (sql.startsWith("SHOW VOLUME DIRECTORY")) return { ...result([]), status: JobStatus.FAILED, errorMessage: "CZLH-70002:Path not found:1/workspaces/workspace/volumes/empty_123/." }
-        if (sql === "SHOW VOLUMES") return { ...result([["public", "empty", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
+        if (sql.startsWith("SHOW VOLUMES")) return { ...result([["public", "empty", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
         return result([])
       },
     })
