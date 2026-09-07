@@ -495,7 +495,7 @@ describe("FsUtil", () => {
       expect.objectContaining({ name: "@user", isDir: true, path: "czfs:/Volumes/@user" }),
       expect.objectContaining({ name: "@table", isDir: true, path: "czfs:/Volumes/@table" }),
     ]))
-    // User namespace roots list workspaces; files require an explicit workspace.
+    // The legacy volume:user://~ spelling lists files under the current workspace/user.
     expect((await fs.ls("volume:user://~/"))[0]).toMatchObject({ name: "uploads", isDir: true, path: "czfs:/Volumes/@user/workspace/alice/uploads" })
     expect((await fs.ls("volume:table://"))[0]).toMatchObject({ name: "orders", isDir: true, path: "czfs:/Volumes/@table/workspace/public/orders" })
     expect((await fs.ls("czfs:/Volumes/@user"))[0]).toMatchObject({ name: "workspace", isDir: true, path: "czfs:/Volumes/@user/workspace" })
@@ -504,6 +504,18 @@ describe("FsUtil", () => {
     // An empty last_modified_time is unknown, not 1970-01-01.
     expect(tableEntries[0]?.modificationTime).toBeNull()
     expect(statements).toEqual(["SHOW VOLUMES", "SELECT current_user()", "SHOW USER VOLUME DIRECTORY", "SHOW TABLES", "SHOW WORKSPACES", "SHOW TABLE VOLUME DIRECTORY `workspace`.`public`.`orders`"])
+  })
+
+  test("requires workspace context for the legacy User Volume root", async () => {
+    const fs = new FsUtil({
+      schema: "public",
+      execute: async (sql) => {
+        if (sql === "SELECT current_user()") return result([["alice"]])
+        throw new Error(`unexpected SQL: ${sql}`)
+      },
+    })
+
+    await expect(fs.ls("volume:user://~/")).rejects.toMatchObject({ code: "FS_PATH_CONTEXT_REQUIRED" })
   })
 
   test("lists partial czfs namespace paths from metadata", async () => {

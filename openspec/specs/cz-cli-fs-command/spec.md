@@ -188,14 +188,14 @@ cz-cli fs cp volume://vol_a/a.csv volume://vol_b/a.csv
 | 命令 | 位置参数 | 专属参数 | 默认行为 |
 | --- | --- | --- | --- |
 | `fs ls` | `<path>` | `-R, --recursive`、`--limit`（CLI 扩展） | 当前层，最多显示 100 条 |
-| `fs head` | `<file>` | `--bytes` | 读取前 65536 字节并按 UTF-8 输出 |
+| `fs head` | `<file>` | `-c, --bytes` | 读取前 65536 字节并按 UTF-8 输出 |
 | `fs mb` | `<volume>` | 无 | 创建 Managed Volume；只接受 Managed Volume 根路径 |
 | `fs rb` | `<volume>` | `--write` | 删除 Managed Volume 对象；不删除文件 |
 | `fs mkdir` | `<path>` | 无 | 自动创建所有父目录 |
 | `fs cp` | `<source> <destination>` | `-R`、`--overwrite/--no-overwrite` | 单向复制；默认拒绝已有目标 |
 | `fs mv` | `<source> <destination>` | `-R`、`--overwrite/--no-overwrite` | 目标完成后删除源；默认拒绝已有目标 |
 | `fs rm` | `<path>` | `-R`、`-f`（CLI 扩展）、`--dry-run`（CLI 扩展）、`--write` | 删除单文件；实际删除必须显式确认 `--write`，目录必须显式递归 |
-| `table load` | `<table> <czfs-source>` | `--using`、`--header` | 仅做追加式 Volume → Table 导入；`COPY OVERWRITE` 和复杂场景使用 SQL |
+| `table load` | `<table> <czfs-source>` | `--using`、`--header`、`--write` | 仅做追加式 Volume → Table 导入；实际写入必须显式确认 `--write`；`COPY OVERWRITE` 和复杂场景使用 SQL |
 
 ### 3.1 FsUtil 参数对齐与 CLI 扩展
 
@@ -368,7 +368,7 @@ Positionals:
   file  Local or Volume file path                          [string] [required]
 
 Options:
-      --bytes  Maximum bytes to read                  [number] [default: 65536]
+  -c, --bytes  Maximum bytes to read                  [number] [default: 65536]
   -h, --help   Show help                                         [boolean]
 
 Examples:
@@ -381,7 +381,7 @@ Examples:
 - `head` 面向 UTF-8 文本，不解析 Parquet、图片、压缩包等二进制格式。
 - 指定 `--format text` 时，stdout 只输出文件内容，方便管道处理；未指定时遵循全局默认 `json`。
 - 显式指定 `--format json` 时，返回 `path`、`bytes`、`content`、`truncated`。
-- `--bytes` 按字节读取并使用严格 UTF-8 解码，与 Python `read(maxBytes).decode("utf8")` 对齐。若截断落在多字节字符中间，返回 `FS_NOT_TEXT`，不回退字符边界，也不输出替换字符。
+- `-c, --bytes` 按字节读取并使用严格 UTF-8 解码，与 Python `read(maxBytes).decode("utf8")` 对齐。若截断落在多字节字符中间，返回 `FS_NOT_TEXT`，不回退字符边界，也不输出替换字符。
 - 文件本身含非法 UTF-8 字节时同样返回 `FS_NOT_TEXT`；成功时 `bytes` 记录实际读取字节数，`truncated` 表示文件是否还有未返回内容。
 
 ### 4.4 `cz-cli fs mb --help`
