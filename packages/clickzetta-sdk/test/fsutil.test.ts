@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FsError, FsUtil, parseVolumePath } from "../src/fsutil.js"
@@ -99,6 +99,18 @@ describe("FsUtil", () => {
     await mkdir(emptySource)
     await fs.cp(emptySource, emptyCopy, true)
     expect((await stat(emptyCopy)).isDirectory()).toBe(true)
+  })
+
+  test("reports a dangling directory entry instead of an empty listing", async () => {
+    const fs = new FsUtil({ execute: async () => { throw new Error("unexpected SQL") } })
+    const parent = join(root, "parent")
+    const deleted = join(parent, "deleted")
+    await mkdir(parent)
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+    await symlink(deleted, join(parent, "deleted-link"), "dir")
+
+    await expect(fs.ls(parent)).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
   })
 
   test("merges a local directory move into an existing directory", async () => {
@@ -400,6 +412,7 @@ describe("FsUtil", () => {
       schema: "public",
       execute: async (sql) => {
         if (sql.startsWith("SHOW VOLUME DIRECTORY")) return result([])
+        if (sql === "SHOW VOLUMES") return { ...result([["public", "volume", "", false, "workspace"]]), columns: [{ name: "schema_name" }, { name: "volume_name" }, { name: "create_time" }, { name: "external" }, { name: "workspace_name" }] }
         throw new Error(`unexpected SQL: ${sql}`)
       },
     })
@@ -418,6 +431,21 @@ describe("FsUtil", () => {
     })
 
     await expect(fs.ls("volume://missing")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
+  })
+
+  test("does not treat a deleted Named Volume with an empty directory response as empty", async () => {
+    const statements: string[] = []
+    const fs = new FsUtil({
+      workspace: "workspace",
+      schema: "public",
+      execute: async (sql) => {
+        statements.push(sql)
+        return result([])
+      },
+    })
+
+    await expect(fs.ls("volume://deleted")).rejects.toMatchObject({ code: "FS_NOT_FOUND" })
+    expect(statements).toEqual(["SHOW VOLUME DIRECTORY `workspace`.`public`.`deleted`", "SHOW VOLUMES"])
   })
 
   test("treats the engine's empty Managed Volume root Path not found as an empty listing", async () => {

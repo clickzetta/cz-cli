@@ -15,6 +15,7 @@ let submittedJobId: string | undefined
 function firstJson(output: string) {
   return JSON.parse(output.trim().split("\n")[0] ?? "{}") as {
     error?: { code?: string; message?: string }
+    ai_message?: string
     job_id?: string
   }
 }
@@ -59,6 +60,32 @@ describe("sql emits job_id on failure", () => {
     expect(json.error?.code).toBe("CZLH-42000")
     expect(submittedJobId).toBeTruthy()
     expect(json.job_id).toBe(submittedJobId!)
+  })
+
+  test("a possible COPY syntax failure suggests checking the Lakehouse docs without classifying it", async () => {
+    stubSubmit(() =>
+      sqlFailure("CZLH-65000", "file format not specified or not supported"),
+    )
+
+    const result = await execute('sql "COPY INTO table FROM USER VOLUME FILE_FORMAT = (TYPE = CSV, HEADER = TRUE) PATTERN = \'file.csv\'" --sync --write')
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json.ai_message).toContain("If this is a SQL syntax or dialect issue")
+    expect(json.ai_message).toContain("lakehouse-doc-en")
+    expect(json.ai_message).toContain("references/copy-into-table.md")
+    expect(json.ai_message).toContain("suggestion only")
+    expect(json.ai_message).not.toContain("This is a SQL syntax error")
+  })
+
+  test("non-dialect SQL failures do not add the documentation suggestion", async () => {
+    stubSubmit(() => sqlFailure("CZLH-42000", "Table 'missing' not found"))
+
+    const result = await execute('sql "SELECT * FROM missing" --sync')
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(1)
+    expect(json.ai_message ?? "").not.toContain("lakehouse-doc-en")
   })
 
   test("a successful job still carries the same job_id shape", async () => {

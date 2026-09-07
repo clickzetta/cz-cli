@@ -503,7 +503,7 @@ class VolumeFsPath implements FsPath {
   async children(recursive: boolean, limit = 0): Promise<FsPath[]> {
     const info = await this.info()
     if (!info.isDir) return [this]
-    if (!this.relativePath) return listVolumeDirectory(this.reference, this.original, this.execute, recursive, limit)
+    if (!this.relativePath) return listVolumeDirectory(this.reference, this.original, this.execute, recursive, limit, true)
     // Volume roots are handled above, so relativePath is always non-empty here.
     const rows = await this.query(`select list_directory(${volumeIdentifier(this.reference)}, ${quote(this.relativePath)}, ${recursive ? "true" : "false"})${limit > 0 ? ` limit ${limit}` : ""}`)
     const seen = new Set<string>()
@@ -631,6 +631,7 @@ async function listVolumeDirectory(
   execute: (sql: string, hints?: Record<string, string>) => Promise<QueryResult>,
   recursive: boolean,
   limit: number,
+  verifyNamedRoot = false,
 ): Promise<FsPath[]> {
   const identifier = reference.identifiers.map(quoteIdentifier).join(".")
   const sql = reference.kind === "user"
@@ -647,6 +648,14 @@ async function listVolumeDirectory(
     if (reference.kind === "named" && parseVolumePath(original)?.relativePath === "" && isEmptyManagedVolumeRootError(message) && await managedVolumeExists(reference, execute)) return []
     if (isMissingVolumePathError(message)) throw new FsError("FS_NOT_FOUND", message)
     throw new FsError("FS_TRANSFER_FAILED", message)
+  }
+
+  // A deleted Named Volume can report a successful empty directory query. An
+  // empty result is only valid when metadata still contains the Volume object;
+  // otherwise this is a missing path and must not look like an empty listing.
+  const isNamedVolumeRoot = verifyNamedRoot && reference.kind === "named" && parseVolumePath(original)?.relativePath === ""
+  if (isNamedVolumeRoot && result.rows.length === 0 && !(await managedVolumeExists(reference, execute))) {
+    throw new FsError("FS_NOT_FOUND", `Path not found: ${original}`)
   }
 
   const entries = new Map<string, FileInfo>()
@@ -872,16 +881,10 @@ export class FsUtil {
     const virtual = await this.listVirtualRoot(path, recurse, limit)
     if (virtual !== undefined) return virtual
     const items = await this.path(path).children(recurse, limit)
-    const infos = await Promise.all(items.map(async (item) => {
-      try { return await item.info() }
-      catch (error) {
-        // Ignore dangling symlinks and files removed during enumeration; one
-        // unreadable entry must not make `fs ls /` fail as a whole.
-        if (item.isLocal && error instanceof FsError && error.code === "FS_NOT_FOUND") return undefined
-        throw error
-      }
-    }))
-    return infos.filter((item): item is FileInfo => item !== undefined)
+    // A path disappearing between enumeration and stat is an actual missing
+    // target, not an empty directory. Let FS_NOT_FOUND reach the caller so the
+    // CLI does not report a successful empty listing for deleted directories.
+    return Promise.all(items.map((item) => item.info()))
   }
   async mkdirs(path: string) { await this.path(path).mkdirs(); return true }
   async put(file: string, contents: string, overwrite = false) {
