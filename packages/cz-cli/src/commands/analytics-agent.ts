@@ -2466,8 +2466,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinApply, { joins: joinRelations }, {}, ctx)
                     const bizErr = extractBusinessError(payload)
                     if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    const data = unwrapResponse(payload)
-                    success(data ?? { submittedCount: joinRelations.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
+                    const responseData = payload && typeof payload === "object" ? (payload as Record<string, unknown>).data : undefined
+                    success(responseData ?? { submittedCount: joinRelations.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
                   } catch (err) {
                     if (isHandledCliError(err)) return
                     error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
