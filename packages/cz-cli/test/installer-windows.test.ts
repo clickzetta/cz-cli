@@ -24,8 +24,8 @@ import { renderBootstrapSh } from "../../../scripts/cos-release.mjs"
 const ROOT = join(import.meta.dir, "..", "..", "..")
 let work: string
 
-/** A stand-in for the published archive: bin/ zipped, exactly as archivePlatform does. */
-function fixtureArchive(binaryName: string) {
+/** Archive the fixture contents in the same format as the platform release. */
+function fixtureArchive(binaryName: string, format: "zip" | "tar.gz") {
   const staging = join(work, "staging")
   mkdirSync(staging, { recursive: true })
   writeFileSync(join(staging, binaryName), "#!/bin/sh\necho 2.0.4\n")
@@ -33,16 +33,16 @@ function fixtureArchive(binaryName: string) {
   writeFileSync(join(staging, "setup.sh"), readFileSync(join(ROOT, "scripts", "setup.sh")))
   // One runtime asset, enough to prove setup.sh's copy loop still runs.
   writeFileSync(join(staging, "tui-quota-runtime.js"), "// stub\n")
-  const archive = join(work, "cz-cli.zip")
+  const archive = join(work, `cz-cli.${format}`)
   // `zip -rq` APPENDS to an existing archive, and the Cygwin/MSYS case builds twice in one
   // work dir — so remove it first rather than accumulating entries.
   rmSync(archive, { force: true })
-  const zipped = Bun.spawnSync(["zip", "-rq", archive, "."], { cwd: staging })
+  const packed = Bun.spawnSync(format === "zip" ? ["zip", "-rq", archive, "."] : ["tar", "-czf", archive, "."], { cwd: staging })
   // Check it. An unchecked fixture build is why this file once flaked: a bad archive makes
   // the installer fail at verify_checksum, and a case asserting on the EXTRACTION error
   // then fails with no hint that its input was never valid.
-  if (zipped.exitCode !== 0 || !existsSync(archive) || readFileSync(archive).byteLength === 0) {
-    throw new Error(`fixture archive build failed (exit ${zipped.exitCode}): ${zipped.stderr.toString()}`)
+  if (packed.exitCode !== 0 || !existsSync(archive) || readFileSync(archive).byteLength === 0) {
+    throw new Error(`fixture archive build failed (exit ${packed.exitCode}): ${packed.stderr.toString()}`)
   }
   return { archive, checksum: createHash("sha256").update(readFileSync(archive)).digest("hex") }
 }
@@ -81,6 +81,7 @@ function stubs(input: {
     `#!/bin/sh\nDEST=""\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "-o" ]; then DEST="$2"; fi\n  shift\ndone\ncp ${JSON.stringify(input.archive)} "$DEST"\n`,
   )
 
+  // Catch a regression that reintroduces CPU detection and selects an unpublished alias.
   if (input.avx2 !== undefined) {
     const grep = Bun.spawnSync(["sh", "-c", "command -v grep"]).stdout.toString().trim()
     write(
@@ -130,14 +131,15 @@ function runInstaller(input: {
   tar?: "extracts" | "fails"
   powershell?: "extracts"
 }) {
-  const { archive, checksum } = fixtureArchive(input.binaryName)
+  const format = input.unameS === "Linux" ? "tar.gz" : "zip"
+  const { archive, checksum } = fixtureArchive(input.binaryName, format)
   const script = join(work, "install.sh")
   writeFileSync(
     script,
     renderBootstrapSh({
       version: "2.0.4",
       channel: "stable",
-      platforms: { [input.platformKey]: { url: "https://example.invalid/cz-cli.zip", archive: "cz-cli.zip", format: "zip", checksum } },
+      platforms: { [input.platformKey]: { url: `https://example.invalid/cz-cli.${format}`, archive: `cz-cli.${format}`, format, checksum } },
     }),
   )
   const home = join(work, "home")

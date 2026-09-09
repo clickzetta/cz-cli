@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/baseline-test.yml
       - .github/workflows/release-cos.yml
+      - .github/actions/setup-bun*/**
       - packages/cz-cli/script/**
       - packages/cz-cli/src/bootstrap/**
       - packages/opencode/package.json
@@ -14,6 +15,7 @@ on:
     paths:
       - .github/workflows/baseline-test.yml
       - .github/workflows/release-cos.yml
+      - .github/actions/setup-bun*/**
       - packages/cz-cli/script/**
       - packages/cz-cli/src/bootstrap/**
       - packages/opencode/package.json
@@ -42,6 +44,6 @@ jobs:
           OPENCODE_VERSION: "0.0.0-baseline-test"
         run: bun run script/build.ts --skip-embed-web-ui
       - name: Install CPU emulator
-        run: sudo apt-get update && sudo apt-get install -y qemu-user
+        run: sudo apt-get -o Acquire::Retries=3 update && sudo apt-get -o Acquire::Retries=3 install -y qemu-user
       - name: Run without AVX or AVX2
         run: sh scripts/check-baseline.sh packages/opencode/dist/cz-cli-linux-x64/bin/cz-cli

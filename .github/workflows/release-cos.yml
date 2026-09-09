@@ -166,22 +166,15 @@ jobs:
         include:
           - os: linux
             runner: ubuntu-latest
-            bun-target: linux-x64-baseline
           - os: linux
             runner: ubuntu-24.04-arm
-            bun-target: linux-aarch64
           - os: darwin
             runner: macos-latest
-            bun-target: darwin-aarch64
           - os: darwin
             runner: macos-15-intel
-            bun-target: darwin-x64-baseline
           - os: win32
             runner: windows-latest
-            bun-target: windows-x64-baseline
     runs-on: ${{ matrix.runner }}
-    env:
-      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
 
@@ -214,10 +207,7 @@ jobs:
           done
           echo "Synced $count skills from clickzetta-skills repo"
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          # Use the same runtime for the build host and compiled artifact.
-          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-${{ matrix.bun-target }}.zip
+      - uses: ./.github/actions/setup-bun-runtime
 
       - uses: actions/setup-node@v4
         with:
@@ -291,8 +281,8 @@ jobs:
       - name: Verify Linux x64 without AVX
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-user
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y qemu-user
           sh scripts/check-baseline.sh packages/opencode/dist/cz-cli-linux-x64/bin/cz-cli
 
       - name: Upload verified archives
