@@ -492,19 +492,15 @@ platform() {
   # runs in when a Windows user pipes it to bash. The win32 archives are built and
   # published like every other platform, so map onto them instead of letting the raw
   # uname string fall through to "unsupported platform", which read as "no Windows build
-  # exists". Deliberately matching install.ps1's \`win32-$Arch\`, baseline included: it
-  # does not select the -baseline build either, so a pre-AVX2 Windows CPU is an open gap
-  # in BOTH installers rather than a new one here.
+  # exists". This matches install.ps1's \`win32-$Arch\` platform key.
   case "$OS" in
     mingw*|msys*|cygwin*) OS="win32" ;;
   esac
 
   SUFFIX=""
   if [ "$OS" = "linux" ]; then
-    # baseline: x64 CPUs without AVX2 need the non-AVX2 build.
-    if [ "$ARCH" = "x64" ] && ! grep -qwi avx2 /proc/cpuinfo 2>/dev/null; then
-      SUFFIX="-baseline"
-    fi
+    # All x64 release artifacts use Bun's baseline runtime, including the
+    # unsuffixed package. No AVX2 detection or separate download is needed.
     # libc: use the statically-linked musl build on musl distros, when forced
     # via CZ_LIBC=musl, or when the host glibc is older than the glibc binary's
     # minimum (GLIBC_2.25, e.g. CentOS/RHEL 7 at 2.17).

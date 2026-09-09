@@ -149,17 +149,12 @@ const allTargets: {
   },
 ]
 
-// cz_change: honor Script.hostOnly (OPENCODE_HOST_ONLY / OPENCODE_RELEASE) so each
-// CI matrix runner builds ONLY its own platform target. Without this every runner
-// builds all targets and races on `gh release upload --clobber`. Vendored from
-// upstream opencode build.ts (lost when this file was split off). MUST also drop the
-// baseline (avx2:false) and abi (musl) variants: the host os+arch can match several
-// entries (e.g. win32-x64 AND win32-x64-baseline), and the baseline/abi variants need
-// extra Bun runtime artifacts (bun-<os>-<arch>-baseline) whose download is flaky and was
-// failing the win32 build. Single-target release CI wants exactly one native binary.
-const hostAvx2Only = (item: (typeof allTargets)[number]) =>
+// cz_change: release runners build one host artifact. Baseline runtime selection
+// happens at compile time below, independently of the public archive/package name.
+// Keep musl and explicitly suffixed variants for the full cross-platform build.
+const hostTarget = (item: (typeof allTargets)[number]) =>
   item.os === process.platform && item.arch === process.arch && item.avx2 !== false && item.abi === undefined
-const platformTargets = Script.hostOnly ? allTargets.filter(hostAvx2Only) : allTargets
+const platformTargets = Script.hostOnly ? allTargets.filter(hostTarget) : allTargets
 
 const targets = singleFlag
   ? platformTargets.filter((item) => {
@@ -167,8 +162,8 @@ const targets = singleFlag
         return false
       }
 
-      // When building for the current platform, prefer a single native binary by default.
-      // Baseline binaries require additional Bun artifacts and can be flaky to download.
+      // Only emit the extra suffixed artifact on request. The unsuffixed x64
+      // artifact already uses the same baseline runtime.
       if (item.avx2 === false) {
         return baselineFlag
       }
@@ -248,7 +243,10 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(DIST_PREFIX, "bun") as any,
+      // cz_change: every x64 artifact uses Bun's SSE4.2 baseline runtime. Keep the
+      // existing public names so npm, direct downloads and upgrades all get the
+      // compatible binary without separate CPU detection or optional packages.
+      target: name.replace(DIST_PREFIX, "bun").replace(/-x64(?!-baseline)/, "-x64-baseline") as Bun.Build.CompileTarget,
       outfile: `dist/${name}/bin/cz-cli`,
       execArgv: [`--user-agent=cz-cli/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
