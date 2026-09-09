@@ -56,14 +56,14 @@ afterEach(() => {
 })
 
 test("splits on ';' with no config, chopping a compound statement into fragments", async () => {
-  const result = await execute(`sql "${COMPOUND}" --sync`)
+  const result = await execute(`sql "${COMPOUND}" --sync --write`)
   expect(result.exitCode).toBe(0)
   expect(submitted).toEqual(["BEGIN SELECT 1\n;", "SELECT 2\n;", "END\n;"])
 })
 
 test('czcli.json {"sql_split": false} submits the statement verbatim', async () => {
   writeConfig('{ "sql_split": false }')
-  const result = await execute(`sql "${COMPOUND}" --sync`)
+  const result = await execute(`sql "${COMPOUND}" --sync --write`)
   expect(result.exitCode).toBe(0)
   // One job, and the trailing ';' is not doubled by execSql's own terminator.
   expect(submitted).toEqual(["BEGIN SELECT 1; SELECT 2; END\n;"])
@@ -71,21 +71,21 @@ test('czcli.json {"sql_split": false} submits the statement verbatim', async () 
 
 test("czcli.jsonc with comments is honoured too", async () => {
   writeConfig('{\n  // one statement carries its own ;\n  "sql_split": false,\n}', "czcli.jsonc")
-  const result = await execute(`sql "${COMPOUND}" --sync`)
+  const result = await execute(`sql "${COMPOUND}" --sync --write`)
   expect(result.exitCode).toBe(0)
   expect(submitted).toEqual(["BEGIN SELECT 1; SELECT 2; END\n;"])
 })
 
 test("an explicit true keeps splitting on", async () => {
   writeConfig('{ "sql_split": true }')
-  const result = await execute(`sql "${COMPOUND}" --sync`)
+  const result = await execute(`sql "${COMPOUND}" --sync --write`)
   expect(result.exitCode).toBe(0)
   expect(submitted).toHaveLength(3)
 })
 
 test("an unparseable value keeps splitting on", async () => {
   writeConfig('{ "sql_split": "flase" }')
-  const result = await execute(`sql "${COMPOUND}" --sync`)
+  const result = await execute(`sql "${COMPOUND}" --sync --write`)
   expect(result.exitCode).toBe(0)
   expect(submitted).toHaveLength(3)
 })
