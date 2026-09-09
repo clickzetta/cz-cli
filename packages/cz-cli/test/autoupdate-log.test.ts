@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { maybeAutoUpdate } from "../src/bootstrap/update"
+import { maybeAutoUpdate, resolveReleaseSelection } from "../src/bootstrap/update"
+import { isPendingChannelSwitch } from "../src/bootstrap/release-version"
 import { createUpdateLogger, updateLogPath } from "../src/bootstrap/update-log"
 
 let home = ""
@@ -17,6 +18,29 @@ afterEach(async () => {
 function environment() {
   return { CLICKZETTA_TEST_HOME: home, XDG_STATE_HOME: path.join(home, "state") }
 }
+
+test.each([undefined, "{ invalid", "{}", '{"channel":"unknown"}'])("missing or invalid installation metadata does not authorize a channel switch: %s", async (metadata) => {
+  if (metadata !== undefined) await Bun.write(path.join(home, ".clickzetta/install.json"), metadata)
+  const selection = await resolveReleaseSelection({ env: environment() })
+  expect(selection).toEqual({ channel: "stable", explicit: false, source: "default" })
+  expect(isPendingChannelSwitch("dev-v2.1.0.20260901105751", selection)).toBe(false)
+})
+
+test("a stored or environmental channel selection is explicit", async () => {
+  await Bun.write(path.join(home, ".clickzetta/install.json"), JSON.stringify({ channel: "nightly" }))
+  expect(await resolveReleaseSelection({ env: environment() })).toEqual({ channel: "nightly", explicit: true, source: "install.json" })
+  expect(await resolveReleaseSelection({ env: { ...environment(), CZ_CHANNEL: "stable" } })).toEqual({ channel: "stable", explicit: true, source: "CZ_CHANNEL" })
+})
+
+test("automatic checking does not label an explicit crossed installation up to date", async () => {
+  await Bun.write(path.join(home, ".clickzetta/install.json"), JSON.stringify({ channel: "nightly" }))
+  await maybeAutoUpdate({
+    args: ["sql"], env: environment(), version: "2.0.4",
+    fetchImpl: Object.assign(async () => Response.json({ version: "dev-v2.0.4.20260901105751" }), { preconnect: fetch.preconnect }),
+  })
+  expect((await Bun.file(path.join(home, "state/clickzetta/update-check.json")).json()).last_result).toBe("update-available")
+  expect((await entries()).at(-1)).toMatchObject({ event: "decision", action: "notify", channel: "nightly" })
+})
 
 async function entries() {
   return (await Bun.file(updateLogPath(environment())).text()).trim().split("\n")
@@ -59,10 +83,46 @@ test("an environment skip is logged before config or network access", async () =
   expect((await entries())[0]).toMatchObject({ event: "skipped", reason: "CZ_SKIP_UPDATE" })
 })
 
-test("config errors are recorded before propagating", async () => {
+test("config errors are recorded without blocking the command or checking for updates", async () => {
   await Bun.write(path.join(home, ".clickzetta/czcli.json"), "{ invalid")
-  await expect(maybeAutoUpdate({ args: ["sql"], version: "2.0.3", env: environment() })).rejects.toThrow("Invalid config")
+  const calls: string[] = []
+  await maybeAutoUpdate({
+    args: ["sql"], version: "2.0.3", env: environment(),
+    fetchImpl: Object.assign(async (url: string | URL | Request) => {
+      calls.push(String(url))
+      return Response.json({ version: "2.0.4" })
+    }, { preconnect: fetch.preconnect }),
+  })
   expect((await entries()).at(-1)?.event).toBe("config-failed")
+  expect(calls).toEqual([])
+  expect(await Bun.file(path.join(home, ".clickzetta/czcli.json")).text()).toBe("{ invalid")
+})
+
+test("a config path that is a directory does not block the command", async () => {
+  const file = path.join(home, ".clickzetta/czcli.json")
+  await fs.unlink(file)
+  await fs.mkdir(file)
+  await maybeAutoUpdate({ args: ["sql"], version: "2.0.3", env: environment() })
+  expect((await entries()).at(-1)?.event).toBe("config-failed")
+})
+
+test("healthy interval skips do not append logs unless diagnostics are requested", async () => {
+  await Bun.write(path.join(home, "state/clickzetta/update-check.json"), JSON.stringify({ last_checked_at: 2_000_000_000_000, last_result: "up-to-date" }))
+  await maybeAutoUpdate({ args: ["sql"], version: "2.0.3", env: environment(), now: 2_000_000_060_000 })
+  expect(await Bun.file(updateLogPath(environment())).exists()).toBe(false)
+  await maybeAutoUpdate({ args: ["sql"], version: "2.0.3", env: { ...environment(), CLICKZETTA_UPDATE_DEBUG: "1" }, now: 2_000_000_060_000 })
+  expect(await entries()).toHaveLength(1)
+  expect((await entries())[0]).toMatchObject({ event: "skipped", reason: "interval" })
+})
+
+test("successful recovery clears the previous error from update state", async () => {
+  const state = path.join(home, "state/clickzetta/update-check.json")
+  await Bun.write(state, JSON.stringify({ last_checked_at: 1, last_result: "check-failed", error: "old timeout" }))
+  await maybeAutoUpdate({
+    args: ["sql"], version: "2.0.3", env: environment(), now: 2_000_000_000_000,
+    fetchImpl: Object.assign(async () => Response.json({ version: "2.0.3" }), { preconnect: fetch.preconnect }),
+  })
+  expect(await Bun.file(state).json()).toEqual({ last_checked_at: 2_000_000_000_000, last_result: "up-to-date", latest_version: "2.0.3" })
 })
 
 test("an unusable log path never breaks the command", async () => {
@@ -82,4 +142,15 @@ test("rotates at one MiB and redacts bounded error messages", async () => {
   expect(String(logs[0].error).length).toBeLessThanOrEqual(4096)
   expect(logs[0].error).not.toContain("private-")
   expect(logs[0].error).toContain("[redacted]")
+})
+
+test("redacts shell and JSON credentials in all string fields", async () => {
+  await createUpdateLogger("2.0.3", environment())("upgrade-failed", {
+    error: '--password private-one --token "private two" CZ_PAT=private-three export CZ_PAT private-four --api-key=private-five',
+    details: '{"password":"private-six","access_token":"private-seven"} --pat private-eight',
+  })
+  const logs = await entries()
+  expect(JSON.stringify(logs)).not.toContain("private")
+  expect(logs[0].error).toContain("--password [redacted]")
+  expect(logs[0].details).toContain("--pat [redacted]")
 })

@@ -5,11 +5,12 @@
 // env-shim MUST be first — it mirrors CLICKZETTA_* → OPENCODE_* env before any
 // opencode module (whose flag getters read process.env) is evaluated.
 import "./env-shim"
+import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { restartArgs, maybeAutoUpdate } from "./update"
 import { main } from "./runtime"
 
 const args = restartArgs(process.execPath, process.argv)
 
-await maybeAutoUpdate({ args })
+await maybeAutoUpdate({ args, version: InstallationVersion })
 
 process.exit(await main(args))

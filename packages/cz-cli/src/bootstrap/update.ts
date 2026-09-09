@@ -11,6 +11,8 @@ import {
   DEFAULT_RELEASE_CHANNEL,
   assertVersionInChannel,
   coerceChannel,
+  channelForVersion,
+  isPendingChannelSwitch,
   isLocalBuildVersion,
   isReleaseVersion,
   shouldUpgradeToVersion,
@@ -59,6 +61,7 @@ type UpdatePaths = {
 type UpdateActionInput = {
   autoupdate?: boolean | "notify"
   channel: ReleaseChannel
+  channelExplicit?: boolean
   currentVersion: string
   latestVersion?: string
   lastCheckedAt?: number
@@ -108,11 +111,16 @@ function updatePaths(home?: string, env: NodeJS.ProcessEnv = process.env): Updat
 // → "stable". Never reads opencode's InstallationChannel. Legacy/unknown values
 // (e.g. "latest") coerce to the stable default.
 export async function resolveReleaseChannel(input: { home?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ReleaseChannel> {
+  return (await resolveReleaseSelection(input)).channel
+}
+
+export async function resolveReleaseSelection(input: { home?: string; env?: NodeJS.ProcessEnv } = {}) {
   const env = input.env ?? process.env
   const override = coerceChannel(env.CZ_CHANNEL)
-  if (override) return override
+  if (override) return { channel: override, explicit: true, source: "CZ_CHANNEL" }
   const metadata = (await readObject(updatePaths(input.home, env).install)) as Partial<InstallMetadata>
-  return coerceChannel(metadata.channel) ?? DEFAULT_RELEASE_CHANNEL
+  const stored = coerceChannel(metadata.channel)
+  return { channel: stored ?? DEFAULT_RELEASE_CHANNEL, explicit: stored !== undefined, source: stored ? "install.json" : "default" }
 }
 
 async function readObject(file: string) {
@@ -340,9 +348,8 @@ export function shouldSkipAutoUpdateCommand(input: {
 
 function autoUpdateSkipReason(input: { args: string[]; env?: NodeJS.ProcessEnv; version?: string }) {
   const env = input.env ?? process.env
-  if (env.CLICKZETTA_SKIP_UPDATE_ONCE === "1") return "CLICKZETTA_SKIP_UPDATE_ONCE"
-  if (env.CLICKZETTA_DISABLE_AUTOUPDATE === "1") return "CLICKZETTA_DISABLE_AUTOUPDATE"
-  if (["1", "true", "yes"].includes((env.CZ_SKIP_UPDATE ?? "").trim().toLowerCase())) return "CZ_SKIP_UPDATE"
+  const suppression = ConfigAutoupdate.suppression(env)
+  if (suppression) return suppression
   // Channel does NOT gate whether auto-update runs; it only selects the update
   // stream. Version shape does: anything that was not published can never have
   // an update target, and must never be replaced behind the developer's back.
@@ -371,7 +378,11 @@ export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   if (input.lastCheckedAt !== undefined && input.now - input.lastCheckedAt < input.intervalMs) {
     return { kind: "skip", reason: "interval" }
   }
-  if (!shouldUpgradeToVersion(input.currentVersion, latestVersion)) {
+  const pending = isPendingChannelSwitch(input.currentVersion, { channel: input.channel, explicit: input.channelExplicit === true })
+  if (channelForVersion(input.currentVersion) !== input.channel && !pending) {
+    return { kind: "skip", reason: "channel-mismatch" }
+  }
+  if (!pending && !shouldUpgradeToVersion(input.currentVersion, latestVersion)) {
     return { kind: "skip", reason: "up-to-date" }
   }
   if (autoupdate === true && input.method && SUPPORTED_AUTO_UPGRADE_METHODS.has(input.method)) {
@@ -411,14 +422,10 @@ export async function maybeAutoUpdate(input: {
   fetchImpl?: typeof fetch
   now?: number
   intervalMs?: number
-  // Overrides the build-stamped InstallationVersion. Only tests pass it: under
-  // `bun test` InstallationVersion is the "local" sentinel, which trips the
-  // skip gate, so without this seam none of the orchestration below is reachable
-  // from a test at all.
-  version?: string
+  version: string
 }) {
   const env = input.env ?? process.env
-  const currentVersion = input.version ?? InstallationVersion
+  const currentVersion = input.version
   const log = createUpdateLogger(currentVersion, env)
   const skip = autoUpdateSkipReason({ args: input.args, env, version: currentVersion })
   if (skip) {
@@ -426,13 +433,14 @@ export async function maybeAutoUpdate(input: {
     return
   }
 
-  await log("started")
   const config = await ConfigAutoupdate.read({ env }).catch(async (error) => {
     await log("config-failed", { error: error instanceof Error ? error.message : String(error) })
-    throw error
+    return undefined
   })
+  // A broken optional updater configuration must not block the user's command
+  // or enable updates by falling back to a default after a failed read.
+  if (!config) return
   const autoupdate = config.value
-  await log("config", { autoupdate, configured: config.configured, source: config.source, config_path: config.path })
   if (autoupdate === false) {
     await log("skipped", { reason: "disabled", source: config.source })
     return
@@ -443,7 +451,9 @@ export async function maybeAutoUpdate(input: {
   const paths = updatePaths(undefined, env)
   const state = ((await readObject(paths.state)) as UpdateState) ?? {}
   if (state.last_checked_at !== undefined && now - state.last_checked_at < intervalMs) {
-    await log("skipped", {
+    // Keep failure cooldowns visible. Healthy repeated invocations are quiet
+    // unless support explicitly requests detailed interval diagnostics.
+    if (env.CLICKZETTA_UPDATE_DEBUG === "1" || state.last_result === "check-failed" || state.last_result === "upgrade-failed") await log("skipped", {
       reason: "interval",
       last_checked_at: state.last_checked_at,
       last_result: state.last_result,
@@ -451,14 +461,14 @@ export async function maybeAutoUpdate(input: {
     })
     return
   }
+  await log("config", { autoupdate, configured: config.configured, source: config.source, config_path: config.path })
   const method = installMethodFromExecPath(process.execPath, undefined, env)
-  const channel = await resolveReleaseChannel({ env })
+  const selection = await resolveReleaseSelection({ env })
+  const channel = selection.channel
   const started = Date.now()
-  await log("check-started", { method, channel, url: `https://cz-cli.ai/api/${channel}`, timeout_ms: DEFAULT_REQUEST_TIMEOUT_MS })
+  await log("check-started", { method, channel, channel_source: selection.source, url: `https://cz-cli.ai/api/${channel}`, timeout_ms: DEFAULT_REQUEST_TIMEOUT_MS })
 
-  let checkFailed = false
   const latestVersion = await latestVersionForMethod(method, input.fetchImpl ?? fetch, channel).catch(async (error) => {
-    checkFailed = true
     await log("check-failed", { channel, duration_ms: Date.now() - started, error: error instanceof Error ? error.message : String(error) })
     await writeJson(paths.state, {
       ...state,
@@ -468,9 +478,11 @@ export async function maybeAutoUpdate(input: {
     } satisfies UpdateState)
     return undefined
   })
+  if (!latestVersion) return
   const action = resolveUpdateAction({
     autoupdate,
     channel,
+    channelExplicit: selection.explicit,
     currentVersion,
     latestVersion,
     lastCheckedAt: state.last_checked_at,
@@ -478,30 +490,22 @@ export async function maybeAutoUpdate(input: {
     intervalMs,
     method,
   })
-  if (!checkFailed) {
-    await log("check-completed", { channel, latest_version: latestVersion, duration_ms: Date.now() - started })
-    await log("decision", {
-      action: action.kind,
-      reason: action.kind === "notify" ? autoupdate === "notify" ? "notify-only" : "unsupported-install-method" : action.reason,
-      method,
-      channel,
-      latest_version: latestVersion,
-    })
-  }
+  await log("check-completed", { channel, latest_version: latestVersion, duration_ms: Date.now() - started })
+  await log("decision", {
+    action: action.kind,
+    reason: action.kind === "notify" ? autoupdate === "notify" ? "notify-only" : "unsupported-install-method" : action.reason,
+    method,
+    channel,
+    latest_version: latestVersion,
+  })
   if (action.kind === "skip") {
     if (action.reason === "interval") return
-    // A failed check lands here as reason "version" (latestVersion is undefined).
-    // The catch above already wrote the authoritative state, including the error;
-    // falling through would rewrite `last_result` with the PRE-failure value from
-    // the stale in-memory `state` and drop `error`, erasing within milliseconds
-    // the only evidence that the check is failing at all. That is why a machine
-    // that can never reach cz-cli.ai still reports a cheerful "up-to-date".
-    if (checkFailed) return
     await writeJson(paths.state, {
       ...state,
       last_checked_at: now,
-      last_result: action.reason === "up-to-date" ? "up-to-date" : state.last_result,
+      last_result: action.reason === "up-to-date" ? "up-to-date" : undefined,
       latest_version: latestVersion,
+      error: undefined,
     } satisfies UpdateState)
     return
   }
@@ -514,13 +518,14 @@ export async function maybeAutoUpdate(input: {
     error: undefined,
   } satisfies UpdateState)
 
-  process.stderr.write(`A newer cz-cli is available: ${currentVersion} -> ${latestVersion}\n`)
+  const pending = isPendingChannelSwitch(currentVersion, selection)
+  process.stderr.write(`${pending ? "A cz-cli channel switch is pending" : "A newer cz-cli is available"}: ${currentVersion} -> ${latestVersion}\n`)
   if (action.kind === "notify" || !latestVersion) return
 
   const upgrading = Date.now()
   await log("upgrade-started", { method, channel, latest_version: latestVersion })
   try {
-    await performUpgrade(method, latestVersion, input.fetchImpl ?? fetch, channel)
+    await performUpgrade(method, latestVersion, input.fetchImpl ?? fetch, channel, pending)
     await ensureRestartBinaryAtPath(latestVersion, process.execPath, env)
     await writeInstallMetadata({ binary_version: latestVersion, channel }, { env })
     await writeJson(paths.state, {

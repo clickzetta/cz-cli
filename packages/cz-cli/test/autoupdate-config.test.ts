@@ -80,9 +80,6 @@ test("imports the former legacy precedence without overwriting other canonical s
 test.each([
   ["CLICKZETTA_AUTOUPDATE", "false", false],
   ["CLICKZETTA_AUTOUPDATE", "notify", "notify"],
-  ["CLICKZETTA_DISABLE_AUTOUPDATE", "1", false],
-  ["CLICKZETTA_SKIP_UPDATE_ONCE", "1", false],
-  ["CZ_SKIP_UPDATE", "yes", false],
 ] as const)("the command and bootstrap report override %s=%s", async (key, value, expected) => {
   const config = await run(["true"], { [key]: value })
   expect(config.value).toBe(expected)
@@ -90,6 +87,15 @@ test.each([
   expect(config.source).toBe(key)
   expect((await loadBootstrapConfig({ env: { ...environment(), [key]: value } })).autoupdate).toBe(expected)
   expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe(true)
+})
+
+test.each(["CLICKZETTA_DISABLE_AUTOUPDATE", "CLICKZETTA_SKIP_UPDATE_ONCE", "CZ_SKIP_UPDATE"])("%s suppresses only this invocation, not the saved preference", async (key) => {
+  const config = await run(["true"], { [key]: "1" })
+  expect(config.value).toBe(true)
+  expect(config.configured).toBe(true)
+  expect(config.source).toBe(path.join(home, ".clickzetta/czcli.json"))
+  expect(config.suppressed_by).toBe(key)
+  expect((await loadBootstrapConfig({ env: { ...environment(), [key]: "1" } })).autoupdate).toBe(true)
 })
 
 test("shows the default and supports off/on/notify through the command", async () => {

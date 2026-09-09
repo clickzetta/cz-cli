@@ -20,6 +20,7 @@ export async function read(input: Input = {}) {
     path: file,
     source: override?.source ?? (configured === undefined ? "default" : file),
     defaulted: configured === undefined && override === undefined,
+    suppressed_by: suppression(env) ?? null,
   }
 }
 
@@ -29,13 +30,16 @@ export async function write(autoupdate: Value, input: Input = {}) {
   await Bun.write(file, JSON.stringify({ ...config, autoupdate }, null, 2) + "\n")
 }
 
-function environmentOverride(env: NodeJS.ProcessEnv): { value: Value; source: string } | undefined {
+export function suppression(env: NodeJS.ProcessEnv = process.env) {
   const disabled = ["CLICKZETTA_SKIP_UPDATE_ONCE", "CLICKZETTA_DISABLE_AUTOUPDATE"]
     .find((key) => env[key] === "1")
-  if (disabled) return { value: false, source: disabled }
+  if (disabled) return disabled
   if (["1", "true", "yes"].includes((env.CZ_SKIP_UPDATE ?? "").trim().toLowerCase())) {
-    return { value: false, source: "CZ_SKIP_UPDATE" }
+    return "CZ_SKIP_UPDATE"
   }
+}
+
+function environmentOverride(env: NodeJS.ProcessEnv): { value: Value; source: string } | undefined {
   if (["true", "false", "notify"].includes(env.CLICKZETTA_AUTOUPDATE ?? "")) {
     return {
       value: env.CLICKZETTA_AUTOUPDATE === "notify" ? "notify" : env.CLICKZETTA_AUTOUPDATE === "true",
@@ -66,6 +70,8 @@ async function migrate(input: Input) {
   const home = input.home ?? env.CLICKZETTA_TEST_HOME ?? os.homedir()
   // Only consult legacy locations when the canonical file has no preference.
   // Preserve their former precedence once, then stop reading them on later runs.
+  // This includes upstream opencode's system/MDM sources deliberately: cz-cli
+  // owns this preference in one user file, not a live upstream policy hierarchy.
   const { ConfigManaged } = await import("opencode/config/managed")
   const managed = env.CLICKZETTA_TEST_MANAGED_CONFIG_DIR ?? ConfigManaged.managedConfigDir()
   const files = [
