@@ -1,6 +1,5 @@
 export async function checkAndUpdate(args: string[]): Promise<void> {
-  const module = await import("./bootstrap/update.js") as {
-    maybeAutoUpdate: (input: { args: string[] }) => Promise<void>
-  }
-  await module.maybeAutoUpdate({ args })
+  const { maybeAutoUpdate } = await import("./bootstrap/update.js")
+  const { InstallationVersion } = await import("@opencode-ai/core/installation/version")
+  await maybeAutoUpdate({ args, version: InstallationVersion })
 }

@@ -23,7 +23,7 @@ import {
   type InstallMethod,
   installMethodFromExecPath,
   performUpgrade,
-  resolveReleaseChannel,
+  resolveReleaseSelection,
   writeInstallMetadata,
 } from "../bootstrap/update.js"
 import {
@@ -33,11 +33,28 @@ import {
   coerceChannel,
   channelForVersion,
   isLocalBuildVersion,
+  isPendingChannelSwitch,
+  toComparableSemver,
   shouldUpgradeToVersion,
 } from "../bootstrap/release-version.js"
 
 export function shouldApplyUpdate(currentVersion: string, latestVersion: string, force: boolean) {
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
+}
+
+export function resolveUpdateRequest(stored: { channel: ReleaseChannel; explicit: boolean }, input: { channel?: string; target?: string }) {
+  const requested = coerceChannel(input.channel)
+  const target = input.target?.replace(/^v/, "")
+  const targetChannel = target ? channelForVersion(target) : undefined
+  if (target && (!targetChannel || isLocalBuildVersion(target))) throw new Error(`Invalid release target: ${target}`)
+  if (requested && targetChannel && requested !== targetChannel) {
+    throw new Error(`Target ${target} belongs to ${targetChannel}, not requested channel ${requested}`)
+  }
+  return {
+    channel: requested ?? targetChannel ?? stored.channel,
+    explicit: requested !== undefined || targetChannel !== undefined || stored.explicit,
+    target,
+  }
 }
 
 function readBinaryVersion(binaryPath: string) {
@@ -269,8 +286,10 @@ async function fetchLatestFromNpm(): Promise<string> {
  * visible, along with the one command that gets out of it.
  */
 export function describeStableAlternative(current: string, stableLatest: string | undefined) {
-  if (!stableLatest) return undefined
-  if (!shouldUpgradeToVersion(current, stableLatest)) return undefined
+  if (!stableLatest || channelForVersion(current) !== "nightly") return undefined
+  const currentBase = toComparableSemver(current)?.split(/[+-]/)[0]
+  const stableBase = toComparableSemver(stableLatest)?.split(/[+-]/)[0]
+  if (!currentBase || !stableBase || !shouldUpgradeToVersion(currentBase, stableBase)) return undefined
   return `The stable channel is at ${stableLatest}. Switch with: cz-cli update --channel stable`
 }
 
@@ -312,23 +331,24 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      const storedChannel = await resolveReleaseChannel()
+      const stored = await resolveReleaseSelection()
       const requestedChannel = coerceChannel(argv.channel)
-      const channel: ReleaseChannel = requestedChannel ?? storedChannel
-      const switchingChannel = requestedChannel !== undefined && requestedChannel !== storedChannel
+      const selection = resolveUpdateRequest(stored, { channel: argv.channel, target: argv.target })
+      const channel = selection.channel
+      const switchingChannel = requestedChannel !== undefined && (requestedChannel !== stored.channel || channelForVersion(VERSION) !== channel)
       // The installed binary can already be from another channel than the one we
       // are pinned to — a --channel switch whose download failed, or an install
       // script that rewrote the stored channel without replacing the binary.
       // That is a pending switch, not a downgrade, so it authorizes the move;
       // otherwise a bare `update` would report a stable version as "up to date
       // on the nightly channel" and strand the user there forever.
-      const pendingChannelSwitch = channelForVersion(VERSION) !== channel
-      if (switchingChannel) {
+      const pendingChannelSwitch = isPendingChannelSwitch(VERSION, selection)
+      if (requestedChannel !== undefined) {
         // Persist the preference before doing any work: an explicit --channel is
         // the user re-pinning the channel, and it must survive a failed download
         // instead of silently reverting on the next run.
         await writeInstallMetadata({ channel })
-        process.stderr.write(`Switching channel: ${storedChannel} → ${channel}\n`)
+        process.stderr.write(`Selected channel: ${channel}\n`)
       } else {
         process.stderr.write(`Channel: ${channel}\n`)
       }
@@ -336,8 +356,8 @@ export function registerUpdateCommand(cli: Argv) {
       // --- Step 1: Fetch latest version for this channel (no cross-channel fallback) ---
       process.stderr.write("Checking for updates...\n")
       let latest: string | undefined
-      if (argv.target) {
-        latest = argv.target.replace(/^v/, "")
+      if (selection.target) {
+        latest = selection.target
         process.stderr.write(`  Requested version: ${latest}\n`)
       } else {
         try {
@@ -375,7 +395,7 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      if (pendingChannelSwitch && !switchingChannel) {
+      if (pendingChannelSwitch && !switchingChannel && !selection.target) {
         process.stderr.write(
           `Installed ${VERSION} is a ${channelForVersion(VERSION) ?? "unknown"}-channel build but this install is pinned to ${channel}; completing the switch.\n`,
         )
@@ -383,11 +403,12 @@ export function registerUpdateCommand(cli: Argv) {
 
       // An explicit --channel switch (or an already-crossed install) authorizes a
       // move across streams the same way --target authorizes an explicit version.
-      if (!shouldApplyUpdate(VERSION, latest, argv.force || !!argv.target || switchingChannel || pendingChannelSwitch)) {
+      const force = argv.force || !!selection.target || switchingChannel || pendingChannelSwitch
+      if (!shouldApplyUpdate(VERSION, latest, force)) {
         if (latest === VERSION) {
           process.stderr.write(`Already up to date (${VERSION}) on the ${channel} channel.\n`)
           // Nightly can stall; surface where stable is so this is not a dead end.
-          const stableLatest = channel === "stable"
+          const stableLatest = channel === "stable" || !process.stdout.isTTY || argv.format_explicit
             ? undefined
             : await fetchLatestFromCzCliAi("stable").catch(() => undefined)
           const alternative = describeStableAlternative(VERSION, stableLatest)
@@ -466,7 +487,7 @@ export function registerUpdateCommand(cli: Argv) {
 
         const label = ["npm", "pnpm", "yarn", "bun"].includes(method) ? method : "install script"
         process.stderr.write(`Upgrading via ${label}...\n`)
-        await performUpgrade(method, latest, fetch, channel, argv.force)
+        await performUpgrade(method, latest, fetch, channel, force)
 
         // Post-upgrade fixup: if install.sh placed the binary in a different dir
         // than where `which cz-cli` resolves, copy it to the right place.

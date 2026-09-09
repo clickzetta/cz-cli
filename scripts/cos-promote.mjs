@@ -4,7 +4,7 @@
  *
  * Usage:
  *   bun run scripts/cos-promote.mjs --channel stable --version 0.3.62
- *   bun run scripts/cos-promote.mjs --channel nightly --version 0.3.62
+ *   bun run scripts/cos-promote.mjs --channel nightly --version dev-v0.3.62.20260901105751
  *
  * Env: COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION
  *      COS_PATH_PREFIX (optional, default "cz-cli-releases")

@@ -24,14 +24,21 @@ export function createUpdateLogger(version: string, env: NodeJS.ProcessEnv = pro
         current_version: version,
         exec_path: process.execPath,
         event,
-        ...fields,
-        // Installer errors can include subprocess output; bound and redact it.
-        ...(typeof fields.error === "string" ? { error: fields.error
-          .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@")
-          .replace(/(Bearer\s+)\S+/gi, "$1[redacted]")
-          .replace(/((?:token|password|secret|api[_-]?key)\s*[=:]\s*)[^\s&,;]+/gi, "$1[redacted]")
-          .slice(0, 4096) } : {}),
+        ...Object.fromEntries(Object.entries(fields).map(([key, value]) => [
+          key,
+          typeof value === "string" ? redact(value) : value,
+        ])),
       }) + "\n", { mode: 0o600 })
     })().catch(() => {})
   }
+}
+
+function redact(value: string) {
+  // Installer output can echo shell commands as well as JSON or URLs. Apply the
+  // same treatment to every string field, including future diagnostic events.
+  return value
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@")
+    .replace(/(Bearer\s+)\S+/gi, "$1[redacted]")
+    .replace(/((?:[\w-]*(?:token|password|passwd|secret|api[_-]?key)|CZ_PAT|--pat)["']?\s*(?:[=:]\s*|\s+))(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&,;]+)/gi, "$1[redacted]")
+    .slice(0, 4096)
 }

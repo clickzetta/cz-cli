@@ -39,7 +39,8 @@ export function registerAutoupdateCommand(cli: Argv<GlobalArgs>) {
         }
         const config = await ConfigAutoupdate.read()
         const saved = argv.value === undefined ? "" : `Saved autoupdate=${config.configured} in ${config.path}. `
-        output(argv, { ...config, log_path: updateLogPath() }, `${saved}autoupdate=${config.value} (source: ${config.source}). Log: ${updateLogPath()}`)
+        const suppressed = config.suppressed_by ? ` This invocation is suppressed by ${config.suppressed_by}.` : ""
+        output(argv, { ...config, log_path: updateLogPath() }, `${saved}autoupdate=${config.value} (source: ${config.source}).${suppressed} Log: ${updateLogPath()}`)
       } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
         process.exitCode = 2

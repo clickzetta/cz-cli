@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { resolveUpdateAction, shouldSkipAutoUpdateCommand } from "../src/bootstrap/update"
-import { describeStableAlternative, shouldApplyUpdate } from "../src/commands/update"
-import { channelForVersion } from "../src/bootstrap/release-version"
+import { describeStableAlternative, shouldApplyUpdate, resolveUpdateRequest } from "../src/commands/update"
+import { channelForVersion, isPendingChannelSwitch } from "../src/bootstrap/release-version"
 
 const NIGHTLY = "dev-v2.0.4.20260901105751"
 const baseAction = {
-  channel: "stable",
+  channel: "stable" as const,
   now: 1_000_000,
   intervalMs: 1_000,
   method: "curl" as const,
@@ -51,6 +51,29 @@ describe("shouldApplyUpdate", () => {
 })
 
 describe("a crossed install is a pending switch, not a downgrade", () => {
+  test("automatic updates complete an explicit switch even to an older prerelease", () => {
+    const selection = { channel: "nightly" as const, explicit: true }
+    expect(isPendingChannelSwitch("2.0.4", selection)).toBe(true)
+    expect(resolveUpdateAction({ ...baseAction, channel: selection.channel, channelExplicit: selection.explicit, currentVersion: "2.0.4", latestVersion: NIGHTLY })).toEqual({ kind: "upgrade", reason: "managed-install" })
+  })
+
+  test("a default channel never authorizes a pending switch or an automatic cross-channel move", () => {
+    const selection = resolveUpdateRequest({ channel: "stable", explicit: false }, {})
+    const current = "dev-v2.1.0.20260901105751"
+    expect(isPendingChannelSwitch(current, selection)).toBe(false)
+    expect(shouldApplyUpdate(current, "2.0.4", isPendingChannelSwitch(current, selection))).toBe(false)
+    expect(resolveUpdateAction({ ...baseAction, currentVersion: current, latestVersion: "2.0.4" })).toEqual({ kind: "skip", reason: "channel-mismatch" })
+  })
+
+  test("an explicit request matching the default still authorizes a channel switch", () => {
+    const selection = resolveUpdateRequest({ channel: "stable", explicit: false }, { channel: "stable" })
+    expect(isPendingChannelSwitch("dev-v2.1.0.20260901105751", selection)).toBe(true)
+  })
+
+  test("a targeted release selects its own channel and rejects conflicting channel flags", () => {
+    expect(resolveUpdateRequest({ channel: "stable", explicit: true }, { target: NIGHTLY })).toEqual({ channel: "nightly", explicit: true, target: NIGHTLY })
+    expect(() => resolveUpdateRequest({ channel: "stable", explicit: true }, { channel: "stable", target: NIGHTLY })).toThrow("belongs to nightly")
+  })
   // What `pendingChannelSwitch` detects: the stored channel and the installed
   // binary's own channel disagree, so the move to the stored channel's latest
   // must be allowed even when semver calls it a step back.
@@ -69,6 +92,9 @@ describe("a crossed install is a pending switch, not a downgrade", () => {
 })
 
 describe("describeStableAlternative", () => {
+  test("does not suggest leaving a nightly on the same release base", () => {
+    expect(describeStableAlternative(NIGHTLY, "2.0.4")).toBeUndefined()
+  })
   test("surfaces stable when a stalled nightly is reported as current", () => {
     expect(describeStableAlternative(NIGHTLY, "2.1.0")).toContain("stable channel is at 2.1.0")
     expect(describeStableAlternative(NIGHTLY, "2.1.0")).toContain("cz-cli update --channel stable")

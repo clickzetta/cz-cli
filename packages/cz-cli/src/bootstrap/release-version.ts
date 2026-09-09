@@ -32,6 +32,11 @@ export type ReleaseChannel = "stable" | "nightly"
 export const DEFAULT_RELEASE_CHANNEL: ReleaseChannel = "stable"
 export const RELEASE_CHANNELS: readonly ReleaseChannel[] = ["stable", "nightly"]
 
+export function isPendingChannelSwitch(version: string, selection: { channel: ReleaseChannel; explicit: boolean }) {
+  const installed = channelForVersion(version)
+  return selection.explicit && installed !== undefined && installed !== selection.channel
+}
+
 const DEV_RELEASE_VERSION_RE = /^dev-v(\d+\.\d+\.\d+)\.([\w.-]+)$/
 const SEMVER_RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
