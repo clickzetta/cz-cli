@@ -50,6 +50,7 @@ const ROUTES = {
   domainPromptClear: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/prompt` },
   domainTableAdd: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables` },
   domainTableRemove: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables/${encodePath(argv["table-id"])}` },
+  domainJoinList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
   domainJoinDiscover: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/discover` },
   domainJoinResult: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/joins/tasks/${encodePath(argv["task-id"])}` },
   domainJoinApply: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/apply` },
@@ -450,6 +451,21 @@ function undefinedIfEmpty(value: Record<string, unknown>): Record<string, unknow
 
 function encodePath(value: unknown): string {
   return encodeURIComponent(String(value ?? ""))
+}
+
+function parseTablePath(path: string | undefined): { workspace?: string; schema?: string; tableName?: string } {
+  if (!path) return {}
+  const result: { workspace?: string; schema?: string; tableName?: string } = {}
+  for (const segment of path.split("/")) {
+    const colonIdx = segment.indexOf(":")
+    if (colonIdx === -1) continue
+    const key = segment.slice(0, colonIdx).toLowerCase()
+    const value = segment.slice(colonIdx + 1)
+    if (key === "workspace") result.workspace = value
+    else if (key === "schema") result.schema = value
+    else if (key === "table") result.tableName = value
+  }
+  return result
 }
 
 /**
@@ -2058,28 +2074,43 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("path", { type: "string", describe: "Table path" })
-                .option("table-name", { type: "string", describe: "Table name" })
-                .option("display-name", { type: "string", describe: "Dataset display name" })
+                .option("workspace", { type: "string", describe: "Workspace name (required for lakehouse type; also accepts -w from global options)" })
+                .option("schema", { type: "string", describe: "Schema name (required for lakehouse type)" })
+                .option("path", { type: "string", describe: "Table path shorthand: workspace:X/schema:Y/table:Z — workspace and schema extracted automatically; table-name must still be provided separately or included as table:Z" })
+                .option("table-name", { type: "string", describe: "Table name (required; can be omitted when --path includes table:Z)" })
+                .option("display-name", { type: "string", describe: "Dataset display name (defaults to table-name when omitted)" })
                 .option("description", { type: "string", describe: "Dataset description" })
                 .option("domain-ids", { type: "string", describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("mode", { type: "number", describe: "Dataset mode" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .option("body", { type: "string", describe: "Full request body as JSON object (overrides individual flags)" })
                 .epilogue(
                   [
+                    "Notes:",
+                    "  --workspace, --schema, --table-name are required for lakehouse datasources.",
+                    "  --display-name defaults to --table-name when not provided.",
+                    "",
                     "Examples:",
-                    "  cz-cli analytics-agent datasource load 3 --path workspace:default/schema:public/table:orders --domain-ids '[5]'",
-                    "  如果当前工作区是 default、schema 是 public、表名是 orders，而且只导入一个域，就这样写。",
-                    "  cz-cli analytics-agent datasource load 3 --path workspace:default/schema:public/table:orders --domain-ids '[5,6]'",
-                    "  如果当前工作区是 default、schema 是 public、表名是 orders，而且要导入多个域，就这样写。",
+                    "  cz-cli analytics-agent datasource load 603 --workspace datagpt_ws --schema retail --table-name orders --domain-ids '[5]'",
+                    "  cz-cli analytics-agent datasource load 603 --path workspace:datagpt_ws/schema:retail/table:orders --domain-ids '[5]'",
+                    "  以上两种写法等效，--path 会自动解析 workspace/schema/table-name。",
+                    "  cz-cli analytics-agent datasource load 603 --workspace datagpt_ws --schema retail --table-name orders --domain-ids '[5,6]'",
+                    "  如果要导入多个域，就这样写。",
                   ].join("\n"),
                 ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
+              const pathParsed = parseTablePath(argv.path as string | undefined)
+              // Build path from --workspace/--schema if --path not given
+              const ws = (argv.workspace as string | undefined)
+              const sc = (argv.schema as string | undefined)
+              const pathFromFlags = !argv.path && (ws || sc)
+                ? [ws ? `workspace:${ws}` : null, sc ? `schema:${sc}` : null].filter(Boolean).join("/")
+                : undefined
+              const resolvedTableName = (argv["table-name"] as string | undefined) ?? pathParsed.tableName
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
-                path: argv.path,
-                tableName: argv["table-name"],
-                displayName: argv["display-name"],
+                path: (argv.path as string | undefined) ?? pathFromFlags,
+                tableName: resolvedTableName,
+                displayName: (argv["display-name"] as string | undefined) ?? resolvedTableName,
                 description: argv.description,
                 domainIds: optionalPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format),
                 mode: argv.mode,
@@ -2150,7 +2181,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                .option("with-tables", { type: "boolean", describe: "Include bound tables" }),
+                .option("with-tables", { type: "boolean", describe: "Include bound tables" })
+                .epilogue("Note: join relations are NOT included in this response. Use 'domain joins list --domain-id <id>' to view joins."),
             async (argv) => {
               await executeAnalyticsCommand("analytics-agent domain detail", argv as Record<string, unknown>, ROUTES.domainDetail, {}, {
                 withTables: argv["with-tables"],
@@ -2251,26 +2283,35 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 (y) =>
                   y
                     .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                    .option("datasource-id", { type: "number", describe: "Datasource ID" })
-                    .option("path", { type: "string", describe: "Table path" })
-                    .option("table-name", { type: "string", describe: "Table name" })
-                    .option("display-name", { type: "string", describe: "Dataset display name" })
+                    .option("datasource-id", { type: "number", describe: "Datasource ID (required for lakehouse type)" })
+                    .option("workspace", { type: "string", describe: "Workspace name (required for lakehouse type; also accepts -w from global options)" })
+                    .option("schema", { type: "string", describe: "Schema name (required for lakehouse type)" })
+                    .option("path", { type: "string", describe: "Table path shorthand: workspace:X/schema:Y/table:Z — workspace, schema, and table-name are extracted automatically" })
+                    .option("table-name", { type: "string", describe: "Table name (can be omitted when --path includes table:Z)" })
+                    .option("display-name", { type: "string", describe: "Dataset display name (defaults to table-name when omitted)" })
                     .option("description", { type: "string", describe: "Dataset description" })
-                    .option("body", { type: "string", describe: "Full request body as JSON object" })
+                    .option("body", { type: "string", describe: "Full request body as JSON object (overrides individual flags)" })
                     .epilogue(
                       [
+                        "Notes:",
+                        "  --workspace, --schema, --table-name are required for lakehouse datasources.",
+                        "  --display-name defaults to --table-name when not provided.",
+                        "",
                         "Examples:",
-                        "  cz-cli analytics-agent domain table add 27",
-                        "    --path workspace:default/schema:public/table:orders",
-                        "  如果当前工作区是 default、schema 是 public、表名是 orders，就这样写。",
+                        "  cz-cli analytics-agent domain table add 27 --datasource-id 603 --workspace datagpt_ws --schema retail --table-name orders",
+                        "  cz-cli analytics-agent domain table add 27 --datasource-id 603 --path workspace:datagpt_ws/schema:retail/table:orders",
+                        "  以上两种写法等效，--path 会自动解析 workspace/schema/table-name。",
                       ].join("\n"),
                     ),
                 async (argv) => {
+                  const pathParsed = parseTablePath(argv.path as string | undefined)
+                  const resolvedTableName = (argv["table-name"] as string | undefined) ?? pathParsed.tableName
                   const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                     datasourceId: argv["datasource-id"],
-                    path: argv.path,
-                    tableName: argv["table-name"],
-                    displayName: argv["display-name"],
+                    workspace: (argv.workspace as string | undefined) ?? pathParsed.workspace,
+                    schema: (argv.schema as string | undefined) ?? pathParsed.schema,
+                    tableName: resolvedTableName,
+                    displayName: (argv["display-name"] as string | undefined) ?? resolvedTableName,
                     description: argv.description,
                   })
                   await executeAnalyticsCommand("analytics-agent domain table add", argv as Record<string, unknown>, ROUTES.domainTableAdd, body)
@@ -2293,10 +2334,36 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           .command("joins", "Discover and apply domain join relations", (joins) => {
             joins
               .command(
-                "discover",
-                "Start async join discovery for a domain",
+                "list",
+                "List join relations saved to a domain",
                 (y) =>
-                  y.option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
+                  y
+                    .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .epilogue([
+                      "Note: 'domain detail' does NOT return join relations. Use this command to verify joins after 'joins apply'.",
+                      "",
+                      "Example:",
+                      "  cz-cli analytics-agent domain joins list --domain-id 27",
+                    ].join("\n")),
+                async (argv) => {
+                  await executeAnalyticsCommand("analytics-agent domain joins list", argv as Record<string, unknown>, ROUTES.domainJoinList, {})
+                },
+              )
+              .command(
+                "discover",
+                "Start async join discovery for a domain (step 1 of discover→result→apply flow)",
+                (y) =>
+                  y
+                    .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                    .epilogue([
+                      "Workflow: discover → result → apply",
+                      "  1. joins discover --domain-id 27          # returns taskId",
+                      "  2. joins result --task-id <taskId>         # poll until status=SUCCESS",
+                      "  3. joins apply --domain-id 27 --join <...> # apply selected joins",
+                      "",
+                      "Example:",
+                      "  cz-cli analytics-agent domain joins discover --domain-id 27",
+                    ].join("\n")),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const t0 = Date.now()
@@ -2317,9 +2384,17 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               )
               .command(
                 "result",
-                "Poll the result of a join discovery task",
+                "Poll the result of a join discovery task (step 2 of discover→result→apply flow)",
                 (y) =>
-                  y.option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by discover" }),
+                  y
+                    .option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by 'joins discover'" })
+                    .epilogue([
+                      "Poll until status=SUCCESS, then pass the returned joins to 'joins apply'.",
+                      "The tableName in each join is the internal view name (e.g. ws.schema.v_gpt_tablename).",
+                      "",
+                      "Example:",
+                      "  cz-cli analytics-agent domain joins result --task-id abc-123",
+                    ].join("\n")),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const t0 = Date.now()
@@ -2355,31 +2430,44 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               )
               .command(
                 "apply",
-                "Apply discovered join relations",
+                "Apply join relations to a domain (step 3 of discover→result→apply flow)",
                 (y) =>
                   y.option("join", {
                     type: "string",
                     demandOption: true,
                     describe:
-                      "Join relation in format: <datasetId>:<table>.<attr>=<joinDatasetId>:<joinTable>.<joinAttr>@<relation>  (e.g. 101:orders.user_id=202:users.id@n:1). Repeat for multiple joins.",
-                  }).option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" }),
+                      "Join in format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>. tableName must be the internal view name (v_gpt_*) from 'joins list' or 'joins result', not the physical table name. relation: n:1 | 1:1 | 1:n. Repeat flag for multiple joins.",
+                  })
+                  .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                  .epilogue([
+                    "IMPORTANT: tableName must be the internal view name returned by 'joins list' or 'joins result'",
+                    "(e.g. datagpt_ws.retail.v_gpt_orders), NOT the physical table name (orders).",
+                    "Use 'joins list --domain-id <id>' to get the correct tableName and datasetId values.",
+                    "",
+                    "Example:",
+                    "  cz-cli analytics-agent domain joins apply --domain-id 27 \\",
+                    "    --join '990:ws.retail.v_gpt_table1.id=991:ws.retail.v_gpt_table2.order_id@n:1'",
+                    "  # Verify with:",
+                    "  cz-cli analytics-agent domain joins list --domain-id 27",
+                  ].join("\n")),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const t0 = Date.now()
                   const rawJoins = Array.isArray(argv["join"]) ? argv["join"] : [argv["join"]]
-                  let joins: Record<string, unknown>[]
+                  let joinRelations: Record<string, unknown>[]
                   try {
-                    joins = (rawJoins as string[]).map((r) => parseJoinFlag(r))
+                    joinRelations = (rawJoins as string[]).map((r) => parseJoinFlag(r))
                   } catch (err) {
                     error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
                     return
                   }
                   try {
                     const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
-                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinApply, { joins }, {}, ctx)
+                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinApply, { joins: joinRelations }, {}, ctx)
                     const bizErr = extractBusinessError(payload)
                     if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    success({ submittedCount: joins.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
+                    const responseData = payload && typeof payload === "object" ? (payload as Record<string, unknown>).data : undefined
+                    success(responseData ?? { submittedCount: joinRelations.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
                   } catch (err) {
                     if (isHandledCliError(err)) return
                     error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
