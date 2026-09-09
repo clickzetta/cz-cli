@@ -12,7 +12,7 @@ export async function read(input: Input = {}) {
   const env = input.env ?? process.env
   const file = configPath(input)
   const config = await readObject(file, true)
-  const configured = value(config.autoupdate) ?? await migrate(input)
+  const configured = value(config.autoupdate) ?? (config.autoupdate_migrated === true ? undefined : await migrate(input))
   const override = environmentOverride(env)
   return {
     value: override?.value ?? configured ?? true,
@@ -80,10 +80,16 @@ async function migrate(input: Input) {
     path.join(managed, "opencode.json"),
     path.join(managed, "opencode.jsonc"),
   ]
-  const preferences = await Promise.all(files.map(async (file) => value((await readObject(file)).autoupdate)))
+  const preferences = await Promise.all(files.map(async (file) => value((await readObject(file).catch(() => undefined))?.autoupdate)))
   const mobile = await ConfigManaged.readManagedPreferences().catch(() => undefined)
   const migrated = (mobile ? value(parseCzConfigText(mobile.text).autoupdate) : undefined)
     ?? preferences.findLast((item) => item !== undefined)
-  if (migrated !== undefined) await write(migrated, input)
+  // Migration is best effort. A failed write must not discard a preference we
+  // successfully read. Record even an empty scan so fresh installs scan once.
+  await (async () => {
+    const file = configPath(input)
+    const config = await readObject(file, true)
+    await Bun.write(file, JSON.stringify({ ...config, ...(migrated === undefined ? {} : { autoupdate: migrated }), autoupdate_migrated: true }, null, 2) + "\n")
+  })().catch(() => {})
   return migrated
 }

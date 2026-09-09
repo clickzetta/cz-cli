@@ -32,6 +32,21 @@ test("a stored or environmental channel selection is explicit", async () => {
   expect(await resolveReleaseSelection({ env: { ...environment(), CZ_CHANNEL: "stable" } })).toEqual({ channel: "stable", explicit: true, source: "CZ_CHANNEL" })
 })
 
+test("a nightly without metadata checks its own channel without authorizing a cross-channel move", async () => {
+  const version = "dev-v2.0.4.20260901105751"
+  expect(await resolveReleaseSelection({ env: environment(), version })).toEqual({ channel: "nightly", explicit: false, source: "binary-version" })
+  const urls: string[] = []
+  await maybeAutoUpdate({
+    args: ["sql"], env: environment(), version,
+    fetchImpl: Object.assign(async (url: string | URL | Request) => {
+      urls.push(String(url))
+      return Response.json({ version: "dev-v2.0.4.20260902105751" })
+    }, { preconnect: fetch.preconnect }),
+  })
+  expect(urls).toEqual(["https://cz-cli.ai/api/nightly"])
+  expect((await entries()).at(-1)).toMatchObject({ action: "notify", channel: "nightly" })
+})
+
 test("automatic checking does not label an explicit crossed installation up to date", async () => {
   await Bun.write(path.join(home, ".clickzetta/install.json"), JSON.stringify({ channel: "nightly" }))
   await maybeAutoUpdate({

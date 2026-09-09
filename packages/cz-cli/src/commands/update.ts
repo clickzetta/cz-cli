@@ -18,6 +18,7 @@ import { unlinkSync, readSync, openSync, closeSync, readlinkSync, lstatSync, cop
 import path from "node:path"
 import type { Argv } from "yargs"
 import { VERSION } from "../version.js"
+import { UsageError } from "../usage-error.js"
 import { renderOutput } from "../output/index.js"
 import {
   type InstallMethod,
@@ -46,9 +47,9 @@ export function resolveUpdateRequest(stored: { channel: ReleaseChannel; explicit
   const requested = coerceChannel(input.channel)
   const target = input.target?.replace(/^v/, "")
   const targetChannel = target ? channelForVersion(target) : undefined
-  if (target && (!targetChannel || isLocalBuildVersion(target))) throw new Error(`Invalid release target: ${target}`)
+  if (target && (!targetChannel || isLocalBuildVersion(target))) throw new UsageError(`Invalid release target: ${target}`)
   if (requested && targetChannel && requested !== targetChannel) {
-    throw new Error(`Target ${target} belongs to ${targetChannel}, not requested channel ${requested}`)
+    throw new UsageError(`Target ${target} belongs to ${targetChannel}, not requested channel ${requested}`)
   }
   return {
     channel: requested ?? targetChannel ?? stored.channel,
@@ -235,9 +236,8 @@ function removeStaleBinary(p: string): boolean {
   }
 }
 
-async function fetchLatestFromCzCliAi(channel: ReleaseChannel): Promise<string> {
+async function fetchLatestFromCzCliAi(channel: ReleaseChannel, timeoutMs = 5000): Promise<string> {
   const url = `https://cz-cli.ai/api/${channel}`
-  const timeoutMs = 5000
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -331,7 +331,7 @@ export function registerUpdateCommand(cli: Argv) {
         return
       }
 
-      const stored = await resolveReleaseSelection()
+      const stored = await resolveReleaseSelection({ version: VERSION })
       const requestedChannel = coerceChannel(argv.channel)
       const selection = resolveUpdateRequest(stored, { channel: argv.channel, target: argv.target })
       const channel = selection.channel
@@ -348,7 +348,7 @@ export function registerUpdateCommand(cli: Argv) {
         // the user re-pinning the channel, and it must survive a failed download
         // instead of silently reverting on the next run.
         await writeInstallMetadata({ channel })
-        process.stderr.write(`Selected channel: ${channel}\n`)
+        process.stderr.write(`Channel pinned to ${channel}; if this update fails, automatic updates may complete the switch on a later check.\n`)
       } else {
         process.stderr.write(`Channel: ${channel}\n`)
       }
@@ -410,14 +410,14 @@ export function registerUpdateCommand(cli: Argv) {
           // Nightly can stall; surface where stable is so this is not a dead end.
           const stableLatest = channel === "stable" || !process.stdout.isTTY || argv.format_explicit
             ? undefined
-            : await fetchLatestFromCzCliAi("stable").catch(() => undefined)
+            : await fetchLatestFromCzCliAi("stable", 1000).catch(() => undefined)
           const alternative = describeStableAlternative(VERSION, stableLatest)
           if (alternative) process.stderr.write(`${alternative}\n`)
           emitUpdateResult(argv, {
             current_version: VERSION,
             channel,
             latest_version: latest,
-            stable_latest: stableLatest ?? null,
+            ...(stableLatest ? { stable_latest: stableLatest } : {}),
             updated: false,
             reason: "already_latest",
           }, [`Already up to date (${VERSION}) on the ${channel} channel.`, alternative].filter(Boolean).join(" "))

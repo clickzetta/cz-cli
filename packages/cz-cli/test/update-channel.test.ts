@@ -2,12 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { resolveUpdateAction, shouldSkipAutoUpdateCommand } from "../src/bootstrap/update"
 import { describeStableAlternative, shouldApplyUpdate, resolveUpdateRequest } from "../src/commands/update"
 import { channelForVersion, isPendingChannelSwitch } from "../src/bootstrap/release-version"
+import { UsageError } from "../src/usage-error"
 
 const NIGHTLY = "dev-v2.0.4.20260901105751"
 const baseAction = {
   channel: "stable" as const,
-  now: 1_000_000,
-  intervalMs: 1_000,
   method: "curl" as const,
 }
 
@@ -73,6 +72,7 @@ describe("a crossed install is a pending switch, not a downgrade", () => {
   test("a targeted release selects its own channel and rejects conflicting channel flags", () => {
     expect(resolveUpdateRequest({ channel: "stable", explicit: true }, { target: NIGHTLY })).toEqual({ channel: "nightly", explicit: true, target: NIGHTLY })
     expect(() => resolveUpdateRequest({ channel: "stable", explicit: true }, { channel: "stable", target: NIGHTLY })).toThrow("belongs to nightly")
+    expect(() => resolveUpdateRequest({ channel: "stable", explicit: true }, { target: "1.2" })).toThrow(UsageError)
   })
   // What `pendingChannelSwitch` detects: the stored channel and the installed
   // binary's own channel disagree, so the move to the stored channel's latest
