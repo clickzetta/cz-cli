@@ -22,4 +22,3 @@ runs:
       with:
         bun-version-file: ${{ !steps.bun-url.outputs.url && 'package.json' || '' }}
         bun-download-url: ${{ steps.bun-url.outputs.url }}
-
