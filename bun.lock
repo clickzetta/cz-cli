@@ -407,6 +407,7 @@
         "langfuse": "3.38.20",
         "opencode": "workspace:*",
         "openid-client": "6.8.4",
+        "semver": "7.7.4",
         "smol-toml": "1.6.1",
         "yargs": "18.0.0",
         "zod": "catalog:",
@@ -415,6 +416,7 @@
         "@opencode-ai/script": "workspace:*",
         "@opentui/solid": "catalog:",
         "@types/bun": "catalog:",
+        "@types/semver": "catalog:",
         "@types/yargs": "17.0.33",
         "solid-js": "catalog:",
         "typescript": "catalog:",
@@ -5978,6 +5980,8 @@
     "@babel/helper-create-class-features-plugin/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
     "@bufbuild/protoplugin/typescript": ["typescript@5.4.5", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ=="],
+
+    "@clickzetta/cli/semver": ["semver@7.7.4", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA=="],
 
     "@cloudflare/kv-asset-handler/mime": ["mime@3.0.0", "", { "bin": { "mime": "cli.js" } }, "sha512-jSCU7/VB1loIWBZe14aEYHU/+1UMEHoaO7qxCOVJOw9GgH72VAWppxNcjU+x9a2k3GSIBXNKxXQFqRvvZ7vr3A=="],
 

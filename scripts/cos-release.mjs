@@ -206,10 +206,30 @@ function releaseMetaKey(version, ...parts) {
   return metaRootKey("releases", version, ...parts)
 }
 
+// `dev-v*` versions belong to nightly and plain semver to stable; the two
+// streams never mix. Clients rely on this: a nightly install refuses a version
+// that does not carry the nightly shape rather than crossing channels, so a
+// pointer published to the wrong stream would strand every client on it.
+// `promoteNightly` defaults to true, so without this guard a manual
+// `cos-release.mjs --version 2.0.4` would put a stable version on nightly.
+function channelForVersion(version) {
+  return version.startsWith("dev-v") ? "nightly" : "stable"
+}
+
 function requestedChannels(ctx) {
   const channels = []
   if (ctx.promoteNightly) channels.push("nightly")
   if (ctx.promoteStable) channels.push("stable")
+  const own = channelForVersion(ctx.version)
+  const crossed = channels.filter((channel) => channel !== own)
+  if (crossed.length > 0) {
+    throw new Error(
+      `Refusing to promote ${ctx.version} to ${crossed.join(", ")}: it belongs to the ${own} channel. ` +
+        (own === "stable"
+          ? "Pass --no-promote-nightly --promote-stable for a stable release."
+          : "dev-v* releases only ever promote to nightly."),
+    )
+  }
   return channels
 }
 

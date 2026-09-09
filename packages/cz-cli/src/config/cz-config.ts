@@ -51,8 +51,9 @@ export function czConfigCandidates(home?: string, env: NodeJS.ProcessEnv = proce
  * An unparseable file yields {} instead of throwing. A hand-edited config with one
  * stray comma must not take down every command that reads a switch; the cost is
  * that the file is silently ignored, which the user sees as "my setting did nothing".
+ * Writers use strict mode so an invalid file cannot be replaced by an empty object.
  */
-export function parseCzConfigText(text: string): Record<string, unknown> {
+export function parseCzConfigText(text: string, options: { strict?: boolean } = {}): Record<string, unknown> {
   for (const parse of [jsonc, parseToml] as const) {
     try {
       const parsed = parse(text, CZ_CONFIG_FILE)
@@ -61,6 +62,7 @@ export function parseCzConfigText(text: string): Record<string, unknown> {
       // try the next format
     }
   }
+  if (options.strict) throw new Error(`Invalid config in ${CZ_CONFIG_FILE}; expected a JSON, JSONC, or TOML object`)
   return {}
 }
 
