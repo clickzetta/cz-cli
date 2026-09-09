@@ -468,6 +468,14 @@ function parseTablePath(path: string | undefined): { workspace?: string; schema?
   return result
 }
 
+function requiredTableName(value: unknown, format: string): string {
+  if (typeof value === "string" && value.trim() !== "") return value.trim()
+  return handledError("USAGE_ERROR", "--table-name is required and must be non-empty; pass it directly or include table:<name> in --path", {
+    format,
+    exitCode: EXIT_USAGE_ERROR,
+  })
+}
+
 /**
  * Parses a --join flag value into a DatasetJoinDTO-shaped object.
  * Format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>
@@ -1534,6 +1542,24 @@ async function executeAnalyticsCommand(
   }
 }
 
+async function ensureAnalyticsDomainExists(argv: Record<string, unknown>): Promise<boolean> {
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  try {
+    const payload = await requestAnalytics(argv, ROUTES.domainDetail, {}, {})
+    const bizErr = extractBusinessError(payload)
+    if (!bizErr) return true
+    error(bizErr.code, bizErr.message, { format })
+    return false
+  } catch (err) {
+    if (isHandledCliError(err)) return false
+    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+    return false
+  }
+}
+
 async function executeKnowledgeNodeListCommand(
   name: string,
   argv: Record<string, unknown>,
@@ -2106,8 +2132,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const pathFromFlags = !argv.path && (ws || sc)
                 ? [ws ? `workspace:${ws}` : null, sc ? `schema:${sc}` : null].filter(Boolean).join("/")
                 : undefined
-              const resolvedTableName = (argv["table-name"] as string | undefined) ?? pathParsed.tableName
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const parsedBody = parseJsonObject(argv.body, "--body")
+              const resolvedTableName = requiredTableName(argv["table-name"] ?? pathParsed.tableName ?? parsedBody.tableName, format)
+              const body = mergeBody(parsedBody, {
                 path: (argv.path as string | undefined) ?? pathFromFlags,
                 tableName: resolvedTableName,
                 displayName: (argv["display-name"] as string | undefined) ?? resolvedTableName,
@@ -2227,17 +2254,39 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 (y) =>
                   y
                     .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                    .option("prompt", { type: "string", describe: "Domain custom prompt" }),
+                    .option("prompt", { type: "string", describe: "Domain custom prompt (quote values containing spaces)" })
+                    .option("prompt-file", { type: "string", describe: "Read the domain custom prompt from a UTF-8 file (use for long or multiline prompts)" })
+                    .conflicts("prompt", "prompt-file")
+                    .example(
+                      "cz-cli analytics-agent domain prompt set 27 --prompt \"Answer with concise, data-backed explanations.\"",
+                      "Set a short domain prompt",
+                    )
+                    .example(
+                      "cz-cli analytics-agent domain prompt set 27 --prompt-file ./domain-prompt.md",
+                      "Set a long or multiline domain prompt from a file",
+                    ),
                 async (argv) => {
                   const format = typeof argv.format === "string" ? argv.format : "json"
-                  if (typeof argv.prompt !== "string" || argv.prompt.trim() === "") {
-                    error("USAGE_ERROR", "prompt is required", { format })
+                  const promptFile = typeof argv["prompt-file"] === "string" ? argv["prompt-file"] : undefined
+                  let prompt: string | undefined
+                  if (promptFile) {
+                    try {
+                      prompt = await Bun.file(promptFile).text()
+                    } catch {
+                      error("USAGE_ERROR", `cannot read prompt file: ${promptFile}`, { format })
+                      return
+                    }
+                  } else if (typeof argv.prompt === "string") {
+                    prompt = argv.prompt.trim()
+                  }
+                  if (!prompt || prompt.trim() === "") {
+                    error("USAGE_ERROR", "prompt is required; use --prompt for short text or --prompt-file for long/multiline text", { format })
                     return
                   }
                   const t0 = Date.now()
                   try {
                     const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainPromptSet, {
-                      prompt: argv.prompt.trim(),
+                      prompt,
                     })
                     const bizErr = extractBusinessError(payload)
                     if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
@@ -2304,9 +2353,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       ].join("\n"),
                     ),
                 async (argv) => {
+                  const format = typeof argv.format === "string" ? argv.format : "json"
                   const pathParsed = parseTablePath(argv.path as string | undefined)
-                  const resolvedTableName = (argv["table-name"] as string | undefined) ?? pathParsed.tableName
-                  const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+                  const parsedBody = parseJsonObject(argv.body, "--body")
+                  const resolvedTableName = requiredTableName(argv["table-name"] ?? pathParsed.tableName ?? parsedBody.tableName, format)
+                  const body = mergeBody(parsedBody, {
                     datasourceId: argv["datasource-id"],
                     workspace: (argv.workspace as string | undefined) ?? pathParsed.workspace,
                     schema: (argv.schema as string | undefined) ?? pathParsed.schema,
@@ -3700,6 +3751,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 sourceType: argv["source-type"],
                 sourceId: argv["source-id"],
               })
+              if (!(await ensureAnalyticsDomainExists(argv as Record<string, unknown>))) return
               await executeAnalyticsCommand("analytics-agent session list", argv as Record<string, unknown>, ROUTES.sessionList, body)
             },
           )

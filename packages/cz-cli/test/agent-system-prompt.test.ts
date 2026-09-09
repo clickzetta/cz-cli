@@ -7,4 +7,10 @@ describe("ClickZetta agent prompt", () => {
     expect(CLICKZETTA_AGENT_SYSTEM_PROMPT).toContain("<full Lakehouse COPY INTO/OVERWRITE statement>")
     expect(CLICKZETTA_AGENT_SYSTEM_PROMPT).toContain("Do not put table-load flags such as --using or --header inside the SQL statement")
   })
+
+  test("uses a file for long or quote-heavy Analytics Agent domain prompts", () => {
+    expect(CLICKZETTA_AGENT_SYSTEM_PROMPT).toContain("--prompt-file <file>")
+    expect(CLICKZETTA_AGENT_SYSTEM_PROMPT).toContain("long, multiline, or quote-heavy prompts")
+    expect(CLICKZETTA_AGENT_SYSTEM_PROMPT).toContain("mutually exclusive")
+  })
 })

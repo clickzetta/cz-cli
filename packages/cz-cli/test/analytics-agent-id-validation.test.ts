@@ -224,6 +224,8 @@ describe("analytics-agent id validation", () => {
       "datasource",
       "load",
       "3",
+      "--table-name",
+      "orders",
       "--domain-ids",
       "[5,6]",
     ])
@@ -242,12 +244,105 @@ describe("analytics-agent id validation", () => {
       "datasource",
       "load",
       "3",
+      "--table-name",
+      "orders",
       "--domain-ids",
       "[5,0]",
     ])
 
     expect(result.exitCode).toBe(2)
     expect(parsedError(result.output).message).toContain("--domain-ids")
+  })
+
+  test("datasource load defaults displayName to an explicit table name", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { datasetId: 12 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "load",
+      "3",
+      "--table-name",
+      "orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({ tableName: "orders", displayName: "orders" })
+  })
+
+  test("datasource load extracts table name from --path", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { datasetId: 12 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "load",
+      "3",
+      "--path",
+      "workspace:default/schema:public/table:orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      path: "workspace:default/schema:public/table:orders",
+      tableName: "orders",
+      displayName: "orders",
+    })
+  })
+
+  test("domain table add extracts the path fields and defaults displayName", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { datasetId: 12 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "table",
+      "add",
+      "27",
+      "--datasource-id",
+      "3",
+      "--path",
+      "workspace:default/schema:public/table:orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      workspace: "default",
+      schema: "public",
+      tableName: "orders",
+      displayName: "orders",
+    })
+  })
+
+  test.each([
+    ["datasource load", ["analytics-agent", "datasource", "load", "3"]],
+    ["datasource load with a blank name", ["analytics-agent", "datasource", "load", "3", "--table-name", ""]],
+    ["domain table add", ["analytics-agent", "domain", "table", "add", "27", "--datasource-id", "3"]],
+    ["domain table add with a blank path name", ["analytics-agent", "domain", "table", "add", "27", "--datasource-id", "3", "--path", "workspace:default/schema:public/table:"]],
+  ])("%s rejects a missing or blank table name before sending a request", async (_name, args) => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli(args)
+
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).message).toContain("--table-name")
   })
 
   test("domain joins apply rejects non-positive dataset ids in --join", async () => {

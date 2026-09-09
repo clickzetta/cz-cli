@@ -100,6 +100,60 @@ describe("analytics-agent domain joins", () => {
     expect(parseData(result.output)).toEqual({ taskId: "task-1", status: "RUNNING" })
   })
 
+  test("reads quote-heavy domain prompts from --prompt-file without shell parsing", async () => {
+    const promptPath = join(process.env.CLICKZETTA_TEST_HOME!, "domain-prompt.md")
+    const prompt = `Use the user's exact "display name".\nNever emit \`raw SQL\`.`
+    writeFileSync(promptPath, prompt)
+    let requestBody: unknown
+    onFetch({
+      match: (url) => url.includes("/domains/195/prompt"),
+      respond: (_url, _method, body) => {
+        requestBody = body ?? null
+        return { success: true, data: { prompt } }
+      },
+    })
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "prompt",
+      "set",
+      "195",
+      "--prompt-file",
+      promptPath,
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toEqual({ prompt })
+  })
+
+  test("rejects session list when the domain does not exist", async () => {
+    let sessionListCalled = false
+    onFetch({
+      match: (url) => url.includes("/open/session/list"),
+      respond: () => {
+        sessionListCalled = true
+        return { success: true, data: [] }
+      },
+    })
+    onFetch({
+      match: (url) => url.includes("/open/api/v1/analytics-agent/domains/99999"),
+      respond: () => ({ success: false, code: "DOMAIN_NOT_FOUND", message: "Domain not found" }),
+    })
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "list",
+      "--domain-id",
+      "99999",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain("DOMAIN_NOT_FOUND")
+    expect(sessionListCalled).toBe(false)
+  })
+
   test("result outputs join details needed by apply", async () => {
     onFetch({
       match: (url) => url.includes("/joins/tasks/"),
