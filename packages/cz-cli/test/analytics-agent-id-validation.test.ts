@@ -211,6 +211,187 @@ describe("analytics-agent id validation", () => {
     expect(requestBody).toMatchObject({ parentId: 0, name: "root-child" })
   })
 
+  test("datasource create sends a direct JDBC connection", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { id: 9 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--name",
+      "lakehouse_ds",
+      "--type",
+      "lakehouse",
+      "--connection-username",
+      "datasource-user",
+      "--connection-password",
+      "datasource-password",
+      "--jdbc-url",
+      "jdbc:clickzetta://jnsxwfyr.uat-api.clickzetta.com/cxx_dt_test?schema=public&virtualCluster=DEFAULT",
+      "--ap-vc",
+      "DEFAULT",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      name: "lakehouse_ds",
+      type: "lakehouse",
+      connection: {
+        username: "datasource-user",
+        password: "datasource-password",
+        jdbcUrl: "jdbc:clickzetta://jnsxwfyr.uat-api.clickzetta.com/cxx_dt_test?schema=public&virtualCluster=DEFAULT",
+        apVc: "DEFAULT",
+      },
+    })
+  })
+
+  test("datasource create builds a JDBC connection from split Lakehouse fields", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { id: 9 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--name",
+      "lakehouse_ds",
+      "--type",
+      "lakehouse",
+      "--connection-username",
+      "datasource-user",
+      "--connection-password",
+      "datasource-password",
+      "--connection-service",
+      "https://uat-api.clickzetta.com/api/",
+      "--connection-instance",
+      "jnsxwfyr",
+      "--connection-workspace",
+      "cxx dt/test",
+      "--connection-schema",
+      "sales data",
+      "--connection-vcluster",
+      "AP VC",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      name: "lakehouse_ds",
+      type: "lakehouse",
+      connection: {
+        username: "datasource-user",
+        password: "datasource-password",
+        jdbcUrl: "jdbc:clickzetta://jnsxwfyr.uat-api.clickzetta.com/api/cxx%20dt%2Ftest?schema=sales+data&virtualCluster=AP+VC",
+        apVc: "AP VC",
+      },
+    })
+  })
+
+  test("datasource create keeps the raw --connection path compatible", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { id: 9 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--name",
+      "legacy_ds",
+      "--type",
+      "lakehouse",
+      "--connection",
+      '{"username":"legacy-user","password":"legacy-password","jdbcUrl":"jdbc:clickzetta://instance.service/workspace"}',
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      connection: {
+        username: "legacy-user",
+        password: "legacy-password",
+        jdbcUrl: "jdbc:clickzetta://instance.service/workspace",
+      },
+    })
+  })
+
+  test("datasource create rejects raw and simplified connection options together", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--connection",
+      '{}',
+      "--connection-username",
+      "datasource-user",
+      "--connection-password",
+      "datasource-password",
+      "--jdbc-url",
+      "jdbc:clickzetta://instance.service/workspace",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).message).toContain("either --connection/--body")
+  })
+
+  test("datasource create rejects direct and split JDBC options together", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--connection-username",
+      "datasource-user",
+      "--connection-password",
+      "datasource-password",
+      "--jdbc-url",
+      "jdbc:clickzetta://instance.service/workspace",
+      "--connection-service",
+      "service",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).message).toContain("--jdbc-url cannot be combined")
+  })
+
+  test("datasource create rejects incomplete split Lakehouse fields", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--connection-username",
+      "datasource-user",
+      "--connection-password",
+      "datasource-password",
+      "--connection-service",
+      "service",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).message).toContain("--connection-instance is required")
+  })
+
   test("datasource load validates --domain-ids as positive integers", async () => {
     let requestBody: Record<string, unknown> | undefined
 
@@ -329,6 +510,38 @@ describe("analytics-agent id validation", () => {
     })
   })
 
+  test("datasource load accepts the --table alias with workspace and schema", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { datasetId: 12 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "load",
+      "3",
+      "--workspace",
+      "default",
+      "--schema",
+      "public",
+      "--table",
+      "orders",
+      "--domain-ids",
+      "[5]",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      path: "workspace:default/schema:public",
+      tableName: "orders",
+      displayName: "orders",
+      domainIds: [5],
+    })
+  })
+
   test.each([
     ["datasource load", ["analytics-agent", "datasource", "load", "3"]],
     ["datasource load with a blank name", ["analytics-agent", "datasource", "load", "3", "--table-name", ""]],
@@ -343,6 +556,37 @@ describe("analytics-agent id validation", () => {
 
     expect(result.exitCode).toBe(2)
     expect(parsedError(result.output).message).toContain("--table-name")
+  })
+
+  test("domain table add accepts the --table alias with workspace and schema", async () => {
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { id: 88 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "domain",
+      "table",
+      "add",
+      "27",
+      "--workspace",
+      "default",
+      "--schema",
+      "public",
+      "--table",
+      "orders",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      workspace: "default",
+      schema: "public",
+      tableName: "orders",
+      displayName: "orders",
+    })
   })
 
   test("domain joins apply rejects non-positive dataset ids in --join", async () => {

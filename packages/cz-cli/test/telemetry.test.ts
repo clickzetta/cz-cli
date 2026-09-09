@@ -116,6 +116,26 @@ test("parseTrackingArgs redacts --password and --pat=inline forms too", () => {
   expect(spaced.args["_positional"]).toBe("s u")
 })
 
+test("parseTrackingArgs redacts datasource connection credentials and JDBC URLs", () => {
+  const result = parseTrackingArgs([
+    "analytics-agent",
+    "datasource",
+    "create",
+    "--connection-username",
+    "datasource-user",
+    "--connection-password",
+    "datasource-password",
+    "--jdbc-url",
+    "jdbc:clickzetta://instance.service/workspace?password=jdbc-password",
+  ])
+
+  expect(result.args["connection-username"]).toBe("datasource-user")
+  expect(result.args["connection-password"]).toBe("<redacted>")
+  expect(result.args["jdbc-url"]).toBe("<redacted>")
+  expect(JSON.stringify(result)).not.toContain("datasource-password")
+  expect(JSON.stringify(result)).not.toContain("jdbc-password")
+})
+
 // Cookie auth is one of the four credential kinds, so `--header Cookie=…` is a
 // credential in flag clothing — it used to reach OTel verbatim.
 test("parseTrackingArgs redacts a cookie value whatever flag carries it", () => {
@@ -162,8 +182,8 @@ test("parseTrackingArgs masks literals in _positional too", () => {
   expect(JSON.stringify(r.args)).not.toContain("13800138000")
 })
 
-// `--login` / `--jdbc` take a JDBC connection string, and jdbc.ts reads `password=`
-// out of it, so the whole value is a credential.
+// `--login` / `--jdbc` / `--jdbc-url` take a JDBC connection string, and jdbc.ts
+// reads `password=` out of it, so the whole value is a credential.
 test("parseTrackingArgs redacts connection strings", () => {
   const r = parseTrackingArgs(["auth", "login", "s", "--login", "jdbc:clickzetta://h/ws?password=hunter2"])
 
