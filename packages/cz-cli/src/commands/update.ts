@@ -2,9 +2,15 @@
  * `cz-cli update` — update cz-cli to the latest version via cz-cli.ai/install.sh.
  *
  * Flow:
- * 1. Fetch latest version from cz-cli.ai/api/stable (fallback: npm registry)
- * 2. Detect & clean up stale/conflicting binaries
- * 3. Perform upgrade via install script or package manager
+ * 1. Resolve the release channel (--channel overrides and re-pins the stored one)
+ * 2. Fetch the latest version for THAT channel from cz-cli.ai/api/<channel>
+ * 3. Detect & clean up stale/conflicting binaries
+ * 4. Perform upgrade via install script or package manager
+ *
+ * The version source never crosses channels. npm's `latest` dist-tag is the
+ * stable stream, so it is only usable as a fallback when the requested channel
+ * is stable; on nightly, a failed check fails the command instead of quietly
+ * substituting a stable version.
  */
 
 import { execSync, execFileSync } from "node:child_process"
@@ -18,9 +24,17 @@ import {
   installMethodFromExecPath,
   performUpgrade,
   resolveReleaseChannel,
-  shouldUpgradeToVersion,
   writeInstallMetadata,
 } from "../bootstrap/update.js"
+import {
+  RELEASE_CHANNELS,
+  type ReleaseChannel,
+  assertVersionInChannel,
+  coerceChannel,
+  channelForVersion,
+  isLocalBuildVersion,
+  shouldUpgradeToVersion,
+} from "../bootstrap/release-version.js"
 
 export function shouldApplyUpdate(currentVersion: string, latestVersion: string, force: boolean) {
   return force || shouldUpgradeToVersion(currentVersion, latestVersion)
@@ -81,7 +95,7 @@ function emitUpdateResult(
   if (output) process.stdout.write(output + "\n")
 }
 
-export function manualInstallCommandForPlatform(platform: NodeJS.Platform = process.platform, channel = "stable") {
+export function manualInstallCommandForPlatform(platform: NodeJS.Platform = process.platform, channel: ReleaseChannel = "stable") {
   if (platform === "win32") {
     const script = channel === "nightly" ? "install-nightly.ps1" : "install.ps1"
     return `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex ((New-Object Net.WebClient).DownloadString('https://cz-cli.ai/${script}'))"`
@@ -204,8 +218,8 @@ function removeStaleBinary(p: string): boolean {
   }
 }
 
-async function fetchLatestFromCzCliAi(channel: string): Promise<string> {
-  const url = channel === "nightly" ? "https://cz-cli.ai/api/nightly" : "https://cz-cli.ai/api/stable"
+async function fetchLatestFromCzCliAi(channel: ReleaseChannel): Promise<string> {
+  const url = `https://cz-cli.ai/api/${channel}`
   const timeoutMs = 5000
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
@@ -215,13 +229,18 @@ async function fetchLatestFromCzCliAi(channel: string): Promise<string> {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const data = (await resp.json()) as { version?: string }
     if (!data.version) throw new Error("version field missing in response")
-    return data.version
+    return assertVersionInChannel(data.version, channel, url)
   } catch (err) {
     clearTimeout(timeout)
     throw new Error(describeUpdateError(err, { timeoutMs, url }))
   }
 }
 
+/**
+ * npm's `latest` dist-tag mirrors the STABLE stream only, and it has been
+ * observed lagging cz-cli.ai (site 2.0.4 vs npm 2.0.0). It is a same-channel
+ * mirror of last resort, never a cross-channel substitute.
+ */
 async function fetchLatestFromNpm(): Promise<string> {
   const url = "https://registry.npmjs.org/@clickzetta/cz-cli/latest"
   const timeoutMs = 5000
@@ -236,11 +255,23 @@ async function fetchLatestFromNpm(): Promise<string> {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const data = (await resp.json()) as { version?: string }
     if (!data.version) throw new Error("version field missing in response")
-    return data.version
+    return assertVersionInChannel(data.version, "stable", url)
   } catch (err) {
     clearTimeout(timeout)
     throw new Error(describeUpdateError(err, { timeoutMs, url }))
   }
+}
+
+/**
+ * Nightly can stall: if the stream stops moving, `already up to date` is the
+ * only thing the user ever sees and they rot on a stale build. Whenever we
+ * report nightly as current, also report where stable is so the dead end is
+ * visible, along with the one command that gets out of it.
+ */
+export function describeStableAlternative(current: string, stableLatest: string | undefined) {
+  if (!stableLatest) return undefined
+  if (!shouldUpgradeToVersion(current, stableLatest)) return undefined
+  return `The stable channel is at ${stableLatest}. Switch with: cz-cli update --channel stable`
 }
 
 export function registerUpdateCommand(cli: Argv) {
@@ -258,25 +289,51 @@ export function registerUpdateCommand(cli: Argv) {
           type: "string",
           alias: "t",
           describe: "Install a specific version (allows downgrade), e.g. 0.5.1",
+        })
+        .option("channel", {
+          type: "string",
+          choices: RELEASE_CHANNELS as readonly string[],
+          describe: "Switch release channel and update to its latest version (persisted)",
         }),
     async (argv) => {
       process.stderr.write(`Current version: ${VERSION}\n`)
 
-      if (VERSION.includes("-dev") && !argv.force) {
-        process.stderr.write("Cannot update development build. Use --force to override.\n")
+      // Unpublished builds (0.0.0-<branch>-<ts> from a worktree build, or
+      // 0.0.0-dev+<ts> under `bun run`) have no update target in any channel.
+      if (isLocalBuildVersion(VERSION) && !argv.force) {
+        process.stderr.write("Cannot update a local development build. Use --force to override.\n")
         emitUpdateResult(argv, {
           current_version: VERSION,
           latest_version: null,
           updated: false,
           reason: "development_build",
-        }, "Cannot update development build. Use --force to override.")
+        }, "Cannot update a local development build. Use --force to override.")
         process.exitCode = 1
         return
       }
 
-      const channel = await resolveReleaseChannel()
+      const storedChannel = await resolveReleaseChannel()
+      const requestedChannel = coerceChannel(argv.channel)
+      const channel: ReleaseChannel = requestedChannel ?? storedChannel
+      const switchingChannel = requestedChannel !== undefined && requestedChannel !== storedChannel
+      // The installed binary can already be from another channel than the one we
+      // are pinned to — a --channel switch whose download failed, or an install
+      // script that rewrote the stored channel without replacing the binary.
+      // That is a pending switch, not a downgrade, so it authorizes the move;
+      // otherwise a bare `update` would report a stable version as "up to date
+      // on the nightly channel" and strand the user there forever.
+      const pendingChannelSwitch = channelForVersion(VERSION) !== channel
+      if (switchingChannel) {
+        // Persist the preference before doing any work: an explicit --channel is
+        // the user re-pinning the channel, and it must survive a failed download
+        // instead of silently reverting on the next run.
+        await writeInstallMetadata({ channel })
+        process.stderr.write(`Switching channel: ${storedChannel} → ${channel}\n`)
+      } else {
+        process.stderr.write(`Channel: ${channel}\n`)
+      }
 
-      // --- Step 1: Fetch latest version (cz-cli.ai → npm fallback) ---
+      // --- Step 1: Fetch latest version for this channel (no cross-channel fallback) ---
       process.stderr.write("Checking for updates...\n")
       let latest: string | undefined
       if (argv.target) {
@@ -285,54 +342,82 @@ export function registerUpdateCommand(cli: Argv) {
       } else {
         try {
           latest = await fetchLatestFromCzCliAi(channel)
-          process.stderr.write(`  [cz-cli.ai] Latest version: ${latest}\n`)
+          process.stderr.write(`  [cz-cli.ai] Latest ${channel} version: ${latest}\n`)
         } catch (err) {
           process.stderr.write(`  [cz-cli.ai] Failed: ${err instanceof Error ? err.message : String(err)}\n`)
-          process.stderr.write("  Falling back to npm registry...\n")
-          try {
-            latest = await fetchLatestFromNpm()
-            process.stderr.write(`  [npm] Latest version: ${latest}\n`)
-          } catch (npmErr) {
-            process.stderr.write(`  [npm] Failed: ${npmErr instanceof Error ? npmErr.message : String(npmErr)}\n`)
+          if (channel === "stable") {
+            process.stderr.write("  Falling back to npm registry (stable mirror)...\n")
+            try {
+              latest = await fetchLatestFromNpm()
+              process.stderr.write(`  [npm] Latest version: ${latest}\n`)
+            } catch (npmErr) {
+              process.stderr.write(`  [npm] Failed: ${npmErr instanceof Error ? npmErr.message : String(npmErr)}\n`)
+            }
+          } else {
+            // npm's `latest` is the stable stream. Substituting it here would
+            // move a nightly install onto stable on a single network blip.
+            process.stderr.write(`  No same-channel fallback for ${channel}; not falling back to the stable npm registry.\n`)
           }
         }
       }
 
       if (!latest) {
-        process.stderr.write("Failed to check for updates from all sources.\n")
+        process.stderr.write(`Failed to check for updates on the ${channel} channel.\n`)
         process.stderr.write(`Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}\n`)
         emitUpdateResult(argv, {
           current_version: VERSION,
+          channel,
           latest_version: null,
           updated: false,
           reason: "check_failed",
-        }, `Failed to check for updates. Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}`)
+        }, `Failed to check for updates on the ${channel} channel. Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}`)
         process.exitCode = 1
         return
       }
 
-      if (!shouldApplyUpdate(VERSION, latest, argv.force || !!argv.target)) {
+      if (pendingChannelSwitch && !switchingChannel) {
+        process.stderr.write(
+          `Installed ${VERSION} is a ${channelForVersion(VERSION) ?? "unknown"}-channel build but this install is pinned to ${channel}; completing the switch.\n`,
+        )
+      }
+
+      // An explicit --channel switch (or an already-crossed install) authorizes a
+      // move across streams the same way --target authorizes an explicit version.
+      if (!shouldApplyUpdate(VERSION, latest, argv.force || !!argv.target || switchingChannel || pendingChannelSwitch)) {
         if (latest === VERSION) {
-          process.stderr.write(`Already up to date (${VERSION}).\n`)
+          process.stderr.write(`Already up to date (${VERSION}) on the ${channel} channel.\n`)
+          // Nightly can stall; surface where stable is so this is not a dead end.
+          const stableLatest = channel === "stable"
+            ? undefined
+            : await fetchLatestFromCzCliAi("stable").catch(() => undefined)
+          const alternative = describeStableAlternative(VERSION, stableLatest)
+          if (alternative) process.stderr.write(`${alternative}\n`)
           emitUpdateResult(argv, {
             current_version: VERSION,
+            channel,
             latest_version: latest,
+            stable_latest: stableLatest ?? null,
             updated: false,
             reason: "already_latest",
-          }, `Already up to date (${VERSION}).`)
+          }, [`Already up to date (${VERSION}) on the ${channel} channel.`, alternative].filter(Boolean).join(" "))
           return
         }
         process.stderr.write(`Refusing to downgrade: ${VERSION} → ${latest}\n`)
-        process.stderr.write("The release channel appears to be pointing to an older version.\n")
-        process.stderr.write("Use --target <ver> to explicitly downgrade.\n")
+        process.stderr.write(`The ${channel} channel appears to be pointing to an older version.\n`)
+        process.stderr.write(`Use --target <ver> to explicitly downgrade, or --channel <${RELEASE_CHANNELS.join("|")}> to switch streams.\n`)
         emitUpdateResult(argv, {
           current_version: VERSION,
+          channel,
           latest_version: latest,
           updated: false,
           reason: "refuse_downgrade",
-        }, `Refusing to downgrade ${VERSION} → ${latest}. Use --target ${latest} to explicitly downgrade.`)
+        }, `Refusing to downgrade ${VERSION} → ${latest} on the ${channel} channel. Use --target ${latest} to explicitly downgrade.`)
         process.exitCode = 1
         return
+      }
+
+      if (switchingChannel && shouldUpgradeToVersion(latest, VERSION)) {
+        process.stderr.write(`Note: ${latest} is older than ${VERSION}; the channel switch was explicit, proceeding.\n`)
       }
 
       process.stderr.write(`${latest === VERSION ? "Reinstalling" : "Updating"}: ${VERSION} → ${latest}\n`)
@@ -417,6 +502,7 @@ export function registerUpdateCommand(cli: Argv) {
         process.stderr.write(`✓ Updated to ${latest}. Restart cz-cli to use the new version.\n`)
         emitUpdateResult(argv, {
           current_version: VERSION,
+          channel,
           latest_version: latest,
           updated: true,
           reason: latest === VERSION ? "reinstalled" : "updated",
@@ -427,6 +513,7 @@ export function registerUpdateCommand(cli: Argv) {
         process.stderr.write(`Try manually: ${manualInstallCommandForPlatform(process.platform, channel)}\n`)
         emitUpdateResult(argv, {
           current_version: VERSION,
+          channel,
           latest_version: latest,
           updated: false,
           reason: "upgrade_failed",

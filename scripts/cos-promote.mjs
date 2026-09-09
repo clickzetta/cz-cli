@@ -55,6 +55,14 @@ function parseArgs(argv) {
   if (!args.version || !VERSION_RE.test(args.version)) {
     throw new Error(`Invalid --version: ${args.version}`)
   }
+  // Same lineage rule as cos-release.mjs and check-release-lineage.mjs: dev-v*
+  // is nightly-only, plain semver is stable-only. Clients refuse a version whose
+  // shape does not match the channel they asked for, so a crossed pointer
+  // strands them instead of updating them.
+  const own = args.version.startsWith("dev-v") ? "nightly" : "stable"
+  if (args.channel !== own) {
+    throw new Error(`Refusing to promote ${args.version} to ${args.channel}: it belongs to the ${own} channel`)
+  }
   return args
 }
 
