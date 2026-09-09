@@ -1,3 +1,4 @@
+import { requireWriteApproval, writeOption } from "./write-approval.js"
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
@@ -331,26 +332,24 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           .positional("source", { type: "string", demandOption: true, describe: "czfs:/ Volume root, directory (trailing /), or file path" })
           .option("using", { type: "string", choices: ["csv", "parquet", "orc", "bson"], default: "csv", describe: "Input file format" })
           .option("header", { type: "boolean", default: false, describe: "Treat the first CSV row as column names" })
-          .option("write", { type: "boolean", default: false, describe: "Allow loading data into the target table; required as a safety guard." })
+          .option("write", writeOption)
           .epilogue([
             "Examples:",
-            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header --write",
-            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet --write",
-            "  cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv --write",
-            "  cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet --write",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/data.csv --header",
+            "  cz-cli table load your_table czfs:/Volumes/your_workspace/your_schema/your_volume/daily/ --using parquet",
+            "  cz-cli table load your_table czfs:/Volumes/@user/your_workspace/your_user/data.csv",
+            "  cz-cli table load your_table czfs:/Volumes/@table/your_workspace/your_schema/source_table/exports/ --using parquet",
             "",
+            "On action_required, ask for explicit approval before retrying the same command with --write.",
             "For PURGE, ON_ERROR, PARTITION, transformations, or complex options, use:",
-            "  cz-cli sql --write \"COPY INTO ...\"",
+            "  cz-cli sql \"COPY INTO ...\"",
           ].join("\n")),
         async (argv) => {
           const format = argv.format
           try {
             const table = validateIdentifier(argv.name as string, "table name")
             const source = String(argv.source)
-            if (!argv.write) {
-              error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", { format, exitCode: 2 })
-              return
-            }
+            if (!requireWriteApproval(argv, { reason: `table load ${table} from ${source}` })) return
             const parsed = parseVolumePath(source)
             if (!parsed || parsed.reference.identifiers.length === 0 || parsed.reference.kind === "named" && parsed.reference.identifiers.length !== 3) {
               error("USAGE_ERROR", "table load requires a qualified czfs:/Volumes/... path; use SQL for a raw Volume identifier.", { format, exitCode: 2 })
@@ -414,9 +413,10 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
           y
             .positional("ddl", { type: "string", describe: "CREATE TABLE DDL statement (positional takes priority over --from-file)" })
             .option("from-file", { type: "string", describe: "Read DDL from a file path (used when positional DDL is not provided)" })
-            .option("write", { type: "boolean", hidden: true }),
+            .option("write", writeOption),
         async (argv) => {
           const format = argv.format
+          if (!requireWriteApproval(argv, { reason: "table create" })) return
           try {
             if (!argv.ddl && !argv["from-file"]) {
               error("MISSING_DDL", "Provide DDL as positional argument or use --from-file.", { format, exitCode: 2 })
@@ -442,9 +442,10 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "drop <name>",
         "Drop a table",
-        (y) => y.positional("name", { type: "string", demandOption: true, describe: "Table name" }),
+        (y) => y.positional("name", { type: "string", demandOption: true, describe: "Table name" }).option("write", writeOption),
         async (argv) => {
           const format = argv.format
+          if (!requireWriteApproval(argv, { reason: "table drop" })) return
           try {
             const ctx = await getExecContext(argv)
             const sql = `DROP TABLE ${validateIdentifier(argv.name as string, "table name")}`

@@ -1926,7 +1926,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               format,
               aiMessage: [
                 `REALTIME task created (id=${fileId}).`,
-                !targetTableExists ? `⚠ Target table '${targetSchema}.${targetTable}' does not exist. Create it before deploy:\n  Write the 'create_table_ddl' field from this response to a file, then run: cz-cli sql --file /tmp/create_table.sql --write` : null,
+                !targetTableExists ? `⚠ Target table '${targetSchema}.${targetTable}' does not exist. Create it before deploy:\n  Write the 'create_table_ddl' field from this response to a file, then run: cz-cli sql --file /tmp/create_table.sql; if approval is required, ask the user and wait before retrying with --write` : null,
                 `Next: deploy with 'cz-cli task deploy ${fileId} -y', then start with 'cz-cli task start ${fileId}'.`,
               ].filter(Boolean).join("\n"),
             })

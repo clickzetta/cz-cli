@@ -1,3 +1,4 @@
+import { requireWriteApproval, writeOption } from "./write-approval.js"
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { JobStatus } from "@clickzetta/sdk"
@@ -85,9 +86,10 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "create <name>",
         "Create a schema",
-        (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }),
+        (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }).option("write", writeOption),
         async (argv) => {
           const format = argv.format
+          if (!requireWriteApproval(argv, { reason: `schema create ${argv.name}` })) return
           try {
             const ctx = await getExecContext(argv)
             const name = validateIdentifier(argv.name as string, "schema name")
@@ -110,9 +112,10 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
       .command(
         "drop <name>",
         "Drop a schema",
-        (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }),
+        (y) => y.positional("name", { type: "string", demandOption: true, describe: "Schema name" }).option("write", writeOption),
         async (argv) => {
           const format = argv.format
+          if (!requireWriteApproval(argv, { reason: `schema drop ${argv.name}` })) return
           try {
             const ctx = await getExecContext(argv)
             const name = validateIdentifier(argv.name as string, "schema name")

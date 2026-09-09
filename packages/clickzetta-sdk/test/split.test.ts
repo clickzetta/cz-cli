@@ -84,7 +84,18 @@ describe("splitSql", () => {
   })
 
   test("multiple statements with block comments", () => {
-    expect(splitSql("/*/--/*/;\nselect /* -- 1; */\n1;-- sql 2")).toHaveLength(3)
+    expect(splitSql("/* -- */;\nselect /* -- 1; */\n1;-- sql 2")).toHaveLength(3)
+  })
+
+  test("an unclosed nested comment does not expose apparent statement boundaries", () => {
+    const sql = "/*/--/*/;\nselect /* -- 1; */\n1;-- sql 2"
+    expect(splitSql(sql)).toEqual([sql])
+  })
+
+  test("nested block comments can contain semicolons", () => {
+    expect(splitSql("/* outer /* inner */ ; outer */ SELECT 1; SELECT 2")).toEqual([
+      "/* outer /* inner */ ; outer */ SELECT 1", " SELECT 2",
+    ])
   })
 
   test("double-quoted string with escaped backslash before semicolon", () => {

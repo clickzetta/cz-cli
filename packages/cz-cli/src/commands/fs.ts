@@ -1,3 +1,4 @@
+import { requireWriteApproval, writeOption } from "./write-approval.js"
 import type { Argv } from "yargs"
 import { InterfaceError } from "@clickzetta/sdk"
 import { FsError, FsUtil, isVolumeNamespaceRoot } from "@clickzetta/sdk/fsutil"
@@ -77,9 +78,11 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "Create a Managed Volume (fs mb cannot create User or Table Volumes)",
         (y) => y
           .positional("volume", { type: "string", demandOption: true, describe: "Managed Volume root, e.g. czfs:/Volumes/your_workspace/your_schema/your_volume" })
+          .option("write", writeOption)
           .epilogue(["Examples:", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/your_volume", "  cz-cli fs mb czfs:/Volumes/your_workspace/your_schema/raw_files"].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
+          if (!requireWriteApproval(args, { reason: `fs mb ${args.volume}` })) return
           try { await createFs(args).mb(args.volume); success({ path: args.volume, operation: "CREATE_VOLUME", status: "SUCCEEDED" }, { format: args.format }) }
           catch (err) { reportFsError(err, args.format) }
         },
@@ -89,12 +92,12 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
         "Remove an empty Managed Volume object (does not remove files)",
         (y) => y
           .positional("volume", { type: "string", demandOption: true, describe: "Managed Volume root" })
-          .option("write", { type: "boolean", default: false, describe: "Allow removing the Volume object; required as a safety guard." })
-          .epilogue(["Examples:", "  cz-cli fs rb czfs:/Volumes/your_workspace/your_schema/your_volume --write", "", "Only empty Managed Volumes can be removed; use fs rm for files first."].join("\n")),
+          .option("write", writeOption)
+          .epilogue(["Examples:", "  cz-cli fs rb czfs:/Volumes/your_workspace/your_schema/your_volume", "", "On action_required, ask for explicit approval before retrying the same command with --write. Only empty Managed Volumes can be removed; use fs rm for files first."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
-            if (!args.write) throw new FsError("WRITE_NOT_ALLOWED", "Remove operation detected. Pass --write to confirm.")
+            if (!requireWriteApproval(args, { reason: `fs rb ${args.volume}` })) return
             await createFs(args).rb(args.volume)
             success({ path: args.volume, operation: "DROP_VOLUME", status: "SUCCEEDED" }, { format: args.format })
           }
@@ -153,12 +156,12 @@ export function registerFsCommand(cli: Argv<GlobalArgs>): void {
           .option("recursive", { alias: "R", type: "boolean", default: false, describe: "Remove a directory and all files below it" })
           .option("force", { alias: "f", type: "boolean", default: false, describe: "Do not fail when the path does not exist" })
           .option("dry-run", { type: "boolean", default: false, describe: "List matched files without deleting them" })
-          .option("write", { type: "boolean", default: false, describe: "Allow removing files or directories; required as a safety guard." })
+          .option("write", writeOption)
           .epilogue(["Examples:", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/data.csv", "  cz-cli fs rm \\", "    czfs:/Volumes/your_workspace/your_schema/your_volume/tmp/ -R --dry-run", "", "Deletion is permanent; use --dry-run before recursive removal."].join("\n")),
         async (argv) => {
           const args = argv as unknown as FsArgs
           try {
-            if (!args.write && !args["dry-run"]) throw new FsError("WRITE_NOT_ALLOWED", "Remove operation detected. Pass --write to confirm.")
+            if (!args["dry-run"] && !requireWriteApproval(args, { reason: `fs rm ${args.path}` })) return
             const fs = createFs(args)
             if (args["dry-run"]) {
               try { await fs.validateRemoval(args.path, args.recursive) }

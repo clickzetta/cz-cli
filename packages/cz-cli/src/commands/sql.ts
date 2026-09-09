@@ -1,6 +1,7 @@
+import { requireWriteApproval } from "./write-approval.js"
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { splitSql, stripLeadingComment, JobStatus, request, requestRaw, getCurrentUser, type ClientOptions, type JobID, type QueryResult } from "@clickzetta/sdk"
+import { analyzeSql, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
@@ -9,7 +10,6 @@ import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExec
 import { formatBillingError } from "./billing-error.js"
 import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
-const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE|RENAME|FORK)\b/i
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
 const LIMIT_RE = /\bLIMIT\s+\d+/i
 const SHOW_RE = /^\s*SHOW\b/i
@@ -22,7 +22,6 @@ const DANGEROUS_WRITE_RE = /^\s*(DELETE|UPDATE)\b/i
 const WHERE_RE = /\bWHERE\b/i
 
 const DEFAULT_FIELD_MAX = 3000
-const DEFAULT_ROW_LIMIT = 100
 
 interface SqlArgs extends GlobalArgs {
   statement?: string
@@ -82,7 +81,7 @@ export async function isSplitEnabled(): Promise<boolean> {
  */
 export function resolveStatements(sql: string, splitEnabled: boolean): string[] {
   const raw = splitEnabled ? splitSql(sql) : [sql.replace(/\s*;\s*$/, "")]
-  return raw.map((s) => s.trim()).filter((s) => s && stripLeadingComment(s))
+  return raw.map((s) => s.trim()).filter((s) => s && analyzeSql(s).statements.length > 0)
 }
 
 interface TruncateResult {
@@ -321,6 +320,9 @@ async function executeSingle(
   opts: { verbatim?: boolean } = {},
 ): Promise<void> {
   const format = argv.format
+  const analysis = analyzeSql(sql)
+  const text = analysis.statements.at(-1)?.text ?? ""
+  const command = analysis.statements.length === 1 ? analysis.statements[0].command : sql
 
   // Both interceptions below assume `sql` is ONE statement, which is what the splitter
   // guarantees. With splitting off it is the whole input, so a text that merely STARTS
@@ -331,14 +333,14 @@ async function executeSingle(
   // client-side handling either way (resolveStatements already dropped its trailing `;`).
   if (!opts.verbatim || !sql.includes(";")) {
     // Intercept SET statements — these are client-side session directives, not executable SQL
-    const setMatch = sql.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
+    const setMatch = command.match(/^\s*SET\s+([^=\s]+)\s*=\s*([\s\S]+)/i)
     if (setMatch) {
       success({ set: `${setMatch[1]}=${setMatch[2].replace(/;$/, "").trim()}` }, { format, timeMs: 0 })
       return
     }
 
     // Intercept USE statements — client-side context switch
-    const use = parseUseStatement(sql)
+    const use = parseUseStatement(command)
     if (use) {
       if (!await applyUseStatement(ctx, use, format, hints, configStatements, argv.timeout * 1000, argv.profile)) return
       success({ use: use.normalized }, { format, timeMs: 0 })
@@ -346,26 +348,12 @@ async function executeSingle(
     }
   }
 
-  const isWrite = WRITE_RE.test(sql)
-  const isSelect = SELECT_RE.test(sql)
-  const isShow = SHOW_RE.test(sql)
-  const hasLimit = LIMIT_RE.test(sql)
-  const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
+  const isSelect = /^\s*(SELECT|SHOW)\b/i.test(text) || (analysis.kind === "readonly" && SELECT_RE.test(text))
+  const canRewrite = analysis.kind === "readonly" && analysis.statements.length === 1 && Object.keys(hints).every(isReadonlySqlSetting)
+  const isShow = SHOW_RE.test(text)
+  const hasLimit = LIMIT_RE.test(text)
   const rowLimit = argv.limit === 0 ? Infinity : argv.limit
   const t0 = Date.now()
-
-  if (isWrite && !argv.write) {
-    error("WRITE_NOT_ALLOWED", "Write operation detected. Pass --write to confirm.", {
-      format,
-      aiMessage: "Add --write flag to execute write operations: cz-cli sql \"<SQL>\" --write",
-    }); return
-  }
-  if (isWrite && DANGEROUS_WRITE_RE.test(sql) && !WHERE_RE.test(sql)) {
-    error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", {
-      format,
-      aiMessage: "Always include a WHERE clause in DELETE/UPDATE to avoid unintended data loss.",
-    }); return
-  }
 
   if (!argv.sync || argv.async) {
     const asyncHints = { ...hints }
@@ -385,11 +373,12 @@ async function executeSingle(
   }
 
   // Sync mode: SELECT/SHOW without user LIMIT → inject LIMIT probe when supported
-  if (isSelect && !hasLimit && rowLimit !== Infinity) {
+  if (isSelect && canRewrite && !hasLimit && rowLimit !== Infinity) {
     // SHOW supports LIMIT, but server-side partial row hints are only for SELECT-like queries.
     const probeHints = isShow ? hints : { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit) }
     const probeLimit = rowLimit + 1
-    const probeSql = sql.replace(/\s*;?\s*$/, ` LIMIT ${probeLimit}`)
+    // A trailing line comment must not swallow the injected LIMIT.
+    const probeSql = sql.replace(/\s*;?\s*$/, `${sql.includes("--") ? "\n" : " "}LIMIT ${probeLimit}`)
     let r = await execSqlWithRetry(ctx, probeSql, { hints: probeHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
     // Retry without LIMIT if injection caused syntax error
     if (isQueryResult(r) && r.status === JobStatus.FAILED && /syntax/i.test(r.errorMessage ?? "") && /LIMIT/i.test(r.errorMessage ?? "")) {
@@ -432,11 +421,12 @@ async function executeSingle(
   }
 
   // Sync mode: SELECT with user LIMIT N → probe with N+1 to detect truncation
-  if (isSelect && hasLimit && !isShow && !!argv.limit) {
-    const limitMatch = sql.match(/\bLIMIT\s+(\d+)/i)
+  if (isSelect && canRewrite && hasLimit && !isShow && !!argv.limit) {
+    const limitMatch = text.match(/\bLIMIT\s+(\d+)/i)
     if (limitMatch) {
       const userLimit = parseInt(limitMatch[1], 10)
-      const probeSql = sql.replace(/\bLIMIT\s+\d+/i, `LIMIT ${userLimit + 1}`)
+      const offset = analysis.statements[0].start + limitMatch.index!
+      const probeSql = sql.slice(0, offset) + `LIMIT ${userLimit + 1}` + sql.slice(offset + limitMatch[0].length)
       const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
@@ -454,14 +444,31 @@ async function executeSingle(
     }
   }
 
-  // General case: SHOW, write, or other
-  const r = await execSqlWithRetry(ctx, sql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
+  // Bound SELECT result transfer even when SQL text cannot be safely rewritten.
+  const resultHints = isSelect && !isShow && !hasLimit && rowLimit !== Infinity
+    ? { ...hints, "cz.sql.result.row.partial.limit": String(rowLimit + 1) }
+    : hints
+  const r = await execSqlWithRetry(ctx, sql, { hints: resultHints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
   if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
   if (r.status === JobStatus.FAILED) {
     await handleFailure(r, sql, ctx, format, t0, argv.profile)
     return
   }
 
+  if (isSelect && !canRewrite && !hasLimit && r.rowCount > rowLimit) {
+    if (isShow) {
+      await emitResult({ ...r, rows: r.rows.slice(0, rowLimit) }, sql, argv, ctx, t0,
+        `SHOW results truncated to ${rowLimit} rows (more available). Use --no-limit to fetch all.`)
+      return
+    }
+    logOperation("sql", { sql, ok: false, errorCode: "LIMIT_REQUIRED", timeMs: Date.now() - t0 })
+    error("LIMIT_REQUIRED", `Query returned more than ${rowLimit} rows. Add a LIMIT clause or pass --no-limit.`, {
+      format,
+      extra: { schema: r.columns },
+      aiMessage: "Add LIMIT to your query or use --no-limit to fetch all.",
+    })
+    return
+  }
   await emitResult(r, sql, argv, ctx, t0)
 }
 
@@ -533,7 +540,6 @@ async function emitResult(
 ): Promise<void> {
   const format = argv.format
   const fieldMax = !argv.truncate ? Infinity : DEFAULT_FIELD_MAX
-  const isWrite = WRITE_RE.test(sql)
 
   let extra: Record<string, unknown> | undefined
 
@@ -541,7 +547,7 @@ async function emitResult(
     extra = { schema: r.columns }
   }
 
-  if (isWrite) {
+  if (r.columns.length === 0 && r.rows.length === 0 && analyzeSql(sql).kind === "write") {
     logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
     const writeExtra = { ...extra, ...(r.jobId ? { job_id: r.jobId } : {}) }
     success({}, { format, timeMs: Date.now() - t0, aiMessage, extra: Object.keys(writeExtra).length > 0 ? writeExtra : undefined })
@@ -615,6 +621,10 @@ async function handler(argv: SqlArgs): Promise<void> {
 
   try {
     const splitEnabled = await isSplitEnabled()
+    // Check the entire substituted input before USE validation, EXPLAIN, async,
+    // batch, or intermediate statements can submit a job. Splitting is transport
+    // behavior and must never disable the guard.
+    if (!validateSqlInput(sql, argv, hints, splitEnabled)) return
     const statements = resolveStatements(sql, splitEnabled)
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
@@ -646,15 +656,17 @@ async function handler(argv: SqlArgs): Promise<void> {
       const configStatements: string[] = []
       for (let i = 0; i < statements.length; i++) {
         const stmt = statements[i]
+        const analysis = analyzeSql(stmt)
+        const command = analysis.statements[0]?.command ?? stmt
         // Extract SET statements as hints for subsequent statements
-        const setMatch = stmt.match(/^\s*SET\s+(\S+)\s*=\s*(.+)/i)
+        const setMatch = command.match(/^\s*SET\s+([^=\s]+)\s*=\s*([\s\S]+)/i)
         if (setMatch) {
           accumulatedHints[setMatch[1]] = setMatch[2].replace(/;$/, "").trim()
           configStatements.push(stmt)
           continue
         }
         // Extract USE statements to update session context client-side
-        const use = parseUseStatement(stmt)
+        const use = parseUseStatement(command)
         if (use) {
           if (!await applyUseStatement(ctx, use, format, accumulatedHints, configStatements, argv.timeout * 1000, argv.profile)) return
           configStatements.push(stmt)
@@ -715,6 +727,52 @@ async function handler(argv: SqlArgs): Promise<void> {
   }
 }
 
+function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, string> | undefined, splitEnabled: boolean): boolean {
+  const analysis = analyzeSql(sql)
+  if (analysis.reason === "No SQL statements found") return true
+  const setting = Object.keys(hints ?? {}).find((key) => !isReadonlySqlSetting(key))
+  if (argv["dry-run"]) {
+    if (!splitEnabled && analysis.statements.length > 1) {
+      error("SQL_NOT_READONLY", "Dry-run of multiple statements requires sql_split to be enabled.", { format: argv.format })
+      return false
+    }
+    // EXPLAIN is not a safe wrapper for arbitrary scripts. In particular, never
+    // prefix just the first statement of an unsplit input and execute the rest.
+    if (analysis.kind !== "readonly" || setting) {
+      error("SQL_NOT_READONLY", "Dry-run supports recognized readonly queries with reviewed settings only.", {
+        format: argv.format,
+        extra: { reason: setting ? `Unreviewed query setting: ${setting}` : analysis.reason ?? analysis.kind },
+      })
+      return false
+    }
+    return true
+  }
+  if (!argv.write && (analysis.kind === "write" || analysis.kind === "unknown" || setting)) {
+    const issue = analysis.statements.findIndex((item) => item.kind === analysis.kind)
+    const code = analysis.kind === "write" ? "WRITE_NOT_ALLOWED" : "SQL_READONLY_UNKNOWN"
+    const message = analysis.kind === "write"
+      ? "Write SQL requires explicit user approval."
+      : "SQL or query settings could not be classified as readonly and require explicit user approval."
+    requireWriteApproval(argv, {
+      code,
+      message,
+      query_kind: analysis.kind === "write" ? "write" : "unknown",
+      reason: setting ? `Unreviewed query setting: ${setting}` : analysis.reason,
+      ...(!setting && issue >= 0 && { statement_index: issue }),
+    })
+    return false
+  }
+  const dangerous = analysis.statements.findIndex((item) => DANGEROUS_WRITE_RE.test(item.text) && !WHERE_RE.test(item.text))
+  if (dangerous >= 0) {
+    error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", {
+      format: argv.format,
+      extra: { statement_index: dangerous },
+    })
+    return false
+  }
+  return true
+}
+
 export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
   cli.command(
     "sql",
@@ -763,7 +821,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           (y) =>
             y
               .positional("statement", { type: "string", describe: "SQL statement to execute" })
-              .option("write", { type: "boolean", default: false, describe: "Allow write operations (INSERT/UPDATE/DELETE/CREATE/DROP). Required as a safety guard." })
+              .option("write", { type: "boolean", default: false, describe: "Explicitly allow writes and SQL the string-based readonly check cannot classify. Does not bypass the DELETE/UPDATE without WHERE guard." })
               .option("with-schema", { type: "boolean", default: false, describe: "Attach table schema (columns) to the response for context" })
               .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
               .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })
@@ -779,11 +837,11 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("N", { type: "boolean", hidden: true })
               .option("limit", { type: "number", default: 100, describe: "Max rows to return (0 for unlimited)" })
               .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute multiple semicolon-separated statements sequentially" })
-              .option("dry-run", { type: "boolean", default: false, describe: "Split SQL and EXPLAIN each statement without executing. Reports ok/error per statement." })
+              .option("dry-run", { type: "boolean", default: false, describe: "EXPLAIN recognized readonly queries. Multiple queries require sql_split=true; writes, session commands and unknown syntax are rejected." })
               .epilogue([
                 "Examples:",
                 "  cz-cli sql \"SELECT * FROM orders LIMIT 10\"",
-                "  cz-cli sql \"INSERT INTO t VALUES(1)\" --write",
+                "  cz-cli sql \"INSERT INTO t VALUES(1)\"",
                 "  cz-cli sql \"SELECT ${col} FROM t\" --variable col=id",
                 "  cz-cli sql -f query.sql --no-limit",
                 "  cz-cli sql \"SELECT * FROM huge_table\" --async",
