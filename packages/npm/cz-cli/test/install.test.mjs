@@ -108,10 +108,17 @@ test("getPlatformSpec maps supported npm package names", async () => {
   )
 })
 
+test("getPlatformSpec maps Linux release packages", async () => {
+  const { getPlatformSpec } = await loadModule()
+  for (const arch of ["x64", "arm64"]) {
+    assert.equal(getPlatformSpec({ platform: "linux", arch }).packageName, `@clickzetta/cz-cli-linux-${arch}`)
+  }
+})
+
 test("getPlatformSpec rejects unsupported package combinations", async () => {
   const { getPlatformSpec } = await loadModule()
   assert.equal(getPlatformSpec({ platform: "win32", arch: "arm64" }), null)
-  assert.equal(getPlatformSpec({ platform: "linux", arch: "x64" }), null)
+  assert.equal(getPlatformSpec({ platform: "linux", arch: "ia32" }), null)
   assert.equal(getPlatformSpec({ platform: "freebsd", arch: "x64" }), null)
 })
 
@@ -122,6 +129,8 @@ test("package.json optionalDependencies only list published platform packages", 
     [
       "@clickzetta/cz-cli-darwin-arm64",
       "@clickzetta/cz-cli-darwin-x64",
+      "@clickzetta/cz-cli-linux-arm64",
+      "@clickzetta/cz-cli-linux-x64",
       "@clickzetta/cz-cli-win32-x64",
     ],
   )

@@ -166,14 +166,19 @@ jobs:
         include:
           - os: linux
             runner: ubuntu-latest
+            bun-target: linux-x64-baseline
           - os: linux
             runner: ubuntu-24.04-arm
+            bun-target: linux-arm64
           - os: darwin
             runner: macos-latest
+            bun-target: darwin-arm64
           - os: darwin
             runner: macos-15-intel
+            bun-target: darwin-x64-baseline
           - os: win32
             runner: windows-latest
+            bun-target: windows-x64-baseline
     runs-on: ${{ matrix.runner }}
     env:
       GH_REPO: ${{ github.repository }}
@@ -211,7 +216,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          # Use the same runtime for the build host and compiled artifact.
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-${{ matrix.bun-target }}.zip
 
       - uses: actions/setup-node@v4
         with:
@@ -269,13 +275,11 @@ jobs:
             sleep 1
           done
 
-      - name: Build and upload ${{ matrix.os }} targets
+      - name: Build ${{ matrix.os }} targets
         env:
           OPENCODE_VERSION: ${{ needs.resolve-release.outputs.version }}
           OPENCODE_ARCHIVE: "1"
           OPENCODE_HOST_ONLY: "1"
-          OPENCODE_RELEASE: "1"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLICKZETTA_OTEL_ENDPOINT: ${{ secrets.CLICKZETTA_OTEL_ENDPOINT }}
           CLICKZETTA_OTEL_HEADERS: ${{ secrets.CLICKZETTA_OTEL_HEADERS }}
         # cz-1.17.11: the cz-cli release builder lives in packages/cz-cli/script/build.ts
@@ -283,6 +287,23 @@ jobs:
         # It chdir's into packages/opencode and writes dist there, so the downstream
         # packages/opencode/dist paths below stay correct.
         run: cd packages/cz-cli && bun run script/build.ts
+
+      - name: Verify Linux x64 without AVX
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user
+          sh scripts/check-baseline.sh packages/opencode/dist/cz-cli-linux-x64/bin/cz-cli
+
+      - name: Upload verified archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          archives=(packages/opencode/dist/cz-cli-*.zip packages/opencode/dist/cz-cli-*.tar.gz)
+          test "${#archives[@]}" -gt 0
+          gh release upload "${{ needs.resolve-release.outputs.tag }}" "${archives[@]}" --clobber --repo "${{ github.repository }}"
 
   upload-installer:
     needs: [resolve-release, build]

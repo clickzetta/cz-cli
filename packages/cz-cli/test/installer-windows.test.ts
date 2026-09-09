@@ -64,6 +64,7 @@ function stubs(input: {
   tar?: "extracts" | "fails"
   powershell?: "extracts"
   marker: string
+  avx2?: boolean
 }) {
   const bin = join(work, `stub-bin-${Math.random().toString(36).slice(2)}`)
   mkdirSync(bin, { recursive: true })
@@ -75,7 +76,19 @@ function stubs(input: {
 
   write("uname", `#!/bin/sh\ncase "$1" in\n  -s) echo "${input.unameS}" ;;\n  -m) echo "${input.unameM}" ;;\n  *) echo "${input.unameS}" ;;\nesac\n`)
   // download() calls: curl -fL --progress-bar URL -o DEST
-  write("curl", `#!/bin/sh\nDEST=""\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "-o" ]; then DEST="$2"; fi\n  shift\ndone\ncp ${JSON.stringify(input.archive)} "$DEST"\n`)
+  write(
+    "curl",
+    `#!/bin/sh\nDEST=""\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "-o" ]; then DEST="$2"; fi\n  shift\ndone\ncp ${JSON.stringify(input.archive)} "$DEST"\n`,
+  )
+
+  if (input.avx2 !== undefined) {
+    const grep = Bun.spawnSync(["sh", "-c", "command -v grep"]).stdout.toString().trim()
+    write(
+      "grep",
+      `#!/bin/sh\nif [ "$*" = "-qwi avx2 /proc/cpuinfo" ]; then exit ${input.avx2 ? 0 : 1}; fi\nexec '${grep}' "$@"\n`,
+    )
+    write("ldd", '#!/bin/sh\necho "ldd (GNU libc) 2.36"\n')
+  }
 
   if (input.tar === "fails") write("tar", "#!/bin/sh\nexit 1\n")
   // extract_zip calls: tar -xf ARCHIVE -C DIR
@@ -110,6 +123,7 @@ function stubs(input: {
 
 function runInstaller(input: {
   platformKey: string
+  avx2?: boolean
   binaryName: string
   unameS: string
   unzip?: "real" | "absent"
@@ -138,6 +152,7 @@ function runInstaller(input: {
     ...(input.tar ? { tar: input.tar } : {}),
     ...(input.powershell ? { powershell: input.powershell } : {}),
     marker,
+    avx2: input.avx2,
   })
   const result = Bun.spawnSync(["sh", script], {
     env: { PATH: path, HOME: home, INSTALL_DIR: installDir, NON_INTERACTIVE: "1" },
@@ -243,5 +258,20 @@ describe("install.sh on Git Bash", () => {
     expect(existsSync(join(r.installDir, "cz-cli"))).toBe(true)
     expect(existsSync(join(r.installDir, "cz-cli.exe"))).toBe(false)
     expect(existsSync(join(r.installDir, "cz-agent.cmd"))).toBe(false)
+  })
+})
+
+describe("install.sh CPU compatibility", () => {
+  test.each([false, true])("installs the published x64 package with AVX2=%s", (avx2) => {
+    const result = runInstaller({
+      platformKey: "linux-x64",
+      binaryName: "cz-cli",
+      unameS: "Linux",
+      avx2,
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain("linux-x64")
+    expect(existsSync(join(result.installDir, "cz-cli"))).toBe(true)
+    expect(existsSync(join(result.installDir, "tui-quota-runtime.js"))).toBe(true)
   })
 })

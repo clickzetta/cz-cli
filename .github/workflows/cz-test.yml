@@ -64,6 +64,10 @@ jobs:
         # of it, per the reasoning above and in each of those call sites.
         run: bun run test
 
+      - name: Run npm installer tests
+        working-directory: packages/npm/cz-cli
+        run: node --test test/install.test.mjs
+
       # UPSTREAM-PATCHES.md's re-baseline checklist points at these three files
       # as the enforcement for their respective ledger entries (7, 9), but they
       # live inside upstream packages and are only named by test.yml's
