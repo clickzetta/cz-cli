@@ -30,10 +30,6 @@ export {
 
 export type InstallMethod = "curl" | "npm" | "yarn" | "pnpm" | "bun" | "brew" | "scoop" | "choco" | "unknown"
 
-type BootstrapConfig = {
-  autoupdate?: boolean | "notify"
-}
-
 type InstallMetadata = {
   version: 1
   method?: InstallMethod
@@ -51,6 +47,7 @@ type UpdateState = {
   last_result?: "up-to-date" | "update-available" | "upgrade-succeeded" | "upgrade-failed" | "check-failed"
   latest_version?: string
   error?: string
+  config_warned_at?: number
 }
 
 type UpdatePaths = {
@@ -64,9 +61,6 @@ type UpdateActionInput = {
   channelExplicit?: boolean
   currentVersion: string
   latestVersion?: string
-  lastCheckedAt?: number
-  now: number
-  intervalMs: number
   method?: InstallMethod
 }
 
@@ -114,13 +108,14 @@ export async function resolveReleaseChannel(input: { home?: string; env?: NodeJS
   return (await resolveReleaseSelection(input)).channel
 }
 
-export async function resolveReleaseSelection(input: { home?: string; env?: NodeJS.ProcessEnv } = {}) {
+export async function resolveReleaseSelection(input: { home?: string; env?: NodeJS.ProcessEnv; version?: string } = {}) {
   const env = input.env ?? process.env
   const override = coerceChannel(env.CZ_CHANNEL)
   if (override) return { channel: override, explicit: true, source: "CZ_CHANNEL" }
   const metadata = (await readObject(updatePaths(input.home, env).install)) as Partial<InstallMetadata>
   const stored = coerceChannel(metadata.channel)
-  return { channel: stored ?? DEFAULT_RELEASE_CHANNEL, explicit: stored !== undefined, source: stored ? "install.json" : "default" }
+  const inferred = input.version ? channelForVersion(input.version) : undefined
+  return { channel: stored ?? inferred ?? DEFAULT_RELEASE_CHANNEL, explicit: stored !== undefined, source: stored ? "install.json" : inferred ? "binary-version" : "default" }
 }
 
 async function readObject(file: string) {
@@ -333,11 +328,6 @@ export function restartArgs(_execPath: string, argv: string[]): string[] {
   return argv.slice(2)
 }
 
-export async function loadBootstrapConfig(input: { home?: string; env?: NodeJS.ProcessEnv } = {}): Promise<BootstrapConfig> {
-  const config = await ConfigAutoupdate.read(input)
-  return { autoupdate: config.value }
-}
-
 export function shouldSkipAutoUpdateCommand(input: {
   args: string[]
   env?: NodeJS.ProcessEnv
@@ -375,9 +365,6 @@ export function resolveUpdateAction(input: UpdateActionInput): UpdateAction {
   // shouldSkipAutoUpdateCommand. Repeated here because this function is the
   // decision seam and is called directly by tests and by maybeAutoUpdate.
   if (isLocalBuildVersion(input.currentVersion)) return { kind: "skip", reason: "local-build" }
-  if (input.lastCheckedAt !== undefined && input.now - input.lastCheckedAt < input.intervalMs) {
-    return { kind: "skip", reason: "interval" }
-  }
   const pending = isPendingChannelSwitch(input.currentVersion, { channel: input.channel, explicit: input.channelExplicit === true })
   if (channelForVersion(input.currentVersion) !== input.channel && !pending) {
     return { kind: "skip", reason: "channel-mismatch" }
@@ -433,8 +420,16 @@ export async function maybeAutoUpdate(input: {
     return
   }
 
+  const now = input.now ?? Date.now()
+  const intervalMs = input.intervalMs ?? resolveIntervalMs(env.CLICKZETTA_UPDATE_INTERVAL_MS)
+  const paths = updatePaths(undefined, env)
+  const state = ((await readObject(paths.state)) as UpdateState) ?? {}
   const config = await ConfigAutoupdate.read({ env }).catch(async (error) => {
     await log("config-failed", { error: error instanceof Error ? error.message : String(error) })
+    if (state.config_warned_at === undefined || now - state.config_warned_at >= intervalMs) {
+      process.stderr.write("cz-cli: automatic updates are paused because configuration could not be read. Run `cz-cli autoupdate` for details.\n")
+      await writeJson(paths.state, { ...state, config_warned_at: now }).catch(() => {})
+    }
     return undefined
   })
   // A broken optional updater configuration must not block the user's command
@@ -446,10 +441,6 @@ export async function maybeAutoUpdate(input: {
     return
   }
 
-  const now = input.now ?? Date.now()
-  const intervalMs = input.intervalMs ?? resolveIntervalMs(env.CLICKZETTA_UPDATE_INTERVAL_MS)
-  const paths = updatePaths(undefined, env)
-  const state = ((await readObject(paths.state)) as UpdateState) ?? {}
   if (state.last_checked_at !== undefined && now - state.last_checked_at < intervalMs) {
     // Keep failure cooldowns visible. Healthy repeated invocations are quiet
     // unless support explicitly requests detailed interval diagnostics.
@@ -463,7 +454,7 @@ export async function maybeAutoUpdate(input: {
   }
   await log("config", { autoupdate, configured: config.configured, source: config.source, config_path: config.path })
   const method = installMethodFromExecPath(process.execPath, undefined, env)
-  const selection = await resolveReleaseSelection({ env })
+  const selection = await resolveReleaseSelection({ env, version: currentVersion })
   const channel = selection.channel
   const started = Date.now()
   await log("check-started", { method, channel, channel_source: selection.source, url: `https://cz-cli.ai/api/${channel}`, timeout_ms: DEFAULT_REQUEST_TIMEOUT_MS })
@@ -485,9 +476,6 @@ export async function maybeAutoUpdate(input: {
     channelExplicit: selection.explicit,
     currentVersion,
     latestVersion,
-    lastCheckedAt: state.last_checked_at,
-    now,
-    intervalMs,
     method,
   })
   await log("check-completed", { channel, latest_version: latestVersion, duration_ms: Date.now() - started })
@@ -499,13 +487,13 @@ export async function maybeAutoUpdate(input: {
     latest_version: latestVersion,
   })
   if (action.kind === "skip") {
-    if (action.reason === "interval") return
+    if (action.reason === "channel-mismatch") process.stderr.write(`cz-cli: automatic updates need an explicit channel. Run cz-cli update --channel ${channelForVersion(currentVersion) ?? channel}.\n`)
     await writeJson(paths.state, {
       ...state,
       last_checked_at: now,
-      last_result: action.reason === "up-to-date" ? "up-to-date" : undefined,
+      last_result: action.reason === "up-to-date" ? "up-to-date" : state.last_result,
       latest_version: latestVersion,
-      error: undefined,
+      error: action.reason === "up-to-date" ? undefined : state.error,
     } satisfies UpdateState)
     return
   }

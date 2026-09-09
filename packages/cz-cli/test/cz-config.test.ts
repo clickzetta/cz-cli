@@ -3,12 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { czConfigCandidates, parseCzConfigText, readCzConfig, czConfigBool } from "../src/config/cz-config.js"
-import { loadBootstrapConfig } from "../src/bootstrap/update.js"
+import { ConfigAutoupdate } from "../src/config/autoupdate.js"
 
 // The config file reader was extracted from bootstrap/update.ts (where `autoupdate`
 // was the only key) so a second switch could share it. These tests pin the two
 // things that extraction must not change: WHICH files are read, in what order, and
-// HOW their text is parsed — plus loadBootstrapConfig still resolving through it.
+// HOW their text is parsed. Automatic updates use a separate canonical reader.
 
 let home = ""
 
@@ -75,8 +75,8 @@ test("czConfigBool accepts real booleans and their quoted spellings", async () =
   expect(await czConfigBool("missing", { home, env })).toBeUndefined()
 })
 
-test("loadBootstrapConfig still reads autoupdate through the shared reader", async () => {
+test("automatic updates read the canonical preference", async () => {
   write(".clickzetta/czcli.json", '{"autoupdate": "notify"}')
-  const config = await loadBootstrapConfig({ home, env: { CLICKZETTA_TEST_MANAGED_CONFIG_DIR: join(home, "managed") } })
-  expect(config.autoupdate).toBe("notify")
+  const config = await ConfigAutoupdate.read({ home, env: { CLICKZETTA_TEST_MANAGED_CONFIG_DIR: join(home, "managed") } })
+  expect(config.value).toBe("notify")
 })

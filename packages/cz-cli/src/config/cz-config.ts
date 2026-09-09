@@ -31,6 +31,8 @@ function homeDirectory(home?: string, env: NodeJS.ProcessEnv = process.env) {
  * `~/.clickzetta/czcli.json` is the canonical location. The XDG paths are honoured
  * too because a user who already keeps an agent config there reasonably expects
  * CLI settings to work from the same file.
+ * Automatic updates use ConfigAutoupdate instead: these paths are migration
+ * inputs only, and czcli.json is the sole persistent preference afterward.
  */
 export function czConfigCandidates(home?: string, env: NodeJS.ProcessEnv = process.env): string[] {
   const root = homeDirectory(home, env)

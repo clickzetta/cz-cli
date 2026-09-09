@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { ConfigAutoupdate } from "../src/config/autoupdate"
-import { loadBootstrapConfig, maybeAutoUpdate } from "../src/bootstrap/update"
+import { maybeAutoUpdate } from "../src/bootstrap/update"
 
 let home = ""
 beforeEach(async () => {
@@ -50,7 +50,7 @@ test("the command replaces the canonical preference despite conflicting legacy f
 
   expect((await run(["true"])).value).toBe(true)
   expect((await run([])).value).toBe(true)
-  expect(await loadBootstrapConfig({ env: environment() })).toEqual({ autoupdate: true })
+  expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe(true)
   expect(await Bun.file(path.join(home, ".clickzetta/czcli.json")).json()).toEqual({ autoupdate: true, sql_split: false })
 })
 
@@ -58,7 +58,7 @@ test.each([false, "notify"] as const)("migrates legacy %s once and keeps update 
   const state = path.join(home, "state/clickzetta/update-check.json")
   await Bun.write(state, JSON.stringify({ autoupdate, last_result: "check-failed", error: "offline" }))
   expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe(autoupdate)
-  expect(await Bun.file(path.join(home, ".clickzetta/czcli.json")).json()).toEqual({ autoupdate })
+  expect(await Bun.file(path.join(home, ".clickzetta/czcli.json")).json()).toEqual({ autoupdate, autoupdate_migrated: true })
   expect((await Bun.file(state).json()).error).toBe("offline")
 
   await Bun.write(state, JSON.stringify({ autoupdate: true }))
@@ -72,7 +72,7 @@ test("imports the former legacy precedence without overwriting other canonical s
   await Bun.write(path.join(home, ".clickzetta/czcli.jsonc"), JSON.stringify({ autoupdate: false }))
   await Bun.write(path.join(home, "managed/opencode.jsonc"), JSON.stringify({ autoupdate: "notify" }))
   expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe("notify")
-  expect(await Bun.file(path.join(home, ".clickzetta/czcli.json")).json()).toEqual({ sql_split: false, autoupdate: "notify" })
+  expect(await Bun.file(path.join(home, ".clickzetta/czcli.json")).json()).toEqual({ sql_split: false, autoupdate: "notify", autoupdate_migrated: true })
   await Bun.write(path.join(home, "managed/opencode.jsonc"), JSON.stringify({ autoupdate: false }))
   expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe("notify")
 })
@@ -85,7 +85,7 @@ test.each([
   expect(config.value).toBe(expected)
   expect(config.configured).toBe(true)
   expect(config.source).toBe(key)
-  expect((await loadBootstrapConfig({ env: { ...environment(), [key]: value } })).autoupdate).toBe(expected)
+  expect((await ConfigAutoupdate.read({ env: { ...environment(), [key]: value } })).value).toBe(expected)
   expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe(true)
 })
 
@@ -95,7 +95,7 @@ test.each(["CLICKZETTA_DISABLE_AUTOUPDATE", "CLICKZETTA_SKIP_UPDATE_ONCE", "CZ_S
   expect(config.configured).toBe(true)
   expect(config.source).toBe(path.join(home, ".clickzetta/czcli.json"))
   expect(config.suppressed_by).toBe(key)
-  expect((await loadBootstrapConfig({ env: { ...environment(), [key]: "1" } })).autoupdate).toBe(true)
+  expect((await ConfigAutoupdate.read({ env: { ...environment(), [key]: "1" } })).value).toBe(true)
 })
 
 test("shows the default and supports off/on/notify through the command", async () => {
@@ -127,4 +127,25 @@ test("refuses to overwrite a malformed canonical config", async () => {
   await Bun.write(file, "{ malformed config")
   await expect(ConfigAutoupdate.write(true, { env: environment() })).rejects.toThrow("Invalid config")
   expect(await Bun.file(file).text()).toBe("{ malformed config")
+})
+
+test("an unreadable legacy path does not prevent migration from another source", async () => {
+  await fs.mkdir(path.join(home, ".clickzetta/czcli.jsonc"), { recursive: true })
+  await Bun.write(path.join(home, "state/clickzetta/update-check.json"), JSON.stringify({ autoupdate: false }))
+  expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe(false)
+})
+
+test("an empty migration is completed once without losing default semantics", async () => {
+  expect((await ConfigAutoupdate.read({ env: environment() })).defaulted).toBe(true)
+  await Bun.write(path.join(home, "state/clickzetta/update-check.json"), JSON.stringify({ autoupdate: false }))
+  expect(await ConfigAutoupdate.read({ env: environment() })).toMatchObject({ value: true, defaulted: true, configured: null })
+})
+
+test("migration write failure retains the successfully read legacy preference", async () => {
+  const file = path.join(home, ".clickzetta/czcli.json")
+  await Bun.write(file, "{}")
+  await fs.chmod(file, 0o400)
+  await Bun.write(path.join(home, "state/clickzetta/update-check.json"), JSON.stringify({ autoupdate: false }))
+  expect((await ConfigAutoupdate.read({ env: environment() })).value).toBe(false)
+  expect(await Bun.file(file).text()).toBe("{}")
 })
