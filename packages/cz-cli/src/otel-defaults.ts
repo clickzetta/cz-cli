@@ -1,7 +1,3 @@
-import { existsSync, readFileSync } from "fs"
-import os from "os"
-import path from "path"
-
 /**
  * Internal OTel telemetry defaults — single source of truth for cz-cli package.
  *
@@ -23,17 +19,7 @@ export const OTEL_DEFAULTS = {
   headers: typeof CLICKZETTA_OTEL_HEADERS === "string" ? CLICKZETTA_OTEL_HEADERS : "",
 }
 
-function shouldRecordOtelContent() {
-  const profilesPath = path.join(process.env.CLICKZETTA_TEST_HOME || os.homedir(), ".clickzetta", "profiles.toml")
-  if (!existsSync(profilesPath)) return true
-  try {
-    return /^telemetry\s*=\s*true/m.test(readFileSync(profilesPath, "utf-8"))
-  } catch {
-    return true
-  }
-}
-
-export function applyDefaultOtelEnv() {
+export async function applyDefaultOtelEnv() {
   if (!process.env.OPENCODE_OTLP_ENDPOINT && OTEL_DEFAULTS.endpoint) {
     process.env.OPENCODE_OTLP_ENDPOINT = OTEL_DEFAULTS.endpoint
   }
@@ -44,7 +30,8 @@ export function applyDefaultOtelEnv() {
     process.env.OPENCODE_OTLP_PROTOCOL = OTEL_PROTOCOL
   }
   if (!process.env.OPENCODE_OTEL_RECORD_CONTENT) {
-    process.env.OPENCODE_OTEL_RECORD_CONTENT = shouldRecordOtelContent() ? "1" : "0"
+    const { ConfigOtel } = await import("./config/otel.js")
+    process.env.OPENCODE_OTEL_RECORD_CONTENT = ((await ConfigOtel.recordContent()) ?? true) ? "1" : "0"
   }
   if (!process.env.OPENCODE_SERVICE_NAME) {
     process.env.OPENCODE_SERVICE_NAME = "cz-agent"

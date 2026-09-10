@@ -143,7 +143,7 @@ export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
 /**
  * Set `default_profile` to `name`, preserving every other top-level key and the
  * profiles table. Uses the same CLICKZETTA_TEST_HOME-aware, atomic, 0600 write
- * as the rest of this module. Mirrors {@link saveProfiles}/{@link setTelemetry}:
+ * as the rest of this module. Mirrors {@link saveProfiles}:
  * a missing/corrupt file starts fresh, but a failed write propagates so the
  * caller's error handler can report it.
  */
@@ -416,7 +416,7 @@ export function setAuthTypeIfAbsent(profileName: string | undefined, authType: A
   }
 }
 
-/** Returns the current telemetry setting, or undefined if not yet configured. */
+/** Legacy content preference; new settings are written to czcli.json. */
 export function getTelemetry(): boolean | undefined {
   try {
     const text = readFileSync(profilesFile(), "utf-8")
@@ -426,17 +426,6 @@ export function getTelemetry(): boolean | undefined {
   } catch {
     return undefined
   }
-}
-
-export function setTelemetry(enabled: boolean): void {
-  let existing: Record<string, unknown> = {}
-  try {
-    const text = readFileSync(profilesFile(), "utf-8")
-    existing = parseTOML(text) as Record<string, unknown>
-  } catch {}
-  existing.telemetry = enabled
-  const content = stringifyTOML(existing)
-  writeProfilesFile(content)
 }
 
 /**

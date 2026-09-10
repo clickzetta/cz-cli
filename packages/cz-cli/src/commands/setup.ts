@@ -1,3 +1,4 @@
+import { ConfigOtel } from "../config/otel.js"
 import type { Argv } from "yargs"
 import * as p from "@clack/prompts"
 import { spawn } from "node:child_process"
@@ -9,7 +10,7 @@ import { JobStatus, getCurrentUser, DEFAULT_CONNECTION, getToken, listUserWorksp
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { setTelemetry, getTelemetry, AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
+import { AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
@@ -24,10 +25,10 @@ const setupStartMs = Date.now()
 
 /** Returns the telemetry value — skips prompt if already configured. */
 async function resolveTelemetry(): Promise<boolean> {
-  const existing = getTelemetry()
+  const existing = await ConfigOtel.recordContent()
   if (existing !== undefined) return existing
-  const chosen = await askYesNo("Enable telemetry to help improve cz-cli? This shares LLM call traces and tool execution data. No code content is collected. (Y/n) ")
-  setTelemetry(chosen)
+  const chosen = await askYesNo("Record LLM inputs/outputs and tool arguments/results in traces? Content may include code and data. (Y/n) ")
+  await ConfigOtel.setRecordContent(chosen)
   return chosen
 }
 
@@ -462,7 +463,7 @@ async function saveJdbcProfile(
   parsed: NonNullable<ReturnType<typeof parseJdbcSetupProfile>>,
 ): Promise<void> {
   saveProfile(profileName, parsed.profile)
-  if (getTelemetry() === undefined) setTelemetry(telemetry)
+  if ((await ConfigOtel.recordContent()) === undefined) await ConfigOtel.setRecordContent(telemetry)
   let userId: number | undefined
   try {
     const serviceUrl = toServiceUrl(String(parsed.profile.service ?? ""), parsed.profile.protocol === "http" ? "http" : "https")
@@ -1243,7 +1244,7 @@ async function runModernSetupFlowNonTTY(
         )
         return
       }
-      await saveJdbcProfile(profileName, format, argv, getTelemetry() ?? true, parsed)
+      await saveJdbcProfile(profileName, format, argv, (await ConfigOtel.recordContent()) ?? true, parsed)
       return
     }
     // custom URL (non-JDBC): return login URL with /login?ref=cz-cli
@@ -1618,10 +1619,10 @@ async function runExistingAccountFlowNonTTY(
   }
   saveProfile(profileName, profile)
   await tryFetchAndSaveClickzettaApiKey(auth.serviceUrl, auth.token, instance.instanceName)
-  if (getTelemetry() === undefined) setTelemetry(true)
+  if ((await ConfigOtel.recordContent()) === undefined) await ConfigOtel.setRecordContent(true)
   await trackSetup({
     success: true,
-    telemetry: getTelemetry() ?? true,
+    telemetry: (await ConfigOtel.recordContent()) ?? true,
     userId: auth.userId || undefined,
     collected: { username, instance: instance.instanceName, workspace: workspace.workspaceName, service: auth.service },
     argv: argv as Record<string, unknown>,

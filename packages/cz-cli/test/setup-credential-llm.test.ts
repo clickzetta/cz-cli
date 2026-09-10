@@ -66,7 +66,8 @@ function runSetup(args: string[]) {
   const llm = readLlmEntries()
   if (originalTestHome === undefined) delete process.env.CLICKZETTA_TEST_HOME
   else process.env.CLICKZETTA_TEST_HOME = originalTestHome
-  return { result, profiles, llm }
+  const config = JSON.parse(readFileSync(join(home, ".clickzetta", "czcli.json"), "utf-8"))
+  return { result, profiles, llm, config }
 }
 
 describe("setup --credential", () => {
@@ -115,7 +116,7 @@ describe("setup --credential", () => {
 
 describe("setup --login-method custom --login <jdbc>", () => {
   test("writes a profile directly from a complete JDBC connection string", () => {
-    const { result, profiles } = runSetup([
+    const { result, profiles, config } = runSetup([
       "--name", "jdbc",
       "--login-method", "custom",
       "--login", "jdbc:clickzetta://00000000.cn-hangzhou-alicloud.api.clickzetta.com/workspace?username=alice&password=secret&schema=public&virtualCluster=DEFAULT",
@@ -123,6 +124,8 @@ describe("setup --login-method custom --login <jdbc>", () => {
 
     expect(result.status).toBe(0)
     expect(profiles.default_profile).toBe("jdbc")
+    expect(profiles.telemetry).toBeUndefined()
+    expect(config.otel_record_content).toBe(true)
     expect(profiles.profiles).toEqual({
       jdbc: {
         username: "alice",

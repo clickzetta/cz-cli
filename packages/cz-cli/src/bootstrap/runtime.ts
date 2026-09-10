@@ -59,7 +59,7 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   // disable repo-local project config, telemetry defaults) at the very top of main()
   // — before opencode or the TUI server Worker reads any flag. All injection is
   // centralized in opencode-injection.ts; see its REGISTRY comment for the full list.
-  applyBaseOpencodeEnv()
+  await applyBaseOpencodeEnv()
 
   if (!globalHandlersRegistered) {
     globalHandlersRegistered = true

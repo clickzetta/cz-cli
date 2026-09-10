@@ -1,3 +1,5 @@
+import { ensureIdentityResolved } from "../../connection/context.js"
+import { profileTelemetryAttributes } from "../../connection/telemetry.js"
 import { context, SpanKind, trace, SpanStatusCode, type Span } from "@opentelemetry/api"
 import { SeverityNumber, type Logger } from "@opentelemetry/api-logs"
 import {
@@ -209,6 +211,12 @@ export function initHandlers(logger: Logger, recordContent?: boolean) {
   _logger = logger
   _recordContent = recordContent ?? true
   setRawRequestCaptureEnabled(_recordContent)
+  // Everything below attributes its span from the profile's `user_id`, and on a headless
+  // run (`agent run`, `serve`) nothing else asks the portal who the user is — the TUI's
+  // profile panel, which does, never paints. So resolve it once here, where telemetry
+  // declares what it needs, rather than from the attribute builder: a span must not be
+  // able to start a portal call. Not awaited, and it cannot reject.
+  void ensureIdentityResolved()
 }
 
 function sessionAttributes(
@@ -234,6 +242,7 @@ function emitLog(input: {
     severityText: input.severityText,
     body: input.body,
     attributes: {
+      ...profileTelemetryAttributes(),
       "event.name": input.eventName,
       ...input.attributes,
     },
@@ -264,6 +273,7 @@ function openTurnSpan(sessionID: string) {
     "prompt",
     {
       attributes: {
+        ...profileTelemetryAttributes(),
         "opencode.session.id": sessionID,
         ...(parentID ? { "opencode.session.parent.id": parentID } : {}),
       },
@@ -535,6 +545,7 @@ export function handleEvent(event: SubscribedEvent) {
             sessionID: p.sessionID ?? "",
             attributes: sessionAttributes(p.sessionID, {
               "gen_ai.conversation.id": p.sessionID ?? "",
+              ...profileTelemetryAttributes(),
               "gen_ai.operation.name": "chat",
             }),
           })
@@ -681,6 +692,7 @@ export function handleEvent(event: SubscribedEvent) {
           const span = tracer.startSpan(`chat ${modelID}`, {
             kind: SpanKind.CLIENT,
             attributes: {
+              ...profileTelemetryAttributes(),
               "gen_ai.operation.name": "chat",
               "gen_ai.provider.name": model?.providerID ?? "",
               "gen_ai.request.model": modelID,
@@ -739,7 +751,8 @@ export function handleEvent(event: SubscribedEvent) {
           }
           if (tokens.input) m.tokenUsage.record(tokens.input, { "gen_ai.token.type": "input", ...modelAttrs })
           if (tokens.output) m.tokenUsage.record(tokens.output, { "gen_ai.token.type": "output", ...modelAttrs })
-          if (durationMs != null) m.operationDuration.record(durationMs / 1000, { "gen_ai.operation.name": "chat", ...modelAttrs })
+          if (durationMs != null) m.operationDuration.record(durationMs / 1000, { ...profileTelemetryAttributes(),
+              "gen_ai.operation.name": "chat", ...modelAttrs })
           emitLog({
             severityNumber: SeverityNumber.INFO,
             severityText: "INFO",
@@ -798,6 +811,7 @@ export function handleEvent(event: SubscribedEvent) {
             if (!tracingEnabled("tool")) break
             const span = tracer.startSpan(`execute_tool ${toolName}`, {
               attributes: {
+                ...profileTelemetryAttributes(),
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.tool.name": toolName,
                 // Recommended by the convention and previously missing; these tools run

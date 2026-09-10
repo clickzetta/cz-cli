@@ -119,11 +119,48 @@ export function connectionContext(args: Partial<CliArgs> = {}): Promise<Connecti
 // A switch retargets everything the profile determines, so nothing resolved under the
 // previous one may survive it. `set()` is the only way the active profile changes after
 // startup (profile-context.ts).
-Profile.onChange(() => cache.clear())
+Profile.onChange(() => {
+  cache.clear()
+  ensured = undefined
+})
 
 /** Test-only: drop memoised contexts between tests sharing a process. */
 export function clearConnectionContextForTest(): void {
   cache.clear()
+  ensured = undefined
+}
+
+let ensured: Promise<void> | undefined
+
+/**
+ * Resolve this profile's identity now, for a caller that only wants the WRITE-BACK.
+ *
+ * `identity()` is lazy on purpose (see its doc comment): the SQL path must not pay a portal
+ * round trip for a user id it never reads. The cost of that laziness is that a profile
+ * whose login never learned its userId — login-browser keeps a token whose userinfo fetch
+ * failed, leaving userId at 0 — has nothing to fill it in, because no other agent-path
+ * reader asks for the user either. Telemetry then attributes a whole session to no one.
+ * This is the one entry point that resolves for that reason alone; it returns nothing,
+ * because the value it produces is the `user_id` on the profile.
+ *
+ * Free where it is already known: `resolveUser` answers from the profile's cached `user_id`
+ * + `account_id` without calling the portal, so on a warm profile this only builds the
+ * context — itself memoised for the life of the process, as is this.
+ *
+ * Never rejects. Every failure here — no profile, no credential, an instance name the
+ * portal will not resolve — is one the callers already degrade for.
+ */
+export function ensureIdentityResolved(args: Partial<CliArgs> = {}): Promise<void> {
+  // No row for the active profile means the write-back below cannot fire either — its guard
+  // needs an entry that matches this connection — so resolving would spend a portal round
+  // trip and throw the answer away. The one caller that resolves for the write alone must
+  // not pay for that.
+  if (!readProfileEntry(args.profile ?? Profile.current())) return Promise.resolve()
+  ensured ??= connectionContext(args)
+    .then((ctx) => ctx.identity())
+    .then(() => undefined)
+    .catch(() => undefined)
+  return ensured
 }
 
 async function derive(config: ConnectionConfig, profileName: string | undefined): Promise<ConnectionContext> {

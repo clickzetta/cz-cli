@@ -11,7 +11,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { parse as parseToml } from "smol-toml"
+import { parse } from "smol-toml"
 import { jsonc } from "opencode/config/parse"
 import { parseBoolish } from "../util/boolish.js"
 
@@ -56,9 +56,9 @@ export function czConfigCandidates(home?: string, env: NodeJS.ProcessEnv = proce
  * Writers use strict mode so an invalid file cannot be replaced by an empty object.
  */
 export function parseCzConfigText(text: string, options: { strict?: boolean } = {}): Record<string, unknown> {
-  for (const parse of [jsonc, parseToml] as const) {
+  for (const decode of [jsonc, parse] as const) {
     try {
-      const parsed = parse(text, CZ_CONFIG_FILE)
+      const parsed = decode(text, CZ_CONFIG_FILE)
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>
     } catch {
       // try the next format
@@ -66,6 +66,20 @@ export function parseCzConfigText(text: string, options: { strict?: boolean } = 
   }
   if (options.strict) throw new Error(`Invalid config in ${CZ_CONFIG_FILE}; expected a JSON, JSONC, or TOML object`)
   return {}
+}
+
+/** Update the canonical file without copying overrides from other config files. */
+export async function writeCzConfig(values: Record<string, unknown>) {
+  const file = path.join(homeDirectory(), CLICKZETTA_DIR, "czcli.json")
+  const text = await fs.readFile(file, "utf-8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined
+    throw error
+  })
+  const config = text === undefined ? {} : parseCzConfigText(text, { strict: true })
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`
+  await Bun.write(temporary, JSON.stringify({ ...config, ...values }, null, 2) + "\n", { mode: 0o600 })
+  await fs.rename(temporary, file)
 }
 
 /** Merged config across all candidates, later files winning key by key. */
