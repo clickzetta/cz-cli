@@ -31,7 +31,7 @@ import { join } from "node:path"
 import { toServiceUrl } from "@clickzetta/sdk"
 import { resolveConnectionConfig } from "../connection/config.js"
 import * as Profile from "../connection/profile-context.js"
-import { deriveAuthType, explicitAuthType, loadProfiles } from "../connection/profile-store.js"
+import { deriveAuthType, explicitAuthType, loadProfiles, patchProfileUserId } from "../connection/profile-store.js"
 // Re-exported, not redefined: tui-quota-runtime.ts publishes these to the .tsx renderer,
 // and commands/ai-gateway.ts needs the same answer — see llm/clickzetta-entry.ts.
 import { classifyClickzettaEntry, resolveClickzettaEntry } from "../llm/clickzetta-entry.js"
@@ -256,28 +256,31 @@ export function clearUserNameCacheForTest(): void {
 }
 
 /**
- * POST getCurrentUser and pull out the login handle, or undefined on any failure
- * or an envelope that doesn't carry one.
+ * POST getCurrentUser and pull out the login handle and the numeric id, or undefined on
+ * any failure or an envelope that doesn't carry them.
  *
- * `name` is the login handle; `accountDisplayName` is the tenant and is already
- * covered by `accountName` elsewhere. Nothing else from this payload is used — it
- * also carries a phone number and an email, which have no place in a status panel.
+ * `name` is the login handle, for display; `id` is what telemetry attributes a span to, and
+ * is returned rather than dropped because this response is the only place on the agent path
+ * that carries it. `accountDisplayName` is the tenant and is already covered by
+ * `accountName` elsewhere. Nothing else from this payload is used — it also carries a phone
+ * number and an email, which have no place in a status panel.
  *
  * `fetchProfileUserName`'s only caller now — fetchProfileSnapshot stopped needing a user
  * name when the token half moved to response headers. The four-part envelope check (record /
  * isPortalOk / record data / string name) stays here rather than inline because that shape
  * is the portal's, not this function's, and it was written once for two callers.
  */
-async function readCurrentUserName(
+async function readCurrentUser(
   baseUrl: string,
   token: string,
   signal: AbortSignal | undefined,
-): Promise<string | undefined> {
+): Promise<{ name?: string; id?: number } | undefined> {
   try {
     const payload = await portalRead(baseUrl, CURRENT_USER_PATH, token, { method: "POST", signal })
     if (!isRecord(payload) || !isPortalOk(payload.code) || !isRecord(payload.data)) return undefined
     const name = typeof payload.data.name === "string" ? payload.data.name.trim() : ""
-    return name || undefined
+    const id = Number(payload.data.id)
+    return { name: name || undefined, id: Number.isFinite(id) && id > 0 ? id : undefined }
   } catch (error) {
     if (signal?.aborted) throw error
     return undefined
@@ -323,10 +326,18 @@ export async function fetchProfileUserName(
     // instead of the indicator silently going blank (this file kept its own
     // fetch for host probing and cancellation, but not its own credential).
     const credential = await profileTokenSource(config).get()
-    const name = await readCurrentUserName(toServiceUrl(config.service, config.protocol), credential.token, input.signal)
-    if (!name) return undefined
-    userNameCache.set(info.profile, name)
-    return { profile: info.profile, name }
+    const user = await readCurrentUser(toServiceUrl(config.service, config.protocol), credential.token, input.signal)
+    // The same response carries the numeric id, and this is the only thing on the agent path
+    // that asks the portal who the user is. Telemetry attributes every span from the
+    // profile's `user_id`, which a login can fail to learn (login-browser keeps a token whose
+    // userinfo fetch failed) and which nothing else here would ever fill in — so record it
+    // while it is in hand rather than spend a second round trip on it later. Safe to write
+    // under: `info.profile` is the profile this credential was built from, and
+    // patchProfileUserId only fills an absent field and never throws.
+    if (user?.id) patchProfileUserId(info.profile, user.id)
+    if (!user?.name) return undefined
+    userNameCache.set(info.profile, user.name)
+    return { profile: info.profile, name: user.name }
   } catch {
     return undefined
   }

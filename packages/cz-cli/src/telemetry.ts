@@ -1,6 +1,4 @@
-import { readFileSync } from "fs"
-import { join } from "path"
-import { homedir } from "os"
+import { profileTelemetryAttributes } from "./connection/telemetry.js"
 import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
 import { currentTraceContext } from "./trace.js"
@@ -221,33 +219,6 @@ function commandAttributes(event: CommandEvent) {
   ]
 }
 
-function getResourceAttributes(): Record<string, string> {
-  try {
-    const toml = readFileSync(join(homedir(), ".clickzetta", "profiles.toml"), "utf-8")
-    const defaultMatch = toml.match(/^default_profile\s*=\s*"?([^"\n]+)"?/m)
-    const profileName = defaultMatch?.[1]?.trim() ?? "default"
-    const sectionHeader = `[profiles.${profileName}]`
-    const sectionIdx = toml.indexOf(sectionHeader)
-    if (sectionIdx < 0) return {}
-    const afterHeader = toml.slice(sectionIdx + sectionHeader.length)
-    const nextSection = afterHeader.indexOf("\n[")
-    const block = nextSection >= 0 ? afterHeader.slice(0, nextSection) : afterHeader
-    const get = (key: string) => block.match(new RegExp(`^${key}\\s*=\\s*"?([^"\\n]+)"?`, "m"))?.[1]?.trim()
-    const attrs: Record<string, string> = {}
-    const userId = get("user_id")
-    const instance = get("instance")
-    const workspace = get("workspace")
-    const service = get("service")
-    if (userId) attrs["enduser.id"] = userId
-    if (instance) attrs["instance.name"] = instance
-    if (workspace) attrs["workspace.name"] = workspace
-    if (service) attrs["service.url"] = service
-    return attrs
-  } catch {
-    return {}
-  }
-}
-
 /**
  * Fire-and-forget: send a command execution event to the OTLP collector.
  * Never throws, never blocks CLI exit.
@@ -255,7 +226,7 @@ function getResourceAttributes(): Record<string, string> {
 export function trackCommand(event: CommandEvent): Promise<void> {
   if (!OTEL_DEFAULTS.endpoint) return Promise.resolve()
   try {
-    const resourceAttrs = event.resourceAttributes ?? getResourceAttributes()
+    const resourceAttrs = event.resourceAttributes ?? profileTelemetryAttributes()
     const now = Date.now()
     const traceContext = currentTraceContext()
     const body = {

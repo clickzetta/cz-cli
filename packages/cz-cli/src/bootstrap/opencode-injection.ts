@@ -48,10 +48,10 @@ import {
 // Base env applied on EVERY cz-cli invocation, at the very top of main(), before
 // opencode or its TUI Worker reads any flag. Order preserved from the original
 // runtime.main(): autoupdate → project-config → otel.
-export function applyBaseOpencodeEnv(): void {
+export async function applyBaseOpencodeEnv(): Promise<void> {
   disableUpstreamAutoupdate()
   disableProjectConfigByDefault()
-  applyDefaultOtelEnv()
+  await applyDefaultOtelEnv()
 }
 
 // Agent-runtime-only injection. Call from the agent branch AFTER the base env and

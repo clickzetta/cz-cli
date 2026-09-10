@@ -1,4 +1,9 @@
-import { expect, test, describe, beforeEach } from "bun:test"
+import { expect, test, describe, beforeEach, afterEach } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { ConnectionEnv } from "../src/connection/env.js"
+import { saveProfiles } from "../src/connection/profile-store.js"
 import { InMemorySpanExporter, SimpleSpanProcessor, BasicTracerProvider } from "@opentelemetry/sdk-trace-base"
 import { trace } from "@opentelemetry/api"
 
@@ -870,5 +875,48 @@ describe("the credential shapes that leaked", () => {
     busy()
     const args = String(named("execute_tool odd")[0]!.attributes["gen_ai.tool.call.arguments"])
     expect(args).toContain("<redacted:cycle>")
+  })
+})
+
+describe("active profile attribution", () => {
+  let home = ""
+  let previousHome: string | undefined
+  let previousProfile: string | undefined
+
+  beforeEach(async () => {
+    previousHome = process.env.CLICKZETTA_TEST_HOME
+    previousProfile = ConnectionEnv.profileName()
+    home = await mkdtemp(path.join(os.tmpdir(), "cz-span-profile-"))
+    process.env.CLICKZETTA_TEST_HOME = home
+    saveProfiles({ first: { user_id: 11, instance: "one" }, second: { user_id: 22, workspace: "two" } })
+  })
+
+  afterEach(async () => {
+    if (previousHome === undefined) delete process.env.CLICKZETTA_TEST_HOME
+    else process.env.CLICKZETTA_TEST_HOME = previousHome
+    if (previousProfile === undefined) ConnectionEnv.unpin()
+    else ConnectionEnv.pin(previousProfile)
+    await rm(home, { recursive: true, force: true })
+  })
+
+  test("prompt, llm, tool spans and logs carry the current profile even with content off", () => {
+    initHandlers(logger as Parameters<typeof initHandlers>[0], false)
+    ;["first", "second"].forEach((profile) => {
+      ConnectionEnv.pin(profile)
+      busy()
+      assistantMessage()
+      part({ id: "start", type: "step-start" })
+      part({ id: "tool", type: "tool", tool: "bash", callID: "call", state: { status: "running", input: { command: "pwd" } } })
+      part({ id: "tool", type: "tool", tool: "bash", callID: "call", state: { status: "completed", output: "/tmp" } })
+      part({ id: "finish", type: "step-finish", reason: "stop" })
+      send("session.idle", { sessionID: SESSION })
+    })
+    ;["prompt", "chat claude-opus-5", "execute_tool bash"].forEach((name) => {
+      expect(named(name).map((span) => span.attributes["enduser.id"])).toEqual(["11", "22"])
+      expect(named(name)[1]!.attributes["instance.name"]).toBeUndefined()
+      expect(named(name)[1]!.attributes["workspace.name"]).toBe("two")
+    })
+    expect(named("execute_tool bash")[0]!.attributes["gen_ai.tool.call.arguments"]).toBeUndefined()
+    expect(emitted("opencode.tool.finished").map((record) => record.attributes["enduser.id"])).toEqual(["11", "22"])
   })
 })

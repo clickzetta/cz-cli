@@ -171,7 +171,6 @@ export const CLICKZETTA_AGENT_SYSTEM_PROMPT = [
   "## Key Rules",
   "",
   "**SQL is async by default**. Use `--sync` for SELECT when you need data immediately.",
-  "**Write approval workflow**: SQL, schema create/drop, table create/drop/load, and fs mb/rb/rm use the same approval workflow. Start each new operation without approval-override flags so the CLI can evaluate it. If the response has `status: action_required`, show the user the operation, target and reason, ask for explicit approval, and wait. Follow `issues[].remediation` and `next_steps` only after approval. A rejection is not permission to retry. Do not bypass the check through another command, tool, SDK, or direct API. An approved retry must preserve the operation, profile/workspace/schema, paths, variables, and settings; changed operations must be checked and approved again.",
   "**Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE).",
   "**Draft vs published matters**: `cz-cli task content <task>` shows draft only. Before validating cron/retry/readiness/scheduled behavior, run `cz-cli task status <task>` first. If draft changes are not published yet, publish them before drawing conclusions.",
   "**Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.",

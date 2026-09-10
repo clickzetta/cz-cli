@@ -72,6 +72,34 @@ cz-cli <command> [options]
 
 Every command takes `--help`.
 
+## CLI configuration
+
+Store CLI preferences in `~/.clickzetta/czcli.json`, alongside settings such as
+`autoupdate`:
+
+```json
+{
+  "autoupdate": false,
+  "otel_record_content": true
+}
+```
+
+When tracing is configured, `otel_record_content` controls recording LLM
+inputs/outputs and tool arguments/results. Content can include code and data;
+existing redaction and size limits still apply. Setting it to `false` keeps spans,
+status, token usage, and available profile identity attributes, but omits content.
+
+Content recording precedence is `OPENCODE_OTEL_RECORD_CONTENT` (`0`/`1`), then
+`otel_record_content`, then the legacy top-level `telemetry` boolean in
+`~/.clickzetta/profiles.toml`, then `true`. Missing files and missing keys use the
+same default. Setup writes new preferences to `czcli.json`; existing legacy
+preferences remain readable.
+
+The shared config reader also accepts `~/.clickzetta/czcli.jsonc`, followed by
+`$XDG_CONFIG_HOME/clickzetta/{opencode.jsonc,opencode.json,config.json}` (XDG defaults
+to `~/.config`). Later files override earlier files per key for content
+recording. Automatic updates use their existing migration into `czcli.json`.
+
 ## Output
 
 Output is machine-readable by default: a `{"data": …}` envelope on success, a
