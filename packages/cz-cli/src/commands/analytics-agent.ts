@@ -4,7 +4,8 @@ import type { Argv } from "yargs"
 import { createTraceparent, isRotatable, mergeHeaders } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
-import { readAgentEndpoint } from "../connection/profile-store.js"
+import { getProfileConfig, readAgentEndpoint } from "../connection/profile-store.js"
+import { current } from "../connection/profile-context.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR, EXIT_USAGE_ERROR } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
@@ -584,6 +585,181 @@ function resolveColumnVirtualBody(argv: Record<string, unknown>): Record<string,
 
 function resolveColumnVirtualDatasetId(argv: Record<string, unknown>): number | undefined {
   return typeof argv["dataset-id"] === "number" ? argv["dataset-id"] : undefined
+}
+
+function trimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function requiredDatasourceConnectionOption(
+  value: unknown,
+  optionName: string,
+  format: string,
+): string {
+  const result = trimmedString(value)
+  if (!result) {
+    handledError("USAGE_ERROR", `${optionName} is required`, {
+      format,
+      exitCode: EXIT_USAGE_ERROR,
+    })
+  }
+  return result
+}
+
+function buildLakehouseJdbcUrl(
+  service: string,
+  instance: string,
+  workspace: string,
+  schema: string,
+  vcluster: string,
+  format: string,
+): string {
+  // Service profiles usually store a host, but accepting an optional protocol
+  // and /api suffix makes the flag usable with values copied from connection
+  // settings without duplicating that transport detail in the JDBC URL.
+  const protocol = /^([a-z][a-z\d+.-]*):\/\//i.exec(service)?.[1]?.toLowerCase()
+  if (protocol && protocol !== "http" && protocol !== "https") {
+    handledError("USAGE_ERROR", "--connection-service may use only http:// or https://", {
+      format,
+      exitCode: EXIT_USAGE_ERROR,
+    })
+  }
+  const withoutProtocol = service.replace(/^https?:\/\//i, "").replace(/\/+$/, "")
+  const slashIndex = withoutProtocol.indexOf("/")
+  const host = slashIndex < 0 ? withoutProtocol : withoutProtocol.slice(0, slashIndex)
+  const suffix = slashIndex < 0 ? "" : withoutProtocol.slice(slashIndex)
+  if (!host) {
+    handledError("USAGE_ERROR", "--connection-service must include a service host", {
+      format,
+      exitCode: EXIT_USAGE_ERROR,
+    })
+  }
+
+  const query = new URLSearchParams({ schema, virtualCluster: vcluster })
+  return `jdbc:clickzetta://${instance}.${host}${suffix}/${encodeURIComponent(workspace)}?${query.toString()}`
+}
+
+function resolveDatasourceConnectionFromProfile(
+  argv: Record<string, unknown>,
+  format: string,
+): Record<string, unknown> {
+  const profileName = typeof argv.profile === "string" ? argv.profile : current()
+  const profile = getProfileConfig(profileName)
+  if (!profile) {
+    handledError(
+      "USAGE_ERROR",
+      profileName
+        ? `Profile '${profileName}' was not found; configure it before using --connection-from-profile`
+        : "No local profile is available; configure a profile or pass --profile before using --connection-from-profile",
+      { format, exitCode: EXIT_USAGE_ERROR },
+    )
+  }
+
+  const username = requiredDatasourceConnectionOption(profile?.username, "profile username", format)
+  const password = requiredDatasourceConnectionOption(profile?.password, "profile password", format)
+  const service = requiredDatasourceConnectionOption(profile?.service, "profile service", format)
+  const instance = requiredDatasourceConnectionOption(profile?.instance, "profile instance", format)
+  const workspace = requiredDatasourceConnectionOption(profile?.workspace, "profile workspace", format)
+  const schema = requiredDatasourceConnectionOption(profile?.schema, "profile schema", format)
+  const vcluster = requiredDatasourceConnectionOption(profile?.vcluster, "profile vcluster", format)
+  const jdbcUrl = buildLakehouseJdbcUrl(service, instance, workspace, schema, vcluster, format)
+  return { username, password, jdbcUrl, apVc: vcluster }
+}
+
+function resolveDatasourceCreateConnection(
+  argv: Record<string, unknown>,
+  format: string,
+): Record<string, unknown> | undefined {
+  const connection = parseOptionalJsonObject(
+    typeof argv.connection === "string" ? argv.connection : undefined,
+    "--connection",
+  )
+  const bodyProvided = typeof argv.body === "string" && argv.body.trim() !== ""
+  const values = {
+    jdbcUrl: trimmedString(argv["jdbc-url"]),
+    username: trimmedString(argv["connection-username"]),
+    password: trimmedString(argv["connection-password"]),
+    apVc: trimmedString(argv["ap-vc"]),
+    service: trimmedString(argv["connection-service"]),
+    instance: trimmedString(argv["connection-instance"]),
+    workspace: trimmedString(argv["connection-workspace"]),
+    schema: trimmedString(argv["connection-schema"]),
+    vcluster: trimmedString(argv["connection-vcluster"]),
+  }
+  const hasSimplifiedOptions = Object.values(values).some((value) => value !== undefined)
+  const fromProfile = argv["connection-from-profile"] === true
+  if (fromProfile) {
+    if (connection !== undefined || bodyProvided || hasSimplifiedOptions) {
+      handledError(
+        "USAGE_ERROR",
+        "Use --connection-from-profile by itself; do not combine it with --connection/--body or other datasource connection options",
+        { format, exitCode: EXIT_USAGE_ERROR },
+      )
+    }
+    return resolveDatasourceConnectionFromProfile(argv, format)
+  }
+  if (!hasSimplifiedOptions) return connection
+
+  if (connection !== undefined || bodyProvided) {
+    handledError(
+      "USAGE_ERROR",
+      "Use either --connection/--body or the simplified datasource connection options, not both",
+      { format, exitCode: EXIT_USAGE_ERROR },
+    )
+  }
+
+  const hasJdbcUrl = values.jdbcUrl !== undefined
+  const splitValues = [values.service, values.instance, values.workspace, values.schema, values.vcluster]
+  const hasSplitFields = splitValues.some((value) => value !== undefined)
+  if (hasJdbcUrl && hasSplitFields) {
+    handledError(
+      "USAGE_ERROR",
+      "--jdbc-url cannot be combined with --connection-service/--connection-instance/--connection-workspace/--connection-schema/--connection-vcluster",
+      { format, exitCode: EXIT_USAGE_ERROR },
+    )
+  }
+  if (!hasJdbcUrl && !hasSplitFields) {
+    handledError(
+      "USAGE_ERROR",
+      "Provide --jdbc-url or all of --connection-service, --connection-instance, --connection-workspace, --connection-schema, and --connection-vcluster",
+      { format, exitCode: EXIT_USAGE_ERROR },
+    )
+  }
+
+  const username = requiredDatasourceConnectionOption(values.username, "--connection-username", format)
+  const password = requiredDatasourceConnectionOption(values.password, "--connection-password", format)
+
+  if (hasJdbcUrl) {
+    const jdbcUrl = requiredDatasourceConnectionOption(values.jdbcUrl, "--jdbc-url", format)
+    if (!/^jdbc:[^:]+:\/\//i.test(jdbcUrl)) {
+      handledError("USAGE_ERROR", "--jdbc-url must be a JDBC URL such as jdbc:clickzetta://...", {
+        format,
+        exitCode: EXIT_USAGE_ERROR,
+      })
+    }
+    return mergeBody({}, {
+      username,
+      password,
+      jdbcUrl,
+      apVc: values.apVc,
+    })
+  }
+
+  if (values.apVc !== undefined) {
+    handledError("USAGE_ERROR", "--ap-vc is only valid with --jdbc-url", {
+      format,
+      exitCode: EXIT_USAGE_ERROR,
+    })
+  }
+  const service = requiredDatasourceConnectionOption(values.service, "--connection-service", format)
+  const instance = requiredDatasourceConnectionOption(values.instance, "--connection-instance", format)
+  const workspace = requiredDatasourceConnectionOption(values.workspace, "--connection-workspace", format)
+  const schema = requiredDatasourceConnectionOption(values.schema, "--connection-schema", format)
+  const vcluster = requiredDatasourceConnectionOption(values.vcluster, "--connection-vcluster", format)
+  const jdbcUrl = buildLakehouseJdbcUrl(service, instance, workspace, schema, vcluster, format)
+  return { username, password, jdbcUrl, apVc: vcluster }
 }
 
 function pickDomainPromptFields(value: unknown): Record<string, unknown> {
@@ -2053,16 +2229,44 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("name", { type: "string", describe: "Datasource name" })
                 .option("type", { type: "string", describe: "Datasource type" })
                 .option("connection", { type: "string", describe: "Datasource connection JSON object" })
+                .option("jdbc-url", { type: "string", describe: "Lakehouse JDBC URL for the datasource connection" })
+                .option("connection-username", { type: "string", describe: "Username for the datasource connection" })
+                .option("connection-password", { type: "string", describe: "Password for the datasource connection" })
+                .option("ap-vc", { type: "string", describe: "Optional AP virtual cluster used with --jdbc-url" })
+                .option("connection-service", { type: "string", describe: "Lakehouse service host used to build the JDBC URL" })
+                .option("connection-instance", { type: "string", describe: "Lakehouse instance used to build the JDBC URL" })
+                .option("connection-workspace", { type: "string", describe: "Lakehouse workspace used to build the JDBC URL" })
+                .option("connection-schema", { type: "string", describe: "Lakehouse schema used to build the JDBC URL" })
+                .option("connection-vcluster", { type: "string", describe: "Lakehouse virtual cluster used to build the JDBC URL and apVc" })
+                .option("connection-from-profile", { type: "boolean", describe: "Read the selected local profile and automatically build the datasource connection request body" })
                 .option("validate-only", { type: "boolean", describe: "Validate connection without creating datasource" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .epilogue(
+                  [
+                    "Examples:",
+                    "  cz-cli analytics-agent datasource create --name lakehouse_ds --type lakehouse",
+                    "    --connection-username user --connection-password '<password>'",
+                    "    --jdbc-url 'jdbc:clickzetta://instance.service/workspace?schema=public&virtualCluster=DEFAULT'",
+                    "  cz-cli analytics-agent datasource create --name lakehouse_ds --type lakehouse",
+                    "    --connection-username user --connection-password '<password>'",
+                    "    --connection-service service --connection-instance instance",
+                    "    --connection-workspace workspace --connection-schema public --connection-vcluster DEFAULT",
+                    "  cz-cli analytics-agent datasource create --profile lakehouse-dev --name lakehouse_ds --type lakehouse --connection-from-profile",
+                    "  --connection-from-profile reads the selected local profile (or the default profile), automatically assembles the datasource connection request body, and sends it to the backend.",
+                    "  Use --connection-username/--connection-password for datasource credentials; global --username/--password authenticate the CLI.",
+                    "  --connection and --body remain available for raw request JSON.",
+                  ].join("\n"),
+                ),
             async (argv) => {
+              const argvRec = argv as Record<string, unknown>
+              const format = typeof argv.format === "string" ? argv.format : "json"
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 name: argv.name,
                 type: argv.type,
-                connection: parseOptionalJsonObject(argv.connection, "--connection"),
+                connection: resolveDatasourceCreateConnection(argvRec, format),
                 validateOnly: argv["validate-only"],
               })
-              await executeAnalyticsCommand("analytics-agent datasource create", argv as Record<string, unknown>, ROUTES.datasourceCreate, body)
+              await executeAnalyticsCommand("analytics-agent datasource create", argvRec, ROUTES.datasourceCreate, body)
             },
           )
           .command(
@@ -2103,7 +2307,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("workspace", { type: "string", describe: "Workspace name (required for lakehouse type; also accepts -w from global options)" })
                 .option("schema", { type: "string", describe: "Schema name (required for lakehouse type)" })
                 .option("path", { type: "string", describe: "Table path shorthand: workspace:X/schema:Y/table:Z — workspace and schema extracted automatically; table-name must still be provided separately or included as table:Z" })
-                .option("table-name", { type: "string", describe: "Table name (required; can be omitted when --path includes table:Z)" })
+                .option("table-name", { alias: "table", type: "string", describe: "Table name (required; can be omitted when --path includes table:Z)" })
                 .option("display-name", { type: "string", describe: "Dataset display name (defaults to table-name when omitted)" })
                 .option("description", { type: "string", describe: "Dataset description" })
                 .option("domain-ids", { type: "string", describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
@@ -2117,6 +2321,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     "",
                     "Examples:",
                     "  cz-cli analytics-agent datasource load 603 --workspace datagpt_ws --schema retail --table-name orders --domain-ids '[5]'",
+                    "  cz-cli analytics-agent datasource load 603 --workspace datagpt_ws --schema retail --table orders --domain-ids '[5]'",
                     "  cz-cli analytics-agent datasource load 603 --path workspace:datagpt_ws/schema:retail/table:orders --domain-ids '[5]'",
                     "  以上两种写法等效，--path 会自动解析 workspace/schema/table-name。",
                     "  cz-cli analytics-agent datasource load 603 --workspace datagpt_ws --schema retail --table-name orders --domain-ids '[5,6]'",
@@ -2336,7 +2541,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     .option("workspace", { type: "string", describe: "Workspace name (required for lakehouse type; also accepts -w from global options)" })
                     .option("schema", { type: "string", describe: "Schema name (required for lakehouse type)" })
                     .option("path", { type: "string", describe: "Table path shorthand: workspace:X/schema:Y/table:Z — workspace, schema, and table-name are extracted automatically" })
-                    .option("table-name", { type: "string", describe: "Table name (can be omitted when --path includes table:Z)" })
+                    .option("table-name", { alias: "table", type: "string", describe: "Table name (can be omitted when --path includes table:Z)" })
                     .option("display-name", { type: "string", describe: "Dataset display name (defaults to table-name when omitted)" })
                     .option("description", { type: "string", describe: "Dataset description" })
                     .option("body", { type: "string", describe: "Full request body as JSON object (overrides individual flags)" })
@@ -2347,7 +2552,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                         "  --display-name defaults to --table-name when not provided.",
                         "",
                         "Examples:",
-                        "  cz-cli analytics-agent domain table add 27 --datasource-id 603 --workspace datagpt_ws --schema retail --table-name orders",
+                        "  cz-cli analytics-agent domain table add 27 --datasource-id 603 --workspace datagpt_ws --schema retail --table orders",
                         "  cz-cli analytics-agent domain table add 27 --datasource-id 603 --path workspace:datagpt_ws/schema:retail/table:orders",
                         "  以上两种写法等效，--path 会自动解析 workspace/schema/table-name。",
                       ].join("\n"),

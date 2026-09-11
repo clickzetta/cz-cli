@@ -11,6 +11,7 @@ import { redactSql } from "./logger.js"
 export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   "credential",
   "password",
+  "connection-password",
   "pat",
   "token",
   "secret",
@@ -23,11 +24,12 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   "cookie",
   "x-api-key",
   "x-auth-token",
-  // Both take a JDBC connection string, and connection/jdbc.ts reads a `password=`
-  // parameter straight out of it. Neither value is a dimension anyone could act on in
-  // analytics, so the whole string goes rather than one parameter of it.
+  // These flags carry JDBC connection strings, and connection/jdbc.ts reads a
+  // `password=` parameter straight out of them. Neither value is a dimension anyone
+  // could act on in analytics, so the whole string goes rather than one parameter of it.
   "login",
   "jdbc",
+  "jdbc-url",
 ])
 
 /**
