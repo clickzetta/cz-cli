@@ -4,8 +4,12 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 // connection/config.ts, which imports more of this module, and a partial mock
 // would break its import with a missing-export SyntaxError.
 const realProfileStore = await import("../src/connection/profile-store.js")
+let profileConfigOverride: ReturnType<typeof realProfileStore.getProfileConfig> = undefined
+let profileEntryOverride: ReturnType<typeof realProfileStore.readProfileEntry> = undefined
 mock.module("../src/connection/profile-store.js", () => ({
   ...realProfileStore,
+  getProfileConfig: () => profileConfigOverride,
+  readProfileEntry: () => profileEntryOverride,
   readAgentEndpoint: () => "https://example.clickzetta.com",
 }))
 
@@ -88,6 +92,8 @@ describe("analytics-agent id validation", () => {
   })
 
   afterEach(() => {
+    profileConfigOverride = undefined
+    profileEntryOverride = undefined
     globalThis.fetch = originalFetch
     process.stdout.write = originalStdoutWrite
     process.stderr.write = originalStderrWrite
@@ -293,6 +299,93 @@ describe("analytics-agent id validation", () => {
         apVc: "AP VC",
       },
     })
+  })
+
+  test("datasource create builds a connection from the selected local profile", async () => {
+    let requestBody: Record<string, unknown> | undefined
+    profileConfigOverride = {
+      username: "profile-user",
+      password: "profile-password",
+      service: "https://uat-api.clickzetta.com/api",
+      instance: "jnsxwfyr",
+      workspace: "cxx_dt_test",
+      schema: "public",
+      vcluster: "DEFAULT",
+    }
+    profileEntryOverride = { ...profileConfigOverride }
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { id: 9 } })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--profile",
+      "lakehouse-dev",
+      "--name",
+      "profile_ds",
+      "--type",
+      "lakehouse",
+      "--connection-from-profile",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestBody).toMatchObject({
+      name: "profile_ds",
+      type: "lakehouse",
+      connection: {
+        username: "profile-user",
+        password: "profile-password",
+        jdbcUrl: "jdbc:clickzetta://jnsxwfyr.uat-api.clickzetta.com/api/cxx_dt_test?schema=public&virtualCluster=DEFAULT",
+        apVc: "DEFAULT",
+      },
+    })
+  })
+
+  test("datasource create rejects profile connection with explicit connection options", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--connection-from-profile",
+      "--jdbc-url",
+      "jdbc:clickzetta://instance.service/workspace",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).message).toContain("--connection-from-profile by itself")
+  })
+
+  test("datasource create reports a missing profile connection field", async () => {
+    profileConfigOverride = {
+      username: "profile-user",
+      password: "profile-password",
+      instance: "jnsxwfyr",
+      workspace: "cxx_dt_test",
+      schema: "public",
+      vcluster: "DEFAULT",
+    }
+    profileEntryOverride = { ...profileConfigOverride }
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "datasource",
+      "create",
+      "--connection-from-profile",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).message).toContain("profile service is required")
   })
 
   test("datasource create keeps the raw --connection path compatible", async () => {

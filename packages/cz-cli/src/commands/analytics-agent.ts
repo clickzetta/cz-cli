@@ -4,7 +4,8 @@ import type { Argv } from "yargs"
 import { createTraceparent, isRotatable, mergeHeaders } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { commandGroup } from "../command-group.js"
-import { readAgentEndpoint } from "../connection/profile-store.js"
+import { getProfileConfig, readAgentEndpoint } from "../connection/profile-store.js"
+import { current } from "../connection/profile-context.js"
 import { resolveConnectionConfig } from "../connection/config.js"
 import { success, error, handledError, isHandledCliError, shouldColorize, renderOutput, EXIT_BIZ_ERROR, EXIT_USAGE_ERROR } from "../output/index.js"
 import { formatMarkdown } from "../output/formatter.js"
@@ -640,6 +641,33 @@ function buildLakehouseJdbcUrl(
   return `jdbc:clickzetta://${instance}.${host}${suffix}/${encodeURIComponent(workspace)}?${query.toString()}`
 }
 
+function resolveDatasourceConnectionFromProfile(
+  argv: Record<string, unknown>,
+  format: string,
+): Record<string, unknown> {
+  const profileName = typeof argv.profile === "string" ? argv.profile : current()
+  const profile = getProfileConfig(profileName)
+  if (!profile) {
+    handledError(
+      "USAGE_ERROR",
+      profileName
+        ? `Profile '${profileName}' was not found; configure it before using --connection-from-profile`
+        : "No local profile is available; configure a profile or pass --profile before using --connection-from-profile",
+      { format, exitCode: EXIT_USAGE_ERROR },
+    )
+  }
+
+  const username = requiredDatasourceConnectionOption(profile?.username, "profile username", format)
+  const password = requiredDatasourceConnectionOption(profile?.password, "profile password", format)
+  const service = requiredDatasourceConnectionOption(profile?.service, "profile service", format)
+  const instance = requiredDatasourceConnectionOption(profile?.instance, "profile instance", format)
+  const workspace = requiredDatasourceConnectionOption(profile?.workspace, "profile workspace", format)
+  const schema = requiredDatasourceConnectionOption(profile?.schema, "profile schema", format)
+  const vcluster = requiredDatasourceConnectionOption(profile?.vcluster, "profile vcluster", format)
+  const jdbcUrl = buildLakehouseJdbcUrl(service, instance, workspace, schema, vcluster, format)
+  return { username, password, jdbcUrl, apVc: vcluster }
+}
+
 function resolveDatasourceCreateConnection(
   argv: Record<string, unknown>,
   format: string,
@@ -661,6 +689,17 @@ function resolveDatasourceCreateConnection(
     vcluster: trimmedString(argv["connection-vcluster"]),
   }
   const hasSimplifiedOptions = Object.values(values).some((value) => value !== undefined)
+  const fromProfile = argv["connection-from-profile"] === true
+  if (fromProfile) {
+    if (connection !== undefined || bodyProvided || hasSimplifiedOptions) {
+      handledError(
+        "USAGE_ERROR",
+        "Use --connection-from-profile by itself; do not combine it with --connection/--body or other datasource connection options",
+        { format, exitCode: EXIT_USAGE_ERROR },
+      )
+    }
+    return resolveDatasourceConnectionFromProfile(argv, format)
+  }
   if (!hasSimplifiedOptions) return connection
 
   if (connection !== undefined || bodyProvided) {
@@ -2199,6 +2238,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("connection-workspace", { type: "string", describe: "Lakehouse workspace used to build the JDBC URL" })
                 .option("connection-schema", { type: "string", describe: "Lakehouse schema used to build the JDBC URL" })
                 .option("connection-vcluster", { type: "string", describe: "Lakehouse virtual cluster used to build the JDBC URL and apVc" })
+                .option("connection-from-profile", { type: "boolean", describe: "Read the selected local profile and automatically build the datasource connection request body" })
                 .option("validate-only", { type: "boolean", describe: "Validate connection without creating datasource" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .epilogue(
@@ -2211,6 +2251,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     "    --connection-username user --connection-password '<password>'",
                     "    --connection-service service --connection-instance instance",
                     "    --connection-workspace workspace --connection-schema public --connection-vcluster DEFAULT",
+                    "  cz-cli analytics-agent datasource create --profile lakehouse-dev --name lakehouse_ds --type lakehouse --connection-from-profile",
+                    "  --connection-from-profile reads the selected local profile (or the default profile), automatically assembles the datasource connection request body, and sends it to the backend.",
                     "  Use --connection-username/--connection-password for datasource credentials; global --username/--password authenticate the CLI.",
                     "  --connection and --body remain available for raw request JSON.",
                   ].join("\n"),

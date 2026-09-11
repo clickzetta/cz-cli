@@ -47,8 +47,8 @@ export const agentGatewayHelpCases: HelpCase[] = [
   {
     args: ["analytics-agent", "datasource", "create", "--help"],
     expectHeader: "cz-cli analytics-agent datasource create",
-    expectOptions: ["--connection", "--jdbc-url", "--connection-username", "--connection-password", "--connection-service", "--connection-instance", "--connection-workspace", "--connection-schema", "--connection-vcluster", "--ap-vc"],
-    expectCommands: ["Examples:", "--jdbc-url 'jdbc:clickzetta://instance.service/workspace", "--connection-service service --connection-instance instance", "--connection-workspace workspace --connection-schema public", "--connection-vcluster DEFAULT", "global --username/--password authenticate the CLI", "--connection and --body remain available"],
+    expectOptions: ["--connection", "--jdbc-url", "--connection-username", "--connection-password", "--connection-service", "--connection-instance", "--connection-workspace", "--connection-schema", "--connection-vcluster", "--ap-vc", "--connection-from-profile"],
+    expectCommands: ["Examples:", "--jdbc-url 'jdbc:clickzetta://instance.service/workspace", "--connection-service service --connection-instance instance", "--connection-workspace workspace --connection-schema public", "--connection-vcluster DEFAULT", "--connection-from-profile", "reads the selected local profile", "sends it to the backend", "global --username/--password authenticate the CLI", "--connection and --body remain available"],
   },
   {
     args: ["analytics-agent", "datasource", "load", "--help"],
