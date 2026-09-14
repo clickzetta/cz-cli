@@ -23,7 +23,11 @@ export function otelResourceAttributes(input: {
 }): Record<string, string> {
   const attributes: Record<string, string> = {
     "service.name": input.serviceName || "opencode",
-    "service.version": input.version,
+    // A source run has no CLICKZETTA_VERSION define, so VERSION carries a per-minute
+    // timestamp. On a RESOURCE that is a new time series every minute — dev traffic used to
+    // aggregate under the single constant "local", and this keeps that, since a dev build
+    // has no release to segment by anyway. Released builds report the real version.
+    "service.version": input.version.startsWith("0.0.0-dev+") ? "local" : input.version,
     "opencode.client": input.client ?? "unknown",
   }
   for (const pair of input.overrides?.split(",") ?? []) {

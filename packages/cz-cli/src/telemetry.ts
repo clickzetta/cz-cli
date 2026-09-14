@@ -232,7 +232,12 @@ function commandAttributes(event: CommandEvent) {
 export function trackCommand(event: CommandEvent): Promise<void> {
   if (!OTEL_DEFAULTS.endpoint) return Promise.resolve()
   try {
-    const identity = event.identityAttributes ?? profileTelemetryAttributes()
+    // An EMPTY override falls back too, not just an absent one: trackSetup always passes a
+    // row, and it is `{}` on a setup that failed before it learned anything — so `??` alone
+    // let the empty object win and left exactly the failures you most want attributed
+    // anonymous, on a machine whose default profile knew the user all along.
+    const override = event.identityAttributes
+    const identity = override && Object.keys(override).length > 0 ? override : profileTelemetryAttributes()
     const now = Date.now()
     const traceContext = currentTraceContext()
     const body = {

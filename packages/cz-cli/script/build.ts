@@ -51,6 +51,12 @@ async function buildRuntimeAsset(entrypoint: string, outfile: string) {
     // 0.0.0-dev+<ts> fallback — the same drop that once broke `cz-cli --version`. The otel
     // plugin now stamps this into the trace resource's service.version, so it has to be
     // the real release version.
+    // CLICKZETTA_OTEL_ENDPOINT/HEADERS are deliberately NOT injected here even though
+    // otel-defaults.ts is reachable from this graph: the plugin gets the collector from
+    // OPENCODE_OTLP_* env, which applyDefaultOtelEnv() fills in the parent process, so
+    // injecting them would ship the credentials in a second artifact for nothing. If
+    // anything in an asset ever calls trackCommand directly it will silently no-op on the
+    // empty endpoint — add them then, and share one define block with the binary build.
     define: {
       CLICKZETTA_VERSION: `'${Script.version}'`,
     },

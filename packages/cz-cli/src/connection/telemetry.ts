@@ -37,7 +37,11 @@ export function identityAttributes(row: IdentityRow | undefined): IdentityAttrib
     FIELDS.flatMap(([field, attribute]) => {
       const value = row[field]
       if (typeof value === "string" && value.trim()) return [[attribute, value]]
-      if (typeof value === "number" && Number.isFinite(value)) return [[attribute, String(value)]]
+      // `> 0`, not `isFinite`: 0 is this codebase's "unknown user" sentinel, not an id —
+      // login-browser.ts:452 hands it out when a login cannot learn the user, and
+      // profile-store.ts:531 already refuses to persist it. Reporting `enduser.id = "0"`
+      // would invent a cohort out of every unattributable session.
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) return [[attribute, String(value)]]
       return []
     }),
   )
