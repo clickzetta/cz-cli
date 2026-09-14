@@ -20,8 +20,18 @@ const FIELDS = [
 /** The four attributes above, and nothing else. */
 export type IdentityAttributes = Partial<Record<(typeof FIELDS)[number][1], string>>
 
+/**
+ * The four profile FIELDS above, and nothing else — the input side needs the same guarantee
+ * as the output side. `Record<string, unknown>` let a hand-built row spell `userId` where
+ * FIELDS reads `user_id`: no compile error, and the attribute silently vanished. That is the
+ * divergence this function exists to prevent, just moved from the attribute to the field.
+ * `ProfileEntry` is an index-signature type so the profile-store path still assigns; the
+ * excess-property check bites on the literal in setup.ts, which is the caller that needs it.
+ */
+export type IdentityRow = Partial<Record<(typeof FIELDS)[number][0], unknown>>
+
 /** Map a profile row (or a login's not-yet-persisted equivalent) onto the attributes. */
-export function identityAttributes(row: Record<string, unknown> | undefined): IdentityAttributes {
+export function identityAttributes(row: IdentityRow | undefined): IdentityAttributes {
   if (!row) return {}
   return Object.fromEntries(
     FIELDS.flatMap(([field, attribute]) => {

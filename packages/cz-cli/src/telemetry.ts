@@ -261,7 +261,11 @@ export function trackCommand(event: CommandEvent): Promise<void> {
             body: { stringValue: commandBody(event) },
             attributes: [
               ...commandAttributes(event),
-              ...Object.entries(identity).map(([k, v]) => ({ key: k, value: { stringValue: v } })),
+              // Filtered: IdentityAttributes is Partial, and an explicit undefined would
+              // serialise as `"value":{}` rather than being dropped.
+              ...Object.entries(identity).flatMap(([k, v]) =>
+                v === undefined ? [] : [{ key: k, value: { stringValue: v } }],
+              ),
             ],
           }],
         }],
