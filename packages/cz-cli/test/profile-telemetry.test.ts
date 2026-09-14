@@ -68,7 +68,15 @@ test("missing profile fields stay absent", () => {
   expect(profileTelemetryAttributes()).toEqual({})
 })
 
-test("command export includes the active profile resource attributes", async () => {
+/**
+ * Identity belongs to the log RECORD, and appears once in the payload.
+ *
+ * It used to be merged into `resource.attributes`, where the OTel resource spec says only
+ * the producing service goes: every (user, instance, workspace) triple then looked like a
+ * separate service instance downstream, and the trace path (which puts the same attributes
+ * on the span) disagreed with the log path about where to read identity from.
+ */
+test("command export puts the active profile identity on the log record, exactly once", async () => {
   ConnectionEnv.pin("second.profile")
   const received: unknown[] = []
   const server = Bun.serve({
@@ -83,20 +91,41 @@ test("command export includes the active profile resource attributes", async () 
   try {
     await trackCommand({ command: "sql", success: true, duration_ms: 1 })
     expect(received).toHaveLength(1)
+
+    // Serialise BEFORE toMatchObject: bun substitutes the expected matchers INTO the
+    // received object, so a string assertion afterwards reads the expectation back rather
+    // than the payload — which is how a first draft of this test "proved" a key it had
+    // itself just written in.
+    const payload = JSON.stringify(received)
+    expect(payload.match(/"enduser\.id"/g)).toHaveLength(1)
+    expect(payload).not.toContain("secret")
+
     expect(received[0]).toMatchObject({
       resourceLogs: [
         {
           resource: {
-            attributes: expect.arrayContaining([
-              { key: "enduser.id", value: { stringValue: "22" } },
-              { key: "instance.name", value: { stringValue: "second-instance" } },
-              { key: "workspace.name", value: { stringValue: "ws" } },
-            ]),
+            attributes: [
+              { key: "service.name", value: { stringValue: "cz-cli" } },
+              { key: "service.version", value: { stringValue: expect.any(String) } },
+            ],
           },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: expect.arrayContaining([
+                    { key: "enduser.id", value: { stringValue: "22" } },
+                    { key: "instance.name", value: { stringValue: "second-instance" } },
+                    { key: "workspace.name", value: { stringValue: "ws" } },
+                    { key: "service.url", value: { stringValue: "https://example.test" } },
+                  ]),
+                },
+              ],
+            },
+          ],
         },
       ],
     })
-    expect(JSON.stringify(received)).not.toContain("secret")
   } finally {
     await server.stop(true)
   }

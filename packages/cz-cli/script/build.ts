@@ -46,6 +46,14 @@ async function buildRuntimeAsset(entrypoint: string, outfile: string) {
     target: "bun",
     format: "esm",
     minify: true,
+    // cz_change: runtime assets are bundled SEPARATELY from the binary, so the binary's
+    // `define` block never reached them and anything here importing version.ts read the
+    // 0.0.0-dev+<ts> fallback — the same drop that once broke `cz-cli --version`. The otel
+    // plugin now stamps this into the trace resource's service.version, so it has to be
+    // the real release version.
+    define: {
+      CLICKZETTA_VERSION: `'${Script.version}'`,
+    },
   })
   if (!result.success) {
     fs.rmSync(tmp, { recursive: true, force: true })

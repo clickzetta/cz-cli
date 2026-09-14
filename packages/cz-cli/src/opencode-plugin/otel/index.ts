@@ -12,6 +12,7 @@ import { getSessionTraceparent } from "./context"
 import { createTraceparent } from "./traceparent"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { VERSION } from "../../version.js"
 
 function parseHeaders(raw?: string): Record<string, string> {
   if (!raw) return {}
@@ -36,9 +37,15 @@ export const OtelPlugin: Plugin = Object.assign(
     const endpoint = process.env.OPENCODE_OTLP_ENDPOINT
     const headers = parseHeaders(process.env.OPENCODE_OTLP_HEADERS)
 
+    // service.version must describe the service that service.name NAMES. This said
+    // `InstallationVersion` — opencode's installed version, which reads "local" for every
+    // build that is not a published opencode release — so `cz-agent` traces reported no
+    // usable cz-cli version at all and could not be segmented by release. opencode's own
+    // version is still worth having, under its own key.
     const resourceAttrs: Record<string, string> = {
       "service.name": process.env.OPENCODE_SERVICE_NAME || "opencode",
-      "service.version": InstallationVersion,
+      "service.version": VERSION,
+      "opencode.version": InstallationVersion,
       "opencode.client": Flag.OPENCODE_CLIENT ?? "unknown",
     }
     if (process.env.OPENCODE_RESOURCE_ATTRIBUTES) {

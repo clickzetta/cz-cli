@@ -1,6 +1,15 @@
 import { current } from "./profile-context.js"
 import { profileStoreFingerprint, readProfileEntry } from "./profile-store.js"
 
+/**
+ * profile row field -> OTel attribute. The ONLY place either name is spelled.
+ *
+ * `setup` used to write `attrs["enduser.id"] = String(opts.userId)` by hand, so the key
+ * existed twice in the codebase and the two copies could disagree about spelling, about
+ * `String()` coercion, or about which signal layer they belong on — which is how the log
+ * path ended up putting identity on the Resource. Callers now pass a profile-shaped row and
+ * get the attributes back; `IdentityAttributes` keeps them from inventing a fifth key.
+ */
 const FIELDS = [
   ["user_id", "enduser.id"],
   ["instance", "instance.name"],
@@ -8,7 +17,23 @@ const FIELDS = [
   ["service", "service.url"],
 ] as const
 
-let cache: { key: string; attributes: Record<string, string> } | undefined
+/** The four attributes above, and nothing else. */
+export type IdentityAttributes = Partial<Record<(typeof FIELDS)[number][1], string>>
+
+/** Map a profile row (or a login's not-yet-persisted equivalent) onto the attributes. */
+export function identityAttributes(row: Record<string, unknown> | undefined): IdentityAttributes {
+  if (!row) return {}
+  return Object.fromEntries(
+    FIELDS.flatMap(([field, attribute]) => {
+      const value = row[field]
+      if (typeof value === "string" && value.trim()) return [[attribute, value]]
+      if (typeof value === "number" && Number.isFinite(value)) return [[attribute, String(value)]]
+      return []
+    }),
+  )
+}
+
+let cache: { key: string; attributes: IdentityAttributes } | undefined
 
 /**
  * Read the active profile on each operation; never cache identity on the SDK resource.
@@ -20,21 +45,11 @@ let cache: { key: string; attributes: Record<string, string> } | undefined
  * that started without an id recovers one. The fingerprint is a read of a small file plus a
  * hash; the parse happens only when the file changed.
  */
-export function profileTelemetryAttributes(): Record<string, string> {
+export function profileTelemetryAttributes(): IdentityAttributes {
   const profile = current()
   const key = JSON.stringify([profileStoreFingerprint(), profile ?? null])
   if (cache?.key === key) return cache.attributes
-  const entry = readProfileEntry(profile)
-  const attributes: Record<string, string> = entry
-    ? Object.fromEntries(
-        FIELDS.flatMap(([field, attribute]) => {
-          const value = entry[field]
-          if (typeof value === "string" && value.trim()) return [[attribute, value]]
-          if (typeof value === "number" && Number.isFinite(value)) return [[attribute, String(value)]]
-          return []
-        }),
-      )
-    : {}
+  const attributes = identityAttributes(readProfileEntry(profile))
   cache = { key, attributes }
   return attributes
 }
