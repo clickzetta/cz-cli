@@ -20,6 +20,12 @@ import { splitEndpoint } from "../commands/account-login.js"
  *                              not serve OAuth, it fails loudly — we don't try to
  *                              "fix" their input.
  *
+ * A THIRD input exists but is not a way of "naming" anything: on a re-login the caller
+ * passes `recordedIssuer`, the issuer this very session was last minted against. That is a
+ * record, not a guess — see readSessionIssuer for why it is not the `service` read this
+ * header rejects — and it exists so a re-login stops asking a question it holds the answer
+ * to. Both flags still outrank it.
+ *
  * The region-specific business service is discovered AFTER login from userinfo
  * (gatewayMapping), never derived here.
  */
@@ -57,6 +63,15 @@ export interface LoginTarget {
   entryHost: string
   /** Protocol to use for the entry host. */
   protocol: string
+  /**
+   * Set only when an explicit flag sent this login to a DIFFERENT host than the one this
+   * session had recorded — i.e. the same session name is being pointed at another
+   * environment. The flag still wins (it is the more explicit statement of intent), but
+   * the caller warns: `[oauth.<id>]` is a single section, so the incoming token replaces
+   * the old one while every `<base>_*` profile row keeps pointing at it. Until now that
+   * swap was silent.
+   */
+  supersededIssuer?: string
 }
 
 export interface ResolveLoginTargetArgs {
@@ -68,6 +83,12 @@ export interface ResolveLoginTargetArgs {
    */
   oauthUrl?: string
   partition?: string
+  /**
+   * The issuer this session signed in to last time ({@link readSessionIssuer}). Only a
+   * re-login has one. It ranks BELOW both flags and ABOVE the prompt: see
+   * {@link resolveLoginTarget}.
+   */
+  recordedIssuer?: string
 }
 
 /** Prod OAuth entry host for a customer partition (a region host — see above). */
@@ -83,20 +104,50 @@ function isTTY(): boolean {
  * Resolve the OAuth central entry with an explicit, profile-free precedence:
  *   1. --oauth-url                explicit entry (internal envs, custom domains)
  *   2. --partition cn|intl        explicit partition
- *   3. interactive cn/intl choice (TTY only)
- *   4. otherwise                  throw (non-interactive with no target)
+ *   3. the session's recorded issuer (a re-login — see below)
+ *   4. interactive cn/intl choice (TTY only)
+ *   5. otherwise                  throw (non-interactive with no target)
+ *
+ * Tier 3 is why a re-login does not ask which region. The two flags outrank it because
+ * they are the user stating intent right now; the prompt ranks below it because a re-login
+ * of a named session has nothing to ask about — the session name IS the answer. This does
+ * not weaken the profile-free rule in the header: a recorded issuer is not a profile's
+ * `service`, and the caller reads it keyed by the session name the user typed (see
+ * readSessionIssuer for why those two are different facts).
  */
 export async function resolveLoginTarget(args: ResolveLoginTargetArgs): Promise<LoginTarget> {
   const explicit = args.oauthUrl?.trim()
   if (explicit) {
     // Verbatim: take the host and protocol exactly as given, no rewriting.
     const { host, protocol } = splitEndpoint(explicit)
-    return { entryHost: host, protocol }
+    const priorHost = args.recordedIssuer?.trim() ? splitEndpoint(args.recordedIssuer.trim()).host : undefined
+    return {
+      entryHost: host,
+      protocol,
+      ...(priorHost && priorHost !== host ? { supersededIssuer: priorHost } : {}),
+    }
   }
+
+  // Recorded BEFORE the flags are honoured, so an explicit flag can report what it
+  // overrode. Compared on the host alone: a recorded issuer carries no protocol.
+  const recorded = args.recordedIssuer?.trim()
+  const recordedHost = recorded ? splitEndpoint(recorded).host : undefined
 
   const partition = normalizePartition(args.partition)
   if (partition) {
-    return { entryHost: partitionEntryHost(partition), protocol: "https" }
+    const entryHost = partitionEntryHost(partition)
+    return {
+      entryHost,
+      protocol: "https",
+      ...(recordedHost && recordedHost !== entryHost ? { supersededIssuer: recordedHost } : {}),
+    }
+  }
+
+  if (recordedHost) {
+    // A re-login: sign back in where this session already lives. https because that is
+    // all a bare host can mean — an http entry only arrives via --oauth-url, which
+    // returned above.
+    return { entryHost: recordedHost, protocol: "https" }
   }
 
   if (isTTY()) {

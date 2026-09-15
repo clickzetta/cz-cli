@@ -158,6 +158,46 @@ export function setDefaultProfile(name: string): void {
   writeProfilesFile(stringifyTOML(existing))
 }
 
+/**
+ * Move a profile row from one key to another, carrying `default_profile` with it.
+ *
+ * Needed because OAuth profile names are derived from the connection they describe
+ * (`<session>_<workspace>_<instance>`), so a workspace or instance renamed on the server
+ * has to be followed on disk or every name eventually lies about what it points at.
+ *
+ * Carrying `default_profile` is not an exception to "a re-login must not change the user's
+ * selection" — it is what PRESERVES it. The selection is a name, and this changes what that
+ * row is called; leaving the pointer behind would turn it into a dangling one and drop the
+ * user back onto whatever `resolveProfileName` picks first.
+ *
+ * No-ops rather than clobbering when `to` is already taken or `from` is absent: the caller
+ * allocates a free name (see provision.ts), and a rename that overwrote a live profile would
+ * destroy credentials. Returns whether the row moved.
+ *
+ * Read-modify-write like every other mutator in this file. That makes it lose the same race
+ * they all do — two processes writing profiles.toml at once — which is being fixed
+ * separately by the cross-process lock work; this should move onto that primitive rather
+ * than grow its own.
+ */
+export function renameProfile(from: string, to: string): boolean {
+  if (from === to) return false
+  let data: Record<string, unknown> = {}
+  try {
+    data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+  } catch {
+    // No file, no row to move.
+    return false
+  }
+  const profiles = (data.profiles ?? {}) as Record<string, unknown>
+  if (profiles[from] === undefined || profiles[to] !== undefined) return false
+  profiles[to] = profiles[from]
+  delete profiles[from]
+  data.profiles = profiles
+  if (data.default_profile === from) data.default_profile = to
+  writeProfilesFile(stringifyTOML(data))
+  return true
+}
+
 export function getDefaultProfileName(): string | undefined {
   try {
     const text = readFileSync(profilesFile(), "utf-8")
@@ -831,6 +871,40 @@ export function oauthSessionProvisioned(id: string): boolean {
     return Object.values(loadProfiles()).some((entry) => entry.oauth === id)
   } catch {
     return false
+  }
+}
+
+/**
+ * The OAuth issuer host `[oauth.<id>]` was last minted against, or undefined when the
+ * section is absent, unreadable, or predates the field.
+ *
+ * This is what lets a re-login skip the region prompt: the session name the user just
+ * typed already names the issuer they signed in to, so asking "which region?" again asks
+ * a question we hold the answer to.
+ *
+ * Deliberately NOT the same move as reading a profile's `service`, which the header of
+ * connection/login-target.ts rejects. Those two fields are not interchangeable: `service`
+ * is the region BUSINESS host, picked from userinfo's gatewayMapping and freely editable,
+ * so a stale one can name an environment the account never signed in to. `issuer` is the
+ * sign-in host itself, written by the login that minted this very token. Reading it back
+ * for a re-login of the SAME session is not a guess about where to log in — it is the
+ * record of where this session already lives.
+ *
+ * Bare host, no protocol (see AuthToken.issuer). Callers default to https, which is the
+ * only scheme an OAuth entry ever reaches us as unless the user typed `--oauth-url
+ * http://…` — and that flag outranks this value anyway.
+ */
+export function readSessionIssuer(id: string): string | undefined {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const shared = data.oauth
+    if (!shared || typeof shared !== "object" || Array.isArray(shared)) return undefined
+    const entry = (shared as Record<string, unknown>)[id]
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined
+    return str((entry as Record<string, unknown>).issuer, undefined)
+  } catch {
+    // Absent or corrupt file → no record, which sends the caller back to the prompt.
+    return undefined
   }
 }
 

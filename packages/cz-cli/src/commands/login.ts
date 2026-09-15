@@ -7,7 +7,7 @@ import { patRefusedOrNoted } from "./pat-guard.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
-import { getDefaultProfileName, oauthSessionProvisioned, sanitizeOAuthId } from "../connection/profile-store.js"
+import { getDefaultProfileName, oauthSessionProvisioned, readSessionIssuer, sanitizeOAuthId } from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
 import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
@@ -33,7 +33,7 @@ export interface LoginArgs extends GlobalArgs {
 // seam — the browser-OAuth path deliberately never reads a profile.
 export interface RunLoginDeps {
   loginWithBrowser?: (opts: { baseUrl: string }) => Promise<BrowserLoginResult>
-  resolveLoginTarget?: (args: { oauthUrl?: string; partition?: string }) => Promise<LoginTarget>
+  resolveLoginTarget?: (args: { oauthUrl?: string; partition?: string; recordedIssuer?: string }) => Promise<LoginTarget>
   runAuthConfigure?: (argv: AuthConfigureArgs) => Promise<void>
   // Injectable enumerator (tests avoid real listUserWorkspaces network calls).
   enumerateOAuthCombos?: (input: {
@@ -159,7 +159,8 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
   const enumerate = deps.enumerateOAuthCombos ?? enumerateOAuthCombos
 
   // Session name is required — it names the shared [oauth.<name>] token and the
-  // <name>_0/_1 profile prefix, so multiple accounts don't overwrite each other.
+  // <name>_<workspace>_<instance> profile prefix, so multiple accounts don't overwrite
+  // each other.
   // If not supplied on the command line, prompt for it interactively (TTY);
   // non-interactive with no name is a hard error.
   const promptName = deps.promptSessionName ?? defaultPromptSessionName
@@ -179,10 +180,32 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     return
   }
 
+  const oauthId = sanitizeOAuthId(sessionName)
+  // First login or re-login of this session? The signal is whether this session name has
+  // state on disk — its token section or profiles pointing at it, see
+  // oauthSessionProvisioned. A re-login refreshes the token and adds newly-appeared
+  // instance×workspace profiles; it does not rewrite existing profiles' user-owned fields,
+  // default_profile, or llm.json (an api_key there may be a virtual key the quota flow
+  // swapped in).
+  //
+  // Read here rather than just before provisioning — which is all the contract needs — so
+  // the SAME answer can also decide where to sign in. Nothing between this point and the
+  // provisioning call writes profiles.toml (the browser round trip is network-only), so
+  // hoisting it changes no classification.
+  const relogin = oauthSessionProvisioned(oauthId)
+
   try {
     const target = await resolveTarget({
       oauthUrl: argv["oauth-url"],
       partition: argv.partition,
+      // A re-login signs back in where this session already lives, so it asks no region
+      // question. Keyed by the session name the user typed, and read from the session's
+      // own token section — not from a profile's `service`, which login-target.ts refuses
+      // for good reason (readSessionIssuer spells out why they are different facts).
+      // undefined on a first login, and also when `logout --keep-profiles` removed the
+      // section while leaving the rows: `relogin` is true there but there is no recorded
+      // issuer, and falling back to the prompt is the honest answer.
+      recordedIssuer: readSessionIssuer(oauthId),
     })
 
     // The resolved entry host IS the OAuth issuer: every endpoint (authorize,
@@ -218,20 +241,11 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
       })
     }
 
-    // Profiles are named `<sessionName>_0/_1…` and all share the [oauth.<sessionName>]
-    // token. The global --profile selects which profile to READ and must not name
-    // what login WRITES. When enumeration yields nothing, provisioning falls back
-    // to a single profile from userinfo alone.
-    // First login or re-login of this session? The signal is whether this session
-    // name has state on disk — its token section or profiles pointing at it, see
-    // oauthSessionProvisioned. A re-login refreshes the token and adds newly-appeared
-    // instance×workspace profiles; it does not rewrite existing profiles'
-    // user-owned fields, default_profile, or llm.json (an api_key there may be a
-    // virtual key the quota flow swapped in). Read BEFORE provisioning, which writes
-    // the section.
-    const relogin = oauthSessionProvisioned(sanitizeOAuthId(sessionName))
-
-    const { profiles, cookiePinned, defaultProfile, llmConfigured, llmAction, created } = provisionProfilesFromOAuthCombos(
+    // Profiles are named `<sessionName>_<workspace>_<instance>` and all share the
+    // [oauth.<sessionName>] token. The global --profile selects which profile to READ and
+    // must not name what login WRITES. When enumeration yields nothing, provisioning falls
+    // back to a single profile from userinfo alone.
+    const { profiles, cookiePinned, defaultProfile, llmConfigured, llmAction, created, renamed, stale } = provisionProfilesFromOAuthCombos(
       sessionName,
       combos,
       {
@@ -252,6 +266,17 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // Warn when the provisioned profile may not be able to run SQL, so success
     // isn't silently misleading (login reported OK but the profile is unusable).
     const warnings: string[] = []
+    // The same session name was pointed at a different OAuth host than the one it was last
+    // minted against. The flag wins — it is the more explicit intent — but the consequence
+    // is not local to the token: `[oauth.<id>]` is ONE section, so the new token replaces
+    // the old one under every `<name>_*` profile row, whose `service`/instance/workspace
+    // still describe the old environment. Rows this login's enumeration does not reach keep
+    // pointing at the old region with a token minted by the new one.
+    if (target.supersededIssuer) {
+      warnings.push(
+        `Session '${sessionName}' was last signed in to '${target.supersededIssuer}', but this login went to '${target.entryHost}'. They share one token section, so the profiles under this session now carry a token from a different environment than the one their 'service' names. Use a separate session name per environment (\`cz-cli auth login <name-for-this-env>\`), or \`cz-cli auth logout ${sessionName}\` first to start clean.`,
+      )
+    }
     if (serviceIsEntryFallback) {
       warnings.push(
         `Could not resolve a region service host from your account (no gatewayMapping); the profile's service falls back to the login entry host '${finalService}'. That entry serves OAuth, but it is not confirmed to be your account's data region, so queries may fail. Re-run login after your account has a provisioned instance.`,
@@ -271,6 +296,25 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // A row pinned to cookie auth ignores the token this login just minted: the pin keeps
     // the Cookie header and withholds the OAuth token store. Both fields are the user's,
     // so say the login was a no-op for those rows instead of overwriting either.
+    // A rename is silent from the user's side otherwise: `default_profile` follows the row
+    // (renameProfile carries it), but a `--profile <old>` in their own script or shell alias
+    // does not, and it will fail with a name that simply no longer exists.
+    if (renamed.length > 0) {
+      warnings.push(
+        `Renamed ${renamed.length === 1 ? "a profile" : `${renamed.length} profiles`} to follow a workspace or instance renamed on the server: ${renamed
+          .map((r) => `${r.from} → ${r.to}`)
+          .join(", ")}. Profile names are derived from the connection, so the old names are gone; default_profile was updated for you, but update any script or alias that passes --profile.`,
+      )
+    }
+    // Not deleted, because "the server did not list it" cannot be told apart from "that
+    // instance's workspace listing failed this time" — oauth-enumerate.ts swallows the
+    // latter per instance. Saying nothing was the old behavior, and it meant a renamed
+    // workspace quietly left a second row behind forever.
+    if (stale.length > 0) {
+      warnings.push(
+        `These profiles belong to this session but describe no connection this login found: ${stale.join(", ")}. A workspace or instance may have been renamed or removed, that instance may simply have failed to list this time, or the row may be the instance-less '${sessionName}' one written back when the account had no instance yet. They are left untouched — a transient listing failure looks identical from here — so remove one with \`cz-cli profile delete <name>\` once you know it is really gone.`,
+      )
+    }
     if (cookiePinned.length > 0) {
       warnings.push(
         `These profiles pin auth_type = "cookie", so they keep authenticating with their stored cookie and will not use the token this login refreshed: ${cookiePinned.join(", ")}. Clear the pin (\`cz-cli profile set <name> auth_type ""\`) or remove their header.Cookie to switch them to OAuth.`,
@@ -323,6 +367,11 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         // Which profiles this run actually created — on a re-login the interesting
         // number, since the rest were left as the user had them.
         profiles_created: created,
+        // Old → new for every row this login moved. A caller that stored a profile name
+        // (or a human with an alias) needs the mapping, not just the new list.
+        profiles_renamed: renamed,
+        // Owned rows this run's enumeration did not reach. Reported, never auto-deleted.
+        profiles_stale: stale,
         user_id: token.userId || null,
         // Stays a plain boolean: a truthy third value ("not_attempted") would make
         // every `jq -e .llm_configured` / `if payload["llm_configured"]` written
@@ -419,7 +468,7 @@ function classifyLoginError(msg: string): { code: string; aiMessage: string } {
  * for why they cannot differ.
  */
 const SESSION_NAME_DESCRIBE =
-  "Session name — required for browser OAuth (prompted in a TTY if omitted), and 'default' when omitted with --credential/--username. Labels this login: names the shared OAuth token [oauth.<name>] and the profile prefix <name>_0/_1, like an AWS SSO session name. Accepted as the positional or as --name."
+  "Session name — required for browser OAuth (prompted in a TTY if omitted), and 'default' when omitted with --credential/--username. Labels this login: names the shared OAuth token [oauth.<name>] and the profile prefix <name>_<workspace>_<instance>, like an AWS SSO session name. Accepted as the positional or as --name."
 
 /**
  * Register the `login [name]` command (builder + handler) onto the given yargs.
@@ -494,7 +543,7 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
           "Three ways to sign in, each independent:\n" +
           "  OAuth (default):      opens a browser. <name> is the SESSION name — cz-cli\n" +
           "    discovers your instances/workspaces and creates one profile per\n" +
-          "    combination (<name>_0, <name>_1, …), all sharing the [oauth.<name>] token.\n" +
+          "    combination (<name>_<workspace>_<instance>), all sharing the [oauth.<name>] token.\n" +
           "    Needs a region: prompted in a TTY, else pass --partition or --oauth-url.\n" +
           "  --credential <b64>:   provision a single profile named <name> from a\n" +
           "    registration token. Without <name> the profile is named 'default'.\n" +
