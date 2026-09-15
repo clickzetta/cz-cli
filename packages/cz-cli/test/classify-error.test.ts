@@ -77,3 +77,34 @@ describe("classifyExecError", () => {
     expect(r.message).toBe("something went wrong")
   })
 })
+
+test("LOCK_CONTENDED is reported as retryable, not as a credential problem", () => {
+  // It reaches here after the full wait, so a bare code with no guidance would read as
+  // a failure of the credentials rather than of the wait.
+  const out = classifyExecError(
+    Object.assign(new Error("another process is holding the lock on /x; try again"), { code: "LOCK_CONTENDED" }),
+  )
+  expect(out.code).toBe("LOCK_CONTENDED")
+  expect(out.aiMessage).toMatch(/retry/i)
+  expect(out.aiMessage).not.toMatch(/auth login/i)
+})
+
+test("oauth_timeout is reported as a connectivity failure, not an unclassified error", () => {
+  // Its message says "timed out", which isNetworkError's "timeout" match does not catch,
+  // so it would otherwise arrive through the codeless fallback with no guidance.
+  const out = classifyExecError(
+    Object.assign(new Error("OAuth token request timed out after 30s (requestId=x)"), { code: "oauth_timeout" }),
+  )
+  expect(out.code).toBe("CONNECTION_ERROR")
+  expect(out.aiMessage).toMatch(/network/i)
+})
+
+test.each([
+  ["OAUTH_REFRESH_UNCERTAIN", /auth login/i],
+  ["OAUTH_REFRESH_PENDING", /retry/i],
+  ["OAUTH_STATE_UNAVAILABLE", /permissions/i],
+])("%s gives actionable recovery guidance", (code, guidance) => {
+  const out = classifyExecError(Object.assign(new Error("OAuth state failed"), { code }))
+  expect(out.code).toBe(code)
+  expect(out.aiMessage).toMatch(guidance)
+})

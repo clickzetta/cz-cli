@@ -1,13 +1,14 @@
 import type { Argv } from "yargs"
-import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
+import { parse as parseTOML } from "smol-toml"
 import { commandGroup } from "../command-group.js"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { buildLoginCommand } from "./login.js"
 import * as Profile from "../connection/profile-context.js"
+import { mutateProfilesFile } from "../connection/profile-store.js"
 
 /**
  * `cz-cli auth` — the authentication command group.
@@ -63,12 +64,17 @@ function loadFullFile(): Record<string, unknown> {
   }
 }
 
-function saveFullFile(data: Record<string, unknown>): void {
-  const path = profilesPath()
-  mkdirSync(join(path, ".."), { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, stringifyTOML(data), { mode: 0o600 })
-  renameSync(tmp, path)
+/**
+ * Read-modify-write the whole profiles document under the cross-process lock.
+ *
+ * Logout deletes an `[oauth.<id>]` section that a peer may be rotating right now, and
+ * removes profile rows another process may be writing to — so the read and the write
+ * have to be one step. The local `loadFullFile`/`saveFullFile` pair this replaces had
+ * the read outside, which is the lost update this module used to be able to cause.
+ * `false` writes nothing.
+ */
+function editProfilesDocument(edit: (data: Record<string, unknown>) => void | false): void {
+  mutateProfilesFile((data) => (edit(data) === false ? undefined : data))
 }
 
 interface OAuthEntry {
@@ -152,40 +158,44 @@ interface LogoutArgs extends GlobalArgs {
 function runLogout(argv: LogoutArgs): void {
   const format = argv.format
   try {
-    const data = loadFullFile()
-    const oauth = (data.oauth ?? {}) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
     const name = argv.name
+    let hadToken = false
+    let found = false
+    const removedProfiles: string[] = []
 
-    const hadToken = name in oauth
-    // Profiles that point at this session.
-    const linked = Object.keys(profiles).filter((p) => profiles[p]?.oauth === name)
+    editProfilesDocument((data) => {
+      const oauth = (data.oauth ?? {}) as Record<string, unknown>
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
 
-    if (!hadToken && linked.length === 0) {
+      hadToken = name in oauth
+      // Profiles that point at this session.
+      const linked = Object.keys(profiles).filter((p) => profiles[p]?.oauth === name)
+      found = hadToken || linked.length > 0
+      if (!found) return false
+
+      // Remove the shared token section.
+      if (hadToken) delete oauth[name]
+      data.oauth = oauth
+
+      // Remove the linked profiles unless the caller opted to keep them.
+      if (!argv["keep-profiles"]) {
+        for (const p of linked) {
+          delete profiles[p]
+          removedProfiles.push(p)
+        }
+        // Fix up default_profile if it was one of the removed ones.
+        if (typeof data.default_profile === "string" && removedProfiles.includes(data.default_profile)) {
+          const remaining = Object.keys(profiles)
+          if (remaining.length > 0) data.default_profile = remaining[0]
+          else delete data.default_profile
+        }
+      }
+      data.profiles = profiles
+    })
+
+    if (!found) {
       return error("SESSION_NOT_FOUND", `No auth session '${name}' (no [oauth.${name}] and no profiles reference it)`, { format })
     }
-
-    // Remove the shared token section.
-    if (hadToken) delete oauth[name]
-    data.oauth = oauth
-
-    // Remove the linked profiles unless the caller opted to keep them.
-    const removedProfiles: string[] = []
-    if (!argv["keep-profiles"]) {
-      for (const p of linked) {
-        delete profiles[p]
-        removedProfiles.push(p)
-      }
-      // Fix up default_profile if it was one of the removed ones.
-      if (typeof data.default_profile === "string" && removedProfiles.includes(data.default_profile)) {
-        const remaining = Object.keys(profiles)
-        if (remaining.length > 0) data.default_profile = remaining[0]
-        else delete data.default_profile
-      }
-    }
-    data.profiles = profiles
-
-    saveFullFile(data)
     success(
       {
         logged_out: true,

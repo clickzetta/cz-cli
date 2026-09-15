@@ -45,12 +45,7 @@ async function fetchToken(config: ConnectionConfig): Promise<AuthToken> {
   const baseUrl = toServiceUrl(config.service, config.protocol)
   return config.pat
     ? await loginWithPat(baseUrl, config.pat, config.instance)
-    : await loginWithPassword(
-        baseUrl,
-        config.username,
-        config.password,
-        config.instance,
-      )
+    : await loginWithPassword(baseUrl, config.username, config.password, config.instance)
 }
 
 /** OAuth `error` codes that mean the refresh token itself is dead — retrying or
@@ -83,15 +78,15 @@ function sessionExpiredError(cause?: unknown): InterfaceError {
  *     in a misleading "Login failed").
  *   - credentials present (PAT/password) → fall back to a full login (it can
  *     genuinely re-authenticate; requirement 5.4).
- *   - transient failure (network/5xx) with no credentials → rethrow the
- *     original error; a dead-end login would only mask a retryable condition.
+ *   - other failure with no credentials → propagate the store's error. A durable
+ *     store marks an ambiguous exchange uncertain and must not replay it.
  * The shared tokenStore.clear() is a documented no-op, so we don't rely on it.
  */
 async function refreshOrLogin(
   config: ConnectionConfig,
   previous: AuthToken,
   refreshTokenValue: string,
-): Promise<AuthToken> {
+): Promise<{ token: AuthToken; rotated: boolean }> {
   // OAuth `/oauth2/token` is served ONLY by the issuer that minted the refresh
   // token (persisted on the token as `issuer`), NOT the region business host in
   // `config.service` — sending the refresh there returns `invalid_grant`. Fall
@@ -101,30 +96,39 @@ async function refreshOrLogin(
     ? toServiceUrl(previous.issuer, config.protocol)
     : toServiceUrl(config.service, config.protocol)
   try {
-    const oauth = await refreshAccessToken(baseUrl, refreshTokenValue)
-    return {
-      token: oauth.accessToken,
-      refreshToken: oauth.refreshToken ?? refreshTokenValue,
-      instanceId: previous.instanceId,
-      userId: previous.userId,
-      expireTimeMs: oauth.expiresInMs,
-      obtainedAt: Date.now(),
-      // Carry the issuer forward so the NEXT rotation also targets it.
-      ...(previous.issuer ? { issuer: previous.issuer } : {}),
+    const request = async (): Promise<AuthToken> => {
+      const oauth = await refreshAccessToken(baseUrl, refreshTokenValue)
+      return {
+        token: oauth.accessToken,
+        refreshToken: oauth.refreshToken ?? refreshTokenValue,
+        instanceId: previous.instanceId,
+        userId: previous.userId,
+        expireTimeMs: oauth.expiresInMs,
+        obtainedAt: Date.now(),
+        // Carry the issuer forward so the NEXT rotation also targets it.
+        ...(previous.issuer ? { issuer: previous.issuer } : {}),
+      }
     }
+    const token = config.tokenStore ? await config.tokenStore.refresh(previous, request) : await request()
+    return { rotated: true, token }
   } catch (err) {
-    clearTokenCache()
+    // This connection's entry only. `clearTokenCache()` here used to evict EVERY
+    // cacheKey in the process, so one slow or unreachable issuer dropped every
+    // profile's cached access token in a long-lived TUI or `mcp serve` — and the new
+    // request deadline makes that reachable on a merely slow network.
+    cache.delete(cacheKey(config))
     config.tokenStore?.clear()
     const code = err instanceof ClickZettaError ? err.code : undefined
     const refreshDead = typeof code === "string" && REFRESH_TOKEN_DEAD.has(code)
     if (hasLoginCredentials(config)) {
-      // PAT/password present → a full login can genuinely re-authenticate.
-      return fetchToken(config)
+      // PAT/password present → a full login can genuinely re-authenticate. `rotated: false`
+      // because no refresh token was spent: this identity stands on its own.
+      return { token: await fetchToken(config), rotated: false }
     }
     // Pure OAuth profile: no credentials to log in with.
     if (refreshDead) throw sessionExpiredError(err)
-    // Transient failure (network/5xx) — surface it as-is so it's retryable and
-    // not misread as a permanent auth failure.
+    // The store decides whether recovery is safe. In particular an uncertain
+    // exchange must stay terminal rather than retrying its single-use grant.
     throw err
   }
 }
@@ -142,56 +146,240 @@ export async function getToken(config: ConnectionConfig): Promise<AuthToken> {
  * loop. `force` drives the rotate/login path instead. Concurrent callers for
  * the same key are still coalesced.
  */
-export async function forceRefreshToken(config: ConnectionConfig): Promise<AuthToken> {
+export async function forceRefreshToken(
+  config: ConnectionConfig,
+  /**
+   * The token value the server rejected. Inside the lock it is the only way to tell
+   * "a peer already rotated, take its token" from "the token on disk is the very one
+   * that just failed" — so the caller that HAS it passes it, rather than this
+   * function recovering it from cache state and quietly depending on that caller
+   * having populated the cache first.
+   */
+  rejected?: string,
+): Promise<AuthToken> {
   const key = cacheKey(config)
+  const rejectedToken = rejected ?? cache.get(key)?.token
   cache.delete(key)
-  return acquireToken(config, true)
+  return acquireToken(config, true, rejectedToken)
 }
 
-async function acquireToken(config: ConnectionConfig, force: boolean): Promise<AuthToken> {
+async function acquireToken(config: ConnectionConfig, force: boolean, rejected?: string): Promise<AuthToken> {
   const key = cacheKey(config)
   if (!force) {
     const cached = cache.get(key)
     if (cached && !isTokenExpired(cached)) return cached
   }
-  const inflight = pendingFetches.get(key)
-  if (inflight) return inflight
+  for (;;) {
+    const inflight = pendingFetches.get(key)
+    if (!inflight) break
+    const joined = await inflight
+    if (!force || rejected === undefined || joined.token !== rejected) return joined
+    // Another forced waiter may have started the replacement while we awaited
+    // the same unforced fetch. Join that replacement instead of spawning one each.
+  }
 
   // Reaching here means any in-memory token for this key is expired/absent (or
-  // a forced refresh). A persisted token (requirement 9) is consulted when
-  // memory has nothing: an unexpired persisted token is reused with no network
-  // call (requirement 9.3) — UNLESS forced, in which case we always rotate so a
+  // a forced refresh). A persisted token (requirement 9) decides what happens
+  // next: an unexpired persisted token is reused with no network call
+  // (requirement 9.3) — UNLESS forced, in which case we always rotate so a
   // server-rejected-but-not-yet-expired token can't be handed back. An expired
   // one with a refresh token feeds the refresh path (requirement 9.4).
   const store = config.tokenStore
   let candidate = !force ? cache.get(key) : undefined
-  if (!candidate && store) {
+  // DISK WINS over an expired in-memory copy. The memory cache is a fast path for
+  // an unexpired access token and nothing more; the refresh token must come from
+  // the store, because a peer process may have rotated it since this process last
+  // looked, and rotating an already-rotated refresh token is what the server
+  // answers with `invalid_grant`. Reading the store only when memory was empty is
+  // exactly the bug: a long-lived process (an agent session, `mcp serve`) held its
+  // own stale copy for as long as it ran and refreshed from that.
+  if (store) {
     const loaded = store.load()
     if (loaded) {
       if (!force && !isTokenExpired(loaded)) {
         cache.set(key, loaded)
         return loaded
       }
-      candidate = loaded
+      candidate = refreshSource(loaded, candidate)
     }
   }
-  // If the candidate carries a refresh token, rotate it instead of a full login
-  // (requirement 5.1); legacy tokens without one always re-login (requirement
-  // 5.5). On success the token is persisted (requirement 9.1).
   const fetch = (async () => {
-    try {
-      const token = candidate?.refreshToken
-        ? await refreshOrLogin(config, candidate, candidate.refreshToken)
-        : await fetchToken(config)
-      cache.set(key, token)
-      store?.save(token)
-      return token
-    } finally {
-      pendingFetches.delete(key)
-    }
+    const token = store
+      ? await rotateExclusively(config, store, key, force, rejected, candidate)
+      : (await rotate(config, candidate)).token
+    cache.set(key, token)
+    return token
   })()
   pendingFetches.set(key, fetch)
-  return fetch
+  try {
+    return await fetch
+  } finally {
+    if (pendingFetches.get(key) === fetch) pendingFetches.delete(key)
+  }
+}
+
+/**
+ * Storage contention is reported by code so the SDK stays independent of the
+ * CLI's SQLite implementation.
+ */
+function isLockContended(err: unknown): boolean {
+  return (err as { code?: unknown } | undefined)?.code === "LOCK_CONTENDED"
+}
+
+/** Coalesce local work; the store owns durable cross-process refresh admission. */
+async function rotateExclusively(
+  config: ConnectionConfig,
+  store: NonNullable<ConnectionConfig["tokenStore"]>,
+  key: string,
+  force: boolean,
+  rejected: string | undefined,
+  candidate: AuthToken | undefined,
+): Promise<AuthToken> {
+  try {
+    return await store.withLock(async () => {
+      const outcome = await rotateUnderLock(config, store, key, force, rejected, candidate)
+      // An adopted token is already on disk, by definition; rewriting it would only
+      // churn the file.
+      if (outcome.adopted) return outcome.token
+      // The refresh store has already persisted a rotated result. This write is
+      // its legacy profile projection, conditional so it cannot replace a new login.
+      const condition = outcome.from ? { expected: outcome.from } : undefined
+      if (store.save(outcome.token, condition)) return outcome.token
+      const peer = store.load()
+      if (peer && !isTokenExpired(peer) && usableAfterRejection(peer, force, rejected)) {
+        cache.set(key, peer)
+        return peer
+      }
+      throw new InterfaceError("Could not persist the OAuth credentials. Check the profile store before retrying.", {
+        code: "OAUTH_STATE_UNAVAILABLE",
+      })
+    })
+  } catch (err) {
+    if (!isLockContended(err)) throw err
+    const fresh = store.load()
+    // The same predicate `rotateUnderLock` uses, deliberately rather than incidentally:
+    // with `force` and no known rejected value there is nothing to compare against, so a
+    // token on disk cannot be shown to differ from the one the server just refused —
+    // returning it would walk straight back into the same 401. An earlier version wrote
+    // `!force || fresh.token !== rejected`, which is true whenever `rejected` is
+    // undefined and would have done exactly that.
+    if (fresh && !isTokenExpired(fresh) && usableAfterRejection(fresh, force, rejected)) {
+      cache.set(key, fresh)
+      return fresh
+    }
+    // Exclusion is about not spending a single-use credential twice. With no refresh
+    // token to spend, the critical section is a plain portal login — idempotent, nothing
+    // at stake — so refusing it because a peer holds the lock would fail a path that
+    // previously just logged in. Reachable with a pat or password behind an `oauth`
+    // pointer whose section is gone, which is what `auth logout --keep-profiles` leaves.
+    const source = refreshSource(fresh, candidate)
+    if (!source?.refreshToken) {
+      const { token } = await rotate(config, source)
+      // Persisted here too. `store.save` moved inside the withLock callback, which this
+      // branch never reached — so without this the login lands in memory only and every
+      // process re-logs in, where before this change it was written once.
+      if (!store.save(token))
+        throw new InterfaceError("Could not persist the login credentials.", { code: "OAUTH_STATE_UNAVAILABLE" })
+      return token
+    }
+    throw err
+  }
+}
+
+/**
+ * The refresh critical section: everything here runs while THIS process holds the
+ * local queue. Cross-process exclusion of single-use refresh tokens is enforced
+ * by TokenStore.refresh's durable claim, including after process crashes.
+ *
+ * It re-reads the store first, because the wait for the lock is precisely the
+ * window in which a peer may have finished its own rotation. When it has, its
+ * result is taken and no network call happens at all — which is what turns N
+ * concurrent cz-cli processes into one rotation instead of N competing ones, each
+ * invalidating the next one's refresh token.
+ *
+ * `adopted` distinguishes a token taken from the store from one this process
+ * minted, so the caller knows whether there is anything to persist.
+ */
+async function rotateUnderLock(
+  config: ConnectionConfig,
+  store: NonNullable<ConnectionConfig["tokenStore"]>,
+  key: string,
+  force: boolean,
+  rejected: string | undefined,
+  candidate: AuthToken | undefined,
+): Promise<{ token: AuthToken; adopted: boolean; from?: AuthToken }> {
+  const fresh = store.load()
+  if (fresh && !isTokenExpired(fresh)) {
+    // Unforced: an unexpired token on disk is simply the answer.
+    // Forced: only if it is NOT the token the server just rejected — otherwise a
+    // peer's untouched token would be handed straight back into the same 401.
+    if (usableAfterRejection(fresh, force, rejected)) {
+      cache.set(key, fresh)
+      return { token: fresh, adopted: true }
+    }
+  }
+  // `from` is what was on disk when this rotation began — the compare value for the
+  // conditional save. Deliberately the STORE's copy, not `candidate`: the condition asks
+  // whether the slot has moved since we looked at it.
+  //
+  // Only when a refresh token was actually spent. A fall-through to a full portal login
+  // (`refreshOrLogin` with credentials present, or a legacy token without a refresh
+  // token) mints an independent identity. The real store's clear() is a no-op, so
+  // comparing against an empty slot would reject that new login.
+  const source = refreshSource(fresh, candidate)
+  const outcome = await rotate(config, source)
+  return outcome.rotated
+    ? { token: outcome.token, adopted: false, from: fresh }
+    : { token: outcome.token, adopted: false }
+}
+
+/**
+ * May a token found in the store be handed back as-is?
+ *
+ * Unforced: yes — an unexpired token is simply the answer. Forced: only when it can be
+ * SHOWN to differ from the one the server rejected, which needs that value; without it,
+ * handing the disk token back risks returning the very token that just 401'd.
+ */
+function usableAfterRejection(fresh: AuthToken, force: boolean, rejected: string | undefined): boolean {
+  return !force || (rejected !== undefined && fresh.token !== rejected)
+}
+
+/**
+ * Which copy supplies the refresh token.
+ *
+ * "Disk wins" is about the refresh token specifically, not about the whole record:
+ * the store's value is newer than anything this process holds, and spending an
+ * already-rotated one is what a reuse-detecting server answers by killing the whole
+ * token family. But a section written by an older version can parse into a perfectly
+ * valid `AuthToken` with NO `refreshToken` (`refresh_token` is optional in
+ * `parseOAuthEntry`). Preferring it unconditionally would discard a usable refresh
+ * token held in memory and fall through to a full login — on a pure-OAuth profile
+ * that is `loginWithPassword` with empty credentials, the ~6 s of retries ending in
+ * a misleading "Login failed" that `refreshOrLogin` exists to avoid.
+ *
+ * So: the store's copy, unless it cannot rotate and the other one can.
+ */
+function refreshSource(fromStore: AuthToken | undefined, inMemory: AuthToken | undefined): AuthToken | undefined {
+  if (fromStore?.refreshToken) return fromStore
+  if (inMemory?.refreshToken) return inMemory
+  return fromStore ?? inMemory
+}
+
+/**
+ * Rotate via the refresh token when there is one (requirement 5.1); legacy tokens
+ * without one always re-login (requirement 5.5).
+ */
+async function rotate(
+  config: ConnectionConfig,
+  candidate: AuthToken | undefined,
+): Promise<{ token: AuthToken; rotated: boolean }> {
+  if (!candidate?.refreshToken) return { token: await fetchToken(config), rotated: false }
+  // Whether a refresh token was actually SPENT has to come from here rather than from the
+  // input: `refreshOrLogin` may fall through to a full portal login when the refresh token
+  // is dead, and it clears the store on the way. A conditional write is only right for the
+  // rotation case — conditioning a fresh login on the pre-rotation slot rejects a write
+  // that has nothing to conflict with, and the login would survive in memory only.
+  return refreshOrLogin(config, candidate, candidate.refreshToken)
 }
 
 /**
@@ -231,7 +419,7 @@ export function connectionTokenSource(config: ConnectionConfig): TokenSource {
       if (current.token !== rejected.token) return current
       // Throws SESSION_EXPIRED when the refresh token is dead and there are no
       // credentials to fall back on — a terminal answer, not a missing path.
-      return toCredential(await forceRefreshToken(config))
+      return toCredential(await forceRefreshToken(config, rejected.token))
     },
   }
 }

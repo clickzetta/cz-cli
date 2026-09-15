@@ -63,10 +63,28 @@ function oauthError(
   const code = error ?? "oauth_error"
   const semantics = OAUTH_ERROR_SEMANTICS[code] ?? "the OAuth request failed"
   const detail = description ? `: ${description}` : ""
+  return new InterfaceError(`OAuth request failed (${code}): ${semantics}${detail} (request id: ${requestId})`, {
+    code,
+    statusCode: status,
+  })
+}
+
+/** Bound issuer I/O. A client timeout does not prove the grant was unconsumed. */
+const TOKEN_REQUEST_TIMEOUT_MS = 30_000
+
+/** The deadline's own error: coded and carrying the request id, like every other
+ *  failure of this call. Never the token or any request input. */
+function timeoutError(requestId: string): InterfaceError {
   return new InterfaceError(
-    `OAuth request failed (${code}): ${semantics}${detail} (request id: ${requestId})`,
-    { code, statusCode: status },
+    `OAuth token request timed out after ${TOKEN_REQUEST_TIMEOUT_MS / 1000}s (requestId=${requestId})`,
+    { code: "oauth_timeout" },
   )
+}
+
+/** A fetch aborted by our own deadline, as opposed to a network error. */
+function isTimeout(err: unknown): boolean {
+  const name = (err as { name?: string } | undefined)?.name
+  return name === "TimeoutError" || name === "AbortError"
 }
 
 async function requestToken(baseUrl: string, params: URLSearchParams): Promise<OAuthTokenResult> {
@@ -77,17 +95,45 @@ async function requestToken(baseUrl: string, params: URLSearchParams): Promise<O
       `[oauth-token] POST ${tokenUrl} grant=${params.get("grant_type")} params=[${Array.from(params.keys()).join(",")}]`,
     )
   }
-  const resp = await fetch(tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Accept": "application/json",
-      "requestId": requestId,
-    },
-    body: params.toString(),
-  })
+  let resp: Response
+  try {
+    resp = await fetch(tokenUrl, {
+      method: "POST",
+      // A 307/308 would otherwise resend this single-use grant behind the caller's
+      // back. A redirected/uncertain exchange requires explicit recovery instead.
+      redirect: "error",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        requestId: requestId,
+      },
+      body: params.toString(),
+      // Bound the caller's wait. The durable store keeps the claim on timeout;
+      // aborting a socket does not undo a refresh already accepted by the issuer.
+      signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
+    })
+  } catch (err) {
+    // `AbortSignal.timeout` rejects with a DOMException, which carries no OAuth code
+    // and no request id. Left as-is it reaches the user as "The operation timed out"
+    // and is classified as neither transient nor a dead refresh token, so a caller
+    // deciding how to recover has nothing to go on. Map it to the same shape every
+    // other failure of this call has.
+    if (isTimeout(err)) throw timeoutError(requestId)
+    throw err
+  }
 
-  const body = (await resp.json()) as Record<string, unknown>
+  // Inside the mapped region too: the deadline aborts the whole request, not just the
+  // header exchange, so an issuer that answers headers at 29 s and then stalls the body
+  // rejects HERE — and an unmapped DOMException at this line reaches the user as "The
+  // operation timed out" with no code and no request id, which is the thing the mapping
+  // exists to prevent.
+  let body: Record<string, unknown>
+  try {
+    body = (await resp.json()) as Record<string, unknown>
+  } catch (err) {
+    if (isTimeout(err)) throw timeoutError(requestId)
+    throw err
+  }
   if (isOauthDebug()) {
     console.error(`[oauth-token] status=${resp.status} returned=[${Object.keys(body).join(",")}]`)
     if (typeof body.error === "string") {
@@ -103,8 +149,13 @@ async function requestToken(baseUrl: string, params: URLSearchParams): Promise<O
     )
   }
 
+  if (typeof body.access_token !== "string" || !body.access_token.trim()) {
+    throw new InterfaceError(`OAuth response is missing an access token (requestId=${requestId})`, {
+      code: "oauth_invalid_response",
+    })
+  }
   return {
-    accessToken: String(body.access_token),
+    accessToken: body.access_token,
     refreshToken: typeof body.refresh_token === "string" ? body.refresh_token : undefined,
     expiresInMs: typeof body.expires_in === "number" ? body.expires_in * 1000 : 0,
     tokenType: typeof body.token_type === "string" ? body.token_type : "Bearer",
@@ -138,10 +189,7 @@ export function exchangeAuthorizationCode(
 /**
  * Rotate tokens using a refresh token (`grant_type=refresh_token`).
  */
-export function refreshAccessToken(
-  baseUrl: string,
-  refreshToken: string,
-): Promise<OAuthTokenResult> {
+export function refreshAccessToken(baseUrl: string, refreshToken: string): Promise<OAuthTokenResult> {
   return requestToken(
     baseUrl,
     new URLSearchParams({
@@ -157,17 +205,14 @@ export function refreshAccessToken(
  * `invalid_token`) surface as {@link InterfaceError} without leaking the
  * token value.
  */
-export async function fetchUserInfo(
-  baseUrl: string,
-  accessToken: string,
-): Promise<Record<string, unknown>> {
+export async function fetchUserInfo(baseUrl: string, accessToken: string): Promise<Record<string, unknown>> {
   const requestId = generateRequestId()
   const resp = await fetch(`${baseUrl}${OAUTH_PATH_PREFIX}/oauth2/userinfo`, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Accept": "application/json",
-      "requestId": requestId,
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      requestId: requestId,
     },
   })
 

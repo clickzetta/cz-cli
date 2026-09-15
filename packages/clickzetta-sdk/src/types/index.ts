@@ -48,8 +48,18 @@ export interface ConnectionConfig {
  */
 export interface TokenStore {
   load(): AuthToken | undefined
-  save(token: AuthToken): void
+  /** Persist a login or update a compatibility projection. A condition protects concurrent login changes. */
+  save(token: AuthToken, expected?: { expected: AuthToken | undefined }): boolean
   clear(): void
+  /** Coalesce local work; cross-process safety belongs to `refresh`, not this queue. */
+  withLock<T>(critical: () => Promise<T>): Promise<T>
+  /**
+   * Durably claim `previous.refreshToken` before calling `request`, then persist its
+   * replacement before resolving. Across every process sharing this store, a token
+   * may be submitted at most once. An uncertain attempt must never be replayed.
+   * A waiter returns the already-persisted replacement instead of calling `request`.
+   */
+  refresh(previous: AuthToken, request: () => Promise<AuthToken>): Promise<AuthToken>
 }
 
 export const DEFAULT_CONNECTION: ConnectionConfig = {

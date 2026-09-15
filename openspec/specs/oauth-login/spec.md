@@ -136,8 +136,9 @@ The CLI should implement a local loopback callback listening flow (`waitForAutho
 
 ### Requirement: Cross-process persistence of the Refresh Token
 
-When login or refresh succeeds and yields an OAuth `AuthToken` containing a `refreshToken`, the CLI should persist `token` (access_token), `refreshToken`, `expireTimeMs`, `obtainedAt`, `instanceId`, `userId` under the current profile's entry in `~/.clickzetta/profiles.toml` (an OAuth subtable), reusing the existing atomic write and `0o600` permission mechanism, and must not write the token to any log. When a new process initiates an operation that requires a token: if the persisted token is judged not expired per `EXPIRED_FACTOR = 0.8`, it is reused directly, without re-login and without calling `/oauth2/token`; if it is expired but contains a `refreshToken`, that refresh token is used to call `/oauth2/token` for renewal, and the rotated new value is written back to the persistent store; on renewal failure (e.g. `invalid_grant`), the persisted OAuth token for that profile is cleared and it falls back to a full login. Persistence is isolated by profile + instance: the OAuth token slot is keyed by **instance** (no longer accompanied by pat/username), and tokens of different profiles/instances are not cross-used. The OAuth token represents the user's own login identity; removing or rotating pat/username must not orphan an already-persisted token slot. This mechanism is injected into the SDK authentication layer via an optional `tokenStore` interface on `ConnectionConfig`; when this interface is not injected, the behavior degrades to the existing pure in-memory cache, preserving backward compatibility.
+A login is imported through the existing `[oauth.<id>]` sections and profile pointers in `~/.clickzetta/profiles.toml`. Once refreshed, the authoritative current credential and its one-time-use history live in `~/.clickzetta/oauth-state.sqlite3` (mode 0600). A store load resolves a TOML seed to its latest runtime credential; a stale or failed TOML projection must not restore an old refresh token. Access tokens are reused while valid under `EXPIRED_FACTOR = 0.8`. Different profiles may share one OAuth login, but independent logins remain isolated. Tokens must never appear in logs.
 
+The SDK remains filesystem-independent: `ConnectionConfig.tokenStore` is optional for in-memory consumers; a shared implementation provides `refresh(previous, request)` to claim a refresh token durably before invoking the callback and persist the result before resolving. `withLock` is only local coalescing, not the cross-process correctness boundary. A required method without a permissive fallback makes this contract explicit to implementers.
 #### Scenario: A persisted, non-expired token is reused directly in a new process
 
 - **WHEN** a profile-backed `tokenStore` is injected, the persisted access_token is not expired, and a new process calls `getToken`
@@ -147,8 +148,61 @@ When login or refresh succeeds and yields an OAuth `AuthToken` containing a `ref
 #### Scenario: Persisted refresh token renewal fails and falls back to full login (exception)
 
 - **WHEN** the persisted token is expired and the CLI calls `/oauth2/token` with the persisted refresh token for renewal, which returns `error=invalid_grant`
-- **THEN** the CLI clears the persisted OAuth token entry for that profile in profiles.toml and falls back to performing a full portal login
+- **THEN** a profile with PAT/password credentials may perform a fresh portal login and must persist it; a pure OAuth profile reports SESSION_EXPIRED and asks the user to sign in again
+- **AND** the consumed token remains recorded so neither a retry nor another process can replay it
 - **AND** error handling and logging do not output `code_verifier`, the plaintext authorization code, `access_token`, or `refresh_token`
+
+### Requirement: One durable claim per refresh token
+
+A second use of a rotated refresh token can revoke its entire family, including the replacement. Correctness therefore requires preventing the second HTTP request, not merely rejecting its eventual local write. No failure mode may fall back to an uncoordinated refresh.
+
+#### Scenario: Independent processes refresh the same credential
+
+- **WHEN** several processes require renewal of the same token, including copies under different session names
+- **THEN** a short SQLite transaction records its fingerprint and pending family before any HTTP call
+- **AND** only the process that commits the first claim may send the refresh
+- **AND** waiters receive the persisted replacement; different token families may refresh concurrently
+- **AND** the client refuses token-endpoint redirects that would resend a single-use grant
+
+#### Scenario: Crash or uncertain response
+
+- **WHEN** a process crashes before sending or after the issuer consumes its token, or the response times out, is malformed, or cannot be persisted
+- **THEN** its committed claim is never removed or taken over based on age, pid, heartbeat, or elapsed waiting time
+- **AND** pending work reports OAUTH_REFRESH_PENDING after a bounded wait; a known uncertain result reports OAUTH_REFRESH_UNCERTAIN and asks for fresh authentication
+- **AND** both codes are terminal for the current request, preventing automatic retry amplification
+- **AND** a new login may recover without deleting the old claim history
+
+#### Scenario: Storage is unavailable
+
+- **WHEN** the local state cannot be written before a refresh
+- **THEN** no refresh request is sent; OAUTH_STATE_UNAVAILABLE explains the permissions/free-space requirement
+- **AND** SQLite contention reports LOCK_CONTENDED instead of running an operation unlocked
+
+#### Scenario: The profile projection is stale or unwritable
+
+- **WHEN** a refresh result is committed to SQLite but profiles.toml retains an older credential
+- **THEN** a new process resolves that credential to the current family record in one lookup
+- **AND** even a much older snapshot or differently named copy cannot replay a spent refresh token
+- **AND** a conditional TOML projection does not overwrite an independently established login
+
+#### Scenario: Profile mutations and logout
+
+- **WHEN** a profile edit reads, modifies, and writes profiles.toml
+- **THEN** the entire synchronous operation holds a SQLite write transaction; timeout never degrades to an unlocked write
+- **AND** no database transaction spans OAuth network I/O, so unrelated profile edits are not blocked by a refresh
+- **AND** logout or replacement of a login removes its runtime secret while retaining its fingerprints; a late refresh response cannot resurrect that login
+
+#### Scenario: An old access token receives a 401 after a peer refreshed
+
+- **WHEN** a caller knows the rejected access-token value and the shared store contains a different valid replacement
+- **THEN** it adopts that replacement without consuming another refresh token
+- **AND** concurrent forced callers still share one in-process acquisition
+
+### Requirement: Local state lifecycle and supported sharing
+
+All participating processes must use this refresh protocol and the same local state database on a filesystem with working SQLite locking and durability. Mixed old/new binaries, independent machines with copied credentials, deleting/rolling back the state database, and unsupported network filesystems cannot preserve the guarantee. Upgrade long-lived CLI/TUI/MCP processes together. Back up and restore profiles.toml and oauth-state.sqlite3 as a consistent, stopped-client snapshot; restoring stale runtime state requires a fresh login before use. Do not recommend deleting the database as recovery. Before downgrading to a client that does not understand it, stop other clients and authenticate afresh.
+
+Old token fingerprints are retained deliberately; only the current credential per active family is stored. A logout removes the runtime credential but not the replay-prevention history. The guarantee is at-most-once submission from cooperating clients, not lossless recovery: without an issuer-specific idempotency/recovery protocol, a lost response can require a fresh login. Ordinary API calls remain concurrent; no access-token drain barrier is required for refresh-token reuse detection alone.
 
 ### Requirement: Persisted OAuth token as a SQL authentication credential
 

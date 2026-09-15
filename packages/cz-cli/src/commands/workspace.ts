@@ -3,7 +3,7 @@ import { commandGroup } from "../command-group.js"
 import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
-import { loadProfiles, saveProfiles } from "../connection/profile-store.js"
+import { loadProfiles, updateProfiles } from "../connection/profile-store.js"
 import * as Profile from "../connection/profile-context.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, classifyExecError } from "./exec.js"
@@ -102,9 +102,23 @@ export function registerWorkspaceCommand(cli: Argv<GlobalArgs>): void {
                 error("PROFILE_NOT_FOUND", `Profile '${profileName}' not found. Create a profile first.`, { format })
                 return
               }
-              profiles[profileName].workspace = name
-              if (schemaVal) profiles[profileName].schema = schemaVal
-              saveProfiles(profiles)
+              // Re-resolved inside the lock: the check above ran on an unlocked read,
+              // and replacing the whole table from that snapshot would drop whatever a
+              // peer wrote in between (an `oauth` pointer, `instance_id`, `auth_type`).
+              let applied = true
+              updateProfiles((current) => {
+                const profile = current[profileName]
+                // Gone since the unlocked check above. Reporting success — with
+                // logOperation ok and exit 0 — for a write that did not happen is the
+                // thing the locked re-read exists to make visible, not to hide.
+                if (!profile) { applied = false; return false }
+                profile.workspace = name
+                if (schemaVal) profile.schema = schemaVal
+              })
+              if (!applied) {
+                error("PROFILE_NOT_FOUND", `Profile '${profileName}' not found. Create a profile first.`, { format })
+                return
+              }
               logOperation("workspace use", { ok: true })
               success(
                 {

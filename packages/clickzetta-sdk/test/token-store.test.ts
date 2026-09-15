@@ -56,6 +56,7 @@ interface FakeStore extends TokenStore {
   loadCount: number
   saveCount: number
   clearCount: number
+  lockCount: number
   saved: AuthToken[]
 }
 
@@ -65,19 +66,31 @@ function makeStore(seed?: AuthToken): FakeStore {
     loadCount: 0,
     saveCount: 0,
     clearCount: 0,
+    lockCount: 0,
     saved: [],
     load() {
       this.loadCount += 1
       return this.current
     },
-    save(token: AuthToken) {
+    save(token: AuthToken, condition?: { expected: AuthToken | undefined }) {
+      // Honours the condition, so a test that seeds a peer write sees the CAS miss the
+      // real store would report rather than an unconditional overwrite.
+      if (condition && condition.expected?.token !== this.current?.token) return false
       this.saveCount += 1
       this.saved.push(token)
       this.current = token
+      return true
     },
     clear() {
       this.clearCount += 1
       this.current = undefined
+    },
+    // Process-local fake. The durable cross-process contract is covered by the
+    // CLI's oauth-refresh-safety.test.ts; this counter pins local coalescing.
+    refresh: (_previous, request) => request(),
+    withLock(critical) {
+      this.lockCount += 1
+      return critical()
     },
   }
   return store
@@ -190,7 +203,9 @@ describe("token store persistence (getToken)", () => {
     expect(calls.login).toBe(0) // no portal login on refresh path
     expect(token.token).toBe("new-access")
     expect(token.refreshToken).toBe("r2")
-    // store.save was called with the rotated refresh token.
+    // store.save was called with the rotated refresh token, and the rotation ran
+    // inside the store's lock — a refresh reintroduced outside it shows up here.
+    expect(store.lockCount).toBe(1)
     expect(store.saveCount).toBeGreaterThanOrEqual(1)
     expect(store.current?.refreshToken).toBe("r2")
     expect(store.current?.token).toBe("new-access")
@@ -258,6 +273,7 @@ describe("token store persistence (getToken)", () => {
     expect(calls.tokenGrants.length).toBe(0) // no OAuth exchange on a plain login
     expect(token.token).toBe("fresh-login-token")
     expect(token.refreshToken).toBeUndefined()
+    expect(store.lockCount).toBe(1)
     expect(store.saveCount).toBeGreaterThanOrEqual(1)
     expect(store.current?.token).toBe("fresh-login-token")
     expect(store.current?.refreshToken).toBeUndefined()
@@ -327,8 +343,22 @@ describe("token store persistence (getToken)", () => {
   // empty pat/username) must NOT share the in-memory cache. Distinct config
   // .cacheKey values keep them independent; without it both key to `instance:`.
   test("two OAuth configs on the same instance don't share the cache when cacheKey differs", async () => {
-    const tokenA: AuthToken = { token: "A", refreshToken: "ra", instanceId: 1, userId: 1, expireTimeMs: 900_000, obtainedAt: now }
-    const tokenB: AuthToken = { token: "B", refreshToken: "rb", instanceId: 1, userId: 2, expireTimeMs: 900_000, obtainedAt: now }
+    const tokenA: AuthToken = {
+      token: "A",
+      refreshToken: "ra",
+      instanceId: 1,
+      userId: 1,
+      expireTimeMs: 900_000,
+      obtainedAt: now,
+    }
+    const tokenB: AuthToken = {
+      token: "B",
+      refreshToken: "rb",
+      instanceId: 1,
+      userId: 2,
+      expireTimeMs: 900_000,
+      obtainedAt: now,
+    }
     globalThis.fetch = (async () => new Response("not found", { status: 404 })) as typeof fetch
 
     const cfgA: ConnectionConfig = { ...config(makeStore(tokenA)), instance: "shared", cacheKey: "oauth-a" }
@@ -369,12 +399,23 @@ describe("token store persistence (getToken)", () => {
   // dead must throw an actionable SESSION_EXPIRED, NOT attempt a password login.
   test("dead refresh token on a credential-less OAuth profile throws SESSION_EXPIRED (no password login)", async () => {
     const persisted: AuthToken = {
-      token: "old", refreshToken: "dead", instanceId: 9, userId: 7,
-      expireTimeMs: 900_000, obtainedAt: 0, issuer: "api.clickzetta.com",
+      token: "old",
+      refreshToken: "dead",
+      instanceId: 9,
+      userId: 7,
+      expireTimeMs: 900_000,
+      obtainedAt: 0,
+      issuer: "api.clickzetta.com",
     }
     const store = makeStore(persisted)
     const calls = buildFetch({
-      login: () => ({ token: "should-not-be-called", authorizationCode: "x", userId: 7, instanceId: 9, expireTime: 999 }),
+      login: () => ({
+        token: "should-not-be-called",
+        authorizationCode: "x",
+        userId: 7,
+        instanceId: 9,
+        expireTime: 999,
+      }),
       token: () => ({ status: 400, body: { error: "invalid_grant", error_description: "expired" } }),
     })
 
@@ -388,8 +429,13 @@ describe("token store persistence (getToken)", () => {
   // must rethrow the original error (retryable), not dead-end in a login.
   test("transient refresh failure on OAuth profile rethrows, doesn't dead-end in login", async () => {
     const persisted: AuthToken = {
-      token: "old", refreshToken: "r1", instanceId: 9, userId: 7,
-      expireTimeMs: 900_000, obtainedAt: 0, issuer: "api.clickzetta.com",
+      token: "old",
+      refreshToken: "r1",
+      instanceId: 9,
+      userId: 7,
+      expireTimeMs: 900_000,
+      obtainedAt: 0,
+      issuer: "api.clickzetta.com",
     }
     const store = makeStore(persisted)
     const calls = buildFetch({

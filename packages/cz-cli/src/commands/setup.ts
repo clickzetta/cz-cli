@@ -2,15 +2,15 @@ import { ConfigOtel } from "../config/otel.js"
 import type { Argv } from "yargs"
 import * as p from "@clack/prompts"
 import { spawn } from "node:child_process"
-import { readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
+import { parse as parseTOML } from "smol-toml"
 import { JobStatus, getCurrentUser, DEFAULT_CONNECTION, getToken, listUserWorkspaces, loginWithPassword, toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
+import { AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId, mutateProfilesFile } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
@@ -190,25 +190,26 @@ async function promptSelect(question: string, options: NamedOption[], _footer?: 
 }
 
 function saveProfile(profileName: string, profile: ProfileEntry): void {
-  const data = loadFullFile()
-  const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
-  if (profiles[profileName]) {
-    // Coded, so the one authoritative collision check reports the same thing on every
-    // path into this flow. runAuthConfigure's catch used to flatten it to SETUP_FAILED,
-    // which is why the collision looked like two different failures depending on which
-    // entry point reached it.
-    throw new ProvisionError(
-      "PROFILE_EXISTS",
-      `Profile '${profileName}' already exists. Use --name <other> or delete it first.`,
-    )
-  }
-  saveFullFile({
-    ...data,
-    default_profile: profileName,
-    profiles: {
-      ...profiles,
-      [profileName]: profile,
-    },
+  // The collision check and the write are one locked step: two setups racing on the
+  // same name would otherwise both pass the check, and the second would replace the
+  // first's profile instead of reporting the collision. The throw travels out through
+  // the lock, which releases either way.
+  mutateProfilesFile((data) => {
+    const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+    if (profiles[profileName]) {
+      // Coded, so the one authoritative collision check reports the same thing on
+      // every path into this flow. runAuthConfigure's catch used to flatten it to
+      // SETUP_FAILED, which is why the collision looked like two different failures
+      // depending on which entry point reached it.
+      throw new ProvisionError(
+        "PROFILE_EXISTS",
+        `Profile '${profileName}' already exists. Use --name <other> or delete it first.`,
+      )
+    }
+    profiles[profileName] = profile
+    data.profiles = profiles
+    data.default_profile = profileName
+    return data
   })
 }
 
@@ -220,17 +221,6 @@ function loadFullFile(): Record<string, unknown> {
   }
 }
 
-function saveFullFile(data: Record<string, unknown>): void {
-  mkdirSync(profilesDir(), { recursive: true })
-  const content = stringifyTOML(data)
-  const file = profilesFilePath()
-  const tmp = file + ".tmp." + Date.now()
-  writeFileSync(tmp, content, { encoding: "utf-8", mode: 0o600 })
-  renameSync(tmp, file)
-  try {
-    chmodSync(file, 0o600)
-  } catch {}
-}
 
 function quoteShell(value: string): string {
   return JSON.stringify(value)

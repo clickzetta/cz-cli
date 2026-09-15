@@ -48,6 +48,9 @@ installFetchBoundary()
 // Clear it before each test so auth always flows through the mocked network.
 beforeEach(async () => {
   useTestHome()
+  // Cases reuse canned refresh tokens but represent independent sessions. Reset
+  // their durable history as well as the SDK cache, only in this throwaway home.
+  fs.rmSync(path.join(testHome, ".clickzetta", "oauth-state.sqlite3"), { force: true })
   try {
     const { clearTokenCache } = await import("@clickzetta/sdk")
     clearTokenCache()

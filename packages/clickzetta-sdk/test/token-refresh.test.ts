@@ -32,8 +32,17 @@ function memoryStore(initial?: AuthToken): TokenStore {
   let current = initial
   return {
     load: () => current,
-    save: (token) => { current = token },
-    clear: () => { current = undefined },
+    save: (token) => {
+      current = token
+      return true
+    },
+    clear: () => {
+      current = undefined
+    },
+    // Single process, single test: the critical section needs no exclusion, only the
+    // seam. Cross-process behaviour is covered in cz-cli's file-lock tests.
+    refresh: (_previous, request) => request(),
+    withLock: (critical) => critical(),
   }
 }
 

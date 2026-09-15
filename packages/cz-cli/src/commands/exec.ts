@@ -57,7 +57,9 @@ export function hasUsableCredentials(config: ConnectionConfig): boolean {
 export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContext> {
   const config = resolveConnectionConfig(args)
   if (!hasUsableCredentials(config)) {
-    throw new Error("Authentication required. Run `cz-cli auth login <name>` to sign in (browser OAuth by default; see `cz-cli auth login --help` for credential/PAT/password methods).")
+    throw new Error(
+      "Authentication required. Run `cz-cli auth login <name>` to sign in (browser OAuth by default; see `cz-cli auth login --help` for credential/PAT/password methods).",
+    )
   }
   if (!config.instance) {
     throw new Error("Instance is required. Provide --instance or configure it in your profile.")
@@ -65,7 +67,7 @@ export async function getExecContext(args: Partial<CliArgs>): Promise<ExecContex
   if (!config.workspace) {
     throw new Error("Workspace is required. Provide --workspace or configure it in your profile.")
   }
-  const token = await getCookieToken(config) ?? await getToken(config)
+  const token = (await getCookieToken(config)) ?? (await getToken(config))
   // Resolved once and reused: passing `undefined` here would let these writes land on
   // `default_profile` while the config above came from Profile.current() (CZ_PROFILE first).
   const activeProfile = args.profile ?? Profile.current()
@@ -92,10 +94,7 @@ export interface ExecResult {
   status: "RUNNING"
 }
 
-export function buildExecHints(
-  hints?: Record<string, string>,
-  traceContext = currentTraceContext(),
-) {
+export function buildExecHints(hints?: Record<string, string>, traceContext = currentTraceContext()) {
   if (Object.prototype.hasOwnProperty.call(hints ?? {}, "query_tag")) {
     return hints
   }
@@ -208,7 +207,8 @@ export function classifyExecError(err: unknown): { code: string; message: string
     return {
       code: "AUTH_ERROR",
       message,
-      aiMessage: "Authentication failed. The token may be invalid or expired. Ask the user to re-run: cz-cli auth login <name> (see `cz-cli auth login --help` for all sign-in methods).",
+      aiMessage:
+        "Authentication failed. The token may be invalid or expired. Ask the user to re-run: cz-cli auth login <name> (see `cz-cli auth login --help` for all sign-in methods).",
       jobId,
     }
   }
@@ -216,7 +216,8 @@ export function classifyExecError(err: unknown): { code: string; message: string
     return {
       code: "NO_CREDENTIALS",
       message,
-      aiMessage: "No credentials configured. Ask the user to run: cz-cli auth login <name> (see `cz-cli auth login --help` for all sign-in methods).",
+      aiMessage:
+        "No credentials configured. Ask the user to run: cz-cli auth login <name> (see `cz-cli auth login --help` for all sign-in methods).",
       jobId,
     }
   }
@@ -228,11 +229,59 @@ export function classifyExecError(err: unknown): { code: string; message: string
       jobId,
     }
   }
+  if (errorCode(err) === "oauth_timeout") {
+    // Its message says "timed out", which isNetworkError's "timeout" match does not
+    // catch, so without this it reaches output through the codeless fallback with an
+    // empty aiMessage — a connectivity failure presented as an unclassified error.
+    return {
+      code: "CONNECTION_ERROR",
+      message,
+      aiMessage:
+        "The OAuth token endpoint did not respond in time. Check network connectivity (and any proxy) to the login host, then retry.",
+      jobId,
+    }
+  }
+  if (errorCode(err) === "OAUTH_REFRESH_UNCERTAIN") {
+    return {
+      code: "OAUTH_REFRESH_UNCERTAIN",
+      message,
+      aiMessage:
+        "A previous refresh may already have consumed the token. Ask the user to run cz-cli auth login <name>; do not repeatedly retry or delete oauth-state.sqlite3.",
+      jobId,
+    }
+  }
+  if (errorCode(err) === "OAUTH_STATE_UNAVAILABLE") {
+    return {
+      code: "OAUTH_STATE_UNAVAILABLE",
+      message,
+      aiMessage:
+        "Check permissions and free space for ~/.clickzetta. OAuth refresh requires writable, durable local state.",
+      jobId,
+    }
+  }
+  if (errorCode(err) === "OAUTH_REFRESH_PENDING") {
+    return {
+      code: "OAUTH_REFRESH_PENDING",
+      message,
+      aiMessage:
+        "An OAuth refresh is pending. Retry later. If the refresher exited, sign in again with cz-cli auth login <name>; do not delete the state database.",
+      jobId,
+    }
+  }
+  if (errorCode(err) === "LOCK_CONTENDED") {
+    return {
+      code: "LOCK_CONTENDED",
+      message,
+      aiMessage: "Another process is updating local OAuth/profile state. Retry the command after it finishes.",
+      jobId,
+    }
+  }
   if (isNetworkError(err)) {
     return {
       code: "CONNECTION_ERROR",
       message,
-      aiMessage: "Cannot connect to ClickZetta. Check network connectivity and verify the instance/service URL in the profile.",
+      aiMessage:
+        "Cannot connect to ClickZetta. Check network connectivity and verify the instance/service URL in the profile.",
       jobId,
     }
   }
@@ -299,11 +348,7 @@ export function isQueryResult(r: QueryResult | ExecResult): r is QueryResult {
 
 export function throwOnFailure(result: QueryResult, sql: string): void {
   if (result.status === JobStatus.FAILED) {
-    throw new SqlError(
-      result.errorCode ?? "SQL_ERROR",
-      result.errorMessage ?? "Query failed",
-      sql,
-    )
+    throw new SqlError(result.errorCode ?? "SQL_ERROR", result.errorMessage ?? "Query failed", sql)
   }
 }
 

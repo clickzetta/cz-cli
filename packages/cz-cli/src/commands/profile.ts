@@ -1,15 +1,15 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { spawnSync } from "node:child_process"
-import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
+import { parse as parseTOML } from "smol-toml"
 import { JobStatus } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
-import { loadProfiles, saveProfiles, getDefaultProfileName, deriveAuthType, explicitAuthType, invalidAuthType, invalidAuthTypeMessage, AUTH_TYPE, type ProfileEntry } from "../connection/profile-store.js"
+import { loadProfiles, saveProfiles, getDefaultProfileName, deriveAuthType, explicitAuthType, invalidAuthType, invalidAuthTypeMessage, AUTH_TYPE, type ProfileEntry, mutateProfilesFile } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { registerBootstrapCommands } from "./profile-bootstrap.js"
 import { getExecContext, execSql, isQueryResult } from "./exec.js"
@@ -52,13 +52,18 @@ function loadFullFile(): Record<string, unknown> {
   }
 }
 
-function saveFullFile(data: Record<string, unknown>): void {
-  mkdirSync(profilesDir(), { recursive: true })
-  const content = stringifyTOML(data)
-  const file = profilesFilePath()
-  const tmp = file + ".tmp." + Date.now()
-  writeFileSync(tmp, content, "utf-8")
-  renameSync(tmp, file)
+/**
+ * Read-modify-write the whole profiles document under the cross-process lock; `false`
+ * writes nothing.
+ *
+ * Replaces a local `saveFullFile` that took its input from a read made earlier, so a
+ * peer writing between the two had its change replaced by this caller's older copy of
+ * the whole document — an `oauth` pointer or an `instance_id` a login had just
+ * recorded, silently gone. It also wrote without a mode, leaving a file that holds
+ * plaintext PATs and passwords at the process umask; the shared writer chmods 0600.
+ */
+function editProfilesDocument(edit: (data: Record<string, unknown>) => void | false): void {
+  mutateProfilesFile((data) => (edit(data) === false ? undefined : data))
 }
 
 function maskSecret(val: string, prefixLen = 8): string {
@@ -379,12 +384,22 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 return error("CONNECTION_FAILED", `Failed to connect: ${err instanceof Error ? err.message : String(err)}`, { format })
               }
             }
-            profiles[name] = profileObj
-            data.profiles = profiles
-            if (Object.keys(profiles).length === 1) {
-              data.default_profile = name
-            }
-            saveFullFile(data)
+            // The collision check above ran on an unlocked read, and an awaited
+            // connection check sits between it and here — the widest window of the
+            // three. So the AUTHORITATIVE check is this one, inside the lock: without
+            // it two racing creates both pass, and the loser's row (its PAT or
+            // password) is overwritten by the winner's.
+            let exists = false
+            editProfilesDocument((fresh) => {
+              const rows = (fresh.profiles ?? {}) as Record<string, ProfileEntry>
+              if (rows[name]) { exists = true; return false }
+              rows[name] = profileObj
+              fresh.profiles = rows
+              if (Object.keys(rows).length === 1) {
+                fresh.default_profile = name
+              }
+            })
+            if (exists) return error("PROFILE_EXISTS", `Profile '${name}' already exists`, { format })
             logOperation("profile create", { ok: true })
             success({ message: `Profile '${name}' created successfully` }, { format })
           } catch (err) {
@@ -484,6 +499,15 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
                 return error("INVALID_ARGUMENTS", invalidAuthTypeMessage(name, invalid), { format })
               }
             }
+            // Validation above ran on an unlocked read; the edit itself runs on the
+            // document as it is on disk now, so a field a peer wrote in between is not
+            // replaced by this command's older copy of the whole file.
+            let applied = true
+            editProfilesDocument((data) => {
+            const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+            // Gone since the unlocked check above — a peer deleted it. Reporting success
+            // for a write that did not happen is worse than reporting the truth.
+            if (!profiles[name]) { applied = false; return false }
             if (key.startsWith("header.")) {
               const headerName = key.slice(7)
               // Store headers as a nested "header" dict (matching Python behavior)
@@ -523,7 +547,8 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               delete profiles[name].pat
             }
             data.profiles = profiles
-            saveFullFile(data)
+            })
+            if (!applied) return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             logOperation("profile update", { ok: true })
             success({ message: `Profile '${name}' updated successfully` }, { format })
           } catch (err) {
@@ -544,9 +569,21 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             if (!profiles[name]) {
               return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             }
+            let oauthId: string | undefined
+            let stillShared = false
+            let tokenRemoved = false
+            // One locked step, so a login writing a sibling row cannot be replaced by
+            // this command's older copy of the document — and so the "is this section
+            // still shared?" decision is made on the rows as they are on disk now.
+            let deleted = true
+            editProfilesDocument((data) => {
+            const profiles = (data.profiles ?? {}) as Record<string, ProfileEntry>
+            // A peer deleted it between the check above and this lock. `profile delete`
+            // reporting a delete it did not perform is the one a script would key on.
+            if (!profiles[name]) { deleted = false; return false }
             // The [oauth.<id>] section this profile points at, before the row goes.
             const pointer = profiles[name]?.oauth
-            const oauthId = typeof pointer === "string" && pointer.length > 0 ? pointer : undefined
+            oauthId = typeof pointer === "string" && pointer.length > 0 ? pointer : undefined
             delete profiles[name]
             data.profiles = profiles
             // Drop the token section too, but ONLY when this was its last
@@ -558,8 +595,8 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             // it is only swept on the NEXT run by pruneOrphanOAuthSections.
             // Deleting a credential should take effect immediately.
             const oauth = (data.oauth ?? {}) as Record<string, unknown>
-            const stillShared = Object.values(profiles).some((p) => p?.oauth === oauthId)
-            const tokenRemoved = oauthId !== undefined && oauthId in oauth && !stillShared
+            stillShared = Object.values(profiles).some((p) => p?.oauth === oauthId)
+            tokenRemoved = oauthId !== undefined && oauthId in oauth && !stillShared
             if (tokenRemoved) {
               delete oauth[oauthId!]
               // Don't leave a bare `[oauth]` header behind once the last one goes.
@@ -571,7 +608,8 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
               if (remaining.length > 0) data.default_profile = remaining[0]
               else delete data.default_profile
             }
-            saveFullFile(data)
+            })
+            if (!deleted) return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             logOperation("profile delete", { ok: true })
             success(
               {
@@ -603,8 +641,13 @@ export function registerProfileCommand(cli: Argv<GlobalArgs>): void {
             if (!profiles[name]) {
               return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             }
-            data.default_profile = name
-            saveFullFile(data)
+            let pointed = true
+            editProfilesDocument((fresh) => {
+              const rows = (fresh.profiles ?? {}) as Record<string, ProfileEntry>
+              if (!rows[name]) { pointed = false; return false }
+              fresh.default_profile = name
+            })
+            if (!pointed) return error("PROFILE_NOT_FOUND", `Profile '${name}' not found`, { format })
             logOperation("profile use", { ok: true })
             success({ message: `Profile '${name}' set as default` }, { format })
           } catch (err) {

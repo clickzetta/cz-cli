@@ -10,7 +10,7 @@ import {
   makeProfileTokenStore,
   patchProfileConnection,
   sanitizeOAuthId,
-  saveProfiles,
+  updateProfiles,
   saveSharedOAuthToken,
   setAuthTypeIfAbsent,
   setDefaultProfile,
@@ -117,13 +117,20 @@ export function provisionProfileFromCredential(name: string, cred: Record<string
     throw new ProvisionError("INVALID_CREDENTIAL", "Missing required fields: instanceName, accessToken")
   }
 
-  const profiles = loadProfiles()
-  if (profiles[name]) {
+  // The existence check and the write have to be one step: two logins racing on the
+  // same name would otherwise both pass the check and the second would replace the
+  // first's profile instead of reporting PROFILE_EXISTS.
+  let existed = false
+  updateProfiles((profiles) => {
+    if (profiles[name]) {
+      existed = true
+      return false
+    }
+    profiles[name] = credentialToProfileEntry(cred)
+  })
+  if (existed) {
     throw new ProvisionError("PROFILE_EXISTS", `Profile '${name}' already exists. Use a different name or delete it first.`)
   }
-
-  profiles[name] = credentialToProfileEntry(cred)
-  saveProfiles(profiles)
   setDefaultProfile(name)
 
   configureClickzettaLlm(name, {
@@ -197,9 +204,8 @@ export interface OAuthProvisionInput {
  * LLM from the userinfo apiKey. The raw userinfo is intentionally NOT archived:
  * every field consumers need has a canonical top-level home, so a verbatim
  * `[profiles.<name>.userinfo]` copy would only duplicate data and risk drift.
- * Idempotent: re-running only patches + refreshes, never duplicates. Best-effort
- * persistence helpers never throw; a failed profile materialization
- * (saveProfiles) propagates to the caller.
+ * Idempotent: re-running only patches + refreshes, never duplicates. Failure to
+ * materialize a profile or persist credentials propagates to the caller.
  */
 export function provisionProfileFromOAuth(name: string | undefined, input: OAuthProvisionInput): { instance: string; llmConfigured: boolean } {
   const { userInfo, service, protocol } = input
@@ -215,9 +221,7 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // are left untouched here and merged by the patch below.
   const existedBefore = Boolean(name) && loadProfiles()[name!] !== undefined
   if (name && !existedBefore) {
-    const profiles = loadProfiles()
-    profiles[name] = {}
-    saveProfiles(profiles)
+    updateProfiles((profiles) => { profiles[name] = {} })
   }
 
   // Two different questions, deliberately not one flag (they used to be, and the
@@ -284,7 +288,12 @@ export function provisionProfileFromOAuth(name: string | undefined, input: OAuth
   // and point this profile at it. Passing an explicit id makes save write the
   // top-level section + the profile's `oauth = "<id>"` pointer.
   const oauthId = sanitizeOAuthId(name ?? (finalInstance || "default"))
-  makeProfileTokenStore(name, oauthId).save(token)
+  if (!makeProfileTokenStore(name, oauthId).save(token)) {
+    throw new ProvisionError(
+      "OAUTH_STATE_UNAVAILABLE",
+      "Could not persist the login credentials. Check permissions and free space in ~/.clickzetta.",
+    )
+  }
 
   // Pin the profile to the OAuth token we just minted, so a pat or username that
   // was already on the profile can't shadow this login. Only when unset — see
@@ -607,9 +616,7 @@ export function provisionProfilesFromOAuthCombos(
     }
 
     // Materialize the row so patchProfileConnection has somewhere to write.
-    const profiles = loadProfiles()
-    profiles[name] = profiles[name] ?? {}
-    saveProfiles(profiles)
+    updateProfiles((profiles) => { profiles[name] = profiles[name] ?? {} })
 
     // Drop any stale header.Cookie residue that would shadow the OAuth token at
     // runtime. service/instance/workspace are all provided below (combo always

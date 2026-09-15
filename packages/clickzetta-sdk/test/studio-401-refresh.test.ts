@@ -20,8 +20,17 @@ function memoryStore(initial: AuthToken): TokenStore {
   let current: AuthToken | undefined = initial
   return {
     load: () => current,
-    save: (token) => { current = token },
-    clear: () => { current = undefined },
+    save: (token) => {
+      current = token
+      return true
+    },
+    clear: () => {
+      current = undefined
+    },
+    // Single process, single test: the critical section needs no exclusion, only the
+    // seam. Cross-process behaviour is covered in cz-cli's file-lock tests.
+    refresh: (_previous, request) => request(),
+    withLock: (critical) => critical(),
   }
 }
 
@@ -98,7 +107,12 @@ function stubFetch(opts: { refreshable: boolean }): void {
         return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 })
       }
       return new Response(
-        JSON.stringify({ access_token: "fresh-access", refresh_token: "refresh-2", expires_in: 3600, token_type: "Bearer" }),
+        JSON.stringify({
+          access_token: "fresh-access",
+          refresh_token: "refresh-2",
+          expires_in: 3600,
+          token_type: "Bearer",
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       )
     }

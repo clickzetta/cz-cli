@@ -12,7 +12,21 @@ const NON_RETRYABLE_STATUS = new Set([400, 403, 404, 409, 422])
  * latency (and, for a profile with no credentials, further pointless network
  * calls) before the same verdict. Transient refresh failures keep retrying.
  */
-const TERMINAL_ERROR_CODES = new Set(["SESSION_EXPIRED"])
+/**
+ * Codes this loop must not retry.
+ *
+ * `LOCK_CONTENDED` is retryable AS A COMMAND but terminal for THIS request, and the
+ * distinction is the whole point: the token source already waited its full budget for a
+ * peer to finish, so another attempt waits that budget again with nothing new learned.
+ * Retrying it multiplied one bounded wait by MAX_RETRIES into minutes of silence.
+ */
+const TERMINAL_ERROR_CODES = new Set([
+  "SESSION_EXPIRED",
+  "LOCK_CONTENDED",
+  "OAUTH_REFRESH_UNCERTAIN",
+  "OAUTH_REFRESH_PENDING",
+  "OAUTH_STATE_UNAVAILABLE",
+])
 const AUTH_EXPIRED_STATUS = 401
 const DEFAULT_TIMEOUT_MS = 60_000
 
@@ -72,12 +86,12 @@ function buildHeaders(opts: ClientOptions, credential: Credential): Record<strin
   return mergeHeaders(
     {
       "Content-Type": "application/json",
-      "Accept": "application/json, text/plain, */*",
+      Accept: "application/json, text/plain, */*",
       "User-Agent": `tssdk/${SDK_VERSION}`,
       // client.py:293 — trace id header, required by the gateway for correlation
-      "requestId": requestId,
+      requestId: requestId,
       "X-Request-ID": requestId,
-      "traceparent": opts.traceparent ?? currentTraceparent(),
+      traceparent: opts.traceparent ?? currentTraceparent(),
       ...(instanceName ? { instanceName } : {}),
     },
     // The credential's own headers sit under the caller's: a Cookie belongs to
@@ -129,7 +143,7 @@ async function doRequest<T>(
         // Prefer the rotated credential; otherwise re-resolve, because a retry
         // after a multi-second backoff must not resend one that expired while
         // we waited. `get()` is cache-backed, so re-resolving costs nothing.
-        credential = rotatedCredential ?? await opts.tokens.get()
+        credential = rotatedCredential ?? (await opts.tokens.get())
         rotatedCredential = undefined
         headers = buildHeaders(opts, credential)
       }
@@ -150,9 +164,7 @@ async function doRequest<T>(
         if (resp.status === AUTH_EXPIRED_STATUS) {
           // Rotation is offered once; a source that cannot rotate (or a second
           // rejection) makes this 401 the final answer for this identity.
-          const fresh = rotated || attempt >= MAX_RETRIES
-            ? undefined
-            : await opts.tokens.rotate(credential)
+          const fresh = rotated || attempt >= MAX_RETRIES ? undefined : await opts.tokens.rotate(credential)
           if (!fresh) {
             authExhausted = true
             throw apiErr
@@ -170,7 +182,10 @@ async function doRequest<T>(
       }
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
-      if (err instanceof ClickZettaApiError && (NON_RETRYABLE_STATUS.has(err.statusCode ?? 0) || err.code === "PARSE_ERROR")) {
+      if (
+        err instanceof ClickZettaApiError &&
+        (NON_RETRYABLE_STATUS.has(err.statusCode ?? 0) || err.code === "PARSE_ERROR")
+      ) {
         throw err
       }
       if (authExhausted) throw err
