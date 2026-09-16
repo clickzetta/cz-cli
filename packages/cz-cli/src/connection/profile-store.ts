@@ -3,7 +3,8 @@ import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
-import { DEFAULT_CONNECTION, toServiceUrl, type ConnectionConfig, type TokenStore, type AuthToken } from "@clickzetta/sdk"
+import { DEFAULT_CONNECTION, type ConnectionConfig, type TokenStore, type AuthToken } from "@clickzetta/sdk"
+import { inferAnalyticsAgentEndpoint } from "./analytics-agent-endpoint.js"
 
 function profilesFile() {
   return join(process.env.CLICKZETTA_TEST_HOME || homedir(), ".clickzetta", "profiles.toml")
@@ -382,7 +383,7 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
 function inferAgentEndpoint(profile: Record<string, unknown>): string | undefined {
   const service = str(profile.service, "")
   if (!service) return undefined
-  return `${toServiceUrl(service, normalizeProtocol(str(profile.protocol, undefined)))}/clickzetta-campaign-data`
+  return inferAnalyticsAgentEndpoint(service, str(profile.protocol, undefined))
 }
 
 /**
