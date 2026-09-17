@@ -134,21 +134,40 @@ The CLI should implement a local loopback callback listening flow (`waitForAutho
 - **THEN** the method resolves with the parsed authorization code and closes the listener
 - **AND** when the callback lacks `code` or `state` does not match, the method rejects and closes the listener, without leaking the authorization code value
 
-### Requirement: Cross-process persistence of the Refresh Token
+### Requirement: File-backed OAuth refresh with server grace window
 
-When login or refresh succeeds and yields an OAuth `AuthToken` containing a `refreshToken`, the CLI should persist `token` (access_token), `refreshToken`, `expireTimeMs`, `obtainedAt`, `instanceId`, `userId` under the current profile's entry in `~/.clickzetta/profiles.toml` (an OAuth subtable), reusing the existing atomic write and `0o600` permission mechanism, and must not write the token to any log. When a new process initiates an operation that requires a token: if the persisted token is judged not expired per `EXPIRED_FACTOR = 0.8`, it is reused directly, without re-login and without calling `/oauth2/token`; if it is expired but contains a `refreshToken`, that refresh token is used to call `/oauth2/token` for renewal, and the rotated new value is written back to the persistent store; on renewal failure (e.g. `invalid_grant`), the persisted OAuth token for that profile is cleared and it falls back to a full login. Persistence is isolated by profile + instance: the OAuth token slot is keyed by **instance** (no longer accompanied by pat/username), and tokens of different profiles/instances are not cross-used. The OAuth token represents the user's own login identity; removing or rotating pat/username must not orphan an already-persisted token slot. This mechanism is injected into the SDK authentication layer via an optional `tokenStore` interface on `ConnectionConfig`; when this interface is not injected, the behavior degrades to the existing pure in-memory cache, preserving backward compatibility.
+OAuth credentials remain in the existing `[oauth.<id>]` sections of `~/.clickzetta/profiles.toml`, shared by profiles with the same session reference. No new credential file, directory or storage migration is introduced. Each store load reads the file again. Saving a refresh result rereads the current document, updates the session's OAuth section and atomically replaces the file with mode 0600. There is no cross-process lock or conditional write.
 
-#### Scenario: A persisted, non-expired token is reused directly in a new process
+The SDK keeps the existing `TokenStore.load/save/clear` interface. Valid access tokens may be cached in memory (`EXPIRED_FACTOR = 0.8`); every acquisition that needs refresh reloads the store first. Concurrent callers in one process share an acquisition. There are no cross-process refresh locks, SQLite databases, spent-token records or conditional refresh writes.
 
-- **WHEN** a profile-backed `tokenStore` is injected, the persisted access_token is not expired, and a new process calls `getToken`
-- **THEN** the CLI reuses the persisted access_token directly, calling neither `/clickzetta-portal/user/loginSingle` nor `/oauth2/token`
-- **AND** does not write a new token entry to profiles.toml
+#### Scenario: A peer has already refreshed
 
-#### Scenario: Persisted refresh token renewal fails and falls back to full login (exception)
+- **WHEN** process B reaches its refresh threshold after A persisted a replacement
+- **THEN** B reloads the file and reuses its valid access token without refreshing
+- **AND** if that access token also needs renewal, B sends the refresh token from the file, not its stale memory copy
 
-- **WHEN** the persisted token is expired and the CLI calls `/oauth2/token` with the persisted refresh token for renewal, which returns `error=invalid_grant`
-- **THEN** the CLI clears the persisted OAuth token entry for that profile in profiles.toml and falls back to performing a full portal login
-- **AND** error handling and logging do not output `code_verifier`, the plaintext authorization code, `access_token`, or `refresh_token`
+#### Scenario: Two processes refresh simultaneously
+
+- **WHEN** A and B read R0 and both submit it within the issuer's grace window
+- **THEN** the issuer returns the same successor refresh token R1 to both requests
+- **AND** each process may atomically persist its result; each update preserves the other fields from the document it just read
+- **AND** the issuer supplies an accurate access-token expiry, including when reusing a prior response
+
+#### Scenario: A 401 arrives after another process refreshed
+
+- **WHEN** the persisted access token is valid and differs from the rejected token
+- **THEN** the caller adopts it without refreshing again
+- **OTHERWISE** the caller refreshes from the newly loaded credentials; the business request offers authentication recovery only once
+
+#### Scenario: Refresh failure
+
+- **WHEN** a refresh fails transiently
+- **THEN** the error is surfaced without permanently poisoning local credentials; the next attempt reloads the file
+- **WHEN** the issuer rejects the refresh token with invalid_grant
+- **THEN** a pure OAuth profile requests a new login; PAT/password consumers retain their full-login fallback
+- **AND** credentials never appear in logs
+
+Lost responses may be recovered within the server's grace window. Recovery after that window, concurrent logout/re-login, and arbitrarily delayed responses have no additional client coordination guarantees. Ordinary logout removes the session's OAuth section from profiles.toml. No replay history is retained.
 
 ### Requirement: Persisted OAuth token as a SQL authentication credential
 

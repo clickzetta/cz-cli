@@ -6,7 +6,7 @@ import type { AuthToken } from "@clickzetta/sdk"
 import { runLogin } from "../src/commands/login"
 import type { LoginTarget } from "../src/connection/login-target"
 import type { BrowserLoginResult } from "../src/commands/login-browser"
-import { configureClickzettaLlm } from "../src/connection/provision"
+import { configureClickzettaLlm, provisionProfileFromOAuth } from "../src/connection/provision"
 import { runAuthConfigure } from "../src/commands/setup"
 import { loadProfiles, makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
 import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config"
@@ -235,10 +235,11 @@ describe("runLogin", () => {
     }
 
     const text = readFileSync(profilesPath(), "utf-8")
-    // Three profiles named with _0/_1/_2 suffixes.
-    expect(text).toContain(`[profiles.${PROFILE}_0]`)
-    expect(text).toContain(`[profiles.${PROFILE}_1]`)
-    expect(text).toContain(`[profiles.${PROFILE}_2]`)
+    // One profile per combo, each named `<session>_<workspace>_<instance>` — readable on its
+    // own, where the old `_0/_1/_2` meant opening this file to find out which was which.
+    expect(text).toContain(`[profiles.${PROFILE}_quick_start_89b94150]`)
+    expect(text).toContain(`[profiles.${PROFILE}_analytics_89b94150]`)
+    expect(text).toContain(`[profiles.${PROFILE}_quick_start_453c81e6]`)
     // Each combo's workspace landed on its profile.
     expect(text).toContain('workspace = "analytics"')
     // Each profile carries its OWN instance_id, from the combo — the whole point of moving
@@ -253,10 +254,17 @@ describe("runLogin", () => {
     expect(pointers.length).toBe(3)
     expect(new Set(pointers)).toEqual(new Set([`oauth = "${PROFILE}"`])) // all point at [oauth.czcli]
 
-    // Default profile is the first combo; token loadable via its pointer.
-    expect(makeProfileTokenStore(`${PROFILE}_0`).load()).toEqual(PERSISTED_TOKEN)
+    // The default is the connection userinfo names (instance 89b94150 / quick_start), NOT
+    // whichever name sorts first — `analytics` would win alphabetically. Report order is
+    // alphabetical so two logins can be diffed; it has no opinion on which connection the
+    // user wants, and userinfo does.
+    expect(readFileSync(profilesPath(), "utf-8")).toContain(
+      `default_profile = "${PROFILE}_quick_start_89b94150"`,
+    )
+    // Token loadable via its pointer.
+    expect(makeProfileTokenStore(`${PROFILE}_quick_start_89b94150`).load()).toEqual(PERSISTED_TOKEN)
     // Sibling profile shares the same token.
-    expect(makeProfileTokenStore(`${PROFILE}_2`).load()).toEqual(PERSISTED_TOKEN)
+    expect(makeProfileTokenStore(`${PROFILE}_quick_start_453c81e6`).load()).toEqual(PERSISTED_TOKEN)
 
     // The LLM belongs to the shared OAuth login, not the arbitrary first profile.
     const llm = readLlmEntries()
@@ -265,11 +273,14 @@ describe("runLogin", () => {
       api_key: "secret-api-key",
       base_url: "https://dev-aimesh.clickzetta.com/",
     })
+    // `czcli_0` here is an llm.json KEY, not a profile name: it is what the entry was called
+    // back when it was keyed by the session's first profile. Profile naming changed; this
+    // migration anchor deliberately did not, so the absorb-and-delete still has to fire.
     expect(llm.llm[`${PROFILE}_0`]).toBeUndefined()
     expect(llm.model).toBe(`${PROFILE}/qwen/qwen3-coder-plus`)
 
     expect(out.text()).toContain("logged_in")
-    expect(out.text()).toContain(`${PROFILE}_0`)
+    expect(out.text()).toContain(`${PROFILE}_quick_start_89b94150`)
     expect(process.exitCode).toBe(0)
   })
 
@@ -423,10 +434,135 @@ describe("runLogin", () => {
     expect(process.exitCode).toBe(0)
   })
 
+  test("a peer completing login while the browser is open makes this a re-login", async () => {
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        resolveLoginTarget: async () => makeTarget(),
+        loginWithBrowser: async () => {
+          provisionProfileFromOAuth(PROFILE, {
+            token: KNOWN_TOKEN,
+            userInfo: KNOWN_RESULT.userInfo,
+            service: "dev-api.clickzetta.com",
+            protocol: "https",
+          })
+          configureClickzettaLlm(PROFILE, { apiKey: "peer-virtual-key" })
+          return { ...KNOWN_RESULT, token: { ...KNOWN_TOKEN, token: "second-access", refreshToken: "second-refresh" } }
+        },
+      })
+    } finally {
+      out.restore()
+    }
+    expect(out.text()).toContain('"relogin":true')
+    expect(readLlmEntries().llm[PROFILE]?.api_key).toBe("peer-virtual-key")
+    expect(makeProfileTokenStore(PROFILE).load()?.token).toBe("second-access")
+    expect(process.exitCode).toBe(0)
+  })
+
   // --pat is not a login: no flow behind `login` consumes it (the setup flow only
   // accepts --credential or username+password+account-name), so it must be
   // rejected with a pointer to `profile create` instead of being handed to a flow
   // that would silently drop it and then demand a username.
+  // The region prompt on a re-login was the bug: the session name the user typed already
+  // names the issuer it was minted against, so asking again asks a question we hold the
+  // answer to. These tests assert on the ARGS login.ts passes the resolver, not on the host
+  // it comes back with — every other test here stubs resolveLoginTarget with a zero-arg
+  // fake, which cannot tell a wired-up recordedIssuer from a dropped one.
+  test("re-login hands the resolver the issuer this session recorded, so it never prompts", async () => {
+    const seen: Array<{ oauthUrl?: string; partition?: string; recordedIssuer?: string }> = []
+    const spyResolve = async (args: { oauthUrl?: string; partition?: string; recordedIssuer?: string }) => {
+      seen.push(args)
+      return makeTarget()
+    }
+
+    const first = captureStdout()
+    try {
+      await runLogin(makeArgs(), { loginWithBrowser: async () => KNOWN_RESULT, resolveLoginTarget: spyResolve })
+    } finally {
+      first.restore()
+    }
+    expect(first.text()).toContain('"relogin":false')
+    // Nothing on disk yet, so there is nothing to reuse and the prompt tier is correct.
+    expect(seen[0]?.recordedIssuer).toBeUndefined()
+    // The first login is what puts the issuer on record (provisioning stamps it onto the
+    // shared token) — if it stopped doing that, the re-login below would silently go back
+    // to prompting.
+    expect(readFileSync(profilesPath(), "utf-8")).toContain('issuer = "api.example.com"')
+
+    const second = captureStdout()
+    try {
+      await runLogin(makeArgs(), { loginWithBrowser: async () => KNOWN_RESULT, resolveLoginTarget: spyResolve })
+    } finally {
+      second.restore()
+    }
+    expect(second.text()).toContain('"relogin":true')
+    expect(seen).toHaveLength(2)
+    expect(seen[1]?.recordedIssuer).toBe("api.example.com")
+    expect(process.exitCode).toBe(0)
+  })
+
+  // `logout --keep-profiles` drops the token section and keeps the rows, so this login is
+  // classified a re-login (profiles still point at the session) with no issuer on record.
+  // Passing something made up would be worse than asking: fall through to the prompt.
+  test("re-login after `logout --keep-profiles` has no recorded issuer to reuse", async () => {
+    let lastArgs: { recordedIssuer?: string } | undefined
+    const spyResolve = async (args: { oauthUrl?: string; partition?: string; recordedIssuer?: string }) => {
+      lastArgs = args
+      return makeTarget()
+    }
+
+    const out1 = captureStdout()
+    try {
+      await runLogin(makeArgs(), { loginWithBrowser: async () => KNOWN_RESULT, resolveLoginTarget: spyResolve })
+    } finally {
+      out1.restore()
+    }
+
+    const raw = readFileSync(profilesPath(), "utf-8").replace(/\[oauth\.czcli\][\s\S]*?(?=\n\[|$)/, "")
+    writeFileSync(profilesPath(), raw)
+    expect(readFileSync(profilesPath(), "utf-8")).toContain('oauth = "czcli"')
+
+    const out2 = captureStdout()
+    try {
+      await runLogin(makeArgs(), { loginWithBrowser: async () => KNOWN_RESULT, resolveLoginTarget: spyResolve })
+    } finally {
+      out2.restore()
+    }
+    expect(out2.text()).toContain('"relogin":true')
+    expect(lastArgs?.recordedIssuer).toBeUndefined()
+  })
+
+  // One session name, two environments. The flag wins, but the fallout is not local to the
+  // token: [oauth.<id>] is a single section, so every row under this session now carries a
+  // token minted somewhere other than where its `service` points.
+  test("a login that moves a session to another issuer warns instead of switching silently", async () => {
+    const out1 = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out1.restore()
+    }
+    expect(out1.text()).not.toContain("was last signed in to")
+
+    const out2 = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        // What resolveLoginTarget returns when --partition/--oauth-url names a different
+        // host than the record.
+        resolveLoginTarget: async () => ({ ...makeTarget(), supersededIssuer: "uat-api.clickzetta.com" }),
+      })
+    } finally {
+      out2.restore()
+    }
+    expect(out2.text()).toContain("was last signed in to")
+    expect(out2.text()).toContain("uat-api.clickzetta.com")
+    expect(process.exitCode).toBe(0)
+  })
+
   test("--pat: rejected with a pointer to `profile create`, no browser, no setup flow", async () => {
     let browserCalls = 0
     let authConfigureCalls = 0

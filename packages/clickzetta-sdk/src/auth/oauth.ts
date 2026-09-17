@@ -79,6 +79,8 @@ async function requestToken(baseUrl: string, params: URLSearchParams): Promise<O
   }
   const resp = await fetch(tokenUrl, {
     method: "POST",
+    redirect: "error",
+    signal: AbortSignal.timeout(10 * 60_000),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "Accept": "application/json",
@@ -103,8 +105,13 @@ async function requestToken(baseUrl: string, params: URLSearchParams): Promise<O
     )
   }
 
+  if (typeof body.access_token !== "string" || !body.access_token.trim()) {
+    throw new InterfaceError(`OAuth response is missing an access token (requestId=${requestId})`, {
+      code: "oauth_invalid_response",
+    })
+  }
   return {
-    accessToken: String(body.access_token),
+    accessToken: body.access_token,
     refreshToken: typeof body.refresh_token === "string" ? body.refresh_token : undefined,
     expiresInMs: typeof body.expires_in === "number" ? body.expires_in * 1000 : 0,
     tokenType: typeof body.token_type === "string" ? body.token_type : "Bearer",

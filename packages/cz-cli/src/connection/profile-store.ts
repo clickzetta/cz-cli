@@ -45,7 +45,7 @@ function writeProfilesFile(content: string): void {
   const file = profilesFile()
   const dir = dirname(file)
   mkdirSync(dir, { recursive: true })
-  const tmpFile = file + ".tmp." + Date.now()
+  const tmpFile = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
   writeFileSync(tmpFile, content, { encoding: "utf-8", mode: 0o600 })
   renameSync(tmpFile, file)
   try {
@@ -53,6 +53,23 @@ function writeProfilesFile(content: string): void {
   } catch {
     // best-effort: filesystems without POSIX modes (FAT, some network mounts) just skip
   }
+}
+
+/** Read the current profiles document, including its shared OAuth sections. */
+function peekProfilesFile(): Record<string, unknown> {
+  try {
+    return parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+/** Read the current document and publish a complete profile update. */
+export function mutateProfilesFile(
+  mutate: (data: Record<string, unknown>) => Record<string, unknown> | undefined,
+): void {
+  const next = mutate(peekProfilesFile())
+  if (next) writeProfilesFile(stringifyTOML(next))
 }
 
 export type ProfileEntry = Record<string, unknown>
@@ -93,7 +110,10 @@ export function readAgentProfile(profileName?: string): AgentProfileEntry | unde
   try {
     const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text) as Record<string, unknown>
-    const name = profileName ?? (data.default_profile as string | undefined) ?? Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
+    const name =
+      profileName ??
+      (data.default_profile as string | undefined) ??
+      Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
     if (!name) return undefined
     const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
     const profile = profiles[name]
@@ -128,17 +148,10 @@ export function loadProfiles(): Record<string, ProfileEntry> {
 }
 
 export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
-  let existing: Record<string, unknown> = {}
-  try {
-    const text = readFileSync(profilesFile(), "utf-8")
-    existing = parseTOML(text) as Record<string, unknown>
-  } catch {
-    // file doesn't exist or is invalid — start fresh
-  }
-
-  existing.profiles = profiles
-  const content = stringifyTOML(existing)
-  writeProfilesFile(content)
+  mutateProfilesFile((existing) => {
+    existing.profiles = profiles
+    return existing
+  })
 }
 
 /**
@@ -149,14 +162,10 @@ export function saveProfiles(profiles: Record<string, ProfileEntry>): void {
  * caller's error handler can report it.
  */
 export function setDefaultProfile(name: string): void {
-  let existing: Record<string, unknown> = {}
-  try {
-    existing = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-  } catch {
-    // file doesn't exist or is invalid — start fresh
-  }
-  existing.default_profile = name
-  writeProfilesFile(stringifyTOML(existing))
+  mutateProfilesFile((existing) => {
+    existing.default_profile = name
+    return existing
+  })
 }
 
 export function getDefaultProfileName(): string | undefined {
@@ -234,8 +243,13 @@ export function deriveAuthType(profile: ProfileEntry | undefined): AuthType | un
   if (hasCookieHeader(profile)) return "cookie"
   if (typeof profile.oauth === "string" && profile.oauth.length > 0) return "oauth"
   if (typeof profile.pat === "string" && profile.pat.length > 0) return "pat"
-  if (typeof profile.username === "string" && profile.username.length > 0
-    && typeof profile.password === "string" && profile.password.length > 0) return "password"
+  if (
+    typeof profile.username === "string" &&
+    profile.username.length > 0 &&
+    typeof profile.password === "string" &&
+    profile.password.length > 0
+  )
+    return "password"
   return undefined
 }
 
@@ -271,9 +285,11 @@ export function invalidAuthType(profile: ProfileEntry | undefined): string | und
 
 /** The message used wherever an invalid `auth_type` is surfaced. */
 export function invalidAuthTypeMessage(profileName: string | undefined, raw: string): string {
-  return `Profile '${profileName ?? "(default)"}' has an invalid auth_type: ${JSON.stringify(raw)}. `
-    + `Valid values are ${AUTH_TYPES.map((t) => `"${t}"`).join(", ")}. `
-    + `Fix it in ~/.clickzetta/profiles.toml, or remove the line to fall back to automatic detection.`
+  return (
+    `Profile '${profileName ?? "(default)"}' has an invalid auth_type: ${JSON.stringify(raw)}. ` +
+    `Valid values are ${AUTH_TYPES.map((t) => `"${t}"`).join(", ")}. ` +
+    `Fix it in ~/.clickzetta/profiles.toml, or remove the line to fall back to automatic detection.`
+  )
 }
 
 /**
@@ -362,7 +378,10 @@ export function readAgentEndpoint(profileName?: string): string | undefined {
   try {
     const text = readFileSync(profilesFile(), "utf-8")
     const data = parseTOML(text) as Record<string, unknown>
-    const name = profileName ?? (data.default_profile as string | undefined) ?? Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
+    const name =
+      profileName ??
+      (data.default_profile as string | undefined) ??
+      Object.keys((data.profiles ?? {}) as Record<string, unknown>)[0]
     if (!name) return undefined
     const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
     const profile = profiles[name]
@@ -400,18 +419,18 @@ function inferAgentEndpoint(profile: Record<string, unknown>): string | undefine
 export function setAuthTypeIfAbsent(profileName: string | undefined, authType: AuthType): void {
   if (!profileName) return
   try {
-    const text = readFileSync(profilesFile(), "utf-8")
-    const data = parseTOML(text) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const profile = profiles[profileName]
-    if (!profile) return
-    // Any pre-existing value wins, including an invalid one. Overwriting would
-    // "fix" a typo by silently choosing a credential for the user; instead the
-    // credential-selecting path rejects it loudly (see invalidAuthType).
-    if (typeof profile.auth_type === "string" && profile.auth_type.trim().length > 0) return
-    profile.auth_type = authType
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      const profile = profiles[profileName]
+      if (!profile) return undefined
+      // Any pre-existing value wins, including an invalid one. Overwriting would
+      // "fix" a typo by silently choosing a credential for the user; instead the
+      // credential-selecting path rejects it loudly (see invalidAuthType).
+      if (typeof profile.auth_type === "string" && profile.auth_type.trim().length > 0) return undefined
+      profile.auth_type = authType
+      data.profiles = profiles
+      return data
+    })
   } catch {
     // best-effort: never block a login
   }
@@ -433,22 +452,20 @@ export function getTelemetry(): boolean | undefined {
  * Write userId into the active profile entry so it can be used as enduser.id
  * in telemetry. No-op if the profile already has user_id — never throws.
  */
-export function patchProfileUserId(profileName: string | undefined, userId: number): void {  try {
-    const text = readFileSync(profilesFile(), "utf-8")
-    const data = parseTOML(text) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+export function patchProfileUserId(profileName: string | undefined, userId: number): void {
+  try {
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      const name = resolveProfileName(data, profileName)
+      if (!name || !profiles[name]) return undefined
 
-    const name = profileName
-      ?? (typeof data.default_profile === "string" ? data.default_profile : undefined)
-      ?? Object.keys(profiles)[0]
-    if (!name || !profiles[name]) return
+      // Already has user_id — done forever
+      if (profiles[name]["user_id"] != null) return undefined
 
-    // Already has user_id — done forever
-    if (profiles[name]["user_id"] != null) return
-
-    profiles[name]["user_id"] = userId
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
+      profiles[name]["user_id"] = userId
+      data.profiles = profiles
+      return data
+    })
   } catch {
     // best-effort: never block the CLI
   }
@@ -467,17 +484,15 @@ export function patchProfileUserId(profileName: string | undefined, userId: numb
 export function patchProfileInstanceId(profileName: string | undefined, instanceId: number): void {
   if (!Number.isFinite(instanceId) || instanceId <= 0) return
   try {
-    const text = readFileSync(profilesFile(), "utf-8")
-    const data = parseTOML(text) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const name = profileName
-      ?? (typeof data.default_profile === "string" ? data.default_profile : undefined)
-      ?? Object.keys(profiles)[0]
-    if (!name || !profiles[name]) return
-    if (profiles[name]["instance_id"] != null) return
-    profiles[name]["instance_id"] = instanceId
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      const name = resolveProfileName(data, profileName)
+      if (!name || !profiles[name]) return undefined
+      if (profiles[name]["instance_id"] != null) return undefined
+      profiles[name]["instance_id"] = instanceId
+      data.profiles = profiles
+      return data
+    })
   } catch {
     // best-effort: never block the CLI
   }
@@ -511,36 +526,44 @@ export function patchProfileConnection(
   },
 ): void {
   try {
-    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
 
-    const name = resolveProfileName(data, profileName)
-    if (!name || !profiles[name]) return
+      const name = resolveProfileName(data, profileName)
+      if (!name || !profiles[name]) return undefined
 
-    const profile = profiles[name]
-    const assign = (key: string, value: string | undefined) => {
-      if (value !== undefined && value.length > 0) profile[key] = value
-    }
-    assign("service", fields.service)
-    assign("protocol", fields.protocol)
-    assign("instance", fields.instance)
-    assign("workspace", fields.workspace)
-    assign("schema", fields.schema)
-    assign("vcluster", fields.vcluster)
-    assign("account_name", fields.accountName)
-    assign("aimeshEndpointBaseUrl", fields.aimeshEndpointBaseUrl)
-    if (typeof fields.userId === "number" && fields.userId > 0) profile["user_id"] = fields.userId
-    // Written unconditionally, unlike patchProfileInstanceId's write-only-if-absent: this
-    // is a login reporting what the server just said, so it also CORRECTS a value an older
-    // version cached from the wrong source.
-    if (typeof fields.instanceId === "number" && fields.instanceId > 0) profile["instance_id"] = fields.instanceId
-    if (typeof fields.accountId === "number" && fields.accountId > 0) profile["account_id"] = fields.accountId
+      const profile = profiles[name]
+      applyProfileConnection(profile, fields)
 
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
+      data.profiles = profiles
+      return data
+    })
   } catch {
     // best-effort: never block the CLI
   }
+}
+
+export function applyProfileConnection(
+  profile: ProfileEntry,
+  fields: Parameters<typeof patchProfileConnection>[1],
+): void {
+  const assign = (key: string, value: string | undefined) => {
+    if (value !== undefined && value.length > 0) profile[key] = value
+  }
+  assign("service", fields.service)
+  assign("protocol", fields.protocol)
+  assign("instance", fields.instance)
+  assign("workspace", fields.workspace)
+  assign("schema", fields.schema)
+  assign("vcluster", fields.vcluster)
+  assign("account_name", fields.accountName)
+  assign("aimeshEndpointBaseUrl", fields.aimeshEndpointBaseUrl)
+  if (typeof fields.userId === "number" && fields.userId > 0) profile["user_id"] = fields.userId
+  // Written unconditionally, unlike patchProfileInstanceId's write-only-if-absent: this
+  // is a login reporting what the server just said, so it also CORRECTS a value an older
+  // version cached from the wrong source.
+  if (typeof fields.instanceId === "number" && fields.instanceId > 0) profile["instance_id"] = fields.instanceId
+  if (typeof fields.accountId === "number" && fields.accountId > 0) profile["account_id"] = fields.accountId
 }
 
 /**
@@ -558,37 +581,48 @@ export function patchProfileConnection(
  * Best-effort; never throws. Call BEFORE patchProfileConnection writes the new
  * values so the subsequent patch re-populates whatever the login does provide.
  */
-export function clearOAuthLoginResidue(profileName: string | undefined, keep: { instance?: boolean; workspace?: boolean; service?: boolean }): void {
+export function clearOAuthLoginResidue(
+  profileName: string | undefined,
+  keep: { instance?: boolean; workspace?: boolean; service?: boolean },
+): void {
   try {
-    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const name = resolveProfileName(data, profileName)
-    if (!name || !profiles[name]) return
-    const profile = profiles[name]
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      const name = resolveProfileName(data, profileName)
+      if (!name || !profiles[name]) return undefined
+      const profile = profiles[name]
 
-    // Drop the cookie header in both storage shapes.
-    const header = profile.header
-    if (header && typeof header === "object" && !Array.isArray(header)) {
-      for (const k of Object.keys(header as Record<string, unknown>)) {
-        if (k.toLowerCase() === "cookie") delete (header as Record<string, unknown>)[k]
-      }
-      if (Object.keys(header as Record<string, unknown>).length === 0) delete profile.header
-    }
-    for (const k of Object.keys(profile)) {
-      if (k.toLowerCase() === "header.cookie") delete profile[k]
-    }
+      applyOAuthLoginCleanup(profile, keep)
 
-    // Strip stale connection identity the new login won't overwrite.
-    if (!keep.instance) delete profile.instance
-    if (!keep.workspace) delete profile.workspace
-    if (!keep.service) delete profile.service
-
-    profiles[name] = profile
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
+      profiles[name] = profile
+      data.profiles = profiles
+      return data
+    })
   } catch {
     // best-effort: never block login on cleanup
   }
+}
+
+export function applyOAuthLoginCleanup(
+  profile: ProfileEntry,
+  keep: Parameters<typeof clearOAuthLoginResidue>[1],
+): void {
+  // Drop the cookie header in both storage shapes.
+  const header = profile.header
+  if (header && typeof header === "object" && !Array.isArray(header)) {
+    for (const k of Object.keys(header as Record<string, unknown>)) {
+      if (k.toLowerCase() === "cookie") delete (header as Record<string, unknown>)[k]
+    }
+    if (Object.keys(header as Record<string, unknown>).length === 0) delete profile.header
+  }
+  for (const k of Object.keys(profile)) {
+    if (k.toLowerCase() === "header.cookie") delete profile[k]
+  }
+
+  // Strip stale connection identity the new login won't overwrite.
+  if (!keep.instance) delete profile.instance
+  if (!keep.workspace) delete profile.workspace
+  if (!keep.service) delete profile.service
 }
 
 /**
@@ -598,12 +632,13 @@ export function clearOAuthLoginResidue(profileName: string | undefined, keep: { 
  */
 export function setProfileOAuthPointer(profileName: string, oauthId: string): void {
   try {
-    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    if (!profiles[profileName]) return
-    profiles[profileName].oauth = oauthId
-    data.profiles = profiles
-    writeProfilesFile(stringifyTOML(data))
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      if (!profiles[profileName]) return undefined
+      profiles[profileName].oauth = oauthId
+      data.profiles = profiles
+      return data
+    })
   } catch {
     // best-effort: never block the CLI
   }
@@ -614,7 +649,7 @@ export function setProfileOAuthPointer(profileName: string, oauthId: string): vo
  * explicit name → default_profile → first profile. Returns undefined when no
  * profile can be resolved (e.g. empty/missing profiles.toml).
  */
-function resolveProfileName(data: Record<string, unknown>, profileName: string | undefined): string | undefined {
+export function resolveProfileName(data: Record<string, unknown>, profileName: string | undefined): string | undefined {
   const profiles = (data.profiles ?? {}) as Record<string, unknown>
   if (profileName) return profileName
   if (typeof data.default_profile === "string") return data.default_profile
@@ -665,7 +700,7 @@ function parseOAuthEntry(entry: Record<string, unknown> | undefined): AuthToken 
   return result
 }
 
-function tokenToEntry(token: AuthToken): Record<string, unknown> {
+export function tokenToEntry(token: AuthToken): Record<string, unknown> {
   // No instance_id: this section is SHARED by every profile the login can reach, and an
   // instance is per-profile — see ConnectionConfig.instanceId. Sections written by older
   // versions still carry one; parseOAuthEntry ignores it.
@@ -836,25 +871,51 @@ export function oauthSessionProvisioned(id: string): boolean {
 }
 
 /**
+ * The OAuth issuer host `[oauth.<id>]` was last minted against, or undefined when the
+ * section is absent, unreadable, or predates the field.
+ *
+ * This is what lets a re-login skip the region prompt: the session name the user just
+ * typed already names the issuer they signed in to, so asking "which region?" again asks
+ * a question we hold the answer to.
+ *
+ * Deliberately NOT the same move as reading a profile's `service`, which the header of
+ * connection/login-target.ts rejects. Those two fields are not interchangeable: `service`
+ * is the region BUSINESS host, picked from userinfo's gatewayMapping and freely editable,
+ * so a stale one can name an environment the account never signed in to. `issuer` is the
+ * sign-in host itself, written by the login that minted this very token. Reading it back
+ * for a re-login of the SAME session is not a guess about where to log in — it is the
+ * record of where this session already lives.
+ *
+ * Bare host, no protocol (see AuthToken.issuer). Callers default to https, which is the
+ * only scheme an OAuth entry ever reaches us as unless the user typed `--oauth-url
+ * http://…` — and that flag outranks this value anyway.
+ */
+export function readSessionIssuer(id: string): string | undefined {
+  try {
+    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
+    const shared = data.oauth
+    if (!shared || typeof shared !== "object" || Array.isArray(shared)) return undefined
+    const entry = (shared as Record<string, unknown>)[id]
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined
+    return str((entry as Record<string, unknown>).issuer, undefined)
+  } catch {
+    // Absent or corrupt file → no record, which sends the caller back to the prompt.
+    return undefined
+  }
+}
+
+/**
  * Write a shared OAuth token section `[oauth.<id>]` once. Used by provisioning
  * when it creates several profiles from a single login that all point at the
- * same token. Best-effort; never throws.
+ * same token. Persistence errors must fail login rather than report success.
  */
 export function saveSharedOAuthToken(id: string, token: AuthToken): void {
-  try {
-    let data: Record<string, unknown> = {}
-    try {
-      data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    } catch {
-      // start fresh
-    }
+  mutateProfilesFile((data) => {
     const shared = (data.oauth ?? {}) as Record<string, unknown>
     shared[id] = tokenToEntry(token)
     data.oauth = shared
-    writeProfilesFile(stringifyTOML(data))
-  } catch {
-    // best-effort
-  }
+    return data
+  })
 }
 
 /**
@@ -866,41 +927,40 @@ export function saveSharedOAuthToken(id: string, token: AuthToken): void {
  */
 export function migrateInlineOAuthTokens(): void {
   try {
-    const raw = readFileSync(profilesFile(), "utf-8")
-    const data = parseTOML(raw) as Record<string, unknown>
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const shared = (data.oauth ?? {}) as Record<string, unknown>
-    let changed = false
+    mutateProfilesFile((data) => {
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      const shared = (data.oauth ?? {}) as Record<string, unknown>
+      let changed = false
 
-    for (const [name, profile] of Object.entries(profiles)) {
-      const inline = profile?.oauth
-      // Only migrate inline objects; string pointers are already migrated.
-      if (!inline || typeof inline !== "object" || Array.isArray(inline)) continue
+      for (const [name, profile] of Object.entries(profiles)) {
+        const inline = profile?.oauth
+        // Only migrate inline objects; string pointers are already migrated.
+        if (!inline || typeof inline !== "object" || Array.isArray(inline)) continue
 
-      // Take the first valid token entry from the inline object.
-      let token: AuthToken | undefined
-      for (const value of Object.values(inline as Record<string, unknown>)) {
-        token = parseOAuthEntry(value as Record<string, unknown>)
-        if (token) break
-      }
-      if (!token) {
-        // Inline object with no usable token — drop the dangling subtable.
-        delete profile.oauth
+        // Take the first valid token entry from the inline object.
+        let token: AuthToken | undefined
+        for (const value of Object.values(inline as Record<string, unknown>)) {
+          token = parseOAuthEntry(value as Record<string, unknown>)
+          if (token) break
+        }
+        if (!token) {
+          // Inline object with no usable token — drop the dangling subtable.
+          delete profile.oauth
+          changed = true
+          continue
+        }
+        const id = generateOAuthId()
+        shared[id] = tokenToEntry(token)
+        profile.oauth = id
         changed = true
-        continue
+        void name
       }
-      const id = generateOAuthId()
-      shared[id] = tokenToEntry(token)
-      profile.oauth = id
-      changed = true
-      void name
-    }
 
-    if (changed) {
+      if (!changed) return undefined
       data.oauth = shared
       data.profiles = profiles
-      writeProfilesFile(stringifyTOML(data))
-    }
+      return data
+    })
   } catch {
     // best-effort: missing/corrupt file → nothing to migrate
   }
@@ -923,30 +983,31 @@ export function migrateInlineOAuthTokens(): void {
  */
 export function pruneOrphanOAuthSections(): void {
   try {
-    const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-    const shared = data.oauth
-    if (!shared || typeof shared !== "object" || Array.isArray(shared)) return
-    const sections = shared as Record<string, unknown>
+    mutateProfilesFile((data) => {
+      const shared = data.oauth
+      if (!shared || typeof shared !== "object" || Array.isArray(shared)) return undefined
+      const sections = shared as Record<string, unknown>
 
-    const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
-    const referenced = new Set<string>()
-    for (const profile of Object.values(profiles)) {
-      const id = profileOAuthPointer(profile)
-      if (id) referenced.add(id)
-    }
+      const profiles = (data.profiles ?? {}) as Record<string, Record<string, unknown>>
+      const referenced = new Set<string>()
+      for (const profile of Object.values(profiles)) {
+        const id = profileOAuthPointer(profile)
+        if (id) referenced.add(id)
+      }
 
-    let removed = false
-    for (const id of Object.keys(sections)) {
-      if (referenced.has(id)) continue
-      delete sections[id]
-      removed = true
-    }
-    if (!removed) return
+      let removed = false
+      for (const id of Object.keys(sections)) {
+        if (referenced.has(id)) continue
+        delete sections[id]
+        removed = true
+      }
+      if (!removed) return undefined
 
-    // Drop an emptied table rather than leaving a bare `[oauth]` header behind.
-    if (Object.keys(sections).length === 0) delete data.oauth
-    else data.oauth = sections
-    writeProfilesFile(stringifyTOML(data))
+      // Drop an emptied table rather than leaving a bare `[oauth]` header behind.
+      if (Object.keys(sections).length === 0) delete data.oauth
+      else data.oauth = sections
+      return data
+    })
   } catch {
     // best-effort: missing/corrupt file → nothing to prune
   }

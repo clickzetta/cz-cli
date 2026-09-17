@@ -113,7 +113,7 @@ async function refreshOrLogin(
       ...(previous.issuer ? { issuer: previous.issuer } : {}),
     }
   } catch (err) {
-    clearTokenCache()
+    cache.delete(cacheKey(config))
     config.tokenStore?.clear()
     const code = err instanceof ClickZettaError ? err.code : undefined
     const refreshDead = typeof code === "string" && REFRESH_TOKEN_DEAD.has(code)
@@ -133,65 +133,50 @@ export async function getToken(config: ConnectionConfig): Promise<AuthToken> {
   return acquireToken(config, false)
 }
 
-/**
- * Drop this config's cached token and obtain a fresh one, bypassing BOTH the
- * in-memory cache and the "unexpired persisted token" shortcut. Used by the 401
- * retry path (client.ts) and exec's retry: the server just rejected a token the
- * client still considers valid (early revocation, clock skew), so reusing a
- * not-yet-expired persisted token would hand back the same rejected value and
- * loop. `force` drives the rotate/login path instead. Concurrent callers for
- * the same key are still coalesced.
- */
-export async function forceRefreshToken(config: ConnectionConfig): Promise<AuthToken> {
+/** Reload after a rejection, adopting a peer's different valid token when available. */
+export async function forceRefreshToken(config: ConnectionConfig, rejected?: string): Promise<AuthToken> {
   const key = cacheKey(config)
+  const rejectedToken = rejected ?? cache.get(key)?.token
   cache.delete(key)
-  return acquireToken(config, true)
+  return acquireToken(config, true, rejectedToken)
 }
 
-async function acquireToken(config: ConnectionConfig, force: boolean): Promise<AuthToken> {
+async function acquireToken(config: ConnectionConfig, force: boolean, rejected?: string): Promise<AuthToken> {
   const key = cacheKey(config)
   if (!force) {
     const cached = cache.get(key)
     if (cached && !isTokenExpired(cached)) return cached
   }
-  const inflight = pendingFetches.get(key)
-  if (inflight) return inflight
-
-  // Reaching here means any in-memory token for this key is expired/absent (or
-  // a forced refresh). A persisted token (requirement 9) is consulted when
-  // memory has nothing: an unexpired persisted token is reused with no network
-  // call (requirement 9.3) — UNLESS forced, in which case we always rotate so a
-  // server-rejected-but-not-yet-expired token can't be handed back. An expired
-  // one with a refresh token feeds the refresh path (requirement 9.4).
-  const store = config.tokenStore
-  let candidate = !force ? cache.get(key) : undefined
-  if (!candidate && store) {
-    const loaded = store.load()
-    if (loaded) {
-      if (!force && !isTokenExpired(loaded)) {
-        cache.set(key, loaded)
-        return loaded
-      }
-      candidate = loaded
-    }
+  for (;;) {
+    const inflight = pendingFetches.get(key)
+    if (!inflight) break
+    const joined = await inflight
+    if (!force || rejected === undefined || joined.token !== rejected) return joined
   }
-  // If the candidate carries a refresh token, rotate it instead of a full login
-  // (requirement 5.1); legacy tokens without one always re-login (requirement
-  // 5.5). On success the token is persisted (requirement 9.1).
+
+  // Always reload before refreshing: another process may have replaced both tokens.
+  // Overlapping requests are allowed; the issuer handles refresh-token reuse within
+  // its grace window. The local promise only coalesces callers in this process.
+  const store = config.tokenStore
+  const candidate = store ? store.load() : cache.get(key)
+  if (candidate && !isTokenExpired(candidate) && (!force || (rejected !== undefined && candidate.token !== rejected))) {
+    cache.set(key, candidate)
+    return candidate
+  }
   const fetch = (async () => {
-    try {
-      const token = candidate?.refreshToken
-        ? await refreshOrLogin(config, candidate, candidate.refreshToken)
-        : await fetchToken(config)
-      cache.set(key, token)
-      store?.save(token)
-      return token
-    } finally {
-      pendingFetches.delete(key)
-    }
+    const token = candidate?.refreshToken
+      ? await refreshOrLogin(config, candidate, candidate.refreshToken)
+      : await fetchToken(config)
+    store?.save(token)
+    cache.set(key, token)
+    return token
   })()
   pendingFetches.set(key, fetch)
-  return fetch
+  try {
+    return await fetch
+  } finally {
+    if (pendingFetches.get(key) === fetch) pendingFetches.delete(key)
+  }
 }
 
 /**
@@ -231,7 +216,7 @@ export function connectionTokenSource(config: ConnectionConfig): TokenSource {
       if (current.token !== rejected.token) return current
       // Throws SESSION_EXPIRED when the refresh token is dead and there are no
       // credentials to fall back on — a terminal answer, not a missing path.
-      return toCredential(await forceRefreshToken(config))
+      return toCredential(await forceRefreshToken(config, rejected.token))
     },
   }
 }
