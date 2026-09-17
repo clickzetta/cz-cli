@@ -306,15 +306,35 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
     expect(result).toEqual({
-      profiles: ["sess_0", "sess_1"],
+      profiles: ["sess_ws1_i1", "sess_ws2_i1"],
       cookiePinned: [],
-      defaultProfile: "sess_0",
+      defaultProfile: "sess_ws1_i1",
+      relogin: false,
       llmConfigured: true,
       llmAction: "written",
-      created: ["sess_0", "sess_1"],
+      created: ["sess_ws1_i1", "sess_ws2_i1"],
+      renamed: [],
+      // Every combo matched, so nothing is left over.
+      stale: [],
     })
-    expect(getDefaultProfileName()).toBe("sess_0")
+    expect(getDefaultProfileName()).toBe("sess_ws1_i1")
     expect(readLlmEntries().llm.sess?.api_key).toBe("free-key")
+  })
+
+  test("a workspace reported in different casing is not a reason to rename the row", () => {
+    const first = [combo("i1", "ws1")]
+    provisionProfilesFromOAuthCombos("sess", first, input(first))
+
+    // Same connection, server casing changed. Matching is case-insensitive, so the row is
+    // found; the derived name must not move with the casing or every such report costs a
+    // rename the user has to chase through their scripts.
+    const again = [combo("I1", "WS1")]
+    const result = provisionProfilesFromOAuthCombos("sess", again, input(again))
+
+    expect(Object.keys(loadProfiles())).toEqual(["sess_ws1_i1"])
+    expect(result.renamed).toEqual([])
+    expect(result.created).toEqual([])
+    expect(result.stale).toEqual([])
   })
 
   test("re-login refreshes the token but leaves llm.json, edited profiles and default_profile alone", () => {
@@ -326,9 +346,9 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     llm.llm.sess = { ...llm.llm.sess!, api_key: "virtual-key-after-quota" }
     writeLlmEntries({ llm: llm.llm })
     const edited = loadProfiles()
-    edited.sess_0 = { ...edited.sess_0, schema: "my_schema", vcluster: "MY_VC" }
+    edited.sess_ws1_i1 = { ...edited.sess_ws1_i1, schema: "my_schema", vcluster: "MY_VC" }
     saveProfiles(edited)
-    setDefaultProfile("sess_1")
+    setDefaultProfile("sess_ws2_i1")
 
     const result = provisionProfilesFromOAuthCombos(
       "sess",
@@ -337,14 +357,14 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     )
 
     expect(result.created).toEqual([])
-    expect(result.defaultProfile).toBe("sess_1")
-    expect(getDefaultProfileName()).toBe("sess_1")
+    expect(result.defaultProfile).toBe("sess_ws2_i1")
+    expect(getDefaultProfileName()).toBe("sess_ws2_i1")
     // The one thing a re-login does own.
-    expect(makeProfileTokenStore("sess_0").load()?.token).toBe("access-2")
+    expect(makeProfileTokenStore("sess_ws1_i1").load()?.token).toBe("access-2")
     // The three things it does not.
     expect(readLlmEntries().llm.sess?.api_key).toBe("virtual-key-after-quota")
-    expect(loadProfiles().sess_0?.schema).toBe("my_schema")
-    expect(loadProfiles().sess_0?.vcluster).toBe("MY_VC")
+    expect(loadProfiles().sess_ws1_i1?.schema).toBe("my_schema")
+    expect(loadProfiles().sess_ws1_i1?.vcluster).toBe("MY_VC")
   })
 
   test("re-login adds a newly appeared workspace without renumbering the existing ones", () => {
@@ -356,12 +376,12 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const second = [combo("i1", "ws2"), combo("i9", "ws_new"), combo("i1", "ws1")]
     const result = provisionProfilesFromOAuthCombos("sess", second, input(second))
 
-    expect(result.created).toEqual(["sess_2"])
-    expect(result.profiles).toEqual(["sess_0", "sess_1", "sess_2"])
+    expect(result.created).toEqual(["sess_ws_new_i9"])
+    expect(result.profiles).toEqual(["sess_ws1_i1", "sess_ws2_i1", "sess_ws_new_i9"])
     const profiles = loadProfiles()
-    expect(profiles.sess_0?.workspace).toBe("ws1")
-    expect(profiles.sess_1?.workspace).toBe("ws2")
-    expect(profiles.sess_2).toMatchObject({ instance: "i9", workspace: "ws_new", oauth: "sess" })
+    expect(profiles.sess_ws1_i1?.workspace).toBe("ws1")
+    expect(profiles.sess_ws2_i1?.workspace).toBe("ws2")
+    expect(profiles.sess_ws_new_i9).toMatchObject({ instance: "i9", workspace: "ws_new", oauth: "sess" })
   })
 
   // Enumeration returning nothing is a transient server condition, not a licence to
@@ -375,7 +395,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const llm = readLlmEntries()
     llm.llm.sess = { ...llm.llm.sess!, api_key: "virtual-key-after-quota" }
     writeLlmEntries({ llm: llm.llm })
-    setDefaultProfile("sess_1")
+    setDefaultProfile("sess_ws2_i1")
 
     const result = provisionProfilesFromOAuthCombos(
       "sess",
@@ -384,19 +404,24 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     )
 
     expect(result).toEqual({
-      profiles: ["sess_0", "sess_1"],
+      profiles: ["sess_ws1_i1", "sess_ws2_i1"],
       cookiePinned: [],
-      defaultProfile: "sess_1",
+      defaultProfile: "sess_ws2_i1",
+      relogin: true,
       llmConfigured: false,
       llmAction: "skipped_relogin",
       created: [],
+      renamed: [],
+      // Empty on purpose even though NO row was matched: the enumeration returned nothing at
+      // all, which says something about the server and nothing about any individual row.
+      stale: [],
     })
-    // No bare `sess` row beside sess_0/sess_1.
-    expect(Object.keys(loadProfiles()).sort()).toEqual(["sess_0", "sess_1"])
+    // No bare `sess` row beside sess_ws1_i1/sess_ws2_i1.
+    expect(Object.keys(loadProfiles()).sort()).toEqual(["sess_ws1_i1", "sess_ws2_i1"])
     expect(readLlmEntries().llm.sess?.api_key).toBe("virtual-key-after-quota")
-    expect(getDefaultProfileName()).toBe("sess_1")
+    expect(getDefaultProfileName()).toBe("sess_ws2_i1")
     // The token is still refreshed — every session profile shares [oauth.sess].
-    expect(makeProfileTokenStore("sess_0").load()?.token).toBe("access-2")
+    expect(makeProfileTokenStore("sess_ws1_i1").load()?.token).toBe("access-2")
   })
 
   // default_profile is one global string with nothing tying it to a session, so
@@ -411,7 +436,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
 
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.defaultProfile).toBe("sess_0")
+    expect(result.defaultProfile).toBe("sess_ws1_i1")
     // Reported, not written: the user's selection stands.
     expect(getDefaultProfileName()).toBe("other_0")
   })
@@ -426,52 +451,55 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     // caller, and the pointer alone already makes this a re-login (see
     // oauthSessionProvisioned) — so pass relogin:false explicitly to exercise the
     // first-login branch's matching, which is what could duplicate.
-    saveProfiles({ sess_0: { instance: "i1", workspace: "ws1", oauth: "sess" } })
+    saveProfiles({ sess_ws1_i1: { instance: "i1", workspace: "ws1", oauth: "sess" } })
     expect(oauthSectionExists("sess")).toBe(false)
 
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos, { relogin: false }))
 
-    expect(result.profiles).toEqual(["sess_0"])
+    expect(result.profiles).toEqual(["sess_ws1_i1"])
     expect(result.created).toEqual([])
-    expect(Object.keys(loadProfiles())).toEqual(["sess_0"])
+    expect(Object.keys(loadProfiles())).toEqual(["sess_ws1_i1"])
   })
 
   // logout --keep-profiles deletes [oauth.<name>] but keeps the rows pointing at it.
   test("a session with profiles but no token section still counts as provisioned", () => {
-    saveProfiles({ sess_0: { instance: "i1", workspace: "ws1", oauth: "sess" } })
+    saveProfiles({ sess_ws1_i1: { instance: "i1", workspace: "ws1", oauth: "sess" } })
     expect(oauthSectionExists("sess")).toBe(false)
     expect(oauthSessionProvisioned("sess")).toBe(true)
   })
 
-  // Session "sess" and session "sess_2" both own a profile that `<base>_N` parsing
-  // reads as "index 2 of sess". The oauth pointer is what separates them.
-  test("re-login does not repoint another session's profile that parses as <base>_N", () => {
+  // A row can be NAMED exactly like one of ours and still belong to someone else — a user
+  // renamed it, or another session's own naming landed there (session "sess" with workspace
+  // "ws9" and session "sess_ws9" with workspace "i9" both want `sess_ws9_i9`). Ownership is
+  // the `oauth` pointer, never the name, and that holds in both directions.
+  test("re-login does not repoint a same-shaped row owned by another session", () => {
     const combos = [combo("i1", "ws1")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
     const profiles = loadProfiles()
-    // What the zero-combos path writes for a session literally named "sess_2".
-    profiles.sess_2 = { instance: "i1", workspace: "ws1", oauth: "sess_2" }
+    // Describes the very connection our combo does, under a name shaped like ours.
+    profiles.sess_ws9_i9 = { instance: "i1", workspace: "ws1", oauth: "other" }
     saveProfiles(profiles)
 
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.profiles).toEqual(["sess_0"])
-    expect(loadProfiles().sess_2?.oauth).toBe("sess_2")
+    expect(result.profiles).toEqual(["sess_ws1_i1"])
+    expect(loadProfiles().sess_ws9_i9?.oauth).toBe("other")
   })
 
-  // The name `sess_2` being taken by another session is still a name collision:
-  // allocating over it would overwrite that session's profile.
-  test("a new profile never takes a <base>_N name another session already owns", () => {
+  // A name another session already holds is a collision even though the connection is
+  // unrelated: allocating over it would overwrite that session's profile, credentials and
+  // all. The colliding combo takes the `_2` suffix instead.
+  test("a new profile never takes a name another session already owns", () => {
     const profiles = loadProfiles()
-    profiles.sess_2 = { instance: "zz", workspace: "wszz", oauth: "sess_2", schema: "keep_me" }
+    profiles.sess_ws3_i1 = { instance: "zz", workspace: "wszz", oauth: "sess_ws3_i1", schema: "keep_me" }
     saveProfiles(profiles)
 
     const combos = [combo("i1", "ws1"), combo("i1", "ws2"), combo("i1", "ws3")]
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.created).toEqual(["sess_3", "sess_4", "sess_5"])
+    expect(result.created).toEqual(["sess_ws1_i1", "sess_ws2_i1", "sess_ws3_i1_2"])
     // Untouched.
-    expect(loadProfiles().sess_2).toEqual({ instance: "zz", workspace: "wszz", oauth: "sess_2", schema: "keep_me" })
+    expect(loadProfiles().sess_ws3_i1).toEqual({ instance: "zz", workspace: "wszz", oauth: "sess_ws3_i1", schema: "keep_me" })
   })
 
   // A default_profile naming a deleted profile is a dangling pointer, not a choice:
@@ -482,8 +510,8 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     setDefaultProfile("deleted-profile")
 
     const repaired = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
-    expect(repaired.defaultProfile).toBe("sess_0")
-    expect(getDefaultProfileName()).toBe("sess_0")
+    expect(repaired.defaultProfile).toBe("sess_ws1_i1")
+    expect(getDefaultProfileName()).toBe("sess_ws1_i1")
 
     // A default that still resolves is left exactly as the user set it, even when it
     // belongs to another session.
@@ -498,17 +526,18 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
   // Writing `oauth`/`auth_type` onto a hand-made row would switch the credential it
   // authenticates with — the very thing setAuthTypeIfAbsent's contract prevents — so
   // a row is only adopted when it explicitly points at THIS session.
-  test("a hand-written <base>_N row with no oauth pointer is never adopted", () => {
+  test("a hand-written row with no oauth pointer is never adopted", () => {
     const combos = [combo("i1", "ws1")]
     const profiles = loadProfiles()
-    profiles.sess_0 = { instance: "i1", workspace: "ws1", pat: "user-pat" }
+    profiles.sess_ws1_i1 = { instance: "i1", workspace: "ws1", pat: "user-pat" }
     saveProfiles(profiles)
 
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.profiles).toEqual(["sess_1"])
+    // The name it wanted was taken by a row it may not adopt, so it allocates beside it.
+    expect(result.profiles).toEqual(["sess_ws1_i1_2"])
     // Untouched: no oauth pointer, no auth_type, pat intact.
-    expect(loadProfiles().sess_0).toEqual({ instance: "i1", workspace: "ws1", pat: "user-pat" })
+    expect(loadProfiles().sess_ws1_i1).toEqual({ instance: "i1", workspace: "ws1", pat: "user-pat" })
   })
 
   // `service` and `aimeshEndpointBaseUrl` are facts userinfo just re-read, not user
@@ -518,7 +547,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const combos = [combo("i1", "ws1")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
     const edited = loadProfiles()
-    edited.sess_0 = { ...edited.sess_0, schema: "my_schema", vcluster: "MY_VC", header: { Cookie: "stale" } }
+    edited.sess_ws1_i1 = { ...edited.sess_ws1_i1, schema: "my_schema", vcluster: "MY_VC", header: { Cookie: "stale" } }
     saveProfiles(edited)
 
     const moved = [{ ...combo("i1", "ws1"), service: "us-east-1-aws.api.singdata.com" }]
@@ -533,7 +562,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       },
     }))
 
-    const after = loadProfiles().sess_0!
+    const after = loadProfiles().sess_ws1_i1!
     expect(after.service).toBe("us-east-1-aws.api.singdata.com")
     expect(after.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
     expect(after.account_name).toBe("renamed")
@@ -559,13 +588,18 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const combos = [combo("i1", "ws1")]
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.created).toEqual(["sess_0"])
-    expect(getDefaultProfileName()).toBe("sess_0")
-    expect(result.defaultProfile).toBe("sess_0")
+    expect(result.created).toEqual(["sess_ws1_i1"])
+    expect(getDefaultProfileName()).toBe("sess_ws1_i1")
+    expect(result.defaultProfile).toBe("sess_ws1_i1")
     // The bare row is this session's too — it shows up in `profiles`, like
     // `auth logout` sees it via the same oauth pointer — but AFTER the usable rows, so
     // `profiles[0]` is not the instance-less one.
-    expect(result.profiles).toEqual(["sess_0", "sess"])
+    expect(result.profiles).toEqual(["sess_ws1_i1", "sess"])
+    // …and it is reported stale, which is the honest answer: no combo describes it and it has
+    // no instance, so it cannot run SQL. That is the row whose whole purpose was to exist
+    // until an instance appeared — now that one has, saying so is how the user learns to
+    // delete it. It is still not deleted here; that stays the user's call.
+    expect(result.stale).toEqual(["sess"])
   })
 
   // enumerateOAuthCombos swallows a failed listUserWorkspaces per instance, so a
@@ -576,16 +610,16 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
   test("partial enumeration still reports the whole session and the on-disk default", () => {
     const both = [combo("i1", "ws1"), combo("i2", "ws2")]
     provisionProfilesFromOAuthCombos("sess", both, input(both))
-    setDefaultProfile("sess_1")
+    setDefaultProfile("sess_ws2_i2")
 
     // Only instance i1 could be enumerated this time.
     const partial = [combo("i1", "ws1")]
     const result = provisionProfilesFromOAuthCombos("sess", partial, input(partial))
 
-    expect(result.profiles).toEqual(["sess_0", "sess_1"])
+    expect(result.profiles).toEqual(["sess_ws1_i1", "sess_ws2_i2"])
     expect(result.created).toEqual([])
-    expect(result.defaultProfile).toBe("sess_1")
-    expect(getDefaultProfileName()).toBe("sess_1")
+    expect(result.defaultProfile).toBe("sess_ws2_i2")
+    expect(getDefaultProfileName()).toBe("sess_ws2_i2")
   })
 
   // The re-login contract must not depend on enumeration succeeding: `service` comes
@@ -594,7 +628,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const combos = [combo("i1", "ws1"), combo("i2", "ws2")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
     const edited = loadProfiles()
-    edited.sess_0 = { ...edited.sess_0, schema: "my_schema" }
+    edited.sess_ws1_i1 = { ...edited.sess_ws1_i1, schema: "my_schema" }
     saveProfiles(edited)
 
     provisionProfilesFromOAuthCombos("sess", [], {
@@ -612,17 +646,17 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
 
     const after = loadProfiles()
     // Account-wide facts land on every row.
-    for (const name of ["sess_0", "sess_1"]) {
+    for (const name of ["sess_ws1_i1", "sess_ws2_i2"]) {
       expect(after[name]?.account_name).toBe("renamed")
       expect(after[name]?.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
     }
     // `service` is per-INSTANCE, and without combos all this path has is the default
     // instance's host: only the row userinfo describes may take it. Writing it to the
     // other row would move a second region's profile onto the wrong host.
-    expect(after.sess_0?.service).toBe("us-east-1-aws.api.singdata.com")
-    expect(after.sess_1?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+    expect(after.sess_ws1_i1?.service).toBe("us-east-1-aws.api.singdata.com")
+    expect(after.sess_ws2_i2?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
     // User-owned still survives.
-    expect(after.sess_0?.schema).toBe("my_schema")
+    expect(after.sess_ws1_i1?.schema).toBe("my_schema")
   })
 
   // The one mechanism that keeps a preserved header.Cookie from shadowing the refreshed
@@ -632,13 +666,13 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
     // A row whose pin the user removed, carrying a stale cookie.
     const edited = loadProfiles()
-    edited.sess_0 = { ...edited.sess_0, header: { Cookie: "stale" } }
-    delete edited.sess_0.auth_type
+    edited.sess_ws1_i1 = { ...edited.sess_ws1_i1, header: { Cookie: "stale" } }
+    delete edited.sess_ws1_i1.auth_type
     saveProfiles(edited)
 
     provisionProfilesFromOAuthCombos("sess", [], input([]))
 
-    const after = loadProfiles().sess_0!
+    const after = loadProfiles().sess_ws1_i1!
     expect(after.auth_type).toBe("oauth")
     expect(after.oauth).toBe("sess")
     expect(after.header).toEqual({ Cookie: "stale" })
@@ -657,7 +691,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       userInfo: { instanceName: "i1", apiKey: "free-key", accountId: 7, accountName: "acct" },
     } as Parameters<typeof provisionProfilesFromOAuthCombos>[2])
 
-    expect(loadProfiles().sess_0?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
+    expect(loadProfiles().sess_ws1_i1?.service).toBe("cn-shanghai-alicloud.api.clickzetta.com")
   })
 
   // Reaching the "provision an instance, then log in again" remedy through the
@@ -714,15 +748,15 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws2")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
     const rows = loadProfiles()
-    rows.sess_1 = { ...rows.sess_1, auth_type: "cookie", header: { Cookie: "stale" } }
+    rows.sess_ws2_i1 = { ...rows.sess_ws2_i1, auth_type: "cookie", header: { Cookie: "stale" } }
     saveProfiles(rows)
 
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.cookiePinned).toEqual(["sess_1"])
+    expect(result.cookiePinned).toEqual(["sess_ws2_i1"])
     // Neither field is overwritten.
-    expect(loadProfiles().sess_1?.auth_type).toBe("cookie")
-    expect(loadProfiles().sess_1?.header).toEqual({ Cookie: "stale" })
+    expect(loadProfiles().sess_ws2_i1?.auth_type).toBe("cookie")
+    expect(loadProfiles().sess_ws2_i1?.header).toEqual({ Cookie: "stale" })
   })
 
   // A per-instance enumeration failure must not leave its rows staler than a total failure
@@ -731,10 +765,10 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
   test("partial enumeration still refreshes the un-enumerated rows' account-wide fields", () => {
     const both = [combo("i1", "ws1"), combo("i2", "ws2")]
     provisionProfilesFromOAuthCombos("sess", both, input(both))
-    // The user cleared sess_1's pin and left a cookie behind; i2 stops enumerating.
+    // The user cleared sess_ws2_i2's pin and left a cookie behind; i2 stops enumerating.
     const edited = loadProfiles()
-    edited.sess_1 = { ...edited.sess_1, header: { Cookie: "stale" } }
-    delete edited.sess_1.auth_type
+    edited.sess_ws2_i2 = { ...edited.sess_ws2_i2, header: { Cookie: "stale" } }
+    delete edited.sess_ws2_i2.auth_type
     saveProfiles(edited)
 
     provisionProfilesFromOAuthCombos("sess", [combo("i1", "ws1")], input([combo("i1", "ws1")], {
@@ -748,7 +782,7 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
       },
     }))
 
-    const after = loadProfiles().sess_1!
+    const after = loadProfiles().sess_ws2_i2!
     expect(after.account_name).toBe("renamed")
     expect(after.aimeshEndpointBaseUrl).toBe("https://new-aimesh.example.com/")
     // The pin is re-asserted, so the preserved cookie cannot shadow the refreshed token.
@@ -774,13 +808,163 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
     expect(loadProfiles().sess?.service).toBe("api.clickzetta.com")
   })
 
+  // The upgrade path off the old positional names. A `<base>_N` row describes the same
+  // CONNECTION it always did, and matching is by connection, so the login finds it and moves
+  // it to the derived name. This is the only way an existing user's `sess_0` ever becomes
+  // readable — nothing else renames a profile row.
+  test("an old positional row is renamed to its connection-derived name", () => {
+    // What a pre-existing install looks like: the old scheme, plus the user's own edits.
+    saveProfiles({
+      sess_0: { instance: "i1", workspace: "ws1", oauth: "sess", schema: "my_schema", auth_type: "oauth" },
+    })
+    setDefaultProfile("sess_0")
+
+    const combos = [combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.renamed).toEqual([{ from: "sess_0", to: "sess_ws1_i1" }])
+    // Moved, not copied, and not counted as a new connection.
+    expect(Object.keys(loadProfiles())).toEqual(["sess_ws1_i1"])
+    expect(result.created).toEqual([])
+    // The migration must not cost the user their edits or their selection. Carrying
+    // default_profile is what PRESERVES the choice; leaving it behind would dangle it.
+    expect(loadProfiles().sess_ws1_i1?.schema).toBe("my_schema")
+    expect(getDefaultProfileName()).toBe("sess_ws1_i1")
+  })
+
+  // connectionKey is case-insensitive, so a row stored with different casing than the server
+  // reports still MATCHES — and once matched, its name no longer agrees with the fields being
+  // written onto it. Follow the server's casing in the name too.
+  test("a row whose casing the server disagrees with is renamed to match", () => {
+    saveProfiles({ sess_WS1_i1: { instance: "i1", workspace: "WS1", oauth: "sess" } })
+
+    const combos = [combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.renamed).toEqual([{ from: "sess_WS1_i1", to: "sess_ws1_i1" }])
+    expect(loadProfiles().sess_ws1_i1?.workspace).toBe("ws1")
+  })
+
+  // A rename must never clobber: the derived name may be held by a row this login may not
+  // touch, and overwriting it would destroy that row's credentials.
+  test("a rename blocked by an occupied name lands beside it instead", () => {
+    saveProfiles({
+      sess_0: { instance: "i1", workspace: "ws1", oauth: "sess" },
+      sess_ws1_i1: { instance: "zz", workspace: "wszz", pat: "someone-elses" },
+    })
+
+    const combos = [combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(loadProfiles().sess_ws1_i1).toEqual({ instance: "zz", workspace: "wszz", pat: "someone-elses" })
+    expect(result.renamed).toEqual([{ from: "sess_0", to: "sess_ws1_i1_2" }])
+    expect(loadProfiles().sess_ws1_i1_2?.workspace).toBe("ws1")
+  })
+
+  // The limit of name-based identity, stated as a test so it is a known shape rather than a
+  // surprise. A real rename changes the CONNECTION KEY, so the old row is not matched at all:
+  // the new name is a new row, and the old one shows up as stale. Following it would take a
+  // stable id, which this scheme deliberately does not use — the names are what make a
+  // profile readable, and instance+workspace do not repeat within an account.
+  test("a true workspace rename yields a new row and reports the old one stale", () => {
+    const before = [combo("i1", "ws_old")]
+    provisionProfilesFromOAuthCombos("sess", before, input(before))
+
+    const after = [combo("i1", "ws_new")]
+    const result = provisionProfilesFromOAuthCombos("sess", after, input(after))
+
+    expect(result.renamed).toEqual([])
+    expect(result.created).toEqual(["sess_ws_new_i1"])
+    // Kept, and called out — the old behavior was to leave it there in silence.
+    expect(result.stale).toEqual(["sess_ws_old_i1"])
+    expect(result.profiles).toEqual(["sess_ws_new_i1", "sess_ws_old_i1"])
+  })
+
+  // Nothing prunes profile rows (pruneOrphanOAuthSections only clears unreferenced TOKEN
+  // sections), so a vanished workspace used to leave a row behind in silence — and the count
+  // could only ever grow. Report it; do NOT delete it, because oauth-enumerate.ts swallows a
+  // per-instance listUserWorkspaces failure, making "gone" and "failed this time"
+  // indistinguishable from here.
+  test("an owned row this run did not enumerate is reported stale, not deleted", () => {
+    const both = [combo("i1", "ws1"), combo("i2", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", both, input(both))
+
+    const only = [combo("i1", "ws1")]
+    const result = provisionProfilesFromOAuthCombos("sess", only, input(only))
+
+    expect(result.stale).toEqual(["sess_ws2_i2"])
+    // Still on disk, still owned, still reported as this session's.
+    expect(result.profiles).toEqual(["sess_ws1_i1", "sess_ws2_i2"])
+    expect(loadProfiles().sess_ws2_i2?.workspace).toBe("ws2")
+  })
+
+  test("nothing is stale when every owned row was enumerated", () => {
+    const combos = [combo("i1", "ws1"), combo("i1", "ws2")]
+    provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+    expect(provisionProfilesFromOAuthCombos("sess", combos, input(combos)).stale).toEqual([])
+  })
+
+  // Names are not injective: the separator is `_`, and workspace/instance names may contain
+  // one. Two connections can therefore want the same name, and which of them gets the plain
+  // one must NOT depend on the order the server enumerated — that order is not stable.
+  test("two connections wanting one name disambiguate the same way regardless of combo order", () => {
+    const a = combo("c", "a_b") // wants sess_a_b_c
+    const b = combo("b_c", "a") // also wants sess_a_b_c
+    const forward = provisionProfilesFromOAuthCombos("sess", [a, b], input([a, b]))
+
+    expect(forward.created).toEqual(["sess_a_b_c", "sess_a_b_c_2"])
+    // Same two connections, reversed. The suffix must land on the same one.
+    const reversed = provisionProfilesFromOAuthCombos("sess", [b, a], input([b, a]))
+    expect(reversed.created).toEqual([])
+    expect(reversed.profiles).toEqual(["sess_a_b_c", "sess_a_b_c_2"])
+    const rows = loadProfiles()
+    expect(rows.sess_a_b_c).toMatchObject({ instance: "b_c", workspace: "a" })
+    expect(rows.sess_a_b_c_2).toMatchObject({ instance: "c", workspace: "a_b" })
+  })
+
+  // The colliding pair again, but with one of them ALREADY on disk. A name held by another
+  // connection's row is not free just because that row has a rename planned: the rename has
+  // not run yet, so a combo that sorts earlier would materialize INTO that row and the
+  // rename would then carry it away, deleting a connection's profile while login reports it.
+  test("a new combo colliding with an existing row does not consume it", () => {
+    const a = combo("c", "a_b") // wants sess_a_b_c, and gets it — nothing else exists yet
+    const first = provisionProfilesFromOAuthCombos("sess", [a], input([a]))
+    expect(first.profiles).toEqual(["sess_a_b_c"])
+
+    // b sorts BEFORE a by connection key ("b_c\0a" < "c\0a_b") and wants the same name.
+    const b = combo("b_c", "a")
+    const second = provisionProfilesFromOAuthCombos("sess", [a, b], input([a, b]))
+
+    // The incumbent keeps its name; the newcomer takes the suffix. No row moves.
+    expect(second.renamed).toEqual([])
+    expect(second.created).toEqual(["sess_a_b_c_2"])
+    expect(second.profiles).toEqual(["sess_a_b_c", "sess_a_b_c_2"])
+    const rows = loadProfiles()
+    // Every reported profile exists, and each connection still has exactly one row.
+    for (const name of second.profiles) expect(rows[name]).toBeDefined()
+    expect(rows.sess_a_b_c).toMatchObject({ instance: "c", workspace: "a_b" })
+    expect(rows.sess_a_b_c_2).toMatchObject({ instance: "b_c", workspace: "a" })
+  })
+
+  // A workspace or instance name is the user's, so it can hold anything. smol-toml would
+  // quote the key and round-trip it fine — this is about the COMMAND LINE, where a profile
+  // name needing shell quoting is a papercut on every invocation.
+  test("characters that would need quoting are collapsed in the name, not in the fields", () => {
+    const combos = [combo("inst one", "my.ws")]
+    const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
+
+    expect(result.profiles).toEqual(["sess_my_ws_inst_one"])
+    // The row still records what the server actually calls them — only the KEY is sanitized.
+    expect(loadProfiles().sess_my_ws_inst_one).toMatchObject({ instance: "inst one", workspace: "my.ws" })
+  })
+
   // enumerateOAuthCombos does not dedupe, so the same connection can arrive twice.
   test("a repeated combo is reported once", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws1")]
     const result = provisionProfilesFromOAuthCombos("sess", combos, input(combos))
 
-    expect(result.profiles).toEqual(["sess_0"])
-    expect(result.created).toEqual(["sess_0"])
+    expect(result.profiles).toEqual(["sess_ws1_i1"])
+    expect(result.created).toEqual(["sess_ws1_i1"])
   })
 
   // The skip cannot tell a provisioned gateway key from a revoked complimentary one,
@@ -828,14 +1012,14 @@ describe("provisionProfilesFromOAuthCombos re-login", () => {
   test("--refresh-llm does not swallow an unrelated entry named after the default profile", () => {
     const combos = [combo("i1", "ws1"), combo("i1", "ws2"), combo("i1", "ws3")]
     provisionProfilesFromOAuthCombos("sess", combos, input(combos))
-    setDefaultProfile("sess_2")
+    setDefaultProfile("sess_ws3_i1")
     const llm = readLlmEntries()
-    llm.llm.sess_2 = { provider: "clickzetta", api_key: "unrelated-key" }
+    llm.llm.sess_ws3_i1 = { provider: "clickzetta", api_key: "unrelated-key" }
     writeLlmEntries({ llm: llm.llm })
 
     provisionProfilesFromOAuthCombos("sess", combos, input(combos, { refreshLlm: true }))
 
-    expect(readLlmEntries().llm.sess_2?.api_key).toBe("unrelated-key")
+    expect(readLlmEntries().llm.sess_ws3_i1?.api_key).toBe("unrelated-key")
   })
 
   // A session name that needs sanitizing was keyed raw by the single-profile path
