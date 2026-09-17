@@ -162,13 +162,30 @@ function validateAnswerBuilderMetricNames(dsl: Record<string, unknown>, format: 
   }
 }
 
-// Resolve the answer-builder `content` DSL string. `--content` carries the DSL
-// JSON (chartParams/outputColumns/relatedTables/…). `--sql`, when given, is
-// injected as the top-level `sql` field so the caller does not have to escape
-// SQL quotes inside the JSON string. Returns the final JSON string to POST.
-function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: string): string {
-  const rawContent = typeof argv.content === "string" ? argv.content : undefined
-  const sql = typeof argv.sql === "string" ? argv.sql : undefined
+async function readInlineOrFile(
+  argv: Record<string, unknown>,
+  key: "body" | "content" | "sql",
+  format: string,
+): Promise<string | undefined> {
+  const inline = typeof argv[key] === "string" ? argv[key] : undefined
+  const fileKey = `${key}-file`
+  const file = typeof argv[fileKey] === "string" ? (argv[fileKey] as string).trim() : undefined
+  if (inline !== undefined && file !== undefined) {
+    return handledError("USAGE_ERROR", `Provide --${key} or --${fileKey}, not both`, { format })
+  }
+  if (file === "") return handledError("USAGE_ERROR", `--${fileKey} must be non-empty`, { format })
+  if (!file) return inline
+  if (!(await Bun.file(file).exists())) {
+    return handledError("USAGE_ERROR", `--${fileKey} does not exist: ${file}`, { format })
+  }
+  return Bun.file(file).text()
+}
+
+// Resolve the answer-builder content DSL. File inputs avoid shell expansion of
+// placeholders and preserve long JSON, SQL, quotes, and newlines verbatim.
+async function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: string): Promise<string> {
+  const rawContent = await readInlineOrFile(argv, "content", format)
+  const sql = await readInlineOrFile(argv, "sql", format)
 
   if (rawContent === undefined && sql === undefined) {
     handledError("USAGE_ERROR", "Provide --content (DSL JSON) or --sql.", { format })
@@ -185,10 +202,20 @@ function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: stri
   return sql === undefined ? rawContent as string : JSON.stringify(dsl)
 }
 
+async function resolveAnswerBuilderBody(argv: Record<string, unknown>, format: string): Promise<Record<string, unknown>> {
+  return parseJsonObject(await readInlineOrFile(argv, "body", format), argv["body-file"] === undefined ? "--body" : "--body-file")
+}
+
 // Syntax reference shown in the epilogue of answer-builder create/validate.
 // Derived from hands-on authoring: the DSL shape, the ${placeholder} rule, the
 // required+domain-unique metricName, and the window/CTE subquery-wrap trick.
 const ANSWER_BUILDER_DSL_HELP = [
+  "File input (recommended for long or structured values):",
+  "  --content-file ./content.json --sql-file ./query.sql",
+  "  --body-file ./request.json is also available for the base request object.",
+  "  Do not combine an inline option with its matching file option.",
+  "  File content is read verbatim, so SQL ${...} placeholders are not expanded by the shell.",
+  "",
   "DSL (--content) structure:",
   "  {",
   '    "chartParams": [        // interactive inputs; reference in SQL as ${name}',
@@ -206,7 +233,7 @@ const ANSWER_BUILDER_DSL_HELP = [
   "    ],",
   '    "relatedTables": ["cat.schema.table", ...]   // every table the SQL touches',
   "  }",
-  "  (Pass the SQL via --sql instead of embedding it in --content to avoid quote escaping.)",
+  "  (Prefer --sql-file, or pass SQL via --sql instead of embedding it in --content.)",
   "",
   "Rules:",
   "  - Shell quoting: wrap --sql in single quotes so bash/zsh won't expand ${...} to empty",
@@ -480,7 +507,8 @@ function requiredTableName(value: unknown, format: string): string {
 /**
  * Parses a --join flag value into a DatasetJoinDTO-shaped object.
  * Format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>
- * Example: 101:orders.user_id=202:users.id@n:1
+ * The dataset ID and table name on each side must be copied from the same API
+ * record; table names must never be inferred from physical or display names.
  */
 function parseJoinFlag(raw: string): Record<string, unknown> {
   const atIdx = raw.lastIndexOf("@")
@@ -540,8 +568,14 @@ function parseLooseJsonValue(raw: string): unknown {
   return raw
 }
 
-function resolveTableSemanticsSetBody(argv: Record<string, unknown>): Record<string, unknown> {
-  return mergeBody(parseJsonObject(typeof argv.body === "string" ? argv.body : undefined, "--body"), {
+async function resolveTableSemanticsSetBody(argv: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const body = typeof argv.body === "string" ? argv.body : undefined
+  const bodyFile = typeof argv["body-file"] === "string" ? argv["body-file"].trim() : undefined
+  if (body !== undefined && bodyFile !== undefined) throw new Error("Provide --body or --body-file, not both")
+  if (bodyFile === "") throw new Error("--body-file must be non-empty")
+  if (bodyFile && !(await Bun.file(bodyFile).exists())) throw new Error(`--body-file does not exist: ${bodyFile}`)
+
+  return mergeBody(parseJsonObject(bodyFile ? await Bun.file(bodyFile).text() : body, bodyFile ? "--body-file" : "--body"), {
     alias: typeof argv.alias === "string" ? parseJsonArray(argv.alias, "--alias") : undefined,
     description: argv.description,
     semanticType: argv["semantic-type"],
@@ -2646,7 +2680,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     .option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by 'joins discover'" })
                     .epilogue([
                       "Poll until status=SUCCESS, then pass the returned joins to 'joins apply'.",
-                      "The tableName in each join is the internal view name (e.g. ws.schema.v_gpt_tablename).",
+                      "Copy every returned join as one record: never mix a datasetId from one join with a tableName from another.",
+                      "Copy tableName exactly as returned. Do not construct it or assume it contains v_gpt_.",
                       "",
                       "Example:",
                       "  cz-cli analytics-agent domain joins result --task-id abc-123",
@@ -2692,15 +2727,20 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     type: "string",
                     demandOption: true,
                     describe:
-                      "Join in format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>. tableName must be the internal view name (v_gpt_*) from 'joins list' or 'joins result', not the physical table name. relation: n:1 | 1:1 | 1:n. Repeat flag for multiple joins.",
+                      "Join in format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>. Copy each ID/name pair exactly from API output; never infer tableName. relation: n:1 | 1:1 | 1:n. Repeat flag for multiple joins.",
                   })
                   .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                   .epilogue([
-                    "IMPORTANT: tableName must be the internal view name returned by 'joins list' or 'joins result'",
-                    "(e.g. datagpt_ws.retail.v_gpt_orders), NOT the physical table name (orders).",
-                    "Use 'joins list --domain-id <id>' to get the correct tableName and datasetId values.",
+                    "HARD RULES:",
+                    "  1. Poll 'joins result' until status=SUCCESS and copy one complete returned join.",
+                    "  2. Run 'domain detail <domainId> --with-tables' and verify both ID/name pairs:",
+                    "       tables[datasetId].tableName === tableName",
+                    "       tables[joinDatasetId].tableName === joinTableName",
+                    "  3. Treat each datasetId/tableName pair as atomic; never mix values from different records.",
+                    "  4. Copy tableName exactly. Never use physicalTable/displayName, add v_gpt_, or reconstruct the name.",
+                    "  5. If either pair cannot be verified, do not apply and do not retry with guessed values.",
                     "",
-                    "Example:",
+                    "Example (replace every value with one verified 'joins result' record):",
                     "  cz-cli analytics-agent domain joins apply --domain-id 27 \\",
                     "    --join '990:ws.retail.v_gpt_table1.id=991:ws.retail.v_gpt_table2.order_id@n:1'",
                     "  # Verify with:",
@@ -2800,12 +2840,28 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   .option("dimension", { type: "boolean", describe: "Whether the column is a dimension" })
                   .option("index", { type: "boolean", describe: "Whether the column is indexed" })
                   .option("dict-code", { type: "string", describe: "Dictionary code" })
-                  .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                  .option("body", { type: "string", describe: "Full request body as an inline JSON object; use only for short values" })
+                  .option("body-file", { type: "string", describe: "Read the full request body from a UTF-8 JSON object file; recommended for long, multiline, quoted, or non-ASCII text" })
+                  .epilogue([
+                    "For long, multiline, quoted, or non-ASCII semantics, use --body-file instead of inline --alias, --description, or --body values.",
+                    "The file must contain one JSON object. Individual field options override values from the file.",
+                    "Do not pass both --body and --body-file.",
+                    "",
+                    "Example semantics.json:",
+                    "  {",
+                    "    \"alias\": [\"会员\", \"高价值客户\"],",
+                    "    \"description\": \"具有较长业务定义的客户字段\",",
+                    "    \"dimension\": true",
+                    "  }",
+                    "",
+                    "Example:",
+                    "  cz-cli analytics-agent table semantics set 180 12 --body-file ./semantics.json",
+                  ].join("\n")),
               async (argv) => {
                 const format = typeof argv.format === "string" ? argv.format : "json"
                 let body: Record<string, unknown>
                 try {
-                  body = resolveTableSemanticsSetBody(argv as Record<string, unknown>)
+                  body = await resolveTableSemanticsSetBody(argv as Record<string, unknown>)
                 } catch (err) {
                   error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
                   return
@@ -2860,13 +2916,20 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
         })
         table.command(
           "update",
-          "Update a dataset's display name and/or description",
+          "Update a dataset in one domain (--dataset-id and --domain-id are required)",
           (y) =>
             y
               .option("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
-              .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID the dataset belongs to" })
+              .option("domain-id", { type: "number", demandOption: true, describe: "Required domain scope; never inferred from the dataset ID" })
               .option("name", { type: "string", describe: "New display name" })
-              .option("description", { type: "string", describe: "New description" }),
+              .option("description", { type: "string", describe: "New description" })
+              .epilogue([
+                "IMPORTANT: pass both the dataset ID and its owning domain ID explicitly.",
+                "Use 'domain detail <domainId> --with-tables' to verify that the dataset belongs to the domain.",
+                "",
+                "Example:",
+                "  cz-cli analytics-agent table update --dataset-id 9 --domain-id 2 --name orders",
+              ].join("\n")),
           async (argv) => runTableUpdate(argv as Record<string, unknown>),
         )
         return commandGroup(table, "analytics-agent table")
@@ -3290,8 +3353,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
+                .option("content-file", { type: "string", describe: "Read Analysis DSL JSON from a UTF-8 file; recommended for long or non-ASCII content" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
+                .option("sql-file", { type: "string", describe: "Read SQL verbatim from a UTF-8 file; recommended for multiline SQL or ${...} placeholders" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .option("body-file", { type: "string", describe: "Read the base request body from a UTF-8 JSON object file" })
                 .example(
                   "cz-cli analytics-agent answer-builder create --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
                   "如果只创建到一个域，就这样写。",
@@ -3304,8 +3370,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
+              const body = mergeBody(await resolveAnswerBuilderBody(argv as Record<string, unknown>, format), {
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
@@ -3326,8 +3392,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
+                .option("content-file", { type: "string", describe: "Read Analysis DSL JSON from a UTF-8 file; recommended for long or non-ASCII content" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
+                .option("sql-file", { type: "string", describe: "Read SQL verbatim from a UTF-8 file; recommended for multiline SQL or ${...} placeholders" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .option("body-file", { type: "string", describe: "Read the base request body from a UTF-8 JSON object file" })
                 .example(
                   "cz-cli analytics-agent answer-builder update 9 --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
                   "如果只更新一个域，就这样写。",
@@ -3340,8 +3409,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
+              const body = mergeBody(await resolveAnswerBuilderBody(argv as Record<string, unknown>, format), {
                 id: argv["analysis-id"],
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
@@ -3491,8 +3560,11 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
+                .option("content-file", { type: "string", describe: "Read Analysis DSL JSON from a UTF-8 file; recommended for long or non-ASCII content" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
+                .option("sql-file", { type: "string", describe: "Read SQL verbatim from a UTF-8 file; recommended for multiline SQL or ${...} placeholders" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .option("body-file", { type: "string", describe: "Read the base request body from a UTF-8 JSON object file" })
                 .example(
                   "cz-cli analytics-agent answer-builder validate --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
                   "如果只校验一个域，就这样写。",
@@ -3505,8 +3577,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const content = resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
+              const body = mergeBody(await resolveAnswerBuilderBody(argv as Record<string, unknown>, format), {
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
@@ -3943,13 +4015,20 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
         session
           .command(
             "list",
-            "List text2insight sessions",
+            "List text2insight sessions in one domain (--domain-id is required)",
             (y) =>
               y
-                .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Required domain scope; never inferred from the profile or another session" })
                 .option("source-type", { type: "string", describe: "Session sourceType" })
                 .option("source-id", { type: "number", describe: "Session sourceId" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .epilogue([
+                  "IMPORTANT: always pass the target domain explicitly with --domain-id.",
+                  "Do not omit it or infer it from the selected profile, workspace, a previous command, or a session ID.",
+                  "",
+                  "Example:",
+                  "  cz-cli analytics-agent session list --domain-id 195",
+                ].join("\n")),
             async (argv) => {
               const body = mergeBody(parseJsonObject(argv.body, "--body"), {
                 domainId: argv["domain-id"],

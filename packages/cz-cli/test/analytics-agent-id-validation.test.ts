@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 // Keep every other profile-store export real: analytics-agent now reaches
 // connection/config.ts, which imports more of this module, and a partial mock
@@ -700,5 +702,168 @@ describe("analytics-agent id validation", () => {
 
     expect(result.exitCode).toBe(1)
     expect(result.output).toContain("datasetId must be a positive integer")
+  })
+
+  test("table semantics set reads long non-ASCII fields from --body-file", async () => {
+    const bodyFile = join(tmpdir(), `cz-cli-semantics-${crypto.randomUUID()}.json`)
+    const semantics = {
+      alias: ["会员", "高价值客户"],
+      description: "这是包含引号“”、空格和多行内容的字段定义。\n第二行不会经过 shell 解析。",
+      semanticTypeProperties: { examples: ["会 员", "重要客户"] },
+      dimension: true,
+    }
+    await Bun.write(bodyFile, JSON.stringify(semantics))
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { datasetId: 180, attrId: 12 } })
+    }) as typeof fetch
+
+    try {
+      const result = await runAnalyticsCli([
+        "analytics-agent",
+        "table",
+        "semantics",
+        "set",
+        "180",
+        "12",
+        "--body-file",
+        bodyFile,
+      ])
+
+      expect(result.exitCode).toBe(0)
+      expect(requestBody).toMatchObject(semantics)
+    } finally {
+      await Bun.file(bodyFile).delete()
+    }
+  })
+
+  test("table semantics set rejects --body with --body-file before sending a request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "table",
+      "semantics",
+      "set",
+      "180",
+      "12",
+      "--body",
+      "{}",
+      "--body-file",
+      "semantics.json",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parsedError(result.output).message).toBe("Provide --body or --body-file, not both")
+  })
+
+  test("table semantics set reports invalid JSON from --body-file", async () => {
+    const bodyFile = join(tmpdir(), `cz-cli-semantics-${crypto.randomUUID()}.json`)
+    await Bun.write(bodyFile, "{ not-json }")
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    try {
+      const result = await runAnalyticsCli([
+        "analytics-agent",
+        "table",
+        "semantics",
+        "set",
+        "180",
+        "12",
+        "--body-file",
+        bodyFile,
+      ])
+
+      expect(result.exitCode).toBe(1)
+      expect(parsedError(result.output).message).toContain("Invalid --body-file")
+    } finally {
+      await Bun.file(bodyFile).delete()
+    }
+  })
+
+  test("answer-builder validate reads DSL, SQL, and base body from files", async () => {
+    const prefix = join(tmpdir(), `cz-cli-answer-builder-${crypto.randomUUID()}`)
+    const contentFile = `${prefix}-content.json`
+    const sqlFile = `${prefix}-query.sql`
+    const bodyFile = `${prefix}-body.json`
+    await Promise.all([
+      Bun.write(contentFile, JSON.stringify({
+        chartParams: [{ name: "dims", type: "dimension" }],
+        outputColumns: [{ name: "总额", metricName: "区域销售额", type: "decimal" }],
+      })),
+      Bun.write(sqlFile, "SELECT ${dims}, sum(amount) AS 总额\nFROM orders\nGROUP BY ${dims}"),
+      Bun.write(bodyFile, JSON.stringify({ analysisDesc: "包含中文和引号“说明”的长描述" })),
+    ])
+    let requestBody: Record<string, unknown> | undefined
+
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: { valid: true } })
+    }) as typeof fetch
+
+    try {
+      const result = await runAnalyticsCli([
+        "analytics-agent",
+        "answer-builder",
+        "validate",
+        "--analysis-name",
+        "区域销售",
+        "--datasource-id",
+        "824",
+        "--domain-ids",
+        "[5]",
+        "--content-file",
+        contentFile,
+        "--sql-file",
+        sqlFile,
+        "--body-file",
+        bodyFile,
+      ])
+
+      expect(result.exitCode).toBe(0)
+      expect(requestBody).toMatchObject({
+        analysisName: "区域销售",
+        analysisDesc: "包含中文和引号“说明”的长描述",
+        datasourceId: 824,
+        domainIds: [5],
+      })
+      expect(JSON.parse(String(requestBody?.content))).toMatchObject({
+        sql: "SELECT ${dims}, sum(amount) AS 总额\nFROM orders\nGROUP BY ${dims}",
+        outputColumns: [{ name: "总额", metricName: "区域销售额", type: "decimal" }],
+      })
+    } finally {
+      await Promise.all([Bun.file(contentFile).delete(), Bun.file(sqlFile).delete(), Bun.file(bodyFile).delete()])
+    }
+  })
+
+  test("answer-builder rejects matching inline and file inputs before sending a request", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "answer-builder",
+      "validate",
+      "--analysis-name",
+      "sales",
+      "--datasource-id",
+      "824",
+      "--domain-ids",
+      "[5]",
+      "--content",
+      "{}",
+      "--content-file",
+      "content.json",
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(parsedError(result.output).message).toBe("Provide --content or --content-file, not both")
   })
 })

@@ -117,6 +117,7 @@ const noProfileCases = [
   // case tests profile gating, not arg-parse errors. With the profile gate now
   // running after yargs validation, a missing required option surfaces a
   // USAGE_ERROR before NO_PROFILE — which is intended (see run-cli.ts).
+  ["analytics-agent", "session", "list", "--domain-id", "1"],
   ["analytics-agent", "session", "create", "--domain-id", "1"],
   ["analytics-agent", "session", "delete", "--session-id", "1"],
   ["analytics-agent", "session", "run", "--session-id", "1"],

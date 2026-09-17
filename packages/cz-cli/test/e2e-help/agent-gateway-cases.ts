@@ -93,6 +93,49 @@ export const agentGatewayHelpCases: HelpCase[] = [
     ],
   },
   {
+    args: ["analytics-agent", "domain", "joins", "result", "--help"],
+    expectHeader: "cz-cli analytics-agent domain joins result",
+    expectOptions: ["--task-id"],
+    expectText: [
+      "never mix a datasetId",
+      "Copy tableName exactly as returned",
+      "v_gpt_.",
+    ],
+  },
+  {
+    args: ["analytics-agent", "domain", "joins", "apply", "--help"],
+    expectHeader: "cz-cli analytics-agent domain joins apply",
+    expectOptions: ["--domain-id", "--join"],
+    expectText: [
+      "HARD RULES:",
+      "domain detail <domainId> --with-tables",
+      "Treat each datasetId/tableName pair as atomic",
+      "Never use physicalTable/displayName",
+      "guessed values.",
+    ],
+  },
+  {
+    args: ["analytics-agent", "table", "update", "--help"],
+    expectHeader: "cz-cli analytics-agent table update",
+    expectOptions: ["--dataset-id", "--domain-id"],
+    expectText: [
+      "--dataset-id and --domain-id are required",
+      "owning domain ID explicitly",
+      "domain detail <domainId> --with-tables",
+    ],
+  },
+  {
+    args: ["analytics-agent", "table", "semantics", "set", "--help"],
+    expectHeader: "cz-cli analytics-agent table semantics set",
+    expectOptions: ["dataset-id", "attr-id", "--body-file"],
+    expectText: [
+      "use --body-file",
+      "inline --alias",
+      "Do not pass both --body and --body-file",
+      "semantics.json",
+    ],
+  },
+  {
     args: ["analytics-agent", "metric", "list", "--help"],
     expectHeader: "cz-cli analytics-agent metric list",
     expectOptions: ["--domain-ids", "--body"],
@@ -119,13 +162,14 @@ export const agentGatewayHelpCases: HelpCase[] = [
   {
     args: ["analytics-agent", "answer-builder", "create", "--help"],
     expectHeader: "cz-cli analytics-agent answer-builder create",
-    expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id"],
+    expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id", "--content-file", "--sql-file", "--body-file"],
     expectCommands: ["Examples:", "--domain-ids '[5]'", "--domain-ids '[5,6]'", "如果只创建到一个域，就这样写。", "如果要同时创建到多个域，就这样写。"],
+    expectText: ["File input", "placeholders are not expanded"],
   },
   {
     args: ["analytics-agent", "answer-builder", "update", "--help"],
     expectHeader: "cz-cli analytics-agent answer-builder update",
-    expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id"],
+    expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id", "--content-file", "--sql-file", "--body-file"],
     expectCommands: ["Examples:", "--analysis-name total-sales", "--domain-ids '[5,6]'", "如果只更新一个域，就这样写。", "如果要同时更新多个域，就这样写。"],
   },
   {
@@ -137,7 +181,7 @@ export const agentGatewayHelpCases: HelpCase[] = [
   {
     args: ["analytics-agent", "answer-builder", "validate", "--help"],
     expectHeader: "cz-cli analytics-agent answer-builder validate",
-    expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id"],
+    expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id", "--content-file", "--sql-file", "--body-file"],
     expectCommands: ["Examples:", "--analysis-name total-sales", "--domain-ids '[5,6]'", "如果只校验一个域，就这样写。", "如果要同时校验多个域，就这样写。"],
   },
   {
@@ -157,6 +201,16 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectHeader: "cz-cli analytics-agent knowledge file upload",
     expectOptions: ["--domain-ids", "--target-path", "--name"],
     expectCommands: ["Examples:", "1 ./a.txt --domain-ids '[5]'", "1 ./a.txt --domain-ids '[5,6]'", "如果只绑定一个域，就这样写。", "如果要同时绑定多个域，就这样写。"],
+  },
+  {
+    args: ["analytics-agent", "session", "list", "--help"],
+    expectHeader: "cz-cli analytics-agent session list",
+    expectOptions: ["--domain-id"],
+    expectText: [
+      "--domain-id is required",
+      "always pass the target domain explicitly",
+      "session list --domain-id 195",
+    ],
   },
   {
     args: ["analytics-agent", "session", "create", "--help"],
