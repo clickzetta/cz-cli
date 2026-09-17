@@ -108,6 +108,48 @@ describe("analytics-agent session delete command", () => {
     process.exitCode = 0
   })
 
+  test("session list requires an explicit domain id", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "list",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
+    expect(parsed.error.code).toBe("USAGE_ERROR")
+    expect(parsed.error.message).toBe("Missing required argument: domain-id")
+  })
+
+  test("session list sends the explicit domain id", async () => {
+    const requests: { url: string; body: Record<string, unknown> | undefined }[] = []
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined,
+      })
+      if (String(input).includes("/domains/195")) return jsonResponse({ success: true, data: { domainId: "195" } })
+      return jsonResponse({ success: true, data: [] })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent",
+      "session",
+      "list",
+      "--domain-id",
+      "195",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requests).toHaveLength(2)
+    expect(requests[1]?.body).toMatchObject({ domainId: 195 })
+  })
+
   test("maps session id into authenticated request body", async () => {
     let requestBody: unknown
 
