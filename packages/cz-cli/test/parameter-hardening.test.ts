@@ -455,7 +455,7 @@ describe("the numeric guard's edges", () => {
 
   test("one bad element rejects a numeric JSON array option", () => {
     const r = run([
-      "analytics-agent", "knowledge", "update", "1",
+      "analytics-agent", "metric", "list",
       "--domain-ids", "[7,\"seven\"]",
     ])
     expect(errorOf(r.stdout).code).toBe("USAGE_ERROR")
@@ -464,7 +464,7 @@ describe("the numeric guard's edges", () => {
 
   test("all-numeric JSON array elements pass through as a list", () => {
     const r = run([
-      "analytics-agent", "knowledge", "update", "1",
+      "analytics-agent", "metric", "list",
       "--domain-ids", "[7,8]",
     ])
     expect(errorOf(r.stdout).code).not.toBe("USAGE_ERROR")

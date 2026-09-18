@@ -110,6 +110,8 @@ describe("analytics-agent session run", () => {
       "run",
       "--session-id",
       "7",
+      "--domain-id",
+      "5",
       "--msg",
       "hello",
     ])
@@ -148,6 +150,8 @@ describe("analytics-agent session run", () => {
       "run",
       "--session-id",
       "7",
+      "--domain-id",
+      "5",
       "--msg",
       "hello",
       "--summary",
@@ -564,6 +568,8 @@ describe("analytics-agent session run", () => {
       "run",
       "--session-id",
       "7",
+      "--domain-id",
+      "5",
       "--msg",
       "hello",
     ])
