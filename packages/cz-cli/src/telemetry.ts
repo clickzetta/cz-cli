@@ -1,4 +1,4 @@
-import { profileTelemetryAttributes } from "./connection/telemetry.js"
+import { profileTelemetryAttributes, type IdentityAttributes } from "./connection/telemetry.js"
 import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
 import { currentTraceContext } from "./trace.js"
@@ -178,7 +178,11 @@ interface CommandEvent {
   success: boolean
   error?: string
   response_bytes?: number
-  resourceAttributes?: Record<string, string>
+  /**
+   * Identity for this event, when the active profile cannot supply it: `setup` runs before
+   * the profile row exists. Log RECORD attributes, not Resource ones — see trackCommand.
+   */
+  identityAttributes?: IdentityAttributes
 }
 
 type OtlpValue =
@@ -228,16 +232,26 @@ function commandAttributes(event: CommandEvent) {
 export function trackCommand(event: CommandEvent): Promise<void> {
   if (!OTEL_DEFAULTS.endpoint) return Promise.resolve()
   try {
-    const resourceAttrs = event.resourceAttributes ?? profileTelemetryAttributes()
+    // An EMPTY override falls back too, not just an absent one: trackSetup always passes a
+    // row, and it is `{}` on a setup that failed before it learned anything — so `??` alone
+    // let the empty object win and left exactly the failures you most want attributed
+    // anonymous, on a machine whose default profile knew the user all along.
+    const override = event.identityAttributes
+    const identity = override && Object.keys(override).length > 0 ? override : profileTelemetryAttributes()
     const now = Date.now()
     const traceContext = currentTraceContext()
     const body = {
       resourceLogs: [{
+        // Resource describes the entity PRODUCING the telemetry, and it is immutable for
+        // the life of the provider (OTel resource spec) — so only the service belongs here.
+        // `enduser.id` used to sit in this list, which made every (user, instance,
+        // workspace) triple look like a distinct service instance to the backend, and would
+        // have pinned the first profile of a long-lived process onto its later events.
+        // It is a record attribute below, exactly once, matching the trace path.
         resource: {
           attributes: [
             { key: "service.name", value: { stringValue: "cz-cli" } },
             { key: "service.version", value: { stringValue: VERSION } },
-            ...Object.entries(resourceAttrs).map(([k, v]) => ({ key: k, value: { stringValue: v } })),
           ],
         },
         scopeLogs: [{
@@ -250,7 +264,14 @@ export function trackCommand(event: CommandEvent): Promise<void> {
             severityNumber: event.success ? 9 : 17, // INFO : ERROR
             severityText: event.success ? "INFO" : "ERROR",
             body: { stringValue: commandBody(event) },
-            attributes: commandAttributes(event),
+            attributes: [
+              ...commandAttributes(event),
+              // Filtered: IdentityAttributes is Partial, and an explicit undefined would
+              // serialise as `"value":{}` rather than being dropped.
+              ...Object.entries(identity).flatMap(([k, v]) =>
+                v === undefined ? [] : [{ key: k, value: { stringValue: v } }],
+              ),
+            ],
           }],
         }],
       }],
