@@ -27,28 +27,6 @@ Analytics Agent 命令 MUST 在 active profile 未显式配置 `analysis_agent_e
 - **THEN** CLI MUST 使用 `https://legacy.example/agent`
 - **AND** 不使用 service 推导结果
 
-### Requirement: knowledge create/update MUST bind domainIds from --domain-ids JSON arrays
-
-`cz-cli analytics-agent knowledge create` 和 `cz-cli analytics-agent knowledge update` MUST 将命令行 `--domain-ids` 规范化为请求体中的 `domainIds` 数组，并在缺少或传入非 JSON 数组、非正整数时本地报错，避免创建出未绑定任何域的 knowledge。单域示例 MUST 使用 `--domain-ids '[5]'`；多域示例 MUST 使用 `--domain-ids '[5,6]'`。
-
-#### Scenario: knowledge create 使用单个 --domain-ids 绑定 domainIds
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --domain-ids '[5]' --content hello`
-- **THEN** CLI 调用 knowledge create open API
-- **AND** 请求体包含 `domainIds=[5]`
-
-#### Scenario: knowledge update 使用多个 --domain-ids 绑定 domainIds
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge update 42 --domain-ids '[5,6]'`
-- **THEN** CLI 调用 knowledge update open API
-- **AND** 请求体包含 `domainIds=[5,6]`
-
-#### Scenario: knowledge create 缺少 --domain-ids 时本地报错
-
-- **WHEN** 用户执行 `cz-cli analytics-agent knowledge create --content hello`
-- **THEN** CLI MUST 在发请求前直接返回 `USAGE_ERROR`
-- **AND** 错误信息 MUST 明确说明需要 `--domain-ids`
-
 ### Requirement: body domainIds commands MUST validate --domain-ids JSON arrays
 
 所有通过请求体字段 `domainIds` 绑定分析域的 Analytics Agent 命令 MUST 将命令行 `--domain-ids` 规范化为正整数 JSON 数组；传入缺值、非 JSON 数组、非数字、非整数或非正数时 MUST 在发请求前返回 `USAGE_ERROR`。路径参数或查询过滤使用的 `domainId` 不属于本规则，MUST 保持单值 `domainId`。

@@ -124,19 +124,9 @@ describe("analytics-agent id validation", () => {
     expect(parsedError(result.output).message).toContain("--session-id")
   })
 
-  test("session run with a valid session-id does not require domain-id", async () => {
-    let runRequestBody: Record<string, unknown> | undefined
-
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
-      if (url.includes("/open/text2insight/query")) {
-        runRequestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
-        return jsonResponse({ success: true, data: { questionId: 99 } })
-      }
-      if (url.includes("/open/safe_question_poll")) {
-        return jsonResponse({ success: true, data: { responses: [{ dataType: "finish", modelRes: { data: { message: "done" } } }] } })
-      }
-      return jsonResponse({ success: true, data: {} })
+  test("session run requires domain-id even when session-id is provided", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
     }) as typeof fetch
 
     const result = await runAnalyticsCli([
@@ -147,12 +137,11 @@ describe("analytics-agent id validation", () => {
       "7",
       "--msg",
       "hello",
-      "--summary",
     ])
 
-    expect(result.exitCode).toBe(0)
-    expect(runRequestBody).toMatchObject({ sessionId: 7, msg: "hello" })
-    expect(runRequestBody).not.toHaveProperty("domainId")
+    expect(result.exitCode).toBe(2)
+    expect(parsedError(result.output).code).toBe("USAGE_ERROR")
+    expect(parsedError(result.output).message).toContain("domain-id")
   })
 
   test("metric detail rejects invalid metric-id before sending request", async () => {

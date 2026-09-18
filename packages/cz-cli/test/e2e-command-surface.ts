@@ -120,7 +120,7 @@ const noProfileCases = [
   ["analytics-agent", "session", "list", "--domain-id", "1"],
   ["analytics-agent", "session", "create", "--domain-id", "1"],
   ["analytics-agent", "session", "delete", "--session-id", "1"],
-  ["analytics-agent", "session", "run", "--session-id", "1"],
+  ["analytics-agent", "session", "run", "--session-id", "1", "--domain-id", "1"],
   ["analytics-agent", "session", "result", "1"],
   ["analytics-agent", "session", "stop", "1", "1"],
 ] as const

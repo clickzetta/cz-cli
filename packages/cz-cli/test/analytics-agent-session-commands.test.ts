@@ -336,6 +336,7 @@ describe("analytics-agent session delete command", () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toContain("同一个 session 内的问答必须串行")
     expect(result.stdout).toContain("Another question is currently being processed")
+    expect(result.stdout).toContain("Required domain ID for the query")
   })
 
   test("help is discoverable", () => {

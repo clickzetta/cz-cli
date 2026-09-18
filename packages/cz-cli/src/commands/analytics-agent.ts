@@ -66,11 +66,6 @@ const ROUTES = {
   columnVirtualSet: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
   columnVirtualList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns` },
   columnVirtualDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/virtual-columns/${encodePath(argv["attr-id"])}` },
-  knowledgeEntryList: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/entries" },
-  knowledgeEntryDetail: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
-  knowledgeEntryCreate: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/entries" },
-  knowledgeEntryUpdate: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
-  knowledgeEntryDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/entries/${encodePath(argv["knowledge-id"])}` },
   knowledgeSpaceList: { method: "GET", path: "/open/api/v1/analytics-agent/knowledge/spaces" },
   knowledgeSpaceCreate: { method: "POST", path: "/open/api/v1/analytics-agent/knowledge/spaces" },
   knowledgeSpaceRename: { method: "PUT", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}` },
@@ -372,7 +367,6 @@ const POSITIVE_ID_ARG_NAMES = new Set([
   "dataset-id",
   "datasource-id",
   "domain-id",
-  "knowledge-id",
   "metric-id",
   "node-id",
   "question-id",
@@ -1886,31 +1880,6 @@ async function executeKnowledgeNodeSearchCommand(
       ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
   }
-}
-
-function knowledgeEntryBody(argv: Record<string, unknown>, domainIds: number[]): Record<string, unknown> {
-  return mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-    aliases: stringArray(argv.alias),
-    content: argv.content,
-    dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
-    type: argv.type,
-    domainIds,
-  })
-}
-
-async function knowledgeCreateBody(argv: Record<string, unknown>, domainIds: number[]): Promise<Record<string, unknown>> {
-  const content = typeof argv.content === "string"
-    ? argv.content
-    : typeof argv.file === "string"
-      ? await Bun.file((await collectKnowledgeLocalFile(argv.file)).absolutePath).text()
-      : undefined
-  return mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
-    aliases: stringArray(argv.alias),
-    content,
-    dictionary: parseOptionalJsonObject(argv.dictionary as string | undefined, "--dictionary"),
-    type: argv.type,
-    domainIds,
-  })
 }
 
 function resolveKnowledgeFolderSortNodeIds(argv: Record<string, unknown>, format: string): number[] {
@@ -3593,104 +3562,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
       .command("knowledge", "Manage Analytics Agent knowledge", (knowledge) => {
         knowledge
           .command(
-            "list",
-            "List structured knowledge entries",
-            (y) =>
-              y
-                .option("keyword", { type: "string", describe: "Keyword for fuzzy search" })
-                .option("domain-id", { type: "number", describe: "Bound domain ID" })
-                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("page-num", { type: "number", describe: "Page number" })
-                .option("page-size", { type: "number", describe: "Page size" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge list", argv as Record<string, unknown>, ROUTES.knowledgeEntryList, {}, {
-                keyword: argv.keyword,
-                domainId: argv["domain-id"],
-                type: argv.type,
-                pageNum: argv["page-num"],
-                pageSize: argv["page-size"],
-              })
-            },
-          )
-          .command(
-            "get <knowledge-id>",
-            "Show structured knowledge detail",
-            (y) => y.positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge get", argv as Record<string, unknown>, ROUTES.knowledgeEntryDetail, {})
-            },
-          )
-          .command(
-            "create",
-            "Create structured knowledge",
-            (y) =>
-              y
-                .option("alias", { type: "string", array: true, describe: "Knowledge alias, can be repeated" })
-                .option("content", { type: "string", describe: "Text knowledge content" })
-                .option("file", { type: "string", describe: "Local file path to load as text knowledge content" })
-                .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
-                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Bound domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" })
-                .example("cz-cli analytics-agent knowledge create --domain-ids '[5]' --content \"hello\"", "如果只绑定一个域，就这样写。")
-                .example("cz-cli analytics-agent knowledge create --domain-ids '[5,6]' --content \"hello\"", "如果要同时绑定多个域，就这样写。"),
-            async (argv) => {
-              const type = typeof argv.type === "string" ? argv.type : "text"
-              const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              if (type === "dictionary" && !argv.dictionary) {
-                handledError("USAGE_ERROR", "dictionary knowledge requires --dictionary", { format })
-              }
-              if (type !== "dictionary" && !argv.content && !argv.file && !argv.dictionary) {
-                handledError("USAGE_ERROR", "text knowledge requires --content or --file", { format })
-              }
-              let body: Record<string, unknown>
-              try {
-                body = await knowledgeCreateBody(argv as Record<string, unknown>, domainIds)
-              } catch (err) {
-                handledError("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                  format,
-                })
-              }
-              await executeAnalyticsCommand("analytics-agent knowledge create", argv as Record<string, unknown>, ROUTES.knowledgeEntryCreate, body)
-            },
-          )
-          .command(
-            "update <knowledge-id>",
-            "Update structured knowledge",
-            (y) =>
-              y
-                .positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" })
-                .option("alias", { type: "string", array: true, describe: "Knowledge alias, can be repeated" })
-                .option("content", { type: "string", describe: "Text knowledge content" })
-                .option("dictionary", { type: "string", describe: "Dictionary JSON object" })
-                .option("type", { type: "string", choices: ["text", "dictionary"], describe: "Knowledge type" })
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Bound domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" })
-                .example("cz-cli analytics-agent knowledge update 42 --domain-ids '[5]' --content \"hello\"", "如果只绑定一个域，就这样写。")
-                .example("cz-cli analytics-agent knowledge update 42 --domain-ids '[5,6]' --content \"hello\"", "如果要同时绑定多个域，就这样写。"),
-            async (argv) => {
-              const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              await executeAnalyticsCommand(
-                "analytics-agent knowledge update",
-                argv as Record<string, unknown>,
-                ROUTES.knowledgeEntryUpdate,
-                knowledgeEntryBody(argv as Record<string, unknown>, domainIds),
-              )
-            },
-          )
-          .command(
-            "delete <knowledge-id>",
-            "Delete structured knowledge",
-            (y) => y.positional("knowledge-id", { type: "number", demandOption: true, describe: "Knowledge ID" }),
-            async (argv) => {
-              await executeAnalyticsCommand("analytics-agent knowledge delete", argv as Record<string, unknown>, ROUTES.knowledgeEntryDelete, {})
-            },
-          )
-          .command(
             "space",
-            "Manage knowledge spaces",
+            "Manage document knowledge spaces (the knowledge-base mechanism; create a space, then upload files)",
             (space) => {
               space
                 .command(
@@ -3705,13 +3578,14 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 )
                 .command(
                   "create",
-                  "Create a knowledge space",
+                  "Create a document knowledge space for files; use knowledge file upload to add documents",
                   (y) =>
                     y
                       .option("name", { type: "string", demandOption: true, describe: "Space name" })
                       .option("description", { type: "string", describe: "Space description" })
                       .option("ocr-model-identifier", { type: "string", describe: "OCR model identifier" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                      .option("body", { type: "string", describe: "Full request body as JSON object" })
+                      .epilogue("This is the document knowledge-base path. After creating the space, upload files with knowledge file upload <space-id> <local-file>."),
                   async (argv) => {
                     const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
                       name: argv.name,
@@ -3956,7 +3830,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 )
                 .command(
                   "upload <space-id> <local-file>",
-                  "Upload one local file into a knowledge space",
+                  "Upload one local file into a document knowledge space (use this path for the domain knowledge base)",
                   (y) =>
                     y
                       .positional("space-id", { type: "number", demandOption: true, describe: "Knowledge space ID" })
@@ -3965,7 +3839,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .option("name", { type: "string", describe: "Remote file name override" })
                       .option("domain-ids", { type: "string", describe: "Bound domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                       .example("cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-ids '[5]'", "如果只绑定一个域，就这样写。")
-                      .example("cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-ids '[5,6]'", "如果要同时绑定多个域，就这样写。"),
+                      .example("cz-cli analytics-agent knowledge file upload 1 ./a.txt --domain-ids '[5,6]'", "如果要同时绑定多个域，就这样写。")
+                      .epilogue("Use this command for documents that should appear in the knowledge space/domain knowledge base."),
                   async (argv) => {
                     await executeKnowledgeFileUploadCommand(argv as Record<string, unknown>)
                   },
@@ -4096,7 +3971,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .option("session-id", { type: "number", describe: "Session ID (creates a new session if omitted)" })
-                .option("domain-id", { type: "number", describe: "Domain ID (required when --session-id is omitted)" })
+                .option("domain-id", { type: "number", demandOption: true, describe: "Required domain ID for the query" })
                 .option("msg", { type: "string", describe: "Question text" })
                 .option("model-name", { type: "string", describe: "Model name" })
                 .option("interval-ms", { type: "number", describe: "Polling interval in milliseconds" })
@@ -4104,13 +3979,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("summary", { type: "boolean", default: false, describe: "Show the final answer instead of the full poll payload" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .example("cz-cli analytics-agent session run --domain-id 195 --msg \"Q1\"", "Ask a question and auto-create the session when needed")
-                .epilogue(SESSION_SERIAL_CONCURRENCY_WARNING)
-                .check((argv) => {
-                  if (argv["session-id"] === undefined && argv["domain-id"] === undefined) {
-                    throw new Error("--domain-id is required when --session-id is not provided")
-                  }
-                  return true
-                }),
+                .epilogue(SESSION_SERIAL_CONCURRENCY_WARNING),
             async (argv) => {
               const argvRec = argv as Record<string, unknown>
               const format = typeof argv.format === "string" ? argv.format : "json"

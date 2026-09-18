@@ -93,131 +93,16 @@ describe("analytics-agent knowledge domain-ids conversion", () => {
     process.exitCode = 0
   })
 
-  test("knowledge create maps --domain-ids into domainIds", async () => {
-    let requestBody: Record<string, unknown> | undefined
-
-    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
-      return jsonResponse({ success: true, data: "123" })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "knowledge",
-      "create",
-      "--domain-ids",
-      "[5]",
-      "--content",
-      "hello",
-      "--body",
-      JSON.stringify({
-        aliases: ["body-alias"],
-        domainIds: [9],
-      }),
-    ])
-
-    expect(result.exitCode).toBe(0)
-    expect(requestBody).toMatchObject({
-      aliases: ["body-alias"],
-      content: "hello",
-      domainIds: [5],
-    })
-  })
-
-  test("knowledge create maps multiple --domain-ids into domainIds", async () => {
-    let requestBody: Record<string, unknown> | undefined
-
-    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
-      return jsonResponse({ success: true, data: "123" })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "knowledge",
-      "create",
-      "--domain-ids",
-      "[5,6]",
-      "--content",
-      "hello",
-      "--body",
-      JSON.stringify({ domainIds: [9] }),
-    ])
-
-    expect(result.exitCode).toBe(0)
-    expect(requestBody).toMatchObject({
-      content: "hello",
-      domainIds: [5, 6],
-    })
-  })
-
-  test("knowledge update maps --domain-ids into domainIds", async () => {
-    let requestBody: Record<string, unknown> | undefined
-
-    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
-      return jsonResponse({ success: true, data: "123" })
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "knowledge",
-      "update",
-      "42",
-      "--domain-ids",
-      "[5]",
-      "--body",
-      JSON.stringify({
-        content: "body-content",
-        domainIds: [9],
-      }),
-    ])
-
-    expect(result.exitCode).toBe(0)
-    expect(requestBody).toMatchObject({
-      content: "body-content",
-      domainIds: [5],
-    })
-  })
-
-  test("knowledge create rejects missing --domain-ids", async () => {
+  test("structured knowledge entry commands are not available", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("fetch should not be called")
     }) as typeof fetch
 
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "knowledge",
-      "create",
-      "--content",
-      "hello",
-    ])
-
-    expect(result.exitCode).toBe(2)
-    const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("domain-ids")
-  })
-
-  test("knowledge create rejects invalid --domain-ids before sending request", async () => {
-    globalThis.fetch = mock(async () => {
-      throw new Error("fetch should not be called")
-    }) as typeof fetch
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "knowledge",
-      "create",
-      "--domain-ids",
-      "abc",
-      "--content",
-      "hello",
-    ])
-
-    expect(result.exitCode).toBe(2)
-    const parsed = JSON.parse(result.output.trim()) as Record<string, { code: string; message: string }>
-    expect(parsed.error.code).toBe("USAGE_ERROR")
-    expect(parsed.error.message).toContain("--domain-ids")
+    for (const command of ["list", "get", "create", "update", "delete"]) {
+      const result = await runAnalyticsCli(["analytics-agent", "knowledge", command])
+      expect(result.exitCode).toBe(2)
+      expect(result.output).toContain(`Unknown command: ${command}`)
+    }
   })
 
   test("metric create maps --domain-ids into domainIds", async () => {

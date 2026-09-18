@@ -185,22 +185,16 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectCommands: ["Examples:", "--analysis-name total-sales", "--domain-ids '[5,6]'", "如果只校验一个域，就这样写。", "如果要同时校验多个域，就这样写。"],
   },
   {
-    args: ["analytics-agent", "knowledge", "create", "--help"],
-    expectHeader: "cz-cli analytics-agent knowledge create",
-    expectOptions: ["--domain-ids", "--content"],
-    expectCommands: ["Examples:", "--domain-ids '[5]' --content \"hello\"", "--domain-ids '[5,6]' --content \"hello\"", "如果只绑定一个域，就这样写。", "如果要同时绑定多个域，就这样写。"],
-  },
-  {
-    args: ["analytics-agent", "knowledge", "update", "--help"],
-    expectHeader: "cz-cli analytics-agent knowledge update",
-    expectOptions: ["--domain-ids", "--content"],
-    expectCommands: ["Examples:", "42 --domain-ids '[5]' --content", "42 --domain-ids '[5,6]' --content", "如果只绑定一个域，就这样写。", "如果要同时绑定多个域，就这样写。"],
+    args: ["analytics-agent", "knowledge", "--help"],
+    expectHeader: "cz-cli analytics-agent knowledge",
+    expectCommands: ["space", "folder", "file"],
+    forbid: ["  list  ", "  get  ", "  create  ", "  update  ", "  delete  "],
   },
   {
     args: ["analytics-agent", "knowledge", "file", "upload", "--help"],
     expectHeader: "cz-cli analytics-agent knowledge file upload",
     expectOptions: ["--domain-ids", "--target-path", "--name"],
-    expectCommands: ["Examples:", "1 ./a.txt --domain-ids '[5]'", "1 ./a.txt --domain-ids '[5,6]'", "如果只绑定一个域，就这样写。", "如果要同时绑定多个域，就这样写。"],
+    expectCommands: ["Examples:", "1 ./a.txt --domain-ids '[5]'", "1 ./a.txt --domain-ids '[5,6]'", "如果只绑定一个域，就这样写。", "如果要同时绑定多个域，就这样写。", "domain knowledge base"],
   },
   {
     args: ["analytics-agent", "session", "list", "--help"],
