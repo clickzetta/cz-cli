@@ -93,14 +93,10 @@ export const agentGatewayHelpCases: HelpCase[] = [
     ],
   },
   {
-    args: ["analytics-agent", "domain", "joins", "result", "--help"],
-    expectHeader: "cz-cli analytics-agent domain joins result",
-    expectOptions: ["--task-id"],
-    expectText: [
-      "never mix a datasetId",
-      "Copy tableName exactly as returned",
-      "v_gpt_.",
-    ],
+    args: ["analytics-agent", "domain", "joins", "--help"],
+    expectHeader: "cz-cli analytics-agent domain joins",
+    expectCommands: ["list", "apply"],
+    forbid: ["discover", "result"],
   },
   {
     args: ["analytics-agent", "domain", "joins", "apply", "--help"],
@@ -189,6 +185,13 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectHeader: "cz-cli analytics-agent knowledge",
     expectCommands: ["space", "folder", "file"],
     forbid: ["  list  ", "  get  ", "  create  ", "  update  ", "  delete  "],
+  },
+  {
+    args: ["analytics-agent", "knowledge", "space", "create", "--help"],
+    expectHeader: "cz-cli analytics-agent knowledge space create",
+    expectOptions: ["--name", "--description", "--ocr-model-identifier"],
+    expectText: ["Knowledge spaces cannot be bound to domains", "Domain bindings belong to nodes", "file upload <space-id> <local-file>", "--domain-ids '[5]'"],
+    forbid: ["--body"],
   },
   {
     args: ["analytics-agent", "knowledge", "file", "upload", "--help"],

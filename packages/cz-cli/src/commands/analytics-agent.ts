@@ -52,8 +52,6 @@ const ROUTES = {
   domainTableAdd: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables` },
   domainTableRemove: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/tables/${encodePath(argv["table-id"])}` },
   domainJoinList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins` },
-  domainJoinDiscover: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/discover` },
-  domainJoinResult: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/joins/tasks/${encodePath(argv["task-id"])}` },
   domainJoinApply: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/domains/${encodePath(argv["domain-id"])}/joins/apply` },
   tableSemanticsList: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics` },
   tableSemanticsGet: { method: "GET", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/datasets/${encodePath(argv["dataset-id"])}/semantics/${encodePath(argv["attr-id"])}` },
@@ -2590,8 +2588,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               return commandGroup(table, "analytics-agent domain table")
             },
           )
-          .command("joins", "Discover and apply domain join relations", (joins) => {
+          .command("joins", "Manage domain join relations", (joins) => {
             joins
+              .wrap(100)
               .command(
                 "list",
                 "List join relations saved to a domain",
@@ -2609,107 +2608,27 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 },
               )
               .command(
-                "discover",
-                "Start async join discovery for a domain (step 1 of discover→result→apply flow)",
-                (y) =>
-                  y
-                    .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
-                    .epilogue([
-                      "Workflow: discover → result → apply",
-                      "  1. joins discover --domain-id 27          # returns taskId",
-                      "  2. joins result --task-id <taskId>         # poll until status=SUCCESS",
-                      "  3. joins apply --domain-id 27 --join <...> # apply selected joins",
-                      "",
-                      "Example:",
-                      "  cz-cli analytics-agent domain joins discover --domain-id 27",
-                    ].join("\n")),
-                async (argv) => {
-                  const format = typeof argv.format === "string" ? argv.format : "json"
-                  const t0 = Date.now()
-                  try {
-                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
-                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinDiscover, {}, {}, ctx)
-                    const bizErr = extractBusinessError(payload)
-                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    const data = unwrapResponse(payload) as Record<string, unknown> | null
-                    success(data ? { taskId: data.taskId, status: data.status } : {}, { format, timeMs: Date.now() - t0 })
-                  } catch (err) {
-                    if (isHandledCliError(err)) return
-                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
-                    })
-                  }
-                },
-              )
-              .command(
-                "result",
-                "Poll the result of a join discovery task (step 2 of discover→result→apply flow)",
-                (y) =>
-                  y
-                    .option("task-id", { type: "string", demandOption: true, describe: "Task ID returned by 'joins discover'" })
-                    .epilogue([
-                      "Poll until status=SUCCESS, then pass the returned joins to 'joins apply'.",
-                      "Copy every returned join as one record: never mix a datasetId from one join with a tableName from another.",
-                      "Copy tableName exactly as returned. Do not construct it or assume it contains v_gpt_.",
-                      "",
-                      "Example:",
-                      "  cz-cli analytics-agent domain joins result --task-id abc-123",
-                    ].join("\n")),
-                async (argv) => {
-                  const format = typeof argv.format === "string" ? argv.format : "json"
-                  const t0 = Date.now()
-                  try {
-                    const ctx = await resolveAnalyticsContext(argv as Record<string, unknown>)
-                    const payload = await requestAnalytics(argv as Record<string, unknown>, ROUTES.domainJoinResult, {}, {}, ctx)
-                    const bizErr = extractBusinessError(payload)
-                    if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
-                    const data = unwrapResponse(payload) as Record<string, unknown> | null
-                    if (!data) { success({}, { format, timeMs: Date.now() - t0 }); return }
-                    const resultJoins = (data.joins as Record<string, unknown>[] | null) ?? []
-                    success({
-                      taskId: data.taskId,
-                      status: data.status,
-                      joinCount: data.joinCount ?? resultJoins.length,
-                      joins: resultJoins.map((j) => ({
-                        datasetId: j.datasetId,
-                        tableName: j.tableName,
-                        attrCode: j.attrCode,
-                        joinDatasetId: j.joinDatasetId,
-                        joinTableName: j.joinTableName,
-                        joinAttrCode: j.joinAttrCode,
-                        relation: j.relation,
-                      })),
-                    }, { format, timeMs: Date.now() - t0 })
-                  } catch (err) {
-                    if (isHandledCliError(err)) return
-                    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
-                      format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
-                    })
-                  }
-                },
-              )
-              .command(
                 "apply",
-                "Apply join relations to a domain (step 3 of discover→result→apply flow)",
+                "Apply joins",
                 (y) =>
                   y.option("join", {
                     type: "string",
                     demandOption: true,
                     describe:
-                      "Join in format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>. Copy each ID/name pair exactly from API output; never infer tableName. relation: n:1 | 1:1 | 1:n. Repeat flag for multiple joins.",
+                      "Join format: ID:TABLE.COLUMN=JOIN_ID:JOIN_TABLE.JOIN_COLUMN@RELATION. Read ID/table pairs from 'domain detail <domainId> --with-tables'. Never infer table names. Relation: n:1, 1:1, or 1:n. May be repeated.",
                   })
                   .option("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
                   .epilogue([
                     "HARD RULES:",
-                    "  1. Poll 'joins result' until status=SUCCESS and copy one complete returned join.",
-                    "  2. Run 'domain detail <domainId> --with-tables' and verify both ID/name pairs:",
+                    "  1. Run 'domain detail <domainId> --with-tables' and verify both ID/name pairs:",
                     "       tables[datasetId].tableName === tableName",
                     "       tables[joinDatasetId].tableName === joinTableName",
-                    "  3. Treat each datasetId/tableName pair as atomic; never mix values from different records.",
-                    "  4. Copy tableName exactly. Never use physicalTable/displayName, add v_gpt_, or reconstruct the name.",
-                    "  5. If either pair cannot be verified, do not apply and do not retry with guessed values.",
+                    "  2. Treat each datasetId/tableName pair as atomic; never mix values from different records.",
+                    "  3. Copy tableName exactly. Never use physicalTable/displayName or reconstruct it.",
+                    "     Never add v_gpt_.",
+                    "  4. If either pair cannot be verified, do not apply and do not retry with guessed values.",
                     "",
-                    "Example (replace every value with one verified 'joins result' record):",
+                    "Example (replace every value with one verified table/column pair):",
                     "  cz-cli analytics-agent domain joins apply --domain-id 27 \\",
                     "    --join '990:ws.retail.v_gpt_table1.id=991:ws.retail.v_gpt_table2.order_id@n:1'",
                     "  # Verify with:",
@@ -3584,15 +3503,13 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       .option("name", { type: "string", demandOption: true, describe: "Space name" })
                       .option("description", { type: "string", describe: "Space description" })
                       .option("ocr-model-identifier", { type: "string", describe: "OCR model identifier" })
-                      .option("body", { type: "string", describe: "Full request body as JSON object" })
-                      .epilogue("This is the document knowledge-base path. After creating the space, upload files with knowledge file upload <space-id> <local-file>."),
+                      .epilogue("Knowledge spaces cannot be bound to domains. Domain bindings belong to nodes. After creating the space, bind a file node while uploading it with knowledge file upload <space-id> <local-file> --domain-ids '[5]'."),
                   async (argv) => {
-                    const body = mergeBody(parseJsonObject(argv.body as string | undefined, "--body"), {
+                    await executeAnalyticsCommand("analytics-agent knowledge space create", argv as Record<string, unknown>, ROUTES.knowledgeSpaceCreate, {
                       name: argv.name,
                       description: argv.description,
                       ocrModelIdentifier: argv["ocr-model-identifier"],
                     })
-                    await executeAnalyticsCommand("analytics-agent knowledge space create", argv as Record<string, unknown>, ROUTES.knowledgeSpaceCreate, body)
                   },
                 )
                 .command(

@@ -74,32 +74,6 @@ describe("analytics-agent domain joins", () => {
     process.exitCode = 0
   })
 
-  test("discover calls the open API with tenantId query and domainId path", async () => {
-    let requestUrl = ""
-    onFetch({
-      match: (url) => url.includes("/joins/discover"),
-      respond: (url) => {
-        requestUrl = url
-        return { success: true, data: { taskId: "task-1", status: "RUNNING", joinCount: 0, joins: [] } }
-      },
-    })
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "joins",
-      "discover",
-      "--domain-id",
-      "195",
-    ])
-
-    expect(result.exitCode).toBe(0)
-    const url = new URL(requestUrl)
-    expect(url.pathname).toBe("/open/api/v1/analytics-agent/domains/195/joins/discover")
-    expect(url.searchParams.get("tenantId")).toBe("55")
-    expect(parseData(result.output)).toEqual({ taskId: "task-1", status: "RUNNING" })
-  })
-
   test("reads quote-heavy domain prompts from --prompt-file without shell parsing", async () => {
     const promptPath = join(process.env.CLICKZETTA_TEST_HOME!, "domain-prompt.md")
     const prompt = `Use the user's exact "display name".\nNever emit \`raw SQL\`.`
@@ -152,55 +126,6 @@ describe("analytics-agent domain joins", () => {
     expect(result.exitCode).toBe(1)
     expect(result.output).toContain("DOMAIN_NOT_FOUND")
     expect(sessionListCalled).toBe(false)
-  })
-
-  test("result outputs join details needed by apply", async () => {
-    onFetch({
-      match: (url) => url.includes("/joins/tasks/"),
-      respond: () => ({
-        success: true,
-        data: {
-          taskId: "task-1",
-          status: "SUCCESS",
-          joinCount: 1,
-          joins: [{
-            datasetId: 101,
-            tableName: "orders",
-            attrCode: "user_id",
-            joinDatasetId: 202,
-            joinTableName: "users",
-            joinAttrCode: "id",
-            relation: "n:1",
-            ignored: "not returned",
-          }],
-        },
-      }),
-    })
-
-    const result = await runAnalyticsCli([
-      "analytics-agent",
-      "domain",
-      "joins",
-      "result",
-      "--task-id",
-      "task-1",
-    ])
-
-    expect(result.exitCode).toBe(0)
-    expect(parseData(result.output)).toEqual({
-      taskId: "task-1",
-      status: "SUCCESS",
-      joinCount: 1,
-      joins: [{
-        datasetId: 101,
-        tableName: "orders",
-        attrCode: "user_id",
-        joinDatasetId: 202,
-        joinTableName: "users",
-        joinAttrCode: "id",
-        relation: "n:1",
-      }],
-    })
   })
 
   test("apply parses --join into backend body and reports submittedCount", async () => {
