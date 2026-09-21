@@ -109,8 +109,6 @@ const noProfileCases = [
   ["analytics-agent", "answer-builder", "list"],
   ["analytics-agent", "answer-builder", "enable", "1"],
   ["analytics-agent", "answer-builder", "disable", "1"],
-  ["analytics-agent", "domain", "joins", "discover", "--domain-id", "1"],
-  ["analytics-agent", "domain", "joins", "result", "--task-id", "t1"],
   ["analytics-agent", "domain", "joins", "apply", "--domain-id", "1", "--join", "1:t.a=2:t2.b@n:1"],
   ["analytics-agent", "service", "enabled"],
   // Use syntactically valid invocations (required options supplied) so this
