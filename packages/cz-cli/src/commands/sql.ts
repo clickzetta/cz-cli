@@ -241,13 +241,35 @@ function resolveSql(argv: SqlArgs): string {
   //   positional > -e/--execute > -f/--file > --stdin
   // It used to read --file first, so `cz-cli sql "select 1" -f other.sql` silently
   // ran the file and ignored the statement the user typed.
-  if (argv.statement) return argv.statement
   // Operands after `--`: the escape hatch for a statement that starts with `-`.
   // yargs appends them to `_` after the command word, where no declared positional
   // picks them up — hence reading them here. Deliberately NOT via yargs'
   // `populate--`, which diverts them into `argv["--"]` for the WHOLE tree and would
   // stop `cz-cli profile create -- myname` from binding its positional.
   const operands = Array.isArray(argv._) ? argv._.slice(1).map(String) : []
+  // Both at once is contradictory input, and returning the positional silently threw
+  // the operands away: `cz-cli sql "SELECT 1 AS a" -- FROM t` submitted
+  // `SELECT 1 AS a` and exited 0, and `cz-cli sql SELECT -- 1 AS x FROM t` submitted
+  // bare `SELECT`. Either way the user got results for a statement they never wrote,
+  // with nothing on stdout to say so. `--` exists for a statement that STARTS with
+  // `-`, so it is the whole statement or none of it.
+  if (argv.statement && operands.length > 0) {
+    // handledError, not error(): error() only writes the envelope and sets exitCode,
+    // so execution would fall through and run the truncated statement anyway.
+    handledError(
+      "AMBIGUOUS_SQL",
+      `Got a SQL positional ("${argv.statement}") and operands after '--' ("${
+        operands.join(" ")
+      }"). Pass the statement once: quote it as a single argument, or put everything after '--'.`,
+      {
+        format: argv.format,
+        exitCode: 2,
+        aiMessage:
+          "The statement arrived in two pieces, so cz-cli cannot tell which one to run. Send the complete SQL as one quoted positional argument, or via -f/--stdin. Use '--' only for a statement that starts with '-', and then put the whole statement after it.",
+      },
+    )
+  }
+  if (argv.statement) return argv.statement
   if (operands.length > 0) return operands.join(" ")
   if (argv.execute) return argv.execute
   if (argv.file) {

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { coalesceJsonArrayOptionArgs } from "../src/cli.ts"
+import { coalesceJsonArrayOptionArgs, looksLikeShellSplitSql } from "../src/cli.ts"
 
 /**
  * Argument-surface hardening: one describe per defect, each named after what used
@@ -773,5 +773,49 @@ describe("second-round review fixes", () => {
     // main.ts and sql.ts both render ABORTED; they now use the same renderer.
     const main = await Bun.file(import.meta.dir + "/../src/main.ts").text()
     expect(main).toContain("renderErrorOutput({ error: { code: \"ABORTED\"")
+  })
+})
+
+describe("looksLikeShellSplitSql (unit)", () => {
+  const SPLIT = ["SELECT", "CASE", "WHEN", "c", "LIKE", "'%a%'", "THEN", "1", "ELSE", "2", "END", "FROM", "t"]
+  const SPLIT_MSG = "Unknown arguments: CASE, WHEN, c, LIKE, '%a%', THEN, 1, ELSE, 2, END, FROM, t"
+
+  test("fires for the plain split, however the flags are spelled", () => {
+    for (const args of [
+      ["sql", ...SPLIT, "--format", "json"],
+      ["sql", "--format", "json", ...SPLIT],
+      ["sql", "--format=json", ...SPLIT],
+      ["sql", "--limit", "10", ...SPLIT],
+      ["sql", "", ...SPLIT],
+    ]) {
+      expect(looksLikeShellSplitSql(args, SPLIT_MSG)).toBe(true)
+    }
+  })
+
+  test("a newline inside a fragment does not abandon the whole message", () => {
+    expect(looksLikeShellSplitSql(["sql", ...SPLIT], "Unknown arguments: CASE, WHEN\nc, LIKE, THEN, ELSE, END")).toBe(
+      true,
+    )
+  })
+
+  test("'sql' as an option value is not the sql command", () => {
+    expect(looksLikeShellSplitSql(["status", "--schema", "sql", "SELECT", "ON", "ALL"], "Unknown arguments: SELECT, ON, ALL")).toBe(false)
+    expect(looksLikeShellSplitSql(["--profile", "sql", "task", "list"], SPLIT_MSG)).toBe(false)
+  })
+
+  test("needs at least two keyword fragments", () => {
+    expect(looksLikeShellSplitSql(["sql", "SELECT 1", "FROM"], "Unknown argument: FROM")).toBe(false)
+    expect(looksLikeShellSplitSql(["sql", "SELECT 1", "FROM", "WHERE"], "Unknown arguments: FROM, WHERE")).toBe(true)
+  })
+
+  test("only reacts to yargs' unknown-argument message", () => {
+    expect(looksLikeShellSplitSql(["sql", ...SPLIT], "Not enough non-option arguments: got 0, need at least 1")).toBe(
+      false,
+    )
+    expect(looksLikeShellSplitSql(["sql", ...SPLIT], undefined)).toBe(false)
+  })
+
+  test("a statement that does not open with a SQL keyword is not SQL", () => {
+    expect(looksLikeShellSplitSql(["sql", "nonsense", "FROM", "WHERE"], "Unknown arguments: FROM, WHERE")).toBe(false)
   })
 })

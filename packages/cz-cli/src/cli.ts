@@ -109,6 +109,77 @@ function isClosedJson(text: string): boolean {
   return !inString && depth === 0
 }
 
+/** Globals that take no value, so the token after them is a positional, not their value. */
+const VALUELESS_GLOBAL_FLAGS = new Set(["debug", "d", "help", "h", "version", "v"])
+
+/**
+ * Index of the top-level command token, or -1.
+ *
+ * `args.find((a) => !a.startsWith("-"))` reads as "the first positional" and is
+ * wrong twice over: it returns a global's VALUE (`--schema sql task list` hands
+ * back "sql", `--schema tabel bogus` hands back "tabel"), and it returns an
+ * empty-string token, which forward.ts passes through verbatim by design. Only
+ * globals can precede the command, so KNOWN_GLOBAL_FLAGS is the complete set of
+ * value-takers to step over here. Mirrors run-cli.ts's subcommandIndex.
+ */
+function commandTokenIndex(args: string[]): number {
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]
+    if (!value) continue
+    if (value === "--") return -1
+    if (!value.startsWith("-")) return index
+    const flag = value.replace(/^-+/, "").split("=")[0]
+    if (!flag || value.includes("=") || VALUELESS_GLOBAL_FLAGS.has(flag)) continue
+    if (KNOWN_GLOBAL_FLAGS.includes(flag)) index++
+  }
+  return -1
+}
+
+/**
+ * Whether a `sql` usage error looks like the shell tore a quote-heavy statement
+ * into separate argv tokens.
+ *
+ * Deliberately a coarse heuristic, not a parser. The root cause is always
+ * caller-side: quotes or escapes the shell consumed before cz-cli ran. We do not
+ * try to reassemble the fragments or to prove they were once one statement — the
+ * fragments that arrive are not a reliable record of what was typed. Two
+ * consequences are accepted on purpose:
+ *   - It stays silent on shapes that carry only one bare keyword (`SELECT a, b, c
+ *     FROM t`). Catching those needs a 1-keyword threshold, which fires on almost
+ *     any stray positional.
+ *   - It fires on correctly quoted SQL followed by stray positionals (`sql
+ *     "SELECT 1" ON ALL`). The advice still resolves that case, so a false
+ *     positive costs wording, not correctness.
+ * The statement is located by SQL shape rather than by position because `sql`
+ * declares ~18 local flags; scanning for the first SQL-looking token keeps this
+ * out of sync with none of them.
+ */
+export function looksLikeShellSplitSql(args: string[], message: string | undefined): boolean {
+  const commandIndex = commandTokenIndex(args)
+  if (commandIndex < 0 || args[commandIndex] !== "sql") return false
+  const statement = args
+    .slice(commandIndex + 1)
+    .find((arg) =>
+      arg && !arg.startsWith("-") &&
+      /^(?:SELECT|WITH|SHOW|DESC|DESCRIBE|VALUES|EXPLAIN|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP)\b/i.test(arg)
+    )
+  if (!statement) return false
+  // [\s\S] rather than `.`: a fragment can carry an embedded newline when multi-line
+  // SQL loses only some of its quotes, and `.` stopping at that newline (with `$`
+  // unable to match mid-string) abandoned detection for the whole message.
+  const unknown = message?.match(/^Unknown arguments?: ([\s\S]+)$/)?.[1]
+  if (!unknown) return false
+  const keywords = unknown
+    .split(",")
+    .map((fragment) => fragment.trim())
+    .filter((fragment) =>
+      /^(?:SELECT|FROM|WHERE|CASE|WHEN|THEN|ELSE|END|LIKE|ILIKE|UNION|ALL|JOIN|LEFT|RIGHT|FULL|INNER|OUTER|ON|AND|OR|GROUP|ORDER|BY|HAVING|LIMIT|OFFSET|AS|WITH|DISTINCT)$/i.test(
+        fragment,
+      )
+    )
+  return keywords.length >= 2
+}
+
 export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
   const result: string[] = []
   for (let i = 0; i < args.length; i++) {
@@ -321,7 +392,12 @@ export function createCli(args: string[]) {
         const hit = suggestClosest(badToken!, KNOWN_FLAGS.filter((f) => f.length > 1))
         if (hit) suggestion = `--${hit}`
       } else if (!selfReported) {
-        const topLevelCmd = args.find((a) => !a.startsWith("-"))
+        // commandTokenIndex, not args.find(): a global's VALUE is not a command, so
+        // `--schema tabel bogus` must not suggest 'table' for a token nobody typed
+        // as a command — and must not let that phantom suggestion suppress the
+        // shell-split advice below.
+        const commandIndex = commandTokenIndex(args)
+        const topLevelCmd = commandIndex < 0 ? undefined : args[commandIndex]
         if (topLevelCmd !== undefined && !knownCommandSet.has(topLevelCmd)) {
           badToken = topLevelCmd
           suggestion = suggestClosest(topLevelCmd, KNOWN_COMMANDS)
@@ -331,9 +407,38 @@ export function createCli(args: string[]) {
       const baseMessage = (msg && msg.trim() !== "")
         ? msg
         : (badToken !== undefined ? `Unknown argument: ${badToken}` : "Unknown argument")
-      const message = suggestion ? `${baseMessage}. Did you mean '${suggestion}'?` : baseMessage
-      const aiMessage = suggestion
-        ? `Unknown ${isFlag ? "argument" : "command"} '${isFlag ? `--${badToken}` : badToken}'. Did you mean '${suggestion}'? Run cz-cli --help to see all available commands.`
+      // Gated on selfReported, not on !suggestion: a flag typo and split SQL
+      // routinely arrive together (`sql SELECT CASE … END -formt x`), and showing
+      // only the typo costs the caller a second round trip on the same split. The
+      // selfReported gate matches lines 383 and 391 — a UsageError already carries
+      // OUR complete message and must not get advice appended.
+      const shellSplitSql = !selfReported && looksLikeShellSplitSql(args, msg)
+      const message = [
+        baseMessage,
+        suggestion ? `. Did you mean '${suggestion}'?` : "",
+        shellSplitSql
+          ? ". The SQL appears to have been split by the shell — quote the whole statement, or put it in a file and run `cz-cli sql -f /tmp/query.sql` (or `cz-cli sql --stdin < /tmp/query.sql`)."
+          : "",
+      ].join("")
+      // Says "rewrite", not "reconstruct": the fragments that survived the shell are
+      // not a faithful copy of the statement, so telling an agent to reassemble them
+      // while also forbidding it is a contradiction it cannot satisfy. The allowlist
+      // includes write verbs, hence the --write note.
+      const aiParts: string[] = []
+      if (suggestion) {
+        aiParts.push(
+          `Unknown ${isFlag ? "argument" : "command"} '${isFlag ? `--${badToken}` : badToken}'. Did you mean '${suggestion}'?`,
+        )
+      }
+      if (shellSplitSql) {
+        aiParts.push(
+          "The shell split a quote-heavy SQL statement into multiple arguments, so the statement cz-cli received is incomplete. Rewrite the SQL you intended as one complete statement into /tmp/query.sql, then run `cz-cli sql -f /tmp/query.sql` (add --write if it modifies data) or `cz-cli sql --stdin < /tmp/query.sql`. Do not retry the same inline command.",
+        )
+      } else if (suggestion) {
+        aiParts.push("Run cz-cli --help to see all available commands.")
+      }
+      const aiMessage = aiParts.length > 0
+        ? aiParts.join(" ")
         : "Run the command with --help to see available options and usage."
 
       const outputArgs = parseOutputArgs(args)

@@ -8,7 +8,15 @@ const cases = {
     "select * from t",
     "VALUES (1), (2)",
     "SHOW TABLES",
+    // Every documented SHOW CREATE object type, so narrowing the prefix strip back
+    // to an allowlist cannot silently drop one of them.
     "SHOW CREATE TABLE t",
+    "SHOW CREATE VIEW v",
+    "SHOW CREATE MATERIALIZED VIEW mv",
+    "SHOW CREATE DYNAMIC TABLE dt",
+    "SHOW CREATE EXTERNAL TABLE et",
+    "SHOW CREATE PIPE p",
+    "SHOW CREATE SEMANTIC VIEW sv",
     "SHOW DYNAMIC TABLE REFRESH HISTORY WHERE name='dt' LIMIT 10",
     "DESC EXTENDED t",
     "DESCRIBE TABLE t",
@@ -21,6 +29,12 @@ const cases = {
     "WITH x AS (SELECT 1), y AS (SELECT * FROM x) SELECT * FROM y",
     "EXPLAIN SELECT 1",
     "EXPLAIN EXTENDED WITH x AS (SELECT 1) SELECT * FROM x",
+    // EXPLAIN is unwrapped before the WRITE scan, so introspection reads the same
+    // wrapped as unwrapped. These demanded write approval when the unwrap ran last.
+    "EXPLAIN SHOW CREATE TABLE t",
+    "EXPLAIN SHOW CREATE VIEW v",
+    "EXPLAIN EXTENDED SHOW CREATE PIPE p",
+    "EXPLAIN SHOW DYNAMIC TABLE REFRESH HISTORY",
     "SELECT CASE WHEN a = 1 THEN 'delete' ELSE 'update' END FROM t",
     "SELECT 'DROP TABLE t; DELETE FROM t', `update`, \"create\" FROM t",
     "SELECT 'it''s a delete', 'escaped\\\' quote; DROP TABLE t'",
@@ -57,6 +71,14 @@ const cases = {
     "WITH x AS (DELETE FROM t) SELECT * FROM x",
     "SELECT 1; DROP TABLE t",
     "SHOW CREATE TABLE t; DROP TABLE t",
+    "SHOW CREATE VIEW v; DROP VIEW v",
+    // A write verb after the stripped prefix, in a SINGLE statement: pins that the
+    // open-ended SHOW CREATE strip consumes only the literal prefix.
+    "SHOW CREATE OR REPLACE VIEW v",
+    // The two prefix rules are alternatives: only `^SHOW CREATE` applies here, so the
+    // REFRESH survives. Chaining the rules collapsed this to "SHOW HISTORY" and lost
+    // it. `SHOW CREATE DYNAMIC TABLE dt` (no REFRESH HISTORY) stays readonly above.
+    "SHOW CREATE DYNAMIC TABLE REFRESH HISTORY",
     "SHOW DYNAMIC TABLE REFRESH HISTORY; DELETE FROM t",
     "SELECT drop FROM t",
     "SELECT * FROM delete",
