@@ -19,21 +19,6 @@ import { redactSql } from "../../logger.js"
 const tracer = trace.getTracer("opencode")
 
 /**
- * Cap for the two attributes that carry tool content. A whole-file `read` output or a
- * long `bash` transcript otherwise becomes one attribute, and collectors commonly drop or
- * truncate a span past their attribute-size limit — losing the span, not just the text.
- * Upstream truncates tool output for the model in the same spirit (message-v2.ts:51).
- */
-const CONTENT_MAX_CHARS = 8_000
-
-/**
- * Prompt and completion content gets the limit the pre-rebaseline handler used, 32KB, not
- * the tool cap above: an input-messages attribute is a whole conversation and 8k would
- * truncate almost all of it. Collectors reject well before this, hence the cap at all.
- */
-const PROMPT_MAX_CHARS = 32 * 1024
-
-/**
  * Tool and prompt content goes through the redactor this repo already has —
  * `isSensitiveKey` and `redactSql`, the predicates the CLI's argv telemetry uses, which
  * exist because plaintext credentials reached `_positional` once already.
@@ -70,35 +55,23 @@ function redactText(value: string): string {
  * Depth- and cycle-guarded: this walk runs before `safeStringify`, so a self-referential
  * payload would overflow the stack where `safeStringify`'s own catch could not absorb it.
  */
-function redactDeep(value: unknown, limit: number, depth = 0, seen = new WeakSet<object>()): unknown {
-  // Truncated at the leaf, before redaction: a `write` body or a `read` result is where the
-  // large payloads are, and redacting text that the cap is about to discard is pure work on
-  // the event-bus path.
-  if (typeof value === "string") return redactText(capTo(value, limit))
+function redactDeep(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (typeof value === "string") return redactText(value)
   if (!value || typeof value !== "object") return value
   if (depth >= 12) return "<redacted:too-deep>"
   if (seen.has(value)) return "<redacted:cycle>"
   seen.add(value)
-  if (Array.isArray(value)) return value.map((item) => redactDeep(item, limit, depth + 1, seen))
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item, depth + 1, seen))
   const out: Record<string, unknown> = {}
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    out[key] = isSensitiveKey(key) ? "<redacted>" : redactDeep(inner, limit, depth + 1, seen)
+    out[key] = isSensitiveKey(key) ? "<redacted>" : redactDeep(inner, depth + 1, seen)
   }
   return out
 }
 
-function capTo(text: string, limit: number): string {
-  if (text.length <= limit) return text
-  return `${text.slice(0, limit)}\n[truncated ${text.length - limit} chars]`
-}
-
-function cap(text: string): string {
-  return capTo(text, CONTENT_MAX_CHARS)
-}
-
-/** Prompt/completion content: redacted like tool content, capped at the historical limit. */
+/** Preserve complete, valid JSON so long histories cannot hide the latest user input. */
 function promptAttr(value: unknown): string {
-  return capTo(safeStringify(redactDeep(value, PROMPT_MAX_CHARS)), PROMPT_MAX_CHARS)
+  return safeStringify(redactDeep(value))
 }
 
 function safeStringify(value: unknown): string {
@@ -384,6 +357,9 @@ function discardUnsettledTools(sessionID: string) {
 function endTurn(sessionID: string) {
   if (!sessionID) return
   liveTurns.delete(sessionID)
+  // Spans own their captured attributes; the next turn's hooks repopulate these caches.
+  sessionInput.delete(sessionID)
+  sessionSystem.delete(sessionID)
   for (const [key, entry] of stepSpans) {
     if (entry.sessionID !== sessionID) continue
     entry.span.end()
@@ -797,7 +773,7 @@ export function handleEvent(event: SubscribedEvent) {
           if (!settled) {
             const args =
               _recordContent && state.input != null
-                ? cap(safeStringify(redactDeep(state.input, CONTENT_MAX_CHARS)))
+                ? safeStringify(redactDeep(state.input))
                 : undefined
             const open = toolSpans.get(key)
             if (open) {
@@ -843,10 +819,7 @@ export function handleEvent(event: SubscribedEvent) {
               entry.span.setStatus({ code: SpanStatusCode.ERROR, message })
               entry.span.setAttribute("error.message", message)
             } else if (_recordContent && state.output) {
-              entry.span.setAttribute(
-                "gen_ai.tool.call.result",
-                cap(redactText(capTo(String(state.output), CONTENT_MAX_CHARS))),
-              )
+              entry.span.setAttribute("gen_ai.tool.call.result", redactText(String(state.output)))
             }
             entry.span.end()
             toolSpans.delete(key)
