@@ -82,6 +82,7 @@ import {
   FILE_TYPE_TO_TASK_TYPE,
   INTEGRATION_FILE_TYPES,
   SCRIPT_FILE_TYPES,
+  TASK_EDIT_STATE_CLI_NAMES,
   UI_ONLY_FILE_TYPES,
   UI_ONLY_SYNC_FILE_TYPES,
   addMethodName,
@@ -1220,7 +1221,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
     yargs
       .command(
         "list",
-        "List tasks. Use --type, --like, --folder to filter. Shows task_id, task_name, task_type, task_edit_state (10=draft, 20=published, 100=offline).",
+        "List tasks. Use --type, --like, --folder to filter. Shows task_id, task_name, task_type, task_edit_state (10=draft, 20=wait_for_publish, 80=modified_after_publish, 100=published).",
         (y) =>
           y
             .option("page", { type: "number", default: 1 })
@@ -4219,8 +4220,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("type", { type: "string", describe: "Task type filter: SQL, PYTHON, SHELL, JDBC, etc." })
             .option("status", {
               type: "string",
-              choices: ["draft", "published", "offline"],
-              describe: "Task status filter",
+              choices: Object.values(TASK_EDIT_STATE_CLI_NAMES),
+              describe: "Task edit state filter",
             })
             .option("folder", { type: "string", describe: "Filter by folder name or ID (searches within this folder)" })
             .option("owner", { type: "string", describe: "Filter by owner username (fuzzy match)" })
@@ -4236,12 +4237,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
           try {
             const sc = await ctx(argv)
             const fileType = argv.type ? String(parseTaskType(argv.type as string)) : undefined
-            const STATUS_CODE: Record<string, number> = {
-              draft: StudioTaskEditState.WaitForSave,
-              published: StudioTaskEditState.WaitForPublish,
-              offline: StudioTaskEditState.Published,
-            }
-            const statusFilter = argv.status ? STATUS_CODE[argv.status as string] : undefined
             const ownerFilter = (argv.owner as string | undefined)?.toLowerCase()
             const sortBy = (argv.sort as string) ?? "last_edit"
             const limit = argv.limit as number
@@ -4293,7 +4288,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               if (tasks.length === 0) break
               for (const task of tasks) {
                 if (results.length >= limit) break
-                if (statusFilter != null && Number(task.fileFlowStatus ?? task.taskEditState) !== statusFilter) continue
+                if (argv.status && taskEditStateCliName(task.fileFlowStatus ?? task.taskEditState) !== argv.status) continue
                 // Folder filter: task's location must include the target folder id
                 if (folderIdFilter != null && !String(task.location ?? "").split(".").includes(String(folderIdFilter))) continue
                 const taskId = Number(task.id ?? task.task_id)

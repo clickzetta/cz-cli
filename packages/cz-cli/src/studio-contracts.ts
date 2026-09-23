@@ -300,16 +300,16 @@ export const TASK_RUN_TYPE_NAMES: Record<number, string> = {
 
 export const TASK_EDIT_STATE_CLI_NAMES: Record<number, string> = {
   [StudioTaskEditState.WaitForSave]: "draft",
-  [StudioTaskEditState.WaitForPublish]: "published",
+  [StudioTaskEditState.WaitForPublish]: "wait_for_publish",
   [StudioTaskEditState.ModifiedAfterPublish]: "modified_after_publish",
-  [StudioTaskEditState.Published]: "offline",
+  [StudioTaskEditState.Published]: "published",
 }
 
 export const TASK_EDIT_STATE_STAT_NAMES: Record<number, string> = {
   [StudioTaskEditState.WaitForSave]: "DRAFT",
-  [StudioTaskEditState.WaitForPublish]: "PUBLISHED",
+  [StudioTaskEditState.WaitForPublish]: "WAIT_FOR_PUBLISH",
   [StudioTaskEditState.ModifiedAfterPublish]: "MODIFIED_AFTER_PUBLISH",
-  [StudioTaskEditState.Published]: "OFFLINE",
+  [StudioTaskEditState.Published]: "PUBLISHED",
 }
 
 export const SCHEDULE_RATE_TYPE_NAMES: Record<number, string> = {

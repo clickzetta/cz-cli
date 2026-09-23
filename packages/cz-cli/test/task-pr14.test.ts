@@ -268,7 +268,7 @@ describe("task status", () => {
     expect(j.error).toBeUndefined()
     const d = j.data as Record<string, unknown>
     expect(d.edit_state).toBeDefined()
-    expect(["draft", "published", "offline"]).toContain(d.edit_state as string)
+    expect(["draft", "wait_for_publish", "modified_after_publish", "published"]).toContain(d.edit_state as string)
   })
 })
 
@@ -454,7 +454,10 @@ describe("help texts", () => {
 
   test("task list --help explains state codes", () => {
     const out = help(["task", "list", "--help"])
-    expect(out).toMatch(/10=draft|20=published|100=offline/)
+    expect(out).toContain("10=draft")
+    expect(out).toContain("20=wait_for_publish")
+    expect(out).toContain("80=modified_after_publish")
+    expect(out).toContain("100=published")
   })
 
   test("task create-setup --help shows one-step description with cron example", () => {
