@@ -251,7 +251,12 @@ test("non-overridable SQL errors do not offer approval as a bypass", async () =>
   expect(submitted).toEqual([])
 })
 
-for (const sql of ["SHOW CREATE TABLE t", "SHOW DYNAMIC TABLE REFRESH HISTORY LIMIT 10"]) {
+// `--limit 0` means "no limit" (rowLimit Infinity), which by design also skips the
+// LIMIT probe injection in sql.ts. So this loop asserts one thing: introspection
+// whose text contains a write keyword clears the approval gate and returns rows.
+// The default-limit path, where these same statements get ` LIMIT <n+1>` appended,
+// is a separate concern and is not covered here.
+for (const sql of ["SHOW CREATE TABLE t", "SHOW CREATE VIEW v", "SHOW DYNAMIC TABLE REFRESH HISTORY LIMIT 10"]) {
   test(`documented introspection returns rows without approval: ${sql}`, async () => {
     const result = await execute("sql", [sql, "--limit", "0"])
     expect(result.exitCode).toBe(0)
@@ -319,4 +324,28 @@ test("approved unclassified SELECT keeps its result bound without rewriting", as
   expect(JSON.parse(result.output).error.code).toBe("LIMIT_REQUIRED")
   expect(submitted).toEqual([`${sql}\n;`])
   expect(submittedHints[0]["cz.sql.result.row.partial.limit"]).toBe("101")
+})
+
+// A positional plus `--` operands used to return the positional and drop the rest
+// without a word, so a truncated statement ran and exited 0.
+for (
+  const args of [
+    ["SELECT", "--", "1", "AS", "x", "FROM", "t"],
+    ["SELECT 1 AS a", "--", "FROM", "t"],
+  ]
+) {
+  test(`a statement split across '--' is rejected, not truncated: ${args.join(" ")}`, async () => {
+    const result = await execute("sql", args)
+    expect(result.exitCode).toBe(2)
+    expect(JSON.parse(result.output).error.code).toBe("AMBIGUOUS_SQL")
+    expect(submitted).toEqual([])
+  })
+}
+
+// Every flag must precede `--`, including the --format this harness would otherwise
+// append: everything after `--` is operand text by definition.
+test("'--' alone still carries a statement that starts with a dash", async () => {
+  const result = await execute("sql", ["--limit", "0", "--format", "json", "--", "-- leading comment\nSELECT 1"])
+  expect(result.exitCode).toBe(0)
+  expect(submitted).toEqual(["-- leading comment\nSELECT 1\n;"])
 })

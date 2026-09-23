@@ -93,6 +93,15 @@ export function commandGroup<T>(yargs: Argv<T>, commandName: string): Argv<T> {
         finalAi = `Unknown subcommand '${badSubcommand}' for '${commandName}'. Did you mean '${suggestion}'? Available subcommands: ${available}.`
       } else if (suggestion && badFlag) {
         finalAi = `Unknown option '--${badFlag}' for '${commandName}'. Did you mean '${suggestion}'? Run \`cz-cli ${commandName} --help\` for available options.`
+      } else if ((cmdMatch?.[1] ?? argMatch?.[1] ?? "").includes(",")) {
+        // Several unknown tokens at once and nothing close enough to suggest: the
+        // usual cause is a quoted value (DDL, a SQL predicate, a JSON blob) that the
+        // shell tore apart before cz-cli saw it. Say so rather than only listing the
+        // debris — these commands are quote-sensitive and normal shell quoting and
+        // escaping rules apply to their arguments. Kept as a note on the existing
+        // message, not a second copy of cli.ts's detector.
+        finalAi =
+          `${finalAi} Arguments here are quote-sensitive and go through the shell first: if a quoted value was split into several tokens, re-quote it as one argument (escaping any inner quotes) or pass it through a file option instead of inline.`
       }
 
       const errorObj: Record<string, unknown> = { code: "USAGE_ERROR", message: displayMsg }
