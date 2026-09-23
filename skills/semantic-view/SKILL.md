@@ -1,6 +1,6 @@
 ---
 name: cz-semantic-view
-description: "Create, edit, deploy, validate and maintain ClickZetta semantic views or semantic YAML. Route modeling, descriptions, audits, relationship/metric/VQR suggestions, verified-query management, optimization and OSI imports to their workflows; query existing views when requested."
+description: "Answer ClickZetta business questions using reusable metrics or business terminology; discover/query existing semantic views (SV, SEMANTIC_VIEW); create, edit, deploy and validate semantic YAML. Route queries, modeling, dimensions, facts, metrics, filters, relationships, VQRs, audit, optimization and OSI import to the matching workflow."
 metadata:
   parent-skill: cz-agent-studio
 ---
@@ -16,7 +16,7 @@ Choose a workflow from the user's intended result:
 | Work | Skill |
 |---|---|
 | New model from tables/SQL | [creation](creation/SKILL.md) |
-| Answer an analysis question using an existing view | [Querying guide](reference/querying_existing_views.md) |
+| Find definitions for a business question, or query a discovered/supplied SV | [Querying guide](reference/querying_existing_views.md) |
 | Download/read existing definition | [download](download/SKILL.md) |
 | Structured local changes | [edit](edit/SKILL.md) |
 | Upload/deploy and recover | [upload](upload/SKILL.md) |

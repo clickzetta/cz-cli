@@ -7,15 +7,15 @@ metadata:
 
 # ClickZetta Agent Studio
 
-Use `cz-cli sv` for every semantic view operation. Read the matching skill below before acting; the command implementation is the source of truth for flags and capability errors.
+Use `cz-cli sv` for semantic-model management; queries can also use native `SEMANTIC_VIEW` SQL through `cz-cli sql`. Read the matching skill below before acting; the command implementation is the source of truth for flags and capability errors.
 
 - Creation, generation and local files: [semantic-view/creation/SKILL.md](../semantic-view/creation/SKILL.md)
 - Questions using existing semantic views: [querying guide](../semantic-view/reference/querying_existing_views.md). Native SEMANTIC_VIEW SQL through `cz-cli sql` is also valid; inspect actual coverage before choosing a physical fallback.
 - Read/download and edits: [semantic-view/download/SKILL.md](../semantic-view/download/SKILL.md), [semantic-view/edit/SKILL.md](../semantic-view/edit/SKILL.md)
 - Validation, planning and deployment: [semantic-view/validate/SKILL.md](../semantic-view/validate/SKILL.md), [semantic-view/upload/SKILL.md](../semantic-view/upload/SKILL.md)
-- Suggestions, VQRs and instructions: read their respective skills under `semantic-view/`.
+- Suggestions, VQRs, instructions and patterns: select the sub-skill from the [SV workflow index](../semantic-view/SKILL.md).
 - OSI imports: use [OSI import](../semantic-view/import_osi/SKILL.md); lossy conversions produce a loss report and require `--allow-lossy` for local output. Tableau and Power BI conversion are outside this release.
-- Audits and optimization: read `audit/` or `agentic_optimization/` as applicable.
+- Audits and optimization: [audit](../semantic-view/audit/SKILL.md) or [agentic optimization](../semantic-view/agentic_optimization/SKILL.md).
 
 The native ClickZetta release tested by this skill supports dimensions, scalar/entity facts, metrics, relationships including ASOF, private access, window and non-additive metrics, and AI verified queries. Filters, sample values, data types, false traits, custom instructions and import provenance are managed authoring metadata. Range relationships, many-to-many semantics, non-left joins and computed relationship keys are rejected before deployment.
 

@@ -2,6 +2,22 @@
 
 Use this guide when answering an analysis question with an existing model. Respect a read-only task: an incomplete model does not authorize redeployment.
 
+## Discover once, then bind the query to the model
+
+When the source or metric definition is unknown, use `cz-cli sv list --profile PROFILE` or `cz-cli sv search --query TERM --profile PROFILE` in the relevant schema. Inspect candidates against business terminology, descriptions and definitions; a name match alone is insufficient. Reuse a trusted deployed definition when supplied. Read a selected view with `cz-cli sv read WORKSPACE.SCHEMA.VIEW --profile PROFILE` (JSON is under `data`).
+
+Keep these namespaces distinct:
+
+| Model information | Query usage |
+|---|---|
+| Logical table and public dimension/fact/metric names | Use `logical_table.field` selectors inside SEMANTIC_VIEW, not their physical expression or synonym |
+| Physical base-table binding and field expressions | Use the actual bound workspace/schema/table for physical SQL; the SV deployment schema need not contain source tables |
+| Named filters | `sv query --filters NAME` resolves managed filters. A filter name is not automatically a native boolean column; use the compiled predicate in deterministic `sv query` output for native SQL |
+| Descriptions, synonyms and business instructions | Resolve intent to actual fields/predicates; metadata text is not an executable identifier |
+| Private fields | Internal modeling expressions, not public selectors |
+
+For a named filter, run `sv query FQN --metrics logical_table.metric --filters NAME --profile PROFILE` without `--execute` to inspect composed SQL. Replace placeholders with observed model names. If materialization fails, inspect the coverage error instead of guessing `WHERE filter_name` or pasting a physical expression into the logical namespace. Preserve the predicate's aggregation scope when composing outer SQL.
+
 ## Match the question to actual coverage
 
 Read the relevant deployed definition or trusted readback once, retaining its identity. Check the requested grain, named metric/fact expressions, filtering columns, role-specific relationships and output requirements. A model description saying it covers a domain is not enough. A physical source column is usable inside SEMANTIC_VIEW only when the model exposes it in the required role.

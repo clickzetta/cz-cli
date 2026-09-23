@@ -14,6 +14,11 @@ You have no direct Lakehouse access. Always delegate via cz-cli.
 - Run async jobs and fetch results
 - Preview table data and row counts
 
+### Semantic Views & Business Questions
+- Discover/query semantic views and reusable business definitions through the delegated agent
+- Model schemas, edit semantic YAML, validate and deploy via `cz-cli sv`
+- Preserve business terminology, profile and known view identity in the delegated request; the agent follows the `cz-semantic-view` workflow index
+
 ### Table & Schema Management
 - List, describe, create, and drop tables and schemas
 - View table history, indexes, partitions, and statistics
