@@ -39,6 +39,8 @@ const PEM_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRI
 const ASSIGNMENT = /([A-Za-z_][\w.-]{1,40})(\s*[:=]\s*)("[^"]*"|'[^']*'|`[^`]*`|[^\s,;)}\]]+)/g
 //: `--password hunter2` / `-p hunter2`, the whitespace-separated flag spelling.
 const FLAG_VALUE = /(--?[A-Za-z][\w-]{0,40})(\s+)("[^"]*"|'[^']*'|[^\s]+)/g
+const CONTENT_MAX_CHARS = 8_000
+const PROMPT_MAX_CHARS = 32 * 1024
 
 function redactText(value: string): string {
   let out = value.replace(PEM_BLOCK, "<redacted:private-key>")
@@ -69,9 +71,14 @@ function redactDeep(value: unknown, depth = 0, seen = new WeakSet<object>()): un
   return out
 }
 
-/** Preserve complete, valid JSON so long histories cannot hide the latest user input. */
-function promptAttr(value: unknown): string {
-  return safeStringify(redactDeep(value))
+function capTo(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const marker = "\n[truncated]\n"
+  if (limit <= marker.length) return "…".slice(0, limit)
+  const available = limit - marker.length
+  const head = Math.ceil(available / 2)
+  const tail = available - head
+  return `${text.slice(0, head)}${marker}${tail ? text.slice(-tail) : ""}`
 }
 
 function safeStringify(value: unknown): string {
@@ -80,6 +87,93 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+const STRUCTURAL_STRING_KEYS = new Set(["role", "type", "finish_reason", "id", "name", "mediaType", "filename"])
+
+function capStrings(value: unknown, limit: number, preserveStructural = false, key = ""): unknown {
+  if (typeof value === "string") {
+    if (preserveStructural && STRUCTURAL_STRING_KEYS.has(key)) return value
+    return capTo(value, limit)
+  }
+  if (Array.isArray(value)) return value.map((item) => capStrings(item, limit, preserveStructural))
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([innerKey, inner]) => [
+      innerKey,
+      capStrings(inner, limit, preserveStructural, innerKey),
+    ]),
+  )
+}
+
+/**
+ * Reduce string leaves until the serialized value fits. This preserves the original JSON
+ * schema, including message roles, part types and finish reasons.
+ */
+function boundedRedactedJson(redacted: unknown, limit: number, preserveStructural = false): string {
+  const serialized = safeStringify(redacted)
+  if (serialized.length <= limit) return serialized
+
+  let low = 0
+  let high = limit
+  let best = safeStringify(capStrings(redacted, 0, preserveStructural))
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    const candidate = safeStringify(capStrings(redacted, middle, preserveStructural))
+    if (candidate.length <= limit) {
+      best = candidate
+      low = middle + 1
+    } else {
+      high = middle - 1
+    }
+  }
+  if (best.length <= limit) return best
+
+  if (redacted && typeof redacted === "object" && !Array.isArray(redacted)) {
+    const result: Record<string, unknown> = { __truncated__: true }
+    for (const [entryKey, inner] of Object.entries(redacted as Record<string, unknown>)) {
+      const candidate = { ...result, [entryKey]: capStrings(inner, 0, preserveStructural, entryKey) }
+      if (safeStringify(candidate).length > limit) break
+      result[entryKey] = candidate[entryKey]
+    }
+    return safeStringify(result)
+  }
+  return "[]"
+}
+
+function boundedJson(value: unknown, limit: number): string {
+  return boundedRedactedJson(redactDeep(value), limit)
+}
+
+function retainArray(items: unknown[], limit: number, keep: "head" | "tail"): unknown[] {
+  const serialized = items.map(safeStringify)
+  const retained: unknown[] = []
+  let used = 2
+  const indexes = Array.from({ length: items.length }, (_, index) => index)
+  if (keep === "tail") indexes.reverse()
+  for (const index of indexes) {
+    const next = serialized[index]!.length + (retained.length ? 1 : 0)
+    if (retained.length && used + next > limit) break
+    if (keep === "head") retained.push(items[index])
+    else retained.unshift(items[index])
+    used += next
+  }
+  return retained
+}
+
+function promptAttr(value: unknown[], keep: "head" | "tail", trimParts = false): string {
+  const redacted = redactDeep(value) as unknown[]
+  let retained = retainArray(redacted, PROMPT_MAX_CHARS, keep)
+  if (trimParts && retained.length === 1) {
+    const message = retained[0]
+    if (message && typeof message === "object" && !Array.isArray(message)) {
+      const record = message as Record<string, unknown>
+      if (Array.isArray(record.parts)) {
+        retained = [{ ...record, parts: retainArray(record.parts, PROMPT_MAX_CHARS / 2, "tail") }]
+      }
+    }
+  }
+  return boundedRedactedJson(retained, PROMPT_MAX_CHARS, true)
 }
 
 // Parse OPENCODE_DISABLE_TRACES once. Value is comma-separated categories,
@@ -429,7 +523,7 @@ export function recordInputMessages(messages: Array<{ info?: Record<string, any>
     role: m.info?.role ?? "unknown",
     parts: (m.parts ?? []).map(serializePart).filter(Boolean),
   }))
-  sessionInput.set(sessionID, promptAttr(serialized))
+  sessionInput.set(sessionID, promptAttr(serialized, "tail"))
 }
 
 /** `experimental.chat.system.transform` (llm/request.ts:70), which does pass a sessionID. */
@@ -437,7 +531,7 @@ export function recordSystemInstructions(sessionID: string | undefined, system: 
   if (!_recordContent || !sessionID || !system?.length) return
   const parts = system.filter(Boolean).map((content) => ({ type: "text", content }))
   if (!parts.length) return
-  sessionSystem.set(sessionID, promptAttr(parts))
+  sessionSystem.set(sessionID, promptAttr(parts, "head"))
 }
 
 /**
@@ -708,7 +802,11 @@ export function handleEvent(event: SubscribedEvent) {
           messageOutput.delete(key)
           const outputMessages =
             _recordContent && output?.size
-              ? promptAttr([{ role: "assistant", parts: [...output.values()], finish_reason: part.reason ?? "unknown" }])
+              ? promptAttr(
+                  [{ role: "assistant", parts: [...output.values()], finish_reason: part.reason ?? "unknown" }],
+                  "tail",
+                  true,
+                )
               : undefined
           if (entry) {
             entry.span.setAttributes({
@@ -773,7 +871,7 @@ export function handleEvent(event: SubscribedEvent) {
           if (!settled) {
             const args =
               _recordContent && state.input != null
-                ? safeStringify(redactDeep(state.input))
+                ? boundedJson(state.input, CONTENT_MAX_CHARS)
                 : undefined
             const open = toolSpans.get(key)
             if (open) {
@@ -806,7 +904,9 @@ export function handleEvent(event: SubscribedEvent) {
           settledTools.add(key)
           const failed = status === "error"
           // `ToolStateError.error` is a plain string in the v1 schema.
-          const message = failed ? String(state.error || "unknown") : ""
+          const message = failed
+            ? capTo(redactText(String(state.error || "unknown")), CONTENT_MAX_CHARS)
+            : ""
           // Settled tool states carry their own start/end, so the duration is the
           // runtime's own rather than one measured around the event.
           const durationMs =
@@ -819,7 +919,10 @@ export function handleEvent(event: SubscribedEvent) {
               entry.span.setStatus({ code: SpanStatusCode.ERROR, message })
               entry.span.setAttribute("error.message", message)
             } else if (_recordContent && state.output) {
-              entry.span.setAttribute("gen_ai.tool.call.result", redactText(String(state.output)))
+              entry.span.setAttribute(
+                "gen_ai.tool.call.result",
+                capTo(redactText(String(state.output)), CONTENT_MAX_CHARS),
+              )
             }
             entry.span.end()
             toolSpans.delete(key)

@@ -444,7 +444,7 @@ describe("subagent sessions", () => {
 })
 
 describe("tool content", () => {
-  test("preserves complete arguments and results while redacting secrets beyond the old cap", () => {
+  test("bounds arguments and results after redacting secrets", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
@@ -472,10 +472,80 @@ describe("tool content", () => {
     })
     send("session.idle", { sessionID: SESSION })
     const [tool] = named("execute_tool read")
-    expect(JSON.parse(String(tool!.attributes["gen_ai.tool.call.arguments"]))).toEqual({
-      file: "x".repeat(20_000) + " PASSWORD=<redacted> tail",
+    const args = String(tool!.attributes["gen_ai.tool.call.arguments"])
+    const result = String(tool!.attributes["gen_ai.tool.call.result"])
+    expect(JSON.parse(args).file).toContain("PASSWORD=<redacted>")
+    expect(args).toContain("PASSWORD=<redacted>")
+    expect(args.length).toBeLessThanOrEqual(8_000)
+    expect(result).toContain("PASSWORD=<redacted>")
+    expect(result.length).toBeLessThanOrEqual(8_000)
+  })
+
+  test("bounds structured arguments with many short fields", () => {
+    busy()
+    assistantMessage()
+    part({ id: "prt_1", type: "step-start" })
+    const input = Object.fromEntries(
+      Array.from({ length: 200 }, (_, index) => [`field_${index}`, "x".repeat(100)]),
+    )
+    part({
+      id: "prt_2",
+      type: "tool",
+      callID: "call_1",
+      tool: "write",
+      state: { status: "running", input, time: { start: 1 } },
     })
-    expect(tool!.attributes["gen_ai.tool.call.result"]).toBe("x".repeat(20_000) + " PASSWORD=<redacted> tail")
+    part({
+      id: "prt_2",
+      type: "tool",
+      callID: "call_1",
+      tool: "write",
+      state: {
+        status: "completed",
+        input,
+        output: "ok",
+        title: "write",
+        metadata: {},
+        time: { start: 1, end: 2 },
+      },
+    })
+    send("session.idle", { sessionID: SESSION })
+    const [tool] = named("execute_tool write")
+    const args = String(tool!.attributes["gen_ai.tool.call.arguments"])
+    expect(args.length).toBeLessThanOrEqual(8_000)
+    expect(JSON.parse(args).field_0).toBeDefined()
+  })
+
+  test("redacts and bounds failed tool output", () => {
+    busy()
+    assistantMessage()
+    part({ id: "prt_1", type: "step-start" })
+    part({
+      id: "prt_2",
+      type: "tool",
+      callID: "call_1",
+      tool: "bash",
+      state: { status: "running", input: { command: "deploy" }, time: { start: 1 } },
+    })
+    part({
+      id: "prt_2",
+      type: "tool",
+      callID: "call_1",
+      tool: "bash",
+      state: {
+        status: "error",
+        input: { command: "deploy" },
+        error: "x".repeat(20_000) + " --password hunter2 tail",
+        time: { start: 1, end: 2 },
+      },
+    })
+    send("session.idle", { sessionID: SESSION })
+    const [tool] = named("execute_tool bash")
+    const message = String(tool!.attributes["error.message"])
+    expect(message.length).toBeLessThanOrEqual(8_000)
+    expect(message).toContain("--password <redacted>")
+    expect(message).not.toContain("hunter2")
+    expect(String(emitted("opencode.tool.finished")[0]!.attributes["error.message"])).toBe(message)
   })
 })
 
@@ -726,8 +796,10 @@ describe("prompt and completion content", () => {
     part({ id: "second", type: "step-start" })
     send("session.idle", { sessionID: SESSION })
     const [first, second] = named("chat claude-opus-5")
-    expect(first!.attributes["gen_ai.input.messages"]).toContain(SESSION.repeat(5_000))
-    expect(first!.attributes["gen_ai.system_instructions"]).toContain(SESSION.repeat(5_000))
+    expect(String(first!.attributes["gen_ai.input.messages"]).length).toBeLessThanOrEqual(32 * 1024)
+    expect(String(first!.attributes["gen_ai.system_instructions"]).length).toBeLessThanOrEqual(32 * 1024)
+    expect(first!.attributes["gen_ai.input.messages"]).toContain(SESSION.repeat(20))
+    expect(first!.attributes["gen_ai.system_instructions"]).toContain(SESSION.repeat(20))
     expect(second!.attributes["gen_ai.input.messages"]).toBeUndefined()
     expect(second!.attributes["gen_ai.system_instructions"]).toBeUndefined()
 
@@ -737,8 +809,10 @@ describe("prompt and completion content", () => {
     })
     send("session.idle", { sessionID: other })
     const [concurrent] = named("chat unknown")
-    expect(concurrent!.attributes["gen_ai.input.messages"]).toContain(other.repeat(5_000))
-    expect(concurrent!.attributes["gen_ai.system_instructions"]).toContain(other.repeat(5_000))
+    expect(String(concurrent!.attributes["gen_ai.input.messages"]).length).toBeLessThanOrEqual(32 * 1024)
+    expect(String(concurrent!.attributes["gen_ai.system_instructions"]).length).toBeLessThanOrEqual(32 * 1024)
+    expect(concurrent!.attributes["gen_ai.input.messages"]).toContain(other.repeat(20))
+    expect(concurrent!.attributes["gen_ai.system_instructions"]).toContain(other.repeat(20))
   })
 
   test("releases content when a turn fails before its first step", async () => {
@@ -761,7 +835,7 @@ describe("prompt and completion content", () => {
     expect(chat!.attributes["gen_ai.system_instructions"]).toBeUndefined()
   })
 
-  test("preserves long history, current input, system instructions and completion as valid JSON", async () => {
+  test("bounds long history while keeping the latest input and valid JSON", async () => {
     const { recordInputMessages, recordSystemInstructions } = await import(
       "../src/opencode-plugin/otel/handlers"
     )
@@ -780,16 +854,43 @@ describe("prompt and completion content", () => {
     send("session.idle", { sessionID: SESSION })
 
     const [chat] = named("chat claude-opus-5")
-    expect(JSON.parse(String(chat!.attributes["gen_ai.input.messages"]))).toEqual([
-      { role: "assistant", parts: [{ type: "text", content: history }] },
-      { role: "user", parts: [{ type: "text", content: text + " PASSWORD=<redacted> tail" }] },
-    ])
-    expect(JSON.parse(String(chat!.attributes["gen_ai.system_instructions"]))).toEqual([
-      { type: "text", content: text + " system tail" },
-    ])
-    expect(JSON.parse(String(chat!.attributes["gen_ai.output.messages"]))).toEqual([
-      { role: "assistant", parts: [{ type: "text", content: text + " completion tail" }], finish_reason: "stop" },
-    ])
+    const input = String(chat!.attributes["gen_ai.input.messages"])
+    const system = String(chat!.attributes["gen_ai.system_instructions"])
+    const output = String(chat!.attributes["gen_ai.output.messages"])
+    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(system.length).toBeLessThanOrEqual(32 * 1024)
+    expect(output.length).toBeLessThanOrEqual(32 * 1024)
+    expect(JSON.parse(input).at(-1)).toEqual({
+      role: "user",
+      parts: [{ type: "text", content: expect.stringContaining("PASSWORD=<redacted>") }],
+    })
+    expect(JSON.parse(system)[0].content).toContain("system tail")
+    expect(JSON.parse(output)[0].parts[0].content).toContain("completion tail")
+    expect(JSON.parse(output)[0].finish_reason).toBe("stop")
+  })
+
+  test("drops oldest messages before shrinking the latest input", async () => {
+    const { recordInputMessages } = await import("../src/opencode-plugin/otel/handlers")
+    busy()
+    assistantMessage()
+    recordInputMessages(
+      Array.from({ length: 800 }, (_, index) => ({
+        info: { role: "user", sessionID: SESSION },
+        parts: [{ type: "text", text: index === 799 ? "latest input" : `history-${index}` }],
+      })),
+    )
+    part({ id: "prt_1", type: "step-start" })
+    send("session.idle", { sessionID: SESSION })
+
+    const input = String(named("chat claude-opus-5")[0]!.attributes["gen_ai.input.messages"])
+    const messages = JSON.parse(input)
+    expect(Array.isArray(messages)).toBe(true)
+    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      parts: [{ type: "text", content: "latest input" }],
+    })
+    expect(messages[0].parts[0].content).not.toBe("history-0")
   })
 
   test("a chat span carries input, system and output messages", async () => {
