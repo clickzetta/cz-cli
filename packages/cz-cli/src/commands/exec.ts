@@ -123,13 +123,13 @@ export async function execSql(
     asynchronous?: boolean
     timeoutMs?: number
     configStatements?: string[]
-    onJobId?: (id: string) => void
+    onJobId?: (id: string) => void | Promise<void>
   },
 ): Promise<QueryResult | ExecResult> {
   const normalizedSql = sql + "\n;"
   const timezone = opts?.hints?.["cz.sql.timezone"]
   const jobId = newJobId(ctx.config.workspace, ctx.instanceId())
-  opts?.onJobId?.(jobId.id)
+  await opts?.onJobId?.(jobId.id)
   const traceContext = currentTraceContext()
   const submitResp = await submitJob(ctx.clientOpts, {
     sql: normalizedSql,
@@ -262,7 +262,7 @@ export async function execSqlWithRetry(
     asynchronous?: boolean
     timeoutMs?: number
     configStatements?: string[]
-    onJobId?: (id: string) => void
+    onJobId?: (id: string) => void | Promise<void>
   },
 ): Promise<QueryResult | ExecResult> {
   try {

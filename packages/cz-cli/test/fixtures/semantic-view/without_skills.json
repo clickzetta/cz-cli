@@ -1,0 +1,2285 @@
+{
+  "fqn": "czcli.cz_sv_faithful_no_1789956251654.tpcds_retail_sv",
+  "native": {
+    "name": "tpcds_retail_sv",
+    "description": "Reusable semantic view for TPC-DS retail analytics across store, catalog, web, returns, inventory, customers, items, dates, stores and warehouses. It targets recurring historical query patterns around channel revenue, returns, customer cohorts, product hierarchy, time windows, inventory balance and fulfillment.",
+    "tables": [
+      {
+        "name": "store_sales",
+        "description": "Store channel sales line fact at ticket, item and customer grain.",
+        "synonyms": [
+          "store sales",
+          "store revenue",
+          "in store purchases"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "store_sales"
+        },
+        "primary_key": {
+          "columns": [
+            "ss_ticket_number",
+            "ss_item_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "ticket_number",
+            "expr": "store_sales.ss_ticket_number",
+            "description": "Store sales ticket number.",
+            "synonyms": [
+              "ticket"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "customer_key",
+            "expr": "store_sales.ss_customer_sk",
+            "description": "Store sales customer surrogate key.",
+            "synonyms": [
+              "store customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_key",
+            "expr": "store_sales.ss_item_sk",
+            "description": "Sold item surrogate key.",
+            "synonyms": [
+              "store item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "store_key",
+            "expr": "store_sales.ss_store_sk",
+            "description": "Store surrogate key.",
+            "synonyms": [
+              "store"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "quantity",
+            "expr": "store_sales.ss_quantity",
+            "description": "Store sales quantity.",
+            "synonyms": [
+              "units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "sales_price",
+            "expr": "store_sales.ss_sales_price",
+            "description": "Store sales unit sales price.",
+            "synonyms": [
+              "unit price"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_sales_price",
+            "expr": "store_sales.ss_ext_sales_price",
+            "description": "Extended store sales amount.",
+            "synonyms": [
+              "store sales amount"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_list_price",
+            "expr": "store_sales.ss_ext_list_price",
+            "description": "Extended store list price before discount.",
+            "synonyms": [
+              "store list amount"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_discount_amt",
+            "expr": "store_sales.ss_ext_discount_amt",
+            "description": "Extended discount amount for store sales.",
+            "synonyms": [
+              "store discount"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "coupon_amt",
+            "expr": "store_sales.ss_coupon_amt",
+            "description": "Store sales coupon amount.",
+            "synonyms": [
+              "coupon"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_paid",
+            "expr": "store_sales.ss_net_paid",
+            "description": "Store sales net paid amount.",
+            "synonyms": [
+              "paid"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_profit",
+            "expr": "store_sales.ss_net_profit",
+            "description": "Store sales net profit.",
+            "synonyms": [
+              "profit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_tax",
+            "expr": "store_sales.ss_ext_tax",
+            "description": "Store sales extended tax.",
+            "synonyms": [
+              "tax"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "__cz_filter_39845bee7be4",
+            "expr": "store_sales.ss_ext_sales_price",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "sales_rows",
+            "expr": "`count`(*)",
+            "description": "Count of store sales rows.",
+            "synonyms": [
+              "store line count"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "store_sales_amount",
+            "expr": "`sum`(store_sales.ss_ext_sales_price)",
+            "description": "Total extended store sales amount.",
+            "synonyms": [
+              "store revenue"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "store_net_profit",
+            "expr": "`sum`(store_sales.ss_net_profit)",
+            "description": "Total store sales net profit.",
+            "synonyms": [
+              "store profit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "store_quantity",
+            "expr": "`sum`(store_sales.ss_quantity)",
+            "description": "Total store sales quantity.",
+            "synonyms": [
+              "store units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "catalog_sales",
+        "description": "Catalog channel sales line fact at order, item and customer grain.",
+        "synonyms": [
+          "catalog sales",
+          "catalog revenue"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "catalog_sales"
+        },
+        "primary_key": {
+          "columns": [
+            "cs_order_number",
+            "cs_item_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "order_number",
+            "expr": "catalog_sales.cs_order_number",
+            "description": "Catalog order number.",
+            "synonyms": [
+              "catalog order"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "bill_customer_key",
+            "expr": "catalog_sales.cs_bill_customer_sk",
+            "description": "Billing customer key for catalog sale.",
+            "synonyms": [
+              "catalog customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ship_customer_key",
+            "expr": "catalog_sales.cs_ship_customer_sk",
+            "description": "Shipping customer key for catalog sale.",
+            "synonyms": [
+              "catalog ship customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_key",
+            "expr": "catalog_sales.cs_item_sk",
+            "description": "Catalog item surrogate key.",
+            "synonyms": [
+              "catalog item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "quantity",
+            "expr": "catalog_sales.cs_quantity",
+            "description": "Catalog sales quantity.",
+            "synonyms": [
+              "catalog units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "sales_price",
+            "expr": "catalog_sales.cs_sales_price",
+            "description": "Catalog sales unit price.",
+            "synonyms": [
+              "catalog price"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_sales_price",
+            "expr": "catalog_sales.cs_ext_sales_price",
+            "description": "Extended catalog sales amount.",
+            "synonyms": [
+              "catalog amount"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "coupon_amt",
+            "expr": "catalog_sales.cs_coupon_amt",
+            "description": "Catalog coupon amount.",
+            "synonyms": [
+              "catalog coupon"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_profit",
+            "expr": "catalog_sales.cs_net_profit",
+            "description": "Catalog sales net profit.",
+            "synonyms": [
+              "catalog profit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_ship_cost",
+            "expr": "catalog_sales.cs_ext_ship_cost",
+            "description": "Catalog extended shipping cost.",
+            "synonyms": [
+              "catalog shipping"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "catalog_sales_amount",
+            "expr": "`sum`(catalog_sales.cs_ext_sales_price)",
+            "description": "Total catalog extended sales amount.",
+            "synonyms": [
+              "catalog revenue"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "catalog_net_profit",
+            "expr": "`sum`(catalog_sales.cs_net_profit)",
+            "description": "Total catalog net profit.",
+            "synonyms": [
+              "catalog profit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "catalog_quantity",
+            "expr": "`sum`(catalog_sales.cs_quantity)",
+            "description": "Total catalog quantity.",
+            "synonyms": [
+              "catalog units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "web_sales",
+        "description": "Web channel sales line fact at order, item, customer, website and warehouse grain.",
+        "synonyms": [
+          "web sales",
+          "online sales",
+          "web revenue"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "web_sales"
+        },
+        "primary_key": {
+          "columns": [
+            "ws_order_number",
+            "ws_item_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "order_number",
+            "expr": "web_sales.ws_order_number",
+            "description": "Web order number.",
+            "synonyms": [
+              "web order"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "bill_customer_key",
+            "expr": "web_sales.ws_bill_customer_sk",
+            "description": "Billing customer key for web sale.",
+            "synonyms": [
+              "web customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_key",
+            "expr": "web_sales.ws_item_sk",
+            "description": "Web item surrogate key.",
+            "synonyms": [
+              "web item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "warehouse_key",
+            "expr": "web_sales.ws_warehouse_sk",
+            "description": "Fulfillment warehouse key.",
+            "synonyms": [
+              "web warehouse"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "quantity",
+            "expr": "web_sales.ws_quantity",
+            "description": "Web sales quantity.",
+            "synonyms": [
+              "web units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "sales_price",
+            "expr": "web_sales.ws_sales_price",
+            "description": "Web sales unit price.",
+            "synonyms": [
+              "web price"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_sales_price",
+            "expr": "web_sales.ws_ext_sales_price",
+            "description": "Extended web sales amount.",
+            "synonyms": [
+              "web amount"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "ext_ship_cost",
+            "expr": "web_sales.ws_ext_ship_cost",
+            "description": "Web extended shipping cost.",
+            "synonyms": [
+              "web shipping"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_profit",
+            "expr": "web_sales.ws_net_profit",
+            "description": "Web sales net profit.",
+            "synonyms": [
+              "web profit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "web_sales_amount",
+            "expr": "`sum`(web_sales.ws_ext_sales_price)",
+            "description": "Total web extended sales amount.",
+            "synonyms": [
+              "web revenue"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "web_net_profit",
+            "expr": "`sum`(web_sales.ws_net_profit)",
+            "description": "Total web net profit.",
+            "synonyms": [
+              "web profit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "web_quantity",
+            "expr": "`sum`(web_sales.ws_quantity)",
+            "description": "Total web quantity.",
+            "synonyms": [
+              "web units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "store_returns",
+        "description": "Store channel return fact keyed by ticket and item.",
+        "synonyms": [
+          "store returns"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "store_returns"
+        },
+        "primary_key": {
+          "columns": [
+            "sr_ticket_number",
+            "sr_item_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "ticket_number",
+            "expr": "store_returns.sr_ticket_number",
+            "description": "Returned store ticket number.",
+            "synonyms": [
+              "return ticket"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_key",
+            "expr": "store_returns.sr_item_sk",
+            "description": "Returned item key.",
+            "synonyms": [
+              "returned item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "customer_key",
+            "expr": "store_returns.sr_customer_sk",
+            "description": "Returning customer key.",
+            "synonyms": [
+              "return customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "return_quantity",
+            "expr": "store_returns.sr_return_quantity",
+            "description": "Store return quantity.",
+            "synonyms": [
+              "returned units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "return_amt",
+            "expr": "store_returns.sr_return_amt",
+            "description": "Store return amount.",
+            "synonyms": [
+              "store refund"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_loss",
+            "expr": "store_returns.sr_net_loss",
+            "description": "Store return net loss.",
+            "synonyms": [
+              "return loss"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "store_return_amount",
+            "expr": "`sum`(store_returns.sr_return_amt)",
+            "description": "Total store return amount.",
+            "synonyms": [
+              "store refunds"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "store_return_quantity",
+            "expr": "`sum`(store_returns.sr_return_quantity)",
+            "description": "Total store returned quantity.",
+            "synonyms": [
+              "store returned units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "catalog_returns",
+        "description": "Catalog channel return fact keyed by order and item.",
+        "synonyms": [
+          "catalog returns"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "catalog_returns"
+        },
+        "primary_key": {
+          "columns": [
+            "cr_order_number",
+            "cr_item_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "order_number",
+            "expr": "catalog_returns.cr_order_number",
+            "description": "Returned catalog order number.",
+            "synonyms": [
+              "catalog return order"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_key",
+            "expr": "catalog_returns.cr_item_sk",
+            "description": "Returned catalog item key.",
+            "synonyms": [
+              "catalog returned item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "returning_customer_key",
+            "expr": "catalog_returns.cr_returning_customer_sk",
+            "description": "Returning catalog customer key.",
+            "synonyms": [
+              "returning customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "return_quantity",
+            "expr": "catalog_returns.cr_return_quantity",
+            "description": "Catalog return quantity.",
+            "synonyms": [
+              "catalog returned units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "return_amount",
+            "expr": "catalog_returns.cr_return_amount",
+            "description": "Catalog return amount.",
+            "synonyms": [
+              "catalog refund"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "return_amt_inc_tax",
+            "expr": "catalog_returns.cr_return_amt_inc_tax",
+            "description": "Catalog return amount including tax.",
+            "synonyms": [
+              "return total"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_loss",
+            "expr": "catalog_returns.cr_net_loss",
+            "description": "Catalog return net loss.",
+            "synonyms": [
+              "catalog return loss"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "catalog_return_amount",
+            "expr": "`sum`(catalog_returns.cr_return_amount)",
+            "description": "Total catalog return amount.",
+            "synonyms": [
+              "catalog refunds"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "catalog_return_quantity",
+            "expr": "`sum`(catalog_returns.cr_return_quantity)",
+            "description": "Total catalog returned quantity.",
+            "synonyms": [
+              "catalog returned units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "web_returns",
+        "description": "Web channel return fact keyed by order and item.",
+        "synonyms": [
+          "web returns"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "web_returns"
+        },
+        "primary_key": {
+          "columns": [
+            "wr_order_number",
+            "wr_item_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "order_number",
+            "expr": "web_returns.wr_order_number",
+            "description": "Returned web order number.",
+            "synonyms": [
+              "web return order"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_key",
+            "expr": "web_returns.wr_item_sk",
+            "description": "Returned web item key.",
+            "synonyms": [
+              "web returned item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "return_quantity",
+            "expr": "web_returns.wr_return_quantity",
+            "description": "Web return quantity.",
+            "synonyms": [
+              "web returned units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "return_amt",
+            "expr": "web_returns.wr_return_amt",
+            "description": "Web return amount.",
+            "synonyms": [
+              "web refund"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "net_loss",
+            "expr": "web_returns.wr_net_loss",
+            "description": "Web return net loss.",
+            "synonyms": [
+              "web return loss"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "web_return_amount",
+            "expr": "`sum`(web_returns.wr_return_amt)",
+            "description": "Total web return amount.",
+            "synonyms": [
+              "web refunds"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "web_return_quantity",
+            "expr": "`sum`(web_returns.wr_return_quantity)",
+            "description": "Total web returned quantity.",
+            "synonyms": [
+              "web returned units"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "inventory",
+        "description": "Daily inventory balance by item and warehouse.",
+        "synonyms": [
+          "inventory",
+          "stock",
+          "quantity on hand"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "inventory"
+        },
+        "primary_key": {
+          "columns": [
+            "inv_date_sk",
+            "inv_item_sk",
+            "inv_warehouse_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "item_key",
+            "expr": "inventory.inv_item_sk",
+            "description": "Inventory item key.",
+            "synonyms": [
+              "stock item"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "warehouse_key",
+            "expr": "inventory.inv_warehouse_sk",
+            "description": "Inventory warehouse key.",
+            "synonyms": [
+              "stock warehouse"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "quantity_on_hand",
+            "expr": "inventory.inv_quantity_on_hand",
+            "description": "Inventory quantity on hand.",
+            "synonyms": [
+              "qoh",
+              "stock quantity"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "avg_quantity_on_hand",
+            "expr": "`avg`(inventory.inv_quantity_on_hand)",
+            "description": "Average inventory quantity on hand.",
+            "synonyms": [
+              "average qoh"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "total_quantity_on_hand",
+            "expr": "`sum`(inventory.inv_quantity_on_hand)",
+            "description": "Total inventory quantity on hand.",
+            "synonyms": [
+              "total qoh"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "qoh_stddev",
+            "expr": "`stddev_samp`(inventory.inv_quantity_on_hand)",
+            "description": "Sample standard deviation of inventory quantity on hand.",
+            "synonyms": [
+              "qoh stdev"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "item",
+        "description": "Product and item dimension with category, class, brand, manufacturer and price attributes.",
+        "synonyms": [
+          "product",
+          "item",
+          "merchandise"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "item"
+        },
+        "primary_key": {
+          "columns": [
+            "i_item_sk"
+          ]
+        },
+        "unique_keys": [
+          {
+            "columns": [
+              "i_item_id"
+            ]
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "item_id",
+            "expr": "item.i_item_id",
+            "description": "Business item identifier.",
+            "synonyms": [
+              "item code"
+            ],
+            "is_unique": true,
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "item_desc",
+            "expr": "item.i_item_desc",
+            "description": "Item description.",
+            "synonyms": [
+              "description"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "category",
+            "expr": "item.i_category",
+            "description": "Item category such as Books, Home or Sports.",
+            "synonyms": [
+              "product category"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "category_id",
+            "expr": "item.i_category_id",
+            "description": "Item category identifier.",
+            "synonyms": [
+              "category key"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "class",
+            "expr": "item.i_class",
+            "description": "Item class within category.",
+            "synonyms": [
+              "product class"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "class_id",
+            "expr": "item.i_class_id",
+            "description": "Item class identifier.",
+            "synonyms": [
+              "class key"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "brand",
+            "expr": "item.i_brand",
+            "description": "Item brand name.",
+            "synonyms": [
+              "product brand"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "brand_id",
+            "expr": "item.i_brand_id",
+            "description": "Item brand identifier.",
+            "synonyms": [
+              "brand key"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "manufacturer_id",
+            "expr": "item.i_manufact_id",
+            "description": "Item manufacturer identifier.",
+            "synonyms": [
+              "manufact id"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "product_name",
+            "expr": "item.i_product_name",
+            "description": "Product name used in inventory rollups.",
+            "synonyms": [
+              "product"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "color",
+            "expr": "item.i_color",
+            "description": "Item color.",
+            "synonyms": [
+              "product color"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "manager_id",
+            "expr": "item.i_manager_id",
+            "description": "Item manager identifier.",
+            "synonyms": [
+              "manager"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "current_price",
+            "expr": "item.i_current_price",
+            "description": "Current item price.",
+            "synonyms": [
+              "item price"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "wholesale_cost",
+            "expr": "item.i_wholesale_cost",
+            "description": "Item wholesale cost.",
+            "synonyms": [
+              "cost"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "__cz_filter_c30ed011c484",
+            "expr": "item.i_category",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [
+          {
+            "name": "avg_current_price",
+            "expr": "`avg`(item.i_current_price)",
+            "description": "Average current item price.",
+            "synonyms": [
+              "average item price"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "date_dim",
+        "description": "Calendar date dimension with day, week, month, quarter and year attributes.",
+        "synonyms": [
+          "date",
+          "calendar",
+          "sold date",
+          "ship date",
+          "returned date"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "date_dim"
+        },
+        "primary_key": {
+          "columns": [
+            "d_date_sk"
+          ]
+        },
+        "unique_keys": [
+          {
+            "columns": [
+              "d_date"
+            ]
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "date_id",
+            "expr": "date_dim.d_date_id",
+            "description": "Date business identifier.",
+            "synonyms": [
+              "date code"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "year",
+            "expr": "date_dim.d_year",
+            "description": "Calendar year.",
+            "synonyms": [
+              "calendar year"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "month_seq",
+            "expr": "date_dim.d_month_seq",
+            "description": "Sequential month number.",
+            "synonyms": [
+              "month sequence"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "week_seq",
+            "expr": "date_dim.d_week_seq",
+            "description": "Sequential week number.",
+            "synonyms": [
+              "week sequence"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "month_of_year",
+            "expr": "date_dim.d_moy",
+            "description": "Month number within year.",
+            "synonyms": [
+              "month"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "quarter_of_year",
+            "expr": "date_dim.d_qoy",
+            "description": "Quarter number within year.",
+            "synonyms": [
+              "quarter"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "quarter_name",
+            "expr": "date_dim.d_quarter_name",
+            "description": "Quarter label such as 2001Q1.",
+            "synonyms": [
+              "quarter label"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "day_of_month",
+            "expr": "date_dim.d_dom",
+            "description": "Day of month.",
+            "synonyms": [
+              "dom"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "day_of_week",
+            "expr": "date_dim.d_dow",
+            "description": "Day of week number.",
+            "synonyms": [
+              "dow"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "day_name",
+            "expr": "date_dim.d_day_name",
+            "description": "Day of week name.",
+            "synonyms": [
+              "weekday"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "date",
+            "expr": "date_dim.d_date",
+            "description": "Calendar date.",
+            "synonyms": [
+              "calendar date"
+            ],
+            "is_time": true,
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "__cz_filter_02d2d04f7803",
+            "expr": "date_dim.d_month_seq",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "customer",
+        "description": "Customer dimension with name, contact and current demographic/address keys.",
+        "synonyms": [
+          "customer",
+          "shopper"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "customer"
+        },
+        "primary_key": {
+          "columns": [
+            "c_customer_sk"
+          ]
+        },
+        "unique_keys": [
+          {
+            "columns": [
+              "c_customer_id"
+            ]
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "customer_id",
+            "expr": "customer.c_customer_id",
+            "description": "Customer business identifier.",
+            "synonyms": [
+              "customer code"
+            ],
+            "is_unique": true,
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "first_name",
+            "expr": "customer.c_first_name",
+            "description": "Customer first name.",
+            "synonyms": [
+              "given name"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "last_name",
+            "expr": "customer.c_last_name",
+            "description": "Customer last name.",
+            "synonyms": [
+              "surname"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "salutation",
+            "expr": "customer.c_salutation",
+            "description": "Customer salutation.",
+            "synonyms": [
+              "title"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "preferred_flag",
+            "expr": "customer.c_preferred_cust_flag",
+            "description": "Preferred customer flag.",
+            "synonyms": [
+              "preferred customer"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "birth_country",
+            "expr": "customer.c_birth_country",
+            "description": "Customer birth country.",
+            "synonyms": [
+              "country of birth"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "email_address",
+            "expr": "customer.c_email_address",
+            "description": "Customer email address.",
+            "synonyms": [
+              "email"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [],
+        "metrics": [
+          {
+            "name": "customer_count",
+            "expr": "`count`(DISTINCT customer.c_customer_sk)",
+            "description": "Distinct customer count.",
+            "synonyms": [
+              "customers"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "customer_address",
+        "description": "Customer address dimension for current, billing, shipping, returning and purchase addresses.",
+        "synonyms": [
+          "address",
+          "customer address",
+          "geography"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "customer_address"
+        },
+        "primary_key": {
+          "columns": [
+            "ca_address_sk"
+          ]
+        },
+        "unique_keys": [
+          {
+            "columns": [
+              "ca_address_id"
+            ]
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "address_id",
+            "expr": "customer_address.ca_address_id",
+            "description": "Address business identifier.",
+            "synonyms": [
+              "address code"
+            ],
+            "is_unique": true,
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "city",
+            "expr": "customer_address.ca_city",
+            "description": "Address city.",
+            "synonyms": [
+              "customer city"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "county",
+            "expr": "customer_address.ca_county",
+            "description": "Address county.",
+            "synonyms": [
+              "customer county"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "state",
+            "expr": "customer_address.ca_state",
+            "description": "Address state.",
+            "synonyms": [
+              "customer state"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "zip",
+            "expr": "customer_address.ca_zip",
+            "description": "Address ZIP code.",
+            "synonyms": [
+              "postal code"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "country",
+            "expr": "customer_address.ca_country",
+            "description": "Address country.",
+            "synonyms": [
+              "customer country"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "location_type",
+            "expr": "customer_address.ca_location_type",
+            "description": "Address location type.",
+            "synonyms": [
+              "location"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "gmt_offset",
+            "expr": "customer_address.ca_gmt_offset",
+            "description": "Address GMT offset.",
+            "synonyms": [
+              "timezone offset"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "__cz_filter_3879289190c1",
+            "expr": "customer_address.ca_country",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "customer_demographics",
+        "description": "Customer demographic dimension with gender, marital, education and dependent attributes.",
+        "synonyms": [
+          "customer demographics",
+          "demographics"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "customer_demographics"
+        },
+        "primary_key": {
+          "columns": [
+            "cd_demo_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "gender",
+            "expr": "customer_demographics.cd_gender",
+            "description": "Customer gender.",
+            "synonyms": [
+              "gender"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "marital_status",
+            "expr": "customer_demographics.cd_marital_status",
+            "description": "Customer marital status.",
+            "synonyms": [
+              "marital"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "education_status",
+            "expr": "customer_demographics.cd_education_status",
+            "description": "Customer education status.",
+            "synonyms": [
+              "education"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "credit_rating",
+            "expr": "customer_demographics.cd_credit_rating",
+            "description": "Customer credit rating.",
+            "synonyms": [
+              "credit"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "dep_count",
+            "expr": "customer_demographics.cd_dep_count",
+            "description": "Customer dependent count.",
+            "synonyms": [
+              "dependents"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "dep_employed_count",
+            "expr": "customer_demographics.cd_dep_employed_count",
+            "description": "Employed dependent count.",
+            "synonyms": [
+              "employed dependents"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "dep_college_count",
+            "expr": "customer_demographics.cd_dep_college_count",
+            "description": "College dependent count.",
+            "synonyms": [
+              "college dependents"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "purchase_estimate",
+            "expr": "customer_demographics.cd_purchase_estimate",
+            "description": "Purchase estimate band value.",
+            "synonyms": [
+              "purchase estimate"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "__cz_filter_8a57acfde98b",
+            "expr": "customer_demographics.cd_gender",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "__cz_filter_02dcbc9fa837",
+            "expr": "customer_demographics.cd_marital_status",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "__cz_filter_f2230d0d5792",
+            "expr": "customer_demographics.cd_education_status",
+            "description": "CLI predicate support field",
+            "synonyms": [],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "household_demographics",
+        "description": "Household demographic dimension used for vehicle, dependent and buying potential filters.",
+        "synonyms": [
+          "household demographics",
+          "household"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "household_demographics"
+        },
+        "primary_key": {
+          "columns": [
+            "hd_demo_sk"
+          ]
+        },
+        "unique_keys": [],
+        "dimensions": [
+          {
+            "name": "buy_potential",
+            "expr": "household_demographics.hd_buy_potential",
+            "description": "Household buy potential band.",
+            "synonyms": [
+              "buy potential"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "dep_count",
+            "expr": "household_demographics.hd_dep_count",
+            "description": "Household dependent count.",
+            "synonyms": [
+              "household dependents"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "vehicle_count",
+            "expr": "household_demographics.hd_vehicle_count",
+            "description": "Household vehicle count.",
+            "synonyms": [
+              "vehicles"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [],
+        "metrics": [],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "store",
+        "description": "Store dimension with store hierarchy, location and operating attributes.",
+        "synonyms": [
+          "store",
+          "retail store"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "store"
+        },
+        "primary_key": {
+          "columns": [
+            "s_store_sk"
+          ]
+        },
+        "unique_keys": [
+          {
+            "columns": [
+              "s_store_id"
+            ]
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "store_id",
+            "expr": "store.s_store_id",
+            "description": "Store business identifier.",
+            "synonyms": [
+              "store code"
+            ],
+            "is_unique": true,
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "store_name",
+            "expr": "store.s_store_name",
+            "description": "Store name.",
+            "synonyms": [
+              "store"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "city",
+            "expr": "store.s_city",
+            "description": "Store city.",
+            "synonyms": [
+              "store city"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "county",
+            "expr": "store.s_county",
+            "description": "Store county.",
+            "synonyms": [
+              "store county"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "state",
+            "expr": "store.s_state",
+            "description": "Store state.",
+            "synonyms": [
+              "store state"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "market_id",
+            "expr": "store.s_market_id",
+            "description": "Store market identifier.",
+            "synonyms": [
+              "market"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "company_name",
+            "expr": "store.s_company_name",
+            "description": "Store company name.",
+            "synonyms": [
+              "company"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "number_employees",
+            "expr": "store.s_number_employees",
+            "description": "Store employee count.",
+            "synonyms": [
+              "employees"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "gmt_offset",
+            "expr": "store.s_gmt_offset",
+            "description": "Store GMT offset.",
+            "synonyms": [
+              "timezone"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [],
+        "filters": [],
+        "constraints": []
+      },
+      {
+        "name": "warehouse",
+        "description": "Warehouse dimension for inventory and fulfillment analytics.",
+        "synonyms": [
+          "warehouse",
+          "fulfillment center"
+        ],
+        "base_table": {
+          "database": "czcli",
+          "schema": "cz_sv_tpcds_sf1_1789702136159",
+          "table": "warehouse"
+        },
+        "primary_key": {
+          "columns": [
+            "w_warehouse_sk"
+          ]
+        },
+        "unique_keys": [
+          {
+            "columns": [
+              "w_warehouse_id"
+            ]
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "warehouse_id",
+            "expr": "warehouse.w_warehouse_id",
+            "description": "Warehouse business identifier.",
+            "synonyms": [
+              "warehouse code"
+            ],
+            "is_unique": true,
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "warehouse_name",
+            "expr": "warehouse.w_warehouse_name",
+            "description": "Warehouse name.",
+            "synonyms": [
+              "warehouse"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "city",
+            "expr": "warehouse.w_city",
+            "description": "Warehouse city.",
+            "synonyms": [
+              "warehouse city"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "county",
+            "expr": "warehouse.w_county",
+            "description": "Warehouse county.",
+            "synonyms": [
+              "warehouse county"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "state",
+            "expr": "warehouse.w_state",
+            "description": "Warehouse state.",
+            "synonyms": [
+              "warehouse state"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          },
+          {
+            "name": "country",
+            "expr": "warehouse.w_country",
+            "description": "Warehouse country.",
+            "synonyms": [
+              "warehouse country"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "time_dimensions": [],
+        "facts": [
+          {
+            "name": "square_feet",
+            "expr": "warehouse.w_warehouse_sq_ft",
+            "description": "Warehouse square footage.",
+            "synonyms": [
+              "warehouse size"
+            ],
+            "using_relationships": [],
+            "non_additive_dimensions": []
+          }
+        ],
+        "metrics": [],
+        "filters": [],
+        "constraints": []
+      }
+    ],
+    "relationships": [
+      {
+        "name": "store_sales_sold_date",
+        "left_table": "store_sales",
+        "right_table": "date_dim",
+        "relationship_columns": [
+          {
+            "left_column": "ss_sold_date_sk",
+            "right_column": "d_date_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "store_sales_item",
+        "left_table": "store_sales",
+        "right_table": "item",
+        "relationship_columns": [
+          {
+            "left_column": "ss_item_sk",
+            "right_column": "i_item_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "store_sales_customer",
+        "left_table": "store_sales",
+        "right_table": "customer",
+        "relationship_columns": [
+          {
+            "left_column": "ss_customer_sk",
+            "right_column": "c_customer_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "store_sales_store",
+        "left_table": "store_sales",
+        "right_table": "store",
+        "relationship_columns": [
+          {
+            "left_column": "ss_store_sk",
+            "right_column": "s_store_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "store_sales_address",
+        "left_table": "store_sales",
+        "right_table": "customer_address",
+        "relationship_columns": [
+          {
+            "left_column": "ss_addr_sk",
+            "right_column": "ca_address_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "store_sales_customer_demographics",
+        "left_table": "store_sales",
+        "right_table": "customer_demographics",
+        "relationship_columns": [
+          {
+            "left_column": "ss_cdemo_sk",
+            "right_column": "cd_demo_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "store_sales_household_demographics",
+        "left_table": "store_sales",
+        "right_table": "household_demographics",
+        "relationship_columns": [
+          {
+            "left_column": "ss_hdemo_sk",
+            "right_column": "hd_demo_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "catalog_sales_sold_date",
+        "left_table": "catalog_sales",
+        "right_table": "date_dim",
+        "relationship_columns": [
+          {
+            "left_column": "cs_sold_date_sk",
+            "right_column": "d_date_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "catalog_sales_item",
+        "left_table": "catalog_sales",
+        "right_table": "item",
+        "relationship_columns": [
+          {
+            "left_column": "cs_item_sk",
+            "right_column": "i_item_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "catalog_sales_bill_customer",
+        "left_table": "catalog_sales",
+        "right_table": "customer",
+        "relationship_columns": [
+          {
+            "left_column": "cs_bill_customer_sk",
+            "right_column": "c_customer_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "catalog_sales_warehouse",
+        "left_table": "catalog_sales",
+        "right_table": "warehouse",
+        "relationship_columns": [
+          {
+            "left_column": "cs_warehouse_sk",
+            "right_column": "w_warehouse_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "web_sales_sold_date",
+        "left_table": "web_sales",
+        "right_table": "date_dim",
+        "relationship_columns": [
+          {
+            "left_column": "ws_sold_date_sk",
+            "right_column": "d_date_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "web_sales_ship_date",
+        "left_table": "web_sales",
+        "right_table": "date_dim",
+        "relationship_columns": [
+          {
+            "left_column": "ws_ship_date_sk",
+            "right_column": "d_date_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "web_sales_item",
+        "left_table": "web_sales",
+        "right_table": "item",
+        "relationship_columns": [
+          {
+            "left_column": "ws_item_sk",
+            "right_column": "i_item_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "web_sales_bill_customer",
+        "left_table": "web_sales",
+        "right_table": "customer",
+        "relationship_columns": [
+          {
+            "left_column": "ws_bill_customer_sk",
+            "right_column": "c_customer_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "web_sales_warehouse",
+        "left_table": "web_sales",
+        "right_table": "warehouse",
+        "relationship_columns": [
+          {
+            "left_column": "ws_warehouse_sk",
+            "right_column": "w_warehouse_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "inventory_date",
+        "left_table": "inventory",
+        "right_table": "date_dim",
+        "relationship_columns": [
+          {
+            "left_column": "inv_date_sk",
+            "right_column": "d_date_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "inventory_item",
+        "left_table": "inventory",
+        "right_table": "item",
+        "relationship_columns": [
+          {
+            "left_column": "inv_item_sk",
+            "right_column": "i_item_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "inventory_warehouse",
+        "left_table": "inventory",
+        "right_table": "warehouse",
+        "relationship_columns": [
+          {
+            "left_column": "inv_warehouse_sk",
+            "right_column": "w_warehouse_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "customer_current_address",
+        "left_table": "customer",
+        "right_table": "customer_address",
+        "relationship_columns": [
+          {
+            "left_column": "c_current_addr_sk",
+            "right_column": "ca_address_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      },
+      {
+        "name": "customer_current_demographics",
+        "left_table": "customer",
+        "right_table": "customer_demographics",
+        "relationship_columns": [
+          {
+            "left_column": "c_current_cdemo_sk",
+            "right_column": "cd_demo_sk",
+            "type": "equi"
+          }
+        ],
+        "join_type": "left_outer",
+        "relationship_type": "many_to_one"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "total_retail_sales_amount",
+        "expr": "(store_sales.store_sales_amount + catalog_sales.catalog_sales_amount) + web_sales.web_sales_amount",
+        "description": "Combined extended sales amount across store, catalog and web channels.",
+        "synonyms": [
+          "total sales",
+          "retail revenue"
+        ],
+        "using_relationships": [],
+        "non_additive_dimensions": []
+      },
+      {
+        "name": "total_retail_net_profit",
+        "expr": "(store_sales.store_net_profit + catalog_sales.catalog_net_profit) + web_sales.web_net_profit",
+        "description": "Combined net profit across store, catalog and web channels.",
+        "synonyms": [
+          "total profit"
+        ],
+        "using_relationships": [],
+        "non_additive_dimensions": []
+      }
+    ],
+    "verified_queries": [
+      {
+        "name": "q98_store_item_revenue_by_product_class",
+        "question": "Store sales item revenue for Sports, Books and Home during the 1999-02-22 thirty-day window by item description, category, class and current price.",
+        "sql": "SELECT i_item_desc, i_category, i_class, i_current_price, sum(ss_ext_sales_price) AS itemrevenue, sum(ss_ext_sales_price) * 100 / sum(sum(ss_ext_sales_price)) OVER (PARTITION BY i_class) AS revenueratio\nFROM cz_sv_tpcds_sf1_1789702136159.store_sales, cz_sv_tpcds_sf1_1789702136159.item, cz_sv_tpcds_sf1_1789702136159.date_dim\nWHERE ss_item_sk = i_item_sk AND i_category IN ('Sports', 'Books', 'Home') AND ss_sold_date_sk = d_date_sk AND d_date BETWEEN cast('1999-02-22' AS DATE) AND (cast('1999-02-22' AS DATE) + INTERVAL 30 days)\nGROUP BY i_item_id, i_item_desc, i_category, i_class, i_current_price\nORDER BY i_category, i_class, i_item_id, i_item_desc, revenueratio\n"
+      },
+      {
+        "name": "q7_store_demographic_promotion_item_averages",
+        "question": "Store sales averages by item for male single college customers, email or event promotion exclusions, and year 2000.",
+        "sql": "SELECT i_item_id, avg(ss_quantity) agg1, avg(ss_list_price) agg2, avg(ss_coupon_amt) agg3, avg(ss_sales_price) agg4\nFROM cz_sv_tpcds_sf1_1789702136159.store_sales, cz_sv_tpcds_sf1_1789702136159.customer_demographics, cz_sv_tpcds_sf1_1789702136159.date_dim, cz_sv_tpcds_sf1_1789702136159.item, cz_sv_tpcds_sf1_1789702136159.promotion\nWHERE ss_sold_date_sk = d_date_sk AND ss_item_sk = i_item_sk AND ss_cdemo_sk = cd_demo_sk AND ss_promo_sk = p_promo_sk AND cd_gender = 'M' AND cd_marital_status = 'S' AND cd_education_status = 'College' AND (p_channel_email = 'N' OR p_channel_event = 'N') AND d_year = 2000\nGROUP BY i_item_id\nORDER BY i_item_id\nLIMIT 100\n"
+      },
+      {
+        "name": "q21_inventory_before_after_item_warehouse",
+        "question": "Inventory before and after a target date by warehouse and item with current-price and date-window filters.",
+        "sql": "SELECT * FROM (SELECT w_warehouse_name, i_item_id, sum(CASE WHEN (cast(d_date AS DATE) < cast('2000-03-11' AS DATE)) THEN inv_quantity_on_hand ELSE 0 END) AS inv_before, sum(CASE WHEN (cast(d_date AS DATE) >= cast('2000-03-11' AS DATE)) THEN inv_quantity_on_hand ELSE 0 END) AS inv_after FROM cz_sv_tpcds_sf1_1789702136159.inventory, cz_sv_tpcds_sf1_1789702136159.warehouse, cz_sv_tpcds_sf1_1789702136159.item, cz_sv_tpcds_sf1_1789702136159.date_dim WHERE i_current_price BETWEEN 0.99 AND 1.49 AND i_item_sk = inv_item_sk AND inv_warehouse_sk = w_warehouse_sk AND inv_date_sk = d_date_sk AND d_date BETWEEN (cast('2000-03-11' AS DATE) - INTERVAL 30 days) AND (cast('2000-03-11' AS DATE) + INTERVAL 30 days) GROUP BY w_warehouse_name, i_item_id) x\nWHERE (CASE WHEN inv_before > 0 THEN inv_after / inv_before ELSE NULL END) BETWEEN 2.0 / 3.0 AND 3.0 / 2.0\nORDER BY w_warehouse_name, i_item_id\nLIMIT 100\n"
+      }
+    ],
+    "properties": {
+      "delivery_scope": "semantic_modeling_only",
+      "modeling_history_file": "training/history.json",
+      "source_schema": "cz_sv_tpcds_sf1_1789702136159",
+      "source_workspace": "czcli"
+    }
+  }
+}

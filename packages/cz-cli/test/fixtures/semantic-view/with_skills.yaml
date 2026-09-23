@@ -1,0 +1,868 @@
+name: tpcds_retail_analytics_sv
+description: Reusable TPC-DS retail analytics semantic view for store, catalog, web, returns and inventory analysis over the supplied experiment schema.
+tables:
+  - name: store_sales
+    description: Store sales line-item fact table at ticket, item, customer, store and sold-date grain.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: store_sales
+    dimensions:
+      - name: ticket_number
+        expr: ss_ticket_number
+        description: Store-sale ticket number.
+        synonyms: [ticket, receipt]
+      - name: sold_date_key
+        expr: ss_sold_date_sk
+        description: Surrogate key for the sold date.
+        synonyms: [sale date key]
+      - name: item_key
+        expr: ss_item_sk
+        description: Surrogate key of the sold item.
+        synonyms: [product key]
+      - name: customer_key
+        expr: ss_customer_sk
+        description: Surrogate key of the purchasing customer.
+        synonyms: [buyer key]
+      - name: store_key
+        expr: ss_store_sk
+        description: Surrogate key of the selling store.
+        synonyms: [location key]
+      - name: address_key
+        expr: ss_addr_sk
+        description: Surrogate key of the purchase address.
+        synonyms: [sales address key]
+    facts:
+      - name: quantity
+        expr: ss_quantity
+        description: Units sold in the store sales line.
+        synonyms: [units]
+      - name: sales_price
+        expr: ss_sales_price
+        description: Store sales price for the line.
+        synonyms: [sales amount]
+      - name: ext_sales_price
+        expr: ss_ext_sales_price
+        description: Extended store sales price.
+        synonyms: [extended sales]
+      - name: ext_list_price
+        expr: ss_ext_list_price
+        description: Extended list price before discounts.
+        synonyms: [list amount]
+      - name: ext_discount_amt
+        expr: ss_ext_discount_amt
+        description: Extended discount amount.
+        synonyms: [discount]
+      - name: coupon_amt
+        expr: ss_coupon_amt
+        description: Coupon amount applied to the sale.
+        synonyms: [coupon]
+      - name: net_paid
+        expr: ss_net_paid
+        description: Net amount paid for store sales.
+        synonyms: [paid amount]
+      - name: net_profit
+        expr: ss_net_profit
+        description: Net profit from store sales.
+        synonyms: [profit]
+      - name: ext_tax
+        expr: ss_ext_tax
+        description: Extended tax amount.
+        synonyms: [tax]
+    metrics:
+      - name: total_quantity
+        expr: sum(ss_quantity)
+        description: Total store quantity sold.
+        synonyms: [store units]
+      - name: total_sales
+        expr: sum(ss_sales_price)
+        description: Total store sales price.
+        synonyms: [store sales]
+      - name: total_ext_sales
+        expr: sum(ss_ext_sales_price)
+        description: Total extended store sales amount.
+        synonyms: [store revenue]
+      - name: total_net_profit
+        expr: sum(ss_net_profit)
+        description: Total store net profit.
+        synonyms: [store profit]
+      - name: total_coupon_amount
+        expr: sum(ss_coupon_amt)
+        description: Total store coupon amount.
+        synonyms: [coupons]
+      - name: avg_quantity
+        expr: avg(ss_quantity)
+        description: Average store quantity per line.
+        synonyms: [average units]
+      - name: avg_sales_price
+        expr: avg(ss_sales_price)
+        description: Average store sales price.
+        synonyms: [average sales price]
+      - name: row_count
+        expr: count(*)
+        description: Number of store sales rows.
+        synonyms: [sales rows]
+    filters:
+      - name: positive_store_sales
+        expr: ss_sales_price > 0
+        description: Store sales rows with positive sales price.
+        synonyms: [positive sales]
+    synonyms: [store channel sales, retail sales]
+    unique_keys: []
+    constraints: []
+  - name: catalog_sales
+    description: Catalog sales fact table at order, item, bill customer, catalog page, warehouse and sold-date grain.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: catalog_sales
+    dimensions:
+      - name: order_number
+        expr: cs_order_number
+        description: Catalog order number.
+        synonyms: [catalog order]
+      - name: sold_date_key
+        expr: cs_sold_date_sk
+        description: Surrogate key for catalog sold date.
+        synonyms: [sale date key]
+      - name: item_key
+        expr: cs_item_sk
+        description: Surrogate key of the catalog item.
+        synonyms: [product key]
+      - name: bill_customer_key
+        expr: cs_bill_customer_sk
+        description: Billing customer surrogate key.
+        synonyms: [customer key]
+      - name: warehouse_key
+        expr: cs_warehouse_sk
+        description: Fulfillment warehouse surrogate key.
+        synonyms: [warehouse]
+    facts:
+      - name: quantity
+        expr: cs_quantity
+        description: Catalog units sold.
+        synonyms: [units]
+      - name: sales_price
+        expr: cs_sales_price
+        description: Catalog sales price.
+        synonyms: [sales amount]
+      - name: ext_sales_price
+        expr: cs_ext_sales_price
+        description: Extended catalog sales price.
+        synonyms: [catalog revenue]
+      - name: net_paid
+        expr: cs_net_paid
+        description: Net amount paid for catalog sale.
+        synonyms: [paid]
+      - name: net_profit
+        expr: cs_net_profit
+        description: Catalog sale net profit.
+        synonyms: [profit]
+      - name: coupon_amt
+        expr: cs_coupon_amt
+        description: Catalog coupon amount.
+        synonyms: [coupon]
+    metrics:
+      - name: total_quantity
+        expr: sum(cs_quantity)
+        description: Total catalog quantity sold.
+        synonyms: [catalog units]
+      - name: total_sales
+        expr: sum(cs_sales_price)
+        description: Total catalog sales price.
+        synonyms: [catalog sales]
+      - name: total_ext_sales
+        expr: sum(cs_ext_sales_price)
+        description: Total extended catalog sales amount.
+        synonyms: [catalog revenue]
+      - name: total_net_profit
+        expr: sum(cs_net_profit)
+        description: Total catalog net profit.
+        synonyms: [catalog profit]
+      - name: avg_quantity
+        expr: avg(cs_quantity)
+        description: Average catalog quantity per line.
+        synonyms: [average units]
+    filters: []
+    synonyms: [catalog channel sales]
+    unique_keys: []
+    constraints: []
+  - name: web_sales
+    description: Web sales fact table at order, item, bill customer, web page, web site, warehouse and sold-date grain.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: web_sales
+    dimensions:
+      - name: order_number
+        expr: ws_order_number
+        description: Web order number.
+        synonyms: [web order]
+      - name: sold_date_key
+        expr: ws_sold_date_sk
+        description: Surrogate key for web sold date.
+        synonyms: [sale date key]
+      - name: ship_date_key
+        expr: ws_ship_date_sk
+        description: Surrogate key for web ship date.
+        synonyms: [ship date key]
+      - name: item_key
+        expr: ws_item_sk
+        description: Surrogate key of the web item.
+        synonyms: [product key]
+      - name: bill_customer_key
+        expr: ws_bill_customer_sk
+        description: Billing customer surrogate key.
+        synonyms: [customer key]
+      - name: warehouse_key
+        expr: ws_warehouse_sk
+        description: Fulfillment warehouse surrogate key.
+        synonyms: [warehouse]
+    facts:
+      - name: quantity
+        expr: ws_quantity
+        description: Web units sold.
+        synonyms: [units]
+      - name: sales_price
+        expr: ws_sales_price
+        description: Web sales price.
+        synonyms: [sales amount]
+      - name: ext_sales_price
+        expr: ws_ext_sales_price
+        description: Extended web sales price.
+        synonyms: [web revenue]
+      - name: net_paid
+        expr: ws_net_paid
+        description: Net amount paid for web sale.
+        synonyms: [paid]
+      - name: net_profit
+        expr: ws_net_profit
+        description: Web sale net profit.
+        synonyms: [profit]
+    metrics:
+      - name: total_quantity
+        expr: sum(ws_quantity)
+        description: Total web quantity sold.
+        synonyms: [web units]
+      - name: total_sales
+        expr: sum(ws_sales_price)
+        description: Total web sales price.
+        synonyms: [web sales]
+      - name: total_ext_sales
+        expr: sum(ws_ext_sales_price)
+        description: Total extended web sales amount.
+        synonyms: [web revenue]
+      - name: total_net_profit
+        expr: sum(ws_net_profit)
+        description: Total web net profit.
+        synonyms: [web profit]
+      - name: avg_quantity
+        expr: avg(ws_quantity)
+        description: Average web quantity per line.
+        synonyms: [average units]
+    filters: []
+    synonyms: [web channel sales, online sales]
+    unique_keys: []
+    constraints: []
+  - name: inventory
+    description: Inventory fact table at item, warehouse and date grain.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: inventory
+    dimensions:
+      - name: date_key
+        expr: inv_date_sk
+        description: Inventory date surrogate key.
+        synonyms: [inventory date]
+      - name: item_key
+        expr: inv_item_sk
+        description: Inventory item surrogate key.
+        synonyms: [product key]
+      - name: warehouse_key
+        expr: inv_warehouse_sk
+        description: Inventory warehouse surrogate key.
+        synonyms: [warehouse key]
+    facts:
+      - name: quantity_on_hand
+        expr: inv_quantity_on_hand
+        description: Quantity on hand.
+        synonyms: [qoh, inventory quantity]
+    metrics:
+      - name: total_quantity_on_hand
+        expr: sum(inv_quantity_on_hand)
+        description: Total inventory quantity on hand.
+        synonyms: [total qoh]
+      - name: avg_quantity_on_hand
+        expr: avg(inv_quantity_on_hand)
+        description: Average inventory quantity on hand.
+        synonyms: [average qoh]
+      - name: quantity_on_hand_stddev
+        expr: stddev_samp(inv_quantity_on_hand)
+        description: Sample standard deviation of quantity on hand.
+        synonyms: [qoh stdev]
+    filters: []
+    synonyms: [stock, inventory balance]
+    unique_keys: []
+    constraints: []
+  - name: item
+    description: Item product dimension used by store, catalog, web and inventory facts.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: item
+    primary_key:
+      columns: [i_item_sk]
+    dimensions:
+      - name: item_key
+        expr: i_item_sk
+        description: Item surrogate key.
+        synonyms: [product key]
+        unique: true
+      - name: item_id
+        expr: i_item_id
+        description: Business item identifier.
+        synonyms: [product id]
+      - name: item_desc
+        expr: i_item_desc
+        description: Item description.
+        synonyms: [product description]
+      - name: category
+        expr: i_category
+        description: Product category.
+        synonyms: [item category]
+      - name: category_id
+        expr: i_category_id
+        description: Product category identifier.
+        synonyms: [category key]
+      - name: class
+        expr: i_class
+        description: Product class.
+        synonyms: [item class]
+      - name: class_id
+        expr: i_class_id
+        description: Product class identifier.
+        synonyms: [class key]
+      - name: brand
+        expr: i_brand
+        description: Product brand.
+        synonyms: [item brand]
+      - name: brand_id
+        expr: i_brand_id
+        description: Product brand identifier.
+        synonyms: [brand key]
+      - name: manufact_id
+        expr: i_manufact_id
+        description: Manufacturer identifier.
+        synonyms: [manufacturer key]
+      - name: product_name
+        expr: i_product_name
+        description: Product name.
+        synonyms: [product]
+      - name: manager_id
+        expr: i_manager_id
+        description: Item manager identifier.
+        synonyms: [manager]
+      - name: color
+        expr: i_color
+        description: Product color.
+        synonyms: [item color]
+    facts:
+      - name: current_price
+        expr: i_current_price
+        description: Current item selling price.
+        synonyms: [price]
+      - name: wholesale_cost
+        expr: i_wholesale_cost
+        description: Current item wholesale cost.
+        synonyms: [cost]
+    metrics:
+      - name: avg_current_price
+        expr: avg(i_current_price)
+        description: Average current item price.
+        synonyms: [average price]
+    filters: []
+    synonyms: [product, merchandise]
+    unique_keys: []
+    constraints: []
+  - name: date_dim
+    description: Calendar date dimension for sold, shipped, returned and inventory dates.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: date_dim
+    primary_key:
+      columns: [d_date_sk]
+    dimensions:
+      - name: date_key
+        expr: d_date_sk
+        description: Date surrogate key.
+        synonyms: [calendar key]
+        unique: true
+      - name: date_id
+        expr: d_date_id
+        description: Date business identifier.
+        synonyms: [date id]
+      - name: year
+        expr: d_year
+        description: Calendar year.
+        synonyms: [calendar year]
+      - name: month_of_year
+        expr: d_moy
+        description: Calendar month number.
+        synonyms: [month]
+      - name: quarter_of_year
+        expr: d_qoy
+        description: Calendar quarter number.
+        synonyms: [quarter]
+      - name: month_sequence
+        expr: d_month_seq
+        description: Sequential month number used for period windows.
+        synonyms: [month seq]
+      - name: week_sequence
+        expr: d_week_seq
+        description: Sequential week number used for week comparisons.
+        synonyms: [week seq]
+      - name: day_of_month
+        expr: d_dom
+        description: Day of month.
+        synonyms: [dom]
+      - name: day_of_week
+        expr: d_dow
+        description: Day of week number.
+        synonyms: [dow]
+      - name: day_name
+        expr: d_day_name
+        description: Day name.
+        synonyms: [weekday]
+      - name: quarter_name
+        expr: d_quarter_name
+        description: Calendar quarter label.
+        synonyms: [quarter label]
+    time_dimensions:
+      - name: date
+        expr: d_date
+        description: Calendar date.
+        synonyms: [calendar date]
+        is_time: true
+    facts: []
+    metrics: []
+    filters:
+      - name: year_2000
+        expr: d_year = 2000
+        description: Dates in calendar year 2000.
+        synonyms: [calendar year 2000]
+      - name: year_2001
+        expr: d_year = 2001
+        description: Dates in calendar year 2001.
+        synonyms: [calendar year 2001]
+    synonyms: [calendar]
+    unique_keys: []
+    constraints: []
+  - name: customer
+    description: Customer dimension with current demographics and address references.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: customer
+    primary_key:
+      columns: [c_customer_sk]
+    dimensions:
+      - name: customer_key
+        expr: c_customer_sk
+        description: Customer surrogate key.
+        synonyms: [customer sk]
+        unique: true
+      - name: customer_id
+        expr: c_customer_id
+        description: Business customer identifier.
+        synonyms: [customer id]
+      - name: first_name
+        expr: c_first_name
+        description: Customer first name.
+        synonyms: [given name]
+      - name: last_name
+        expr: c_last_name
+        description: Customer last name.
+        synonyms: [surname]
+      - name: preferred_customer_flag
+        expr: c_preferred_cust_flag
+        description: Preferred customer flag.
+        synonyms: [preferred flag]
+      - name: birth_country
+        expr: c_birth_country
+        description: Customer birth country.
+        synonyms: [birth country]
+      - name: current_address_key
+        expr: c_current_addr_sk
+        description: Current customer address key.
+        synonyms: [current address]
+      - name: current_demographics_key
+        expr: c_current_cdemo_sk
+        description: Current customer demographics key.
+        synonyms: [current demographics]
+    facts: []
+    metrics:
+      - name: customer_count
+        expr: count(*)
+        description: Number of customer rows.
+        synonyms: [customers]
+    filters: []
+    synonyms: [shopper, buyer]
+    unique_keys: []
+    constraints: []
+  - name: customer_address
+    description: Customer address dimension used for current, billing, shipping and purchase-address analysis.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: customer_address
+    primary_key:
+      columns: [ca_address_sk]
+    dimensions:
+      - name: address_key
+        expr: ca_address_sk
+        description: Address surrogate key.
+        synonyms: [address sk]
+        unique: true
+      - name: city
+        expr: ca_city
+        description: Address city.
+        synonyms: [city]
+      - name: county
+        expr: ca_county
+        description: Address county.
+        synonyms: [county]
+      - name: state
+        expr: ca_state
+        description: Address state.
+        synonyms: [state]
+      - name: zip
+        expr: ca_zip
+        description: Address ZIP code.
+        synonyms: [postal code]
+      - name: country
+        expr: ca_country
+        description: Address country.
+        synonyms: [country]
+    facts: []
+    metrics: []
+    filters:
+      - name: united_states
+        expr: ca_country = 'United States'
+        description: United States addresses.
+        synonyms: [US addresses]
+    synonyms: [address, location]
+    unique_keys: []
+    constraints: []
+  - name: store
+    description: Store dimension with location, market and company attributes.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: store
+    primary_key:
+      columns: [s_store_sk]
+    dimensions:
+      - name: store_key
+        expr: s_store_sk
+        description: Store surrogate key.
+        synonyms: [store sk]
+        unique: true
+      - name: store_id
+        expr: s_store_id
+        description: Business store identifier.
+        synonyms: [store id]
+      - name: store_name
+        expr: s_store_name
+        description: Store name.
+        synonyms: [location name]
+      - name: city
+        expr: s_city
+        description: Store city.
+        synonyms: [store city]
+      - name: county
+        expr: s_county
+        description: Store county.
+        synonyms: [store county]
+      - name: state
+        expr: s_state
+        description: Store state.
+        synonyms: [store state]
+      - name: market_id
+        expr: s_market_id
+        description: Store market identifier.
+        synonyms: [market]
+      - name: company_name
+        expr: s_company_name
+        description: Store company name.
+        synonyms: [company]
+      - name: gmt_offset
+        expr: s_gmt_offset
+        description: Store GMT offset.
+        synonyms: [time zone offset]
+    facts:
+      - name: floor_space
+        expr: s_floor_space
+        description: Store floor space.
+        synonyms: [square feet]
+    metrics: []
+    filters: []
+    synonyms: [retail store, outlet]
+    unique_keys: []
+    constraints: []
+  - name: warehouse
+    description: Warehouse dimension for inventory and shipped sales analysis.
+    base_table:
+      database: czcli
+      schema: cz_sv_tpcds_sf1_1789702136159
+      table: warehouse
+    primary_key:
+      columns: [w_warehouse_sk]
+    dimensions:
+      - name: warehouse_key
+        expr: w_warehouse_sk
+        description: Warehouse surrogate key.
+        synonyms: [warehouse sk]
+      - name: warehouse_name
+        expr: w_warehouse_name
+        description: Warehouse name.
+        synonyms: [warehouse]
+      - name: city
+        expr: w_city
+        description: Warehouse city.
+        synonyms: [warehouse city]
+      - name: county
+        expr: w_county
+        description: Warehouse county.
+        synonyms: [warehouse county]
+      - name: state
+        expr: w_state
+        description: Warehouse state.
+        synonyms: [warehouse state]
+      - name: country
+        expr: w_country
+        description: Warehouse country.
+        synonyms: [warehouse country]
+    facts:
+      - name: warehouse_sq_ft
+        expr: w_warehouse_sq_ft
+        description: Warehouse square footage.
+        synonyms: [warehouse area]
+    metrics: []
+    filters: []
+    synonyms: [distribution center]
+    unique_keys: []
+    constraints: []
+relationships:
+  - name: store_sales_to_item
+    left_table: store_sales
+    right_table: item
+    relationship_columns:
+      - left_column: ss_item_sk
+        right_column: i_item_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: catalog_sales_to_item
+    left_table: catalog_sales
+    right_table: item
+    relationship_columns:
+      - left_column: cs_item_sk
+        right_column: i_item_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: web_sales_to_item
+    left_table: web_sales
+    right_table: item
+    relationship_columns:
+      - left_column: ws_item_sk
+        right_column: i_item_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: inventory_to_item
+    left_table: inventory
+    right_table: item
+    relationship_columns:
+      - left_column: inv_item_sk
+        right_column: i_item_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: store_sales_to_sold_date
+    left_table: store_sales
+    right_table: date_dim
+    relationship_columns:
+      - left_column: ss_sold_date_sk
+        right_column: d_date_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: catalog_sales_to_sold_date
+    left_table: catalog_sales
+    right_table: date_dim
+    relationship_columns:
+      - left_column: cs_sold_date_sk
+        right_column: d_date_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: web_sales_to_sold_date
+    left_table: web_sales
+    right_table: date_dim
+    relationship_columns:
+      - left_column: ws_sold_date_sk
+        right_column: d_date_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: inventory_to_date
+    left_table: inventory
+    right_table: date_dim
+    relationship_columns:
+      - left_column: inv_date_sk
+        right_column: d_date_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: store_sales_to_customer
+    left_table: store_sales
+    right_table: customer
+    relationship_columns:
+      - left_column: ss_customer_sk
+        right_column: c_customer_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: store_sales_to_store
+    left_table: store_sales
+    right_table: store
+    relationship_columns:
+      - left_column: ss_store_sk
+        right_column: s_store_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: store_sales_to_address
+    left_table: store_sales
+    right_table: customer_address
+    relationship_columns:
+      - left_column: ss_addr_sk
+        right_column: ca_address_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: customer_to_current_address
+    left_table: customer
+    right_table: customer_address
+    relationship_columns:
+      - left_column: c_current_addr_sk
+        right_column: ca_address_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: inventory_to_warehouse
+    left_table: inventory
+    right_table: warehouse
+    relationship_columns:
+      - left_column: inv_warehouse_sk
+        right_column: w_warehouse_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: catalog_sales_to_warehouse
+    left_table: catalog_sales
+    right_table: warehouse
+    relationship_columns:
+      - left_column: cs_warehouse_sk
+        right_column: w_warehouse_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+  - name: web_sales_to_warehouse
+    left_table: web_sales
+    right_table: warehouse
+    relationship_columns:
+      - left_column: ws_warehouse_sk
+        right_column: w_warehouse_sk
+        type: equi
+    join_type: left_outer
+    relationship_type: many_to_one
+metrics:
+  - name: combined_sales_amount
+    expr: store_sales.total_sales + catalog_sales.total_sales + web_sales.total_sales
+    description: Combined sales amount across store, catalog and web channels.
+    synonyms: [all channel sales, total sales]
+  - name: combined_ext_sales_amount
+    expr: store_sales.total_ext_sales + catalog_sales.total_ext_sales + web_sales.total_ext_sales
+    description: Combined extended sales amount across store, catalog and web channels.
+    synonyms: [all channel revenue]
+  - name: combined_net_profit
+    expr: store_sales.total_net_profit + catalog_sales.total_net_profit + web_sales.total_net_profit
+    description: Combined net profit across store, catalog and web channels.
+    synonyms: [all channel profit]
+verified_queries:
+  - name: store_sales_by_category_year
+    question: Store sales amount by item category for manager 1 in November 2000.
+    sql: |
+      SELECT
+        dt.d_year,
+        item.i_category_id,
+        item.i_category,
+        sum(ss_ext_sales_price)
+      FROM czcli.cz_sv_tpcds_sf1_1789702136159.date_dim dt, czcli.cz_sv_tpcds_sf1_1789702136159.store_sales, czcli.cz_sv_tpcds_sf1_1789702136159.item
+      WHERE dt.d_date_sk = store_sales.ss_sold_date_sk
+        AND store_sales.ss_item_sk = item.i_item_sk
+        AND item.i_manager_id = 1
+        AND dt.d_moy = 11
+        AND dt.d_year = 2000
+      GROUP BY dt.d_year, item.i_category_id, item.i_category
+      ORDER BY sum(ss_ext_sales_price) DESC, dt.d_year, item.i_category_id, item.i_category
+      LIMIT 100
+    verified_at: 1789731151
+    verified_by: history q42 job 20260918113231523affarhlprxk
+  - name: web_item_revenue_ratio
+    question: Web item revenue and class revenue ratio for Sports, Books and Home in a 30-day date window.
+    sql: |
+      SELECT
+        i_item_desc,
+        i_category,
+        i_class,
+        i_current_price,
+        sum(ws_ext_sales_price) AS itemrevenue,
+        sum(ws_ext_sales_price) * 100 / sum(sum(ws_ext_sales_price)) OVER (PARTITION BY i_class) AS revenueratio
+      FROM czcli.cz_sv_tpcds_sf1_1789702136159.web_sales, czcli.cz_sv_tpcds_sf1_1789702136159.item, czcli.cz_sv_tpcds_sf1_1789702136159.date_dim
+      WHERE ws_item_sk = i_item_sk
+        AND i_category IN ('Sports', 'Books', 'Home')
+        AND ws_sold_date_sk = d_date_sk
+        AND d_date BETWEEN cast('1999-02-22' AS DATE) AND (cast('1999-02-22' AS DATE) + INTERVAL 30 days)
+      GROUP BY i_item_id, i_item_desc, i_category, i_class, i_current_price
+      ORDER BY i_category, i_class, i_item_id, i_item_desc, revenueratio
+      LIMIT 100
+    verified_at: 1789731141
+    verified_by: history q12 job 202609181132214952qkkxtv4ly57
+  - name: inventory_before_after_window
+    question: Inventory before and after a reference date by warehouse and item for low-priced items.
+    sql: |
+      SELECT *
+      FROM (
+        SELECT
+          w_warehouse_name,
+          i_item_id,
+          sum(CASE WHEN (cast(d_date AS DATE) < cast('2000-03-11' AS DATE)) THEN inv_quantity_on_hand ELSE 0 END) AS inv_before,
+          sum(CASE WHEN (cast(d_date AS DATE) >= cast('2000-03-11' AS DATE)) THEN inv_quantity_on_hand ELSE 0 END) AS inv_after
+        FROM czcli.cz_sv_tpcds_sf1_1789702136159.inventory, czcli.cz_sv_tpcds_sf1_1789702136159.warehouse, czcli.cz_sv_tpcds_sf1_1789702136159.item, czcli.cz_sv_tpcds_sf1_1789702136159.date_dim
+        WHERE i_current_price BETWEEN 0.99 AND 1.49
+          AND i_item_sk = inv_item_sk
+          AND inv_warehouse_sk = w_warehouse_sk
+          AND inv_date_sk = d_date_sk
+          AND d_date BETWEEN (cast('2000-03-11' AS DATE) - INTERVAL 30 days) AND (cast('2000-03-11' AS DATE) + INTERVAL 30 days)
+        GROUP BY w_warehouse_name, i_item_id) x
+      WHERE (CASE WHEN inv_before > 0 THEN inv_after / inv_before ELSE NULL END) BETWEEN 2.0 / 3.0 AND 3.0 / 2.0
+      ORDER BY w_warehouse_name, i_item_id
+      LIMIT 100
+    verified_at: 1789731142
+    verified_by: history q21 job 202609181132226202vq2rqvuciaq
+properties: {}

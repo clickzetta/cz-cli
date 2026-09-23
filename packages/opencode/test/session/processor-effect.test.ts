@@ -287,6 +287,60 @@ it.live("session.processor effect tests capture llm input cleanly", () =>
   ),
 )
 
+for (const text of ["", "partial output"]) {
+  it.live(`session.processor rejects an empty unknown finish but preserves partial output: ${Boolean(text)}`, () =>
+    provideTmpdirServer(
+      ({ dir, llm }) =>
+        Effect.gen(function* () {
+          const { processors, session, provider } = yield* boot()
+          yield* llm.push(
+            raw({
+              chunks: [
+                {
+                  id: "chatcmpl-unknown",
+                  object: "chat.completion.chunk",
+                  choices: [{ delta: { role: "assistant", ...(text ? { content: text } : {}) }, finish_reason: null }],
+                  usage: { prompt_tokens: 12, completion_tokens: text ? 2 : 0, total_tokens: text ? 14 : 12 },
+                },
+              ],
+            }),
+          )
+          const chat = yield* session.create({})
+          const parent = yield* user(chat.id, "complete the task")
+          const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+          const model = yield* provider.getModel(ref.providerID, ref.modelID)
+          const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model })
+          const result = yield* handle.process({
+            user: parent,
+            sessionID: chat.id,
+            model,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "complete the task" }],
+            tools: {},
+          })
+          expect(yield* llm.calls).toBe(1)
+          expect(handle.message.finish).toBe("unknown")
+          expect(result).toBe(text ? "continue" : "stop")
+          if (text) {
+            expect(handle.message.error).toBeUndefined()
+            expect((yield* MessageV2.parts(msg.id)).some((part) => part.type === "text" && part.text === text)).toBe(
+              true,
+            )
+            return
+          }
+          expect(handle.message.error).toMatchObject({
+            data: { message: "Provider stream ended with an unknown finish reason and no text, file, or tool output" },
+          })
+          expect((yield* MessageV2.get({ sessionID: chat.id, messageID: msg.id })).info).toMatchObject({
+            error: handle.message.error,
+          })
+        }),
+      { config: (url) => providerCfg(url) },
+    ),
+  )
+}
+
 it.live("session.processor effect tests preserve text start time", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

@@ -1,0 +1,2246 @@
+{
+  "data": {
+    "raw": {
+      "logicalTables": [
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "store_sales",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "store_sales",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "ss_ticket_number"
+                  },
+                  {
+                    "fieldName": "ss_item_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "store transactions",
+            "retail sales"
+          ],
+          "comment": "Store sales transaction lines."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "catalog_sales",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "catalog_sales",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "cs_order_number"
+                  },
+                  {
+                    "fieldName": "cs_item_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "catalog transactions"
+          ],
+          "comment": "Catalog sales transaction lines."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "web_sales",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "web_sales",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "ws_order_number"
+                  },
+                  {
+                    "fieldName": "ws_item_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "online transactions"
+          ],
+          "comment": "Web sales transaction lines."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "inventory",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "inventory",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "inv_date_sk"
+                  },
+                  {
+                    "fieldName": "inv_item_sk"
+                  },
+                  {
+                    "fieldName": "inv_warehouse_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "stock",
+            "quantity on hand"
+          ],
+          "comment": "Daily item inventory by warehouse."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "item",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "item",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "i_item_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            },
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "uniqueKey": {
+                "uniqueFields": [
+                  {
+                    "fieldName": "i_item_id"
+                  }
+                ],
+                "enable": false,
+                "validate": false,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "products",
+            "merchandise"
+          ],
+          "comment": "Product and merchandise attributes."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "date_dim",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "date_dim",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "d_date_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            },
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "uniqueKey": {
+                "uniqueFields": [
+                  {
+                    "fieldName": "d_date"
+                  }
+                ],
+                "enable": false,
+                "validate": false,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "calendar",
+            "dates"
+          ],
+          "comment": "Calendar date dimension with day, month, quarter, year and sequence attributes."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "store",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "store",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "s_store_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            },
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "uniqueKey": {
+                "uniqueFields": [
+                  {
+                    "fieldName": "s_store_id"
+                  }
+                ],
+                "enable": false,
+                "validate": false,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "retail stores"
+          ],
+          "comment": "Physical store attributes."
+        },
+        {
+          "tableIdentifier": {
+            "type": "TABLE",
+            "instanceId": "1",
+            "namespace": [
+              "czcli",
+              "cz_sv_tpcds_sf1_1789702136159"
+            ],
+            "name": "warehouse",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "alias": "warehouse",
+          "constraints": [
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "primaryKey": {
+                "fields": [
+                  {
+                    "fieldName": "w_warehouse_sk"
+                  }
+                ],
+                "enable": true,
+                "validate": true,
+                "rely": true
+              }
+            },
+            {
+              "specId": 0,
+              "properties": [],
+              "name": "",
+              "uniqueKey": {
+                "uniqueFields": [
+                  {
+                    "fieldName": "w_warehouse_id"
+                  }
+                ],
+                "enable": false,
+                "validate": false,
+                "rely": true
+              }
+            }
+          ],
+          "synonyms": [
+            "fulfillment centers"
+          ],
+          "comment": "Fulfillment warehouse attributes."
+        }
+      ],
+      "facts": [
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "quantity",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_quantity",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "sales_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_sales_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "extended_sales_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_ext_sales_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "net_paid",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_net_paid",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "net_profit",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_net_profit",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "quantity",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_quantity",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "sales_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_sales_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "extended_sales_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_ext_sales_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "net_paid",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_net_paid",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "net_profit",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_net_profit",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "quantity",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_quantity",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "sales_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_sales_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "extended_sales_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_ext_sales_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "net_paid",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_net_paid",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "net_profit",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_net_profit",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "quantity_on_hand",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "inventory.inv_quantity_on_hand",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "current_price",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_current_price",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "wholesale_cost",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_wholesale_cost",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        }
+      ],
+      "dimensions": [
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "item_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_item_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "customer_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_customer_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "store_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_store_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "sold_date_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_sold_date_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "ticket_number",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store_sales.ss_ticket_number",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "item_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_item_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "customer_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_bill_customer_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "warehouse_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_warehouse_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "sold_date_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_sold_date_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "order_number",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "catalog_sales.cs_order_number",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "item_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_item_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "customer_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_bill_customer_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "warehouse_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_warehouse_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "sold_date_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_sold_date_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "order_number",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "web_sales.ws_order_number",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "item_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "inventory.inv_item_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "warehouse_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "inventory.inv_warehouse_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "date_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "inventory.inv_date_sk",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "item_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_item_sk",
+          "synonyms": [],
+          "trait": {
+            "isUnique": true,
+            "enumValues": []
+          },
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "item_id",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_item_id",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "item_description",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_item_desc",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "category",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_category",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "class",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_class",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "brand",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_brand",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "manufacturer",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_manufact",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "color",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_color",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "size",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_size",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "item"
+            ],
+            "name": "manager_id",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "item.i_manager_id",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "date_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_date_sk",
+          "synonyms": [],
+          "trait": {
+            "isUnique": true,
+            "enumValues": []
+          },
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "date_id",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_date_id",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "year",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_year",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "month_of_year",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_moy",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "quarter_of_year",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_qoy",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "month_sequence",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_month_seq",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "quarter_name",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_quarter_name",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "day_name",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_day_name",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "date_dim"
+            ],
+            "name": "date",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "date_dim.d_date",
+          "synonyms": [],
+          "trait": {
+            "isTime": true,
+            "enumValues": []
+          },
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "store_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_store_sk",
+          "synonyms": [],
+          "trait": {
+            "isUnique": true,
+            "enumValues": []
+          },
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "store_id",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_store_id",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "store_name",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_store_name",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "city",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_city",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "county",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_county",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "state",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_state",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "country",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_country",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store"
+            ],
+            "name": "gmt_offset",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "store.s_gmt_offset",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "warehouse_key",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_warehouse_sk",
+          "synonyms": [],
+          "trait": {
+            "isUnique": true,
+            "enumValues": []
+          },
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "warehouse_id",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_warehouse_id",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "warehouse_name",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_warehouse_name",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "city",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_city",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "county",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_county",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "state",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_state",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "warehouse"
+            ],
+            "name": "country",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "warehouse.w_country",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        }
+      ],
+      "metrics": [
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "sales_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(store_sales.ss_ext_sales_price)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "net_paid_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(store_sales.ss_net_paid)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "profit_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(store_sales.ss_net_profit)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "units_sold",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(store_sales.ss_quantity)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "store_sales"
+            ],
+            "name": "transaction_lines",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`count`(*)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "sales_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(catalog_sales.cs_ext_sales_price)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "net_paid_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(catalog_sales.cs_net_paid)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "profit_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(catalog_sales.cs_net_profit)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "units_sold",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(catalog_sales.cs_quantity)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "catalog_sales"
+            ],
+            "name": "transaction_lines",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`count`(*)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "sales_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(web_sales.ws_ext_sales_price)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "net_paid_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(web_sales.ws_net_paid)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "profit_amount",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(web_sales.ws_net_profit)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "units_sold",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(web_sales.ws_quantity)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "web_sales"
+            ],
+            "name": "transaction_lines",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`count`(*)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "total_quantity_on_hand",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`sum`(inventory.inv_quantity_on_hand)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "average_quantity_on_hand",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`avg`(inventory.inv_quantity_on_hand)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        },
+        {
+          "name": {
+            "type": "UNKNOWN",
+            "instanceId": "1",
+            "namespace": [
+              "inventory"
+            ],
+            "name": "inventory_rows",
+            "id": "0",
+            "namespaceId": [],
+            "version": "",
+            "namespaceType": []
+          },
+          "expressionText": "",
+          "expressionExpandedText": "`count`(*)",
+          "synonyms": [],
+          "usingRelationships": [],
+          "nonAdditiveBy": []
+        }
+      ],
+      "filters": [],
+      "variables": [],
+      "relationships": [
+        {
+          "name": "store_sales_item",
+          "leftTable": "store_sales",
+          "rightTable": "item",
+          "leftColumns": [
+            "ss_item_sk"
+          ],
+          "rightColumns": [
+            "i_item_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "store_sales_date",
+          "leftTable": "store_sales",
+          "rightTable": "date_dim",
+          "leftColumns": [
+            "ss_sold_date_sk"
+          ],
+          "rightColumns": [
+            "d_date_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "store_sales_store",
+          "leftTable": "store_sales",
+          "rightTable": "store",
+          "leftColumns": [
+            "ss_store_sk"
+          ],
+          "rightColumns": [
+            "s_store_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "catalog_sales_item",
+          "leftTable": "catalog_sales",
+          "rightTable": "item",
+          "leftColumns": [
+            "cs_item_sk"
+          ],
+          "rightColumns": [
+            "i_item_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "catalog_sales_date",
+          "leftTable": "catalog_sales",
+          "rightTable": "date_dim",
+          "leftColumns": [
+            "cs_sold_date_sk"
+          ],
+          "rightColumns": [
+            "d_date_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "catalog_sales_warehouse",
+          "leftTable": "catalog_sales",
+          "rightTable": "warehouse",
+          "leftColumns": [
+            "cs_warehouse_sk"
+          ],
+          "rightColumns": [
+            "w_warehouse_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "web_sales_item",
+          "leftTable": "web_sales",
+          "rightTable": "item",
+          "leftColumns": [
+            "ws_item_sk"
+          ],
+          "rightColumns": [
+            "i_item_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "web_sales_date",
+          "leftTable": "web_sales",
+          "rightTable": "date_dim",
+          "leftColumns": [
+            "ws_sold_date_sk"
+          ],
+          "rightColumns": [
+            "d_date_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "web_sales_warehouse",
+          "leftTable": "web_sales",
+          "rightTable": "warehouse",
+          "leftColumns": [
+            "ws_warehouse_sk"
+          ],
+          "rightColumns": [
+            "w_warehouse_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "inventory_item",
+          "leftTable": "inventory",
+          "rightTable": "item",
+          "leftColumns": [
+            "inv_item_sk"
+          ],
+          "rightColumns": [
+            "i_item_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "inventory_date",
+          "leftTable": "inventory",
+          "rightTable": "date_dim",
+          "leftColumns": [
+            "inv_date_sk"
+          ],
+          "rightColumns": [
+            "d_date_sk"
+          ],
+          "kind": "EQUI"
+        },
+        {
+          "name": "inventory_warehouse",
+          "leftTable": "inventory",
+          "rightTable": "warehouse",
+          "leftColumns": [
+            "inv_warehouse_sk"
+          ],
+          "rightColumns": [
+            "w_warehouse_sk"
+          ],
+          "kind": "EQUI"
+        }
+      ],
+      "verifiedQueries": [
+        {
+          "name": "store_sales_by_category_year",
+          "question": "What are store sales by item category and year?",
+          "sql": "SELECT i.i_category, d.d_year, SUM(ss.ss_ext_sales_price) AS store_sales FROM czcli.cz_sv_tpcds_sf1_1789702136159.store_sales ss JOIN czcli.cz_sv_tpcds_sf1_1789702136159.item i ON ss.ss_item_sk=i.i_item_sk JOIN czcli.cz_sv_tpcds_sf1_1789702136159.date_dim d ON ss.ss_sold_date_sk=d.d_date_sk GROUP BY i.i_category,d.d_year"
+        },
+        {
+          "name": "inventory_by_warehouse_item",
+          "question": "What inventory quantity is on hand by warehouse and item?",
+          "sql": "SELECT w.w_warehouse_name, i.i_item_id, SUM(inv.inv_quantity_on_hand) AS quantity_on_hand FROM czcli.cz_sv_tpcds_sf1_1789702136159.inventory inv JOIN czcli.cz_sv_tpcds_sf1_1789702136159.warehouse w ON inv.inv_warehouse_sk=w.w_warehouse_sk JOIN czcli.cz_sv_tpcds_sf1_1789702136159.item i ON inv.inv_item_sk=i.i_item_sk GROUP BY w.w_warehouse_name,i.i_item_id"
+        },
+        {
+          "name": "web_sales_by_category_year",
+          "question": "What are web sales by item category and year?",
+          "sql": "SELECT i.i_category, d.d_year, SUM(ws.ws_ext_sales_price) AS web_sales FROM czcli.cz_sv_tpcds_sf1_1789702136159.web_sales ws JOIN czcli.cz_sv_tpcds_sf1_1789702136159.item i ON ws.ws_item_sk=i.i_item_sk JOIN czcli.cz_sv_tpcds_sf1_1789702136159.date_dim d ON ws.ws_sold_date_sk=d.d_date_sk GROUP BY i.i_category,d.d_year"
+        }
+      ]
+    }
+  }
+}

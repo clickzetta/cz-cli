@@ -1,0 +1,81 @@
+{
+  "output": {
+    "rows": [
+      [
+        "",
+        "",
+        ""
+      ],
+      [
+        "# detailed table information",
+        "",
+        ""
+      ],
+      [
+        "workspace",
+        "czcli",
+        ""
+      ],
+      [
+        "schema",
+        "cz_sv_verify_20260917_2350",
+        ""
+      ],
+      [
+        "name",
+        "metadata_sv",
+        ""
+      ],
+      [
+        "creator",
+        "czcli",
+        ""
+      ],
+      [
+        "created_time",
+        "2026-09-17 23:52:35.635",
+        ""
+      ],
+      [
+        "last_modified_time",
+        "2026-09-17 23:52:35.64",
+        ""
+      ],
+      [
+        "comment",
+        "metadata preservation test",
+        ""
+      ],
+      [
+        "properties",
+        "null",
+        ""
+      ],
+      [
+        "version",
+        "-1",
+        ""
+      ],
+      [
+        "type",
+        "SEMANTIC VIEW",
+        ""
+      ],
+      [
+        "def",
+        "{\n \"logicalTables\": [\n  {\n   \"tableIdentifier\": {\n    \"type\": \"TABLE\",\n    \"instanceId\": \"1\",\n    \"namespace\": [\n     \"czcli\",\n     \"cz_sv_verify_20260917_2350\"\n    ],\n    \"name\": \"orders\",\n    \"id\": \"0\",\n    \"namespaceId\": [],\n    \"version\": \"\",\n    \"namespaceType\": []\n   },\n   \"alias\": \"o\",\n   \"constraints\": [\n    {\n     \"specId\": 0,\n     \"properties\": [],\n     \"name\": \"\",\n     \"primaryKey\": {\n      \"fields\": [\n       {\n        \"fieldName\": \"id\"\n       }\n      ],\n      \"enable\": true,\n      \"validate\": true,\n      \"rely\": true\n     }\n    },\n    {\n     \"specId\": 0,\n     \"properties\": [],\n     \"name\": \"idx1\",\n     \"index\": {\n      \"type\": \"BLOOM_FILTER\",\n      \"key\": {\n       \"fields\": [\n        {\n         \"fieldName\": \"customer_id\"\n        }\n       ]\n      },\n      \"indexId\": \"0\"\n     }\n    }\n   ],\n   \"synonyms\": []\n  }\n ],\n \"facts\": [\n  {\n   \"name\": {\n    \"type\": \"UNKNOWN\",\n    \"instanceId\": \"1\",\n    \"namespace\": [\n     \"o\"\n    ],\n    \"name\": \"net\",\n    \"id\": \"0\",\n    \"namespaceId\": [],\n    \"version\": \"\",\n    \"namespaceType\": []\n   },\n   \"expressionText\": \"\",\n   \"expressionExpandedText\": \"o.amount - o.discount\",\n   \"synonyms\": [],\n   \"comment\": \"Net fact\",\n   \"usingRelationships\": [],\n   \"nonAdditiveBy\": []\n  }\n ],\n \"dimensions\": [\n  {\n   \"name\": {\n    \"type\": \"UNKNOWN\",\n    \"instanceId\": \"1\",\n    \"namespace\": [\n     \"o\"\n    ],\n    \"name\": \"dt\",\n    \"id\": \"0\",\n    \"namespaceId\": [],\n    \"version\": \"\",\n    \"namespaceType\": []\n   },\n   \"expressionText\": \"\",\n   \"expressionExpandedText\": \"o.order_date\",\n   \"synonyms\": [],\n   \"trait\": {\n    \"isTime\": true,\n    \"enumValues\": [\n     {\n      \"date\": 20454\n     },\n     {\n      \"date\": 20455\n     }\n    ]\n   },\n   \"usingRelationships\": [],\n   \"nonAdditiveBy\": []\n  },\n  {\n   \"name\": {\n    \"type\": \"UNKNOWN\",\n    \"instanceId\": \"1\",\n    \"namespace\": [\n     \"o\"\n    ],\n    \"name\": \"order_id\",\n    \"id\": \"0\",\n    \"namespaceId\": [],\n    \"version\": \"\",\n    \"namespaceType\": []\n   },\n   \"expressionText\": \"\",\n   \"expressionExpandedText\": \"o.id\",\n   \"synonyms\": [],\n   \"trait\": {\n    \"isUnique\": true,\n    \"enumValues\": []\n   },\n   \"usingRelationships\": [],\n   \"nonAdditiveBy\": []\n  }\n ],\n \"metrics\": [\n  {\n   \"name\": {\n    \"type\": \"UNKNOWN\",\n    \"instanceId\": \"1\",\n    \"namespace\": [\n     \"o\"\n    ],\n    \"name\": \"net_revenue\",\n    \"id\": \"0\",\n    \"namespaceId\": [],\n    \"version\": \"\",\n    \"namespaceType\": []\n   },\n   \"expressionText\": \"\",\n   \"expressionExpandedText\": \"`sum`(o.net)\",\n   \"synonyms\": [],\n   \"usingRelationships\": [],\n   \"nonAdditiveBy\": []\n  }\n ],\n \"filters\": [],\n \"variables\": [],\n \"relationships\": [],\n \"verifiedQueries\": []\n}\n",
+        ""
+      ],
+      [
+        "format",
+        "PARQUET",
+        ""
+      ],
+      [
+        "statistics",
+        "0 rows 0 bytes",
+        ""
+      ]
+    ]
+  }
+}

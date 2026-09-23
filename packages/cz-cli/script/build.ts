@@ -393,6 +393,7 @@ if (fs.existsSync(allSkillsSrc)) {
   for (const key of Object.keys(binaries)) {
     for (const { name, src } of skillEntries) {
       const dest = path.join("dist", key, "bin", "skills", name)
+      fs.rmSync(dest, { recursive: true, force: true })
       fs.cpSync(src, dest, { recursive: true })
     }
   }

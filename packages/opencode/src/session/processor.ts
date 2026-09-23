@@ -986,6 +986,22 @@ export const layer = Layer.effect(
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
+            // A usage-only or truncated response can end as unknown without
+            // throwing. Do not let the session report that empty turn as success.
+            if (!ctx.needsCompaction && !ctx.assistantMessage.error && ctx.assistantMessage.finish === "unknown") {
+              const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
+                Effect.provideService(Database.Service, database),
+              )
+              if (
+                !parts.some(
+                  (part) => part.type === "tool" || part.type === "file" || (part.type === "text" && part.text.trim()),
+                )
+              ) {
+                return yield* Effect.fail(
+                  new Error("Provider stream ended with an unknown finish reason and no text, file, or tool output"),
+                )
+              }
+            }
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {

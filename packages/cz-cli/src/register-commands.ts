@@ -1,3 +1,4 @@
+import { registerSvCommand } from "./commands/sv.js"
 import type { Argv } from "yargs"
 import type { GlobalArgs } from "./cli.js"
 import { registerSqlCommand } from "./commands/sql.js"
@@ -24,6 +25,7 @@ import { registerDqcCommand } from "./commands/dqc.js"
 import { registerFsCommand } from "./commands/fs.js"
 
 export function registerCommands(cli: Argv<GlobalArgs>): Argv<GlobalArgs> {
+  registerSvCommand(cli)
   registerAuthCommand(cli)
   registerSqlCommand(cli)
   registerSchemaCommand(cli)

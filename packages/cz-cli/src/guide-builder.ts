@@ -251,6 +251,8 @@ export function buildAiGuide(options?: { wide?: boolean; budgetChars?: number })
 
 export function registerStaticCommands(): void {
   registerCommands([
+    { name: "sv", kind: "group", description: "Author, import, query, audit and optimize ClickZetta semantic views; see cz-cli sv --help" },
+    ...["capabilities", "read", "describe", "list", "search", "write", "edit", "compile", "plan", "validate", "deploy", "recover", "generate", "query", "audit", "suggest", "import", "backend", "optimize"].map(name => ({ name: `sv ${name}`, kind: "command" as const, description: `Semantic view ${name}; inspect command help for file, target and profile options` })),
     { name: "sql", kind: "command", description: "Execute SQL against ClickZetta",
       options: [
         { flags: "--write", required: false, takes_value: false, help: "Allow writes or unknown SQL only after explicit user approval requested by the CLI" },

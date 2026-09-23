@@ -9,6 +9,8 @@ const cases = {
     "VALUES (1), (2)",
     "SHOW TABLES",
     "SHOW CREATE TABLE t",
+    "SHOW CREATE SEMANTIC VIEW analytics.public.sales",
+    "DESC SEMANTIC VIEW EXTENDED analytics.public.sales",
     "SHOW DYNAMIC TABLE REFRESH HISTORY WHERE name='dt' LIMIT 10",
     "DESC EXTENDED t",
     "DESCRIBE TABLE t",
@@ -57,6 +59,7 @@ const cases = {
     "WITH x AS (DELETE FROM t) SELECT * FROM x",
     "SELECT 1; DROP TABLE t",
     "SHOW CREATE TABLE t; DROP TABLE t",
+    "SHOW CREATE SEMANTIC VIEW sales; DROP TABLE t",
     "SHOW DYNAMIC TABLE REFRESH HISTORY; DELETE FROM t",
     "SELECT drop FROM t",
     "SELECT * FROM delete",
@@ -167,4 +170,8 @@ test("only reviewed settings are accepted", () => {
   ]) {
     expect(isReadonlySqlSetting(key)).toBe(false)
   }
+})
+
+test("semantic JSON description format is an allowed readonly setting", () => {
+  expect(isReadonlySqlSetting("cz.sql.desc.format")).toBe(true)
 })

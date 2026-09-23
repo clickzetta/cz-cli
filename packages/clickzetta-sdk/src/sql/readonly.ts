@@ -23,7 +23,7 @@ const UNSUPPORTED = /\b(?:BEGIN|CALL|EXECUTE|EXEC|DECLARE|SET|USE|UNSET|RESET|IN
 
 /** Settings whose effects are understood without changing lexical/function lookup rules. */
 export function isReadonlySqlSetting(key: string): boolean {
-  return /^(?:query_tag|query_timeout|time_zone|schedule_job_queue_priority|cz\.sql\.timezone|sdk\.job\.timeout|cz\.sql\.result\.row\.partial\.limit)$/i.test(
+  return /^(?:query_tag|query_timeout|time_zone|schedule_job_queue_priority|cz\.sql\.timezone|cz\.sql\.desc\.format|sdk\.job\.timeout|cz\.sql\.result\.row\.partial\.limit)$/i.test(
     key,
   )
 }
@@ -53,7 +53,7 @@ export function analyzeSql(sql: string): SqlCheck {
 function classify(text: string): Pick<SqlCheck, "kind" | "reason"> {
   // These documented introspection prefixes contain modification keywords.
   const inspected = text
-    .replace(/^SHOW\s+CREATE\s+TABLE\b/i, "SHOW TABLE")
+    .replace(/^SHOW\s+CREATE\s+(?:TABLE|SEMANTIC\s+VIEW)\b/i, "SHOW TABLE")
     .replace(/^SHOW\s+DYNAMIC\s+TABLE\s+REFRESH\s+HISTORY\b/i, "SHOW HISTORY")
   const write = inspected.match(WRITE)
   if (write) return { kind: "write", reason: `Modification keyword: ${write[0].toUpperCase()}` }

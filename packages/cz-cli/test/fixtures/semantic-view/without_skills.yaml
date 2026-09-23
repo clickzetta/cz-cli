@@ -1,0 +1,384 @@
+name: tpcds_retail_sv
+description: Reusable semantic view for TPC-DS retail analytics across store, catalog, web, returns, inventory, customers, items, dates, stores and warehouses. It targets recurring historical query patterns around channel revenue, returns, customer cohorts, product hierarchy, time windows, inventory balance and fulfillment.
+tables:
+  - name: store_sales
+    description: Store channel sales line fact at ticket, item and customer grain.
+    synonyms: [store sales, store revenue, in store purchases]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: store_sales}
+    primary_key: {columns: [ss_ticket_number, ss_item_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: ticket_number, expr: ss_ticket_number, description: Store sales ticket number., synonyms: [ticket], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: customer_key, expr: ss_customer_sk, description: Store sales customer surrogate key., synonyms: [store customer], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_key, expr: ss_item_sk, description: Sold item surrogate key., synonyms: [store item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: store_key, expr: ss_store_sk, description: Store surrogate key., synonyms: [store], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: quantity, expr: ss_quantity, description: Store sales quantity., synonyms: [units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: sales_price, expr: ss_sales_price, description: Store sales unit sales price., synonyms: [unit price], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_sales_price, expr: ss_ext_sales_price, description: Extended store sales amount., synonyms: [store sales amount], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_list_price, expr: ss_ext_list_price, description: Extended store list price before discount., synonyms: [store list amount], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_discount_amt, expr: ss_ext_discount_amt, description: Extended discount amount for store sales., synonyms: [store discount], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: coupon_amt, expr: ss_coupon_amt, description: Store sales coupon amount., synonyms: [coupon], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_paid, expr: ss_net_paid, description: Store sales net paid amount., synonyms: [paid], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_profit, expr: ss_net_profit, description: Store sales net profit., synonyms: [profit], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_tax, expr: ss_ext_tax, description: Store sales extended tax., synonyms: [tax], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: sales_rows, expr: COUNT(*), description: Count of store sales rows., synonyms: [store line count], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: store_sales_amount, expr: SUM(ss_ext_sales_price), description: Total extended store sales amount., synonyms: [store revenue], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: store_net_profit, expr: SUM(ss_net_profit), description: Total store sales net profit., synonyms: [store profit], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: store_quantity, expr: SUM(ss_quantity), description: Total store sales quantity., synonyms: [store units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters:
+      - {name: positive_store_sales, expr: ss_ext_sales_price > 0, description: Store sales rows with positive extended sales price., synonyms: [positive sales], using_relationships: [], non_additive_dimensions: []}
+    constraints: []
+  - name: catalog_sales
+    description: Catalog channel sales line fact at order, item and customer grain.
+    synonyms: [catalog sales, catalog revenue]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: catalog_sales}
+    primary_key: {columns: [cs_order_number, cs_item_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: order_number, expr: cs_order_number, description: Catalog order number., synonyms: [catalog order], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: bill_customer_key, expr: cs_bill_customer_sk, description: Billing customer key for catalog sale., synonyms: [catalog customer], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: ship_customer_key, expr: cs_ship_customer_sk, description: Shipping customer key for catalog sale., synonyms: [catalog ship customer], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_key, expr: cs_item_sk, description: Catalog item surrogate key., synonyms: [catalog item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: quantity, expr: cs_quantity, description: Catalog sales quantity., synonyms: [catalog units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: sales_price, expr: cs_sales_price, description: Catalog sales unit price., synonyms: [catalog price], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_sales_price, expr: cs_ext_sales_price, description: Extended catalog sales amount., synonyms: [catalog amount], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: coupon_amt, expr: cs_coupon_amt, description: Catalog coupon amount., synonyms: [catalog coupon], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_profit, expr: cs_net_profit, description: Catalog sales net profit., synonyms: [catalog profit], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_ship_cost, expr: cs_ext_ship_cost, description: Catalog extended shipping cost., synonyms: [catalog shipping], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: catalog_sales_amount, expr: SUM(cs_ext_sales_price), description: Total catalog extended sales amount., synonyms: [catalog revenue], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: catalog_net_profit, expr: SUM(cs_net_profit), description: Total catalog net profit., synonyms: [catalog profit], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: catalog_quantity, expr: SUM(cs_quantity), description: Total catalog quantity., synonyms: [catalog units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: web_sales
+    description: Web channel sales line fact at order, item, customer, website and warehouse grain.
+    synonyms: [web sales, online sales, web revenue]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: web_sales}
+    primary_key: {columns: [ws_order_number, ws_item_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: order_number, expr: ws_order_number, description: Web order number., synonyms: [web order], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: bill_customer_key, expr: ws_bill_customer_sk, description: Billing customer key for web sale., synonyms: [web customer], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_key, expr: ws_item_sk, description: Web item surrogate key., synonyms: [web item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: warehouse_key, expr: ws_warehouse_sk, description: Fulfillment warehouse key., synonyms: [web warehouse], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: quantity, expr: ws_quantity, description: Web sales quantity., synonyms: [web units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: sales_price, expr: ws_sales_price, description: Web sales unit price., synonyms: [web price], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_sales_price, expr: ws_ext_sales_price, description: Extended web sales amount., synonyms: [web amount], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: ext_ship_cost, expr: ws_ext_ship_cost, description: Web extended shipping cost., synonyms: [web shipping], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_profit, expr: ws_net_profit, description: Web sales net profit., synonyms: [web profit], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: web_sales_amount, expr: SUM(ws_ext_sales_price), description: Total web extended sales amount., synonyms: [web revenue], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: web_net_profit, expr: SUM(ws_net_profit), description: Total web net profit., synonyms: [web profit], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: web_quantity, expr: SUM(ws_quantity), description: Total web quantity., synonyms: [web units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: store_returns
+    description: Store channel return fact keyed by ticket and item.
+    synonyms: [store returns]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: store_returns}
+    primary_key: {columns: [sr_ticket_number, sr_item_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: ticket_number, expr: sr_ticket_number, description: Returned store ticket number., synonyms: [return ticket], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_key, expr: sr_item_sk, description: Returned item key., synonyms: [returned item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: customer_key, expr: sr_customer_sk, description: Returning customer key., synonyms: [return customer], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: return_quantity, expr: sr_return_quantity, description: Store return quantity., synonyms: [returned units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: return_amt, expr: sr_return_amt, description: Store return amount., synonyms: [store refund], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_loss, expr: sr_net_loss, description: Store return net loss., synonyms: [return loss], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: store_return_amount, expr: SUM(sr_return_amt), description: Total store return amount., synonyms: [store refunds], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: store_return_quantity, expr: SUM(sr_return_quantity), description: Total store returned quantity., synonyms: [store returned units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: catalog_returns
+    description: Catalog channel return fact keyed by order and item.
+    synonyms: [catalog returns]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: catalog_returns}
+    primary_key: {columns: [cr_order_number, cr_item_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: order_number, expr: cr_order_number, description: Returned catalog order number., synonyms: [catalog return order], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_key, expr: cr_item_sk, description: Returned catalog item key., synonyms: [catalog returned item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: returning_customer_key, expr: cr_returning_customer_sk, description: Returning catalog customer key., synonyms: [returning customer], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: return_quantity, expr: cr_return_quantity, description: Catalog return quantity., synonyms: [catalog returned units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: return_amount, expr: cr_return_amount, description: Catalog return amount., synonyms: [catalog refund], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: return_amt_inc_tax, expr: cr_return_amt_inc_tax, description: Catalog return amount including tax., synonyms: [return total], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_loss, expr: cr_net_loss, description: Catalog return net loss., synonyms: [catalog return loss], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: catalog_return_amount, expr: SUM(cr_return_amount), description: Total catalog return amount., synonyms: [catalog refunds], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: catalog_return_quantity, expr: SUM(cr_return_quantity), description: Total catalog returned quantity., synonyms: [catalog returned units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: web_returns
+    description: Web channel return fact keyed by order and item.
+    synonyms: [web returns]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: web_returns}
+    primary_key: {columns: [wr_order_number, wr_item_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: order_number, expr: wr_order_number, description: Returned web order number., synonyms: [web return order], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_key, expr: wr_item_sk, description: Returned web item key., synonyms: [web returned item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: return_quantity, expr: wr_return_quantity, description: Web return quantity., synonyms: [web returned units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: return_amt, expr: wr_return_amt, description: Web return amount., synonyms: [web refund], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: net_loss, expr: wr_net_loss, description: Web return net loss., synonyms: [web return loss], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: web_return_amount, expr: SUM(wr_return_amt), description: Total web return amount., synonyms: [web refunds], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+      - {name: web_return_quantity, expr: SUM(wr_return_quantity), description: Total web returned quantity., synonyms: [web returned units], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: inventory
+    description: Daily inventory balance by item and warehouse.
+    synonyms: [inventory, stock, quantity on hand]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: inventory}
+    primary_key: {columns: [inv_date_sk, inv_item_sk, inv_warehouse_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: item_key, expr: inv_item_sk, description: Inventory item key., synonyms: [stock item], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: warehouse_key, expr: inv_warehouse_sk, description: Inventory warehouse key., synonyms: [stock warehouse], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: quantity_on_hand, expr: inv_quantity_on_hand, description: Inventory quantity on hand., synonyms: [qoh, stock quantity], data_type: int, using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: avg_quantity_on_hand, expr: AVG(inv_quantity_on_hand), description: Average inventory quantity on hand., synonyms: [average qoh], data_type: double, using_relationships: [], non_additive_dimensions: []}
+      - {name: total_quantity_on_hand, expr: SUM(inv_quantity_on_hand), description: Total inventory quantity on hand., synonyms: [total qoh], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: qoh_stddev, expr: STDDEV_SAMP(inv_quantity_on_hand), description: Sample standard deviation of inventory quantity on hand., synonyms: [qoh stdev], data_type: double, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: item
+    description: Product and item dimension with category, class, brand, manufacturer and price attributes.
+    synonyms: [product, item, merchandise]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: item}
+    primary_key: {columns: [i_item_sk]}
+    unique_keys: [{columns: [i_item_id]}]
+    dimensions:
+      - {name: item_id, expr: i_item_id, description: Business item identifier., synonyms: [item code], data_type: string, unique: true, using_relationships: [], non_additive_dimensions: []}
+      - {name: item_desc, expr: i_item_desc, description: Item description., synonyms: [description], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: category, expr: i_category, description: "Item category such as Books, Home or Sports.", synonyms: [product category], data_type: string, sample_values: [Books, Home, Sports], using_relationships: [], non_additive_dimensions: []}
+      - {name: category_id, expr: i_category_id, description: Item category identifier., synonyms: [category key], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: class, expr: i_class, description: Item class within category., synonyms: [product class], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: class_id, expr: i_class_id, description: Item class identifier., synonyms: [class key], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: brand, expr: i_brand, description: Item brand name., synonyms: [product brand], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: brand_id, expr: i_brand_id, description: Item brand identifier., synonyms: [brand key], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: manufacturer_id, expr: i_manufact_id, description: Item manufacturer identifier., synonyms: [manufact id], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: product_name, expr: i_product_name, description: Product name used in inventory rollups., synonyms: [product], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: color, expr: i_color, description: Item color., synonyms: [product color], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: manager_id, expr: i_manager_id, description: Item manager identifier., synonyms: [manager], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: current_price, expr: i_current_price, description: Current item price., synonyms: [item price], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+      - {name: wholesale_cost, expr: i_wholesale_cost, description: Item wholesale cost., synonyms: [cost], data_type: "decimal(7,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics:
+      - {name: avg_current_price, expr: AVG(i_current_price), description: Average current item price., synonyms: [average item price], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+    filters:
+      - {name: tpcds_focus_categories, expr: "i_category IN ('Sports', 'Books', 'Home')", description: Product categories frequently used by historical revenue-share queries., synonyms: [sports books home], using_relationships: [], non_additive_dimensions: []}
+    constraints: []
+  - name: date_dim
+    description: Calendar date dimension with day, week, month, quarter and year attributes.
+    synonyms: [date, calendar, sold date, ship date, returned date]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: date_dim}
+    primary_key: {columns: [d_date_sk]}
+    unique_keys: [{columns: [d_date]}]
+    dimensions:
+      - {name: date_id, expr: d_date_id, description: Date business identifier., synonyms: [date code], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: year, expr: d_year, description: Calendar year., synonyms: [calendar year], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: month_seq, expr: d_month_seq, description: Sequential month number., synonyms: [month sequence], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: week_seq, expr: d_week_seq, description: Sequential week number., synonyms: [week sequence], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: month_of_year, expr: d_moy, description: Month number within year., synonyms: [month], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: quarter_of_year, expr: d_qoy, description: Quarter number within year., synonyms: [quarter], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: quarter_name, expr: d_quarter_name, description: Quarter label such as 2001Q1., synonyms: [quarter label], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: day_of_month, expr: d_dom, description: Day of month., synonyms: [dom], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: day_of_week, expr: d_dow, description: Day of week number., synonyms: [dow], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: day_name, expr: d_day_name, description: Day of week name., synonyms: [weekday], data_type: string, sample_values: [Sunday, Monday, Tuesday], using_relationships: [], non_additive_dimensions: []}
+    time_dimensions:
+      - {name: date, expr: d_date, description: Calendar date., synonyms: [calendar date], data_type: date, is_time: true, using_relationships: [], non_additive_dimensions: []}
+    facts: []
+    metrics: []
+    filters:
+      - {name: month_seq_1200_year, expr: d_month_seq BETWEEN 1200 AND 1211, description: Common 12-month analysis window from historical queries., synonyms: [month sequence 1200], using_relationships: [], non_additive_dimensions: []}
+    constraints: []
+  - name: customer
+    description: Customer dimension with name, contact and current demographic/address keys.
+    synonyms: [customer, shopper]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: customer}
+    primary_key: {columns: [c_customer_sk]}
+    unique_keys: [{columns: [c_customer_id]}]
+    dimensions:
+      - {name: customer_id, expr: c_customer_id, description: Customer business identifier., synonyms: [customer code], data_type: string, unique: true, using_relationships: [], non_additive_dimensions: []}
+      - {name: first_name, expr: c_first_name, description: Customer first name., synonyms: [given name], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: last_name, expr: c_last_name, description: Customer last name., synonyms: [surname], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: salutation, expr: c_salutation, description: Customer salutation., synonyms: [title], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: preferred_flag, expr: c_preferred_cust_flag, description: Preferred customer flag., synonyms: [preferred customer], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: birth_country, expr: c_birth_country, description: Customer birth country., synonyms: [country of birth], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: email_address, expr: c_email_address, description: Customer email address., synonyms: [email], data_type: string, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts: []
+    metrics:
+      - {name: customer_count, expr: COUNT(DISTINCT c_customer_sk), description: Distinct customer count., synonyms: [customers], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    filters: []
+    constraints: []
+  - name: customer_address
+    description: Customer address dimension for current, billing, shipping, returning and purchase addresses.
+    synonyms: [address, customer address, geography]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: customer_address}
+    primary_key: {columns: [ca_address_sk]}
+    unique_keys: [{columns: [ca_address_id]}]
+    dimensions:
+      - {name: address_id, expr: ca_address_id, description: Address business identifier., synonyms: [address code], data_type: string, unique: true, using_relationships: [], non_additive_dimensions: []}
+      - {name: city, expr: ca_city, description: Address city., synonyms: [customer city], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: county, expr: ca_county, description: Address county., synonyms: [customer county], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: state, expr: ca_state, description: Address state., synonyms: [customer state], data_type: string, sample_values: [GA, IL, CA], using_relationships: [], non_additive_dimensions: []}
+      - {name: zip, expr: ca_zip, description: Address ZIP code., synonyms: [postal code], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: country, expr: ca_country, description: Address country., synonyms: [customer country], data_type: string, sample_values: [United States], using_relationships: [], non_additive_dimensions: []}
+      - {name: location_type, expr: ca_location_type, description: Address location type., synonyms: [location], data_type: string, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: gmt_offset, expr: ca_gmt_offset, description: Address GMT offset., synonyms: [timezone offset], data_type: "decimal(5,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics: []
+    filters:
+      - {name: united_states, expr: "ca_country = 'United States'", description: United States addresses., synonyms: [us addresses], using_relationships: [], non_additive_dimensions: []}
+    constraints: []
+  - name: customer_demographics
+    description: Customer demographic dimension with gender, marital, education and dependent attributes.
+    synonyms: [customer demographics, demographics]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: customer_demographics}
+    primary_key: {columns: [cd_demo_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: gender, expr: cd_gender, description: Customer gender., synonyms: [gender], data_type: string, sample_values: [M, F], using_relationships: [], non_additive_dimensions: []}
+      - {name: marital_status, expr: cd_marital_status, description: Customer marital status., synonyms: [marital], data_type: string, sample_values: [S, M, D], using_relationships: [], non_additive_dimensions: []}
+      - {name: education_status, expr: cd_education_status, description: Customer education status., synonyms: [education], data_type: string, sample_values: [College, "4 yr Degree", "2 yr Degree"], using_relationships: [], non_additive_dimensions: []}
+      - {name: credit_rating, expr: cd_credit_rating, description: Customer credit rating., synonyms: [credit], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: dep_count, expr: cd_dep_count, description: Customer dependent count., synonyms: [dependents], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: dep_employed_count, expr: cd_dep_employed_count, description: Employed dependent count., synonyms: [employed dependents], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: dep_college_count, expr: cd_dep_college_count, description: College dependent count., synonyms: [college dependents], data_type: int, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: purchase_estimate, expr: cd_purchase_estimate, description: Purchase estimate band value., synonyms: [purchase estimate], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    metrics: []
+    filters:
+      - {name: male_single_college, expr: "cd_gender = 'M' AND cd_marital_status = 'S' AND cd_education_status = 'College'", description: Frequent historical customer demographic filter., synonyms: [male single college], using_relationships: [], non_additive_dimensions: []}
+    constraints: []
+  - name: household_demographics
+    description: Household demographic dimension used for vehicle, dependent and buying potential filters.
+    synonyms: [household demographics, household]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: household_demographics}
+    primary_key: {columns: [hd_demo_sk]}
+    unique_keys: []
+    dimensions:
+      - {name: buy_potential, expr: hd_buy_potential, description: Household buy potential band., synonyms: [buy potential], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: dep_count, expr: hd_dep_count, description: Household dependent count., synonyms: [household dependents], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: vehicle_count, expr: hd_vehicle_count, description: Household vehicle count., synonyms: [vehicles], data_type: int, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts: []
+    metrics: []
+    filters: []
+    constraints: []
+  - name: store
+    description: Store dimension with store hierarchy, location and operating attributes.
+    synonyms: [store, retail store]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: store}
+    primary_key: {columns: [s_store_sk]}
+    unique_keys: [{columns: [s_store_id]}]
+    dimensions:
+      - {name: store_id, expr: s_store_id, description: Store business identifier., synonyms: [store code], data_type: string, unique: true, using_relationships: [], non_additive_dimensions: []}
+      - {name: store_name, expr: s_store_name, description: Store name., synonyms: [store], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: city, expr: s_city, description: Store city., synonyms: [store city], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: county, expr: s_county, description: Store county., synonyms: [store county], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: state, expr: s_state, description: Store state., synonyms: [store state], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: market_id, expr: s_market_id, description: Store market identifier., synonyms: [market], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: company_name, expr: s_company_name, description: Store company name., synonyms: [company], data_type: string, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: number_employees, expr: s_number_employees, description: Store employee count., synonyms: [employees], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+      - {name: gmt_offset, expr: s_gmt_offset, description: Store GMT offset., synonyms: [timezone], data_type: "decimal(5,2)", using_relationships: [], non_additive_dimensions: []}
+    metrics: []
+    filters: []
+    constraints: []
+  - name: warehouse
+    description: Warehouse dimension for inventory and fulfillment analytics.
+    synonyms: [warehouse, fulfillment center]
+    base_table: {workspace: czcli, schema: cz_sv_tpcds_sf1_1789702136159, table: warehouse}
+    primary_key: {columns: [w_warehouse_sk]}
+    unique_keys: [{columns: [w_warehouse_id]}]
+    dimensions:
+      - {name: warehouse_id, expr: w_warehouse_id, description: Warehouse business identifier., synonyms: [warehouse code], data_type: string, unique: true, using_relationships: [], non_additive_dimensions: []}
+      - {name: warehouse_name, expr: w_warehouse_name, description: Warehouse name., synonyms: [warehouse], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: city, expr: w_city, description: Warehouse city., synonyms: [warehouse city], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: county, expr: w_county, description: Warehouse county., synonyms: [warehouse county], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: state, expr: w_state, description: Warehouse state., synonyms: [warehouse state], data_type: string, using_relationships: [], non_additive_dimensions: []}
+      - {name: country, expr: w_country, description: Warehouse country., synonyms: [warehouse country], data_type: string, using_relationships: [], non_additive_dimensions: []}
+    time_dimensions: []
+    facts:
+      - {name: square_feet, expr: w_warehouse_sq_ft, description: Warehouse square footage., synonyms: [warehouse size], data_type: bigint, using_relationships: [], non_additive_dimensions: []}
+    metrics: []
+    filters: []
+    constraints: []
+relationships:
+  - {name: store_sales_sold_date, left_table: store_sales, right_table: date_dim, relationship_columns: [{left_column: ss_sold_date_sk, right_column: d_date_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: store_sales_item, left_table: store_sales, right_table: item, relationship_columns: [{left_column: ss_item_sk, right_column: i_item_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: store_sales_customer, left_table: store_sales, right_table: customer, relationship_columns: [{left_column: ss_customer_sk, right_column: c_customer_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: store_sales_store, left_table: store_sales, right_table: store, relationship_columns: [{left_column: ss_store_sk, right_column: s_store_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: store_sales_address, left_table: store_sales, right_table: customer_address, relationship_columns: [{left_column: ss_addr_sk, right_column: ca_address_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: store_sales_customer_demographics, left_table: store_sales, right_table: customer_demographics, relationship_columns: [{left_column: ss_cdemo_sk, right_column: cd_demo_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: store_sales_household_demographics, left_table: store_sales, right_table: household_demographics, relationship_columns: [{left_column: ss_hdemo_sk, right_column: hd_demo_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: catalog_sales_sold_date, left_table: catalog_sales, right_table: date_dim, relationship_columns: [{left_column: cs_sold_date_sk, right_column: d_date_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: catalog_sales_item, left_table: catalog_sales, right_table: item, relationship_columns: [{left_column: cs_item_sk, right_column: i_item_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: catalog_sales_bill_customer, left_table: catalog_sales, right_table: customer, relationship_columns: [{left_column: cs_bill_customer_sk, right_column: c_customer_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: catalog_sales_warehouse, left_table: catalog_sales, right_table: warehouse, relationship_columns: [{left_column: cs_warehouse_sk, right_column: w_warehouse_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: web_sales_sold_date, left_table: web_sales, right_table: date_dim, relationship_columns: [{left_column: ws_sold_date_sk, right_column: d_date_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: web_sales_ship_date, left_table: web_sales, right_table: date_dim, relationship_columns: [{left_column: ws_ship_date_sk, right_column: d_date_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: web_sales_item, left_table: web_sales, right_table: item, relationship_columns: [{left_column: ws_item_sk, right_column: i_item_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: web_sales_bill_customer, left_table: web_sales, right_table: customer, relationship_columns: [{left_column: ws_bill_customer_sk, right_column: c_customer_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: web_sales_warehouse, left_table: web_sales, right_table: warehouse, relationship_columns: [{left_column: ws_warehouse_sk, right_column: w_warehouse_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: inventory_date, left_table: inventory, right_table: date_dim, relationship_columns: [{left_column: inv_date_sk, right_column: d_date_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: inventory_item, left_table: inventory, right_table: item, relationship_columns: [{left_column: inv_item_sk, right_column: i_item_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: inventory_warehouse, left_table: inventory, right_table: warehouse, relationship_columns: [{left_column: inv_warehouse_sk, right_column: w_warehouse_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: customer_current_address, left_table: customer, right_table: customer_address, relationship_columns: [{left_column: c_current_addr_sk, right_column: ca_address_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+  - {name: customer_current_demographics, left_table: customer, right_table: customer_demographics, relationship_columns: [{left_column: c_current_cdemo_sk, right_column: cd_demo_sk, type: equi}], join_type: left_outer, relationship_type: many_to_one}
+metrics:
+  - {name: total_retail_sales_amount, expr: store_sales.store_sales_amount + catalog_sales.catalog_sales_amount + web_sales.web_sales_amount, description: "Combined extended sales amount across store, catalog and web channels.", synonyms: [total sales, retail revenue], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+  - {name: total_retail_net_profit, expr: store_sales.store_net_profit + catalog_sales.catalog_net_profit + web_sales.web_net_profit, description: "Combined net profit across store, catalog and web channels.", synonyms: [total profit], data_type: decimal, using_relationships: [], non_additive_dimensions: []}
+verified_queries:
+  - name: q98_store_item_revenue_by_product_class
+    question: Store sales item revenue for Sports, Books and Home during the 1999-02-22 thirty-day window by item description, category, class and current price.
+    sql: |
+      SELECT i_item_desc, i_category, i_class, i_current_price, sum(ss_ext_sales_price) AS itemrevenue, sum(ss_ext_sales_price) * 100 / sum(sum(ss_ext_sales_price)) OVER (PARTITION BY i_class) AS revenueratio
+      FROM cz_sv_tpcds_sf1_1789702136159.store_sales, cz_sv_tpcds_sf1_1789702136159.item, cz_sv_tpcds_sf1_1789702136159.date_dim
+      WHERE ss_item_sk = i_item_sk AND i_category IN ('Sports', 'Books', 'Home') AND ss_sold_date_sk = d_date_sk AND d_date BETWEEN cast('1999-02-22' AS DATE) AND (cast('1999-02-22' AS DATE) + INTERVAL 30 days)
+      GROUP BY i_item_id, i_item_desc, i_category, i_class, i_current_price
+      ORDER BY i_category, i_class, i_item_id, i_item_desc, revenueratio
+  - name: q7_store_demographic_promotion_item_averages
+    question: Store sales averages by item for male single college customers, email or event promotion exclusions, and year 2000.
+    sql: |
+      SELECT i_item_id, avg(ss_quantity) agg1, avg(ss_list_price) agg2, avg(ss_coupon_amt) agg3, avg(ss_sales_price) agg4
+      FROM cz_sv_tpcds_sf1_1789702136159.store_sales, cz_sv_tpcds_sf1_1789702136159.customer_demographics, cz_sv_tpcds_sf1_1789702136159.date_dim, cz_sv_tpcds_sf1_1789702136159.item, cz_sv_tpcds_sf1_1789702136159.promotion
+      WHERE ss_sold_date_sk = d_date_sk AND ss_item_sk = i_item_sk AND ss_cdemo_sk = cd_demo_sk AND ss_promo_sk = p_promo_sk AND cd_gender = 'M' AND cd_marital_status = 'S' AND cd_education_status = 'College' AND (p_channel_email = 'N' OR p_channel_event = 'N') AND d_year = 2000
+      GROUP BY i_item_id
+      ORDER BY i_item_id
+      LIMIT 100
+  - name: q21_inventory_before_after_item_warehouse
+    question: Inventory before and after a target date by warehouse and item with current-price and date-window filters.
+    sql: |
+      SELECT * FROM (SELECT w_warehouse_name, i_item_id, sum(CASE WHEN (cast(d_date AS DATE) < cast('2000-03-11' AS DATE)) THEN inv_quantity_on_hand ELSE 0 END) AS inv_before, sum(CASE WHEN (cast(d_date AS DATE) >= cast('2000-03-11' AS DATE)) THEN inv_quantity_on_hand ELSE 0 END) AS inv_after FROM cz_sv_tpcds_sf1_1789702136159.inventory, cz_sv_tpcds_sf1_1789702136159.warehouse, cz_sv_tpcds_sf1_1789702136159.item, cz_sv_tpcds_sf1_1789702136159.date_dim WHERE i_current_price BETWEEN 0.99 AND 1.49 AND i_item_sk = inv_item_sk AND inv_warehouse_sk = w_warehouse_sk AND inv_date_sk = d_date_sk AND d_date BETWEEN (cast('2000-03-11' AS DATE) - INTERVAL 30 days) AND (cast('2000-03-11' AS DATE) + INTERVAL 30 days) GROUP BY w_warehouse_name, i_item_id) x
+      WHERE (CASE WHEN inv_before > 0 THEN inv_after / inv_before ELSE NULL END) BETWEEN 2.0 / 3.0 AND 3.0 / 2.0
+      ORDER BY w_warehouse_name, i_item_id
+      LIMIT 100
+properties:
+  source_workspace: czcli
+  source_schema: cz_sv_tpcds_sf1_1789702136159
+  modeling_history_file: training/history.json
+  delivery_scope: semantic_modeling_only
