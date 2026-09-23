@@ -444,11 +444,11 @@ describe("subagent sessions", () => {
 })
 
 describe("tool content", () => {
-  test("is capped so an oversized attribute cannot cost the span", () => {
+  test("preserves complete arguments and results while redacting secrets beyond the old cap", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
-    const huge = "x".repeat(20_000)
+    const huge = "x".repeat(20_000) + " PASSWORD=hunter2 tail"
     part({
       id: "prt_2",
       type: "tool",
@@ -472,11 +472,10 @@ describe("tool content", () => {
     })
     send("session.idle", { sessionID: SESSION })
     const [tool] = named("execute_tool read")
-    for (const key of ["gen_ai.tool.call.arguments", "gen_ai.tool.call.result"]) {
-      const value = String(tool!.attributes[key])
-      expect(value.length).toBeLessThan(9_000)
-      expect(value).toContain("[truncated")
-    }
+    expect(JSON.parse(String(tool!.attributes["gen_ai.tool.call.arguments"]))).toEqual({
+      file: "x".repeat(20_000) + " PASSWORD=<redacted> tail",
+    })
+    expect(tool!.attributes["gen_ai.tool.call.result"]).toBe("x".repeat(20_000) + " PASSWORD=<redacted> tail")
   })
 })
 
@@ -704,6 +703,95 @@ describe("log records for a session with no turn", () => {
 })
 
 describe("prompt and completion content", () => {
+  test.each(["session.idle", "session.status"])("%s releases only the ending session's content", async (event) => {
+    const { recordInputMessages, recordSystemInstructions } = await import(
+      "../src/opencode-plugin/otel/handlers"
+    )
+    const other = "ses_other"
+    busy()
+    assistantMessage()
+    busy(other)
+    for (const sessionID of [SESSION, other]) {
+      recordInputMessages([
+        { info: { role: "user", sessionID }, parts: [{ type: "text", text: sessionID.repeat(5_000) }] },
+      ])
+      recordSystemInstructions(sessionID, [sessionID.repeat(5_000)])
+    }
+    part({ id: "first", type: "step-start" })
+    part({ id: "finish", type: "step-finish", reason: "stop" })
+    send(event, { sessionID: SESSION, status: { type: "idle" } })
+
+    // Without another transform hook, a new turn must not reuse the old content.
+    busy()
+    part({ id: "second", type: "step-start" })
+    send("session.idle", { sessionID: SESSION })
+    const [first, second] = named("chat claude-opus-5")
+    expect(first!.attributes["gen_ai.input.messages"]).toContain(SESSION.repeat(5_000))
+    expect(first!.attributes["gen_ai.system_instructions"]).toContain(SESSION.repeat(5_000))
+    expect(second!.attributes["gen_ai.input.messages"]).toBeUndefined()
+    expect(second!.attributes["gen_ai.system_instructions"]).toBeUndefined()
+
+    send("message.part.updated", {
+      sessionID: other,
+      part: { type: "step-start", id: "other", messageID: "msg_other", sessionID: other },
+    })
+    send("session.idle", { sessionID: other })
+    const [concurrent] = named("chat unknown")
+    expect(concurrent!.attributes["gen_ai.input.messages"]).toContain(other.repeat(5_000))
+    expect(concurrent!.attributes["gen_ai.system_instructions"]).toContain(other.repeat(5_000))
+  })
+
+  test("releases content when a turn fails before its first step", async () => {
+    const { recordInputMessages, recordSystemInstructions } = await import(
+      "../src/opencode-plugin/otel/handlers"
+    )
+    busy()
+    recordInputMessages([
+      { info: { role: "user", sessionID: SESSION }, parts: [{ type: "text", text: "failed turn input" }] },
+    ])
+    recordSystemInstructions(SESSION, ["failed turn system"])
+    send("session.error", { sessionID: SESSION, error: { name: "UnknownError", data: { message: "failed" } } })
+    send("session.idle", { sessionID: SESSION })
+    busy()
+    assistantMessage()
+    part({ id: "next", type: "step-start" })
+    send("session.idle", { sessionID: SESSION })
+    const [chat] = named("chat claude-opus-5")
+    expect(chat!.attributes["gen_ai.input.messages"]).toBeUndefined()
+    expect(chat!.attributes["gen_ai.system_instructions"]).toBeUndefined()
+  })
+
+  test("preserves long history, current input, system instructions and completion as valid JSON", async () => {
+    const { recordInputMessages, recordSystemInstructions } = await import(
+      "../src/opencode-plugin/otel/handlers"
+    )
+    busy()
+    assistantMessage()
+    const history = "history ".repeat(6_000)
+    const text = "用户输入\n\"内容\" ".repeat(5_000)
+    recordInputMessages([
+      { info: { role: "assistant", sessionID: SESSION }, parts: [{ type: "text", text: history }] },
+      { info: { role: "user", sessionID: SESSION }, parts: [{ type: "text", text: text + " PASSWORD=hunter2 tail" }] },
+    ])
+    recordSystemInstructions(SESSION, [text + " system tail"])
+    part({ id: "prt_1", type: "step-start" })
+    part({ id: "prt_text", type: "text", text: text + " completion tail" })
+    part({ id: "prt_2", type: "step-finish", reason: "stop" })
+    send("session.idle", { sessionID: SESSION })
+
+    const [chat] = named("chat claude-opus-5")
+    expect(JSON.parse(String(chat!.attributes["gen_ai.input.messages"]))).toEqual([
+      { role: "assistant", parts: [{ type: "text", content: history }] },
+      { role: "user", parts: [{ type: "text", content: text + " PASSWORD=<redacted> tail" }] },
+    ])
+    expect(JSON.parse(String(chat!.attributes["gen_ai.system_instructions"]))).toEqual([
+      { type: "text", content: text + " system tail" },
+    ])
+    expect(JSON.parse(String(chat!.attributes["gen_ai.output.messages"]))).toEqual([
+      { role: "assistant", parts: [{ type: "text", content: text + " completion tail" }], finish_reason: "stop" },
+    ])
+  })
+
   test("a chat span carries input, system and output messages", async () => {
     const { recordInputMessages, recordSystemInstructions } = await import(
       "../src/opencode-plugin/otel/handlers"
