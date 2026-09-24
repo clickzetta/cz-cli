@@ -10,8 +10,9 @@ import {
 } from "./handlers"
 import { getSessionTraceparent } from "./context"
 import { createTraceparent } from "./traceparent"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { VERSION } from "../../version.js"
+import { otelResourceAttributes } from "./resource.js"
 
 function parseHeaders(raw?: string): Record<string, string> {
   if (!raw) return {}
@@ -36,17 +37,12 @@ export const OtelPlugin: Plugin = Object.assign(
     const endpoint = process.env.OPENCODE_OTLP_ENDPOINT
     const headers = parseHeaders(process.env.OPENCODE_OTLP_HEADERS)
 
-    const resourceAttrs: Record<string, string> = {
-      "service.name": process.env.OPENCODE_SERVICE_NAME || "opencode",
-      "service.version": InstallationVersion,
-      "opencode.client": Flag.OPENCODE_CLIENT ?? "unknown",
-    }
-    if (process.env.OPENCODE_RESOURCE_ATTRIBUTES) {
-      for (const pair of process.env.OPENCODE_RESOURCE_ATTRIBUTES.split(",")) {
-        const eqIdx = pair.indexOf("=")
-        if (eqIdx > 0) resourceAttrs[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1)
-      }
-    }
+    const resourceAttrs = otelResourceAttributes({
+      serviceName: process.env.OPENCODE_SERVICE_NAME,
+      version: VERSION,
+      client: Flag.OPENCODE_CLIENT,
+      overrides: process.env.OPENCODE_RESOURCE_ATTRIBUTES,
+    })
 
     let sdk: OtelSdk | undefined
     if (endpoint) {
