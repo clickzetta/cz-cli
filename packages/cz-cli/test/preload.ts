@@ -11,7 +11,7 @@
 import os from "node:os"
 import path from "node:path"
 import fs from "node:fs"
-import { afterAll, beforeEach } from "bun:test"
+import { afterAll, afterEach, beforeEach } from "bun:test"
 import { installFetchBoundary } from "./support/fetch-boundary.js"
 
 // Per-process temp home. Set env FIRST — logger.ts and global dirs read homedir()
@@ -54,6 +54,13 @@ beforeEach(async () => {
   } catch {
     // SDK not resolvable in this file's context — nothing to clear.
   }
+})
+
+// process.exitCode is shared by every isolated file. A test that exercises an
+// error path can leave it non-zero even when all assertions pass, which makes
+// the whole Bun process exit 1. Clear it after each test like HOME above.
+afterEach(() => {
+  process.exitCode = 0
 })
 
 afterAll(() => {
