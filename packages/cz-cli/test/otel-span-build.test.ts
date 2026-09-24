@@ -893,6 +893,61 @@ describe("prompt and completion content", () => {
     expect(messages[0].parts[0].content).not.toBe("history-0")
   })
 
+  test("bounds tool argument fields without losing the latest input message", async () => {
+    const { recordInputMessages } = await import("../src/opencode-plugin/otel/handlers")
+    busy()
+    assistantMessage()
+    recordInputMessages([
+      {
+        info: { role: "assistant", sessionID: SESSION },
+        parts: [
+          {
+            type: "tool",
+            callID: "call_1",
+            tool: "lookup",
+            state: {
+              status: "completed",
+              input: { name: "x".repeat(200_000), note: "latest context" },
+            },
+          },
+        ],
+      },
+    ])
+    part({ id: "prt_1", type: "step-start" })
+    send("session.idle", { sessionID: SESSION })
+
+    const input = String(named("chat claude-opus-5")[0]!.attributes["gen_ai.input.messages"])
+    const messages = JSON.parse(input)
+    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts[0].arguments.note).toBe("latest context")
+    expect(messages[0].parts[0].arguments.name.length).toBeLessThan(200_000)
+  })
+
+  test("trims oversized input message parts from the tail", async () => {
+    const { recordInputMessages } = await import("../src/opencode-plugin/otel/handlers")
+    busy()
+    assistantMessage()
+    recordInputMessages([
+      {
+        info: { role: "user", sessionID: SESSION },
+        parts: Array.from({ length: 1_200 }, (_, index) => ({
+          type: "text",
+          text: index === 1_199 ? "latest context" : "x",
+        })),
+      },
+    ])
+    part({ id: "prt_1", type: "step-start" })
+    send("session.idle", { sessionID: SESSION })
+
+    const input = String(named("chat claude-opus-5")[0]!.attributes["gen_ai.input.messages"])
+    const messages = JSON.parse(input)
+    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts.length).toBeGreaterThan(0)
+    expect(messages[0].parts.at(-1)).toEqual({ type: "text", content: "latest context" })
+  })
+
   test("a chat span carries input, system and output messages", async () => {
     const { recordInputMessages, recordSystemInstructions } = await import(
       "../src/opencode-plugin/otel/handlers"

@@ -89,19 +89,41 @@ function safeStringify(value: unknown): string {
   }
 }
 
-const STRUCTURAL_STRING_KEYS = new Set(["role", "type", "finish_reason", "id", "name", "mediaType", "filename"])
+type StructuralContext = "none" | "messages" | "parts" | "message" | "part"
 
-function capStrings(value: unknown, limit: number, preserveStructural = false, key = ""): unknown {
+const MESSAGE_STRUCTURAL_KEYS = new Set(["role", "finish_reason"])
+const PART_STRUCTURAL_KEYS = new Set(["type", "id", "name", "mediaType", "filename"])
+
+function capStrings(
+  value: unknown,
+  limit: number,
+  structuralContext: StructuralContext = "none",
+  key = "",
+): unknown {
   if (typeof value === "string") {
-    if (preserveStructural && STRUCTURAL_STRING_KEYS.has(key)) return value
+    if (
+      (structuralContext === "message" && MESSAGE_STRUCTURAL_KEYS.has(key)) ||
+      (structuralContext === "part" && PART_STRUCTURAL_KEYS.has(key))
+    ) {
+      return value
+    }
     return capTo(value, limit)
   }
-  if (Array.isArray(value)) return value.map((item) => capStrings(item, limit, preserveStructural))
+  if (Array.isArray(value)) {
+    const itemContext =
+      structuralContext === "messages" ? "message" : structuralContext === "parts" ? "part" : "none"
+    return value.map((item) => capStrings(item, limit, itemContext))
+  }
   if (!value || typeof value !== "object") return value
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([innerKey, inner]) => [
       innerKey,
-      capStrings(inner, limit, preserveStructural, innerKey),
+      capStrings(
+        inner,
+        limit,
+        structuralContext === "message" && innerKey === "parts" ? "parts" : "none",
+        innerKey,
+      ),
     ]),
   )
 }
@@ -110,16 +132,20 @@ function capStrings(value: unknown, limit: number, preserveStructural = false, k
  * Reduce string leaves until the serialized value fits. This preserves the original JSON
  * schema, including message roles, part types and finish reasons.
  */
-function boundedRedactedJson(redacted: unknown, limit: number, preserveStructural = false): string {
+function boundedRedactedJson(
+  redacted: unknown,
+  limit: number,
+  structuralContext: StructuralContext = "none",
+): string {
   const serialized = safeStringify(redacted)
   if (serialized.length <= limit) return serialized
 
   let low = 0
   let high = limit
-  let best = safeStringify(capStrings(redacted, 0, preserveStructural))
+  let best = safeStringify(capStrings(redacted, 0, structuralContext))
   while (low <= high) {
     const middle = Math.floor((low + high) / 2)
-    const candidate = safeStringify(capStrings(redacted, middle, preserveStructural))
+    const candidate = safeStringify(capStrings(redacted, middle, structuralContext))
     if (candidate.length <= limit) {
       best = candidate
       low = middle + 1
@@ -132,7 +158,7 @@ function boundedRedactedJson(redacted: unknown, limit: number, preserveStructura
   if (redacted && typeof redacted === "object" && !Array.isArray(redacted)) {
     const result: Record<string, unknown> = { __truncated__: true }
     for (const [entryKey, inner] of Object.entries(redacted as Record<string, unknown>)) {
-      const candidate = { ...result, [entryKey]: capStrings(inner, 0, preserveStructural, entryKey) }
+      const candidate = { ...result, [entryKey]: capStrings(inner, 0, structuralContext, entryKey) }
       if (safeStringify(candidate).length > limit) break
       result[entryKey] = candidate[entryKey]
     }
@@ -161,7 +187,12 @@ function retainArray(items: unknown[], limit: number, keep: "head" | "tail"): un
   return retained
 }
 
-function promptAttr(value: unknown[], keep: "head" | "tail", trimParts = false): string {
+function promptAttr(
+  value: unknown[],
+  keep: "head" | "tail",
+  trimParts = false,
+  structuralContext: "messages" | "parts" = "messages",
+): string {
   const redacted = redactDeep(value) as unknown[]
   let retained = retainArray(redacted, PROMPT_MAX_CHARS, keep)
   if (trimParts && retained.length === 1) {
@@ -173,7 +204,7 @@ function promptAttr(value: unknown[], keep: "head" | "tail", trimParts = false):
       }
     }
   }
-  return boundedRedactedJson(retained, PROMPT_MAX_CHARS, true)
+  return boundedRedactedJson(retained, PROMPT_MAX_CHARS, structuralContext)
 }
 
 // Parse OPENCODE_DISABLE_TRACES once. Value is comma-separated categories,
@@ -523,7 +554,7 @@ export function recordInputMessages(messages: Array<{ info?: Record<string, any>
     role: m.info?.role ?? "unknown",
     parts: (m.parts ?? []).map(serializePart).filter(Boolean),
   }))
-  sessionInput.set(sessionID, promptAttr(serialized, "tail"))
+  sessionInput.set(sessionID, promptAttr(serialized, "tail", true))
 }
 
 /** `experimental.chat.system.transform` (llm/request.ts:70), which does pass a sessionID. */
@@ -531,7 +562,7 @@ export function recordSystemInstructions(sessionID: string | undefined, system: 
   if (!_recordContent || !sessionID || !system?.length) return
   const parts = system.filter(Boolean).map((content) => ({ type: "text", content }))
   if (!parts.length) return
-  sessionSystem.set(sessionID, promptAttr(parts, "head"))
+  sessionSystem.set(sessionID, promptAttr(parts, "head", false, "parts"))
 }
 
 /**
