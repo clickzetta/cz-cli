@@ -1,3 +1,4 @@
+import { abortable, delay } from "../abort.js"
 import { requestRaw, type ClientOptions } from "../client.js"
 import { ClickZettaApiError } from "../types/api.js"
 import { lh_code } from "./errors.js"
@@ -77,10 +78,6 @@ export function normalizeServiceEndpoint(value: string | undefined): { host: str
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 function nextRetrySleepMs(current: number): number {
   return current < 3000 ? current * 2 : current
 }
@@ -99,10 +96,11 @@ function shouldRetrySubmitError(error: unknown): boolean {
   return ![400, 401, 403, 404, 409, 422].includes(error.statusCode ?? 0)
 }
 
-export async function submitJob(
-  opts: ClientOptions,
-  params: SubmitJobParams,
-): Promise<unknown> {
+export function submitJob(opts: ClientOptions, params: SubmitJobParams): Promise<unknown> {
+  return abortable(submitJobRequest(opts, params), opts.signal)
+}
+
+async function submitJobRequest(opts: ClientOptions, params: SubmitJobParams): Promise<unknown> {
   const {
     sql,
     workspace,
@@ -143,8 +141,7 @@ export async function submitJob(
     }
   }
 
-  const hybridPollingTimeout =
-    pollingTimeout !== undefined ? pollingTimeout : asynchronous ? 0 : 30
+  const hybridPollingTimeout = pollingTimeout !== undefined ? pollingTimeout : asynchronous ? 0 : 30
 
   const jobDesc: Record<string, unknown> = {
     virtualCluster: vcluster,
@@ -187,9 +184,10 @@ export async function submitJob(
   if (serviceInfo.endpoint) {
     jobDesc.jdbcDomain = serviceInfo.endpoint
   }
-  const accessToken = typeof resolvedContextJson.configs === "object" && resolvedContextJson.configs
-    ? (resolvedContextJson.configs as Record<string, unknown>).access_token
-    : undefined
+  const accessToken =
+    typeof resolvedContextJson.configs === "object" && resolvedContextJson.configs
+      ? (resolvedContextJson.configs as Record<string, unknown>).access_token
+      : undefined
   if (typeof accessToken === "string" && accessToken) {
     jobDesc.account = { accessToken }
   }
@@ -200,25 +198,31 @@ export async function submitJob(
   let lastError: unknown = new Error(`submitJob failed for ${jobId.id}`)
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const resp = await requestRaw({
-        ...opts,
-        traceparent,
-        customHeaders: {
-          ...opts.customHeaders,
-          ...(instanceName ? { instanceName } : {}),
-          jobId: jobId.id,
+      opts.signal?.throwIfAborted()
+      const resp = await requestRaw(
+        {
+          ...opts,
+          traceparent,
+          customHeaders: {
+            ...opts.customHeaders,
+            ...(instanceName ? { instanceName } : {}),
+            jobId: jobId.id,
+          },
         },
-      }, "/lh/submitJob", body)
+        "/lh/submitJob",
+        body,
+      )
       if (submitErrorCode(resp) === lh_code.JOB_NOT_SUBMITTED && attempt < maxRetries) {
-        await sleep(sleepMs)
+        await delay(sleepMs, opts.signal)
         sleepMs = nextRetrySleepMs(sleepMs)
         continue
       }
       return resp
     } catch (error) {
+      opts.signal?.throwIfAborted()
       lastError = error
       if (attempt >= maxRetries || !shouldRetrySubmitError(error)) throw error
-      await sleep(sleepMs)
+      await delay(sleepMs, opts.signal)
       sleepMs = nextRetrySleepMs(sleepMs)
     }
   }
