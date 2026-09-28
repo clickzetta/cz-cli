@@ -1,11 +1,7 @@
+import { abortable, delay } from "../abort.js"
 import { requestRaw, type ClientOptions } from "../client.js"
 import { JobStatus, type JobID, type QueryResult, type ColumnSchema } from "./types.js"
-import {
-  isFatalErrorCode,
-  isRetryableErrorCode,
-  isRetryableMessage,
-  shouldResubmitWithNewJobId,
-} from "./errors.js"
+import { isFatalErrorCode, isRetryableErrorCode, isRetryableMessage, shouldResubmitWithNewJobId } from "./errors.js"
 import { toClickZettaError, OperationalError } from "../types/errors.js"
 import { decodeArrowPayload, deduplicateColumns, fetchArrowFromUrls } from "./arrow.js"
 import { normalizeServiceEndpoint } from "./submit.js"
@@ -144,7 +140,6 @@ function splitSingle(row: string, delimiterIndex: number, columnCount: number): 
   return result
 }
 
-
 /**
  * Parse base64-encoded TEXT data chunks into rows of column values.
  * Each element in dataList is a base64-encoded string containing
@@ -193,7 +188,8 @@ async function fetchTextFromUrls(urls: string[], columnCount: number): Promise<(
 
 function toJobStatus(state: string): JobStatus {
   switch (state) {
-    case "SUBMITTED": return JobStatus.SUBMITTED
+    case "SUBMITTED":
+      return JobStatus.SUBMITTED
     case "RUNNING":
     case "QUEUEING":
     case "SETUP":
@@ -202,14 +198,15 @@ function toJobStatus(state: string): JobStatus {
     case "SUCCEEDED":
     case "SUCCEED":
       return JobStatus.SUCCEEDED
-    case "FAILED": return JobStatus.FAILED
+    case "FAILED":
+      return JobStatus.FAILED
     case "CANCELLED":
     case "CANCELLING":
       return JobStatus.CANCELLED
-    default: return JobStatus.UNKNOWN
+    default:
+      return JobStatus.UNKNOWN
   }
 }
-
 
 // --- Type coercion ---
 
@@ -282,18 +279,34 @@ export function coerceValue(value: string | null, typeCategory: string, timezone
 
   // JSON
   if (upper === "JSON") {
-    try { return JSON.parse(value) } catch { return value }
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
   }
 
   // Complex containers (JSON-encoded strings in TEXT format)
   if (upper === "MAP" && value) {
-    try { return JSON.parse(value) } catch { return value }
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
   }
   if ((upper.startsWith("ARRAY") || upper === "LIST") && value) {
-    try { return JSON.parse(value) } catch { return value }
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
   }
   if ((upper === "STRUCT" || upper.startsWith("STRUCT<") || upper.startsWith("ROW(")) && value) {
-    try { return JSON.parse(value) } catch { return value }
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
   }
 
   // String-like: CHAR / CHAR(n) / VARCHAR / VARCHAR(n) / STRING
@@ -376,16 +389,11 @@ function parseResultSet(
   return { columns, rows: [], isAsync: false, timeZone, format }
 }
 
-
 /**
  * Parse a raw LH job response (from either submitJob HYBRID or getJob)
  * into a QueryResult. Handles embedded TEXT data and presigned URL fetching.
  */
-export async function parseJobResponse(
-  raw: LhJobResponse,
-  jobId: JobID,
-  timezone?: string,
-): Promise<QueryResult> {
+export async function parseJobResponse(raw: LhJobResponse, jobId: JobID, timezone?: string): Promise<QueryResult> {
   const state = raw.status?.state ?? "UNKNOWN"
   const status = toJobStatus(state)
 
@@ -440,11 +448,15 @@ export async function parseJobResponse(
 /**
  * Poll /lh/getJob until the job reaches a terminal state, then parse results.
  */
-export async function pollJobResult(
+export function pollJobResult(
   opts: ClientOptions,
   jobId: JobID,
   params: PollJobResultParams = {},
 ): Promise<QueryResult> {
+  return abortable(pollUntilTerminal(opts, jobId, params), opts.signal)
+}
+
+async function pollUntilTerminal(opts: ClientOptions, jobId: JobID, params: PollJobResultParams): Promise<QueryResult> {
   const startTime = Date.now()
   const { jobTimeoutMs, timezone, maxRetries = Infinity, resubmitFn } = params
   const serviceInfo = normalizeServiceEndpoint(opts.context?.service ?? opts.baseUrl)
@@ -468,6 +480,7 @@ export async function pollJobResult(
   let retryCount = 0
 
   while (true) {
+    opts.signal?.throwIfAborted()
     if (maxRetries > 0 && retryCount >= maxRetries) {
       throw new OperationalError(`Job ${jobId.id} exceeded max retries (${maxRetries})`, { jobId: jobId.id })
     }
@@ -476,17 +489,23 @@ export async function pollJobResult(
       try {
         const { cancelJob } = await import("./cancel.js")
         await cancelJob(opts, jobId)
-      } catch { /* best-effort cancel */ }
+      } catch {
+        /* best-effort cancel */
+      }
       throw new OperationalError(`Job ${jobId.id} timed out after ${jobTimeoutMs}ms`, { jobId: jobId.id })
     }
 
-    const raw = await requestRaw<LhJobResponse>({
-      ...opts,
-      customHeaders: {
-        ...opts.customHeaders,
-        instanceId: String(jobId.instanceId),
+    const raw = await requestRaw<LhJobResponse>(
+      {
+        ...opts,
+        customHeaders: {
+          ...opts.customHeaders,
+          instanceId: String(jobId.instanceId),
+        },
       },
-    }, "/lh/getJob", requestBody)
+      "/lh/getJob",
+      requestBody,
+    )
     const state = raw?.status?.state ?? "UNKNOWN"
     const errorCode = raw?.status?.errorCode || raw?.respStatus?.errorCode || undefined
     const errorMessage = raw?.status?.errorMessage || raw?.status?.message || raw?.respStatus?.errorMsg || undefined
@@ -512,16 +531,14 @@ export async function pollJobResult(
     // Other retryable lh_codes (60007 / 60022 / 60023) → keep polling same job
     if (isRetryableErrorCode(errorCode)) {
       retryCount++
-      await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
+      await delay(sleepMs, opts.signal)
       sleepMs = nextSleepMs(sleepMs)
       continue
     }
 
     if (!errorCode && isRetryableMessage(errorMessage)) {
       const isNoPerm =
-        !!errorMessage &&
-        errorMessage.includes("NoPermission: User ") &&
-        errorMessage.endsWith(" is not found")
+        !!errorMessage && errorMessage.includes("NoPermission: User ") && errorMessage.endsWith(" is not found")
       if (isNoPerm) {
         noPermissionTries++
         if (noPermissionTries >= NO_PERMISSION_MAX_TRIES) {
@@ -532,7 +549,7 @@ export async function pollJobResult(
         }
       }
       retryCount++
-      await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
+      await delay(sleepMs, opts.signal)
       sleepMs = nextSleepMs(sleepMs)
       continue
     }
@@ -548,7 +565,7 @@ export async function pollJobResult(
     }
 
     retryCount++
-    await new Promise<void>((resolve) => setTimeout(resolve, sleepMs))
+    await delay(sleepMs, opts.signal)
     sleepMs = nextSleepMs(sleepMs)
   }
 }

@@ -15,6 +15,8 @@ import {
   type QueryResult,
   JobStatus,
 } from "@clickzetta/sdk"
+import { CLEANUP_ENV } from "../sql/cleanup-scope.js"
+import { trackSqlJob } from "./sql-lifecycle.js"
 import { currentTraceContext, defaultQueryTag } from "../trace.js"
 import { patchProfileUserId } from "../connection/profile-store.js"
 import * as Profile from "../connection/profile-context.js"
@@ -130,50 +132,76 @@ export async function execSql(
   const timezone = opts?.hints?.["cz.sql.timezone"]
   const jobId = newJobId(ctx.config.workspace, ctx.instanceId())
   opts?.onJobId?.(jobId.id)
-  const traceContext = currentTraceContext()
-  const submitResp = await submitJob(ctx.clientOpts, {
-    sql: normalizedSql,
-    workspace: ctx.config.workspace,
-    schema: ctx.config.schema,
-    vcluster: ctx.config.vcluster,
-    instanceName: ctx.config.instance,
-    instanceId: ctx.instanceId(),
-    jobId,
-    hints: buildExecHints(opts?.hints, traceContext),
-    asynchronous: opts?.asynchronous,
-    configStatements: opts?.configStatements,
-    traceparent: traceContext.traceparent,
-    maxRetries: submitMaxRetries(opts?.hints),
-  })
-  if (opts?.asynchronous) {
-    return { jobId: jobId.id, status: "RUNNING" as const }
+  const timeoutMs = opts?.timeoutMs ?? (
+    opts?.hints?.["sdk.job.timeout"] !== undefined
+      ? Number(opts.hints["sdk.job.timeout"]) * 1000
+      : process.env[CLEANUP_ENV] ? 300_000 : undefined
+  )
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+    throw new Error("SQL --timeout must be a positive, finite number of seconds")
   }
-  // HYBRID mode: submitJob may return the result directly if the query
-  // finished within hybridPollingTimeout. Check for a terminal state.
-  const raw = submitResp as { status?: { state?: string } }
-  let result: QueryResult
-  if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
-    const errorCode = retryableSubmitCode(submitResp)
-    if (isRetryableErrorCode(errorCode)) {
-      result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
-    } else {
-      result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone)
-    }
-  } else {
-    result = await pollJobResult(ctx.clientOpts, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
-  }
-
-  // Volume SQL (PUT/GET): process file transfers after getting the job result
-  if (isVolumeSql(normalizedSql) && result.status === JobStatus.SUCCEEDED) {
-    return processVolumeSql(
-      { clientOpts: ctx.clientOpts, workspace: ctx.config.workspace, instanceId: ctx.instanceId() },
+  const lease = await trackSqlJob(ctx.clientOpts, jobId, timeoutMs)
+  const client = { ...ctx.clientOpts, signal: lease.signal }
+  let disposition: "terminal" | "detached" | "cancel" = "cancel"
+  try {
+    const traceContext = currentTraceContext()
+    const submitResp = await submitJob(client, {
+      sql: normalizedSql,
+      workspace: ctx.config.workspace,
+      schema: ctx.config.schema,
+      vcluster: ctx.config.vcluster,
+      instanceName: ctx.config.instance,
+      instanceId: ctx.instanceId(),
       jobId,
-      result,
-      normalizedSql,
-    )
-  }
+      hints: buildExecHints(opts?.hints, traceContext),
+      asynchronous: opts?.asynchronous,
+      jobTimeoutMs: opts?.asynchronous ? timeoutMs : lease.timeoutMs,
+      configStatements: opts?.configStatements,
+      traceparent: traceContext.traceparent,
+      maxRetries: submitMaxRetries(opts?.hints),
+    })
+    if (opts?.asynchronous) {
+      disposition = "detached"
+      return { jobId: jobId.id, status: "RUNNING" as const }
+    }
+    // HYBRID mode: submitJob may return the result directly if the query
+    // finished within hybridPollingTimeout. Check for a terminal state.
+    const raw = submitResp as { status?: { state?: string } }
+    let result: QueryResult
+    if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
+      const errorCode = retryableSubmitCode(submitResp)
+      if (isRetryableErrorCode(errorCode)) {
+        result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
+      } else {
+        result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone)
+      }
+    } else {
+      result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
+    }
 
-  return result
+    disposition = "terminal"
+
+    // Volume SQL (PUT/GET): process file transfers after getting the job result
+    if (isVolumeSql(normalizedSql) && result.status === JobStatus.SUCCEEDED) {
+      return processVolumeSql(
+        { clientOpts: ctx.clientOpts, workspace: ctx.config.workspace, instanceId: ctx.instanceId() },
+        jobId,
+        result,
+        normalizedSql,
+      )
+    }
+
+    return result
+  } catch (error) {
+    if (lease.signal.aborted) {
+      const failure = new Error(`Job ${jobId.id} interrupted or timed out`)
+      Object.assign(failure, { jobId: jobId.id })
+      throw failure
+    }
+    throw error
+  } finally {
+    await lease.finish(disposition)
+  }
 }
 
 function isAuthError(err: unknown): boolean {

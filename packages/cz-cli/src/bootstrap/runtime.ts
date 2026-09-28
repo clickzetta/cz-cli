@@ -55,6 +55,12 @@ export function applyServeLogFlags(flags: ServeLogFlags): void {
 }
 
 export async function main(args: string[], agentRuntime = false): Promise<number> {
+  if (!agentRuntime) return runRuntime(args, false)
+  const { withSqlSupervisor } = await import("../sql/supervisor-runtime.js")
+  return withSqlSupervisor(() => runRuntime(args, true))
+}
+
+async function runRuntime(args: string[], agentRuntime: boolean): Promise<number> {
   // cz_change: apply the base opencode env injection (kill upstream auto-updater,
   // disable repo-local project config, telemetry defaults) at the very top of main()
   // — before opencode or the TUI server Worker reads any flag. All injection is
@@ -483,6 +489,6 @@ export async function main(args: string[], agentRuntime = false): Promise<number
   } finally {
     await flushOtel()
     await flushLangfuse()
-    process.exit()
   }
+  return (process.exitCode as number) ?? 0
 }

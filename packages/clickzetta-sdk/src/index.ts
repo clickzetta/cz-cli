@@ -47,3 +47,5 @@ export const threadsafety = 2
 /** DB-API 2.0 parameter style (dbapi.py:29). */
 export const paramstyle = "qmark"
 export { czStruct } from "./sql/converter.js"
+
+export { abortable, abortAfter } from "./abort.js"

@@ -3,7 +3,7 @@ import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
 import { analyzeSql, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
+import { success, successRows, error, handledError, parseOutputArgs, renderOutput } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
@@ -595,6 +595,10 @@ async function emitResult(
 
 async function handler(argv: SqlArgs): Promise<void> {
   const format = argv.format
+  if (!Number.isFinite(argv.timeout) || argv.timeout <= 0) {
+    error("USAGE_ERROR", "--timeout must be a positive, finite number of seconds (0 is not supported).", { format, exitCode: 2 })
+    return
+  }
 
   if (argv["job-profile"]) {
     const ctx = await getExecContext(argv)
@@ -628,18 +632,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     sql = applyVariables(sql, parseKvPairs(argv.variable))
   }
   const hints = argv.set ? parseKvPairs(argv.set) : undefined
-  let currentJobId: string | undefined
   let ctx: ExecContext | undefined
-
-  const sigintHandler = () => {
-    const payload: Record<string, unknown> = { error: { code: "ABORTED", message: "Execution interrupted by user." } }
-    if (currentJobId) payload.job_id = currentJobId
-    // renderErrorOutput, like every other failure: under a row format this is
-    // `ERROR ABORTED: …` rather than a JSON blob (see its docstring).
-    process.stdout.write(renderErrorOutput(payload, format, parseOutputArgs(process.argv.slice(2)).field) + "\n")
-    process.exit(130)
-  }
-  process.on("SIGINT", sigintHandler)
 
   try {
     const splitEnabled = await isSplitEnabled()
@@ -734,18 +727,16 @@ async function handler(argv: SqlArgs): Promise<void> {
             return
           }
         } else {
-          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements, (id) => { currentJobId = id })
+          await executeSingle(ctx, stmt, argv, accumulatedHints, configStatements, undefined)
         }
       }
     } else {
-      await executeSingle(ctx, statements[0], argv, hints ?? {}, undefined, (id) => { currentJobId = id }, { verbatim: !splitEnabled })
+      await executeSingle(ctx, statements[0], argv, hints ?? {}, undefined, undefined, { verbatim: !splitEnabled })
     }
   } catch (err) {
     const { code, message, aiMessage, jobId } = classifyExecError(err)
     logOperation("sql", { sql, ok: false, errorCode: code })
     error(code, await formatClassifiedError({ code, message, ctx, profileName: argv.profile }), { format, debug: argv.debug, ...(aiMessage && { aiMessage }), ...(jobId && { extra: { job_id: jobId } }) })
-  } finally {
-    process.removeListener("SIGINT", sigintHandler)
   }
 }
 
@@ -851,7 +842,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
               .option("sync", { type: "boolean", default: true, describe: "Wait for query result before returning (default). Use --no-sync or --async for large queries that may take a long time." })
               .option("async", { type: "boolean", default: false, describe: "Return job_id immediately without waiting for results. Use for large/long-running queries." })
-              .option("timeout", { type: "number", default: 300, describe: "Job timeout in seconds (default: 300)" })
+              .option("timeout", { type: "number", default: 300, describe: "Positive job timeout in seconds (default: 300; 0 is not supported)" })
               .option("variable", { type: "string", array: true, nargs: 1, describe: "Variable substitution: --variable KEY=VALUE. Use ${KEY} in SQL." })
               .option("set", { type: "string", array: true, nargs: 1, describe: "Query hint: --set KEY=VALUE (e.g. --set cz.sql.timezone=UTC)" })
               .option("job-profile", { type: "string", describe: "Fetch execution profile for a completed job ID (separate from running SQL)" })
