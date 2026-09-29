@@ -3,7 +3,7 @@ import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
 import { analyzeSql, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
+import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput, EXIT_BIZ_ERROR } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
@@ -704,6 +704,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           try {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
+              process.exitCode = EXIT_BIZ_ERROR
               const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: await formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
               process.stdout.write(renderOutput(line, format, batchField) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
@@ -715,6 +716,7 @@ async function handler(argv: SqlArgs): Promise<void> {
               logOperation("sql", { sql: stmt, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             }
           } catch (err) {
+            process.exitCode = EXIT_BIZ_ERROR
             const { code, message } = classifyExecError(err)
             const line = { index: i, sql: stmt, error: { code, message: await formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
             process.stdout.write(renderOutput(line, format, batchField) + "\n")
@@ -858,7 +860,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("header", { type: "boolean", default: true, describe: "Include column names in output. Use --no-header or -N to suppress." })
               .option("N", { type: "boolean", hidden: true })
               .option("limit", { type: "number", default: 100, describe: "Max rows to return (0 for unlimited)" })
-              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute multiple semicolon-separated statements sequentially" })
+              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute all statements sequentially; exit non-zero if any fails" })
               .option("dry-run", { type: "boolean", default: false, describe: "EXPLAIN recognized readonly queries. Multiple queries require sql_split=true; writes, session commands and unknown syntax are rejected." })
               .epilogue([
                 "Examples:",
