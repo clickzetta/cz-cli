@@ -7,6 +7,8 @@ metadata:
 
 # Edit a Semantic View
 
+If the working file is Ossie YAML (pulled with `sv pull` or imported), edit it directly and follow [ossie](../ossie/SKILL.md); the structured operations below apply to native `.sv.yaml`, the default for current deployments.
+
 Use the selected connection profile on remote commands (`--profile NAME`). Relative model paths resolve under `cz_project/`; absolute paths are accepted. Read `cz-cli sv capabilities` for the current schema and supported operations. Local output is a model draft; deployment requires `sv deploy --write`. An existing user request to implement/deploy supplies authorization within its scope; do not invent another approval gate.
 
 ## Phase 1: retrieve and inspect

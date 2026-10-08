@@ -11,6 +11,8 @@ const Manifest = z
     remote_fingerprint: z.string().optional(),
     local_fingerprint: z.string(),
     remote_version: z.string().optional(),
+    format: z.enum(["model", "ossie"]).optional(),
+    ossie_version: z.string().optional(),
     state: z.enum(["draft", "downloaded", "edited", "deployed"]),
     updated_at: z.string(),
   })

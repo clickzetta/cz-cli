@@ -5,6 +5,7 @@ import { object } from "./metadata.js"
 import { modelSchema, parseModel, type Model } from "./model.js"
 import { operationNames } from "./edit.js"
 import { capabilities } from "./compile.js"
+import { readKnowledge, checkCoverage, checkKeyEvidence } from "./knowledge.js"
 import generationContract from "../../../../skills/semantic-view/reference/model_generation_contract.md" with { type: "text" }
 
 export type Completion = (instruction: string, input: unknown, signal?: AbortSignal) => Promise<unknown>
@@ -88,13 +89,36 @@ export async function completion(options: { model?: string; llm?: string } = {})
 }
 
 export async function generateModel(complete: Completion, request: unknown, signal?: AbortSignal) {
-  const result = await complete(
-    `Create a ClickZetta semantic model grounded ONLY in the supplied physical metadata and user requirements. Do not deploy or execute SQL.\n${generationContract}`,
-    { request, schema: modelSchema(), capabilities: capabilities() },
-    signal,
-  )
+  const knowledge = readKnowledge(request)
+  const instruction = `Create a ClickZetta semantic model grounded ONLY in the supplied physical metadata and user requirements. Do not deploy or execute SQL.\n${generationContract}`
+  const input = { request, schema: modelSchema(), capabilities: capabilities() }
+  const result = await complete(instruction, input, signal)
+  try {
+    return parseGenerated(result, knowledge)
+  } catch (error) {
+    if (!(error instanceof SemanticViewError) || !["INVALID_MODEL", "INVALID_COVERAGE", "UNVERIFIED_KEYS"].includes(error.code)) throw error
+    const repaired = await complete(
+      `${instruction}\nRepair the supplied candidate using the validation error. Preserve every original requirement and its evidence state. Return the full candidate object. This is the only repair attempt.`,
+      { ...input, repair: { candidate: result, error: { code: error.code, message: error.message, details: error.details } } },
+      signal,
+    )
+    return { ...parseGenerated(repaired, knowledge), generation_repair: { attempted: true, trigger: error.code } }
+  }
+}
+
+function parseGenerated(result: unknown, knowledge: ReturnType<typeof readKnowledge>) {
   const output = object(result)
-  return { model: parseModel(output.model), assumptions: output.assumptions ?? [], coverage: output.coverage ?? [] }
+  const candidate = object(output.model)
+  // Some providers spell an omitted optional key as null. This carries no key claim.
+  const tables = Array.isArray(candidate.tables) ? candidate.tables.map((value) => {
+    const table = object(value)
+    if (table.primary_key !== null) return value
+    const { primary_key, ...rest } = table
+    return rest
+  }) : candidate.tables
+  const model = parseModel({ ...candidate, tables })
+  checkKeyEvidence(model, knowledge)
+  return { model, assumptions: output.assumptions ?? [], coverage: checkCoverage(model, knowledge, output.coverage), ...(knowledge ? { knowledge } : {}) }
 }
 
 export async function propose(

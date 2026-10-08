@@ -1,6 +1,6 @@
 ---
 name: cz-semantic-view
-description: "Answer ClickZetta business questions using reusable metrics or business terminology; discover/query existing semantic views (SV, SEMANTIC_VIEW); create, edit, deploy and validate semantic YAML. Route queries, modeling, dimensions, facts, metrics, filters, relationships, VQRs, audit, optimization and OSI import to the matching workflow."
+description: "Answer ClickZetta business questions using reusable metrics or business terminology; discover/query existing semantic views (SV, SEMANTIC_VIEW); create, edit, deploy and validate semantic YAML. Route queries, modeling, dimensions, facts, metrics, filters, relationships, VQRs, audit, optimization and Ossie/OSI YAML (pull, edit, push, import) to the matching workflow."
 metadata:
   parent-skill: cz-agent-studio
 ---
@@ -11,11 +11,13 @@ Use the selected connection profile on remote commands (`--profile NAME`). Relat
 
 Choose a workflow from the user's intended result:
 
+For the first remote modeling operation in a connection, run `cz-cli sv capabilities --remote --profile PROFILE`; add `--fqn WORKSPACE.SCHEMA.EXISTING_VIEW` to probe Ossie export when relevant. Plain `capabilities` describes the CLI, not the server. Permission/network failures mean unknown support. Recheck after changing profile or deployment. The default is native `.sv.yaml` with `read/generate → validate → plan → deploy`; the verified release-v1.8 baseline does not support Ossie export. Use Ossie only after the relevant server checks; local preview is still available. Native creation does not require a server ontology catalog.
+
 “Create/build/set up a semantic view,” “create a semantic model,” and “model this schema” route directly to creation. Do not ask the user to select a workflow when the intent is already clear. Load the selected sub-skill before performing its operations. Description tasks additionally load [description guidelines](reference/description_guidelines.md).
 
 | Work | Skill |
 |---|---|
-| New model from tables/SQL | [creation](creation/SKILL.md) |
+| New model from tables, SQL and knowledge materials | [creation](creation/SKILL.md) |
 | Find definitions for a business question, or query a discovered/supplied SV | [Querying guide](reference/querying_existing_views.md) |
 | Download/read existing definition | [download](download/SKILL.md) |
 | Structured local changes | [edit](edit/SKILL.md) |
@@ -27,7 +29,7 @@ Choose a workflow from the user's intended result:
 | VQR discovery and maintenance | [vqr_suggestions](vqr_suggestions/SKILL.md), [vqr_management](vqr_management/SKILL.md) |
 | Quality and custom criteria | [audit](audit/SKILL.md) |
 | Iterative improvement | [agentic_optimization](agentic_optimization/SKILL.md) |
-| OSI semantic-model conversion | [import_osi](import_osi/SKILL.md) |
+| Ossie/OSI YAML: pull, edit, status, validate, push, import | [ossie](ossie/SKILL.md) |
 | Advanced modeling | [patterns](patterns/SKILL.md) |
 
 ## Resolve similar intents
@@ -67,7 +69,7 @@ Pattern presence is not proof of native support. Use `sv capabilities` and the c
 
 Use the user's actual model filename, not a guessed filename derived from the view name. Prefer `sv read` for tracked exports and `sv edit` for modifying an existing model. Extract generated response YAML with a parser; large model content belongs in files, not shell arguments. Preserve the manifest and deployment journal.
 
-Open Semantic Interchange/OSI YAML routes to its import skill. Tableau and Power BI conversion are deliberately out of the current CZ release scope; do not route those files to an SV importer. Ordinary SV YAML is not an OSI import.
+Ossie YAML (Apache Ossie, formerly Open Semantic Interchange/OSI, versions 0.1.1 and 0.2.0.dev0) routes to [ossie](ossie/SKILL.md), whether the file is external or was pulled from a view. Recognize it by a root `version` plus `datasets` or `semantic_model`. The server converts Ossie; never translate it into `.sv.yaml` or native DDL by hand. Tableau and Power BI conversion are deliberately out of the current CZ release scope; do not route those files to an SV importer. Ordinary `.sv.yaml` (with `tables:`) is not Ossie.
 
 ## Command contract
 

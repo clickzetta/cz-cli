@@ -14,7 +14,7 @@ Use `cz-cli sv` for semantic-model management; queries can also use native `SEMA
 - Read/download and edits: [semantic-view/download/SKILL.md](../semantic-view/download/SKILL.md), [semantic-view/edit/SKILL.md](../semantic-view/edit/SKILL.md)
 - Validation, planning and deployment: [semantic-view/validate/SKILL.md](../semantic-view/validate/SKILL.md), [semantic-view/upload/SKILL.md](../semantic-view/upload/SKILL.md)
 - Suggestions, VQRs, instructions and patterns: select the sub-skill from the [SV workflow index](../semantic-view/SKILL.md).
-- OSI imports: use [OSI import](../semantic-view/import_osi/SKILL.md); lossy conversions produce a loss report and require `--allow-lossy` for local output. Tableau and Power BI conversion are outside this release.
+- Ossie/OSI YAML: use [Ossie](../semantic-view/ossie/SKILL.md). The server converts it (`USING OSSIE YAML` / `AS OSSIE YAML`); the CLI pulls, validates and pushes, and does no local conversion. Tableau and Power BI conversion are outside this release.
 - Audits and optimization: [audit](../semantic-view/audit/SKILL.md) or [agentic optimization](../semantic-view/agentic_optimization/SKILL.md).
 
 The native ClickZetta release tested by this skill supports dimensions, scalar/entity facts, metrics, relationships including ASOF, private access, window and non-additive metrics, and AI verified queries. Filters, sample values, data types, false traits, custom instructions and import provenance are managed authoring metadata. Range relationships, many-to-many semantics, non-left joins and computed relationship keys are rejected before deployment.

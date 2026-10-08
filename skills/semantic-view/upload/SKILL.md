@@ -7,6 +7,8 @@ metadata:
 
 # Deploy and Recover a Semantic View
 
+`sv deploy` applies to native `.sv.yaml`, the default workflow for current deployments. For Ossie YAML, use [ossie](../ossie/SKILL.md) only after server validation of the actual document; local support for `push` is not evidence of server support.
+
 Use the selected connection profile on remote commands (`--profile NAME`). Relative model paths resolve under `cz_project/`; absolute paths are accepted. Read `cz-cli sv capabilities` for the current schema and supported operations. Local output is a model draft; deployment requires `sv deploy --write`. An existing user request to implement/deploy supplies authorization within its scope; do not invent another approval gate.
 
 ## Plan before applying

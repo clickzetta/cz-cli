@@ -1,6 +1,6 @@
 ---
 name: cz-semantic-view-creation
-description: "Create a new semantic view or model from physical tables, SQL history and business requirements. Use for create/build/generate requests or modeling an existing schema, not a specific edit to an existing model."
+description: "Create a semantic view from physical tables, SQL history, knowledge materials and business requirements. Use for create/build/generate requests or modeling an existing schema, not a specific edit to an existing model."
 metadata:
   parent-skill: cz-semantic-view
 ---
@@ -15,7 +15,7 @@ Resolve the following from the request, selected profile and available project m
 |---|---|
 | Name | Use the supplied name; otherwise choose a descriptive name when the task authorizes autonomous creation, or resolve a required naming convention |
 | Target | Actual workspace/schema and profile; ask if an ambiguous target could affect the wrong objects |
-| Sources | Physical tables, supplied SQL, SQL files or code containing SQL |
+| Sources | Physical tables, supplied SQL, SQL files or code containing SQL; business documents, glossaries and metric definitions when provided |
 | Compute | Selected profile/vcluster; do not invent a foreign compute-object parameter |
 | Existing file | Honor the exact supplied model path and distinguish new-model creation from editing an existing artifact |
 | Business scope | Questions, definitions, grain and intended model boundary supported by available evidence |
@@ -35,6 +35,8 @@ Identify the tables, relationship roles, recurring aggregates and predicates req
 For a multi-table or history-driven task, keep a compact requirement map beside the model: business computation and grain, relevant source/role, proposed logical fields or relationships, and validation or unresolved status. Group recurring requirements instead of copying every history query. Include fields used only in joins and predicates, not just SELECT outputs. Keep this map when generation fails or the session resumes; reconcile it against the deployed readback before reporting completion. A smaller replacement model must retain explicit unresolved entries.
 
 ## Phase 2: Prepare the request
+
+When knowledge materials or explicit business definitions are supplied, read [knowledge grounding](../reference/knowledge_grounding.md). Put its structured `knowledge` object inside `json_proto`; preserve sources and unresolved definitions beside the candidate. This is local generation context, compatible with the native online workflow, not a required ontology service. Run the selected profile's remote capability check before planning the candidate.
 
 Read the [model-generation contract](../reference/model_generation_contract.md). It is embedded in `sv generate` so the inner model call receives the shared modeling requirements. Include task-specific business definitions and the requirement map in the request; other outer-session context is not automatically forwarded. Review the returned `coverage` against actual model fields and query results: it is an LLM proposal, not a passed test.
 
@@ -84,7 +86,7 @@ Use actual source columns, definitions and selected connection. `database` is a 
 cz-cli sv generate --file-path /tmp/sales_proto.json --out-path /tmp/sales_response.json --profile PROFILE
 ```
 
-Generation can spend time fetching source metadata and waiting for the configured LLM. When the task budget allows, give the shell command 300 seconds so its deadline does not preempt the completion transport's 180-second deadline plus metadata reads. Preserve the request and error; a shell timeout alone does not prove an engine rejection. If a short outer timeout killed the request, one retry with a longer deadline is reasonable; do not keep retrying unchanged failures. Run a bounded diagnostic before launching multiple requests when service latency is uncertain.
+Generation can spend time fetching source metadata and waiting for the configured LLM. A schema, coverage or key-evidence failure triggers at most one corrective model call using the original request and validation error. The response reports `generation_repair` when used. HTTP, empty/truncated response and invalid JSON errors are not automatically retried. When the task budget allows, give the shell command 420 seconds for up to two 180-second calls plus metadata reads. Preserve the request and error; a shell timeout alone does not prove an engine rejection. If a short outer timeout killed the request, one retry with a longer deadline is reasonable; do not keep retrying unchanged failures. Run a bounded diagnostic before launching multiple requests when service latency is uncertain.
 
 The output file is an unwrapped JSON response, not YAML. Extract `json_proto.semanticYaml` with a JSON parser into the intended model file. CLI stdout has a separate `data` envelope; do not confuse the two formats.
 

@@ -150,6 +150,21 @@ test("generation transports shared guidance and distinguishes empty, truncated a
     expect(requests).toHaveLength(4)
     expect(requests[3]).toContain("AVG(quantity)")
     expect(requests[3]).toContain("average quantity")
+    const knowledge = { sources: [{ id: "s1", locator: "definitions.md#quantity" }], requirements: [{ id: "r1", statement: "average quantity", source_ids: ["s1"], state: "confirmed" }] }
+    const coverage = [{ requirement_id: "r1", fields: ["o.avg_qty"], status: "covered" }]
+    const candidate = JSON.parse(responses[3].choices[0].message.content)
+    responses.push({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ ...candidate, coverage }) } }] })
+    responses.push({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ ...candidate, coverage }) } }] })
+    await Bun.write(file, JSON.stringify({ json_proto: { metadata: { columns: ["qty"] }, knowledge } }))
+    const saved = path.join(root, "response.json")
+    const structured = await cli(["sv", "generate", "--file-path", file, "--out-path", saved], { CLICKZETTA_TEST_HOME: root })
+    expect(structured.code).toBe(0)
+    expect(structured.body.data?.knowledge).toEqual(knowledge)
+    expect((await Bun.file(saved).json()).coverage).toEqual(coverage)
+    expect(requests[4]).toContain("definitions.md#quantity")
+    const backend = await cli(["sv", "backend", "--tool", "generate_semantic_model_yaml", "--parameters", JSON.stringify({ json_proto: { knowledge } })], { CLICKZETTA_TEST_HOME: root })
+    expect(backend.code).toBe(0)
+    expect(JSON.parse(String(backend.body.data?.result)).knowledge).toEqual(knowledge)
   } finally {
     server.stop(true)
     await rm(root, { recursive: true, force: true })

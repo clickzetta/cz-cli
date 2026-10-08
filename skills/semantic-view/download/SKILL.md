@@ -7,6 +7,8 @@ metadata:
 
 # Download a Semantic View
 
+This native `.sv.yaml` workflow is the default for current deployments. For a portable Ossie copy, first check `sv capabilities --remote --fqn TARGET --profile PROFILE`; use [ossie](../ossie/SKILL.md) only when that server supports export.
+
 Use the selected connection profile on remote commands (`--profile NAME`). Relative model paths resolve under `cz_project/`; absolute paths are accepted. Read `cz-cli sv capabilities` for the current schema and supported operations. Local output is a model draft; deployment requires `sv deploy --write`. An existing user request to implement/deploy supplies authorization within its scope; do not invent another approval gate.
 
 1. Resolve the target explicitly or use `sv list` / `sv search --query TERM` in the selected schema.

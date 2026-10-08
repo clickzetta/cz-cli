@@ -4,7 +4,6 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { parseModel } from "../src/semantic-view/model.js"
 import { compile } from "../src/semantic-view/compile.js"
-import { convertImport, parseImportOptions } from "../src/semantic-view/import.js"
 import { editModel } from "../src/semantic-view/edit.js"
 import { auditModel } from "../src/semantic-view/audit.js"
 import {
@@ -37,15 +36,6 @@ test("facts reject cross-table dimensions before SQL submission and accept same-
   model.tables.push({ ...model.tables[0], name: "customer", dimensions: [{ ...model.tables[0].dimensions[0], name: "customer_id" }] })
   expect(() => buildQuery(model, "w.s.sales", { facts: ["o.raw_amount"], dimensions: ["customer.customer_id"] })).toThrow("same logical table")
   expect(buildQuery(model, "w.s.sales", { facts: ["o.raw_amount"], dimensions: ["o.id"], limit: 0 })).toContain("FACTS `o`.`raw_amount`")
-})
-
-test("import options reject ignored filters before reading or converting a source", async () => {
-  expect(() => parseImportOptions({ include_measures_all: false })).toThrow("Unknown or invalid import option")
-  expect(() => parseImportOptions({ include_tables: "Orders" })).toThrow("Unknown or invalid import option")
-  expect(() => parseImportOptions({ mapping: { Orders: { schema: "s" } } })).toThrow("Unknown or invalid import option")
-  expect(
-    parseImportOptions({ include_tables: ["Orders"], mapping: { Orders: { schema: "s", table: "orders" } } }),
-  ).toMatchObject({ include_tables: ["Orders"] })
 })
 
 test("VQR batch conversion retains order and per-query failures without claiming equivalence", async () => {
@@ -145,40 +135,6 @@ test("same-named physical aggregate is not a metric cycle and rename keeps physi
       },
     ]).tables[0].metrics[1].expr,
   ).toBe("COUNT(DISTINCT o.id)")
-})
-
-test("OSI dialects, composite relationships, keys and provenance convert without invention", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "cz-sv-import-"))
-  try {
-    const file = path.join(dir, "osi.yaml")
-    await Bun.write(
-      file,
-      Bun.YAML.stringify({
-        version: "0.2.0",
-        name: "sales",
-        datasets: [
-          {
-            name: "o",
-            source: "w.s.orders",
-            fields: [{ name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } }],
-          },
-          { name: "c", source: "w.s.customers", primary_key: ["id"], unique_keys: [["code"]], fields: [] },
-        ],
-        relationships: [{ name: "customer", from: "o", to: "c", from_columns: ["customer_id"], to_columns: ["id"] }],
-        metrics: [
-          { name: "revenue", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "SUM(o.amount)" }] } },
-        ],
-      }),
-    )
-    const result = await convertImport(file, "osi")
-    expect(result.losses).toEqual([])
-    expect(result.model.relationships[0].left_table).toBe("o")
-    expect(result.model.tables[1].unique_keys[0].columns).toEqual(["code"])
-    expect(result.model.metrics[0].expr).toBe("SUM(o.amount)")
-    expect(result.model.module_custom_instructions).toHaveProperty("osi")
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
 })
 
 test("optimization persists accepted improvements, refuses SQL mutations and supports cancellation", async () => {

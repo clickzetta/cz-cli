@@ -22,12 +22,16 @@ const commands = [
   "audit",
   "suggest",
   "import",
+  "pull",
+  "status",
+  "push",
   "backend",
   "optimize",
 ] as const
 export type SvArgs = GlobalArgs & {
   name?: string
   fqn?: string
+  remote?: boolean
   source?: string
   filePath?: string
   outPath?: string
@@ -61,7 +65,7 @@ export type SvArgs = GlobalArgs & {
   stateRoot?: string
   foreground?: boolean
   historyFile?: string
-  allowLossy?: boolean
+  ossieVersion?: string
   semanticChanges?: boolean
   evaluate?: boolean
 }
@@ -76,6 +80,7 @@ export function registerSvCommand(cli: Argv<GlobalArgs>) {
           args
             .positional("name", { type: "string" })
             .option("fqn", { type: "string", describe: "Target workspace.schema.view" })
+            .option("remote", { type: "boolean", default: false, describe: "Probe the selected server with read-only statements (capabilities)" })
             .option("source", { type: "string", choices: ["remote", "workspace"], default: "remote" })
             .option("file-path", { type: "string", describe: "Input file, or output file for write" })
             .option("out-path", { type: "string", describe: "Save response/model to this path" })
@@ -123,7 +128,11 @@ export function registerSvCommand(cli: Argv<GlobalArgs>) {
               describe: "Measure held-out VQR query accuracy using actual readonly results",
             })
             .option("history-file", { type: "string" })
-            .option("allow-lossy", { type: "boolean", default: false }),
+            .option("ossie-version", {
+              type: "string",
+              choices: ["0.2.0.dev0", "0.1.1"],
+              describe: "Ossie document version for pull/export (default: server default 0.2.0.dev0)",
+            }),
         async (argv) => {
           try {
             const { runSv } = await import("../semantic-view/commands.js")
@@ -158,7 +167,10 @@ const descriptions: Record<(typeof commands)[number], string> = {
   query: "Build or generate a query; execute only with --execute",
   audit: "Audit model quality and optionally source data",
   suggest: "Suggest relationships, metrics, filters, descriptions or VQRs",
-  import: "Analyze or convert OSI semantic models",
+  import: "Preview an Ossie (OSI) YAML document, or create a view from it on the server with --write",
+  pull: "Export a semantic view as Ossie YAML into a tracked local file",
+  status: "Compare a tracked Ossie file with its local and remote baselines",
+  push: "Validate and submit a local Ossie file to the server (CREATE ... USING OSSIE YAML)",
   backend: "Invoke a semantic workflow tool",
   optimize: "Start, inspect, cancel or run a persistent optimization job",
 }

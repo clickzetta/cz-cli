@@ -14,6 +14,7 @@ If the user needs an analysis answer from existing views, use the [querying guid
 | Request | Check |
 |---|---|
 | Check YAML shape or references | `sv validate --mode local` |
+| Check an Ossie YAML file | `sv validate --file-path F.ossie.yaml --mode remote --profile PROFILE` (server EXPLAIN); see [ossie](../ossie/SKILL.md) |
 | Check whether this definition can deploy | `--mode remote` with target and profile |
 | Check stored VQRs / broken example SQL | `--mode queries` |
 | Check definition and VQRs | `--mode all` |
