@@ -502,6 +502,13 @@ async function resolveAccountDisplayName(ctx: ExecContext) {
   }
 }
 
+// Per-statement failures are already rendered inline, so error() would print a
+// second envelope; set the exit code and telemetry error it would have set.
+function markStatementFailure(message: string) {
+  process.exitCode = EXIT_BIZ_ERROR
+  ;(process as unknown as Record<string, unknown>).lastError = message
+}
+
 async function formatQueryError(r: QueryResult, ctx: ExecContext, profileName?: string, fallback = "Query failed") {
   return formatBillingError({
     code: r.errorCode,
@@ -669,6 +676,8 @@ async function handler(argv: SqlArgs): Promise<void> {
         }
       }))
       success({ statements: results, count: statements.length }, { format, rowsKey: "statements" })
+      const failed = results.find((r) => r.status === "error")
+      if (failed) markStatementFailure(String(failed.error))
       return
     }
     ctx = await getExecContext(argv)
@@ -704,8 +713,8 @@ async function handler(argv: SqlArgs): Promise<void> {
           try {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
-              process.exitCode = EXIT_BIZ_ERROR
               const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: await formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              markStatementFailure(line.error.message)
               process.stdout.write(renderOutput(line, format, batchField) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             } else if (isQueryResult(r)) {
@@ -716,9 +725,9 @@ async function handler(argv: SqlArgs): Promise<void> {
               logOperation("sql", { sql: stmt, ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             }
           } catch (err) {
-            process.exitCode = EXIT_BIZ_ERROR
             const { code, message } = classifyExecError(err)
             const line = { index: i, sql: stmt, error: { code, message: await formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
+            markStatementFailure(line.error.message)
             process.stdout.write(renderOutput(line, format, batchField) + "\n")
             logOperation("sql", { sql: stmt, ok: false, errorCode: code })
           }
@@ -861,7 +870,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("N", { type: "boolean", hidden: true })
               .option("limit", { type: "number", default: 100, describe: "Max rows to return (0 for unlimited)" })
               .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute all statements sequentially; exit non-zero if any fails" })
-              .option("dry-run", { type: "boolean", default: false, describe: "EXPLAIN recognized readonly queries. Multiple queries require sql_split=true; writes, session commands and unknown syntax are rejected." })
+              .option("dry-run", { type: "boolean", default: false, describe: "EXPLAIN recognized readonly queries; exit non-zero if any fails. Multiple queries require sql_split=true; writes, session commands and unknown syntax are rejected." })
               .epilogue([
                 "Examples:",
                 "  cz-cli sql \"SELECT * FROM orders LIMIT 10\"",

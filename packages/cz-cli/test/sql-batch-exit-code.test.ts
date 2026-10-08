@@ -55,3 +55,24 @@ for (const input of ["execute", "file"] as const) {
     })
   }
 }
+
+for (const failure of ["none", "job", "http"] as const) {
+  test(`dry-run: ${failure} failure preserves results and exit status`, async () => {
+    await Bun.write(join(requireTestHome(), ".clickzetta", "czcli.json"), '{"sql_split":true}')
+    onFetch({
+      match: (url) => url.includes("/lh/submitJob"),
+      respond: (_url, _method, body) => {
+        const query = (body as { jobDesc: { sqlJob: { query: string[] } } }).jobDesc.sqlJob.query[0]
+        if (query.includes("SELECT 2") && failure === "job") return sqlFailure("CZLH-42000", "Statement failed")
+        if (query.includes("SELECT 2") && failure === "http") return new Response("Submission rejected", { status: 400 })
+        return sqlSuccess(["plan"], [["ok"]])
+      },
+    })
+
+    const result = await execute("sql", ["SELECT 1; SELECT 2", "--dry-run"])
+    const statements = JSON.parse(result.output).data.statements as { status: string }[]
+
+    expect(statements.map((s) => s.status)).toEqual(failure === "none" ? ["ok", "ok"] : ["ok", "error"])
+    expect(result.exitCode).toBe(failure === "none" ? 0 : 1)
+  })
+}
