@@ -160,6 +160,12 @@ export async function execSql(
       configStatements: opts?.configStatements,
       traceparent: traceContext.traceparent,
       maxRetries: submitMaxRetries(opts?.hints),
+    }).catch((error: unknown) => {
+      // The gateway answered with a definitive client rejection: no job exists to cancel.
+      // Timeouts, conflicts and throttling stay ambiguous and still cancel.
+      const status = (error as { statusCode?: number })?.statusCode
+      if (status && status >= 400 && status < 500 && ![408, 409, 429].includes(status)) disposition = "terminal"
+      throw error
     })
     if (opts?.asynchronous) {
       disposition = "detached"
