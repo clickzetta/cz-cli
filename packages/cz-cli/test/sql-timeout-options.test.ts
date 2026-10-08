@@ -43,3 +43,15 @@ for (const command of ["table list", "schema list"]) {
     expect(timeouts.every((value) => value === undefined)).toBe(true)
   })
 }
+
+test("sql --async without --timeout leaves the detached job on the deployment timeout", async () => {
+  const result = await execute("sql", ["select 1", "--async"])
+  expect(result.exitCode).toBe(0)
+  expect(timeouts).toEqual([undefined])
+})
+
+test("sql --job-profile ignores an unused --timeout", async () => {
+  onFetch({ match: (url) => url.includes("/lh/getJob"), respond: () => Response.json({ status: { state: "SUCCEED" } }) })
+  const result = await execute("sql", ["--job-profile", "job1", "--timeout", "0"])
+  expect(result.exitCode).toBe(0)
+})

@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { createServer, createConnection, type Socket } from "node:net"
+import { timingSafeEqual } from "node:crypto"
 import {
   abortable,
   abortAfter,
@@ -16,7 +17,8 @@ const registration = z.object({
   job: z.object({
     id: z.string().min(1).max(256),
     workspace: z.string().min(1),
-    instanceId: z.number().int().positive(),
+    // profile add --verify and setup pass 0 before an instance id is resolved.
+    instanceId: z.number().int().nonnegative(),
   }),
   baseUrl: z
     .string()
@@ -94,7 +96,7 @@ export async function createSqlSupervisor(options: {
       if (!parsed.success) return cleanup(connection)
       if (!connection.entry) {
         const result = registration.safeParse(parsed.data)
-        if (!result.success || result.data.secret !== secret) return cleanup(connection)
+        if (!result.success || !sameSecret(result.data.secret, secret)) return cleanup(connection)
         const key = JSON.stringify([result.data.job.instanceId, result.data.job.workspace, result.data.job.id])
         if (jobs.has(key)) return cleanup(connection)
         jobs.add(key)
@@ -168,6 +170,12 @@ export async function createSqlSupervisor(options: {
   }
 }
 
+function sameSecret(actual: string, expected: string) {
+  const a = Buffer.from(actual)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 function parseMessage(data: string): unknown {
   try {
     return JSON.parse(data)
@@ -194,9 +202,11 @@ export async function registerSqlCleanup(
   const url = new URL(address.url)
   if (url.hostname !== "127.0.0.1" || url.protocol !== "tcp:" || !url.port)
     throw new Error("Invalid SQL cleanup supervisor")
+  // A token refresh is a portal round trip; bound it by the query deadline only.
+  // The 2s budget covers the loopback connect and handshake.
+  const credential = await abortable(client.tokens.get(), signal)
   const deadline = abortAfter(2000, signal)
   try {
-    const credential = await abortable(client.tokens.get(), deadline.signal)
     deadline.signal.throwIfAborted()
     const socket = createConnection({ host: url.hostname, port: Number(url.port) })
     const ready = Promise.withResolvers<void>()
@@ -215,7 +225,9 @@ export async function registerSqlCleanup(
       if (done) return
       done = true
       abandon()
-      const error = new Error(`SQL job ${job.id}: cleanup supervisor connection lost`)
+      const error = Object.assign(new Error(`SQL job ${job.id}: cleanup supervisor connection lost`), {
+        code: "SQL_SUPERVISOR_LOST",
+      })
       ready.reject(error)
       released.reject(error)
       if (acknowledged) onLost()
@@ -301,7 +313,6 @@ function readMessages(socket: Socket, receive: (message: unknown) => void) {
   socket.on("data", (chunk: Buffer) => {
     buffer = Buffer.concat([buffer, chunk])
     while (!socket.destroyed) {
-      if (socket.writableLength > 64 * 1024) return socket.destroy()
       const end = buffer.indexOf(10)
       if (end < 0) break
       if (end > 64 * 1024) return socket.destroy()

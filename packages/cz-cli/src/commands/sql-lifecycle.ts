@@ -3,6 +3,11 @@ import { registerSqlCleanup } from "../sql/cleanup-scope.js"
 import { parseOutputArgs, renderErrorOutput } from "../output/index.js"
 
 const active = new Map<string, { abort(): void; finish(state: "terminal" | "detached" | "cancel"): Promise<void> }>()
+// Abort reasons stay distinct so callers can tell a signal from a lost supervisor
+// (the deadline aborts with a TimeoutError DOMException).
+const interrupted = () => Object.assign(new Error("SQL execution interrupted"), { code: "ABORTED" })
+const supervisorLost = () =>
+  Object.assign(new Error("SQL cleanup supervisor connection lost"), { code: "SQL_SUPERVISOR_LOST" })
 let shutdown: Promise<void> | undefined
 
 export function hasActiveSqlJobs() {
@@ -18,7 +23,7 @@ export async function trackSqlJob(opts: ClientOptions, job: JobID, timeoutMs?: n
   let supervisor: Awaited<ReturnType<typeof registerSqlCleanup>>
   let completion: Promise<void> | undefined
   const lease = {
-    abort: () => controller.abort(new Error("SQL execution interrupted")),
+    abort: () => controller.abort(interrupted()),
     finish(state: "terminal" | "detached" | "cancel") {
       if (completion) return completion
       completion = (async () => {
@@ -65,11 +70,12 @@ export async function trackSqlJob(opts: ClientOptions, job: JobID, timeoutMs?: n
   }
   active.set(job.id, lease)
   try {
-    supervisor = await registerSqlCleanup(opts, job, signal, timeoutMs ?? 300_000, lease.abort)
+    supervisor = await registerSqlCleanup(opts, job, signal, timeoutMs ?? 300_000, () =>
+      controller.abort(supervisorLost()),
+    )
     signal.throwIfAborted()
     return {
       signal,
-      timeoutMs,
       async finish(state: "terminal" | "detached" | "cancel") {
         await lease.finish(state)
         // Let the signal owner emit the interruption and choose the exit code.
@@ -101,8 +107,13 @@ function stop(signal: string, exitCode: number) {
     process.stdout.write(
       renderErrorOutput(
         {
-          error: { code: "ABORTED", message: `Execution interrupted by ${signal}.` },
-          job_ids: jobs.map(([id]) => id),
+          error: {
+            code: "ABORTED",
+            message: signal === "SIGINT" ? "Execution interrupted by user." : `Execution interrupted by ${signal}.`,
+          },
+          // job_id keeps the pre-existing single-job shape; concurrent execSql callers add job_ids.
+          ...(jobs[0] && { job_id: jobs[0][0] }),
+          ...(jobs.length > 1 && { job_ids: jobs.map(([id]) => id) }),
         },
         output.format,
         output.field,

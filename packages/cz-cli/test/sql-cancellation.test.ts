@@ -35,7 +35,7 @@ test("query deadline aborts a blocked submit and confirms cancellation", async (
     expect(await child.exited).not.toBe(0)
     expect(submitted).toHaveLength(1)
     expect(cancelled).toEqual(submitted)
-    expect(await new Response(child.stderr).text()).toContain("interrupted or timed out")
+    expect(await new Response(child.stderr).text()).toContain(`Job ${submitted[0]} timed out`)
   } finally {
     child.kill("SIGKILL")
     await child.exited
@@ -101,7 +101,14 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
         expect(await child.exited).toBe(signal === "SIGTERM" ? 143 : 130)
         expect(cancelled.sort()).toEqual(submitted.sort())
         expect(cancelled).toHaveLength(2)
-        expect(await new Response(child.stdout).text()).toContain("ABORTED")
+        const output = JSON.parse(await new Response(child.stdout).text())
+        expect(output.error).toEqual({
+          code: "ABORTED",
+          message: signal === "SIGINT" ? "Execution interrupted by user." : "Execution interrupted by SIGTERM.",
+        })
+        // Single-job job_id stays for existing readers; concurrent jobs also list job_ids.
+        expect(submitted).toContain(output.job_id)
+        expect(output.job_ids.sort()).toEqual(submitted.sort())
       } finally {
         child.kill("SIGKILL")
         server.stop(true)

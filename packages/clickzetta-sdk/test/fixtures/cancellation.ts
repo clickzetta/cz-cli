@@ -19,6 +19,18 @@ for (const body of [
   })
 }
 
+// Proto3 omits an empty respStatus even when other fields are populated.
+for (const body of [{}, { jobId: "owned-job" }, { requestId: "r1", respStatus: {} }, { code: 0, data: {} }]) {
+  test(`accepts cancellation without an error status: ${JSON.stringify(body)}`, async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json(body) })
+    try {
+      await cancelJob({ baseUrl: server.url.origin, tokens: anonymous() }, job)
+    } finally {
+      await server.stop(true)
+    }
+  })
+}
+
 test("retries cancellation until a late submission becomes terminal", async () => {
   let attempts = 0
   const server = Bun.serve({

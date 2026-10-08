@@ -13,7 +13,8 @@ export async function cancelJob(opts: ClientOptions, jobId: JobID): Promise<unkn
     force: false,
   })
   // Coordinator protobuf JSON uses respStatus; some gateways preserve snake_case.
-  // Proto3 omits empty fields, so {} is a valid successful CancelJobResponse.
+  // Proto3 omits empty fields individually, so an absent status (alone or beside
+  // other fields) is success; only a populated error status rejects.
   if (!response || typeof response !== "object" || Array.isArray(response)) {
     throw new ClickZettaApiError("INVALID_CANCEL_RESPONSE", "Invalid cancellation response")
   }
@@ -21,9 +22,6 @@ export async function cancelJob(opts: ClientOptions, jobId: JobID): Promise<unkn
   const value = raw.respStatus ?? raw.resp_status
   if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
     throw new ClickZettaApiError("INVALID_CANCEL_RESPONSE", "Invalid cancellation status")
-  }
-  if (Object.keys(raw).length > 0 && value === undefined && raw.code === undefined) {
-    throw new ClickZettaApiError("INVALID_CANCEL_RESPONSE", "Missing cancellation status")
   }
   const status = value as Record<string, unknown> | undefined
   const code = status?.errorCode ?? status?.error_code

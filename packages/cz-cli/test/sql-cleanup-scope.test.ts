@@ -10,11 +10,11 @@ import { pathToFileURL } from "node:url"
 import { createSqlSupervisor } from "../src/sql/cleanup-scope.js"
 
 const execModule = new URL("../src/commands/exec.ts", import.meta.url).pathname
-function program(url: string, options = "{ timeoutMs: 30000 }") {
+function program(url: string, options = "{ timeoutMs: 30000 }", instanceId = 1) {
   return `import { execSql } from ${JSON.stringify(execModule)};
     import { anonymous } from '@clickzetta/sdk';
     const ctx = { config: { workspace: 'ws', schema: 'public', vcluster: 'vc', instance: 'inst' },
-      clientOpts: { baseUrl: ${JSON.stringify(url)}, tokens: anonymous() }, instanceId: () => 1 };
+      clientOpts: { baseUrl: ${JSON.stringify(url)}, tokens: anonymous() }, instanceId: () => ${instanceId} };
     await execSql(ctx, 'select 1', ${options});`
 }
 
@@ -408,8 +408,8 @@ test("existing cz Worker environment bridge carries the supervisor endpoint", as
   }
 })
 
-test("supervisor startup failure leaves non-SQL work usable but blocks SQL admission", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "cz-supervisor-unavailable-"))
+test("unwritable diagnostics keep supervision and SQL admission", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cz-supervisor-diagnostics-"))
   await Bun.write(path.join(directory, ".clickzetta"), "not a directory")
   const remote = queryServer()
   const child = Bun.spawn(
@@ -419,11 +419,11 @@ test("supervisor startup failure leaves non-SQL work usable but blocks SQL admis
       `
     import { withSqlSupervisor } from ${JSON.stringify(new URL("../src/sql/supervisor-runtime.ts", import.meta.url).pathname)};
     await withSqlSupervisor(async () => {
-      console.log('non-sql-work-ran');
+      if (!process.env.CZ_SQL_CLEANUP?.startsWith('{')) throw new Error('supervision disabled');
       const { execSql } = await import(${JSON.stringify(execModule)});
       const { anonymous } = await import('@clickzetta/sdk');
       await execSql({ config: { workspace: 'ws', schema: 'public', vcluster: 'vc', instance: 'inst' },
-        clientOpts: { baseUrl: ${JSON.stringify(remote.server.url.origin)}, tokens: anonymous() }, instanceId: () => 1 }, 'select 1');
+        clientOpts: { baseUrl: ${JSON.stringify(remote.server.url.origin)}, tokens: anonymous() }, instanceId: () => 1 }, 'select 1', { timeoutMs: 300 });
     });
   `,
     ],
@@ -431,13 +431,37 @@ test("supervisor startup failure leaves non-SQL work usable but blocks SQL admis
   )
   try {
     expect(await child.exited).not.toBe(0)
-    expect(await new Response(child.stdout).text()).toContain("non-sql-work-ran")
-    expect(await new Response(child.stderr).text()).toContain("SQL cleanup supervisor unavailable")
-    expect(remote.submitted).toEqual([])
+    const stderr = await new Response(child.stderr).text()
+    expect(stderr).toContain("timed out")
+    expect(stderr).not.toContain("unavailable")
+    expect(remote.submitted).toHaveLength(1)
+    // Child and supervisor may both cancel; either confirms the timed-out job.
+    expect(remote.cancelled).toContain(remote.submitted[0])
   } finally {
     child.kill("SIGKILL")
     await child.exited
     await remote.server.stop(true)
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// profile add --verify and setup submit before any instance id is resolved.
+test("instance id 0 registers under supervision", async () => {
+  const remote = queryServer()
+  const supervisor = await createSqlSupervisor({ onWarning: async () => {} })
+  const child = Bun.spawn([process.execPath, "--eval", program(remote.server.url.origin, "{ timeoutMs: 300 }", 0)], {
+    env: { ...process.env, ...supervisor.env },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  try {
+    await child.exited
+    expect(await new Response(child.stderr).text()).not.toContain("supervisor connection lost")
+    expect(remote.submitted).toHaveLength(1)
+  } finally {
+    child.kill("SIGKILL")
+    await child.exited
+    await supervisor.close()
+    await remote.server.stop(true)
   }
 })

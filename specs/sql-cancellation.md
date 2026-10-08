@@ -19,9 +19,10 @@ process runner. A separate connection owns each SQL job, so concurrent commands
 and sessions do not share job ownership. Remote servers use the supervisor on the
 machine actually executing their CLI subprocesses, not the attached client.
 
-If the supervisor or its diagnostic destination cannot start, non-SQL tools can
-still run. The environment explicitly marks supervision unavailable and SQL
-admission fails closed. A missing inherited environment (for example after an
+If the supervisor cannot start, non-SQL tools can still run. The environment
+explicitly marks supervision unavailable and SQL admission fails closed. An
+unwritable diagnostic destination only drops unconfirmed-cleanup records; it
+does not withdraw supervision. A missing inherited environment (for example after an
 explicit `env -i`) uses standalone CLI behavior; it cannot promise supervisor
 recovery.
 
@@ -54,7 +55,8 @@ handoff. Disconnect after a successful handoff does not cancel the detached job.
 
 | Boundary                | Budget                                        |
 | ----------------------- | --------------------------------------------- |
-| Registration            | 2 seconds, also subject to the query deadline |
+| Credential resolution   | Query deadline only (may refresh a token)     |
+| Registration handshake  | 2 seconds, also subject to the query deadline |
 | Child cleanup           | 1.5 seconds per job, concurrently             |
 | Signal shutdown         | Hard 2-second exit bound                      |
 | Supervisor cleanup      | 5 seconds per job, concurrently               |
@@ -72,13 +74,21 @@ supervisor and attempts cancellation of all outstanding registrations.
 
 Standalone `cz-cli sql` retains its default 300-second timeout and now actively
 cancels on timeout, SIGINT or SIGTERM. Positive explicit timeouts are sent to the
-server, including for `--async`. Invalid/non-positive CLI timeout values fail at
-the command boundary; zero is not an unlimited-timeout sentinel.
+server, including for `--async`; the 300-second default is not, because it bounds
+waiting rather than a detached job. Invalid/non-positive CLI timeout values fail
+at the command boundary (except `--job-profile`, which submits nothing); zero is
+not an unlimited-timeout sentinel.
+
+Interruption errors name their cause: a deadline is `Job <id> timed out`
+(`JOB_TIMEOUT`), a signal is `ABORTED`, a lost supervisor is
+`SQL_SUPERVISOR_LOST`. The signal envelope keeps `job_id` and adds `job_ids`
+when several jobs were active. `cancelJob` treats a 2xx without a populated error
+status as accepted; confirmation still comes from polling job state.
 
 Standalone `execSql` callers without a timeout (such as table/schema/file commands)
 keep their previous deployment-defined timeout. They still clean up on caught
 failure and signals. Agent-supervised calls without an explicit timeout receive
-a 300-second fallback. No upstream hook exposes the shell's remaining budget, so
+a 300-second fallback (not sent to the server for `--async` handoff). No upstream hook exposes the shell's remaining budget, so
 supervision uses the SQL deadline plus disconnect/heartbeat detection instead.
 
 If the entire agent is killed, loses network access, or the credential snapshot

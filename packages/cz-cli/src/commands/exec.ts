@@ -132,14 +132,14 @@ export async function execSql(
   const timezone = opts?.hints?.["cz.sql.timezone"]
   const jobId = newJobId(ctx.config.workspace, ctx.instanceId())
   opts?.onJobId?.(jobId.id)
-  const timeoutMs = opts?.timeoutMs ?? (
-    opts?.hints?.["sdk.job.timeout"] !== undefined
-      ? Number(opts.hints["sdk.job.timeout"]) * 1000
-      : process.env[CLEANUP_ENV] ? 300_000 : undefined
+  const explicitTimeoutMs = opts?.timeoutMs ?? (
+    opts?.hints?.["sdk.job.timeout"] !== undefined ? Number(opts.hints["sdk.job.timeout"]) * 1000 : undefined
   )
-  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+  if (explicitTimeoutMs !== undefined && (!Number.isFinite(explicitTimeoutMs) || explicitTimeoutMs <= 0)) {
     throw new Error("SQL --timeout must be a positive, finite number of seconds")
   }
+  // Supervised jobs need a finite fallback in case both processes die before cleanup.
+  const timeoutMs = explicitTimeoutMs ?? (process.env[CLEANUP_ENV] ? 300_000 : undefined)
   const lease = await trackSqlJob(ctx.clientOpts, jobId, timeoutMs)
   const client = { ...ctx.clientOpts, signal: lease.signal }
   let disposition: "terminal" | "detached" | "cancel" = "cancel"
@@ -155,7 +155,8 @@ export async function execSql(
       jobId,
       hints: buildExecHints(opts?.hints, traceContext),
       asynchronous: opts?.asynchronous,
-      jobTimeoutMs: opts?.asynchronous ? timeoutMs : lease.timeoutMs,
+      // A detached job outlives its supervisor by design: only an explicit timeout reaches the server.
+      jobTimeoutMs: opts?.asynchronous ? explicitTimeoutMs : timeoutMs,
       configStatements: opts?.configStatements,
       traceparent: traceContext.traceparent,
       maxRetries: submitMaxRetries(opts?.hints),
@@ -193,15 +194,23 @@ export async function execSql(
 
     return result
   } catch (error) {
-    if (lease.signal.aborted) {
-      const failure = new Error(`Job ${jobId.id} interrupted or timed out`)
-      Object.assign(failure, { jobId: jobId.id })
-      throw failure
-    }
+    if (lease.signal.aborted) throw abortFailure(jobId.id, lease.signal.reason, error)
     throw error
   } finally {
     await lease.finish(disposition)
   }
+}
+
+/** Name the abort cause; classifyExecError maps "timed out" to JOB_TIMEOUT and other codes verbatim. */
+function abortFailure(jobId: string, reason: unknown, cause: unknown) {
+  if (reason instanceof DOMException && reason.name === "TimeoutError")
+    return Object.assign(new Error(`Job ${jobId} timed out`, { cause }), { jobId })
+  const message = reason instanceof Error ? reason.message : "SQL execution interrupted"
+  const code = (reason as { code?: unknown })?.code
+  return Object.assign(new Error(`Job ${jobId}: ${message}`, { cause }), {
+    jobId,
+    code: typeof code === "string" ? code : "ABORTED",
+  })
 }
 
 function isAuthError(err: unknown): boolean {

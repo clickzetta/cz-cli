@@ -36,6 +36,8 @@ interface SqlArgs extends GlobalArgs {
   sync: boolean
   async: boolean
   timeout: number
+  /** --timeout as given; undefined when the 300s default applies. */
+  explicitTimeout?: number
   variable?: string[]
   set?: string[]
   "job-profile"?: string
@@ -379,7 +381,8 @@ async function executeSingle(
 
   if (!argv.sync || argv.async) {
     const asyncHints = { ...hints }
-    if (argv.timeout) asyncHints["sdk.job.timeout"] = String(argv.timeout)
+    // The default 300s bounds waiting, not a detached job: only an explicit value is sent.
+    if (argv.explicitTimeout !== undefined) asyncHints["sdk.job.timeout"] = String(argv.explicitTimeout)
     const r = await execSqlWithRetry(ctx, sql, { hints: asyncHints, asynchronous: true, configStatements, onJobId })
     logOperation("sql", { sql, ok: true, timeMs: Date.now() - t0 })
     if (isQueryResult(r)) {
@@ -602,10 +605,6 @@ async function emitResult(
 
 async function handler(argv: SqlArgs): Promise<void> {
   const format = argv.format
-  if (!Number.isFinite(argv.timeout) || argv.timeout <= 0) {
-    error("USAGE_ERROR", "--timeout must be a positive, finite number of seconds (0 is not supported).", { format, exitCode: 2 })
-    return
-  }
 
   if (argv["job-profile"]) {
     const ctx = await getExecContext(argv)
@@ -631,6 +630,10 @@ async function handler(argv: SqlArgs): Promise<void> {
       logOperation("sql job-profile", { ok: false, errorCode: "JOB_PROFILE_ERROR" })
       error("JOB_PROFILE_ERROR", err instanceof Error ? err.message : String(err), { format })
     }
+    return
+  }
+  if (!Number.isFinite(argv.timeout) || argv.timeout <= 0) {
+    error("USAGE_ERROR", "--timeout must be a positive, finite number of seconds (0 is not supported).", { format, exitCode: 2 })
     return
   }
 
@@ -853,7 +856,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("stdin", { type: "boolean", default: false, describe: "Read SQL from stdin" })
               .option("sync", { type: "boolean", default: true, describe: "Wait for query result before returning (default). Use --no-sync or --async for large queries that may take a long time." })
               .option("async", { type: "boolean", default: false, describe: "Return job_id immediately without waiting for results. Use for large/long-running queries." })
-              .option("timeout", { type: "number", default: 300, describe: "Positive job timeout in seconds (default: 300; 0 is not supported)" })
+              .option("timeout", { type: "number", describe: "Positive job timeout in seconds (default: 300; 0 is not supported)" })
               .option("variable", { type: "string", array: true, nargs: 1, describe: "Variable substitution: --variable KEY=VALUE. Use ${KEY} in SQL." })
               .option("set", { type: "string", array: true, nargs: 1, describe: "Query hint: --set KEY=VALUE (e.g. --set cz.sql.timezone=UTC)" })
               .option("job-profile", { type: "string", describe: "Fetch execution profile for a completed job ID (separate from running SQL)" })
@@ -878,7 +881,10 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
                 `statement itself contains ';', put this in ${CZ_CONFIG_FILE}:`,
                 `  { "${SQL_SPLIT_CONFIG_KEY}": false }`,
               ].join("\n")),
-          (argv) => handler(argv as unknown as SqlArgs),
+          (argv) => {
+            const args = argv as unknown as SqlArgs
+            return handler({ ...args, timeout: args.timeout ?? 300, explicitTimeout: args.timeout })
+          },
         ),
   )
 }
