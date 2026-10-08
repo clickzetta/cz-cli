@@ -1,3 +1,4 @@
+import { abortable, abortAfter, delay } from "./abort.js"
 import { ClickZettaApiError, type ApiResponse } from "./types/api.js"
 import type { Credential, RequestContext, TokenSource } from "./types/index.js"
 import { currentTraceparent } from "./traceparent.js"
@@ -28,6 +29,9 @@ export interface ClientOptions {
   customHeaders?: Record<string, string>
   traceparent?: string
   timeout?: number
+  /** Cancellation covers requests, credential waits and retry backoff. */
+  signal?: AbortSignal
+  maxRetries?: number
   /** Non-auth metadata some request bodies embed — see {@link RequestContext}. */
   context?: RequestContext
 }
@@ -39,10 +43,6 @@ export interface ClientOptions {
 export function retryDelayMs(attempt: number): number {
   const base = Math.min(500 * 2 ** attempt, 8000)
   return base + Math.random() * 500
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
@@ -72,12 +72,12 @@ function buildHeaders(opts: ClientOptions, credential: Credential): Record<strin
   return mergeHeaders(
     {
       "Content-Type": "application/json",
-      "Accept": "application/json, text/plain, */*",
+      Accept: "application/json, text/plain, */*",
       "User-Agent": `tssdk/${SDK_VERSION}`,
       // client.py:293 — trace id header, required by the gateway for correlation
-      "requestId": requestId,
+      requestId: requestId,
       "X-Request-ID": requestId,
-      "traceparent": opts.traceparent ?? currentTraceparent(),
+      traceparent: opts.traceparent ?? currentTraceparent(),
       ...(instanceName ? { instanceName } : {}),
     },
     // The credential's own headers sit under the caller's: a Cookie belongs to
@@ -105,7 +105,8 @@ async function doRequest<T>(
   parseWrapper: boolean,
 ): Promise<T> {
   const url = `${opts.baseUrl}${path}`
-  let credential = await opts.tokens.get()
+  opts.signal?.throwIfAborted()
+  let credential = await abortable(opts.tokens.get(), opts.signal)
   let headers = buildHeaders(opts, credential)
   // Credential a rotation just produced, to be used verbatim by the next attempt.
   // `TokenSource.rotate` is contracted to RETURN the replacement, not to make
@@ -123,13 +124,15 @@ async function doRequest<T>(
   let authExhausted = false
 
   let lastError: Error | undefined
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= (opts.maxRetries ?? MAX_RETRIES); attempt++) {
+    const deadline = abortAfter(opts.timeout ?? DEFAULT_TIMEOUT_MS, opts.signal)
     try {
       if (attempt > 0) {
         // Prefer the rotated credential; otherwise re-resolve, because a retry
         // after a multi-second backoff must not resend one that expired while
         // we waited. `get()` is cache-backed, so re-resolving costs nothing.
-        credential = rotatedCredential ?? await opts.tokens.get()
+        opts.signal?.throwIfAborted()
+        credential = rotatedCredential ?? (await abortable(opts.tokens.get(), opts.signal))
         rotatedCredential = undefined
         headers = buildHeaders(opts, credential)
       }
@@ -137,7 +140,7 @@ async function doRequest<T>(
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(opts.timeout ?? DEFAULT_TIMEOUT_MS),
+        signal: deadline.signal,
       })
       const text = await resp.text()
       if (!resp.ok) {
@@ -150,9 +153,10 @@ async function doRequest<T>(
         if (resp.status === AUTH_EXPIRED_STATUS) {
           // Rotation is offered once; a source that cannot rotate (or a second
           // rejection) makes this 401 the final answer for this identity.
-          const fresh = rotated || attempt >= MAX_RETRIES
-            ? undefined
-            : await opts.tokens.rotate(credential)
+          const fresh =
+            rotated || attempt >= (opts.maxRetries ?? MAX_RETRIES)
+              ? undefined
+              : await abortable(opts.tokens.rotate(credential), opts.signal)
           if (!fresh) {
             authExhausted = true
             throw apiErr
@@ -169,16 +173,22 @@ async function doRequest<T>(
         throw new ClickZettaApiError("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 200)}`, 0)
       }
     } catch (err) {
+      opts.signal?.throwIfAborted()
       lastError = err instanceof Error ? err : new Error(String(err))
-      if (err instanceof ClickZettaApiError && (NON_RETRYABLE_STATUS.has(err.statusCode ?? 0) || err.code === "PARSE_ERROR")) {
+      if (
+        err instanceof ClickZettaApiError &&
+        (NON_RETRYABLE_STATUS.has(err.statusCode ?? 0) || err.code === "PARSE_ERROR")
+      ) {
         throw err
       }
       if (authExhausted) throw err
       if (TERMINAL_ERROR_CODES.has(String((err as { code?: unknown }).code ?? ""))) throw err
-      if (attempt < MAX_RETRIES) {
-        await sleep(retryDelayMs(attempt))
+      if (attempt < (opts.maxRetries ?? MAX_RETRIES)) {
+        await delay(retryDelayMs(attempt), opts.signal)
         continue
       }
+    } finally {
+      deadline.dispose()
     }
   }
   // Signal to callers: parseWrapper is unused on the error path but
@@ -193,7 +203,7 @@ export async function request<T>(
   body?: unknown,
   method: string = "POST",
 ): Promise<ApiResponse<T>> {
-  return doRequest<ApiResponse<T>>(options, path, body, method, true)
+  return abortable(doRequest<ApiResponse<T>>(options, path, body, method, true), options.signal)
 }
 
 /**
@@ -207,5 +217,5 @@ export async function requestRaw<T = unknown>(
   body?: unknown,
   method: string = "POST",
 ): Promise<T> {
-  return doRequest<T>(options, path, body, method, false)
+  return abortable(doRequest<T>(options, path, body, method, false), options.signal)
 }
