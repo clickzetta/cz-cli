@@ -3,7 +3,7 @@ import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
 import { analyzeSql, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput } from "../output/index.js"
+import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput, EXIT_BIZ_ERROR } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
@@ -502,6 +502,13 @@ async function resolveAccountDisplayName(ctx: ExecContext) {
   }
 }
 
+// Per-statement failures are already rendered inline, so error() would print a
+// second envelope; set the exit code and telemetry error it would have set.
+function markStatementFailure(message: string) {
+  process.exitCode = EXIT_BIZ_ERROR
+  ;(process as unknown as Record<string, unknown>).lastError = message
+}
+
 async function formatQueryError(r: QueryResult, ctx: ExecContext, profileName?: string, fallback = "Query failed") {
   return formatBillingError({
     code: r.errorCode,
@@ -669,6 +676,8 @@ async function handler(argv: SqlArgs): Promise<void> {
         }
       }))
       success({ statements: results, count: statements.length }, { format, rowsKey: "statements" })
+      const failed = results.find((r) => r.status === "error")
+      if (failed) markStatementFailure(String(failed.error))
       return
     }
     ctx = await getExecContext(argv)
@@ -705,6 +714,7 @@ async function handler(argv: SqlArgs): Promise<void> {
             const r = await execSqlWithRetry(ctx, stmt, { hints: accumulatedHints, timeoutMs: argv.timeout * 1000, configStatements })
             if (isQueryResult(r) && r.status === JobStatus.FAILED) {
               const line = { index: i, sql: stmt, error: { code: r.errorCode ?? "SQL_ERROR", message: await formatQueryError(r, ctx, argv.profile) }, time_ms: Date.now() - t0, ...(r.jobId ? { job_id: r.jobId } : {}) }
+              markStatementFailure(line.error.message)
               process.stdout.write(renderOutput(line, format, batchField) + "\n")
               logOperation("sql", { sql: stmt, ok: false, errorCode: r.errorCode })
             } else if (isQueryResult(r)) {
@@ -717,6 +727,7 @@ async function handler(argv: SqlArgs): Promise<void> {
           } catch (err) {
             const { code, message } = classifyExecError(err)
             const line = { index: i, sql: stmt, error: { code, message: await formatClassifiedError({ code, message, ctx, profileName: argv.profile }) }, time_ms: Date.now() - t0 }
+            markStatementFailure(line.error.message)
             process.stdout.write(renderOutput(line, format, batchField) + "\n")
             logOperation("sql", { sql: stmt, ok: false, errorCode: code })
           }
@@ -858,8 +869,8 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
               .option("header", { type: "boolean", default: true, describe: "Include column names in output. Use --no-header or -N to suppress." })
               .option("N", { type: "boolean", hidden: true })
               .option("limit", { type: "number", default: 100, describe: "Max rows to return (0 for unlimited)" })
-              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute multiple semicolon-separated statements sequentially" })
-              .option("dry-run", { type: "boolean", default: false, describe: "EXPLAIN recognized readonly queries. Multiple queries require sql_split=true; writes, session commands and unknown syntax are rejected." })
+              .option("batch", { alias: "B", type: "boolean", default: false, describe: "Batch mode: execute all statements sequentially; exit non-zero if any fails" })
+              .option("dry-run", { type: "boolean", default: false, describe: "EXPLAIN recognized readonly queries; exit non-zero if any fails. Multiple queries require sql_split=true; writes, session commands and unknown syntax are rejected." })
               .epilogue([
                 "Examples:",
                 "  cz-cli sql \"SELECT * FROM orders LIMIT 10\"",
