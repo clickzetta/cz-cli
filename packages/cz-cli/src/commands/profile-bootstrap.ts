@@ -225,7 +225,7 @@ function parseStudioUrl(studioUrl: string, serviceOverride?: string): StudioUrlI
   }
 
   // Resolve center region
-  let centerRegion = getRegionByAlias(envToken || "")
+  let centerRegion = getRegionByAlias(envToken || "") || (envToken && isRegionToken(envToken) ? envToken : "")
   if (!centerRegion && serviceHost) {
     try { centerRegion = detectEnv(serviceHost) } catch { /* ignore */ }
   }
@@ -421,7 +421,7 @@ export const PROD_REGIONS = [
 
 interface CspItem { id: number; code: string; name: string }
 interface RegionItem { region_id: number; region_key: string; region_name: string; csp_id: number; csp_code: string; csp_name: string }
-interface InstanceItem { instance_id: number; instance_name: string; region_id: number; region_key?: string; region_name?: string }
+interface InstanceItem { instance_id: number; instance_name: string; region_id: number; region_key?: string; region_name?: string; csp_id?: number }
 
 async function apiGet<T>(baseUrl: string, token: string, path: string, timeout = 20000): Promise<T> {
   const url = `${baseUrl.replace(/\/$/, "")}${path}`
@@ -434,8 +434,11 @@ async function apiGet<T>(baseUrl: string, token: string, path: string, timeout =
     },
     signal: AbortSignal.timeout(timeout),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`)
+  if (!resp.ok) throw new Error(`${path}: HTTP ${resp.status}`, { cause: resp.status })
   const body = await resp.json() as Record<string, unknown>
+  if (body.code !== undefined && ![0, "0", 200, "200"].includes(body.code as string | number)) {
+    throw new Error(`${path}: API error ${body.code}`)
+  }
   return (body.data ?? body) as T
 }
 
@@ -451,23 +454,28 @@ async function apiPost<T>(baseUrl: string, token: string, path: string, payload:
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(timeout),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`)
+  if (!resp.ok) throw new Error(`${path}: HTTP ${resp.status}`, { cause: resp.status })
   const body = await resp.json() as Record<string, unknown>
+  if (body.code !== undefined && ![0, "0", 200, "200"].includes(body.code as string | number)) {
+    throw new Error(`${path}: API error ${body.code}`)
+  }
   return (body.data ?? body) as T
 }
 
-async function loadRegionsForEnv(jwt: string, serviceUrl: string): Promise<RegionItem[]> {
+async function loadRegionsForEnv(jwt: string, serviceUrl: string, warnings: string[]): Promise<RegionItem[]> {
   const regions: RegionItem[] = []
   try {
     const csps = await apiGet<CspItem[]>(serviceUrl, jwt, "/clickzetta-portal/csp/list")
-    for (const csp of csps || []) {
+    if (!Array.isArray(csps)) throw new Error("CSP discovery returned an invalid list")
+    for (const csp of csps) {
       if (!csp.id) continue
       try {
         const rList = await apiGet<Record<string, unknown>[]>(
           serviceUrl, jwt,
           `/clickzetta-portal/region/list?cspId=${csp.id}`,
         )
-        for (const r of rList || []) {
+        if (!Array.isArray(rList)) throw new Error("Region discovery returned an invalid list")
+        for (const r of rList) {
           regions.push({
             region_id: coerceInt(r.id),
             region_key: String(r.cregionId ?? ""),
@@ -477,15 +485,20 @@ async function loadRegionsForEnv(jwt: string, serviceUrl: string): Promise<Regio
             csp_name: csp.name || "",
           })
         }
-      } catch { /* skip */ }
+      } catch (error) {
+        warnings.push(error instanceof Error ? error.message : String(error))
+      }
     }
-  } catch { /* skip */ }
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : String(error))
+  }
   return regions
 }
 
-async function loadRegions(auth: AuthResult): Promise<{ regions: RegionItem[]; resolvedEnv: string }> {
+async function loadRegions(auth: AuthResult, instances: InstanceItem[]) {
+  const warnings: string[] = []
   let resolvedEnv = auth.centerRegion
-  let regions = await loadRegionsForEnv(auth.token, auth.serviceUrl)
+  let regions = await loadRegionsForEnv(auth.token, auth.serviceUrl, warnings)
 
   if (!regions.length && ["dev", "sit", "uat"].includes(auth.centerRegion)) {
     // Probe prod regions as fallback
@@ -496,13 +509,31 @@ async function loadRegions(auth: AuthResult): Promise<{ regions: RegionItem[]; r
       const host = REGION_API_HOSTS[env]
       if (!host) continue
       const serviceUrl = toServiceUrl(host)
-      const found = await loadRegionsForEnv(auth.token, serviceUrl)
+      const found = await loadRegionsForEnv(auth.token, serviceUrl, warnings)
       if (found.length) {
         regions = found
         resolvedEnv = env
         break
       }
     }
+  }
+
+  // Only the authenticated instance can bind its region ID to the login endpoint.
+  // A center region alone does not establish where other account instances live.
+  const instance = instances.find((item) => item.instance_id === auth.instanceId)
+  if (!regions.length && instance?.region_id && isRegionToken(auth.centerRegion)) {
+    regions = [{
+      region_id: instance.region_id,
+      region_key: auth.centerRegion,
+      region_name: auth.centerRegion,
+      csp_id: instance.csp_id ?? 0,
+      csp_code: "",
+      csp_name: "",
+    }]
+    warnings.push("Region metadata inferred from the authenticated instance and service endpoint")
+  }
+  if (!regions.length && warnings.length) {
+    throw new Error(`Region discovery failed: ${warnings.join("; ")}`)
   }
 
   // Deduplicate by region_id
@@ -515,25 +546,34 @@ async function loadRegions(auth: AuthResult): Promise<{ regions: RegionItem[]; r
   return {
     regions: deduped.sort((a, b) => a.region_key.localeCompare(b.region_key) || a.region_id - b.region_id),
     resolvedEnv,
+    warnings,
   }
 }
 
 async function loadInstances(auth: AuthResult): Promise<InstanceItem[]> {
-  try {
-    const data = await apiPost<Record<string, unknown>[]>(
+  const data = await apiGet<Record<string, unknown>[]>(
+    auth.serviceUrl, auth.token,
+    `/clickzetta-portal/service/serviceInstanceList?accountId=${auth.tenantId}`,
+  ).catch((error: unknown) => {
+    // Older portals expose only the POST route. Do not mask auth or server errors.
+    if (!(error instanceof Error) || error.cause !== 404) throw error
+    return apiPost<Record<string, unknown>[]>(
       auth.serviceUrl, auth.token,
       "/clickzetta-portal/service/listInstances",
       { accountId: auth.tenantId },
     )
-    return (data || [])
-      .filter((item) => coerceInt(item.serviceId) === 1)
-      .map((item) => ({
-        instance_id: coerceInt(item.id),
-        instance_name: String(item.name ?? ""),
-        region_id: coerceInt(item.regionId),
-      }))
-      .sort((a, b) => a.instance_name.localeCompare(b.instance_name) || a.instance_id - b.instance_id)
-  } catch { return [] }
+  })
+  if (!Array.isArray(data)) throw new Error("Instance discovery returned an invalid list")
+  return data
+    .filter((item) => coerceInt(item.serviceId) === 1)
+    .map((item) => ({
+      instance_id: coerceInt(item.instanceId ?? item.id),
+      instance_name: String(item.instanceName ?? item.name ?? ""),
+      region_id: coerceInt(item.regionId),
+      csp_id: coerceInt(item.cspId),
+    }))
+    .filter((item) => item.instance_id > 0 && Boolean(item.instance_name))
+    .sort((a, b) => a.instance_name.localeCompare(b.instance_name) || a.instance_id - b.instance_id)
 }
 
 function resolveRegion(hint: string, regions: RegionItem[]): RegionItem | undefined {
@@ -645,26 +685,15 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
           const authMode = info.urlType === "account" ? "account_login"
             : ["app", "api"].includes(info.urlType) ? "login_single" : "unknown"
 
-          const { regions, resolvedEnv } = await loadRegions(auth)
+          const instances = await loadInstances(auth)
+          const { regions, resolvedEnv, warnings } = await loadRegions(auth, instances)
           const regionById = new Map(regions.map((r) => [r.region_id, r]))
-
-          let instances: InstanceItem[] = []
-          let instancesNote: string | undefined
-          if (auth.tenantId) {
-            try {
-              instances = await loadInstances(auth)
-              for (const item of instances) {
-                const region = regionById.get(item.region_id)
-                if (region) {
-                  item.region_key = region.region_key
-                  item.region_name = region.region_name
-                }
-              }
-            } catch (e) {
-              instancesNote = e instanceof Error ? e.message : String(e)
+          for (const item of instances) {
+            const region = regionById.get(item.region_id)
+            if (region) {
+              item.region_key = region.region_key
+              item.region_name = region.region_name
             }
-          } else {
-            instancesNote = "tenant_id unavailable; select a region then use list-workspaces"
           }
 
           const result: Record<string, unknown> = {
@@ -680,7 +709,7 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
             regions, instances,
             defaults: { schema: "public", vcluster: "default" },
           }
-          if (instancesNote) result.instances_note = instancesNote
+          if (warnings.length) result.warnings = warnings
           logOperation("profile discover", { ok: true })
           success(result, { format })
         } catch (err) {
@@ -697,7 +726,8 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
         const format = argv.format
         try {
           const { info, auth } = await authFromOpts(argv)
-          const { regions, resolvedEnv } = await loadRegions(auth)
+          const instances = await loadInstances(auth)
+          const { regions, resolvedEnv, warnings } = await loadRegions(auth, instances)
           const target = resolveRegion(argv.region as string, regions)
           if (!target) throw new Error(`region '${argv.region}' not found`)
 
@@ -708,26 +738,23 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
             fixedAuth = { ...auth, serviceUrl: toServiceUrl(resolvedService) }
           }
 
-          const instances = await loadInstances(fixedAuth)
           let targetInstances = instances.filter((i) => i.region_id === target.region_id)
-          const instFilter = (argv.instance as string || "").trim()
+          const instFilter = (argv.instance as string || info.instanceName || "").trim()
           if (instFilter) targetInstances = targetInstances.filter((i) => i.instance_name === instFilter)
 
           const workspacesByInstance: Record<string, unknown[]> = {}
           for (const inst of targetInstances) {
             if (!inst.instance_name || !inst.instance_id) continue
-            try {
-              workspacesByInstance[inst.instance_name] = await listWorkspacesForInstance(
-                fixedAuth, inst.instance_name, inst.instance_id, regionKey,
-              )
-            } catch { workspacesByInstance[inst.instance_name] = [] }
+            workspacesByInstance[inst.instance_name] = await listWorkspacesForInstance(
+              fixedAuth, inst.instance_name, inst.instance_id, regionKey,
+            )
           }
 
           logOperation("profile list-workspaces", { ok: true })
           // No rowsKey: `workspaces_by_instance` is what list-workspaces answers, and
           // projecting `instances` would drop it from every row format. Reshaping to
           // one row per instance x workspace is the real fix and is out of scope here.
-          success({ region: target, instances: targetInstances, workspaces_by_instance: workspacesByInstance }, { format })
+          success({ region: target, instances: targetInstances, workspaces_by_instance: workspacesByInstance, ...(warnings.length ? { warnings } : {}) }, { format })
         } catch (err) {
           logOperation("profile list-workspaces", { ok: false, errorCode: "BOOTSTRAP_ERROR" })
           error("BOOTSTRAP_ERROR", err instanceof Error ? err.message : String(err), { format })
@@ -749,13 +776,13 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
         const format = argv.format
         try {
           const { info, auth } = await authFromOpts(argv)
-          const { regions, resolvedEnv } = await loadRegions(auth)
+          const instances = await loadInstances(auth)
+          const { regions, resolvedEnv, warnings } = await loadRegions(auth, instances)
           const target = resolveRegion(argv.region as string, regions)
           if (!target) throw new Error(`region '${argv.region}' not found`)
 
-          const instances = await loadInstances(auth)
           let targetInstances = instances.filter((i) => i.region_id === target.region_id)
-          const instFilter = (argv.instance as string || "").trim()
+          const instFilter = (argv.instance as string || info.instanceName || "").trim()
           if (instFilter) targetInstances = targetInstances.filter((i) => i.instance_name === instFilter)
           if (!targetInstances.length) throw new Error("no instance found for selected region")
           if (targetInstances.length > 1 && !instFilter) {
@@ -789,6 +816,7 @@ export function registerBootstrapCommands(yargs: Argv<GlobalArgs>): void {
             region: target,
             instance: { instance_name: inst.instance_name, instance_id: inst.instance_id },
             workspace, schema, vcluster, command: cmd,
+            ...(warnings.length ? { warnings } : {}),
           }, { format })
         } catch (err) {
           logOperation("profile render-command", { ok: false, errorCode: "BOOTSTRAP_ERROR" })
