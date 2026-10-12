@@ -442,26 +442,6 @@ async function apiGet<T>(baseUrl: string, token: string, path: string, timeout =
   return (body.data ?? body) as T
 }
 
-async function apiPost<T>(baseUrl: string, token: string, path: string, payload: unknown, timeout = 20000): Promise<T> {
-  const url = `${baseUrl.replace(/\/$/, "")}${path}`
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "X-Clickzetta-Token": token,
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(timeout),
-  })
-  if (!resp.ok) throw new Error(`${path}: HTTP ${resp.status}`, { cause: resp.status })
-  const body = await resp.json() as Record<string, unknown>
-  if (body.code !== undefined && ![0, "0", 200, "200"].includes(body.code as string | number)) {
-    throw new Error(`${path}: API error ${body.code}`)
-  }
-  return (body.data ?? body) as T
-}
-
 async function loadRegionsForEnv(jwt: string, serviceUrl: string, warnings: string[]): Promise<RegionItem[]> {
   const regions: RegionItem[] = []
   try {
@@ -554,15 +534,7 @@ async function loadInstances(auth: AuthResult): Promise<InstanceItem[]> {
   const data = await apiGet<Record<string, unknown>[]>(
     auth.serviceUrl, auth.token,
     `/clickzetta-portal/service/serviceInstanceList?accountId=${auth.tenantId}`,
-  ).catch((error: unknown) => {
-    // Older portals expose only the POST route. Do not mask auth or server errors.
-    if (!(error instanceof Error) || error.cause !== 404) throw error
-    return apiPost<Record<string, unknown>[]>(
-      auth.serviceUrl, auth.token,
-      "/clickzetta-portal/service/listInstances",
-      { accountId: auth.tenantId },
-    )
-  })
+  )
   if (!Array.isArray(data)) throw new Error("Instance discovery returned an invalid list")
   return data
     .filter((item) => coerceInt(item.serviceId) === 1)

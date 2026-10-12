@@ -10,7 +10,6 @@ async function run(
     region?: string
     instances?: unknown[]
     catalog?: boolean
-    legacy?: boolean
     instanceStatus?: number
     businessCode?: number
     workspaceStatus?: number
@@ -27,11 +26,7 @@ async function run(
         return Response.json({ code: 0, data: { token, instanceId: options.loginInstance ?? 42, userId: 7 } })
       }
       if (url.pathname.endsWith("/service/serviceInstanceList")) {
-        if (options.legacy) return new Response(null, { status: 404 })
         return Response.json({ code: options.businessCode ?? 0, data: options.instances ?? [instance] }, { status: options.instanceStatus ?? 200 })
-      }
-      if (url.pathname.endsWith("/service/listInstances")) {
-        return Response.json({ code: 0, data: options.instances ?? [instance] })
       }
       if (options.catalog && url.pathname.endsWith("/csp/list")) {
         return Response.json({ code: 0, data: [{ id: 3, code: "aws", name: "AWS" }] })
@@ -98,10 +93,10 @@ test("a different region is rejected rather than assigned to the login instance"
   expect(result.output.error.message).toContain("not found")
 })
 
-test("numeric region IDs and older instance endpoints remain supported", async () => {
-  const result = await run("render-command", { legacy: true, catalog: true, region: "64" })
+test("numeric region IDs remain supported", async () => {
+  const result = await run("render-command", { catalog: true, region: "64" })
   expect(result.code).toBe(0)
-  expect(result.requests).toContain("POST /clickzetta-portal/service/listInstances")
+  expect(result.requests).toContain("GET /clickzetta-portal/service/serviceInstanceList?accountId=9")
   expect(result.output.data.region.region_name).toBe("Singapore")
 })
 
@@ -141,4 +136,14 @@ test("available catalogs retain region names and accept instance field aliases",
   expect(result.output.data.region).toMatchObject({ region_id: 64, region_name: "Singapore", csp_code: "AWS" })
   expect(result.output.data.warnings).toBeUndefined()
   expect(result.requests).not.toContain("POST /clickzetta-portal/service/listInstances")
+})
+
+
+test("missing instance endpoints surface the 404 without trying another route", async () => {
+  const result = await run("discover", { instanceStatus: 404 })
+  expect(result.code).toBe(1)
+  expect(result.output.error.message).toContain("HTTP 404")
+  expect(result.requests.filter((request) => request.includes("/service/"))).toEqual([
+    "GET /clickzetta-portal/service/serviceInstanceList?accountId=9",
+  ])
 })

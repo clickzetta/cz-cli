@@ -683,17 +683,7 @@ async function listInstances(auth: SetupAuthContext): Promise<InstanceOption[]> 
     "cz-lang": "zh_CN",
   }
   const getUrl = `${auth.serviceUrl}/clickzetta-portal/service/serviceInstanceList?accountId=${auth.tenantId}`
-  const postUrl = `${auth.serviceUrl}/clickzetta-portal/service/listInstances`
-  let rows: Record<string, unknown>[] = []
-  try {
-    rows = filterLakehouseInstances(unwrapArray(await requestJson(getUrl, { method: "GET", headers })))
-  } catch {
-    rows = filterLakehouseInstances(unwrapArray(await requestJson(postUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ accountId: auth.tenantId }),
-    })))
-  }
+  const rows = filterLakehouseInstances(unwrapArray(await requestJson(getUrl, { method: "GET", headers })))
   return rows
     .map((row) => {
       const instanceId = coerceInt(row.instanceId ?? row.id)
