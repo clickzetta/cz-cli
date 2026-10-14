@@ -46,6 +46,24 @@ test("parseJdbcUrl maps use_http=true to http protocol", () => {
   expect(cfg!.protocol).toBe("http")
 })
 
+test.each([
+  ["use_http=false", "https"],
+  ["use_http=TRUE", "http"],
+  ["use_http=true&protocol=https", "https"],
+  ["use_http=false&protocol=HTTP", "http"],
+])("parseJdbcUrl resolves transport %s", (query, protocol) => {
+  expect(parseJdbcUrl(`jdbc:clickzetta://instance.service/ws?${query}`)?.protocol).toBe(protocol)
+})
+
+test.each([
+  "jdbc:mysql://instance.service/ws",
+  "https://instance.service/ws",
+  "jdbc:clickzetta://instance.service/ws?use_http=typo",
+  "jdbc:clickzetta://instance.service/ws?protocol=ftp",
+])("parseJdbcUrl rejects unsupported or malformed transport: %s", (jdbc) => {
+  expect(parseJdbcUrl(jdbc)).toBeUndefined()
+})
+
 test("parseJdbcUrl handles /api/ path prefix in service", () => {
   const cfg = parseJdbcUrl(
     "jdbc:clickzetta://a1b2c3d4.lakehouse-studio.uat.example.com/api/my_workspace?username=user&password=secret&schema=public&virtualCluster=DEFAULT",

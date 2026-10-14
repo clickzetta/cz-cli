@@ -5,19 +5,9 @@ import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
 import { suggestClosest } from "./suggest.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
 import { UsageError } from "./usage-error.js"
+import type { CliArgs } from "./connection/config.js"
 
-export interface GlobalArgs {
-  profile?: string
-  jdbc?: string
-  pat?: string
-  username?: string
-  password?: string
-  service?: string
-  protocol?: string
-  instance?: string
-  workspace?: string
-  schema?: string
-  vcluster?: string
+export interface GlobalArgs extends CliArgs {
   format: string
   format_explicit?: boolean
   field?: string

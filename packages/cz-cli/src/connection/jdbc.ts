@@ -9,6 +9,7 @@ export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefine
   } catch {
     return undefined
   }
+  if (parsed.protocol !== "clickzetta:") return undefined
 
   const hostParts = parsed.hostname.split(".")
   // Need at least instance + one service segment (e.g. "instance.host.com")
@@ -45,10 +46,16 @@ export function parseJdbcUrl(jdbc: string): Partial<ConnectionConfig> | undefine
     params.get("vcluster") || params.get("virtualCluster") || params.get("virtualcluster")
   if (vcluster) result.vcluster = vcluster
   if (params.get("workspace")) result.workspace = params.get("workspace")!
-  if (params.get("protocol")) result.protocol = params.get("protocol")!
+  const protocol = params.get("protocol")?.toLowerCase()
+  const useHttp = params.get("use_http")?.toLowerCase()
+  if (protocol !== undefined) {
+    if (protocol !== "http" && protocol !== "https") return undefined
+    result.protocol = protocol
+  }
   // JDBC strings carry transport as use_http=true rather than protocol=http.
-  else if (params.get("use_http")) {
-    result.protocol = params.get("use_http") === "true" ? "http" : "https"
+  if (protocol === undefined && useHttp !== undefined) {
+    if (useHttp !== "true" && useHttp !== "false") return undefined
+    result.protocol = useHttp === "true" ? "http" : "https"
   }
 
   return result
