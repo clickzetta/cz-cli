@@ -940,6 +940,9 @@ async function editAdhocConfigs(
 export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
   return taskYargs.command("integration", "Configure data integration (offline sync) task content across Lakehouse, relational (MySQL/PostgreSQL/…), Elasticsearch, and Kafka datasources", (yargs) => {
     yargs
+      // Treat -vc as the vc option; splitting it into -v/-c prints the version
+      // and exits successfully without saving either datasource connection.
+      .parserConfiguration({ "short-option-groups": false })
       // ── setup ─────────────────────────────────────────────────────────
       .command(
         "setup <task>",
