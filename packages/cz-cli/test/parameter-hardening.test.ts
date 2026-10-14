@@ -631,7 +631,7 @@ describe("serve keeps the global flags the outer layer already consumed", () => 
   for (const flag of [
     ["--profile", "p1"], ["--format", "json"], ["--field", "x"], ["--debug"],
     ["--workspace", "ws1"], ["--instance", "i2"], ["--schema", "sc"], ["--vcluster", "vc"],
-    ["--service", "svc"], ["--protocol", "http"], ["--pat", "tok"], ["--jdbc", "jdbc:x"],
+    ["--service", "svc"], ["--protocol", "http"], ["--pat", "tok"], ["--jdbc", "jdbc:clickzetta://i2.svc/ws1"],
     ["--username", "u"], ["--password", "w"], ["-p", "p1"],
   ]) {
     test(`${flag[0]} is accepted, not rejected by .strict()`, () => {
