@@ -231,6 +231,28 @@ const SINGLE_BASE =
   "--sink-datasource mysql_sink --sink-schema public --format json"
 
 describe("integration setup: single-table sync VC", () => {
+  test.each(["-vc=SYNC_VC", "-vc SYNC_VC", "--vc=SYNC_VC"])("%s saves both datasource connections instead of printing the version", async (flag) => {
+    const result = await execute(
+      "task integration setup 10012766 --sync-type=single " +
+        "--source-datasource=mysql_src --source-type=mysql --source-schema=db1 --source-table=t1 " +
+        "--sink-datasource=lakehouse_sink --sink-schema=public --sink-table=t1 " +
+        `--write-mode=OVERWRITE ${flag} --format json`,
+    )
+    expect(result.exitCode).toBe(0)
+    expect(saveContentCalls).toHaveLength(1)
+    expect(saveContentCalls[0]).toMatchObject({
+      dataFileId: 10012766,
+      dataFileContent: {
+        sourceConnection: { datasourceId: 100, datasourceName: "mysql_src", type: 5 },
+        sinkConnection: { datasourceId: 200, datasourceName: "lakehouse_sink", type: 1 },
+      },
+    })
+    expect(JSON.parse(String(saveContentCalls[0]!.adhocConfigs))).toMatchObject({
+      adhocVcCode: "SYNC_VC", adhocVcId: "vc-int-1",
+    })
+    expect(firstJson(result.output).data).toMatchObject({ task_id: 10012766, vc: "SYNC_VC" })
+  })
+
   test("single-table setup persists adhocConfigs (explicit --vc)", async () => {
     const result = await execute(`${SINGLE_BASE} --vc SYNC_VC`)
     if (result.exitCode !== 0) console.log(result.output)
