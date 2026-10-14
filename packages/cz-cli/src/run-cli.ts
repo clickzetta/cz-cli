@@ -7,7 +7,7 @@ import { createCli } from "./cli.js"
 import { CLICKZETTA_PROFILE_OPTION_NAMES } from "./clickzetta-profile-option.js"
 import { ConnectionEnv } from "./connection/env.js"
 import { parseAgentTimeoutMs } from "./bootstrap/runtime-config.js"
-import { resolveConnectionConfig, type CliArgs } from "./connection/config.js"
+import { resolveConnectionConfig, resolveConnectionOverrides, type CliArgs } from "./connection/config.js"
 import { migrateInlineOAuthTokens, pruneOrphanOAuthSections, readProfileEntry } from "./connection/profile-store.js"
 import * as Profile from "./connection/profile-context.js"
 import { EXIT_BIZ_ERROR, isHandledCliError, parseOutputArgs, renderOutput, renderErrorOutput } from "./output/index.js"
@@ -532,7 +532,7 @@ function connectionOverridesFromArgs(args: string[], agentPath = false): Partial
   const flagMap: Record<string, keyof CliArgs> = {
     profile: "profile",
     p: "profile",
-    jdbc: "jdbcUrl",
+    jdbc: "jdbc",
     pat: "pat",
     username: "username",
     password: "password",
@@ -571,80 +571,29 @@ function connectionOverridesFromArgs(args: string[], agentPath = false): Partial
 }
 
 /**
- * Expand the connection flags of this invocation into the `CZ_*` layer, so the
- * agent runtime and any child process it spawns see the same connection the
- * flags selected.
- *
- * `resolved` (resolveConnectionConfig's output) is NOT one provenance: most of
- * it can be the ACTIVE PROFILE's own TOML fields, expanded here only because
- * `overrides` happened to include `--profile` — e.g. `cz-cli mcp serve
- * --profile a` resolves entirely from profile a, with no credential flag at
- * all. Writing that wholesale through ConnectionEnv.applyUser (as an earlier
- * version of this function did) mislabelled the profile's OWN values as the
- * user's, making them permanently un-clearable: commands/mcp.ts's per-call
- * `applyClickZettaProfile("b")` — a `.apply()` expanding a DIFFERENT profile —
- * skips any name already marked user-owned, so the session kept authenticating
- * as `a`. That is the exact "`--profile B` authenticates as A" failure
- * connection/env.ts's module docblock describes.
- *
- * So the two provenances are split here, not decided by `.apply()`'s
- * skip-if-user-owns-it check after the fact:
- *   - a value LITERALLY supplied by a flag on `overrides` — the user speaking
- *     now, same as a hand-set `CZ_SCHEMA=x` — goes through `.applyUser()`,
- *     never marked derived, so it survives a later per-profile `.apply()`.
- *   - everything else `resolved` produced (i.e. from the profile, JDBC, or a
- *     lower env tier) goes through `.apply()`, marked derived under
- *     `overrides.profile`, so the SAME later per-profile `.apply()` correctly
- *     replaces it on a switch instead of leaving it stuck.
- *
- * The credential (pat vs. username+password) follows config.ts's own
- * `explicitCredential` line: only a flag-pat, or a flag pair with BOTH
- * username AND password present on `overrides`, counts as fully the user's.
- * A lone `--username` with the password filled from the profile is still
- * mostly the profile speaking, so it takes the derived path — same reasoning
- * as why that case does not suppress the OAuth token store in config.ts.
+ * Forward invocation fields as user-owned overrides, including fields carried
+ * inside --jdbc. Profile/default fields stay inherited and remain replaceable
+ * when an agent switches profiles.
  */
 const NON_AUTH_CONNECTION_KEYS = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
 
-/**
- * Pure split of `resolveConnectionConfig`'s output into the two provenance
- * layers `applyAgentConnectionEnv` writes. Exported so a test can assert the
- * split ITSELF — the two decisions that can regress silently (`credentialIsFlag`
- * reading `overrides.*` rather than `resolved.*`, and which non-auth keys land
- * in which layer) — rather than only the behaviour `ConnectionEnv` produces
- * given an already-correct split. This formula has been wrong twice: once
- * writing `resolved` wholesale through `applyUser`, mislabelling every
- * profile-sourced field as the user's own.
- */
 export function splitConnectionEnv(
   overrides: Partial<CliArgs>,
   resolved: Partial<ConnectionEnv.Fields> & { pat?: string; username?: string; password?: string },
 ): { userFields: ConnectionEnv.Fields; derivedFields: ConnectionEnv.Fields } {
+  const explicit = resolveConnectionOverrides(overrides)
   const userFields: ConnectionEnv.Fields = {}
   for (const key of NON_AUTH_CONNECTION_KEYS) {
-    if (overrides[key]) userFields[key] = overrides[key]
+    if (explicit[key]) userFields[key] = resolved[key]
   }
-  // A flag being PRESENT on overrides does not mean it WON: pickCredential's
-  // tier order is flag pat > env pat > profile pat > flag username/password
-  // (config.ts), so `--username u --password p` against a profile that also
-  // stores a pat resolves to that profile's pat, not the flag pair — resolved
-  // and overrides can name DIFFERENT kinds. Checking presence on overrides
-  // alone (as an earlier version of this function did) would then promote
-  // resolved.pat — the PROFILE's value — into userFields, mislabelling it as
-  // the user's. Requiring the VALUE to match what overrides supplied, not just
-  // the field being present, is what keeps the two in agreement: only a
-  // flag-pat whose value resolveConnectionConfig actually kept, or a flag pair
-  // whose BOTH values it actually kept, counts as fully the user's. A lone
-  // `--username` with the password filled from the profile is still mostly the
-  // profile speaking (same reasoning as why that case does not suppress the
-  // OAuth token store in config.ts), and now so is any flag credential that
-  // simply lost its priority tier to the profile's own.
+  // Only propagate a complete explicit credential if it actually won the
+  // resolver's auth priority; never promote profile-filled credentials.
   const credentialIsFlag =
-    (overrides.pat !== undefined && resolved.pat === overrides.pat) ||
-    (overrides.username !== undefined &&
-      overrides.password !== undefined &&
-      resolved.username === overrides.username &&
-      resolved.password === overrides.password)
+    (explicit.pat !== undefined && resolved.pat === explicit.pat) ||
+    (explicit.username !== undefined &&
+      explicit.password !== undefined &&
+      resolved.username === explicit.username &&
+      resolved.password === explicit.password)
   if (credentialIsFlag) {
     if (resolved.pat) userFields.pat = resolved.pat
     else if (resolved.username && resolved.password) {
@@ -655,7 +604,7 @@ export function splitConnectionEnv(
 
   const derivedFields: ConnectionEnv.Fields = {}
   for (const key of NON_AUTH_CONNECTION_KEYS) {
-    if (!overrides[key] && resolved[key]) derivedFields[key] = resolved[key]
+    if (!explicit[key] && resolved[key]) derivedFields[key] = resolved[key]
   }
   if (!credentialIsFlag) {
     if (resolved.pat) derivedFields.pat = resolved.pat

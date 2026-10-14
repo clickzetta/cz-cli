@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { AuthToken, ConnectionConfig, Credential, TokenSource } from "../types/index.js"
 import { loginWithPat, loginWithPassword } from "./login.js"
 import { refreshAccessToken } from "./oauth.js"
@@ -24,14 +25,16 @@ export function isTokenExpired(token: AuthToken): boolean {
   return elapsed > token.expireTimeMs * EXPIRED_FACTOR
 }
 
-// Cache identity for a config. OAuth logins carry no pat/username, so the
-// legacy `instance:pat|username` key collapses to `instance:` and collides
-// across distinct OAuth logins on the same instance. cz-cli supplies an
-// explicit `cacheKey` (the profile's [oauth.<id>] pointer) to disambiguate;
-// PAT/password configs keep the legacy key.
+// Password/PAT logins belong to an endpoint and credential, not just an instance
+// name. OAuth keeps its shared store identity so profiles using the same OAuth
+// session still coalesce refreshes, even across service endpoints.
 function cacheKey(config: ConnectionConfig): string {
   if (config.cacheKey) return `oauth:${config.cacheKey}`
-  return `${config.instance}:${config.pat || config.username}`
+  const identity = config.pat ? ["pat", config.pat] : ["password", config.username, config.password]
+  // Cache keys must not retain plaintext passwords.
+  return createHash("sha256")
+    .update(JSON.stringify([toServiceUrl(config.service, config.protocol), config.instance, identity]))
+    .digest("hex")
 }
 
 /** True when the config has NO credentials to perform a fresh portal login

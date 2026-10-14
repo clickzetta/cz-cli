@@ -14,6 +14,8 @@ export interface CliArgs {
   workspace?: string
   schema?: string
   vcluster?: string
+  jdbc?: string
+  /** Compatibility with existing programmatic callers. CLI arguments use jdbc. */
   jdbcUrl?: string
   profile?: string
 }
@@ -51,7 +53,7 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   }
   const profileCfg = getProfileConfig(profileName) ?? (profileName ? undefined : getProfileConfig())
   const ambient = ConnectionEnv.read()
-  const jdbcCfg = cliArgs.jdbcUrl ? parseJdbcUrl(cliArgs.jdbcUrl) : undefined
+  const overrides = resolveConnectionOverrides(cliArgs)
 
   const cfg: ConnectionConfig = { ...DEFAULT_CONNECTION }
 
@@ -63,29 +65,7 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   applyNonAuth(cfg, ambient.inherited)
   applyNonAuth(cfg, profileCfg)
   applyNonAuth(cfg, ambient.user)
-  applyNonAuth(cfg, jdbcCfg)
-
-  const nonAuthKeys = ["service", "protocol", "instance", "workspace", "schema", "vcluster"] as const
-  for (const key of nonAuthKeys) {
-    const val = cliArgs[key]
-    // An EMPTY value is not a value. `--workspace` with nothing after it (yargs
-    // hands us "") used to overwrite the profile's workspace with "", and the
-    // command then reported "Workspace is required. Provide --workspace or
-    // configure it in your profile" — about the flag the user had just passed.
-    // Treat it as absent, which is what every other CLI does with an empty
-    // operand, and let the profile keep its value.
-    if (val !== undefined && val !== null && String(val).trim() !== "") {
-      // Read BEFORE the write. Comparing against cfg[key] afterwards is comparing val to
-      // itself, which is how the first version of this guard never fired once — and the
-      // symptom was silent: `--instance other` kept the profile's cached id and submitted
-      // the job against the profile's instance.
-      const previous = cfg[key]
-      cfg[key] = val
-      // An id resolved for one instance is meaningless for another, so naming a different
-      // instance drops it and getExecContext resolves the right one.
-      if (key === "instance" && val !== previous) cfg.instanceId = undefined
-    }
-  }
+  applyNonAuth(cfg, overrides)
   cfg.protocol = normalizeProtocol(cfg.protocol)
 
   // Auth priority: --pat > CZ_PAT > profile pat > --username/--password > JDBC > env > profile
@@ -118,7 +98,7 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
   // before this field existed. Old profiles are untouched.
   const pinAllows = (type: AuthType) => pinnedAuth === undefined || pinnedAuth === type
 
-  const credential = pickCredential({ cliArgs, ambient, jdbc: jdbcCfg, profile: profileCfg, pinAllows })
+  const credential = pickCredential({ overrides, ambient, profile: profileCfg, pinAllows })
   if (credential.kind === "pat") cfg.pat = credential.pat
   if (credential.kind === "password") {
     cfg.username = credential.username
@@ -130,70 +110,19 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
     cfg.customHeaders = { ...profileCfg.customHeaders, ...cfg.customHeaders }
   }
 
-  // A pinned non-cookie `auth_type` must drop the Cookie header. Every
-  // token-acquiring call site is hardcoded as `getCookieToken() ?? getToken()`, so
-  // a lingering cookie outranks the pinned credential regardless of what cfg's
-  // other fields say. This runs AFTER every merge on purpose: applyNonAuth already
-  // copied the profile's headers into cfg above, so filtering only the profile's
-  // copy would leave the cookie in place via cfg. Only the Cookie key goes — the
-  // rest of the headers are transport config, not credentials.
-  if (pinnedAuth !== undefined && pinnedAuth !== "cookie" && cfg.customHeaders) {
+  // Explicit credentials include JDBC fields and user-owned env pairs (also
+  // how CLI credentials reach agent children). A pair completed from the
+  // profile remains profile-dependent. Only the credential that WON may
+  // suppress the profile's persisted OAuth login or cookie.
+  const explicitCredential =
+    credential.source === "env" ||
+    (credential.source === "flag" &&
+      (credential.kind === "pat" || Boolean(overrides.username && overrides.password)))
+  if ((explicitCredential || (pinnedAuth !== undefined && pinnedAuth !== "cookie")) && cfg.customHeaders) {
     const kept = Object.entries(cfg.customHeaders).filter(([key]) => key.toLowerCase() !== "cookie")
     cfg.customHeaders = kept.length > 0 ? Object.fromEntries(kept) : undefined
   }
 
-  // Attach a profile-backed OAuth token store so callers routing through this
-  // function (exec.ts, studio-context.ts) get cross-process persistence
-  // (requirement 9.3, 9.7). The OAuth token represents the user's own login,
-  // so the slot is keyed by INSTANCE ONLY (not pat/username): removing or
-  // rotating a pat must not orphan the persisted token (requirement 9.6/11.6).
-  // The store is self-keyed — the SDK calls load/save/clear on it without
-  // re-deriving a key — so this key need not mirror token.ts's in-memory key.
-  //
-  // BUT never attach it when the caller supplied an EXPLICIT per-invocation
-  // credential (--pat / CZ_PAT, or --username+--password). getToken() consults
-  // the store before fetchToken(), so an attached store would return a cached
-  // OAuth token and silently shadow the credential the user just passed —
-  // violating the documented auth priority (--pat > CZ_PAT > …) and defeating
-  // PAT rotation. Skipping the store also stops the PAT-exchanged token from
-  // being persisted. Profile-level and pure-OAuth flows still attach it.
-  //
-  // "Explicit" is now decided by the credential's SOURCE rather than by which
-  // fields happen to be set. An INHERITED credential — one we expanded into the
-  // env ourselves — is not the user speaking, so it must not suppress the store:
-  // treating it as explicit is what let a stale injection outrank the profile's
-  // own OAuth login.
-  //
-  // A "flag" password credential needs one more check than that, though:
-  // pickCredential enters the flag tier as soon as EITHER --username or
-  // --password is set, then fills the other half from a lower tier (profile,
-  // env, JDBC) — that is what makes `--username alice` against a profile-stored
-  // password keep working. Tagging that result explicit on source alone would
-  // suppress the token store on a credential that is only HALF the user
-  // speaking now; the stored OAuth login the other half came from is exactly
-  // what should stay attached. Only a pair supplied ENTIRELY by flags — or, for
-  // pat, the single flag/env value — is unambiguously "not the profile's".
-  //
-  // Same reasoning excludes an env-sourced password PAIR: unlike CZ_PAT (a
-  // single value, unambiguously the user's), CZ_USERNAME+CZ_PASSWORD have never
-  // been treated as explicit here, and there is no flag-style "half from the
-  // profile" case to protect for env — so credential.source === "env" is only
-  // explicit for a pat.
-  //
-  // Keying off source has one more consequence, confirmed intentional: an
-  // explicit `--username`/`--password` pair that LOSES the priority tier to a
-  // profile pat (no auth_type pin) is tagged source: "profile", not "flag" —
-  // pickCredential picked the profile's credential, the flags did not win.
-  // Consistent with "only the credential that's actually speaking suppresses
-  // the store", that profile pat still attaches the store exactly as it would
-  // with no credential flag at all (see the profile-level-pat test above) —
-  // the flags losing the tier means they are not the ones authenticating, so
-  // they should not be the ones deciding whether a stored OAuth login stays
-  // reachable either.
-  const explicitCredential =
-    (credential.source === "env" && credential.kind === "pat") ||
-    (credential.source === "flag" &&
-      (credential.kind === "pat" || Boolean(cliArgs.username && cliArgs.password)))
   // Attach the OAuth token store when the profile can carry an OAuth login:
   // either it has an instance (the common case) OR it has an `oauth = "<id>"`
   // pointer to a shared [oauth.<id>] token. The old `cfg.instance`-only gate
@@ -228,18 +157,42 @@ export function resolveConnectionConfig(cliArgs: Partial<CliArgs> = {}): Connect
     // No oauthId passed: the store resolves the shared-token id from this
     // profile's `oauth = "<id>"` pointer (or a legacy inline subtable).
     cfg.tokenStore = makeProfileTokenStore(profileName)
-    // Disambiguate the in-memory token cache per OAuth login. Without this the
-    // SDK cache key collapses to `instance:` for OAuth profiles (no pat/user)
-    // and collides across distinct logins on the same instance. The shared
-    // [oauth.<id>] pointer is that stable identity.
+    // Profiles sharing an OAuth store also share its stable cache identity;
+    // distinct OAuth logins must not collide merely by instance name.
     if (hasOAuthPointer) cfg.cacheKey = oauthPointer
   }
 
   return cfg
 }
 
-/** Where the selected credential came from, in descending precedence. */
-type CredentialSource = "flag" | "env" | "profile" | "inherited" | "jdbc"
+/**
+ * The invocation's own fields, before profile or environment defaults.
+ * Share this boundary with env propagation so JDBC values retain the same
+ * precedence in native handlers, execute(), and agent children.
+ */
+export function resolveConnectionOverrides(args: Partial<CliArgs>): Partial<ConnectionConfig> {
+  if (args.jdbc !== undefined && args.jdbcUrl !== undefined && args.jdbc !== args.jdbcUrl) {
+    throw new InterfaceError("Conflicting jdbc and jdbcUrl connection arguments.", { code: "INVALID_ARGUMENTS" })
+  }
+  const jdbc = args.jdbc ?? args.jdbcUrl
+  const parsed = jdbc === undefined ? {} : parseJdbcUrl(jdbc)
+  if (!parsed) {
+    // Never echo the URL: it may contain a password.
+    throw new InterfaceError("Invalid --jdbc. Expected jdbc:clickzetta://<instance>.<service>/<workspace>?schema=<schema>.", {
+      code: "INVALID_ARGUMENTS",
+    })
+  }
+  const overrides = { ...parsed }
+  for (const key of ["service", "protocol", "instance", "workspace", "schema", "vcluster", "pat", "username", "password"] as const) {
+    const value = args[key]
+    // Empty connection fields are absent; credentials remain byte-for-byte.
+    if (value && (key === "password" || value.trim())) overrides[key] = value
+  }
+  return overrides
+}
+
+/** Source of the credential selected by pickCredential. */
+type CredentialSource = "flag" | "env" | "profile" | "inherited"
 
 type Credential =
   | { kind: "pat"; source: CredentialSource; pat: string }
@@ -247,43 +200,18 @@ type Credential =
   | { kind: "none"; source: "default" }
 
 /**
- * Choose ONE credential, as a group.
- *
- * A credential is an identity, not a bag of fields: a username from one source
- * and a password from another authenticate as nobody. The old code set
- * `cfg.pat` / `cfg.username` / `cfg.password` from independent priority chains,
- * which is how a profile's instance ended up paired with a username we had
- * injected for a different profile ("Login failed: 没有这样的用户").
- *
- * The tier order is the one this function has always had — flag pat, user's
- * `CZ_PAT`, profile pat, flag username/password, JDBC, user's `CZ_USERNAME`
- * pair, profile pair — with one tier ADDED at the bottom: a credential we
- * expanded into the environment ourselves ranks below the profile, because it is
- * OUR value rather than the user's (see connection/env.ts). This is a
- * provenance fix, not a re-litigation of flag-versus-profile.
- *
- * One precedence change DOES fall out of it, though: the old `getEnvConfig()`
- * this replaced only populated `username`/`password` at all when the env held
- * `CZ_PAT` OR a COMPLETE `CZ_USERNAME`+`CZ_PASSWORD` pair — a lone
- * `CZ_USERNAME` with no `CZ_PASSWORD` returned non-auth fields only, so
- * `envUsername` in the old flag-tier merge was empty and fell through to the
- * profile's username. `ConnectionEnv.read()` carries no such gate:
- * `ambient.user.username` is populated whenever `CZ_USERNAME` is set, whole or
- * half. So `CZ_USERNAME=envuser` (no `CZ_PASSWORD`) plus `--password p`
- * against a profile storing `username = "profileuser"` now merges to
- * `envuser`/`p` instead of falling through to `profileuser`/`p`. Accepted as
- * more consistent with this file's own documented `env > profile` layering
- * (the flag tier's username lookup already prefers `ambient.user.username`
- * over the profile at that same line), not reverted.
+ * Select one credential group. Preserve PAT precedence over password auth;
+ * password overrides have already merged flags over JDBC. A partial explicit
+ * pair can be completed from user env or the selected profile, but inherited
+ * credentials remain below the profile.
  */
 function pickCredential(input: {
-  cliArgs: Partial<CliArgs>
+  overrides: Partial<ConnectionConfig>
   ambient: ConnectionEnv.Ambient
-  jdbc: Partial<ConnectionConfig> | undefined
   profile: Partial<ConnectionConfig> | undefined
   pinAllows: (type: AuthType) => boolean
 }): Credential {
-  if (input.cliArgs.pat) return { kind: "pat", source: "flag", pat: input.cliArgs.pat }
+  if (input.overrides.pat) return { kind: "pat", source: "flag", pat: input.overrides.pat }
   if (input.ambient.user.pat) return { kind: "pat", source: "env", pat: input.ambient.user.pat }
   if (input.pinAllows("pat") && input.profile?.pat) {
     return { kind: "pat", source: "profile", pat: input.profile.pat }
@@ -292,24 +220,18 @@ function pickCredential(input: {
   // A flag that supplies only half of the pair still selects the flag tier; the
   // missing half is filled from the tiers below, which is how
   // `--username alice` against a profile that stores the password keeps working.
-  if (input.cliArgs.username !== undefined || input.cliArgs.password !== undefined) {
+  if (input.overrides.username !== undefined || input.overrides.password !== undefined) {
     const username =
-      input.cliArgs.username ||
-      input.jdbc?.username ||
+      input.overrides.username ||
       input.ambient.user.username ||
       (input.pinAllows("password") ? input.profile?.username : undefined) ||
       input.ambient.inherited.username
     const password =
-      input.cliArgs.password ||
-      input.jdbc?.password ||
+      input.overrides.password ||
       input.ambient.user.password ||
       (input.pinAllows("password") ? input.profile?.password : undefined) ||
       input.ambient.inherited.password
     if (username && password) return { kind: "password", source: "flag", username, password }
-  }
-
-  if (input.jdbc?.username && input.jdbc.password) {
-    return { kind: "password", source: "jdbc", username: input.jdbc.username, password: input.jdbc.password }
   }
 
   if (input.ambient.user.username && input.ambient.user.password) {
@@ -335,7 +257,11 @@ function pickCredential(input: {
 
 function applyNonAuth(target: ConnectionConfig, src: Partial<ConnectionConfig> | undefined): void {
   if (!src) return
-  if (src.service) target.service = src.service
+  if (src.service) {
+    // Instance ids are scoped to a service, even when the instance name matches.
+    if (src.service !== target.service) target.instanceId = undefined
+    target.service = src.service
+  }
   if (src.protocol) target.protocol = normalizeProtocol(src.protocol)
   if (src.instance) {
     // The id travels WITH the name. A layer that carries its own id wins; a layer that

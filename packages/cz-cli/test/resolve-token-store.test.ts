@@ -176,16 +176,16 @@ test("--username alone against a profile-stored password STILL attaches the stor
   expect(cfg.tokenStore).toBeDefined()
 })
 
-test("CZ_USERNAME/CZ_PASSWORD from the environment does NOT suppress the store", () => {
-  // Unlike CZ_PAT (a single value, unambiguously the user's), an env
-  // username/password pair has never been treated as explicit here.
+test("a user-owned CZ_USERNAME/CZ_PASSWORD pair suppresses the profile OAuth store", () => {
+  // Explicit CLI/JDBC credentials also travel through this layer in agent
+  // children. A stored login must not silently replace that complete pair.
   saveProfiles({ czcli: { instance: "inst", service: "api.example.com", oauth: "sess" } })
   process.env.CZ_USERNAME = "envuser"
   process.env.CZ_PASSWORD = "envpass"
 
   const cfg = resolveConnectionConfig({ profile: "czcli" })
   expect(cfg.username).toBe("envuser")
-  expect(cfg.tokenStore).toBeDefined()
+  expect(cfg.tokenStore).toBeUndefined()
 })
 
 test("--username/--password that LOSE to a profile pat still attach the store (source, not fields, decides explicitness)", () => {
