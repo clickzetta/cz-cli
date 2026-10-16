@@ -35,7 +35,7 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
     success: false,
     error: "exit_code=1",
     response_bytes: 456,
-    resourceAttributes: { "username": "alice" },
+    identityAttributes: { "enduser.id": "42" },
   })
 
   expect(request?.url).toBe("https://otel.example/v1/logs")
@@ -46,6 +46,7 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
 
   const payload = JSON.parse(String(request?.init?.body)) as {
     resourceLogs: Array<{
+      resource?: { attributes: Array<{ key: string }> }
       scopeLogs: Array<{
         logRecords: Array<{
           severityNumber: number
@@ -71,6 +72,11 @@ test("trackCommand emits normalized command telemetry attributes", async () => {
     { key: "cz_cli.command.duration_ms", value: { intValue: "123" } },
     { key: "cz_cli.command.response_bytes", value: { intValue: "456" } },
     { key: "cz_cli.command.error", value: { stringValue: "exit_code=1" } },
+    { key: "enduser.id", value: { stringValue: "42" } },
+  ])
+  expect(payload.resourceLogs[0]?.resource?.attributes.map((a) => a.key)).toEqual([
+    "service.name",
+    "service.version",
   ])
 })
 
