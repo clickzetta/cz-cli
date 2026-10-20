@@ -1,3 +1,5 @@
+import type { LLMTraceEvent } from "@opencode-ai/plugin"
+import { Option, Schema } from "effect"
 import { ensureIdentityResolved } from "../../connection/context.js"
 import { profileTelemetryAttributes } from "../../connection/telemetry.js"
 import { context, SpanKind, trace, SpanStatusCode, type Span } from "@opentelemetry/api"
@@ -13,7 +15,7 @@ import {
 } from "./context"
 import * as m from "./metrics"
 import type { Event } from "@opencode-ai/sdk"
-import { isSensitiveKey, isSensitiveValue } from "../../telemetry.js"
+import { isSensitiveKey } from "../../telemetry.js"
 import { redactSql } from "../../logger.js"
 
 const tracer = trace.getTracer("opencode")
@@ -39,8 +41,6 @@ const PEM_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRI
 const ASSIGNMENT = /([A-Za-z_][\w.-]{1,40})(\s*[:=]\s*)("[^"]*"|'[^']*'|`[^`]*`|[^\s,;)}\]]+)/g
 //: `--password hunter2` / `-p hunter2`, the whitespace-separated flag spelling.
 const FLAG_VALUE = /(--?[A-Za-z][\w-]{0,40})(\s+)("[^"]*"|'[^']*'|[^\s]+)/g
-const CONTENT_MAX_CHARS = 8_000
-const PROMPT_MAX_CHARS = 32 * 1024
 
 function redactText(value: string): string {
   let out = value.replace(PEM_BLOCK, "<redacted:private-key>")
@@ -53,32 +53,26 @@ function redactText(value: string): string {
   return redactSql(out)
 }
 
-/**
- * Depth- and cycle-guarded: this walk runs before `safeStringify`, so a self-referential
- * payload would overflow the stack where `safeStringify`'s own catch could not absorb it.
- */
-function redactDeep(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+/** Redact credentials without truncating content or treating shared objects as cycles. */
+function redactDeep(value: unknown, seen = new WeakSet<object>(), properties = false): unknown {
   if (typeof value === "string") return redactText(value)
   if (!value || typeof value !== "object") return value
-  if (depth >= 12) return "<redacted:too-deep>"
+  if (value instanceof URL) return value.href
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("base64")
+  if (value instanceof ArrayBuffer) return Buffer.from(value).toString("base64")
+  if (value instanceof Error) return { name: value.name, message: redactText(value.message) }
   if (seen.has(value)) return "<redacted:cycle>"
   seen.add(value)
-  if (Array.isArray(value)) return value.map((item) => redactDeep(item, depth + 1, seen))
-  const out: Record<string, unknown> = {}
-  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    out[key] = isSensitiveKey(key) ? "<redacted>" : redactDeep(inner, depth + 1, seen)
-  }
-  return out
-}
-
-function capTo(text: string, limit: number): string {
-  if (text.length <= limit) return text
-  const marker = "\n[truncated]\n"
-  if (limit <= marker.length) return "…".slice(0, limit)
-  const available = limit - marker.length
-  const head = Math.ceil(available / 2)
-  const tail = available - head
-  return `${text.slice(0, head)}${marker}${tail ? text.slice(-tail) : ""}`
+  const result = Array.isArray(value)
+    ? value.map((item) => redactDeep(item, seen))
+    : Object.fromEntries(
+        Object.entries(value).map(([key, inner]) => [
+          key,
+          !properties && isSensitiveKey(key) ? "<redacted>" : redactDeep(inner, seen, key === "properties"),
+        ]),
+      )
+  seen.delete(value)
+  return result
 }
 
 function safeStringify(value: unknown): string {
@@ -89,128 +83,18 @@ function safeStringify(value: unknown): string {
   }
 }
 
-type StructuralContext = "none" | "messages" | "parts" | "message" | "part"
-
-const MESSAGE_STRUCTURAL_KEYS = new Set(["role", "finish_reason"])
-const PART_STRUCTURAL_KEYS = new Set(["type", "id", "name", "mediaType", "filename"])
-
-function capStrings(
-  value: unknown,
-  limit: number,
-  structuralContext: StructuralContext = "none",
-  key = "",
-): unknown {
-  if (typeof value === "string") {
-    if (
-      (structuralContext === "message" && MESSAGE_STRUCTURAL_KEYS.has(key)) ||
-      (structuralContext === "part" && PART_STRUCTURAL_KEYS.has(key))
-    ) {
-      return value
-    }
-    return capTo(value, limit)
-  }
-  if (Array.isArray(value)) {
-    const itemContext =
-      structuralContext === "messages" ? "message" : structuralContext === "parts" ? "part" : "none"
-    return value.map((item) => capStrings(item, limit, itemContext))
-  }
-  if (!value || typeof value !== "object") return value
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([innerKey, inner]) => [
-      innerKey,
-      capStrings(
-        inner,
-        limit,
-        structuralContext === "message" && innerKey === "parts" ? "parts" : "none",
-        innerKey,
-      ),
-    ]),
-  )
-}
-
-/**
- * Reduce string leaves until the serialized value fits. This preserves the original JSON
- * schema, including message roles, part types and finish reasons.
- */
-function boundedRedactedJson(
-  redacted: unknown,
-  limit: number,
-  structuralContext: StructuralContext = "none",
-): string {
-  const serialized = safeStringify(redacted)
-  if (serialized.length <= limit) return serialized
-
-  let low = 0
-  let high = limit
-  let best = safeStringify(capStrings(redacted, 0, structuralContext))
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2)
-    const candidate = safeStringify(capStrings(redacted, middle, structuralContext))
-    if (candidate.length <= limit) {
-      best = candidate
-      low = middle + 1
-    } else {
-      high = middle - 1
-    }
-  }
-  if (best.length <= limit) return best
-
-  if (redacted && typeof redacted === "object" && !Array.isArray(redacted)) {
-    const result: Record<string, unknown> = { __truncated__: true }
-    for (const [entryKey, inner] of Object.entries(redacted as Record<string, unknown>)) {
-      const candidate = { ...result, [entryKey]: capStrings(inner, 0, structuralContext, entryKey) }
-      if (safeStringify(candidate).length > limit) break
-      result[entryKey] = candidate[entryKey]
-    }
-    return safeStringify(result)
-  }
-  return "[]"
-}
-
-function boundedJson(value: unknown, limit: number): string {
-  return boundedRedactedJson(redactDeep(value), limit)
-}
-
-function retainArray(items: unknown[], limit: number, keep: "head" | "tail"): unknown[] {
-  const serialized = items.map(safeStringify)
-  const retained: unknown[] = []
-  let used = 2
-  const indexes = Array.from({ length: items.length }, (_, index) => index)
-  if (keep === "tail") indexes.reverse()
-  for (const index of indexes) {
-    const next = serialized[index]!.length + (retained.length ? 1 : 0)
-    if (retained.length && used + next > limit) break
-    if (keep === "head") retained.push(items[index])
-    else retained.unshift(items[index])
-    used += next
-  }
-  return retained
-}
-
-function promptAttr(
-  value: unknown[],
-  keep: "head" | "tail",
-  trimParts = false,
-  structuralContext: "messages" | "parts" = "messages",
-): string {
-  const redacted = redactDeep(value) as unknown[]
-  let retained = retainArray(redacted, PROMPT_MAX_CHARS, keep)
-  if (trimParts && retained.length === 1) {
-    const message = retained[0]
-    if (message && typeof message === "object" && !Array.isArray(message)) {
-      const record = message as Record<string, unknown>
-      if (Array.isArray(record.parts)) {
-        retained = [{ ...record, parts: retainArray(record.parts, PROMPT_MAX_CHARS / 2, "tail") }]
-      }
-    }
-  }
-  return boundedRedactedJson(retained, PROMPT_MAX_CHARS, structuralContext)
+/** Preserve every message and part; collection must not change request semantics. */
+function promptAttr(value: unknown): string {
+  return safeStringify(redactDeep(value))
 }
 
 // Parse OPENCODE_DISABLE_TRACES once. Value is comma-separated categories,
 // e.g. "tool,llm". Logs and metrics are never affected.
 const disabledTraceCategories: ReadonlySet<string> = new Set(
-  (process.env.OPENCODE_DISABLE_TRACES ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.OPENCODE_DISABLE_TRACES ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 )
 
 function tracingEnabled(category: string): boolean {
@@ -245,6 +129,18 @@ const pendingErrors = new Map<string, string>()
 //: raw-request capture attach to "the" current session — so remember who filled it
 //: and only that session may clear it.
 let contextOwner: string | undefined
+
+const observedSessions = new Set<string>()
+const llmCalls = new Map<
+  string,
+  {
+    span: Span
+    sessionID: string
+    events: Extract<LLMTraceEvent, { type: "event" }>["event"][]
+    parts: Map<string, Record<string, unknown>>
+    finishReason?: string
+  }
+>()
 
 const stepSpans = new Map<string, { span: Span; sessionID: string }>()
 const toolSpans = new Map<string, { span: Span; sessionID: string }>()
@@ -317,10 +213,7 @@ export function initHandlers(logger: Logger, recordContent?: boolean) {
   void ensureIdentityResolved()
 }
 
-function sessionAttributes(
-  sessionID?: string,
-  attrs?: Record<string, string | number | boolean>,
-) {
+function sessionAttributes(sessionID?: string, attrs?: Record<string, string | number | boolean>) {
   return {
     ...(sessionID ? { "opencode.session.id": sessionID, "langfuse.session.id": sessionID } : {}),
     ...attrs,
@@ -554,7 +447,7 @@ export function recordInputMessages(messages: Array<{ info?: Record<string, any>
     role: m.info?.role ?? "unknown",
     parts: (m.parts ?? []).map(serializePart).filter(Boolean),
   }))
-  sessionInput.set(sessionID, promptAttr(serialized, "tail", true))
+  sessionInput.set(sessionID, promptAttr(serialized))
 }
 
 /** `experimental.chat.system.transform` (llm/request.ts:70), which does pass a sessionID. */
@@ -562,7 +455,192 @@ export function recordSystemInstructions(sessionID: string | undefined, system: 
   if (!_recordContent || !sessionID || !system?.length) return
   const parts = system.filter(Boolean).map((content) => ({ type: "text", content }))
   if (!parts.length) return
-  sessionSystem.set(sessionID, promptAttr(parts, "head", false, "parts"))
+  sessionSystem.set(sessionID, promptAttr(parts))
+}
+
+/** Capture finalized invocations independently of replayable session message parts. */
+export function recordLlmEvent(event: LLMTraceEvent) {
+  if (event.type === "start") {
+    observedSessions.add(event.sessionID)
+    if (!tracingEnabled("llm")) return
+    if (llmCalls.has(event.requestID)) return
+    const span = tracer.startSpan(
+      `chat ${event.model.modelID}`,
+      {
+        kind: SpanKind.CLIENT,
+        attributes: {
+          ...profileTelemetryAttributes(),
+          "gen_ai.operation.name": "chat",
+          "gen_ai.provider.name": event.model.providerID,
+          "gen_ai.request.model": event.model.modelID,
+          "gen_ai.agent.name": event.agent,
+          "gen_ai.conversation.id": event.sessionID,
+          "opencode.session.id": event.sessionID,
+          "langfuse.session.id": event.sessionID,
+          "opencode.llm.request.id": event.requestID,
+          "opencode.llm.runtime": event.runtime,
+        },
+      },
+      turnContext(event.sessionID),
+    )
+    llmCalls.set(event.requestID, { span, sessionID: event.sessionID, events: [], parts: new Map() })
+    const options = event.request.options
+    const parameters = {
+      "gen_ai.request.temperature": options.temperature,
+      "gen_ai.request.top_p": options.topP,
+      "gen_ai.request.top_k": options.topK,
+      "gen_ai.request.max_tokens": options.maxOutputTokens ?? options.maxTokens,
+      "gen_ai.request.stop_sequences": options.stopSequences ?? options.stop,
+    }
+    Object.entries(parameters).forEach(([key, value]) => {
+      if (typeof value === "number" || (Array.isArray(value) && value.every((item) => typeof item === "string")))
+        span.setAttribute(key, value)
+    })
+    if (!_recordContent) return
+    const messages = event.request.messages.filter(isRecord)
+    span.setAttributes({
+      "gen_ai.input.messages": promptAttr(messages.filter((message) => message.role !== "system").map(modelMessage)),
+      "gen_ai.system_instructions": promptAttr([
+        ...(event.request.system ?? []).map(modelPart),
+        ...messages
+          .filter((message) => message.role === "system")
+          .flatMap((message) =>
+            typeof message.content === "string"
+              ? [{ type: "text", content: message.content }]
+              : Array.isArray(message.content)
+                ? message.content.map(modelPart)
+                : [],
+          ),
+      ]),
+      "gen_ai.tool.definitions": promptAttr(event.request.tools ?? []),
+      "clickzetta.llm.request": promptAttr(event.request),
+    })
+
+    return
+  }
+  const call = llmCalls.get(event.requestID)
+  if (!call || call.sessionID !== event.sessionID) return
+  if (event.type === "request") {
+    if (!_recordContent) return
+    const body =
+      typeof event.body === "string"
+        ? Option.getOrElse(Schema.decodeUnknownOption(Schema.UnknownFromJsonString)(event.body), () => event.body)
+        : event.body
+    call.span.setAttribute("clickzetta.llm.request.body", promptAttr(body))
+    if (event.url && URL.canParse(event.url)) {
+      const url = new URL(event.url)
+      url.username = ""
+      url.password = ""
+      url.searchParams.forEach((_, key) => {
+        if (isSensitiveKey(key) || key === "key") url.searchParams.set(key, "<redacted>")
+      })
+      call.span.setAttribute("url.full", url.toString())
+    }
+    if (event.method) call.span.setAttribute("http.request.method", event.method)
+    return
+  }
+  if (event.type === "end") {
+    call.span.setAttribute("opencode.llm.outcome", event.outcome)
+    if (event.outcome === "error")
+      call.span.setStatus({ code: SpanStatusCode.ERROR, message: event.error ? redactText(event.error) : undefined })
+    if (_recordContent) {
+      if (event.error) call.span.setAttribute("error.message", redactText(event.error))
+      call.span.setAttributes({
+        "gen_ai.output.messages": promptAttr([
+          {
+            role: "assistant",
+            parts: [...call.parts.values()],
+            finish_reason: call.finishReason ?? event.outcome,
+          },
+        ]),
+        "clickzetta.llm.response.events": promptAttr(call.events),
+      })
+    }
+    call.span.end()
+    llmCalls.delete(event.requestID)
+    return
+  }
+  const part = event.event
+  if (part.type === "finish" || part.type === "step-finish") {
+    const reason = isRecord(part.finishReason) ? part.finishReason.unified : part.reason
+    if (typeof reason === "string") {
+      call.finishReason = reason
+      call.span.setAttribute("gen_ai.response.finish_reasons", [reason])
+    }
+    if (isRecord(part.usage)) {
+      const usage = part.usage
+      const input = isRecord(usage.inputTokens) ? usage.inputTokens.total : usage.inputTokens
+      const output = isRecord(usage.outputTokens) ? usage.outputTokens.total : usage.outputTokens
+      if (typeof input === "number") call.span.setAttribute("gen_ai.usage.input_tokens", input)
+      if (typeof output === "number") call.span.setAttribute("gen_ai.usage.output_tokens", output)
+    }
+  }
+  if (part.type === "response-metadata" && typeof part.id === "string")
+    call.span.setAttribute("gen_ai.response.id", part.id)
+  if (part.type === "response-metadata" && typeof part.modelId === "string")
+    call.span.setAttribute("gen_ai.response.model", part.modelId)
+  if (!_recordContent) return
+  call.events.push(part)
+  const id =
+    typeof part.id === "string"
+      ? part.id
+      : typeof part.toolCallId === "string"
+        ? part.toolCallId
+        : String(call.parts.size)
+  if (part.type === "text-delta" || part.type === "reasoning-delta" || part.type === "tool-input-delta") {
+    const type = part.type === "text-delta" ? "text" : part.type === "reasoning-delta" ? "reasoning" : "tool_call"
+    const key = `${type}:${id}`
+    const previous = call.parts.get(key)
+    const delta = part.delta ?? part.text
+    call.parts.set(key, {
+      ...previous,
+      type,
+      ...(type === "tool_call" ? { id, name: previous?.name ?? part.name } : {}),
+      content:
+        (typeof previous?.content === "string" ? previous.content : "") + (typeof delta === "string" ? delta : ""),
+    })
+    return
+  }
+  if (part.type === "tool-input-start" || part.type === "tool-call")
+    call.parts.set(`tool_call:${id}`, {
+      ...call.parts.get(`tool_call:${id}`),
+      type: "tool_call",
+      id,
+      name: part.toolName ?? part.name,
+      ...(part.input !== undefined ? { arguments: part.input } : {}),
+    })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function modelMessage(message: Record<string, unknown>) {
+  const { content, ...rest } = message
+  const parts = Array.isArray(content) ? content : typeof content === "string" ? [{ type: "text", text: content }] : []
+  return {
+    ...rest,
+    parts: parts.map(modelPart),
+  }
+}
+
+function modelPart(part: unknown): unknown {
+  if (!isRecord(part)) return part
+  if (typeof part.text === "string") {
+    const { text, ...rest } = part
+    return { ...rest, content: text }
+  }
+  if (part.type === "tool-call")
+    return {
+      ...part,
+      type: "tool_call",
+      id: part.toolCallId ?? part.id,
+      name: part.toolName ?? part.name,
+      arguments: part.input,
+    }
+  if (part.type === "tool-result")
+    return { ...part, type: "tool_call_response", id: part.toolCallId ?? part.id, response: part.output ?? part.result }
+  return part
 }
 
 /**
@@ -609,6 +687,7 @@ export function handleEvent(event: SubscribedEvent) {
           sessionStartMs.delete(p.sessionID)
           // The model must outlive individual turns, so this is the only place it can go.
           sessionModels.delete(p.sessionID)
+          observedSessions.delete(p.sessionID)
           sessionParents.delete(p.sessionID)
           sessionInput.delete(p.sessionID)
           sessionSystem.delete(p.sessionID)
@@ -757,7 +836,7 @@ export function handleEvent(event: SubscribedEvent) {
         const messageID = part.messageID ?? ""
         const model = sessionModels.get(sessionID)
         const rememberOutput = () => {
-          if (!_recordContent || !messageID) return
+          if (!_recordContent || !messageID || observedSessions.has(sessionID)) return
           const serialized = serializePart(part)
           if (!serialized || !part.id) return
           const acc = messageOutput.get(messageID) ?? new Map<string, Record<string, unknown>>()
@@ -779,7 +858,7 @@ export function handleEvent(event: SubscribedEvent) {
           // The turn continued past whatever error was published, so that error was not
           // terminal — see recordTurnError.
           clearTurnError(sessionID)
-          if (!tracingEnabled("llm")) break
+          if (!tracingEnabled("llm") || observedSessions.has(sessionID)) break
           // A message holds one step per LLM round trip, written in order, and
           // step-start and step-finish share only the messageID — so that is the key.
           // An open span under the same key belongs to a step that never finished.
@@ -790,26 +869,30 @@ export function handleEvent(event: SubscribedEvent) {
             clearCurrentLlmSpan(stale.span)
           }
           const modelID = model?.modelID ?? "unknown"
-          const span = tracer.startSpan(`chat ${modelID}`, {
-            kind: SpanKind.CLIENT,
-            attributes: {
-              ...profileTelemetryAttributes(),
-              "gen_ai.operation.name": "chat",
-              "gen_ai.provider.name": model?.providerID ?? "",
-              "gen_ai.request.model": modelID,
-              "gen_ai.conversation.id": sessionID,
-              "opencode.session.id": sessionID,
-              "langfuse.session.id": sessionID,
-              ...(model?.agent ? { "gen_ai.agent.name": model.agent } : {}),
-              // Restored to parity with the pre-rebaseline handler, which carried these on
-              // the step event its own upstream patch published. Same attribute names, so
-              // the historical rows and the new ones line up.
-              ...(sessionInput.has(sessionID) ? { "gen_ai.input.messages": sessionInput.get(sessionID)! } : {}),
-              ...(sessionSystem.has(sessionID)
-                ? { "gen_ai.system_instructions": sessionSystem.get(sessionID)! }
-                : {}),
+          const span = tracer.startSpan(
+            `chat ${modelID}`,
+            {
+              kind: SpanKind.CLIENT,
+              attributes: {
+                ...profileTelemetryAttributes(),
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": model?.providerID ?? "",
+                "gen_ai.request.model": modelID,
+                "gen_ai.conversation.id": sessionID,
+                "opencode.session.id": sessionID,
+                "langfuse.session.id": sessionID,
+                ...(model?.agent ? { "gen_ai.agent.name": model.agent } : {}),
+                // Restored to parity with the pre-rebaseline handler, which carried these on
+                // the step event its own upstream patch published. Same attribute names, so
+                // the historical rows and the new ones line up.
+                ...(sessionInput.has(sessionID) ? { "gen_ai.input.messages": sessionInput.get(sessionID)! } : {}),
+                ...(sessionSystem.has(sessionID)
+                  ? { "gen_ai.system_instructions": sessionSystem.get(sessionID)! }
+                  : {}),
+              },
             },
-          }, turnContext(sessionID))
+            turnContext(sessionID),
+          )
           stepSpans.set(key, { span, sessionID })
           setCurrentLlmSpan(span)
           break
@@ -833,11 +916,9 @@ export function handleEvent(event: SubscribedEvent) {
           messageOutput.delete(key)
           const outputMessages =
             _recordContent && output?.size
-              ? promptAttr(
-                  [{ role: "assistant", parts: [...output.values()], finish_reason: part.reason ?? "unknown" }],
-                  "tail",
-                  true,
-                )
+              ? promptAttr([
+                  { role: "assistant", parts: [...output.values()], finish_reason: part.reason ?? "unknown" },
+                ])
               : undefined
           if (entry) {
             entry.span.setAttributes({
@@ -856,8 +937,12 @@ export function handleEvent(event: SubscribedEvent) {
           }
           if (tokens.input) m.tokenUsage.record(tokens.input, { "gen_ai.token.type": "input", ...modelAttrs })
           if (tokens.output) m.tokenUsage.record(tokens.output, { "gen_ai.token.type": "output", ...modelAttrs })
-          if (durationMs != null) m.operationDuration.record(durationMs / 1000, { ...profileTelemetryAttributes(),
-              "gen_ai.operation.name": "chat", ...modelAttrs })
+          if (durationMs != null)
+            m.operationDuration.record(durationMs / 1000, {
+              ...profileTelemetryAttributes(),
+              "gen_ai.operation.name": "chat",
+              ...modelAttrs,
+            })
           emitLog({
             severityNumber: SeverityNumber.INFO,
             severityText: "INFO",
@@ -900,10 +985,7 @@ export function handleEvent(event: SubscribedEvent) {
 
           const settled = status === "completed" || status === "error"
           if (!settled) {
-            const args =
-              _recordContent && state.input != null
-                ? boundedJson(state.input, CONTENT_MAX_CHARS)
-                : undefined
+            const args = _recordContent && state.input != null ? promptAttr(state.input) : undefined
             const open = toolSpans.get(key)
             if (open) {
               // The first state a call surfaces in is always `pending`, whose input is an
@@ -914,19 +996,23 @@ export function handleEvent(event: SubscribedEvent) {
               break
             }
             if (!tracingEnabled("tool")) break
-            const span = tracer.startSpan(`execute_tool ${toolName}`, {
-              attributes: {
-                ...profileTelemetryAttributes(),
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.name": toolName,
-                // Recommended by the convention and previously missing; these tools run
-                // in this process, so `function`.
-                "gen_ai.tool.type": "function",
-                "gen_ai.tool.call.id": callID,
-                "opencode.session.id": sessionID,
-                ...(args ? { "gen_ai.tool.call.arguments": args } : {}),
+            const span = tracer.startSpan(
+              `execute_tool ${toolName}`,
+              {
+                attributes: {
+                  ...profileTelemetryAttributes(),
+                  "gen_ai.operation.name": "execute_tool",
+                  "gen_ai.tool.name": toolName,
+                  // Recommended by the convention and previously missing; these tools run
+                  // in this process, so `function`.
+                  "gen_ai.tool.type": "function",
+                  "gen_ai.tool.call.id": callID,
+                  "opencode.session.id": sessionID,
+                  ...(args ? { "gen_ai.tool.call.arguments": args } : {}),
+                },
               },
-            }, turnContext(sessionID))
+              turnContext(sessionID),
+            )
             toolSpans.set(key, { span, sessionID })
             break
           }
@@ -935,9 +1021,7 @@ export function handleEvent(event: SubscribedEvent) {
           settledTools.add(key)
           const failed = status === "error"
           // `ToolStateError.error` is a plain string in the v1 schema.
-          const message = failed
-            ? capTo(redactText(String(state.error || "unknown")), CONTENT_MAX_CHARS)
-            : ""
+          const message = failed ? redactText(String(state.error || "unknown")) : ""
           // Settled tool states carry their own start/end, so the duration is the
           // runtime's own rather than one measured around the event.
           const durationMs =
@@ -950,10 +1034,7 @@ export function handleEvent(event: SubscribedEvent) {
               entry.span.setStatus({ code: SpanStatusCode.ERROR, message })
               entry.span.setAttribute("error.message", message)
             } else if (_recordContent && state.output) {
-              entry.span.setAttribute(
-                "gen_ai.tool.call.result",
-                capTo(redactText(String(state.output)), CONTENT_MAX_CHARS),
-              )
+              entry.span.setAttribute("gen_ai.tool.call.result", redactText(String(state.output)))
             }
             entry.span.end()
             toolSpans.delete(key)
@@ -988,6 +1069,9 @@ export function handleEvent(event: SubscribedEvent) {
 }
 
 export function shutdown() {
+  for (const [requestID, call] of llmCalls)
+    recordLlmEvent({ type: "end", sessionID: call.sessionID, requestID, outcome: "canceled" })
+  observedSessions.clear()
   for (const sessionID of [...turnSpans.keys()]) endTurn(sessionID)
   clearSessionSpanContexts()
   setCurrentLlmSpan(undefined)

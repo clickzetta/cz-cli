@@ -1,10 +1,12 @@
+import { LLMTrace } from "./trace"
+import { ProviderRequest } from "@/provider/request-context"
 import type { Auth } from "@/auth"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { asSchema, type ModelMessage, type Tool } from "ai"
-import { Cause, Effect, FiberSet, Queue } from "effect"
+import { Cause, Effect, Exit, FiberSet, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { FetchHttpClient } from "effect/unstable/http"
 import {
@@ -41,6 +43,7 @@ type StreamInput = {
   readonly providerOptions?: Record<string, any>
   readonly headers: Record<string, string>
   readonly abort: AbortSignal
+  readonly trace?: { context: LLMTrace.Context; observe: LLMTrace.Observer }
 }
 
 export function status(input: Pick<StreamInput, "model" | "provider" | "auth">): RuntimeStatus {
@@ -49,7 +52,7 @@ export function status(input: Pick<StreamInput, "model" | "provider" | "auth">):
 
 function statusWithFetch(
   input: Pick<StreamInput, "model" | "provider" | "auth">,
-  fetch: typeof globalThis.fetch | undefined,
+  transport: typeof fetch | undefined,
 ): RuntimeStatus {
   const providerID = input.model.providerID
   if (providerID !== "openai" && providerID !== "anthropic" && !providerID.startsWith("opencode"))
@@ -57,7 +60,7 @@ function statusWithFetch(
   const npm = input.model.api.npm
   if (npm !== "@ai-sdk/openai" && npm !== "@ai-sdk/openai-compatible" && npm !== "@ai-sdk/anthropic")
     return { type: "unsupported", reason: "provider package is not OpenAI, OpenAI-compatible, or Anthropic" }
-  if (input.auth?.type === "oauth" && !(input.provider.id === "openai" && fetch)) {
+  if (input.auth?.type === "oauth" && !(input.provider.id === "openai" && transport)) {
     return { type: "unsupported", reason: "OAuth auth requires a provider fetch override" }
   }
 
@@ -72,8 +75,8 @@ function statusWithFetch(
 }
 
 export function stream(input: StreamInput): StreamResult {
-  const fetch = providerFetch(input)
-  const current = statusWithFetch(input, fetch)
+  const providerTransport = providerFetch(input)
+  const current = statusWithFetch(input, providerTransport)
   if (current.type === "unsupported") return current
 
   // Integration point with @opencode-ai/llm: native-request lowers session data
@@ -134,22 +137,105 @@ export function stream(input: StreamInput): StreamResult {
               ),
             ),
           )
-        return provider.pipe(Stream.concat(Stream.fromQueue(results)))
+        const observed = provider.pipe(Stream.concat(Stream.fromQueue(results)))
+        const trace = input.trace
+        if (!trace) return observed
+        let call: Awaited<ReturnType<typeof LLMTrace.start>> | undefined
+        let finished = false
+        let failure: string | undefined
+        // The transport can retry before emitting any model events. Give every HTTP
+        // attempt its own identity so failed requests cannot overwrite later ones.
+        const transport: typeof fetch = Object.assign(async (url: RequestInfo | URL, init?: RequestInit) => {
+          const current = await LLMTrace.start(
+            {
+              ...trace.context,
+              runtime: "native",
+              request: {
+                messages: request.messages,
+                system: request.system,
+                tools: [...request.tools, ...toDefinitions(tools)],
+                options: {
+                  maxTokens: request.generation?.maxTokens,
+                  temperature: request.generation?.temperature,
+                  topP: request.generation?.topP,
+                  topK: request.generation?.topK,
+                  frequencyPenalty: request.generation?.frequencyPenalty,
+                  presencePenalty: request.generation?.presencePenalty,
+                  seed: request.generation?.seed,
+                  stop: request.generation?.stop,
+                  toolChoice: request.toolChoice,
+                  providerOptions: request.providerOptions,
+                },
+              },
+            },
+            trace.observe,
+          )
+          call = current
+          finished = false
+          failure = undefined
+          await ProviderRequest.record(url, init, current.request).catch(() => {})
+          const response = await ProviderRequest.observe(current.request, () =>
+            Promise.resolve().then(() => (providerTransport ?? fetch)(url, init)),
+          ).catch(async (error: unknown) => {
+            await current.end(input.abort.aborted ? "canceled" : "error", errorMessage(error))
+            throw error
+          })
+          if (!response.ok) {
+            await current.event({
+              type: "provider-error",
+              message: await response
+                .clone()
+                .text()
+                .catch(() => response.statusText),
+              status: response.status,
+            })
+            await current.end("error", `HTTP ${response.status}`)
+          }
+          return response
+        }, fetch)
+        return observed.pipe(
+          Stream.tap((event) =>
+            Effect.promise(async () => {
+              await call?.event(event)
+              if (event.type === "provider-error") failure = event.message
+              if (event.type === "finish") {
+                finished = true
+                if (event.reason === "error") failure ??= "Provider reported an error finish reason"
+                await call?.end(failure ? "error" : "completed", failure)
+              }
+            }),
+          ),
+          Stream.onExit((exit) =>
+            Effect.promise(async () => {
+              await call?.end(
+                input.abort.aborted || (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause))
+                  ? "canceled"
+                  : Exit.isFailure(exit) || failure || !finished
+                    ? "error"
+                    : "completed",
+                Exit.isFailure(exit)
+                  ? Cause.pretty(exit.cause)
+                  : (failure ?? (finished ? undefined : "Provider stream ended without a finish event")),
+              )
+            }),
+          ),
+          Stream.provideService(FetchHttpClient.Fetch, transport),
+        )
       }),
     ),
   )
 
   return {
     ...current,
-    stream: fetch ? stream.pipe(Stream.provideService(FetchHttpClient.Fetch, fetch)) : stream,
+    stream: providerTransport ? stream.pipe(Stream.provideService(FetchHttpClient.Fetch, providerTransport)) : stream,
   }
 }
 
-function providerFetch(input: Pick<StreamInput, "provider" | "auth">): typeof globalThis.fetch | undefined {
+function providerFetch(input: Pick<StreamInput, "provider" | "auth">): typeof fetch | undefined {
   if (input.provider.id !== "openai" || input.auth?.type !== "oauth") return undefined
   const value: unknown = input.provider.options.fetch
   if (typeof value !== "function") return undefined
-  return value as typeof globalThis.fetch
+  return value as typeof fetch
 }
 
 function providerHeaders(value: unknown): Record<string, string> | undefined {

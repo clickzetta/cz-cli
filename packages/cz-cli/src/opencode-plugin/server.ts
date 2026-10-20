@@ -29,6 +29,7 @@ function runHook<T extends unknown[]>(
 function mergeHooks(hooks: Hooks[]): Hooks {
   return {
     dispose: runHook(hooks, "dispose"),
+    "experimental.chat.llm": runHook(hooks, "experimental.chat.llm"),
     event: runHook(hooks, "event"),
     config: runHook(hooks, "config"),
     "chat.headers": runHook(hooks, "chat.headers"),

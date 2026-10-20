@@ -1,10 +1,11 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { LLMTraceEvent, Plugin } from "@opencode-ai/plugin"
 import type { Event } from "@opencode-ai/sdk"
 import { initOtelSdk, type OtelSdk } from "./setup"
 import {
   handleEvent,
   initHandlers,
   recordInputMessages,
+  recordLlmEvent,
   recordSystemInstructions,
   shutdown as shutdownHandlers,
 } from "./handlers"
@@ -80,6 +81,9 @@ export const OtelPlugin: Plugin = Object.assign(
     }
 
     return {
+      async "experimental.chat.llm"(event: LLMTraceEvent) {
+        if (sdk) recordLlmEvent(event)
+      },
       // Typed from the published union rather than widened to `{ type: string }`, which is
       // what allowed a subscription to a nonexistent event name to compile.
       async event({ event }: { event: Event }) {

@@ -54,7 +54,13 @@ export async function initOtelSdk(
   const langfuseProcessor = createLangfuseProcessor()
   if (langfuseProcessor) spanProcessors.push(langfuseProcessor)
 
-  const tracerProvider = new BasicTracerProvider({ resource, spanProcessors })
+  const tracerProvider = new BasicTracerProvider({
+    resource,
+    spanProcessors,
+    // Full model requests are replay inputs, not previews. Ignore environment-level
+    // attribute truncation here; collector and backend limits must be configured separately.
+    spanLimits: { attributeValueLengthLimit: Infinity },
+  })
   trace.setGlobalTracerProvider(tracerProvider)
 
   const metricExporter = new OTLPMetricExporter({ url: `${endpoint}/v1/metrics`, headers })

@@ -219,7 +219,31 @@ export type ProviderHook = {
 /** @deprecated Use AuthOAuthResult instead. */
 export type AuthOuathResult = AuthOAuthResult
 
+/** Read-only observations of one provider invocation, including partial responses. */
+export type LLMTraceEvent = {
+  sessionID: string
+  requestID: string
+} & (
+  | {
+      type: "start"
+      runtime: "ai-sdk" | "native"
+      model: { providerID: string; modelID: string }
+      agent: string
+      request: {
+        messages: readonly unknown[]
+        system?: readonly unknown[]
+        tools?: readonly unknown[]
+        options: Record<string, unknown>
+      }
+    }
+  | { type: "request"; body: unknown; url?: string; method?: string }
+  | { type: "event"; event: { readonly type: string; readonly [key: string]: unknown } }
+  | { type: "end"; outcome: "completed" | "canceled" | "error"; error?: string }
+)
+
 export interface Hooks {
+  /** Observe finalized model requests and responses without modifying execution. */
+  "experimental.chat.llm"?: (input: LLMTraceEvent, output: Record<string, never>) => Promise<void>
   dispose?: () => Promise<void>
   event?: (input: { event: Event }) => Promise<void>
   config?: (input: Config) => Promise<void>
