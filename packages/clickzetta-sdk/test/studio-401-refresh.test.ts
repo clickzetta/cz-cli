@@ -201,6 +201,7 @@ describe("Studio requests authenticate through the context's TokenSource", () =>
 
     // The source refuses up front, so no doomed request is sent at all.
     expect(studioTokens).toEqual([])
-    expect(store.load()).toBeUndefined()
+    // A failed refresh must not remove credentials shared with another caller.
+    expect(store.load()).toEqual(oauthToken(now, { expired: true }))
   })
 })

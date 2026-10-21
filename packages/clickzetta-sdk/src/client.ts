@@ -8,12 +8,12 @@ const SDK_VERSION = "0.1.0"
 const MAX_RETRIES = 3
 const NON_RETRYABLE_STATUS = new Set([400, 403, 404, 409, 422])
 /**
- * Error codes that end the retry loop immediately. A refresh that reported the
- * session as dead will report it again on every attempt, so retrying only adds
- * latency (and, for a profile with no credentials, further pointless network
- * calls) before the same verdict. Transient refresh failures keep retrying.
+ * These credential failures end the retry loop after authentication recovery.
+ * Repeating the request can replay a refresh token already rejected by the
+ * issuer or consumed before a failed credential save.
+ * Transient refresh failures keep retrying.
  */
-const TERMINAL_ERROR_CODES = new Set(["SESSION_EXPIRED"])
+const TERMINAL_ERROR_CODES = new Set(["SESSION_EXPIRED", "OAUTH_PERSIST_FAILED"])
 const AUTH_EXPIRED_STATUS = 401
 const DEFAULT_TIMEOUT_MS = 60_000
 
@@ -130,7 +130,7 @@ async function doRequest<T>(
       if (attempt > 0) {
         // Prefer the rotated credential; otherwise re-resolve, because a retry
         // after a multi-second backoff must not resend one that expired while
-        // we waited. `get()` is cache-backed, so re-resolving costs nothing.
+        // we waited, or was replaced in the shared profile store.
         opts.signal?.throwIfAborted()
         credential = rotatedCredential ?? (await abortable(opts.tokens.get(), opts.signal))
         rotatedCredential = undefined

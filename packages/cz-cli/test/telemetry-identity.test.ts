@@ -22,8 +22,9 @@ const previousProfile = process.env.CZ_PROFILE
 const profilesPath = () => join(requireTestHome(), ".clickzetta", "profiles.toml")
 
 /**
- * An OAuth profile that does not know its user: no `user_id` on the row, none on the token,
- * and no `account_id` — so nothing short-circuits and the portal has to answer. No
+ * An OAuth profile that does not know its user: no `user_id` on the row, the token's
+ * required `user_id` is 0 (as written by login-browser), and no `account_id` — so
+ * nothing short-circuits and the portal has to answer. No
  * `username` either, which is what sends the profile panel to the portal for a display name.
  */
 function writeProfileWithoutUserId() {
@@ -33,6 +34,7 @@ function writeProfileWithoutUserId() {
       'default_profile = "sess_0"', "",
       "[oauth.sess]",
       'access_token = "at"', 'refresh_token = "rt"',
+      "user_id = 0",
       "expire_time_ms = 3600000", `obtained_at = ${Date.now()}`, "",
       "[profiles.sess_0]",
       'service = "uat-api.clickzetta.com"', 'instance = "inst"', 'workspace = "wanxin_test_04"',

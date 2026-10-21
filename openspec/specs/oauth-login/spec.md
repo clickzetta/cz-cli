@@ -138,11 +138,11 @@ The CLI should implement a local loopback callback listening flow (`waitForAutho
 
 OAuth credentials remain in the existing `[oauth.<id>]` sections of `~/.clickzetta/profiles.toml`, shared by profiles with the same session reference. No new credential file, directory or storage migration is introduced. Each store load reads the file again. Saving a refresh result rereads the current document, updates the session's OAuth section and atomically replaces the file with mode 0600. There is no cross-process lock or conditional write.
 
-The SDK keeps the existing `TokenStore.load/save/clear` interface. Valid access tokens may be cached in memory (`EXPIRED_FACTOR = 0.8`); every acquisition that needs refresh reloads the store first. Concurrent callers in one process share an acquisition. There are no cross-process refresh locks, SQLite databases, spent-token records or conditional refresh writes.
+The SDK keeps the existing `TokenStore.load/save/clear` interface. Every profile-backed acquisition reloads the store, even while its in-memory access token is valid (`EXPIRED_FACTOR = 0.8`). A missing shared session must not be served from memory. If renewal is required but a pure OAuth session has no refresh token, request login without an empty password exchange. Legacy inline OAuth entries are updated in place if startup migration has not succeeded. Concurrent callers in one process share an acquisition. There are no cross-process refresh locks, SQLite databases, spent-token records or conditional refresh writes.
 
 #### Scenario: A peer has already refreshed
 
-- **WHEN** process B reaches its refresh threshold after A persisted a replacement
+- **WHEN** process B acquires a token after A persisted a replacement, even before B's cached token reaches its refresh threshold
 - **THEN** B reloads the file and reuses its valid access token without refreshing
 - **AND** if that access token also needs renewal, B sends the refresh token from the file, not its stale memory copy
 
@@ -164,8 +164,17 @@ The SDK keeps the existing `TokenStore.load/save/clear` interface. Valid access 
 - **WHEN** a refresh fails transiently
 - **THEN** the error is surfaced without permanently poisoning local credentials; the next attempt reloads the file
 - **WHEN** the issuer rejects the refresh token with invalid_grant
-- **THEN** a pure OAuth profile requests a new login; PAT/password consumers retain their full-login fallback
+- **THEN** a pure OAuth profile rereads the store once and adopts a different, valid access token if a peer has already published one
+- **AND** that replacement must differ from the access token rejected by the business request, if any
+- **AND** adoption does not rewrite the peer's result, replay the rejected refresh token, or poll for a pending result
+- **OTHERWISE** the pure OAuth profile requests a new login; PAT/password consumers retain their full-login fallback
 - **AND** credentials never appear in logs
+
+#### Scenario: Refresh persistence fails
+
+- **WHEN** the issuer returns a replacement but saving it to profiles.toml fails
+- **THEN** the caller receives `OAUTH_PERSIST_FAILED` rather than a successful refresh
+- **AND** the replacement is not published to the in-memory cache, and the business retry loop stops without replaying the old refresh token
 
 Lost responses may be recovered within the server's grace window. Recovery after that window, concurrent logout/re-login, and arbitrarily delayed responses have no additional client coordination guarantees. Ordinary logout removes the session's OAuth section from profiles.toml. No replay history is retained.
 

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml"
-import { DEFAULT_CONNECTION, type ConnectionConfig, type TokenStore, type AuthToken } from "@clickzetta/sdk"
+import { DEFAULT_CONNECTION, InterfaceError, type ConnectionConfig, type TokenStore, type AuthToken } from "@clickzetta/sdk"
 import { inferAnalyticsAgentEndpoint } from "./analytics-agent-endpoint.js"
 
 function profilesFile() {
@@ -742,7 +742,9 @@ function profileOAuthPointer(profile: Record<string, unknown> | undefined): stri
  *   Matching gh/aws/gcloud/kubectl, a failed refresh surfaces an error telling
  *   the user to re-run `cz-cli login`; only an explicit logout removes tokens.
  *
- * All operations are best-effort and never throw. Token values are never logged.
+ * Loads remain best-effort, while save failures are surfaced so callers cannot
+ * report a refresh as shared when its replacement only exists in memory.
+ * Token values are never logged.
  */
 export function makeProfileTokenStore(profileName: string | undefined, oauthId?: string): TokenStore {
   return {
@@ -780,12 +782,7 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
 
     save(token: AuthToken): void {
       try {
-        let data: Record<string, unknown> = {}
-        try {
-          data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
-        } catch {
-          // file doesn't exist or is invalid — start fresh
-        }
+        const data = parseTOML(readFileSync(profilesFile(), "utf-8")) as Record<string, unknown>
         const name = resolveProfileName(data, profileName)
         if (!name) return
 
@@ -797,15 +794,25 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
         //
         // Minting an id here is what produced drifts of orphan `[oauth.cz<random>]`
         // sections. Only `cz-cli login` establishes an OAuth identity, and it always
-        // passes an explicit, stable id (the session name). A save with neither an
-        // explicit id nor an existing pointer is therefore never an OAuth login —
-        // it is some other credential's token arriving through an over-attached
-        // store, and a random id gives it a section nothing owns: the next run
+        // passes an explicit, stable id (the session name). Unless this is an
+        // existing legacy inline identity, a save with neither an explicit id
+        // nor an existing pointer is another credential's over-attached store.
+        // A random id gives it a section nothing owns: the next run
         // reads no pointer, mints another, and the file grows without bound.
         // Dropping the write keeps such a token in memory only, which is where a
         // non-OAuth credential's token belongs.
         const id = oauthId ?? profileOAuthPointer(profile)
-        if (!id) return
+        if (!id) {
+          // Startup migration is best-effort. Until it succeeds, persist back
+          // to the same legacy entry that load() selects, without minting an ID.
+          const inline = profile.oauth
+          if (!inline || typeof inline !== "object" || Array.isArray(inline)) return
+          const entry = Object.entries(inline).find(([, value]) => parseOAuthEntry(value as Record<string, unknown>))
+          if (!entry) return
+          profile.oauth = { ...inline, [entry[0]]: tokenToEntry(token) }
+          writeProfilesFile(stringifyTOML(data))
+          return
+        }
 
         const shared = (data.oauth ?? {}) as Record<string, unknown>
         shared[id] = tokenToEntry(token)
@@ -817,7 +824,10 @@ export function makeProfileTokenStore(profileName: string | undefined, oauthId?:
         data.profiles = profiles
         writeProfilesFile(stringifyTOML(data))
       } catch {
-        // best-effort: never block the CLI on persistence failure
+        throw new InterfaceError(
+          "Could not save the refreshed OAuth credentials. Check access to ~/.clickzetta/profiles.toml before signing in again.",
+          { code: "OAUTH_PERSIST_FAILED" },
+        )
       }
     },
 
