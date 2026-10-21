@@ -205,7 +205,10 @@ describe("spans built from v1 message parts", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
-    send("session.error", { sessionID: SESSION, error: { name: "ContextOverflowError", data: { message: "too long" } } })
+    send("session.error", {
+      sessionID: SESSION,
+      error: { name: "ContextOverflowError", data: { message: "too long" } },
+    })
     // Compaction re-runs the turn: another step start is what marks it as continuing.
     part({ id: "prt_1b", type: "step-start" })
     part({
@@ -226,7 +229,10 @@ describe("spans built from v1 message parts", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
-    send("session.error", { sessionID: SESSION, error: { name: "ContextOverflowError", data: { message: "too long" } } })
+    send("session.error", {
+      sessionID: SESSION,
+      error: { name: "ContextOverflowError", data: { message: "too long" } },
+    })
     send("session.idle", { sessionID: SESSION })
     send("message.updated", {
       sessionID: SESSION,
@@ -444,7 +450,7 @@ describe("subagent sessions", () => {
 })
 
 describe("tool content", () => {
-  test("bounds arguments and results after redacting secrets", () => {
+  test("preserves complete arguments and results after redacting secrets", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
@@ -476,18 +482,16 @@ describe("tool content", () => {
     const result = String(tool!.attributes["gen_ai.tool.call.result"])
     expect(JSON.parse(args).file).toContain("PASSWORD=<redacted>")
     expect(args).toContain("PASSWORD=<redacted>")
-    expect(args.length).toBeLessThanOrEqual(8_000)
+    expect(args.length).toBeGreaterThan(8_000)
     expect(result).toContain("PASSWORD=<redacted>")
-    expect(result.length).toBeLessThanOrEqual(8_000)
+    expect(result.length).toBeGreaterThan(8_000)
   })
 
-  test("bounds structured arguments with many short fields", () => {
+  test("preserves every structured argument field", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
-    const input = Object.fromEntries(
-      Array.from({ length: 200 }, (_, index) => [`field_${index}`, "x".repeat(100)]),
-    )
+    const input = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`field_${index}`, "x".repeat(100)]))
     part({
       id: "prt_2",
       type: "tool",
@@ -512,11 +516,11 @@ describe("tool content", () => {
     send("session.idle", { sessionID: SESSION })
     const [tool] = named("execute_tool write")
     const args = String(tool!.attributes["gen_ai.tool.call.arguments"])
-    expect(args.length).toBeLessThanOrEqual(8_000)
+    expect(args.length).toBeGreaterThan(8_000)
     expect(JSON.parse(args).field_0).toBeDefined()
   })
 
-  test("redacts and bounds failed tool output", () => {
+  test("preserves complete failed tool output after redaction", () => {
     busy()
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
@@ -542,7 +546,7 @@ describe("tool content", () => {
     send("session.idle", { sessionID: SESSION })
     const [tool] = named("execute_tool bash")
     const message = String(tool!.attributes["error.message"])
-    expect(message.length).toBeLessThanOrEqual(8_000)
+    expect(message.length).toBeGreaterThan(8_000)
     expect(message).toContain("--password <redacted>")
     expect(message).not.toContain("hunter2")
     expect(String(emitted("opencode.tool.finished")[0]!.attributes["error.message"])).toBe(message)
@@ -774,9 +778,7 @@ describe("log records for a session with no turn", () => {
 
 describe("prompt and completion content", () => {
   test.each(["session.idle", "session.status"])("%s releases only the ending session's content", async (event) => {
-    const { recordInputMessages, recordSystemInstructions } = await import(
-      "../src/opencode-plugin/otel/handlers"
-    )
+    const { recordInputMessages, recordSystemInstructions } = await import("../src/opencode-plugin/otel/handlers")
     const other = "ses_other"
     busy()
     assistantMessage()
@@ -796,8 +798,8 @@ describe("prompt and completion content", () => {
     part({ id: "second", type: "step-start" })
     send("session.idle", { sessionID: SESSION })
     const [first, second] = named("chat claude-opus-5")
-    expect(String(first!.attributes["gen_ai.input.messages"]).length).toBeLessThanOrEqual(32 * 1024)
-    expect(String(first!.attributes["gen_ai.system_instructions"]).length).toBeLessThanOrEqual(32 * 1024)
+    expect(String(first!.attributes["gen_ai.input.messages"]).length).toBeGreaterThan(32 * 1024)
+    expect(String(first!.attributes["gen_ai.system_instructions"]).length).toBeGreaterThan(32 * 1024)
     expect(first!.attributes["gen_ai.input.messages"]).toContain(SESSION.repeat(20))
     expect(first!.attributes["gen_ai.system_instructions"]).toContain(SESSION.repeat(20))
     expect(second!.attributes["gen_ai.input.messages"]).toBeUndefined()
@@ -809,16 +811,14 @@ describe("prompt and completion content", () => {
     })
     send("session.idle", { sessionID: other })
     const [concurrent] = named("chat unknown")
-    expect(String(concurrent!.attributes["gen_ai.input.messages"]).length).toBeLessThanOrEqual(32 * 1024)
-    expect(String(concurrent!.attributes["gen_ai.system_instructions"]).length).toBeLessThanOrEqual(32 * 1024)
+    expect(String(concurrent!.attributes["gen_ai.input.messages"]).length).toBeGreaterThan(32 * 1024)
+    expect(String(concurrent!.attributes["gen_ai.system_instructions"]).length).toBeGreaterThan(32 * 1024)
     expect(concurrent!.attributes["gen_ai.input.messages"]).toContain(other.repeat(20))
     expect(concurrent!.attributes["gen_ai.system_instructions"]).toContain(other.repeat(20))
   })
 
   test("releases content when a turn fails before its first step", async () => {
-    const { recordInputMessages, recordSystemInstructions } = await import(
-      "../src/opencode-plugin/otel/handlers"
-    )
+    const { recordInputMessages, recordSystemInstructions } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     recordInputMessages([
       { info: { role: "user", sessionID: SESSION }, parts: [{ type: "text", text: "failed turn input" }] },
@@ -835,14 +835,12 @@ describe("prompt and completion content", () => {
     expect(chat!.attributes["gen_ai.system_instructions"]).toBeUndefined()
   })
 
-  test("bounds long history while keeping the latest input and valid JSON", async () => {
-    const { recordInputMessages, recordSystemInstructions } = await import(
-      "../src/opencode-plugin/otel/handlers"
-    )
+  test("preserves complete history, system instructions and output as valid JSON", async () => {
+    const { recordInputMessages, recordSystemInstructions } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     assistantMessage()
     const history = "history ".repeat(6_000)
-    const text = "用户输入\n\"内容\" ".repeat(5_000)
+    const text = 'User input\n"content" '.repeat(5_000)
     recordInputMessages([
       { info: { role: "assistant", sessionID: SESSION }, parts: [{ type: "text", text: history }] },
       { info: { role: "user", sessionID: SESSION }, parts: [{ type: "text", text: text + " PASSWORD=hunter2 tail" }] },
@@ -857,9 +855,11 @@ describe("prompt and completion content", () => {
     const input = String(chat!.attributes["gen_ai.input.messages"])
     const system = String(chat!.attributes["gen_ai.system_instructions"])
     const output = String(chat!.attributes["gen_ai.output.messages"])
-    expect(input.length).toBeLessThanOrEqual(32 * 1024)
-    expect(system.length).toBeLessThanOrEqual(32 * 1024)
-    expect(output.length).toBeLessThanOrEqual(32 * 1024)
+    expect(input.length).toBeGreaterThan(32 * 1024)
+    expect(system.length).toBeGreaterThan(32 * 1024)
+    expect(output.length).toBeGreaterThan(32 * 1024)
+    expect(JSON.parse(input)).toHaveLength(2)
+    expect(JSON.parse(input)[0].parts[0].content).toBe(history)
     expect(JSON.parse(input).at(-1)).toEqual({
       role: "user",
       parts: [{ type: "text", content: expect.stringContaining("PASSWORD=<redacted>") }],
@@ -869,7 +869,7 @@ describe("prompt and completion content", () => {
     expect(JSON.parse(output)[0].finish_reason).toBe("stop")
   })
 
-  test("drops oldest messages before shrinking the latest input", async () => {
+  test("preserves every historical message", async () => {
     const { recordInputMessages } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     assistantMessage()
@@ -885,15 +885,16 @@ describe("prompt and completion content", () => {
     const input = String(named("chat claude-opus-5")[0]!.attributes["gen_ai.input.messages"])
     const messages = JSON.parse(input)
     expect(Array.isArray(messages)).toBe(true)
-    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(input.length).toBeGreaterThan(32 * 1024)
     expect(messages.at(-1)).toEqual({
       role: "user",
       parts: [{ type: "text", content: "latest input" }],
     })
-    expect(messages[0].parts[0].content).not.toBe("history-0")
+    expect(messages).toHaveLength(800)
+    expect(messages[0].parts[0].content).toBe("history-0")
   })
 
-  test("bounds tool argument fields without losing the latest input message", async () => {
+  test("preserves complete tool argument fields in input messages", async () => {
     const { recordInputMessages } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     assistantMessage()
@@ -918,13 +919,13 @@ describe("prompt and completion content", () => {
 
     const input = String(named("chat claude-opus-5")[0]!.attributes["gen_ai.input.messages"])
     const messages = JSON.parse(input)
-    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(input.length).toBeGreaterThan(32 * 1024)
     expect(messages).toHaveLength(1)
     expect(messages[0].parts[0].arguments.note).toBe("latest context")
-    expect(messages[0].parts[0].arguments.name.length).toBeLessThan(200_000)
+    expect(messages[0].parts[0].arguments.name).toBe("x".repeat(200_000))
   })
 
-  test("trims oversized input message parts from the tail", async () => {
+  test("preserves every part of oversized input messages", async () => {
     const { recordInputMessages } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     assistantMessage()
@@ -942,16 +943,14 @@ describe("prompt and completion content", () => {
 
     const input = String(named("chat claude-opus-5")[0]!.attributes["gen_ai.input.messages"])
     const messages = JSON.parse(input)
-    expect(input.length).toBeLessThanOrEqual(32 * 1024)
+    expect(input.length).toBeGreaterThan(32 * 1024)
     expect(messages).toHaveLength(1)
-    expect(messages[0].parts.length).toBeGreaterThan(0)
+    expect(messages[0].parts).toHaveLength(1_200)
     expect(messages[0].parts.at(-1)).toEqual({ type: "text", content: "latest context" })
   })
 
   test("a chat span carries input, system and output messages", async () => {
-    const { recordInputMessages, recordSystemInstructions } = await import(
-      "../src/opencode-plugin/otel/handlers"
-    )
+    const { recordInputMessages, recordSystemInstructions } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     assistantMessage()
     // Both transform hooks fire before the step, which is why the span can carry them.
@@ -1005,9 +1004,7 @@ describe("prompt and completion content", () => {
   })
 
   test("content is redacted and honours OPENCODE_OTEL_RECORD_CONTENT=0", async () => {
-    const { recordInputMessages, initHandlers: init } = await import(
-      "../src/opencode-plugin/otel/handlers"
-    )
+    const { recordInputMessages, initHandlers: init } = await import("../src/opencode-plugin/otel/handlers")
     busy()
     assistantMessage()
     recordInputMessages([
@@ -1073,8 +1070,11 @@ describe("the credential shapes that leaked", () => {
   test("a TOML credential file read does not export the PAT", () => {
     // profiles.toml uses `pat = "…"` — spaces around `=` and double quotes, which the
     // KEY=VALUE predicate and redactSql's single-quote matching both miss.
-    const { result } = toolCall("read", { filePath: "~/.clickzetta/profiles.toml" },
-      '[default]\npat = "czpat_liveSecretValue"\npassword = "hunter2"\nworkspace = "ws1"\n')
+    const { result } = toolCall(
+      "read",
+      { filePath: "~/.clickzetta/profiles.toml" },
+      '[default]\npat = "czpat_liveSecretValue"\npassword = "hunter2"\nworkspace = "ws1"\n',
+    )
     expect(result).not.toContain("czpat_liveSecretValue")
     expect(result).not.toContain("hunter2")
     expect(result).toContain("<redacted>")
@@ -1114,7 +1114,13 @@ describe("the credential shapes that leaked", () => {
     assistantMessage()
     part({ id: "prt_1", type: "step-start" })
     part({ id: "prt_2", type: "tool", callID: "c1", tool: "odd", state: { status: "pending", input: {}, raw: "" } })
-    part({ id: "prt_2", type: "tool", callID: "c1", tool: "odd", state: { status: "running", input: cyclic, time: { start: 1 } } })
+    part({
+      id: "prt_2",
+      type: "tool",
+      callID: "c1",
+      tool: "odd",
+      state: { status: "running", input: cyclic, time: { start: 1 } },
+    })
     send("session.idle", { sessionID: SESSION })
     busy()
     const args = String(named("execute_tool odd")[0]!.attributes["gen_ai.tool.call.arguments"])
@@ -1150,7 +1156,13 @@ describe("active profile attribution", () => {
       busy()
       assistantMessage()
       part({ id: "start", type: "step-start" })
-      part({ id: "tool", type: "tool", tool: "bash", callID: "call", state: { status: "running", input: { command: "pwd" } } })
+      part({
+        id: "tool",
+        type: "tool",
+        tool: "bash",
+        callID: "call",
+        state: { status: "running", input: { command: "pwd" } },
+      })
       part({ id: "tool", type: "tool", tool: "bash", callID: "call", state: { status: "completed", output: "/tmp" } })
       part({ id: "finish", type: "step-finish", reason: "stop" })
       send("session.idle", { sessionID: SESSION })
@@ -1162,5 +1174,131 @@ describe("active profile attribution", () => {
     })
     expect(named("execute_tool bash")[0]!.attributes["gen_ai.tool.call.arguments"]).toBeUndefined()
     expect(emitted("opencode.tool.finished").map((record) => record.attributes["enduser.id"])).toEqual(["11", "22"])
+  })
+})
+
+describe("finalized LLM invocations", () => {
+  test("preserves users before oversized assistant history and records finalized options and schemas", async () => {
+    const { recordLlmEvent } = await import("../src/opencode-plugin/otel/handlers")
+    busy()
+    const identity = { sessionID: SESSION, requestID: "request-final" }
+    const schema = { type: "object", properties: { password: { type: "string" } } }
+    const messages = [
+      { role: "system", content: "Final instructions" },
+      { role: "user", content: [{ type: "text", text: "Original user question" }] },
+      { role: "assistant", content: [{ type: "text", text: "x".repeat(100_000) }] },
+    ]
+    recordLlmEvent({
+      ...identity,
+      type: "start",
+      runtime: "ai-sdk",
+      model: { providerID: "clickzetta", modelID: "claude-opus-5" },
+      agent: "data_engineer",
+      request: { messages, tools: [{ name: "lookup", inputSchema: schema }], options: { temperature: 0.2 } },
+    })
+    recordLlmEvent({
+      ...identity,
+      type: "request",
+      body: JSON.stringify({ messages, tools: [schema] }),
+      url: "https://example.com/v1/chat?key=credential",
+      method: "POST",
+    })
+    // The legacy step surface must not create a second LLM span.
+    assistantMessage()
+    part({ id: "start", type: "step-start" })
+    recordLlmEvent({ ...identity, type: "event", event: { type: "text-delta", id: "text", delta: "partial" } })
+    send("session.idle", { sessionID: SESSION })
+    recordLlmEvent({ ...identity, type: "end", outcome: "canceled" })
+    const calls = named("chat claude-opus-5")
+    expect(calls).toHaveLength(1)
+    const attrs = calls[0]!.attributes
+    expect(JSON.parse(String(attrs["gen_ai.input.messages"]))).toEqual([
+      { role: "user", parts: [{ type: "text", content: "Original user question" }] },
+      { role: "assistant", parts: [{ type: "text", content: "x".repeat(100_000) }] },
+    ])
+    expect(JSON.parse(String(attrs["gen_ai.tool.definitions"]))[0].inputSchema).toEqual(schema)
+    expect(JSON.parse(String(attrs["clickzetta.llm.request.body"]))).toEqual({ messages, tools: [schema] })
+    expect(attrs["url.full"]).not.toContain("credential")
+    expect(attrs["gen_ai.request.temperature"]).toBe(0.2)
+    expect(attrs["opencode.llm.outcome"]).toBe("canceled")
+    expect(JSON.parse(String(attrs["gen_ai.output.messages"]))[0].parts[0].content).toBe("partial")
+  })
+
+  test("records failures without a first step and isolates concurrent requests", async () => {
+    const { recordLlmEvent } = await import("../src/opencode-plugin/otel/handlers")
+    busy()
+    for (const requestID of ["first-attempt", "retry-attempt"])
+      recordLlmEvent({
+        type: "start",
+        sessionID: SESSION,
+        requestID,
+        runtime: "native",
+        model: { providerID: "clickzetta", modelID: "claude-opus-5" },
+        agent: "data_engineer",
+        request: { messages: [{ role: "user", content: requestID }], options: {} },
+      })
+    recordLlmEvent({ type: "end", sessionID: SESSION, requestID: "first-attempt", outcome: "error", error: "HTTP 503" })
+    recordLlmEvent({ type: "end", sessionID: SESSION, requestID: "retry-attempt", outcome: "completed" })
+    const calls = named("chat claude-opus-5")
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.status.code).toBe(2)
+    expect(calls[1]!.attributes["opencode.llm.outcome"]).toBe("completed")
+    expect(String(calls[0]!.attributes["gen_ai.input.messages"])).toContain("first-attempt")
+    expect(String(calls[1]!.attributes["gen_ai.input.messages"])).toContain("retry-attempt")
+  })
+
+  test("keeps overlapping text, reasoning and tool identifiers separate", async () => {
+    const { recordLlmEvent } = await import("../src/opencode-plugin/otel/handlers")
+    busy()
+    const identity = { sessionID: SESSION, requestID: "overlapping-blocks" }
+    recordLlmEvent({
+      ...identity,
+      type: "start",
+      runtime: "native",
+      model: { providerID: "test", modelID: "model" },
+      agent: "test",
+      request: { messages: [], system: [{ type: "text", text: "System instructions" }], options: {} },
+    })
+    ;[
+      { type: "reasoning-delta", id: "0", text: "Thinking" },
+      { type: "text-delta", id: "0", delta: "Answer" },
+      { type: "tool-input-start", id: "0", toolName: "lookup" },
+      { type: "tool-input-delta", id: "0", delta: '{"query":' },
+      { type: "tool-call", toolCallId: "0", toolName: "lookup", input: '{"query":"test"}' },
+    ].forEach((event) => recordLlmEvent({ ...identity, type: "event", event }))
+    recordLlmEvent({ ...identity, type: "end", outcome: "completed" })
+    const attrs = named("chat model")[0]!.attributes
+    expect(JSON.parse(String(attrs["gen_ai.system_instructions"]))).toEqual([
+      { type: "text", content: "System instructions" },
+    ])
+    expect(JSON.parse(String(attrs["gen_ai.output.messages"]))[0].parts).toEqual([
+      { type: "reasoning", content: "Thinking" },
+      { type: "text", content: "Answer" },
+      { type: "tool_call", id: "0", name: "lookup", content: '{"query":', arguments: '{"query":"test"}' },
+    ])
+  })
+
+  test("does not record request or response content when disabled", async () => {
+    const { recordLlmEvent } = await import("../src/opencode-plugin/otel/handlers")
+    initHandlers(logger, false)
+    busy()
+    const identity = { sessionID: SESSION, requestID: "content-off" }
+    recordLlmEvent({
+      ...identity,
+      type: "start",
+      runtime: "ai-sdk",
+      model: { providerID: "clickzetta", modelID: "claude-opus-5" },
+      agent: "data_engineer",
+      request: { messages: [{ role: "user", content: "private content" }], options: { temperature: 0.3 } },
+    })
+    recordLlmEvent({ ...identity, type: "request", body: { content: "private content" } })
+    recordLlmEvent({ ...identity, type: "event", event: { type: "text-delta", id: "text", delta: "private output" } })
+    recordLlmEvent({ ...identity, type: "end", outcome: "completed" })
+    const attrs = named("chat claude-opus-5")[0]!.attributes
+    expect(attrs["gen_ai.input.messages"]).toBeUndefined()
+    expect(attrs["clickzetta.llm.request.body"]).toBeUndefined()
+    expect(attrs["gen_ai.output.messages"]).toBeUndefined()
+    expect(attrs["clickzetta.llm.response.events"]).toBeUndefined()
+    expect(attrs["gen_ai.request.temperature"]).toBe(0.3)
   })
 })

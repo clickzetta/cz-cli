@@ -1,3 +1,4 @@
+import type { LLMTraceEvent } from "@opencode-ai/plugin"
 import { describe, expect, test } from "bun:test"
 import { LLMEvent, ToolFailure } from "@opencode-ai/llm"
 import { LLMClient, RequestExecutor, WebSocketExecutor, type LLMClientShape } from "@opencode-ai/llm/route"
@@ -709,9 +710,85 @@ describe("session.llm-native.request", () => {
     }),
   )
 
+  it.live("preserves separate HTTP retries and partial output on cancellation", () =>
+    Effect.gen(function* () {
+      const observations: LLMTraceEvent[] = []
+      const bodies: unknown[] = []
+      const abort = new AbortController()
+      const customFetch = Object.assign(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init)
+          bodies.push(await request.json())
+          if (bodies.length === 1)
+            return Response.json(
+              { error: { message: "Rate limited" } },
+              { status: 429, headers: { "retry-after-ms": "0" } },
+            )
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Partial answer"}\n\n',
+                  ),
+                )
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          )
+        },
+        { preconnect: () => undefined },
+      ) satisfies typeof fetch
+      const llmClient = yield* LLMClient.Service
+      const native = LLMNativeRuntime.stream({
+        model: baseModel,
+        provider: { ...providerInfo, options: { apiKey: OAUTH_DUMMY_KEY, fetch: customFetch } },
+        auth: { type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 },
+        llmClient,
+        messages: [{ role: "user", content: "Original question" }],
+        tools: {},
+        headers: {},
+        abort: abort.signal,
+        trace: {
+          context: {
+            sessionID: "native-cancel",
+            model: { providerID: "openai", modelID: "gpt-5-mini" },
+            agent: "test",
+          },
+          observe: async (event) => {
+            observations.push(event)
+          },
+        },
+      })
+      if (native.type === "unsupported") throw new Error(native.reason)
+      yield* native.stream.pipe(
+        Stream.filter((event) => event.type === "text-delta"),
+        Stream.tap(() => Effect.sync(() => abort.abort())),
+        Stream.take(1),
+        Stream.runDrain,
+      )
+      expect(bodies).toHaveLength(2)
+      expect(observations.filter((event) => event.type === "start")).toHaveLength(2)
+      expect(
+        observations.filter((event) => event.type === "request").map((event) => JSON.parse(String(event.body))),
+      ).toEqual(bodies)
+      expect(observations.filter((event) => event.type === "end")).toMatchObject([
+        { outcome: "error", error: "HTTP 429" },
+        { outcome: "canceled" },
+      ])
+      expect(new Set(observations.filter((event) => event.type === "start").map((event) => event.requestID)).size).toBe(
+        2,
+      )
+      expect(observations.filter((event) => event.type === "event").map((event) => event.event)).toContainEqual(
+        expect.objectContaining({ type: "text-delta", text: "Partial answer" }),
+      )
+    }),
+  )
+
   it.effect("uses provider fetch override for native OpenAI OAuth requests", () =>
     Effect.gen(function* () {
       const captures: Array<{ url: string; body: unknown }> = []
+      const observations: LLMTraceEvent[] = []
       const customFetch = Object.assign(
         async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
           const request = input instanceof Request ? input : new Request(input, init)
@@ -735,11 +812,25 @@ describe("session.llm-native.request", () => {
         providerOptions: { instructions: "You are concise." },
         headers: {},
         abort: new AbortController().signal,
+        trace: {
+          context: {
+            sessionID: "native-session",
+            model: { providerID: "openai", modelID: "gpt-5-mini" },
+            agent: "test",
+          },
+          observe: async (event) => {
+            observations.push(event)
+          },
+        },
       })
       expect(native.type).toBe("supported")
       if (native.type === "unsupported") throw new Error(native.reason)
       const events = Array.from(yield* native.stream.pipe(Stream.runCollect))
 
+      const recordedRequest = observations.find((event) => event.type === "request")
+      expect(recordedRequest?.type).toBe("request")
+      expect(recordedRequest?.type === "request" && JSON.parse(String(recordedRequest.body))).toEqual(captures[0]!.body)
+      expect(observations.at(-1)).toMatchObject({ type: "end", outcome: "completed" })
       expect(captures).toHaveLength(1)
       expect(captures[0]).toMatchObject({
         url: "https://api.openai.com/v1/responses",

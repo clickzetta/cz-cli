@@ -1,3 +1,4 @@
+import { LLMTrace } from "./llm/trace"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { llmClient } from "@opencode-ai/core/effect/layer-node-platform"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
@@ -116,6 +117,13 @@ const live: Layer.Layer<
       // from the workflow service are executed via opencode's tool system
       // and results sent back over the WebSocket.
       const bridge = yield* EffectBridge.make()
+      const traceContext = {
+        sessionID: input.sessionID,
+        model: { providerID: input.model.providerID, modelID: input.model.id },
+        agent: input.agent.name,
+      }
+      const observe: LLMTrace.Observer = (event) =>
+        bridge.promise(plugin.trigger("experimental.chat.llm", event, {}).pipe(Effect.ignore))
       if (language instanceof GitLabWorkflowLanguageModel) {
         const workflowModel = language as GitLabWorkflowLanguageModel & {
           sessionID?: string
@@ -239,6 +247,7 @@ const live: Layer.Layer<
           providerOptions: prepared.params.options,
           headers: prepared.headers,
           abort: input.abort,
+          trace: { context: traceContext, observe },
         })
         if (native.type === "supported") {
           yield* Effect.logInfo("llm runtime selected", {
@@ -339,6 +348,7 @@ const live: Layer.Layer<
                   return args.params
                 },
               },
+              LLMTrace.middleware(traceContext, observe),
             ],
           }),
           experimental_telemetry: {
