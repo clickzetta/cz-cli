@@ -25,6 +25,7 @@ import {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const dir = path.resolve(__dirname, "../../opencode")
+const root = path.resolve(dir, "../..")
 
 process.chdir(dir)
 
@@ -223,13 +224,15 @@ for (const item of targets) {
   const localPath = path.resolve(dir, "node_modules/@opentui/core/parser.worker.js")
   const rootPath = path.resolve(dir, "../../node_modules/@opentui/core/parser.worker.js")
   const parserWorker = fs.realpathSync(fs.existsSync(localPath) ? localPath : rootPath)
-  const workerPath = "./src/cli/tui/worker.ts"
+  // cz_change: install the HTTP decoding boundary inside the TUI server Worker.
+  const workerPath = "../cz-cli/src/bootstrap/worker.ts"
 
   // Use platform-specific bunfs root path based on target OS
   const bunfsRoot = item.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/"
-  const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
+  const workerRelativePath = path.relative(root, parserWorker).replaceAll("\\", "/")
 
   await Bun.build({
+    root,
     conditions: ["bun", "node"],
     tsconfig: "./tsconfig.json",
     plugins: [plugin],
@@ -270,7 +273,7 @@ for (const item of targets) {
       CLICKZETTA_VERSION: `'${Script.version}'`,
       OPENCODE_MODELS_DEV: generated.modelsData,
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
-      OPENCODE_WORKER_PATH: workerPath,
+      OPENCODE_WORKER_PATH: bunfsRoot + "packages/cz-cli/src/bootstrap/worker.js",
       OPENCODE_CHANNEL: `'${Script.channel}'`,
       OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
       // cz_change: build-time injection of the internal OTel collector endpoint/
@@ -350,6 +353,12 @@ for (const item of targets) {
     path.resolve(import.meta.dirname, "../src/opencode-plugin/gateway-prompt-view.tsx"),
     `dist/${name}/bin/${CLICKZETTA_TUI_GATEWAY_PROMPT_ASSET}`,
   )
+  // cz_change: verify the actual host binary before it can be archived/uploaded.
+  if (item.os === process.platform && item.arch === process.arch && !item.abi) {
+    await $`CZ_CLI_BIN=${path.resolve(`dist/${name}/bin/cz-cli`)} bun test test/http-security.test.ts`.cwd(
+      path.resolve(__dirname, ".."),
+    )
+  }
   binaries[name] = Script.version
 }
 

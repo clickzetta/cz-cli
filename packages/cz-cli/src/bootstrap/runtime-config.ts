@@ -497,7 +497,12 @@ export function installClickzettaWorkerEnvShim() {
   class ClickzettaWorker extends RealWorker {
     constructor(scriptURL: string | URL, options?: WorkerOptions) {
       const opts = (options ?? {}) as WorkerOptions & { env?: unknown }
-      super(scriptURL, (opts.env === undefined ? { ...opts, env: { ...process.env } } : opts) as WorkerOptions)
+      // Source-mode TUI resolves upstream's worker directly. Compiled builds
+      // already point OPENCODE_WORKER_PATH at our secured bootstrap.
+      const target = /\/cli\/tui\/worker\.(ts|js)$/.test(String(scriptURL))
+        ? new URL("./worker.ts", import.meta.url)
+        : scriptURL
+      super(target, (opts.env === undefined ? { ...opts, env: { ...process.env } } : opts) as WorkerOptions)
     }
   }
   g.Worker = ClickzettaWorker as unknown as typeof Worker

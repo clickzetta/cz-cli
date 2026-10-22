@@ -5,6 +5,7 @@
 // env-shim MUST be first — it mirrors CLICKZETTA_* → OPENCODE_* env before any
 // opencode module (whose flag getters read process.env) is evaluated.
 import "./env-shim"
+import "./http-security"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { restartArgs, maybeAutoUpdate } from "./update"
 import { main } from "./runtime"

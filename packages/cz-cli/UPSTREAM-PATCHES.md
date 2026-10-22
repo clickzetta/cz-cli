@@ -611,6 +611,29 @@ the hooks they depend on still exist in the new upstream.
   it should accept (a new global in cli.ts's `KNOWN_GLOBAL_FLAGS` is covered
   automatically; a new UPSTREAM root flag is not).
 
+### HTTP decoding boundary — CVE-2026-111497 (HOOK)
+
+- `src/bootstrap/http-security.ts` installs the Bun fetch boundary before the
+  compiled bootstrap or source CLI imports the application graph. It disables
+  native HTTP decompression, negotiates gzip/deflate, streams those formats through
+  `DecompressionStream`, and rejects Brotli or other unnegotiated encodings before
+  decoding. A server ignoring `Accept-Encoding` cannot bypass it. Explicit
+  `decompress: false` callers retain raw-body behavior.
+- `src/bootstrap/worker.ts` imports the same boundary before upstream's TUI worker.
+  The branded build points `OPENCODE_WORKER_PATH` at this entry; the existing Worker
+  env shim redirects upstream's source-mode worker to it as well. Re-verify the
+  upstream worker URL and exported `rpc` on every re-baseline.
+- This is HTTP containment while the pinned Bun 1.3.14 decoder remains unpatched,
+  not a replacement for upgrading the embedded runtime. It does not patch direct
+  Brotli APIs, third-party clients that bypass global fetch, independently launched
+  MCP servers, the upstream CLI entrypoints, or Electron. Do not remove it merely
+  by upgrading to Bun 1.4.2/1.4.3; both lack the fix. Replace it with a stable Bun
+  containing oven-sh/bun#46392, verify Node's decoder regression test on the build
+  runtime and packaged targets, then rebuild all distribution binaries.
+- `test/http-security.test.ts` exercises real HTTP (including forced Brotli,
+  redirects, stacked encodings, request bodies, aborts and streaming), plus source
+  and compiled subprocesses/Workers. No malicious CVE payload is needed.
+
 ## Re-baseline procedure (quick)
 
 1. Fast-forward upstream packages to the new opencode version.
