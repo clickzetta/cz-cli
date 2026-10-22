@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DEFAULT_CONNECTION, forceRefreshToken, getToken, type AuthToken } from "@clickzetta/sdk"
+import { connectionTokenSource, DEFAULT_CONNECTION, forceRefreshToken, getToken, request, type AuthToken } from "@clickzetta/sdk"
 import { parse } from "smol-toml"
 import {
   loadProfiles,
   makeProfileTokenStore,
+  mutateProfilesFile,
   saveProfiles,
   saveSharedOAuthToken,
+  tokenToEntry,
 } from "../src/connection/profile-store.js"
 
 const originalHome = process.env.CLICKZETTA_TEST_HOME
@@ -94,6 +96,204 @@ test("B reloads A's replacement after its in-memory access token reaches the ref
   expect((await b()).token).toBe("access-1")
   expect(sent).toEqual(["refresh-0"])
 }, 10000)
+
+test("every shared-token use reloads a peer's replacement before using memory", async () => {
+  seed({ obtainedAt: Date.now(), expireTimeMs: 3600_000 })
+  const b = await worker("second")
+  expect((await b()).token).toBe("access-0")
+  makeProfileTokenStore("first").save({
+    token: "access-1",
+    refreshToken: "refresh-1",
+    userId: 7,
+    obtainedAt: Date.now(),
+    expireTimeMs: 3600_000,
+    issuer: `127.0.0.1:${server.port}`,
+  })
+  expect((await b()).token).toBe("access-1")
+  expect(sent).toEqual([])
+}, 10000)
+
+test("refresh uses the latest stored RT even while the cached access token is valid", async () => {
+  seed({ obtainedAt: Date.now(), expireTimeMs: 3600_000 })
+  const a = await worker()
+  expect((await a()).token).toBe("access-0")
+  seed({ token: "expired-peer", refreshToken: "refresh-peer" })
+  expect((await a()).token).toBe("access-1")
+  expect(sent).toEqual(["refresh-peer"])
+}, 10000)
+
+test("a rejected overlapping refresh adopts the successor saved by its peer", async () => {
+  seed()
+  const firstArrived = Promise.withResolvers<void>()
+  const failureArrived = Promise.withResolvers<void>()
+  const releaseFailure = Promise.withResolvers<void>()
+  let requests = 0
+  handler = async () => {
+    requests += 1
+    if (requests === 1) {
+      firstArrived.resolve()
+      await failureArrived.promise
+      return Response.json({ access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600 })
+    }
+    failureArrived.resolve()
+    await releaseFailure.promise
+    return Response.json({ error: "invalid_grant" }, { status: 400 })
+  }
+  const a = await worker()
+  const b = await worker("second")
+  const winner = a()
+  await firstArrived.promise
+  const loser = b()
+  await failureArrived.promise
+  await winner
+  expect(makeProfileTokenStore("first").load()?.refreshToken).toBe("refresh-1")
+  const published = statSync(join(home, ".clickzetta/profiles.toml")).ino
+  releaseFailure.resolve()
+  expect((await loser).token).toBe("access-1")
+  expect(statSync(join(home, ".clickzetta/profiles.toml")).ino).toBe(published)
+  expect((await b()).token).toBe("access-1")
+  expect(sent).toEqual(["refresh-0", "refresh-0"])
+}, 10000)
+
+test("a rejected refresh with no usable peer replacement reports login once", async () => {
+  seed()
+  handler = () => Response.json({ error: "invalid_grant" }, { status: 400 })
+  const a = await worker()
+  await expect(a()).rejects.toThrow("OAuth session expired")
+  expect(sent).toEqual(["refresh-0"])
+  expect(makeProfileTokenStore("first").load()?.refreshToken).toBe("refresh-0")
+}, 10000)
+
+test("an expired peer replacement does not recover a rejected refresh", async () => {
+  seed()
+  handler = () => {
+    seed({ token: "expired-peer", refreshToken: "peer-refresh" })
+    return Response.json({ error: "invalid_grant" }, { status: 400 })
+  }
+  const a = await worker()
+  await expect(a()).rejects.toThrow("OAuth session expired")
+  expect(sent).toEqual(["refresh-0"])
+}, 10000)
+
+test("refresh recovery never reuses the access token rejected by the business request", async () => {
+  seed({ token: "candidate" })
+  const arrived = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  handler = async () => {
+    arrived.resolve()
+    await release.promise
+    return Response.json({ error: "invalid_grant" }, { status: 400 })
+  }
+  const a = await worker()
+  const pending = a({ force: true, rejected: "rejected-access" })
+  await arrived.promise
+  seed({ token: "rejected-access", refreshToken: "peer-refresh", obtainedAt: Date.now(), expireTimeMs: 3600_000 })
+  release.resolve()
+  await expect(pending).rejects.toThrow("OAuth session expired")
+  expect(sent).toEqual(["refresh-0"])
+}, 10000)
+
+test("a removed shared session cannot be served from the process cache", async () => {
+  seed({ obtainedAt: Date.now(), expireTimeMs: 3600_000 })
+  const a = await worker()
+  expect((await a()).token).toBe("access-0")
+  mutateProfilesFile((data) => {
+    delete (data.oauth as Record<string, unknown>).session
+    return data
+  })
+  await expect(a()).rejects.toThrow("OAuth session expired")
+  expect(sent).toEqual([])
+}, 10000)
+
+test("legacy inline OAuth refreshes are saved before the next acquisition", async () => {
+  const token = seed()
+  saveProfiles({
+    first: { service: `127.0.0.1:${server.port}`, protocol: "http", oauth: { legacy: tokenToEntry(token) } },
+  })
+  const a = await worker()
+  expect((await a()).refreshToken).toBe("refresh-1")
+  expect(makeProfileTokenStore("first").load()?.refreshToken).toBe("refresh-1")
+  expect((await a()).token).toBe("access-1")
+  expect(sent).toEqual(["refresh-0"])
+}, 10000)
+
+test("an expired OAuth token without a refresh token requests login without an empty password exchange", async () => {
+  seed({ refreshToken: undefined })
+  const a = await worker()
+  await expect(a()).rejects.toThrow("OAuth session expired")
+  expect(sent).toEqual([])
+}, 10000)
+
+test("a rejected OAuth token without a refresh token requests login without an empty password exchange", async () => {
+  seed({ refreshToken: undefined, obtainedAt: Date.now(), expireTimeMs: 3600_000 })
+  const a = await worker()
+  await expect(a({ force: true, rejected: "access-0" })).rejects.toThrow("OAuth session expired")
+  expect(sent).toEqual([])
+}, 10000)
+
+test.skipIf(process.platform === "win32")(
+  "refresh success is not reported when the successor cannot be saved",
+  async () => {
+    seed()
+    const a = await worker()
+    chmodSync(join(home, ".clickzetta"), 0o500)
+    try {
+      await expect(a()).rejects.toThrow("Could not save the refreshed OAuth credentials")
+      expect(makeProfileTokenStore("first").load()?.refreshToken).toBe("refresh-0")
+      expect(sent).toEqual(["refresh-0"])
+    } finally {
+      chmodSync(join(home, ".clickzetta"), 0o700)
+    }
+  },
+  10000,
+)
+
+test("a refresh save does not replace an unreadable profile document with an empty one", async () => {
+  seed()
+  handler = () => {
+    writeFileSync(join(home, ".clickzetta/profiles.toml"), "[broken")
+    return Response.json({ access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600 })
+  }
+  const a = await worker()
+  await expect(a()).rejects.toThrow("Could not save the refreshed OAuth credentials")
+  expect(readFileSync(join(home, ".clickzetta/profiles.toml"), "utf8")).toBe("[broken")
+  expect(sent).toEqual(["refresh-0"])
+}, 10000)
+
+test.skipIf(process.platform === "win32")(
+  "a 401 recovery stops retries when the refreshed credentials cannot be saved",
+  async () => {
+    seed({ obtainedAt: Date.now(), expireTimeMs: 3600_000 })
+    handler = (incoming) =>
+      new URL(incoming.url).pathname === "/business"
+        ? Response.json({ error: "expired" }, { status: 401 })
+        : Response.json({ access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600 })
+    const config = {
+      ...DEFAULT_CONNECTION,
+      protocol: "http",
+      service: `127.0.0.1:${server.port}`,
+      tokenStore: makeProfileTokenStore("first"),
+      cacheKey: "session",
+    }
+    chmodSync(join(home, ".clickzetta"), 0o500)
+    try {
+      await expect(
+        request(
+          {
+            baseUrl: `http://127.0.0.1:${server.port}`,
+            tokens: connectionTokenSource(config),
+          },
+          "/business",
+        ),
+      ).rejects.toMatchObject({ code: "OAUTH_PERSIST_FAILED" })
+      expect(sent).toEqual(["", "refresh-0"])
+      expect(makeProfileTokenStore("first").load()?.refreshToken).toBe("refresh-0")
+    } finally {
+      chmodSync(join(home, ".clickzetta"), 0o700)
+    }
+  },
+  10000,
+)
 
 test("simultaneous processes refresh without a lock and persist the server's common successor", async () => {
   seed()

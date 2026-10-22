@@ -37,9 +37,8 @@ function cacheKey(config: ConnectionConfig): string {
     .digest("hex")
 }
 
-/** True when the config has NO credentials to perform a fresh portal login
- *  (pure OAuth profile). Such a profile can only refresh via its refresh token;
- *  when that fails the only recovery is an interactive `cz-cli auth login`. */
+/** Whether this config has credentials for a fresh portal login.
+ * Pure OAuth profiles can only refresh or adopt a peer's persisted token. */
 function hasLoginCredentials(config: ConnectionConfig): boolean {
   return Boolean(config.pat || (config.username && config.password))
 }
@@ -56,10 +55,8 @@ async function fetchToken(config: ConnectionConfig): Promise<AuthToken> {
       )
 }
 
-/** OAuth `error` codes that mean the refresh token itself is dead — retrying or
- *  re-fetching won't help; only an interactive re-login recovers. Distinct from
- *  transient failures (network, 5xx) which must NOT trigger a credential-less
- *  login dead-end. */
+/** OAuth errors that require re-login unless a peer has published a replacement.
+ * Never retry the same rejected refresh token. */
 const REFRESH_TOKEN_DEAD = new Set(["invalid_grant", "invalid_token", "invalid_request"])
 
 /** Raised when an OAuth session cannot be refreshed and there are no fallback
@@ -80,15 +77,13 @@ function sessionExpiredError(cause?: unknown): InterfaceError {
  *
  * On failure the recovery depends on WHY and on whether the config has
  * credentials:
- *   - refresh token dead (invalid_grant/…) + no credentials (pure OAuth) →
- *     throw SESSION_EXPIRED telling the user to re-login. We must NOT attempt a
- *     password login with empty credentials (it wastes ~6s of retries and ends
- *     in a misleading "Login failed").
+ *   - no credentials (pure OAuth) → preserve the error so acquisition can adopt
+ *     a peer's replacement before reporting SESSION_EXPIRED. Never attempt a
+ *     password login with empty credentials.
  *   - credentials present (PAT/password) → fall back to a full login (it can
  *     genuinely re-authenticate; requirement 5.4).
  *   - transient failure (network/5xx) with no credentials → rethrow the
  *     original error; a dead-end login would only mask a retryable condition.
- * The shared tokenStore.clear() is a documented no-op, so we don't rely on it.
  */
 async function refreshOrLogin(
   config: ConnectionConfig,
@@ -117,17 +112,11 @@ async function refreshOrLogin(
     }
   } catch (err) {
     cache.delete(cacheKey(config))
-    config.tokenStore?.clear()
-    const code = err instanceof ClickZettaError ? err.code : undefined
-    const refreshDead = typeof code === "string" && REFRESH_TOKEN_DEAD.has(code)
     if (hasLoginCredentials(config)) {
       // PAT/password present → a full login can genuinely re-authenticate.
+      config.tokenStore?.clear()
       return fetchToken(config)
     }
-    // Pure OAuth profile: no credentials to log in with.
-    if (refreshDead) throw sessionExpiredError(err)
-    // Transient failure (network/5xx) — surface it as-is so it's retryable and
-    // not misread as a permanent auth failure.
     throw err
   }
 }
@@ -146,7 +135,8 @@ export async function forceRefreshToken(config: ConnectionConfig, rejected?: str
 
 async function acquireToken(config: ConnectionConfig, force: boolean, rejected?: string): Promise<AuthToken> {
   const key = cacheKey(config)
-  if (!force) {
+  const store = config.tokenStore
+  if (!store && !force) {
     const cached = cache.get(key)
     if (cached && !isTokenExpired(cached)) return cached
   }
@@ -157,22 +147,49 @@ async function acquireToken(config: ConnectionConfig, force: boolean, rejected?:
     if (!force || rejected === undefined || joined.token !== rejected) return joined
   }
 
-  // Always reload before refreshing: another process may have replaced both tokens.
-  // Overlapping requests are allowed; the issuer handles refresh-token reuse within
-  // its grace window. The local promise only coalesces callers in this process.
-  const store = config.tokenStore
-  const candidate = store ? store.load() : cache.get(key)
-  if (candidate && !isTokenExpired(candidate) && (!force || (rejected !== undefined && candidate.token !== rejected))) {
-    cache.set(key, candidate)
-    return candidate
+  // A profile-backed store is authoritative on every acquisition, so another
+  // process can publish a replacement even while this process's access token is
+  // still marked valid. Overlapping refresh requests remain possible; the local
+  // promise only coalesces callers in this process.
+  const current = store ? store.load() : cache.get(key)
+  if (current && !isTokenExpired(current) && (!force || (rejected !== undefined && current.token !== rejected))) {
+    cache.set(key, current)
+    return current
+  }
+  if (store && !current?.refreshToken && !hasLoginCredentials(config)) {
+    cache.delete(key)
+    throw sessionExpiredError()
   }
   const fetch = (async () => {
-    const token = candidate?.refreshToken
-      ? await refreshOrLogin(config, candidate, candidate.refreshToken)
-      : await fetchToken(config)
-    store?.save(token)
-    cache.set(key, token)
-    return token
+    try {
+      const token = current?.refreshToken
+        ? await refreshOrLogin(config, current, current.refreshToken)
+        : await fetchToken(config)
+      store?.save(token)
+      cache.set(key, token)
+      return token
+    } catch (err) {
+      if (
+        !current?.refreshToken ||
+        hasLoginCredentials(config) ||
+        !(err instanceof ClickZettaError) ||
+        !REFRESH_TOKEN_DEAD.has(err.code ?? "")
+      )
+        throw err
+      // The submitted RT can be spent while a peer has already published its
+      // live successor. Adopt it once without replaying the failed refresh or
+      // writing the peer's result back over a later update.
+      const replacement = err.code === "invalid_grant" ? store?.load() : undefined
+      if (
+        !replacement ||
+        replacement.token === current?.token ||
+        replacement.token === rejected ||
+        isTokenExpired(replacement)
+      )
+        throw sessionExpiredError(err)
+      cache.set(key, replacement)
+      return replacement
+    }
   })()
   pendingFetches.set(key, fetch)
   try {
