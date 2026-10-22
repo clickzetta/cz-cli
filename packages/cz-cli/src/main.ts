@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 // Dev entry point (bun run src/main.ts). The compiled binary uses src/bootstrap/boot.ts.
+import "./bootstrap/http-security"
 import { hasActiveSqlJobs } from "./commands/sql-lifecycle.js"
 import { checkAndUpdate } from "./auto-update.js"
 import { runCliWithTracking } from "./run-cli.js"

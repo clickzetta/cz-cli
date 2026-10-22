@@ -211,7 +211,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       - name: Configure local Node headers for node-gyp
         shell: bash
@@ -264,6 +264,10 @@ jobs:
             attempt=$((attempt + 1))
             sleep 1
           done
+
+      - name: Verify HTTP decoding boundary on ${{ matrix.os }}
+        working-directory: packages/cz-cli
+        run: bun test test/http-security.test.ts
 
       - name: Build ${{ matrix.os }} targets
         env:
@@ -333,7 +337,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.23.4"
 
       # bun-version-file resolves from the repo root (working-directory applies to
       # `run` steps only), which is what we want — sdks/cz-vscode/package.json has
@@ -411,7 +415,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.23.4"
           registry-url: "https://registry.npmjs.org"
 
       - name: Download release assets
@@ -448,7 +452,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       - name: Configure local Node headers for node-gyp
         shell: bash

@@ -3,7 +3,7 @@ FROM ${REGISTRY}/build/base:24.04
 
 SHELL ["/bin/bash", "-lc"]
 
-ARG NODE_VERSION=24.4.0
+ARG NODE_VERSION=24.22.1
 ARG BUN_VERSION=1.3.14
 
 ENV BUN_INSTALL=/opt/bun
