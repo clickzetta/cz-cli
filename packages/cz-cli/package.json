@@ -24,7 +24,8 @@
     "test:mcp": "bun test/mcp-serve-smoke.ts",
     "preview:gateway-prompt": "bun script/preview-gateway-prompt.ts",
     "test:unit": "bun test test/classify-error.test.ts",
-    "test:all": "bun test test/classify-error.test.ts && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
+    "test:history": "bun test test/history-argv.test.ts test/history-effect.test.ts",
+    "test:all": "bun test test/classify-error.test.ts && bun run test:history && bun test/e2e-routing.ts && bun test/e2e-help.ts && bun test/e2e.ts",
     "build:local": "bun run build --single && mkdir -p dist && cp ../opencode/dist/cz-cli-darwin-arm64/bin/cz-cli dist/cz-cli && cp ../opencode/dist/cz-cli-darwin-arm64/bin/clickzetta-* ../opencode/dist/cz-cli-darwin-arm64/bin/tui-title-brand.ts ../opencode/dist/cz-cli-darwin-arm64/bin/tui-quota-runtime.js ../opencode/dist/cz-cli-darwin-arm64/bin/tui-quota.tsx ../opencode/dist/cz-cli-darwin-arm64/bin/gateway-prompt-view.tsx dist/ && codesign --sign - dist/cz-cli",
     "test:ci": "bun run build:local && CZ_CLI_BIN=./dist/cz-cli bun run test:all"
   },
