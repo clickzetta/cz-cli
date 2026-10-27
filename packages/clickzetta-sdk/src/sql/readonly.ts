@@ -46,11 +46,16 @@ export function analyzeSql(sql: string): SqlCheck {
   const scan = scanSql(sql)
   const statements = scan.statements
     .filter((item) => item.text.trim())
-    .map((item) => ({
-      ...item,
-      ...(scan.reason ? { kind: "unknown" as const, reason: scan.reason } : classify(item.text.trim())),
-    }))
-  if (scan.reason) return { kind: "unknown", reason: scan.reason, statements }
+    .map((item) => {
+      const result = classify(item.text.trim())
+      return {
+        ...item,
+        ...(scan.reason && result.kind !== "write" ? { kind: "unknown" as const, reason: scan.reason } : result),
+      }
+    })
+  if (scan.reason && !statements.some((item) => item.kind === "write")) {
+    return { kind: "unknown", reason: scan.reason, statements }
+  }
   if (!statements.length) return { kind: "unknown", reason: "No SQL statements found", statements }
   const issue =
     statements.find((item) => item.kind === "write") ??
@@ -60,6 +65,7 @@ export function analyzeSql(sql: string): SqlCheck {
 }
 
 function classify(text: string): Pick<SqlCheck, "kind" | "reason"> {
+  if (/^SET\b/i.test(text)) return { kind: "session" }
   // EXPLAIN returns a plan and executes nothing, so unwrap it before any other rule
   // looks at the statement. This used to happen after the WRITE scan, which left
   // `EXPLAIN SHOW CREATE VIEW v` demanding write approval — CREATE was still in the
@@ -89,11 +95,6 @@ function classify(text: string): Pick<SqlCheck, "kind" | "reason"> {
   const inspected = prefix ? query.replace(prefix[0], prefix[1]) : query
   const write = inspected.match(WRITE)
   if (write) return { kind: "write", reason: `Modification keyword: ${write[0].toUpperCase()}` }
-  const setting = text.match(/^SET\s+([\w.]+)\s*=\s*(?:\?|[\w+./:-]+)\s*$/i)
-  if (setting)
-    return isReadonlySqlSetting(setting[1])
-      ? { kind: "session" }
-      : { kind: "unknown", reason: `Unreviewed session setting: ${setting[1]}` }
   if (/^USE\s+(?:(?:SCHEMA|WORKSPACE|VCLUSTER)\s+)?(?:\?|[\w]+)(?:\s*\.\s*(?:\?|[\w]+))*\s*$/i.test(text)) {
     return { kind: "session" }
   }
