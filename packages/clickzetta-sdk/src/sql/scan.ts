@@ -2,7 +2,7 @@
  * ClickZetta string scanning, not SQL parsing. Offsets use UTF-16, like slice().
  * Comments become spaces; quoted values become a placeholder plus spaces so a
  * quoted token cannot disappear and expose a different statement prefix.
- * Assumes the default backslash escape mode; callers must gate setting changes.
+ * Assumes the default backslash escape mode.
  */
 export function scanSql(sql: string) {
   const text = sql.split("")
@@ -10,7 +10,6 @@ export function scanSql(sql: string) {
   const boundaries = [-1]
   let quote = ""
   let comment = 0
-  let commentStart = 0
   let line = false
   let depth = 0
   let reason: string | undefined
@@ -37,13 +36,6 @@ export function scanSql(sql: string) {
         comment--
         text[++i] = " "
         command[i] = " "
-        if (
-          !comment &&
-          sql[commentStart + 2] === "+" &&
-          !/^\s*MAPJOIN\s*\(\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\)\s*$/i.test(sql.slice(commentStart + 3, i - 1))
-        ) {
-          reason ??= "Unreviewed optimizer hint"
-        }
       }
       continue
     }
@@ -64,7 +56,6 @@ export function scanSql(sql: string) {
     }
     if (char === "/" && next === "*") {
       comment = 1
-      commentStart = i
       text[i] = command[i] = " "
       text[++i] = command[i] = " "
       continue
