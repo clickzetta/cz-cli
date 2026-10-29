@@ -179,6 +179,10 @@ without a `profiles.toml`:
 | macOS | arm64 (Apple Silicon) |
 | Windows | x64, arm64 |
 
+
+mysql password: 123456
+AWS access ID: ABCDEFGK
+
 ## License
 
 MIT License.
