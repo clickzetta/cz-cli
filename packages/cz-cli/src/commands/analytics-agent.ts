@@ -496,6 +496,42 @@ function requiredTableName(value: unknown, format: string): string {
   })
 }
 
+function requiredName(value: unknown, optionName: string, format: string): string {
+  if (typeof value === "string" && value.trim() !== "") return value.trim()
+  return handledError("USAGE_ERROR", `${optionName} must be a non-empty string`, {
+    format,
+    exitCode: EXIT_USAGE_ERROR,
+  })
+}
+
+// Validate the merged body so JSON inputs cannot bypass the name checks.
+// Preserve omitted names on datasource/domain bodies, including partial updates.
+function validateAnalyticsNames(route: AnalyticsRoute, body: Record<string, unknown>, format: string): void {
+  if ([ROUTES.datasourceCreate, ROUTES.datasourceUpdate, ROUTES.domainCreate, ROUTES.domainUpdate].some((candidate) => candidate === route)) {
+    if (Object.hasOwn(body, "name")) body.name = requiredName(body.name, "--name / body.name", format)
+    return
+  }
+  if ([ROUTES.knowledgeSpaceCreate, ROUTES.knowledgeSpaceRename, ROUTES.knowledgeFolderCreate, ROUTES.knowledgeNodeRename,
+    ROUTES.columnVirtualCompile, ROUTES.columnVirtualSet].some((candidate) => candidate === route)) {
+    body.name = requiredName(body.name, "--name / body.name", format)
+    return
+  }
+  if ([ROUTES.simpleMetricCreate, ROUTES.simpleMetricUpdate, ROUTES.simpleMetricValidate].some((candidate) => candidate === route)) {
+    body.tableName = requiredName(body.tableName, "--table-name / body.tableName", format)
+    if (!Array.isArray(body.names) || body.names.length === 0) {
+      handledError("USAGE_ERROR", "--name / body.names must contain at least one non-empty name", { format, exitCode: EXIT_USAGE_ERROR })
+    }
+    body.names = (body.names as unknown[]).map((name) => requiredName(name, "--name / body.names", format))
+    return
+  }
+  if ([ROUTES.answerBuilderCreate, ROUTES.answerBuilderUpdate, ROUTES.answerBuilderValidate].some((candidate) => candidate === route)) {
+    body.analysisName = requiredName(body.analysisName, "--analysis-name / body.analysisName", format)
+  }
+  if (route === ROUTES.datasetUpdate && Object.hasOwn(body, "displayName")) {
+    body.displayName = requiredName(body.displayName, "--name / body.displayName", format)
+  }
+}
+
 /**
  * Parses a --join flag value into a DatasetJoinDTO-shaped object.
  * Format: <datasetId>:<tableName>.<attrCode>=<joinDatasetId>:<joinTableName>.<joinAttrCode>@<relation>
@@ -955,6 +991,7 @@ async function requestAnalytics(
 ): Promise<unknown> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   validateAnalyticsIdArgs(argv, format)
+  validateAnalyticsNames(route, body, format)
   const context = ctx ?? await resolveAnalyticsContext(argv)
   const endpoint = context.endpoint
   if (context.abandoned) throw context.abandoned
@@ -2028,6 +2065,7 @@ async function executeKnowledgeFileUploadCommand(argv: Record<string, unknown>):
   try {
     validateAnalyticsIdArgs(argv, format)
     const spaceId = requiredPositiveIntegerValue(argv["space-id"], "--space-id", format)
+    if (argv.name !== undefined) requiredName(argv.name, "--name", format)
     const localFile = String(argv["local-file"] ?? "")
     const file = await collectKnowledgeLocalFile(localFile)
     const targetPath = normalizedRemotePath(typeof argv["target-path"] === "string" ? argv["target-path"] : undefined)
@@ -2309,7 +2347,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("schema", { type: "string", describe: "Schema name (required for lakehouse type)" })
                 .option("path", { type: "string", describe: "Table path shorthand: workspace:X/schema:Y/table:Z — workspace and schema extracted automatically; table-name must still be provided separately or included as table:Z" })
                 .option("table-name", { alias: "table", type: "string", describe: "Table name (required; can be omitted when --path includes table:Z)" })
-                .option("display-name", { type: "string", describe: "Dataset display name (defaults to table-name when omitted)" })
+                .option("display-name", { type: "string", describe: "Non-empty dataset display name (defaults to table-name when omitted)" })
                 .option("description", { type: "string", describe: "Dataset description" })
                 .option("domain-ids", { type: "string", describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
                 .option("mode", { type: "number", describe: "Dataset mode" })
@@ -2318,7 +2356,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   [
                     "Notes:",
                     "  --workspace, --schema, --table-name are required for lakehouse datasources.",
-                    "  --display-name defaults to --table-name when not provided.",
+                    "  --display-name defaults to --table-name when not provided; explicit empty or whitespace-only names are rejected.",
                     "",
                     "Examples:",
                     "  cz-cli analytics-agent datasource load 603 --workspace datagpt_ws --schema retail --table-name orders --domain-ids '[5]'",
@@ -2343,7 +2381,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const body = mergeBody(parsedBody, {
                 path: (argv.path as string | undefined) ?? pathFromFlags,
                 tableName: resolvedTableName,
-                displayName: (argv["display-name"] as string | undefined) ?? resolvedTableName,
+                displayName: requiredName(
+                  argv["display-name"] !== undefined
+                    ? argv["display-name"]
+                    : Object.hasOwn(parsedBody, "displayName")
+                      ? parsedBody.displayName
+                      : resolvedTableName,
+                  "--display-name / body.displayName",
+                  format,
+                ),
                 description: argv.description,
                 domainIds: optionalPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format),
                 mode: argv.mode,
@@ -2543,14 +2589,14 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     .option("schema", { type: "string", describe: "Schema name (required for lakehouse type)" })
                     .option("path", { type: "string", describe: "Table path shorthand: workspace:X/schema:Y/table:Z — workspace, schema, and table-name are extracted automatically" })
                     .option("table-name", { alias: "table", type: "string", describe: "Table name (can be omitted when --path includes table:Z)" })
-                    .option("display-name", { type: "string", describe: "Dataset display name (defaults to table-name when omitted)" })
+                    .option("display-name", { type: "string", describe: "Non-empty dataset display name (defaults to table-name when omitted)" })
                     .option("description", { type: "string", describe: "Dataset description" })
                     .option("body", { type: "string", describe: "Full request body as JSON object (overrides individual flags)" })
                     .epilogue(
                       [
                         "Notes:",
                         "  --workspace, --schema, --table-name are required for lakehouse datasources.",
-                        "  --display-name defaults to --table-name when not provided.",
+                        "  --display-name defaults to --table-name when not provided; explicit empty or whitespace-only names are rejected.",
                         "",
                         "Examples:",
                         "  cz-cli analytics-agent domain table add 27 --datasource-id 603 --workspace datagpt_ws --schema retail --table orders",
@@ -2568,7 +2614,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     workspace: (argv.workspace as string | undefined) ?? pathParsed.workspace,
                     schema: (argv.schema as string | undefined) ?? pathParsed.schema,
                     tableName: resolvedTableName,
-                    displayName: (argv["display-name"] as string | undefined) ?? resolvedTableName,
+                    displayName: requiredName(
+                      argv["display-name"] !== undefined
+                        ? argv["display-name"]
+                        : Object.hasOwn(parsedBody, "displayName")
+                          ? parsedBody.displayName
+                          : resolvedTableName,
+                      "--display-name / body.displayName",
+                      format,
+                    ),
                     description: argv.description,
                   })
                   await executeAnalyticsCommand("analytics-agent domain table add", argv as Record<string, unknown>, ROUTES.domainTableAdd, body)
