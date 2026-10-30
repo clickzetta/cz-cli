@@ -519,6 +519,93 @@ describe("analytics-agent id validation", () => {
     expect(parsedError(result.output).message).toContain("--domain-ids")
   })
 
+  describe.each([
+    ["datasource create", ["datasource", "create", "--connection", '{"jdbc":"jdbc:test"}'], "--name"],
+    ["datasource update", ["datasource", "update", "3"], "--name"],
+    ["domain create", ["domain", "create"], "--name"],
+    ["domain update", ["domain", "update", "27"], "--name"],
+    ["metric create", ["metric", "create", "--table-name", "orders", "--domain-ids", "[5]", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
+    ["metric update", ["metric", "update", "9", "--table-name", "orders", "--domain-ids", "[5]", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
+    ["metric validate", ["metric", "validate", "--table-name", "orders", "--domain-ids", "[5]", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
+    ["virtual column compile", ["column", "virtual", "compile", "--dataset-id", "1", "--type", "bigint", "--expression", "1"], "--name"],
+    ["virtual column set", ["column", "virtual", "set", "--dataset-id", "1", "--type", "bigint", "--expression", "1"], "--name"],
+    ["answer builder create", ["answer-builder", "create", "--datasource-id", "3", "--domain-ids", "[5]", "--content", '{"outputColumns":[{"metricName":"total"}]}'], "--analysis-name"],
+    ["answer builder update", ["answer-builder", "update", "9", "--datasource-id", "3", "--domain-ids", "[5]", "--content", '{"outputColumns":[{"metricName":"total"}]}'], "--analysis-name"],
+    ["answer builder validate", ["answer-builder", "validate", "--datasource-id", "3", "--domain-ids", "[5]", "--content", '{"outputColumns":[{"metricName":"total"}]}'], "--analysis-name"],
+    ["knowledge space create", ["knowledge", "space", "create"], "--name"],
+    ["knowledge space rename", ["knowledge", "space", "rename", "1"], "--name"],
+    ["knowledge folder create", ["knowledge", "folder", "create", "1"], "--name"],
+    ["knowledge folder rename", ["knowledge", "folder", "rename", "1", "2"], "--name"],
+    ["knowledge file rename", ["knowledge", "file", "rename", "1", "2"], "--name"],
+    ["knowledge file upload", ["knowledge", "file", "upload", "1", "/missing-local-file.txt"], "--name"],
+  ])("%s name validation", (_name, args, option) => {
+    test.each(["", " \t\n "])("rejects blank name %j without a request", async (name) => {
+      const calls = mock(async () => jsonResponse({ success: true }))
+      globalThis.fetch = calls as typeof fetch
+
+      const result = await runAnalyticsCli(["analytics-agent", ...args, option, name])
+
+      expect(result.exitCode).toBe(2)
+      expect(parsedError(result.output).code).toBe("USAGE_ERROR")
+      expect(parsedError(result.output).message).toContain(option)
+      expect(calls).not.toHaveBeenCalled()
+    })
+
+    if (_name !== "knowledge file upload") {
+      test("accepts and trims a valid name", async () => {
+        let body: Record<string, unknown> | undefined
+        globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          body = JSON.parse(String(init?.body)) as Record<string, unknown>
+          return jsonResponse({ success: true, data: {} })
+        }) as typeof fetch
+        const result = await runAnalyticsCli(["analytics-agent", ...args, option, "  订单  "])
+        expect(result.exitCode).toBe(0)
+        const name = option === "--analysis-name" ? body?.analysisName
+          : args[0] === "metric" ? (body?.names as string[])[0] : body?.name
+        expect(name).toBe("订单")
+      })
+    }
+  })
+
+  describe.each([
+    ["datasource create", ["datasource", "create", "--connection", '{"jdbc":"jdbc:test"}']],
+    ["datasource update", ["datasource", "update", "3"]],
+    ["domain create", ["domain", "create"]],
+    ["domain update", ["domain", "update", "27"]],
+  ])("%s JSON name validation", (_name, args) => {
+    test.each(["", "   ", null, 123, []].map((name) => [name]))("rejects invalid body name %j", async (name) => {
+      const calls = mock(async () => jsonResponse({ success: true }))
+      globalThis.fetch = calls as typeof fetch
+      const result = await runAnalyticsCli(["analytics-agent", ...args, "--body", JSON.stringify({ name })])
+      expect(result.exitCode).toBe(2)
+      expect(parsedError(result.output).message).toContain("name")
+      expect(calls).not.toHaveBeenCalled()
+    })
+
+    test("preserves omitted names and empty descriptions", async () => {
+      let body: Record<string, unknown> | undefined
+      globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return jsonResponse({ success: true, data: {} })
+      }) as typeof fetch
+      const result = await runAnalyticsCli(["analytics-agent", ...args, "--body", '{"description":""}'])
+      expect(result.exitCode).toBe(0)
+      expect(body).not.toHaveProperty("name")
+      expect(body?.description).toBe("")
+    })
+
+    test("preserves and trims a valid JSON name", async () => {
+      let body: Record<string, unknown> | undefined
+      globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return jsonResponse({ success: true, data: {} })
+      }) as typeof fetch
+      const result = await runAnalyticsCli(["analytics-agent", ...args, "--body", '{"name":"  订单  "}'])
+      expect(result.exitCode).toBe(0)
+      expect(body?.name).toBe("订单")
+    })
+  })
+
   test("datasource load defaults displayName to an explicit table name", async () => {
     let requestBody: Record<string, unknown> | undefined
 
@@ -538,6 +625,47 @@ describe("analytics-agent id validation", () => {
 
     expect(result.exitCode).toBe(0)
     expect(requestBody).toMatchObject({ tableName: "orders", displayName: "orders" })
+  })
+
+  describe.each([
+    ["datasource load", ["analytics-agent", "datasource", "load", "3"]],
+    ["domain table add", ["analytics-agent", "domain", "table", "add", "27"]],
+  ])("%s display name validation", (_name, command) => {
+    test.each([
+      ["empty flag", ["--display-name", ""]],
+      ["whitespace flag", ["--display-name", " \t\n "]],
+      ["empty body name", ["--body", '{"displayName":""}']],
+      ["whitespace body name", ["--body", '{"displayName":"   "}']],
+      ["null body name", ["--body", '{"displayName":null}']],
+      ["non-string body name", ["--body", '{"displayName":123}']],
+    ])("rejects %s before making any request", async (_case, options) => {
+      const fetchMock = mock(async () => jsonResponse({ success: true }))
+      globalThis.fetch = fetchMock as typeof fetch
+
+      const result = await runAnalyticsCli([...command, "--table-name", "orders", ...options])
+
+      expect(result.exitCode).toBe(2)
+      expect(parsedError(result.output).code).toBe("USAGE_ERROR")
+      expect(parsedError(result.output).message).toContain("display-name")
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    test.each([
+      ["flag", ["--display-name", "  订单  "]],
+      ["body", ["--body", '{"displayName":"  订单  "}']],
+      ["flag over body", ["--display-name", "  订单  ", "--body", '{"displayName":"other"}']],
+    ])("preserves and trims the explicit name from %s", async (_case, options) => {
+      let requestBody: Record<string, unknown> | undefined
+      globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+        return jsonResponse({ success: true, data: { datasetId: 12 } })
+      }) as typeof fetch
+
+      const result = await runAnalyticsCli([...command, "--table-name", "orders", ...options])
+
+      expect(result.exitCode).toBe(0)
+      expect(requestBody).toMatchObject({ tableName: "orders", displayName: "订单" })
+    })
   })
 
   test("datasource load extracts table name from --path", async () => {
