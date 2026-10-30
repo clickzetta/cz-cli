@@ -183,6 +183,9 @@ without a `profiles.toml`:
 mysql password: 123456
 AWS access ID: ABCDEFGK
 
+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
 ## License
 
 MIT License.
