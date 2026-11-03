@@ -241,7 +241,9 @@ describe("HTTP decoding boundary (CVE-2026-111497)", () => {
         import ${security}
         try { await fetch(${JSON.stringify(url("/br").href)}); throw new Error("unprotected") }
         catch (error) { if (!String(error).includes("CVE-2026-111497")) throw error }
-        const worker = new Worker(new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url))
+        const worker = new Worker(typeof HTTP_SECURITY_WORKER_PATH === "undefined"
+          ? new URL("./worker.ts", import.meta.url)
+          : HTTP_SECURITY_WORKER_PATH)
         const message = await new Promise((resolve, reject) => {
           worker.onmessage = (event) => resolve(event.data)
           worker.onerror = reject
@@ -253,9 +255,17 @@ describe("HTTP decoding boundary (CVE-2026-111497)", () => {
       )
       const binary = path.join(dir, process.platform === "win32" ? "security.exe" : "security")
       const result = await Bun.build({
+        root: dir,
         entrypoints: [path.join(dir, "main.ts"), path.join(dir, "worker.ts")],
         splitting: true,
         compile: { outfile: binary },
+        // Match the release build: compiled Workers use an explicit bunfs path.
+        // Relative URLs from import.meta.url do not locate the Worker on Windows.
+        define: {
+          HTTP_SECURITY_WORKER_PATH: JSON.stringify(
+            process.platform === "win32" ? "B:/~BUN/root/worker.js" : "/$bunfs/root/worker.js",
+          ),
+        },
       })
       expect(result.success).toBe(true)
       for (const command of [[process.execPath, path.join(dir, "main.ts")], [binary]]) {
