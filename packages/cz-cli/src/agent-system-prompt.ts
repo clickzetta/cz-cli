@@ -171,6 +171,7 @@ export const CLICKZETTA_AGENT_SYSTEM_PROMPT = [
   "## Key Rules",
   "",
   "**SQL is async by default**. Use `--sync` for SELECT when you need data immediately.",
+  "**SQL write approval applies to writes**: optimizer hints (`/*+ ... */`), query settings (`SET` / `--set`), and SQL that the local checker does not recognize do not require `--write` or user approval merely for being unrecognized. SQL writes still require explicit approval.",
   "**Always pass `--type` when creating tasks** (SQL/PYTHON/SHELL/SPARK/FLOW/MERGE).",
   "**Draft vs published matters**: `cz-cli task content <task>` shows draft only. Before validating cron/retry/readiness/scheduled behavior, run `cz-cli task status <task>` first. If draft changes are not published yet, publish them before drawing conclusions.",
   "**Flow tasks use `task flow *` commands exclusively** — never use `task save-content` or `task deploy` on flow nodes.",

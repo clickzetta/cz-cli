@@ -649,7 +649,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     // Check the entire substituted input before USE validation, EXPLAIN, async,
     // batch, or intermediate statements can submit a job. Splitting is transport
     // behavior and must never disable the guard.
-    if (!validateSqlInput(sql, argv, hints, splitEnabled)) return
+    if (!validateSqlInput(sql, argv, splitEnabled)) return
     const statements = resolveStatements(sql, splitEnabled)
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
@@ -659,7 +659,7 @@ async function handler(argv: SqlArgs): Promise<void> {
       ctx = dryRunCtx
       const results = await Promise.all(statements.map(async (stmt) => {
         try {
-          const r = await execSql(dryRunCtx, `EXPLAIN ${stmt}`, { timeoutMs: argv.timeout * 1000 })
+          const r = await execSql(dryRunCtx, `EXPLAIN ${stmt}`, { hints, timeoutMs: argv.timeout * 1000 })
           if (isQueryResult(r)) {
             if (r.status === JobStatus.FAILED)
               return { sql: stmt, status: "error", job_id: r.jobId, error: await formatQueryError(r, dryRunCtx, argv.profile, "EXPLAIN failed") }
@@ -754,10 +754,9 @@ async function handler(argv: SqlArgs): Promise<void> {
   }
 }
 
-function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, string> | undefined, splitEnabled: boolean): boolean {
+function validateSqlInput(sql: string, argv: SqlArgs, splitEnabled: boolean): boolean {
   const analysis = analyzeSql(sql)
   if (analysis.reason === "No SQL statements found") return true
-  const setting = Object.keys(hints ?? {}).find((key) => !isReadonlySqlSetting(key))
   if (argv["dry-run"]) {
     if (!splitEnabled && analysis.statements.length > 1) {
       error("SQL_NOT_READONLY", "Dry-run of multiple statements requires sql_split to be enabled.", { format: argv.format })
@@ -765,27 +764,23 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
     }
     // EXPLAIN is not a safe wrapper for arbitrary scripts. In particular, never
     // prefix just the first statement of an unsplit input and execute the rest.
-    if (analysis.kind !== "readonly" || setting) {
-      error("SQL_NOT_READONLY", "Dry-run supports recognized readonly queries with reviewed settings only.", {
+    if (analysis.kind !== "readonly") {
+      error("SQL_NOT_READONLY", "Dry-run supports recognized readonly queries only.", {
         format: argv.format,
-        extra: { reason: setting ? `Unreviewed query setting: ${setting}` : analysis.reason ?? analysis.kind },
+        extra: { reason: analysis.reason ?? analysis.kind },
       })
       return false
     }
     return true
   }
-  if (!argv.write && (analysis.kind === "write" || analysis.kind === "unknown" || setting)) {
-    const issue = analysis.statements.findIndex((item) => item.kind === analysis.kind)
-    const code = analysis.kind === "write" ? "WRITE_NOT_ALLOWED" : "SQL_READONLY_UNKNOWN"
-    const message = analysis.kind === "write"
-      ? "Write SQL requires explicit user approval."
-      : "SQL or query settings could not be classified as readonly and require explicit user approval."
+  if (!argv.write && analysis.kind === "write") {
+    const issue = analysis.statements.findIndex((item) => item.kind === "write")
     requireWriteApproval(argv, {
-      code,
-      message,
-      query_kind: analysis.kind === "write" ? "write" : "unknown",
-      reason: setting ? `Unreviewed query setting: ${setting}` : analysis.reason,
-      ...(!setting && issue >= 0 && { statement_index: issue }),
+      code: "WRITE_NOT_ALLOWED",
+      message: "Write SQL requires explicit user approval.",
+      query_kind: "write",
+      reason: analysis.reason,
+      ...(issue >= 0 && { statement_index: issue }),
     })
     return false
   }
@@ -848,7 +843,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           (y) =>
             y
               .positional("statement", { type: "string", describe: "SQL statement to execute" })
-              .option("write", { type: "boolean", default: false, describe: "Explicitly allow writes and SQL the string-based readonly check cannot classify. Does not bypass the DELETE/UPDATE without WHERE guard." })
+              .option("write", { type: "boolean", default: false, describe: "Explicitly allow SQL writes. Queries, optimizer hints, and query settings do not require this flag. Does not bypass the DELETE/UPDATE without WHERE guard." })
               .option("with-schema", { type: "boolean", default: false, describe: "Attach table schema (columns) to the response for context" })
               .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
               .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })
