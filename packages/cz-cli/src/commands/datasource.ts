@@ -339,6 +339,65 @@ export async function checkCdcPrereqs(
 }
 
 // ---------------------------------------------------------------------------
+// Secret masking
+// ---------------------------------------------------------------------------
+// `datasource list` echoes connectionParams, which carries credential material
+// (OSS/S3 access keys, database passwords, tokens) — sometimes as a JSON-encoded
+// string, sometimes with credentials inline in a JDBC URL. Values are masked by
+// default; --show-secrets is the only path to plaintext.
+const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|api_?key|access_?key|private_?key)/i
+// ak/sk only count as a standalone segment (`ak`, `oss_sk`, `ak-id`, `ossAk`, `akId`) so
+// words that merely contain the letters (`task`, `disk`, `skip`) stay readable.
+const AK_SK_PATTERN = /(^|[_\-.])(ak|sk|AK|SK)([_\-.]|$)|[a-z0-9](Ak|AK|Sk|SK)([A-Z_\-.]|$)|^(ak|sk)[A-Z]/
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || AK_SK_PATTERN.test(key)
+}
+
+/**
+ * Replace credential values with '********' while keeping every field visible.
+ * Empty/null values stay as-is so a real empty credential remains
+ * distinguishable from NULL in text output.
+ */
+export function maskSecrets(value: unknown): unknown {
+  if (typeof value === "string") return maskSecretString(value)
+  if (value === null || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(maskSecrets)
+  const masked: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    masked[key] = isSecretKey(key) && val !== null && val !== undefined && val !== ""
+      ? "********"
+      : maskSecrets(val)
+  }
+  return masked
+}
+
+/**
+ * Mask credentials inside connection strings: URL userinfo passwords
+ * (`postgresql://user:x@host`), query params (`jdbc:...?password=x&useSSL=true`) and
+ * SQL Server-style `;`-separated properties (`jdbc:sqlserver://h;user=u;password=x`).
+ */
+function maskSecretString(value: string): string {
+  if (value.startsWith("{")) {
+    const parsed = tryParseJsonObject(value)
+    if (parsed !== undefined) return JSON.stringify(maskSecrets(parsed))
+  }
+  return value
+    .replace(/([a-z][\w+.-]*:\/\/[^/:@\s]*):[^@/?#\s]+@/gi, "$1:********@")
+    .replace(/([?&;])([^=&;?]+)=[^&;]*/g, (param, sep: string, key: string) =>
+      isSecretKey(key) ? `${sep}${key}=********` : param)
+}
+
+function tryParseJsonObject(value: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed !== null && typeof parsed === "object" ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
@@ -353,7 +412,12 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .option("name", { type: "string", describe: "Filter by name (fuzzy)" })
             .option("type", { type: "string", describe: `Filter by type: ${Object.keys(DS_TYPE_MAP).join(", ")}` })
             .option("page", { type: "number", default: 1, describe: "Page number" })
-            .option("page-size", { type: "number", default: 20, describe: "Items per page" }),
+            .option("page-size", { type: "number", default: 20, describe: "Items per page" })
+            .option("show-secrets", {
+              type: "boolean",
+              default: false,
+              describe: "Show plaintext values of sensitive fields (access keys, passwords, tokens) in connection params. Applies to this invocation only; it is never persisted. The output may contain credentials — do not share it.",
+            }),
         async (argv) => {
           const format = argv.format
           const t0 = Date.now()
@@ -372,7 +436,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               name: ds.dsName ?? ds.name,
               type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
               status: ds.status,
-              connectionParams: ds.connectionParams,
+              connectionParams: argv["show-secrets"] ? ds.connectionParams : maskSecrets(ds.connectionParams),
               testFailedReason:ds.testFailedReason
             }))
             logOperation("datasource list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })

@@ -1,0 +1,140 @@
+import { describe, expect, test } from "bun:test"
+
+/**
+ * `datasource list` echoes connectionParams, which for OSS/S3 carries
+ * access_key_id/access_key_secret and for databases carries passwords/tokens —
+ * sometimes as a JSON-encoded string or inline in a JDBC URL. The default output
+ * must keep every field but replace credential values with '********';
+ * --show-secrets is the only path to plaintext (covered end-to-end in
+ * datasource-list-secrets.test.ts).
+ */
+// integration-sync-vc.test.ts globally mocks "../src/commands/datasource.js";
+// the "?real" query fetches an unmocked copy (same guard as datasource-resolve.test.ts).
+const { maskSecrets } = await import("../src/commands/datasource.ts?real")
+
+describe("maskSecrets", () => {
+  test("masks OSS access keys but keeps endpoint/bucket readable", () => {
+    const masked = maskSecrets({
+      access_key_id: "{{SECRET_nu8fmark}}",
+      access_key_secret: "fake-sk-value",
+      endpoint: "oss-cn-hangzhou.example.com",
+      bucket: "my-bucket",
+    }) as Record<string, unknown>
+    expect(masked.access_key_id).toBe("********")
+    expect(masked.access_key_secret).toBe("********")
+    expect(masked.endpoint).toBe("oss-cn-hangzhou.example.com")
+    expect(masked.bucket).toBe("my-bucket")
+  })
+
+  test("masks camelCase, ak/sk, password and token keys; leaves username/host/port alone", () => {
+    const masked = maskSecrets({
+      accessKeyId: "{{SECRET_kf18vs2l}}",
+      secretAccessKey: "{{SECRET_3owkrqvn}}",
+      ak: "{{SECRET_bms7gq2x}}",
+      sk: "{{SECRET_ja0spdbt}}",
+      password: "fake-password",
+      api_token: "fake-token",
+      privateKey: "-----BEGIN...",
+      username: "dbuser",
+      host: "rm-bp.example.com",
+      port: 3306,
+    }) as Record<string, unknown>
+    expect(masked.accessKeyId).toBe("********")
+    expect(masked.secretAccessKey).toBe("********")
+    expect(masked.ak).toBe("********")
+    expect(masked.sk).toBe("********")
+    expect(masked.password).toBe("********")
+    expect(masked.api_token).toBe("********")
+    expect(masked.privateKey).toBe("********")
+    expect(masked.username).toBe("dbuser")
+    expect(masked.host).toBe("rm-bp.example.com")
+    expect(masked.port).toBe(3306)
+  })
+
+  test("recurses into nested objects and arrays", () => {
+    const masked = maskSecrets({
+      auth: { token: "fake-token", mode: "basic" },
+      brokers: [{ user: "u", password: "fake-password" }, "kafka-1.example.com:9092"],
+    }) as { auth: Record<string, unknown>; brokers: unknown[] }
+    expect(masked.auth.token).toBe("********")
+    expect(masked.auth.mode).toBe("basic")
+    expect((masked.brokers[0] as Record<string, unknown>).password).toBe("********")
+    expect((masked.brokers[0] as Record<string, unknown>).user).toBe("u")
+    expect(masked.brokers[1]).toBe("kafka-1.example.com:9092")
+  })
+
+  test("masks a JSON-encoded params string, passes plain strings through", () => {
+    const masked = maskSecrets('{"access_key_id":"{{SECRET_nu8fmark}}","access_key_secret":"{{SECRET_ja0spdbt}}","bucket":"b"}')
+    expect(masked).toBe('{"access_key_id":"********","access_key_secret":"********","bucket":"b"}')
+    expect(maskSecrets("oss://plain-endpoint")).toBe("oss://plain-endpoint")
+    expect(maskSecrets("{not json")).toBe("{not json")
+  })
+
+  test("masks passwords embedded in jdbcUrl query params, keeps other params", () => {
+    const masked = maskSecrets({
+      password: "fake-password",
+      username: "root",
+      jdbcUrl: "jdbc:mysql://rm-bp.example.com:3306/db?password={{SECRET_he4dtjc9}}&useSSL=false&serverTimezone=UTC",
+    }) as Record<string, unknown>
+    expect(masked.password).toBe("********")
+    expect(masked.username).toBe("root")
+    expect(masked.jdbcUrl).toBe("jdbc:mysql://rm-bp.example.com:3306/db?password=********&useSSL=false&serverTimezone=UTC")
+    expect(maskSecrets("jdbc:clickzetta://inst.example.com/ws?password={{SECRET_he4dtjc9}}&user=u")).toBe(
+      "jdbc:clickzetta://inst.example.com/ws?password=********&user=u")
+    expect(maskSecrets("jdbc:mysql://host.example.com:3306/db?useSSL=false")).toBe(
+      "jdbc:mysql://host.example.com:3306/db?useSSL=false")
+  })
+
+  test("masks snake_case, kebab and camelCase ak/sk keys without hitting task/disk/skip", () => {
+    const masked = maskSecrets({
+      oss_ak: "{{SECRET_bms7gq2x}}",
+      oss_sk: "{{SECRET_ja0spdbt}}",
+      ak_id: "{{SECRET_kf18vs2l}}",
+      "sk-secret": "{{SECRET_3owkrqvn}}",
+      ossAk: "{{SECRET_bms7gq2x}}",
+      ossSK: "{{SECRET_ja0spdbt}}",
+      akId: "{{SECRET_kf18vs2l}}",
+      AK: "{{SECRET_bms7gq2x}}",
+      task: "sync",
+      diskSize: 10,
+      skipHeader: true,
+    }) as Record<string, unknown>
+    for (const key of ["oss_ak", "oss_sk", "ak_id", "sk-secret", "ossAk", "ossSK", "akId", "AK"])
+      expect(masked[key]).toBe("********")
+    expect(masked.task).toBe("sync")
+    expect(masked.diskSize).toBe(10)
+    expect(masked.skipHeader).toBe(true)
+  })
+
+  test("masks pwd keys and PWD connection-string params", () => {
+    const masked = maskSecrets({ pwd: "fake-password", PWD: "fake-password", user: "u" }) as Record<string, unknown>
+    expect(masked.pwd).toBe("********")
+    expect(masked.PWD).toBe("********")
+    expect(masked.user).toBe("u")
+    expect(maskSecrets("jdbc:mysql://h.example.com/db?user=u&PWD={{SECRET_he4dtjc9}}")).toBe(
+      "jdbc:mysql://h.example.com/db?user=u&PWD=********")
+  })
+
+  test("masks SQL Server ';'-separated JDBC properties", () => {
+    expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u;password={{SECRET_he4dtjc9}}")).toBe(
+      "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u;password=********")
+    expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;password={{SECRET_he4dtjc9}};encrypt=true")).toBe(
+      "jdbc:sqlserver://h.example.com:1433;password=********;encrypt=true")
+  })
+
+  test("masks passwords in URL userinfo but keeps the username", () => {
+    expect(maskSecrets("postgresql://u:{{SECRET_he4dtjc9}}@h.example.com:5432/db")).toBe(
+      "postgresql://u:********@h.example.com:5432/db")
+    expect(maskSecrets("jdbc:postgresql://u:{{SECRET_he4dtjc9}}@h.example.com:5432/db?sslmode=require")).toBe(
+      "jdbc:postgresql://u:********@h.example.com:5432/db?sslmode=require")
+    expect(maskSecrets("mongodb://u@h.example.com:27017/db")).toBe("mongodb://u@h.example.com:27017/db")
+    expect(maskSecrets("jdbc:mysql://h.example.com:3306/db")).toBe("jdbc:mysql://h.example.com:3306/db")
+  })
+
+  test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
+    const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
+    expect(masked.access_key_id).toBe("")
+    expect(masked.access_key_secret).toBeNull()
+    expect(maskSecrets(undefined)).toBeUndefined()
+  })
+})
