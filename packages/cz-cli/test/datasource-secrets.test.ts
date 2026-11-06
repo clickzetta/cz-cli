@@ -115,6 +115,22 @@ describe("maskSecrets", () => {
       "jdbc:mysql://h.example.com/db?user=u&PWD=********")
   })
 
+  test("masks SQL Server ';'-separated JDBC properties", () => {
+    expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u;password={{SECRET_he4dtjc9}}")).toBe(
+      "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u;password=********")
+    expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;password={{SECRET_he4dtjc9}};encrypt=true")).toBe(
+      "jdbc:sqlserver://h.example.com:1433;password=********;encrypt=true")
+  })
+
+  test("masks passwords in URL userinfo but keeps the username", () => {
+    expect(maskSecrets("postgresql://u:{{SECRET_he4dtjc9}}@h.example.com:5432/db")).toBe(
+      "postgresql://u:********@h.example.com:5432/db")
+    expect(maskSecrets("jdbc:postgresql://u:{{SECRET_he4dtjc9}}@h.example.com:5432/db?sslmode=require")).toBe(
+      "jdbc:postgresql://u:********@h.example.com:5432/db?sslmode=require")
+    expect(maskSecrets("mongodb://u@h.example.com:27017/db")).toBe("mongodb://u@h.example.com:27017/db")
+    expect(maskSecrets("jdbc:mysql://h.example.com:3306/db")).toBe("jdbc:mysql://h.example.com:3306/db")
+  })
+
   test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
     const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
     expect(masked.access_key_id).toBe("")

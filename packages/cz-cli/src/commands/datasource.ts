@@ -372,14 +372,20 @@ export function maskSecrets(value: unknown): unknown {
   return masked
 }
 
-/** Mask credential query params inside connection strings (`jdbc:...?password=x&useSSL=true`). */
+/**
+ * Mask credentials inside connection strings: URL userinfo passwords
+ * (`postgresql://user:x@host`), query params (`jdbc:...?password=x&useSSL=true`) and
+ * SQL Server-style `;`-separated properties (`jdbc:sqlserver://h;user=u;password=x`).
+ */
 function maskSecretString(value: string): string {
   if (value.startsWith("{")) {
     const parsed = tryParseJsonObject(value)
     if (parsed !== undefined) return JSON.stringify(maskSecrets(parsed))
   }
-  return value.replace(/([?&])([^=&]+)=[^&]*/g, (param, sep: string, key: string) =>
-    isSecretKey(key) ? `${sep}${key}=********` : param)
+  return value
+    .replace(/([a-z][\w+.-]*:\/\/[^/:@\s]*):[^@/?#\s]+@/gi, "$1:********@")
+    .replace(/([?&;])([^=&;?]+)=[^&;]*/g, (param, sep: string, key: string) =>
+      isSecretKey(key) ? `${sep}${key}=********` : param)
 }
 
 function tryParseJsonObject(value: string): unknown {
