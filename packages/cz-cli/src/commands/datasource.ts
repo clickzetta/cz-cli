@@ -345,7 +345,14 @@ export async function checkCdcPrereqs(
 // (OSS/S3 access keys, database passwords, tokens) — sometimes as a JSON-encoded
 // string, sometimes with credentials inline in a JDBC URL. Values are masked by
 // default; --show-secrets is the only path to plaintext.
-const SECRET_KEY_PATTERN = /(password|passwd|secret|token|api_?key|access_?key|private_?key|\bak\b|\bsk\b)/i
+const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|api_?key|access_?key|private_?key)/i
+// ak/sk only count as a standalone segment (`ak`, `oss_sk`, `ak-id`, `ossAk`, `akId`) so
+// words that merely contain the letters (`task`, `disk`, `skip`) stay readable.
+const AK_SK_PATTERN = /(^|[_\-.])(ak|sk|AK|SK)([_\-.]|$)|[a-z0-9](Ak|AK|Sk|SK)([A-Z_\-.]|$)|^(ak|sk)[A-Z]/
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || AK_SK_PATTERN.test(key)
+}
 
 /**
  * Replace credential values with '********' while keeping every field visible.
@@ -358,7 +365,7 @@ export function maskSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(maskSecrets)
   const masked: Record<string, unknown> = {}
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-    masked[key] = SECRET_KEY_PATTERN.test(key) && val !== null && val !== undefined && val !== ""
+    masked[key] = isSecretKey(key) && val !== null && val !== undefined && val !== ""
       ? "********"
       : maskSecrets(val)
   }
@@ -372,7 +379,7 @@ function maskSecretString(value: string): string {
     if (parsed !== undefined) return JSON.stringify(maskSecrets(parsed))
   }
   return value.replace(/([?&])([^=&]+)=[^&]*/g, (param, sep: string, key: string) =>
-    SECRET_KEY_PATTERN.test(key) ? `${sep}${key}=********` : param)
+    isSecretKey(key) ? `${sep}${key}=********` : param)
 }
 
 function tryParseJsonObject(value: string): unknown {

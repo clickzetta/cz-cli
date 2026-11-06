@@ -85,6 +85,36 @@ describe("maskSecrets", () => {
       "jdbc:mysql://host.example.com:3306/db?useSSL=false")
   })
 
+  test("masks snake_case, kebab and camelCase ak/sk keys without hitting task/disk/skip", () => {
+    const masked = maskSecrets({
+      oss_ak: "{{SECRET_bms7gq2x}}",
+      oss_sk: "{{SECRET_ja0spdbt}}",
+      ak_id: "{{SECRET_kf18vs2l}}",
+      "sk-secret": "{{SECRET_3owkrqvn}}",
+      ossAk: "{{SECRET_bms7gq2x}}",
+      ossSK: "{{SECRET_ja0spdbt}}",
+      akId: "{{SECRET_kf18vs2l}}",
+      AK: "{{SECRET_bms7gq2x}}",
+      task: "sync",
+      diskSize: 10,
+      skipHeader: true,
+    }) as Record<string, unknown>
+    for (const key of ["oss_ak", "oss_sk", "ak_id", "sk-secret", "ossAk", "ossSK", "akId", "AK"])
+      expect(masked[key]).toBe("********")
+    expect(masked.task).toBe("sync")
+    expect(masked.diskSize).toBe(10)
+    expect(masked.skipHeader).toBe(true)
+  })
+
+  test("masks pwd keys and PWD connection-string params", () => {
+    const masked = maskSecrets({ pwd: "fake-password", PWD: "fake-password", user: "u" }) as Record<string, unknown>
+    expect(masked.pwd).toBe("********")
+    expect(masked.PWD).toBe("********")
+    expect(masked.user).toBe("u")
+    expect(maskSecrets("jdbc:mysql://h.example.com/db?user=u&PWD={{SECRET_he4dtjc9}}")).toBe(
+      "jdbc:mysql://h.example.com/db?user=u&PWD=********")
+  })
+
   test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
     const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
     expect(masked.access_key_id).toBe("")
