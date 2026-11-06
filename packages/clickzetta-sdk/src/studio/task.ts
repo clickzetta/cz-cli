@@ -504,6 +504,23 @@ export function checkCdcTables(config: StudioConfig, pipelineId: number, workspa
 }
 
 
+export interface TableSyncStatusTarget {
+  schema: string
+  table: string
+}
+
+/**
+ * Per target / source table sync status of a multi-table realtime task, from rocket
+ * `table/syncStatus` (the backend of OpenAPI `getTableSyncStatus`). Rocket only checks the tenant.
+ */
+export function getTableSyncStatus(config: StudioConfig, taskPipelineId: number, targetTables?: TableSyncStatusTarget[]) {
+  return studioRequest(
+    config,
+    `/clickzetta-rocket/api/v1/ops/inner/table/syncStatus?tenantId=${config.tenantId}`,
+    { taskPipelineId, ...(targetTables?.length ? { targetTables } : {}) },
+  )
+}
+
 /** Take a realtime pipeline task offline (back to draft, offlines table mappings).
  *  fileId is sent as a number to match the Studio backend (timelyTask/pipeline/offline). */
 export function offlineCdcTask(config: StudioConfig, fileId: number, updateBy: string) {

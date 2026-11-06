@@ -14,6 +14,8 @@ import {
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
   saveCdcTask,
+  getTableSyncStatus,
+  openApiRequest,
   startCdcTask,
   stopCdcTask,
   getCdcTaskRunStatus,
@@ -557,6 +559,65 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
             format,
             aiMessage: `CDC pipeline ${fileId} taken offline (back to draft).`,
           })
+        } catch (err) {
+          reportTaskError(err, format)
+        }
+      },
+    )
+    .command(
+      "sync-status <task>",
+      "Per target / source table sync progress of a multi-table CDC pipeline (rocket table/syncStatus)",
+      (y) =>
+        y
+          .positional("task", { type: "string", demandOption: true, describe: "Multi-table CDC pipeline task name or ID (fileType 281)" })
+          .option("tables", { type: "string", describe: "Comma-separated target tables as schema.table (default: all)" }),
+      async (argv) => {
+        const format = argv.format
+        try {
+          const sc = await ctx(argv)
+          const fileId = await resolveCdcPipelineId(sc, argv.task as string, format)
+          const targets = argv.tables
+            ? String(argv.tables).split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
+                const dot = s.indexOf(".")
+                if (dot <= 0 || dot === s.length - 1) handledError("INVALID_ARGUMENTS", `--tables entry '${s}' must be schema.table`, { format })
+                return { schema: s.slice(0, dot), table: s.slice(dot + 1) }
+              })
+            : undefined
+          const resp = await getTableSyncStatus(sc, fileId, targets)
+          logOperation("task cdc sync-status", { ok: true })
+          success({ task_id: fileId, server_time: Date.now(), status: resp.data }, { format })
+        } catch (err) {
+          reportTaskError(err, format)
+        }
+      },
+    )
+    .command(
+      "openapi <path>",
+      "Call a read-only realtime OpenAPI v2 endpoint (get*/list*/fetch* under /openapi/v2/realtime or /openapi/v2/di) signed with the AccessKey in CZ_OPENAPI_AK / CZ_OPENAPI_SK",
+      (y) =>
+        y
+          .positional("path", { type: "string", demandOption: true, describe: "e.g. /openapi/v2/realtime/getTableSyncStatus" })
+          .option("body", { type: "string", default: "{}", describe: "JSON request body" }),
+      async (argv) => {
+        const format = argv.format
+        try {
+          const path = String(argv.path)
+          if (!/^\/openapi\/v2\/(realtime|di)\/(get|list|fetch)[A-Za-z]*$/.test(path)) {
+            error("INVALID_ARGUMENTS", "Only read-only get*/list*/fetch* endpoints under /openapi/v2/realtime or /openapi/v2/di are allowed.", { format, exitCode: 2 }); return
+          }
+          const accessKey = process.env.CZ_OPENAPI_AK
+          const secretKey = process.env.CZ_OPENAPI_SK
+          if (!accessKey || !secretKey) {
+            error("INVALID_ARGUMENTS", "Set CZ_OPENAPI_AK and CZ_OPENAPI_SK to your own AccessKey before calling OpenAPI.", { format, exitCode: 2 }); return
+          }
+          let body: unknown
+          try { body = JSON.parse(String(argv.body)) } catch {
+            error("INVALID_ARGUMENTS", "--body is not valid JSON.", { format, exitCode: 2 }); return
+          }
+          const sc = await ctx(argv)
+          const resp = await openApiRequest(sc.baseUrl, path, body, { accessKey, secretKey })
+          logOperation("task cdc openapi", { ok: resp.status === 200 })
+          success({ path, http_status: resp.status, response: resp.body }, { format })
         } catch (err) {
           reportTaskError(err, format)
         }
