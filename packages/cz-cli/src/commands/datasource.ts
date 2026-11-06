@@ -399,7 +399,12 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .option("name", { type: "string", describe: "Filter by name (fuzzy)" })
             .option("type", { type: "string", describe: `Filter by type: ${Object.keys(DS_TYPE_MAP).join(", ")}` })
             .option("page", { type: "number", default: 1, describe: "Page number" })
-            .option("page-size", { type: "number", default: 20, describe: "Items per page" }),
+            .option("page-size", { type: "number", default: 20, describe: "Items per page" })
+            .option("show-secrets", {
+              type: "boolean",
+              default: false,
+              describe: "Show plaintext values of sensitive fields (access keys, passwords, tokens) in connection params. Applies to this invocation only; it is never persisted. The output may contain credentials — do not share it.",
+            }),
         async (argv) => {
           const format = argv.format
           const t0 = Date.now()
@@ -418,7 +423,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               name: ds.dsName ?? ds.name,
               type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
               status: ds.status,
-              connectionParams: maskSecrets(ds.connectionParams),
+              connectionParams: argv["show-secrets"] ? ds.connectionParams : maskSecrets(ds.connectionParams),
               testFailedReason:ds.testFailedReason
             }))
             logOperation("datasource list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })

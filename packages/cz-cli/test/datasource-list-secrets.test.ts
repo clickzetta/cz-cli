@@ -75,4 +75,21 @@ describe("datasource list secret masking", () => {
     expect(r.output).not.toContain(OSS_SK)
     expect(r.output).not.toContain(MYSQL_PW)
   })
+
+  test("--show-secrets reveals plaintext without confirmation", async () => {
+    const r = await execute("datasource list --show-secrets")
+    expect(r.exitCode).toBe(0)
+    const data = json(r).data as Record<string, unknown>[]
+    const oss = data[0]!.connectionParams as Record<string, unknown>
+    expect(oss.access_key_id).toBe(OSS_AK)
+    expect(oss.access_key_secret).toBe(OSS_SK)
+    expect(oss.endpoint).toBe("oss-cn-hangzhou.example.com")
+  })
+
+  test("--show-secrets works with --format text", async () => {
+    const r = await execute("datasource list --format text --show-secrets")
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain(OSS_SK)
+    expect(r.output).not.toContain("********")
+  })
 })
