@@ -339,6 +339,52 @@ export async function checkCdcPrereqs(
 }
 
 // ---------------------------------------------------------------------------
+// Secret masking
+// ---------------------------------------------------------------------------
+// `datasource list` echoes connectionParams, which carries credential material
+// (OSS/S3 access keys, database passwords, tokens) — sometimes as a JSON-encoded
+// string, sometimes with credentials inline in a JDBC URL. Values are masked by
+// default; --show-secrets is the only path to plaintext.
+const SECRET_KEY_PATTERN = /(password|passwd|secret|token|api_?key|access_?key|private_?key|\bak\b|\bsk\b)/i
+
+/**
+ * Replace credential values with '********' while keeping every field visible.
+ * Empty/null values stay as-is so a real empty credential remains
+ * distinguishable from NULL in text output.
+ */
+export function maskSecrets(value: unknown): unknown {
+  if (typeof value === "string") return maskSecretString(value)
+  if (value === null || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(maskSecrets)
+  const masked: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    masked[key] = SECRET_KEY_PATTERN.test(key) && val !== null && val !== undefined && val !== ""
+      ? "********"
+      : maskSecrets(val)
+  }
+  return masked
+}
+
+/** Mask credential query params inside connection strings (`jdbc:...?password=x&useSSL=true`). */
+function maskSecretString(value: string): string {
+  if (value.startsWith("{")) {
+    const parsed = tryParseJsonObject(value)
+    if (parsed !== undefined) return JSON.stringify(maskSecrets(parsed))
+  }
+  return value.replace(/([?&])([^=&]+)=[^&]*/g, (param, sep: string, key: string) =>
+    SECRET_KEY_PATTERN.test(key) ? `${sep}${key}=********` : param)
+}
+
+function tryParseJsonObject(value: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed !== null && typeof parsed === "object" ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
