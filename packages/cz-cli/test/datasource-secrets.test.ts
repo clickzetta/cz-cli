@@ -5,8 +5,8 @@ import { describe, expect, test } from "bun:test"
  * access_key_id/access_key_secret and for databases carries passwords/tokens —
  * sometimes as a JSON-encoded string or inline in a JDBC URL. The default output
  * must keep every field but replace credential values with '********';
- * --show-secrets is the only path to plaintext (covered by the execute() tests
- * at the bottom of this file).
+ * --show-secrets is the only path to plaintext (covered end-to-end in
+ * datasource-list-secrets.test.ts).
  */
 // integration-sync-vc.test.ts globally mocks "../src/commands/datasource.js";
 // the "?real" query fetches an unmocked copy (same guard as datasource-resolve.test.ts).
