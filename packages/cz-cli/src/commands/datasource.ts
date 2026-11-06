@@ -418,7 +418,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               name: ds.dsName ?? ds.name,
               type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
               status: ds.status,
-              connectionParams: ds.connectionParams,
+              connectionParams: maskSecrets(ds.connectionParams),
               testFailedReason:ds.testFailedReason
             }))
             logOperation("datasource list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
