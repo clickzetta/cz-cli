@@ -876,7 +876,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           (y) =>
             y
               .positional("statement", { type: "string", describe: "SQL statement to execute" })
-              .option("write", { type: "boolean", default: false, describe: "Explicitly allow SQL writes and settings that change SQL lexing. Queries, optimizer hints, and other query settings do not require this flag. Does not bypass the DELETE/UPDATE without WHERE guard." })
+              .option("write", { type: "boolean", default: false, describe: "Explicitly allow SQL writes, settings that change SQL lexing, and tokens the local check cannot follow ($$ quotes, #, stray \\ or */). Queries, optimizer hints, and other query settings do not require this flag. Does not bypass the DELETE/UPDATE without WHERE guard." })
               .option("with-schema", { type: "boolean", default: false, describe: "Attach table schema (columns) to the response for context" })
               .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
               .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })
