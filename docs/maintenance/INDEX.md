@@ -9,9 +9,13 @@
 
 ## 启用门槛
 
-维护代码与 docs 必须先合入 `main`。更新 `origin/main` 后，确认其包含本版 `AGENTS.md`、docs 和维护工具；新任务从该精确 SHA 创建 worktree，实施者与审查者读取各自 worktree 内相同版本的规则。
+本地试跑使用已提交且干净的控制 checkout，无需先合入 `main`。将其绝对路径写入本机 `config.json.native.maintenanceRoot`；三个循环以及实施、审查子 Agent 统一读取这里的 `AGENTS.md`、docs 和维护工具。每项任务记录控制 checkout 的 `policySha`，期间保持该版本不变。
 
-启用前由用户提供本机 URL、key 与认证方式，核对来源范围和外部授权。凭据不写进提示词或仓库。先在仓库根目录运行：
+启动时显式进入该目录，核对工作区干净且 `HEAD` 等于本机配置的 `native.policySha`；路径配置不会自动切换 Claude 的工作目录。子 Agent 从控制会话派出，将源码 worktree 作为明确路径传入。
+
+新修复的代码 worktree 仍从更新后的 `origin/main` 精确 SHA 创建；源码基线与维护规则版本分别记录。任务 worktree 即使尚不含新 docs，也不能退回其中旧版维护规则。后续团队部署时可将维护改动合入 `main`，本地试跑不依赖 PR。
+
+启用前由用户提供本机 URL、key 与认证方式，核对来源范围和外部授权，并验证一次模型连接与有边界的首轮任务。凭据不写进提示词或仓库。先在控制 checkout 根目录运行：
 
 ```sh
 bun scripts/maintenance.ts init
@@ -22,7 +26,7 @@ bun scripts/maintenance.ts status
 
 ## 三个会话
 
-在仓库根目录的三个终端中分别运行下列命令。每次启动或恢复维护会话都携带相同的 `--settings`，不修改仓库或用户级记忆开关。以下 `5m` 为示例间隔。
+在控制 checkout 根目录的三个终端中分别运行下列命令。每次启动或恢复维护会话都携带相同的 `--settings`，不修改仓库或用户级记忆开关。以下 `5m` 为示例间隔。
 
 GitHub：
 
