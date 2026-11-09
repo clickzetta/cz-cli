@@ -121,6 +121,20 @@ for (const sql of [
   })
 }
 
+for (const sql of [
+  "SELECT CASE WHEN a THEN'x' ELSE'y' END FROM t LIMIT 1",
+  "SELECT * FROM t WHERE s LIKE'%a%' LIMIT 1",
+  'SELECT 1 AS"x"',
+  "SELECT DATE'2020-01-01', TIMESTAMP'2020-01-01 00:00:00', INTERVAL'1'DAY",
+  "SELECT x'ff', N'abc', e.name FROM t e LIMIT 1",
+]) {
+  test(`ordinary literals adjacent to words need no approval: ${sql}`, async () => {
+    const result = await execute("sql", [sql, "--sync"])
+    expect(result.exitCode).toBe(0)
+    expect(submitted.length).toBeGreaterThan(0)
+  })
+}
+
 test("explicit approval submits SQL with lexical settings", async () => {
   const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.string.literal.escape.mode=quote", "--write"])
   expect(result.exitCode).toBe(0)

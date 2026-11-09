@@ -64,8 +64,11 @@ export function scanSql(sql: string) {
       continue
     }
     if (char === "'" || char === '"' || char === "`") {
-      // Prefixed literals such as r'...' may use other escape rules.
-      if (char !== "`" && /\w/.test(sql[i - 1] ?? "")) unmodeled ??= "Prefixed string literal is unsupported"
+      // Raw r'...' and escape e'...' literals use other backslash rules. Match only a
+      // standalone prefix so DATE'...', THEN'x', N'...' and x'..' stay modeled.
+      if (char !== "`" && /^[rReE]$/.test(sql[i - 1] ?? "") && !/\w/.test(sql[i - 2] ?? "")) {
+        unmodeled ??= "Prefixed string literal is unsupported"
+      }
       quote = char
       text[i] = "?"
       continue
