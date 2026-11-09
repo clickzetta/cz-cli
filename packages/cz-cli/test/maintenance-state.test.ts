@@ -79,6 +79,25 @@ function fixture() {
 }
 
 describe("native maintenance state", () => {
+  test("nightly scope cannot enable generic or stable publication", async () => {
+    const data = fixture()
+    for (const permissions of [
+      { ...data.config.permissions, release: true },
+      { ...data.config.permissions, releaseStable: true },
+    ]) {
+      writeFileSync(path.join(data.directory, "config.json"), JSON.stringify({ ...data.config, permissions }))
+      await expect(readRuntime(data.directory)).rejects.toThrow("permissions must be explicit")
+    }
+    writeFileSync(
+      path.join(data.directory, "config.json"),
+      JSON.stringify({
+        ...data.config,
+        permissions: { ...data.config.permissions, releaseNightly: true, releaseStable: false },
+      }),
+    )
+    expect((await readRuntime(data.directory)).config.permissions.releaseNightly).toBe(true)
+  })
+
   test("adopts all legacy tasks, preserving permissions, cursors, IDs and worktrees", async () => {
     const data = fixture()
     const originalState = readFileSync(path.join(data.directory, "state.json"), "utf8")

@@ -1,5 +1,7 @@
 import { findTask, initializeRuntime, loadRuntime, registerTask, saveTask } from "./maintenance/state"
 import { readReceipts, reply } from "./maintenance/reply"
+import { mergePullRequest, readMergeReceipts } from "./maintenance/merge"
+import { readNightlyReceipts, reconcileNightlyRelease, releaseNightly } from "./maintenance/release"
 
 export async function main(args = Bun.argv.slice(2)) {
   const runtime = await loadRuntime()
@@ -43,6 +45,8 @@ export async function main(args = Bun.argv.slice(2)) {
         messageId: receipt.messageId,
         file: receipt.file,
       })),
+      merges: await readMergeReceipts(runtime.directory),
+      nightly: await readNightlyReceipts(runtime.directory),
     }
   }
   if ((action === "register" || action === "save") && args.length === 2) {
@@ -55,6 +59,27 @@ export async function main(args = Bun.argv.slice(2)) {
     if (!task) throw new Error(`Unknown task or source: ${args[1]}`)
     return task
   }
+  if (action === "merge" && (args.length === 3 || (args.length === 4 && args[3] === "--merge"))) {
+    const task = findTask(runtime.tasks, args[1], runtime.config.repository)
+    if (!task) throw new Error(`Unknown task or source: ${args[1]}`)
+    return mergePullRequest({
+      directory: runtime.directory,
+      config: runtime.config,
+      task,
+      pullRequestNumber: Number(args[2]),
+      merge: args[3] === "--merge",
+    })
+  }
+  if (action === "nightly" && (args.length === 3 || (args.length === 4 && args[3] === "--publish"))) {
+    return releaseNightly({
+      directory: runtime.directory,
+      config: runtime.config,
+      version: args[1],
+      sha: args[2],
+      execute: args[3] === "--publish",
+    })
+  }
+  if (action === "nightly-status" && args.length === 2) return reconcileNightlyRelease(runtime.directory, args[1])
   if (action === "reply") {
     const phase = args[2]
     if (phase !== "接单" && phase !== "阻碍" && phase !== "审查完成" && phase !== "发布完成")
@@ -90,7 +115,7 @@ export async function main(args = Bun.argv.slice(2)) {
     })
   }
   throw new Error(
-    "Use: init | status | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send]",
+    "Use: init | status | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
   )
 }
 

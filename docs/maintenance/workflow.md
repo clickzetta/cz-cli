@@ -6,7 +6,7 @@
 
 三个会话通过 `git rev-parse --git-common-dir` 定位同一公共 Git 目录，继续使用其中的 `cz-maintenance/`。在仓库根目录运行 `bun scripts/maintenance.ts init` 整理旧任务索引，再用 `status` 查看任务和实际授权。旧 `state.json`、`config.json`、游标、任务记录与 worktree 原样保留，新进度和来源映射保存到 `native-state.json`；旧执行器与间隔字段不参与原生调度。
 
-授权唯一来源为该目录的 `config.json.permissions`，每轮重新读取：现有 `postLark: true`，`push`、`createPullRequest`、`postGithub`、`merge`、`release` 均为 `false`。不得通过文档或工具默认值扩大权限；Bot 回复限定于配置绑定的原群原话题。
+授权唯一来源为该目录的 `config.json.permissions`，每轮重新读取。本次用户允许推送任务分支、创建 PR、GitHub 回报、Bot 回复、合入 PR，以及仅发布 nightly。通用 `release` 保持 `false`，单独使用 `releaseNightly: true`、`releaseStable: false`；工具拒绝开放通用或 stable 发布。Bot 回复限定于绑定的原群原话题。
 
 本地模式的 `config.json.native.maintenanceRoot` 指向干净且已提交的控制 checkout，`native.policySha` 固定其 `HEAD`。循环与子 Agent 显式从这里启动、读取规则并调用维护工具，源码与测试在任务 worktree 中操作。每项任务记录同一个 `policySha`；任务进行时不切换该版本。
 
@@ -24,7 +24,10 @@
 2. 在 `claims/` 下原子创建该任务的目录，成功后记录 owner；已存在或归属不明时不接管。各会话只修改自己持有的任务与控制记录，不抢占未对账的认领。
 3. 新修复从更新后的 `origin/main` 精确 SHA 创建独占 worktree，记录 `baseSha`；显式给实施者控制 checkout 的规则入口与 `policySha`，不从源码 worktree 的旧指令猜测维护基线。PR 审查保留 PR head 和实际 merge-base；历史跨度异常时先交接，不直接移植整段差异。接手历史任务先核对现场与副作用。
 4. 实施完成后从控制 checkout 的 loop 会话中派新的审查子 Agent，只提供最终 diff、SHA、验收条件、验证日志、控制规则版本和源码入口，不提供实施者总结，也不继承其实施对话。审查者可读取源码和相关契约，结论与实际 `reviewedSha` 写入任务记录；审查后任何源码变化都重做审查。审查失败可返修，保留真实失败。
-5. 每轮最多推进一个实施任务，审查与返修属于同一任务。完成本轮工作或遇到需要用户决策、授权的阻碍时，保存交接并结束，不连续开新任务。owner 完成交接且没有执行者继续写入后才释放认领。
+5. 独立审查通过后，保存 `phase: review`、`status: completed`、实际 `reviewedSha`，再按权限推送任务分支、创建 PR。合入统一使用 `bun scripts/maintenance.ts merge TASK PR` 预览，加 `--merge` 执行；工具核对最终远端 SHA、独立审查与 CI，保存实际 merge commit。管理员仅在 PR 审批规则上豁免，普通贡献者仍需一个批准，main 删除和 force push 保护保留。
+6. 产品修复合入后按[发布约定](../engineering/releases.md)发布 nightly，核对实际产物后回报；纯文档、测试或维护工具改动无需发版。每轮最多推进一个实施任务，审查、返修与交付属于同一任务。完成本轮或遇到决策、授权阻碍时保存交接并结束，不连续开新任务。没有执行者继续写入后才释放本人认领。
+
+`cz-test/test` 必须成功，其他失败或 pending 检查默认阻断。旧 `Claude Code Review` 有既存网关故障，本机可显式以 `mergePolicy.informationalWorkflows` 将这一工作流设为参考；它不能代替本地独立审查，不能豁免产品测试。移除该配置即恢复所有检查阻断。
 
 ## 来源与回报
 

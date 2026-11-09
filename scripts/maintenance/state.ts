@@ -13,7 +13,10 @@ export type Config = {
     postLark: boolean
     merge: boolean
     release: boolean
+    releaseNightly?: boolean
+    releaseStable?: false
   }
+  mergePolicy?: { informationalWorkflows?: string[] }
   [key: string]: unknown
 }
 
@@ -212,6 +215,7 @@ function saveNative(directory: string, value: NativeState) {
 
 function requireConfig(value: unknown): Config {
   const permissions = record(value) ? value.permissions : undefined
+  const mergePolicy = record(value) ? value.mergePolicy : undefined
   if (
     !record(value) ||
     typeof value.repository !== "string" ||
@@ -224,6 +228,13 @@ function requireConfig(value: unknown): Config {
     (value.lark.chatId !== undefined &&
       (typeof value.lark.chatId !== "string" || !/^oc_[\w-]+$/.test(value.lark.chatId))) ||
     !record(permissions) ||
+    permissions.release !== false ||
+    (permissions.releaseNightly !== undefined && typeof permissions.releaseNightly !== "boolean") ||
+    (permissions.releaseStable !== undefined && permissions.releaseStable !== false) ||
+    (mergePolicy !== undefined &&
+      (!record(mergePolicy) ||
+        !Array.isArray(mergePolicy.informationalWorkflows) ||
+        mergePolicy.informationalWorkflows.some((name) => name !== "Claude Code Review"))) ||
     !["push", "createPullRequest", "postGithub", "postLark", "merge", "release"].every(
       (key) => typeof permissions[key] === "boolean",
     )
