@@ -16,7 +16,7 @@ SQL 维护同时检查 CLI 命令与 SDK 执行链，关注提交、轮询、取
 - 改变服务端词法的设置：`cz.sql.string.literal.escape.mode`、`cz.sql.translation.mode`、`cz.sql.double.quoted.identifiers`，来自 `--set` 或脚本中的 `SET`；以及无法归一为普通点分键的 `SET` 目标。
 - 本地扫描无法跟踪的记号：`$$` 引号、`#`、游离的 `\` 或 `*/`、独立的 `r'…'`/`e'…'` 前缀字符串。
 
-后两类返回 `SQL_READONLY_UNKNOWN`，且 `--dry-run` 直接拒绝。普通查询、优化器 hint（`/*+ … */`）、其他查询设置和无法分类的 SQL 不再因无法识别而要求 `--write`。`--write` 不绕过无 `WHERE` 的 `DELETE`/`UPDATE` 拦截。`--dry-run` 只接受识别为只读的查询。
+后两类返回 `SQL_READONLY_UNKNOWN`；加 `--dry-run` 时改为直接返回 `SQL_NOT_READONLY`。普通查询、优化器 hint（`/*+ … */`）、其他查询设置和无法分类的 SQL 不再因无法识别而要求 `--write`。`--write` 不绕过无 `WHERE` 的 `DELETE`/`UPDATE` 拦截。`--dry-run` 只接受识别为只读的查询。
 
 来源：[检查与审批](../../packages/cz-cli/src/commands/sql.ts) 中的 `validateSqlInput`、[SDK 分类](../../packages/clickzetta-sdk/src/sql/readonly.ts)、[扫描](../../packages/clickzetta-sdk/src/sql/scan.ts)、[CLI 验证](../../packages/cz-cli/test/sql-readonly.test.ts)，引入于 PR #126。
 
