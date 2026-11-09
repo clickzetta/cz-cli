@@ -10,6 +10,7 @@ import { JobStatus, getCurrentUser, DEFAULT_CONNECTION, getToken, listUserWorksp
 import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
+import { identityAttributes } from "../connection/telemetry.js"
 import { AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
@@ -40,11 +41,15 @@ function trackSetup(opts: {
   collected?: Record<string, string | undefined>
   argv?: Record<string, unknown>
 }): Promise<void> {
-  const attrs: Record<string, string> = {}
-  if (opts.userId) attrs["enduser.id"] = String(opts.userId)
-  if (opts.collected?.instance) attrs["instance.name"] = opts.collected.instance
-  if (opts.collected?.workspace) attrs["workspace.name"] = opts.collected.workspace
-  if (opts.collected?.service) attrs["service.url"] = opts.collected.service
+  // Shaped like a profile row on purpose: identityAttributes owns the field -> attribute
+  // mapping so `enduser.id` is spelled in exactly one place. setup cannot use
+  // profileTelemetryAttributes() because it reports the run that CREATES the profile.
+  const attrs = identityAttributes({
+    user_id: opts.userId,
+    instance: opts.collected?.instance,
+    workspace: opts.collected?.workspace,
+    service: opts.collected?.service,
+  })
 
   const args: Record<string, string> = {}
   if (opts.argv) {
@@ -66,7 +71,7 @@ function trackSetup(opts: {
     duration_ms: Date.now() - setupStartMs,
     success: opts.success,
     error: opts.error,
-    resourceAttributes: attrs,
+    identityAttributes: attrs,
   })
 }
 
