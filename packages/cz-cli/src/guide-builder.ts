@@ -253,7 +253,7 @@ export function registerStaticCommands(): void {
   registerCommands([
     { name: "sql", kind: "command", description: "Execute SQL against ClickZetta",
       options: [
-        { flags: "--write", required: false, takes_value: false, help: "Allow writes or unknown SQL only after explicit user approval requested by the CLI" },
+        { flags: "--write", required: false, takes_value: false, help: "Allow SQL writes, lexer-changing settings, or SQL the local check cannot tokenize only after explicit user approval requested by the CLI; queries, optimizer hints, and other settings do not need it" },
         { flags: "-e, --execute", required: false, takes_value: true, help: "SQL string" },
         { flags: "-f, --file", required: false, takes_value: true, help: "Read SQL from file" },
         { flags: "--sync", required: false, takes_value: false, help: "Wait for result" },
