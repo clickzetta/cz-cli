@@ -51,6 +51,12 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectCommands: ["Examples:", "--jdbc-url 'jdbc:clickzetta://instance.service/workspace", "--connection-service service --connection-instance instance", "--connection-workspace workspace --connection-schema public", "--connection-vcluster DEFAULT", "--connection-from-profile", "reads the selected local profile", "sends it to the backend", "global --username/--password authenticate the CLI", "--connection and --body remain available"],
   },
   {
+    args: ["analytics-agent", "datasource", "update", "--help"],
+    expectHeader: "cz-cli analytics-agent datasource update",
+    expectOptions: ["--name", "--connection", "--validate-only"],
+    expectText: ["Partially update", "保留连接和凭据", "不保存修改"],
+  },
+  {
     args: ["analytics-agent", "datasource", "load", "--help"],
     expectHeader: "cz-cli analytics-agent datasource load",
     expectOptions: ["--path", "--table", "--domain-ids"],
@@ -77,6 +83,7 @@ export const agentGatewayHelpCases: HelpCase[] = [
     args: ["analytics-agent", "domain", "update", "--help"],
     expectHeader: "cz-cli analytics-agent domain update",
     expectOptions: ["--sample-questions"],
+    expectText: ["Partially update", "omitted fields retain their values"],
     expectCommands: ["Examples:", "--sample-questions '[\"Q1\"]'"],
   },
   {
@@ -146,8 +153,15 @@ export const agentGatewayHelpCases: HelpCase[] = [
   {
     args: ["analytics-agent", "metric", "update", "--help"],
     expectHeader: "cz-cli analytics-agent metric update",
-    expectOptions: ["--domain-ids", "--datasource-id", "--expression"],
-    expectCommands: ["Examples:", "--domain-ids '[5]'", "--domain-ids '[5,6]'", "如果只更新一个域，就这样写。", "如果要同时更新多个域，就这样写。"],
+    expectOptions: ["--alias", "--description", "--datasource-id", "--expression", "--base-version-id", "--version-description"],
+    expectText: ["只更新别名", "metric update-domains"],
+    forbid: ["--domain-ids"],
+  },
+  {
+    args: ["analytics-agent", "metric", "update-domains", "--help"],
+    expectHeader: "cz-cli analytics-agent metric update-domains",
+    expectOptions: ["--domain-ids"],
+    expectText: ["--domain-ids '[5,6]'", "--domain-ids '[]'", "清空全部分析域绑定"],
   },
   {
     args: ["analytics-agent", "metric", "validate", "--help"],
@@ -166,7 +180,8 @@ export const agentGatewayHelpCases: HelpCase[] = [
     args: ["analytics-agent", "answer-builder", "update", "--help"],
     expectHeader: "cz-cli analytics-agent answer-builder update",
     expectOptions: ["--domain-ids", "--analysis-name", "--datasource-id", "--content-file", "--sql-file", "--body-file"],
-    expectCommands: ["Examples:", "--analysis-name total-sales", "--domain-ids '[5,6]'", "如果只更新一个域，就这样写。", "如果要同时更新多个域，就这样写。"],
+    expectCommands: ["Examples:", "--analysis-desc", "--domain-ids '[]'", "只更新描述", "清空全部分析域绑定"],
+    expectText: ["omitted fields retain their values", "--base-version-id", "--version-description"],
   },
   {
     args: ["analytics-agent", "answer-builder", "list", "--help"],

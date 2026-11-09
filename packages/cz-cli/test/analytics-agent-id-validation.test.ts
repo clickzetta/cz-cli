@@ -525,7 +525,7 @@ describe("analytics-agent id validation", () => {
     ["domain create", ["domain", "create"], "--name"],
     ["domain update", ["domain", "update", "27"], "--name"],
     ["metric create", ["metric", "create", "--table-name", "orders", "--domain-ids", "[5]", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
-    ["metric update", ["metric", "update", "9", "--table-name", "orders", "--domain-ids", "[5]", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
+    ["metric update", ["metric", "update", "9", "--table-name", "orders", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
     ["metric validate", ["metric", "validate", "--table-name", "orders", "--domain-ids", "[5]", "--datasource-id", "3", "--expression", "sum(amount)"], "--name"],
     ["virtual column compile", ["column", "virtual", "compile", "--dataset-id", "1", "--type", "bigint", "--expression", "1"], "--name"],
     ["virtual column set", ["column", "virtual", "set", "--dataset-id", "1", "--type", "bigint", "--expression", "1"], "--name"],
