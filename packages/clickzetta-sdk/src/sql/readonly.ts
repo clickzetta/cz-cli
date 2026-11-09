@@ -38,6 +38,15 @@ export function isReadonlySqlSetting(key: string): boolean {
 }
 
 /**
+ * Settings that change how the server tokenizes SQL. scanSql() models only the
+ * default lexer, so under these its statement boundaries and quoted spans can
+ * differ from what the server executes.
+ */
+export function isLexicalSqlSetting(key: string): boolean {
+  return /^cz\.sql\.(?:string\.literal\.escape|translation)\.mode$/i.test(key)
+}
+
+/**
  * Best-effort accident guard: readonly means a recognized query-shaped string,
  * not proof of valid SQL or absence of UDF/view/external-service side effects.
  * Analyze the entire input after substitution, before executing any statement.

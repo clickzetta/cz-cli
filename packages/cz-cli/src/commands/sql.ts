@@ -1,7 +1,7 @@
 import { requireWriteApproval } from "./write-approval.js"
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { analyzeSql, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
+import { analyzeSql, isLexicalSqlSetting, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput, EXIT_BIZ_ERROR } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
@@ -649,7 +649,7 @@ async function handler(argv: SqlArgs): Promise<void> {
     // Check the entire substituted input before USE validation, EXPLAIN, async,
     // batch, or intermediate statements can submit a job. Splitting is transport
     // behavior and must never disable the guard.
-    if (!validateSqlInput(sql, argv, splitEnabled)) return
+    if (!validateSqlInput(sql, argv, hints, splitEnabled)) return
     const statements = resolveStatements(sql, splitEnabled)
     if (statements.length === 0) {
       error("USAGE_ERROR", "No SQL statements found.", { format, exitCode: 2 }); return
@@ -754,9 +754,32 @@ async function handler(argv: SqlArgs): Promise<void> {
   }
 }
 
-function validateSqlInput(sql: string, argv: SqlArgs, splitEnabled: boolean): boolean {
+function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, string> | undefined, splitEnabled: boolean): boolean {
   const analysis = analyzeSql(sql)
   if (analysis.reason === "No SQL statements found") return true
+  // The local scan assumes the default lexer. A lexical setting from --set or a
+  // script SET can make the server see statements the scan hid inside a string,
+  // so neither the write check nor an EXPLAIN prefix can be trusted under it.
+  const lexical = [
+    ...Object.keys(hints ?? {}),
+    ...analysis.statements.flatMap((item) => item.command.match(/^\s*SET\s+[`'"]?([\w.]+)/i)?.[1] ?? []),
+  ].find(isLexicalSqlSetting)
+  if (lexical && argv["dry-run"]) {
+    error("SQL_NOT_READONLY", "Dry-run does not support settings that change SQL lexing.", {
+      format: argv.format,
+      extra: { reason: `Lexical setting: ${lexical}` },
+    })
+    return false
+  }
+  if (lexical && !argv.write) {
+    requireWriteApproval(argv, {
+      code: "SQL_READONLY_UNKNOWN",
+      message: "SQL with settings that change lexing cannot be checked for writes and requires explicit user approval.",
+      query_kind: "unknown",
+      reason: `Lexical setting: ${lexical}`,
+    })
+    return false
+  }
   if (argv["dry-run"]) {
     if (!splitEnabled && analysis.statements.length > 1) {
       error("SQL_NOT_READONLY", "Dry-run of multiple statements requires sql_split to be enabled.", { format: argv.format })
@@ -843,7 +866,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           (y) =>
             y
               .positional("statement", { type: "string", describe: "SQL statement to execute" })
-              .option("write", { type: "boolean", default: false, describe: "Explicitly allow SQL writes. Queries, optimizer hints, and query settings do not require this flag. Does not bypass the DELETE/UPDATE without WHERE guard." })
+              .option("write", { type: "boolean", default: false, describe: "Explicitly allow SQL writes and settings that change SQL lexing. Queries, optimizer hints, and other query settings do not require this flag. Does not bypass the DELETE/UPDATE without WHERE guard." })
               .option("with-schema", { type: "boolean", default: false, describe: "Attach table schema (columns) to the response for context" })
               .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
               .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })

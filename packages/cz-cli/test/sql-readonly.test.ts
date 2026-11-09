@@ -58,7 +58,6 @@ for (const sql of [
   "SELECT 1; BEGIN SELECT 2; END",
   "SELECT 'unfinished",
   "SELECT 1; /* unfinished",
-  "SET cz.sql.string.literal.escape.mode=quote; SELECT 1",
 ]) {
   test(`unclassified input reaches the backend without write approval: ${sql}`, async () => {
     const result = await execute("sql", [sql])
@@ -66,6 +65,39 @@ for (const sql of [
     expect(submitted.length).toBeGreaterThan(0)
   })
 }
+
+// Under quote escape mode the backslash is literal, so the server ends the string
+// at the second quote and sees a separate DROP that the default-mode scan hides.
+const hiddenDrop = "SELECT '\\'; DROP TABLE t; -- '"
+for (const args of [
+  [hiddenDrop, "--set", "cz.sql.string.literal.escape.mode=quote"],
+  [hiddenDrop, "--set", "cz.sql.translation.mode=mysql"],
+  [`SET cz.sql.string.literal.escape.mode=quote; ${hiddenDrop}`],
+  ["/* c */ SET `cz.sql.string.literal.escape.mode` = 'quote'; SELECT 1"],
+]) {
+  for (const flags of [[], ["--batch"], ["--async"]]) {
+    test(`lexical settings require approval before submission: ${args.join(" ")} ${flags.join(" ")}`, async () => {
+      const result = await execute("sql", [...args, ...flags])
+      expect(result.exitCode).toBe(1)
+      const body = JSON.parse(result.output).error
+      expect(body.code).toBe("SQL_READONLY_UNKNOWN")
+      expect(submitted).toEqual([])
+    })
+  }
+
+  test(`dry-run rejects lexical settings before submission: ${args.join(" ")}`, async () => {
+    const result = await execute("sql", [...args, "--dry-run"])
+    expect(result.exitCode).toBe(1)
+    expect(JSON.parse(result.output).error.code).toBe("SQL_NOT_READONLY")
+    expect(submitted).toEqual([])
+  })
+}
+
+test("explicit approval submits SQL with lexical settings", async () => {
+  const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.string.literal.escape.mode=quote", "--write"])
+  expect(result.exitCode).toBe(0)
+  expect(submittedHints.at(-1)?.["cz.sql.string.literal.escape.mode"]).toBe("quote")
+})
 
 test("checks substituted SQL before executing any statements", async () => {
   const result = await execute("sql", ["SELECT ${value}", "--variable", "value=1; DROP TABLE t"])
@@ -124,10 +156,10 @@ test("reviewed session directives continue to work with leading comments", async
 })
 
 test("query settings reach the backend without write authorization", async () => {
-  const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.translation.mode=mysql"])
+  const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.optimizer.join.type=merge"])
   expect(result.exitCode).toBe(0)
   expect(submitted).toEqual(["SELECT 1\n;"])
-  expect(submittedHints[0]["cz.sql.translation.mode"]).toBe("mysql")
+  expect(submittedHints[0]["cz.sql.optimizer.join.type"]).toBe("merge")
 })
 
 test("recognized queries preserve literals and nested comments when submitted", async () => {
@@ -190,7 +222,7 @@ test("a trailing line comment cannot swallow the LIMIT probe", async () => {
 })
 
 test("unreviewed execution settings disable default-mode SQL rewriting", async () => {
-  const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.translation.mode=mysql"])
+  const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.optimizer.join.type=merge"])
   expect(result.exitCode).toBe(0)
   expect(submitted).toEqual(["SELECT 1\n;"])
 })
@@ -223,7 +255,7 @@ test("write rejection provides a structured user-approval workflow", async () =>
   expect(submitted).toEqual([])
 })
 
-for (const args of [["CALL proc()"], ["SELECT 1", "--set", "cz.sql.translation.mode=mysql"]]) {
+for (const args of [["CALL proc()"], ["SELECT 1", "--set", "cz.sql.optimizer.join.type=merge"]]) {
   test(`unknown SQL/settings do not produce an approval workflow: ${args.join(" ")}`, async () => {
     const result = await execute("sql", args)
     expect(result.exitCode).toBe(0)
@@ -271,7 +303,7 @@ test("approved writes preserve returned result rows", async () => {
 
 test("unreviewed settings preserve the result limit without rewriting SQL", async () => {
   rows = Array.from({ length: 101 }, (_, index) => [index])
-  const result = await execute("sql", ["SELECT * FROM t", "--set", "cz.sql.translation.mode=mysql"])
+  const result = await execute("sql", ["SELECT * FROM t", "--set", "cz.sql.optimizer.join.type=merge"])
   expect(JSON.parse(result.output).error.code).toBe("LIMIT_REQUIRED")
   expect(submitted).toEqual(["SELECT * FROM t\n;"])
   expect(submittedHints[0]["cz.sql.result.row.partial.limit"]).toBe("101")
@@ -303,7 +335,7 @@ test("empty readonly results retain the query output shape", async () => {
 
 test("unknown settings preserve SHOW truncation", async () => {
   rows = Array.from({ length: 101 }, (_, index) => [index])
-  const result = await execute("sql", ["SHOW TABLES", "--set", "cz.sql.translation.mode=mysql"])
+  const result = await execute("sql", ["SHOW TABLES", "--set", "cz.sql.optimizer.join.type=merge"])
   expect(result.exitCode).toBe(0)
   expect(JSON.parse(result.output).rows).toHaveLength(100)
   expect(submitted).toEqual(["SHOW TABLES\n;"])
@@ -319,7 +351,7 @@ test("SET values containing equals preserve the reviewed hint key", async () => 
 test("SELECT with hints and query settings keeps its result bound without write approval", async () => {
   rows = Array.from({ length: 101 }, (_, index) => [index])
   const sql = "SELECT /*+ unknown_hint */ * FROM t"
-  const result = await execute("sql", [sql, "--set", "cz.sql.translation.mode=mysql"])
+  const result = await execute("sql", [sql, "--set", "cz.sql.optimizer.join.type=merge"])
   expect(JSON.parse(result.output).error.code).toBe("LIMIT_REQUIRED")
   expect(submitted).toEqual([`${sql}\n;`])
   expect(submittedHints[0]["cz.sql.result.row.partial.limit"]).toBe("101")
@@ -347,10 +379,10 @@ test("SET query settings containing write keywords do not require write approval
 })
 
 test("dry-run accepts query settings without write approval", async () => {
-  const result = await execute("sql", ["SELECT /*+ unknown_hint */ 1", "--set", "cz.sql.translation.mode=mysql", "--dry-run"])
+  const result = await execute("sql", ["SELECT /*+ unknown_hint */ 1", "--set", "cz.sql.optimizer.join.type=merge", "--dry-run"])
   expect(result.exitCode).toBe(0)
   expect(submitted).toEqual(["EXPLAIN SELECT /*+ unknown_hint */ 1\n;"])
-  expect(submittedHints[0]["cz.sql.translation.mode"]).toBe("mysql")
+  expect(submittedHints[0]["cz.sql.optimizer.join.type"]).toBe("merge")
 })
 
 // A positional plus `--` operands used to return the positional and drop the rest

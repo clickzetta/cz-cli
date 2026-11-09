@@ -2,7 +2,7 @@
  * ClickZetta string scanning, not SQL parsing. Offsets use UTF-16, like slice().
  * Comments become spaces; quoted values become a placeholder plus spaces so a
  * quoted token cannot disappear and expose a different statement prefix.
- * Assumes the default backslash escape mode.
+ * Assumes the default lexer; callers must gate isLexicalSqlSetting() keys.
  */
 export function scanSql(sql: string) {
   const text = sql.split("")

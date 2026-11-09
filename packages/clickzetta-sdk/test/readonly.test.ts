@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { analyzeSql, isReadonlySqlSetting } from "../src/sql/readonly.js"
+import { analyzeSql, isLexicalSqlSetting, isReadonlySqlSetting } from "../src/sql/readonly.js"
 import { splitSql } from "../src/sql/split.js"
 
 const cases = {
@@ -182,6 +182,15 @@ test("long comments and quoted values do not expose keywords", () => {
   expect(analyzeSql(`/*${"/*".repeat(2000)}DROP${"*/".repeat(2000)}*/ SELECT '${"DELETE;".repeat(20000)}'`).kind).toBe(
     "readonly",
   )
+})
+
+test("settings that change lexing are identified", () => {
+  for (const key of ["cz.sql.string.literal.escape.mode", "CZ.SQL.TRANSLATION.MODE"]) {
+    expect(isLexicalSqlSetting(key)).toBe(true)
+  }
+  for (const key of ["cz.sql.timezone", "cz.sql.optimizer.join.type", "cz.sql.remote.udf.lookup.policy"]) {
+    expect(isLexicalSqlSetting(key)).toBe(false)
+  }
 })
 
 test("only reviewed settings are accepted", () => {
