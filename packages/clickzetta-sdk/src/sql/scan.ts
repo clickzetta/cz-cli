@@ -13,6 +13,9 @@ export function scanSql(sql: string) {
   let line = false
   let depth = 0
   let reason: string | undefined
+  // Kept apart from reason, which holds only the first problem: a token outside
+  // the default lexer makes every boundary after it untrustworthy.
+  let unmodeled: string | undefined
 
   for (let i = 0; i < sql.length; i++) {
     const char = sql[i]
@@ -61,6 +64,8 @@ export function scanSql(sql: string) {
       continue
     }
     if (char === "'" || char === '"' || char === "`") {
+      // Prefixed literals such as r'...' may use other escape rules.
+      if (char !== "`" && /\w/.test(sql[i - 1] ?? "")) unmodeled ??= "Prefixed string literal is unsupported"
       quote = char
       text[i] = "?"
       continue
@@ -76,9 +81,11 @@ export function scanSql(sql: string) {
     }
     if (char === "#" || char === "\\" || (char === "*" && next === "/")) {
       reason ??= "Unsupported SQL delimiter"
+      unmodeled ??= "Unsupported SQL delimiter"
     }
-    if (!reason && char === "$" && /^\$(?:[A-Za-z_][\w]*)?\$/.test(sql.slice(i))) {
+    if (!unmodeled && char === "$" && /^\$(?:[A-Za-z_][\w]*)?\$/.test(sql.slice(i))) {
       reason ??= "Dollar-quoted SQL is unsupported"
+      unmodeled = "Dollar-quoted SQL is unsupported"
     }
   }
 
@@ -90,6 +97,7 @@ export function scanSql(sql: string) {
   const uncommented = command.join("")
   return {
     reason,
+    unmodeled,
     statements: boundaries.slice(1).flatMap((end, index) => {
       const start = boundaries[index] + 1
       return end > start

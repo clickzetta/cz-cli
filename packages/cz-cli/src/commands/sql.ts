@@ -773,10 +773,7 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
   // Dollar quotes, "#" and stray "\" or "*/" are tokens the scan does not model;
   // it still splits by the default lexer, so its statement boundaries, and any
   // SET or write hidden behind them, cannot be trusted either.
-  const unmodeled = [analysis.reason, ...analysis.statements.map((item) => item.reason)].find(
-    (reason) => reason === "Dollar-quoted SQL is unsupported" || reason === "Unsupported SQL delimiter",
-  )
-  const lexical = setting !== undefined ? `Lexical setting: ${setting}` : unmodeled
+  const lexical = setting !== undefined ? `Lexical setting: ${setting}` : analysis.unmodeled
   if (lexical && argv["dry-run"]) {
     error("SQL_NOT_READONLY", "Dry-run does not support SQL whose lexing the local check cannot follow.", {
       format: argv.format,

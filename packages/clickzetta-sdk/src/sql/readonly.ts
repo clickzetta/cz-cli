@@ -3,6 +3,8 @@ import { scanSql } from "./scan.js"
 export type SqlCheck = {
   kind: "readonly" | "write" | "session" | "unknown"
   reason?: string
+  /** Set when the input has tokens the default-lexer scan does not model. */
+  unmodeled?: string
   statements: {
     kind: "readonly" | "write" | "session" | "unknown"
     reason?: string
@@ -63,14 +65,14 @@ export function analyzeSql(sql: string): SqlCheck {
       }
     })
   if (scan.reason && !statements.some((item) => item.kind === "write")) {
-    return { kind: "unknown", reason: scan.reason, statements }
+    return { kind: "unknown", reason: scan.reason, unmodeled: scan.unmodeled, statements }
   }
-  if (!statements.length) return { kind: "unknown", reason: "No SQL statements found", statements }
+  if (!statements.length) return { kind: "unknown", reason: "No SQL statements found", unmodeled: scan.unmodeled, statements }
   const issue =
     statements.find((item) => item.kind === "write") ??
     statements.find((item) => item.kind === "unknown") ??
     statements.find((item) => item.kind === "session")
-  return { kind: issue?.kind ?? "readonly", reason: issue?.reason, statements }
+  return { kind: issue?.kind ?? "readonly", reason: issue?.reason, unmodeled: scan.unmodeled, statements }
 }
 
 function classify(text: string): Pick<SqlCheck, "kind" | "reason"> {

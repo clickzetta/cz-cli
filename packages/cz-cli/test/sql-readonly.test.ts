@@ -84,6 +84,11 @@ for (const args of [
   [`SELECT $$'$$; SET cz.sql.string.literal.escape.mode=quote; ${hiddenDrop}`],
   ["SELECT $$'$$; DROP TABLE t; -- '"],
   ["SELECT 1 # '\n; DROP TABLE t; -- '"],
+  // An earlier scan problem must not mask the unmodeled token.
+  ["SELECT 1); SELECT $$ ' $$; DROP TABLE t; --'"],
+  ["SELECT (1;2); SELECT $$ ' $$; DROP TABLE t; --'"],
+  ["SELECT 1); SELECT 2 # '\n; DROP TABLE t; --'"],
+  ["SELECT r'\\'; DROP TABLE t; --'"],
 ]) {
   for (const flags of [[], ["--batch"], ["--async"]]) {
     test(`lexical settings require approval before submission: ${args.join(" ")} ${flags.join(" ")}`, async () => {
