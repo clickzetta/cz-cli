@@ -43,7 +43,7 @@ export function isReadonlySqlSetting(key: string): boolean {
  * differ from what the server executes.
  */
 export function isLexicalSqlSetting(key: string): boolean {
-  return /^cz\.sql\.(?:string\.literal\.escape|translation)\.mode$/i.test(key)
+  return /^cz\.sql\.(?:string\.literal\.escape\.mode|translation\.mode|double\.quoted\.identifiers)$/i.test(key)
 }
 
 /**

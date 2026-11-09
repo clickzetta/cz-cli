@@ -74,6 +74,11 @@ for (const args of [
   [hiddenDrop, "--set", "cz.sql.translation.mode=mysql"],
   [`SET cz.sql.string.literal.escape.mode=quote; ${hiddenDrop}`],
   ["/* c */ SET `cz.sql.string.literal.escape.mode` = 'quote'; SELECT 1"],
+  [`SET \`cz\`.\`sql\`.\`string\`.\`literal\`.\`escape\`.\`mode\`=quote; ${hiddenDrop}`],
+  [`SET cz.sql . string.literal.escape.mode=quote; ${hiddenDrop}`],
+  [`SET cz.sql./**/string.literal.escape.mode=quote; ${hiddenDrop}`],
+  [`SET cz.sql.double.quoted.identifiers=true; SELECT "\\"; DROP TABLE t; --"`],
+  [hiddenDrop, "--set", "`cz.sql.string.literal.escape.mode`=quote"],
 ]) {
   for (const flags of [[], ["--batch"], ["--async"]]) {
     test(`lexical settings require approval before submission: ${args.join(" ")} ${flags.join(" ")}`, async () => {
@@ -92,6 +97,13 @@ for (const args of [
     expect(submitted).toEqual([])
   })
 }
+
+test("lexical settings require approval with sql_split disabled", async () => {
+  await Bun.file(join(requireTestHome(), ".clickzetta", "czcli.json")).write('{"sql_split":false}')
+  const result = await execute("sql", [`SET cz.sql.string.literal.escape.mode=quote; ${hiddenDrop}`])
+  expect(JSON.parse(result.output).error.code).toBe("SQL_READONLY_UNKNOWN")
+  expect(submitted).toEqual([])
+})
 
 test("explicit approval submits SQL with lexical settings", async () => {
   const result = await execute("sql", ["SELECT 1", "--set", "cz.sql.string.literal.escape.mode=quote", "--write"])

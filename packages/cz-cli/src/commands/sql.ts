@@ -760,10 +760,15 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
   // The local scan assumes the default lexer. A lexical setting from --set or a
   // script SET can make the server see statements the scan hid inside a string,
   // so neither the write check nor an EXPLAIN prefix can be trusted under it.
+  // Read the whole SET target up to "=", as execution forwards it verbatim, and
+  // fail closed on any target that does not normalize to a plain dotted key.
   const lexical = [
     ...Object.keys(hints ?? {}),
-    ...analysis.statements.flatMap((item) => item.command.match(/^\s*SET\s+[`'"]?([\w.]+)/i)?.[1] ?? []),
-  ].find(isLexicalSqlSetting)
+    ...analysis.statements.flatMap((item) => item.command.match(/^\s*SET\b([^=]*)/i)?.[1] ?? []),
+  ].find((raw) => {
+    const key = raw.replace(/[`'"\s]/g, "")
+    return !/^[A-Za-z_][\w.]*$/.test(key) || isLexicalSqlSetting(key)
+  })
   if (lexical && argv["dry-run"]) {
     error("SQL_NOT_READONLY", "Dry-run does not support settings that change SQL lexing.", {
       format: argv.format,

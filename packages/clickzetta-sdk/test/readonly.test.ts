@@ -185,7 +185,7 @@ test("long comments and quoted values do not expose keywords", () => {
 })
 
 test("settings that change lexing are identified", () => {
-  for (const key of ["cz.sql.string.literal.escape.mode", "CZ.SQL.TRANSLATION.MODE"]) {
+  for (const key of ["cz.sql.string.literal.escape.mode", "CZ.SQL.TRANSLATION.MODE", "cz.sql.double.quoted.identifiers"]) {
     expect(isLexicalSqlSetting(key)).toBe(true)
   }
   for (const key of ["cz.sql.timezone", "cz.sql.optimizer.join.type", "cz.sql.remote.udf.lookup.policy"]) {
