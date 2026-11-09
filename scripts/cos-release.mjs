@@ -47,8 +47,14 @@ const VERSION_DIR_RE = /^(?:\d+\.\d+\.\d+([-+][\w.-]+)?|dev-v\d+\.\d+\.\d+\.[\w.
 
 /** Compare release versions. Returns <0 if a<b, 0 if equal, >0 if a>b. */
 export function compareReleaseVersions(a, b) {
-  const pa = a.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
-  const pb = b.replace(/^dev-v/, "").replace(/[-+].*$/, "").split(".")
+  const pa = a
+    .replace(/^dev-v/, "")
+    .replace(/[-+].*$/, "")
+    .split(".")
+  const pb = b
+    .replace(/^dev-v/, "")
+    .replace(/[-+].*$/, "")
+    .split(".")
   for (let i = 0; i < 3; i++) {
     const left = Number(pa[i] ?? 0)
     const right = Number(pb[i] ?? 0)
@@ -901,27 +907,31 @@ async function resolveChannelPromotions(ctx) {
   }
 }
 
+export function retainedVersionHistory(ctx, channels, existingDoc) {
+  const existing = existingDoc?.versions ?? []
+  const own = channelForVersion(ctx.version)
+  const current = {
+    version: ctx.version,
+    released_at: ctx.buildDate,
+    channel_tags: [...channels],
+  }
+  const previous = existing
+    .filter((entry) => entry.version !== ctx.version && channelForVersion(entry.version) === own)
+    .map((entry) => ({
+      ...entry,
+      channel_tags: entry.channel_tags?.filter((tag) => !channels.includes(tag)) ?? [],
+    }))
+  // Each stream owns its retention window; publishing one cannot evict the other.
+  return [
+    ...[current, ...previous].slice(0, ctx.retain),
+    ...existing.filter((entry) => channelForVersion(entry.version) !== own),
+  ]
+}
+
 async function updateVersions(ctx, channels, existingDoc) {
   const target = metaRootKey("versions.json")
   const existing = existingDoc ?? null
-  const prior = (existing?.versions ?? []).filter((v) => v.version !== ctx.version)
-  const channelTags = [...channels]
-  const next = [
-    {
-      version: ctx.version,
-      released_at: ctx.buildDate,
-      channel_tags: channelTags,
-    },
-    ...prior,
-  ].slice(0, ctx.retain)
-
-  // Re-tag prior entries based on what we know
-  for (const entry of next) {
-    if (entry.version === ctx.version) continue
-    entry.channel_tags = entry.channel_tags?.filter((t) => {
-      return !channels.includes(t)
-    }) ?? []
-  }
+  const next = retainedVersionHistory(ctx, channels, existing)
 
   const doc = {
     updated_at: ctx.buildDate,
@@ -949,7 +959,10 @@ async function updateVersions(ctx, channels, existingDoc) {
   return doc
 }
 
-async function retentionCleanup(ctx, versionsDoc) {
+export async function retentionCleanup(ctx, versionsDoc) {
+  // Nightly publication must never evict historical stable artifacts.
+  if (ctx.version.startsWith("dev-v")) return
+
   const keep = new Set(versionsDoc.versions.map((v) => v.version))
   if (versionsDoc.stable) keep.add(versionsDoc.stable)
   if (versionsDoc.nightly) keep.add(versionsDoc.nightly)
@@ -1049,7 +1062,12 @@ async function main() {
   logPreparedArchives(builds)
 
   const cos = args.dryRun
-    ? { client: null, Bucket: process.env.COS_BUCKET ?? "DRY", Region: process.env.COS_REGION ?? "DRY", accelerate: false }
+    ? {
+        client: null,
+        Bucket: process.env.COS_BUCKET ?? "DRY",
+        Region: process.env.COS_REGION ?? "DRY",
+        accelerate: false,
+      }
     : createClient()
   const ctx = { ...args, ...cos }
 
