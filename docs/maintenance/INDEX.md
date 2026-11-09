@@ -24,6 +24,12 @@ bun scripts/maintenance.ts status
 
 核对旧任务、11 个待处理来源、权限和回执目录，完成[工作流程](workflow.md)要求的检查后，再启动三个会话。清理旧 worktree 需要用户逐项确认，不阻塞启用。
 
+## 飞书事件前提
+
+Bot 必须已入目标群，应用具备群全消息权限 `im:message.group_msg`；用户身份可读消息或具备 `send_as_bot` 不等于已订阅 Bot 事件。在飞书开发者控制台选择长连接接收事件，订阅 `im.message.receive_v1`，并确认配置已发布生效。
+
+先用本机 `lark-cli event schema im.message.receive_v1` 和 `lark-cli event consume --help` 核对要求；1.0.58 的 schema 还预检 `im:message.p2p_msg:readonly`，不能仅凭群权限推断命令可用。按[唤醒与监听](workflow.md#唤醒与监听)确认连接 ready，并用真实目标群消息验收；本地 Monitor 测试通过不等于飞书事件实测通过。
+
 ## 三个会话
 
 在控制 checkout 根目录的三个终端中分别运行下列命令。每次启动或恢复维护会话都携带相同的 `--settings`，不修改仓库或用户级记忆开关。`/loop` 不指定间隔，由 Claude 每轮决定下次检查时间；这是持续维护，暂时无反馈时等待下一轮，不视为整个维护任务完成。
@@ -46,11 +52,11 @@ claude --background --name cz-github --model claude-opus-5-5 \
   '/loop 持续维护 GitHub，读取 docs/maintenance/prompts/github.md 按要求推进，空闲时等待下一轮。'
 ```
 
-飞书：
+飞书：下列额外监听工具仅在该会话的启动参数中开放。
 
 ```sh
 claude --background --name cz-feishu --model claude-opus-5-5 \
-  --permission-mode acceptEdits --allowedTools 'Bash,Agent,Skill,ScheduleWakeup' \
+  --permission-mode acceptEdits --allowedTools 'Bash,Agent,Skill,ScheduleWakeup,ToolSearch,Monitor,TaskStop' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
   '/loop 持续处理飞书反馈，读取 docs/maintenance/prompts/feishu.md 按要求推进，空闲时等待下一轮。'

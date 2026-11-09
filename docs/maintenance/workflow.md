@@ -24,6 +24,14 @@
 
 查证后仍有影响对外契约、数据可见性或授权范围的决策缺口时，只暂停依赖该决定的实施。回报已确认事实、推荐方案及影响，再提出一个具体问题；记录查证缺口，不用笼统的“请确认”代替调查。等待期间照常读取新进展，无新依据不重做同一调查或催问，后续轮次选择其他可推进任务。
 
+## 唤醒与监听
+
+飞书优先用原生 `Monitor` 接收事件，`/loop` 定时补扫兜底，间隔由 Claude 每轮决定。创建监听前先用 `ToolSearch` 核对当前 `Monitor`、`TaskStop` 的 schema、允许时限与停止方式，再用本机 `lark-cli event schema im.message.receive_v1` 和 `lark-cli event consume --help` 核对命令。满足[事件接入前提](INDEX.md#飞书事件前提)后，消费命令为 `lark-cli event consume im.message.receive_v1 --as bot --timeout DURATION --jq 'select(.chat_id=="CHAT_ID")'`；替换为配置中的目标群，先过滤再向模型输出。`DURATION` 必须短于 Monitor 允许时限，有界运行可避免 stdin EOF 导致提前退出。
+
+同群只保留一个监听实例，owner、Monitor task ID 与到期时间保存在本机 runtime 的 `control/`。按 `event_id`、`message_id` 去重，过滤目标群并补读话题上下文；忙时将待处理来源排队，每轮仍只推进一个实施任务。断线、退出或到期后先核对旧任务状态，再续建监听，并按保存的游标重叠补扫。事件通知只触发来源核对，不构成用户授权。
+
+飞书订阅、权限、连接 ready 和真实目标群事件尚未全部验收时，不得宣称事件接入上线。本地 Monitor 测试只证明本地机制可用；ready、断线、超时等运行诊断留在本机日志，不发群。
+
 ## 推进一项任务
 
 1. 核对当前配置、`native-handoff.md`、工具列出的旧任务与来源最新上下文。用稳定来源键查询旧 ID，再认领或注册任务；来源有更新时补充已有任务，不另建重复任务。
@@ -39,7 +47,7 @@
 
 GitHub 首轮核对现有 open Issue 与 PR，后续读取更新。飞书首轮按配置范围回溯，后续增量读取并保留重叠窗口，补齐话题根消息。分页或上下文未完成时记录缺口，不越过未处理范围推进成功游标。
 
-飞书读取使用已授权用户，回复使用已入群 Bot。所有 Bot 回复通过维护工具调用 `lark-cli im +messages-reply --reply-in-thread --idempotency-key`，不直接绕过 outbox 发送。阶段固定为 `接单`、`阻碍`、`审查完成`、`发布完成`，采用新消息回报状态变化：
+飞书读取使用已授权用户，回复使用已入群 Bot。所有 Bot 回复通过维护工具调用 `lark-cli im +messages-reply --reply-in-thread --idempotency-key`，不直接绕过 outbox 发送。确需回报时，阶段从 `接单`、`阻碍`、`审查完成`、`发布完成` 中选择，采用新消息回报状态变化：
 
 ```sh
 bun scripts/maintenance.ts reply TASK 阻碍 --event STABLE_EVENT --text-file draft.txt
@@ -49,5 +57,11 @@ bun scripts/maintenance.ts reply TASK 阻碍 --event STABLE_EVENT --text-file dr
 首条命令只预览。`STABLE_EVENT` 标识确定的状态变化，如 `blocker-missing-scope` 或 `review-<SHA>`；同事件重试保持相同标识和正文，不随机生成或按执行次数变化。工具在原子锁内为新事件分配序号，生成 `<任务ID>-<阶段>-<序号>`；重复事件沿用已有 key，不因重试递增。发送前保存固定目标、正文、key 与 `sending`，成功保存 `sent` 和 `message_id`。查回执使用 `status`。
 
 超时或响应不明记为 `unknown`，同一目标暂停后续发送；核对原话题的时间、Bot 身份和正文，确认后再人工登记回执。没有按 key 查询服务端的接口；服务端去重仅一小时，不能靠换序号或跨小时重试绕过未知结果。GitHub 回复及其他外部操作分别核对授权。
+
+## 对外回复
+
+默认 1–3 句，通常 150 汉字以内，能一句说清就一句；只作软目标，不硬截断。先给结论，再交代实际动作与状态；确需对方补充信息或决定时，只问一个具体问题。省去固定前缀、套话和重复上下文，无变化不发，不要求每个阶段都发。
+
+调查过程、测试清单、内部任务 ID 和幂等 key 留在本机日志，正文按需附 Issue 或 PR 链接。技术 review 或对方主动索要详情时，可展开必要定位与证据；简短不能省略重要风险、未验证状态或必要决策。
 
 验收命令见[验证约定](../engineering/verification.md)。行为与契约变化同步更新所属领域文档，任务日志留在本机。
