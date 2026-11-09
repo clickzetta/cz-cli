@@ -761,27 +761,35 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
   // script SET can make the server see statements the scan hid inside a string,
   // so neither the write check nor an EXPLAIN prefix can be trusted under it.
   // Read the whole SET target up to "=", as execution forwards it verbatim, and
-  // fail closed on any target that does not normalize to a plain dotted key.
-  const lexical = [
+  // fail closed on any target that does not normalize to one plain dotted key.
+  const setting = [
     ...Object.keys(hints ?? {}),
     ...analysis.statements.flatMap((item) => item.command.match(/^\s*SET\b([^=]*)/i)?.[1] ?? []),
   ].find((raw) => {
-    const key = raw.replace(/[`'"\s]/g, "")
-    return !/^[A-Za-z_][\w.]*$/.test(key) || isLexicalSqlSetting(key)
+    const target = raw.replace(/[`'"]/g, "")
+    const key = target.replace(/\s/g, "")
+    return /\w\s+\w/.test(target) || !/^[A-Za-z_][\w.]*$/.test(key) || isLexicalSqlSetting(key)
   })
+  // Dollar quotes, "#" and stray "\" or "*/" are tokens the scan does not model;
+  // it still splits by the default lexer, so its statement boundaries, and any
+  // SET or write hidden behind them, cannot be trusted either.
+  const unmodeled = [analysis.reason, ...analysis.statements.map((item) => item.reason)].find(
+    (reason) => reason === "Dollar-quoted SQL is unsupported" || reason === "Unsupported SQL delimiter",
+  )
+  const lexical = setting !== undefined ? `Lexical setting: ${setting}` : unmodeled
   if (lexical && argv["dry-run"]) {
-    error("SQL_NOT_READONLY", "Dry-run does not support settings that change SQL lexing.", {
+    error("SQL_NOT_READONLY", "Dry-run does not support SQL whose lexing the local check cannot follow.", {
       format: argv.format,
-      extra: { reason: `Lexical setting: ${lexical}` },
+      extra: { reason: lexical },
     })
     return false
   }
   if (lexical && !argv.write) {
     requireWriteApproval(argv, {
       code: "SQL_READONLY_UNKNOWN",
-      message: "SQL with settings that change lexing cannot be checked for writes and requires explicit user approval.",
+      message: "SQL whose lexing the local check cannot follow cannot be checked for writes and requires explicit user approval.",
       query_kind: "unknown",
-      reason: `Lexical setting: ${lexical}`,
+      reason: lexical,
     })
     return false
   }
