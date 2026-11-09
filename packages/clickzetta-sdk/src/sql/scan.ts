@@ -2,7 +2,7 @@
  * ClickZetta string scanning, not SQL parsing. Offsets use UTF-16, like slice().
  * Comments become spaces; quoted values become a placeholder plus spaces so a
  * quoted token cannot disappear and expose a different statement prefix.
- * Assumes the default backslash escape mode; callers must gate setting changes.
+ * Assumes the default lexer; callers must gate isLexicalSqlSetting() keys.
  */
 export function scanSql(sql: string) {
   const text = sql.split("")
@@ -10,10 +10,12 @@ export function scanSql(sql: string) {
   const boundaries = [-1]
   let quote = ""
   let comment = 0
-  let commentStart = 0
   let line = false
   let depth = 0
   let reason: string | undefined
+  // Kept apart from reason, which holds only the first problem: a token outside
+  // the default lexer makes every boundary after it untrustworthy.
+  let unmodeled: string | undefined
 
   for (let i = 0; i < sql.length; i++) {
     const char = sql[i]
@@ -37,13 +39,6 @@ export function scanSql(sql: string) {
         comment--
         text[++i] = " "
         command[i] = " "
-        if (
-          !comment &&
-          sql[commentStart + 2] === "+" &&
-          !/^\s*MAPJOIN\s*\(\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\)\s*$/i.test(sql.slice(commentStart + 3, i - 1))
-        ) {
-          reason ??= "Unreviewed optimizer hint"
-        }
       }
       continue
     }
@@ -64,12 +59,16 @@ export function scanSql(sql: string) {
     }
     if (char === "/" && next === "*") {
       comment = 1
-      commentStart = i
       text[i] = command[i] = " "
       text[++i] = command[i] = " "
       continue
     }
     if (char === "'" || char === '"' || char === "`") {
+      // Raw r'...' and escape e'...' literals use other backslash rules. Match only a
+      // standalone prefix so DATE'...', THEN'x', N'...' and x'..' stay modeled.
+      if (char !== "`" && /^[rReE]$/.test(sql[i - 1] ?? "") && !/\w/.test(sql[i - 2] ?? "")) {
+        unmodeled ??= "Prefixed string literal is unsupported"
+      }
       quote = char
       text[i] = "?"
       continue
@@ -85,9 +84,11 @@ export function scanSql(sql: string) {
     }
     if (char === "#" || char === "\\" || (char === "*" && next === "/")) {
       reason ??= "Unsupported SQL delimiter"
+      unmodeled ??= "Unsupported SQL delimiter"
     }
-    if (!reason && char === "$" && /^\$(?:[A-Za-z_][\w]*)?\$/.test(sql.slice(i))) {
+    if (!unmodeled && char === "$" && /^\$(?:[A-Za-z_][\w]*)?\$/.test(sql.slice(i))) {
       reason ??= "Dollar-quoted SQL is unsupported"
+      unmodeled = "Dollar-quoted SQL is unsupported"
     }
   }
 
@@ -99,6 +100,7 @@ export function scanSql(sql: string) {
   const uncommented = command.join("")
   return {
     reason,
+    unmodeled,
     statements: boundaries.slice(1).flatMap((end, index) => {
       const start = boundaries[index] + 1
       return end > start

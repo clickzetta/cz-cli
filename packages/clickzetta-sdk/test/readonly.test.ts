@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { analyzeSql, isReadonlySqlSetting } from "../src/sql/readonly.js"
+import { analyzeSql, isLexicalSqlSetting, isReadonlySqlSetting } from "../src/sql/readonly.js"
 import { splitSql } from "../src/sql/split.js"
 
 const cases = {
@@ -42,11 +42,17 @@ const cases = {
     "SELECT deleted_at, drop_count FROM t",
     "/* outer /* inner */ ; DROP TABLE t */ SELECT 1; -- DELETE FROM t",
     "SELECT /*+ MAPJOIN(t2) */ * FROM t1 JOIN t2 ON t1.id=t2.id",
+    "SELECT /*+ SET_VAR(foo=1) */ 1",
+    "SELECT /*+ MAPJOIN(t) SET_VAR(foo=1) */ 1",
+    "SELECT /*+ FORCE_DYNAMIC_FILTER(t) */ * FROM t",
+    "SELECT /*+ unknown_hint */ 1",
     "SELECT 1; SELECT 2",
     "SELECT 1 -- comment\r; SELECT 2",
     "SELECT public.external_func(a) FROM t", // String classification makes no purity claim.
   ],
   write: [
+    "SELECT /*+ unknown_hint */ 1; DROP TABLE t",
+    "DROP TABLE t; /* unfinished",
     "INSERT INTO t VALUES (1)",
     "INSERT OVERWRITE t SELECT * FROM s",
     "UPDATE t SET a=1 WHERE id=1",
@@ -88,6 +94,13 @@ const cases = {
     "SET cz.sql.timezone=UTC",
     "SET query_tag='drop; delete'",
     "SET query_timeout=300",
+    "SET cz.sql.string.literal.escape.mode=quote",
+    "SET cz.sql.double.quoted.identifiers=true",
+    "SET cz.sql.remote.udf.lookup.policy=udf_first",
+    "SET cz.sql.translation.mode=mysql",
+    "SET arbitrary=1",
+    "SET query_tag=(SELECT 1)",
+    "SET cz.sql.optimizer.join.type=merge",
     "USE SCHEMA public",
     "USE WORKSPACE ws",
     "USE VCLUSTER vc",
@@ -116,15 +129,7 @@ const cases = {
     "BOGUS 1",
     "WITH x AS (VALUES (1))",
     "EXPLAIN ANALYZE SELECT 1",
-    "SET cz.sql.string.literal.escape.mode=quote",
-    "SET cz.sql.double.quoted.identifiers=true",
-    "SET cz.sql.remote.udf.lookup.policy=udf_first",
-    "SET cz.sql.translation.mode=mysql",
-    "SET arbitrary=1",
-    "SET query_tag=(SELECT 1)",
     "USE SCHEMA t SELECT 1",
-    "SELECT /*+ SET_VAR(foo=1) */ 1",
-    "SELECT /*+ MAPJOIN(t) SET_VAR(foo=1) */ 1",
   ],
 } as const
 
@@ -177,6 +182,15 @@ test("long comments and quoted values do not expose keywords", () => {
   expect(analyzeSql(`/*${"/*".repeat(2000)}DROP${"*/".repeat(2000)}*/ SELECT '${"DELETE;".repeat(20000)}'`).kind).toBe(
     "readonly",
   )
+})
+
+test("settings that change lexing are identified", () => {
+  for (const key of ["cz.sql.string.literal.escape.mode", "CZ.SQL.TRANSLATION.MODE", "cz.sql.double.quoted.identifiers"]) {
+    expect(isLexicalSqlSetting(key)).toBe(true)
+  }
+  for (const key of ["cz.sql.timezone", "cz.sql.optimizer.join.type", "cz.sql.remote.udf.lookup.policy"]) {
+    expect(isLexicalSqlSetting(key)).toBe(false)
+  }
 })
 
 test("only reviewed settings are accepted", () => {

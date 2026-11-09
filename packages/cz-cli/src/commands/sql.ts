@@ -1,7 +1,7 @@
 import { requireWriteApproval } from "./write-approval.js"
 import type { Argv } from "yargs"
 import { readFileSync, openSync, readSync, closeSync } from "node:fs"
-import { analyzeSql, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
+import { analyzeSql, isLexicalSqlSetting, isReadonlySqlSetting, splitSql, JobStatus, requestRaw, getCurrentUser, type JobID, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
 import { success, successRows, error, handledError, parseOutputArgs, renderOutput, renderErrorOutput, EXIT_BIZ_ERROR } from "../output/index.js"
 import { maskRows } from "../output/masking.js"
@@ -659,7 +659,7 @@ async function handler(argv: SqlArgs): Promise<void> {
       ctx = dryRunCtx
       const results = await Promise.all(statements.map(async (stmt) => {
         try {
-          const r = await execSql(dryRunCtx, `EXPLAIN ${stmt}`, { timeoutMs: argv.timeout * 1000 })
+          const r = await execSql(dryRunCtx, `EXPLAIN ${stmt}`, { hints, timeoutMs: argv.timeout * 1000 })
           if (isQueryResult(r)) {
             if (r.status === JobStatus.FAILED)
               return { sql: stmt, status: "error", job_id: r.jobId, error: await formatQueryError(r, dryRunCtx, argv.profile, "EXPLAIN failed") }
@@ -757,7 +757,39 @@ async function handler(argv: SqlArgs): Promise<void> {
 function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, string> | undefined, splitEnabled: boolean): boolean {
   const analysis = analyzeSql(sql)
   if (analysis.reason === "No SQL statements found") return true
-  const setting = Object.keys(hints ?? {}).find((key) => !isReadonlySqlSetting(key))
+  // The local scan assumes the default lexer. A lexical setting from --set or a
+  // script SET can make the server see statements the scan hid inside a string,
+  // so neither the write check nor an EXPLAIN prefix can be trusted under it.
+  // Read the whole SET target up to "=", as execution forwards it verbatim, and
+  // fail closed on any target that does not normalize to one plain dotted key.
+  const setting = [
+    ...Object.keys(hints ?? {}),
+    ...analysis.statements.flatMap((item) => item.command.match(/^\s*SET\b([^=]*)/i)?.[1] ?? []),
+  ].find((raw) => {
+    const target = raw.replace(/[`'"]/g, "")
+    const key = target.replace(/\s/g, "")
+    return /\w\s+\w/.test(target) || !/^[A-Za-z_][\w.]*$/.test(key) || isLexicalSqlSetting(key)
+  })
+  // Dollar quotes, "#" and stray "\" or "*/" are tokens the scan does not model;
+  // it still splits by the default lexer, so its statement boundaries, and any
+  // SET or write hidden behind them, cannot be trusted either.
+  const lexical = setting !== undefined ? `Lexical setting: ${setting}` : analysis.unmodeled
+  if (lexical && argv["dry-run"]) {
+    error("SQL_NOT_READONLY", "Dry-run does not support SQL whose lexing the local check cannot follow.", {
+      format: argv.format,
+      extra: { reason: lexical },
+    })
+    return false
+  }
+  if (lexical && !argv.write) {
+    requireWriteApproval(argv, {
+      code: "SQL_READONLY_UNKNOWN",
+      message: "SQL whose lexing the local check cannot follow cannot be checked for writes and requires explicit user approval.",
+      query_kind: "unknown",
+      reason: lexical,
+    })
+    return false
+  }
   if (argv["dry-run"]) {
     if (!splitEnabled && analysis.statements.length > 1) {
       error("SQL_NOT_READONLY", "Dry-run of multiple statements requires sql_split to be enabled.", { format: argv.format })
@@ -765,27 +797,23 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
     }
     // EXPLAIN is not a safe wrapper for arbitrary scripts. In particular, never
     // prefix just the first statement of an unsplit input and execute the rest.
-    if (analysis.kind !== "readonly" || setting) {
-      error("SQL_NOT_READONLY", "Dry-run supports recognized readonly queries with reviewed settings only.", {
+    if (analysis.kind !== "readonly") {
+      error("SQL_NOT_READONLY", "Dry-run supports recognized readonly queries only.", {
         format: argv.format,
-        extra: { reason: setting ? `Unreviewed query setting: ${setting}` : analysis.reason ?? analysis.kind },
+        extra: { reason: analysis.reason ?? analysis.kind },
       })
       return false
     }
     return true
   }
-  if (!argv.write && (analysis.kind === "write" || analysis.kind === "unknown" || setting)) {
-    const issue = analysis.statements.findIndex((item) => item.kind === analysis.kind)
-    const code = analysis.kind === "write" ? "WRITE_NOT_ALLOWED" : "SQL_READONLY_UNKNOWN"
-    const message = analysis.kind === "write"
-      ? "Write SQL requires explicit user approval."
-      : "SQL or query settings could not be classified as readonly and require explicit user approval."
+  if (!argv.write && analysis.kind === "write") {
+    const issue = analysis.statements.findIndex((item) => item.kind === "write")
     requireWriteApproval(argv, {
-      code,
-      message,
-      query_kind: analysis.kind === "write" ? "write" : "unknown",
-      reason: setting ? `Unreviewed query setting: ${setting}` : analysis.reason,
-      ...(!setting && issue >= 0 && { statement_index: issue }),
+      code: "WRITE_NOT_ALLOWED",
+      message: "Write SQL requires explicit user approval.",
+      query_kind: "write",
+      reason: analysis.reason,
+      ...(issue >= 0 && { statement_index: issue }),
     })
     return false
   }
@@ -848,7 +876,7 @@ export function registerSqlCommand(cli: Argv<GlobalArgs>): void {
           (y) =>
             y
               .positional("statement", { type: "string", describe: "SQL statement to execute" })
-              .option("write", { type: "boolean", default: false, describe: "Explicitly allow writes and SQL the string-based readonly check cannot classify. Does not bypass the DELETE/UPDATE without WHERE guard." })
+              .option("write", { type: "boolean", default: false, describe: "Explicitly allow SQL writes and settings that change SQL lexing. Queries, optimizer hints, and other query settings do not require this flag. Does not bypass the DELETE/UPDATE without WHERE guard." })
               .option("with-schema", { type: "boolean", default: false, describe: "Attach table schema (columns) to the response for context" })
               .option("truncate", { type: "boolean", default: true, describe: "Truncate field values longer than 3000 chars. Use --no-truncate to disable." })
               .option("file", { alias: "f", type: "string", describe: "Read SQL from a file path" })
