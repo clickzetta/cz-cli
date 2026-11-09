@@ -26,7 +26,7 @@ bun scripts/maintenance.ts status
 
 ## 三个会话
 
-在控制 checkout 根目录的三个终端中分别运行下列命令。每次启动或恢复维护会话都携带相同的 `--settings`，不修改仓库或用户级记忆开关。以下 `5m` 为示例间隔。
+在控制 checkout 根目录的三个终端中分别运行下列命令。每次启动或恢复维护会话都携带相同的 `--settings`，不修改仓库或用户级记忆开关。`/loop` 不指定间隔，由 Claude 每轮决定下次检查时间；这是持续维护，暂时无反馈时等待下一轮，不视为整个维护任务完成。
 
 GitHub：
 
@@ -35,7 +35,7 @@ claude --name cz-github --model claude-opus-5-5 --settings '{"autoMemoryEnabled"
 ```
 
 ```text
-/loop 5m 读取 docs/maintenance/prompts/github.md，按其中要求执行一轮。
+/loop 持续维护 GitHub，读取 docs/maintenance/prompts/github.md 按要求推进，空闲时等待下一轮。
 ```
 
 飞书：
@@ -45,7 +45,7 @@ claude --name cz-feishu --model claude-opus-5-5 --settings '{"autoMemoryEnabled"
 ```
 
 ```text
-/loop 5m 读取 docs/maintenance/prompts/feishu.md，按其中要求执行一轮。
+/loop 持续处理飞书反馈，读取 docs/maintenance/prompts/feishu.md 按要求推进，空闲时等待下一轮。
 ```
 
 维护：
@@ -55,7 +55,7 @@ claude --name cz-review --model claude-opus-5-5 --settings '{"autoMemoryEnabled"
 ```
 
 ```text
-/loop 5m 读取 docs/maintenance/prompts/review.md，按其中要求执行一轮。
+/loop 持续检查代码与文档，读取 docs/maintenance/prompts/review.md 按要求推进，空闲时等待下一轮。
 ```
 
 三个角色共享任务认领，每轮最多推进一个实施任务；每项改动另做独立审查。`/loop` 后面是让 Claude 读取文件的指令，不是执行文件的 shell 命令。
