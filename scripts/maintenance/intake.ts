@@ -227,6 +227,21 @@ async function fetchFeishu(runtime: Runtime, previous: Ledger, since: string, th
   }
   for (const message of roots) await remember(message)
   const entries: Entry[] = []
+  const owner = (root: Record<string, unknown>, id: string | null, messages: Record<string, unknown>[]) => {
+    const ids = new Set(messages.map((message) => String(message.message_id)))
+    if (id)
+      lookups.forEach((message) => {
+        if (canonicalThread(message.thread_id) === id) ids.add(String(message.message_id))
+      })
+    return (
+      runtime.tasks.find((task) => task.item.source === "lark" && task.item.id === `lark:${chat}:${root.message_id}`) ??
+      runtime.tasks.find(
+        (task) =>
+          task.item.source === "lark" &&
+          ids.has(task.item.id.match(new RegExp(`^lark:${chat}:(om_[\\w-]+)$`))?.[1] ?? ""),
+      )
+    )
+  }
   const add = (
     message: Record<string, unknown>,
     root: Record<string, unknown>,
@@ -236,13 +251,26 @@ async function fetchFeishu(runtime: Runtime, previous: Ledger, since: string, th
     if (message.chat_id !== chat) throw new Error("Feishu thread returned a message from another chat")
     if (ownReplies.has(String(message.message_id))) return
     const updatedAt = messageTime(message)
-    const sourceId = `lark:${chat}:${requiredString(root, "message_id")}`
+    const existing = owner(root, id, messages)
+    const bound = existing
+      ? (lookups.get(existing.item.id.split(":").at(-1)!) ??
+        messages.find((entry) => entry.message_id === existing.item.id.split(":").at(-1)))
+      : root
+    if (!bound) throw new Error("Cannot resolve the existing task's bound Feishu message")
+    const sourceId = existing?.item.id ?? `lark:${chat}:${requiredString(root, "message_id")}`
     const body = text(message)
     const item: Item = {
       source: "lark",
       id: sourceId,
       title: text(root).slice(0, 160),
-      body: JSON.stringify({ message: root, threadId: id, latestMessage: message, threadMessages: messages }),
+      body: JSON.stringify({
+        chat_id: chat,
+        message: bound,
+        rootMessage: root,
+        threadId: id,
+        latestMessage: message,
+        threadMessages: messages,
+      }),
       url: typeof root.message_app_link === "string" ? root.message_app_link : "",
       updatedAt,
     }

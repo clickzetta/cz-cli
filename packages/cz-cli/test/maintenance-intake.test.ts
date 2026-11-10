@@ -11,6 +11,8 @@ import {
 } from "../../../scripts/maintenance/intake"
 import type { IntakeRunner } from "../../../scripts/maintenance/intake"
 import type { Config, Task } from "../../../scripts/maintenance/state"
+import { readRuntime, registerTask, saveTask } from "../../../scripts/maintenance/state"
+import { reply } from "../../../scripts/maintenance/reply"
 
 const directories: string[] = []
 const now = new Date("2026-11-10T08:00:00Z")
@@ -240,6 +242,79 @@ describe("maintenance intake", () => {
     expect(first.pending.map((entry) => entry.id)).toEqual(["om_new_topic"])
     expect(first.pending[0].body).toContain("arrow zstd")
     expect((await scanIntake(runtime, "feishu", run, later)).pending.map((entry) => entry.id)).toEqual(["om_new_topic"])
+  })
+
+  test("new Feishu intake items pass the actual reply preview's bound-chat validation", async () => {
+    const runtime = fixture()
+    const root = message("om_new", "new question", undefined, "omt_new")
+    const result = await scanIntake(
+      runtime,
+      "feishu",
+      lark((argv) => ({ messages: argv.includes("+chat-messages-list") ? [root] : [] })),
+      now,
+    )
+    const entry = await showIntake(runtime.directory, "feishu", result.pending[0].key)
+    expect(JSON.parse(entry.item.body).chat_id).toBe("oc_test")
+    const preview = await reply({
+      directory: runtime.directory,
+      config: runtime.config,
+      task: { id: "task-new", item: entry.item },
+      phase: "接单",
+      event: "new-topic",
+      text: "已收到，开始检查。",
+    })
+    expect(preview.status).toBe("preview")
+    expect(preview.targetMessageId).toBe("om_new")
+  })
+
+  test("a reply-keyed legacy task owns both its canonical root and replies across register, save, ack and reply preview", async () => {
+    const root = message("om_root", "actual root")
+    const response = { ...message("om_legacy_reply", "legacy reply"), root_id: "om_root" }
+    const legacy = {
+      ...oldTask(),
+      item: {
+        ...oldTask().item,
+        id: "lark:oc_test:om_legacy_reply",
+        body: JSON.stringify({ chat_id: "oc_test", message: response }),
+      },
+    }
+    const runtime = fixture([legacy])
+    await Bun.write(path.join(runtime.directory, "config.json"), JSON.stringify(runtime.config))
+    await Bun.write(path.join(runtime.directory, "state.json"), JSON.stringify({ tasks: runtime.tasks }))
+    const run: IntakeRunner = async (argv) => ({
+      stdout: JSON.stringify({
+        ok: true,
+        identity: "user",
+        data: argv.includes("api")
+          ? { items: [argv[3].endsWith("om_root") ? root : response] }
+          : { messages: argv.includes("+chat-messages-list") ? [] : [response], has_more: false },
+      }),
+      stderr: "",
+      exitCode: 0,
+    })
+    const result = await scanIntake(runtime, "feishu", run, now)
+    expect(result.pending.map((entry) => entry.id).sort()).toEqual(["om_legacy_reply", "om_root"])
+    expect(result.pending.every((entry) => entry.taskId === legacy.id && entry.sourceId === legacy.item.id)).toBe(true)
+    for (const summary of result.pending) {
+      const entry = await showIntake(runtime.directory, "feishu", summary.key)
+      expect((await registerTask(runtime.directory, entry.item)).id).toBe(legacy.id)
+      const updated = await saveTask(runtime.directory, { ...legacy, item: entry.item })
+      expect(JSON.parse(updated.item.body).rootMessage.message_id).toBe("om_root")
+      expect(JSON.parse(updated.item.body).message.message_id).toBe("om_legacy_reply")
+      const preview = await reply({
+        directory: runtime.directory,
+        config: runtime.config,
+        task: updated,
+        phase: "接单",
+        event: "legacy-thread",
+        text: "已收到补充。",
+      })
+      expect(preview.status).toBe("preview")
+      expect(preview.targetMessageId).toBe("om_legacy_reply")
+      await acknowledgeIntake(runtime, "feishu", entry.key, { taskId: legacy.id })
+    }
+    expect((await readRuntime(runtime.directory)).tasks).toHaveLength(1)
+    expect((await pendingIntake(runtime.directory, "feishu")).pendingCount).toBe(0)
   })
 
   test("does not mistake the first reply for its root and repairs a stored reply alias by following root_id", async () => {
