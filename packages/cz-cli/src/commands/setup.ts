@@ -16,7 +16,7 @@ import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
 import { patRefusedOrNoted, type PatGuardArgs } from "./pat-guard.js"
 import { execSql, isQueryResult } from "./exec.js"
-import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
+import { accountLoginUrlForService, accountSiteForApiService, loginByAccountSite, stripProtocol } from "./account-login.js"
 import { browserOpenCommandForPlatform } from "../util/browser.js"
 import { trackCommand, isSensitiveKey } from "../telemetry.js"
 import { profileTokenSource, verbatimTokenSource } from "../connection/token-source.js"
@@ -592,7 +592,14 @@ async function loginWithAccountForApiService(
   accountName: string,
   service: string,
 ): Promise<SetupAuthContext> {
-  const { data, token } = await loginByAccountSite(accountName, username, password, service, 20_000)
+  const { data, token } = await loginByAccountSite(
+    accountName,
+    username,
+    password,
+    service,
+    20_000,
+    await accountSiteForApiService(service, accountName),
+  )
   const jwt = decodeJwtPayload(token)
   const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
   if (!tenantId) throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")

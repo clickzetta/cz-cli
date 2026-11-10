@@ -560,7 +560,13 @@ describe("setup guidance", () => {
   // The account name is not an instance name. An API endpoint only accepts
   // instance-scoped password login, so when that guess fails the account must be
   // authenticated on its accounts site and its instances discovered instead.
-  async function startAccountWithInstances(instances: string[]) {
+  // `consoleOnService` models a path-style private deployment: the console (its meta
+  // script and root /login) is served on the API host, with the API under /api.
+  async function startAccountWithInstances(
+    instances: string[],
+    options: { consoleOnService?: boolean; mfa?: boolean } = {},
+  ) {
+    const api = options.consoleOnService ? "/api" : ""
     const seen = { instanceLogins: [] as unknown[], accountLogins: [] as string[] }
     const server = createServer(async (request, response) => {
       const body = await new Promise<string>((resolve) => {
@@ -573,15 +579,21 @@ describe("setup guidance", () => {
         response.writeHead(status, { "content-type": "application/json" })
         response.end(JSON.stringify(payload))
       }
-      if (request.url === "/clickzetta-portal/user/loginSingle" && request.method === "POST") {
+      if (options.consoleOnService && request.url?.startsWith("/one-combo-api/configCenter/script/getApolloConfig")) {
+        response.writeHead(200, { "content-type": "application/javascript" })
+        response.end(`window.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":""}`)
+        return
+      }
+      if (request.url === `${api}/clickzetta-portal/user/loginSingle` && request.method === "POST") {
         seen.instanceLogins.push(JSON.parse(body).instanceName)
         return json(400, { code: 400, message: "No such element" })
       }
       if (request.url === "/login" && request.method === "POST") {
         seen.accountLogins.push(request.headers.host ?? "")
+        if (options.mfa) return json(200, { code: 0, data: { mfaStatus: { enable: true, phone: "138****0000" } } })
         return json(200, { code: 0, data: { token: "header.eyJ1c2VySWQiOjEsImFjY291bnRJZCI6M30.signature" } })
       }
-      if (request.url === "/clickzetta-portal/service/serviceInstanceList?accountId=3") {
+      if (request.url === `${api}/clickzetta-portal/service/serviceInstanceList?accountId=3`) {
         return json(200, {
           code: 0,
           data: instances.map((instanceName, index) => ({
@@ -589,7 +601,7 @@ describe("setup guidance", () => {
           })),
         })
       }
-      if (request.url === "/ide-authority/v1/workspace/listUserWorkspaces" && request.method === "POST") {
+      if (request.url === `${api}/ide-authority/v1/workspace/listUserWorkspaces` && request.method === "POST") {
         return json(200, {
           code: 0,
           data: ["ws1", "ws2"].map((workspaceName, index) => ({
@@ -660,5 +672,44 @@ describe("setup guidance", () => {
     expect(result.exitCode).not.toBe(0)
     expect(seen.instanceLogins).toEqual(["wrong", "acct"])
     expect(seen.accountLogins).toEqual([])
+  })
+
+  test("existing-account setup on a path-style private deployment authenticates at the site root", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"], { consoleOnService: true })
+    // 127.0.0.1 has no account subdomain form, so reaching /login proves the root was used.
+    const service = `http://127.0.0.1:${port}/api`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(seen.accountLogins).toEqual([`127.0.0.1:${port}`])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("workspace")
+    expect(json.collected).toEqual({ username: "u", account_name: "acct", service, instance: "prod" })
+  })
+
+  test("existing-account setup reports MFA instead of a missing token when the account requires it", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"], { mfa: true })
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", `http://localhost:${port}`,
+    ])
+
+    expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
+    expect(result.exitCode).not.toBe(0)
+    const output = result.stdout + result.stderr
+    expect(output).toContain("ACCOUNT_MFA_REQUIRED")
+    expect(output).toContain("cz-cli auth login <name>")
+    expect(output).not.toContain("token not found")
   })
 })

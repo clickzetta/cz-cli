@@ -237,6 +237,29 @@ async function loadAccountConsoleMeta(accountLoginUrl: string): Promise<AccountC
   return parseAccountConsoleMeta(await response.text())
 }
 
+function requiresMfa(payload: Record<string, unknown>): boolean {
+  const data = payload.data
+  if (!data || typeof data !== "object") return false
+  const status = (data as Record<string, unknown>).mfaStatus
+  return Boolean(status && typeof status === "object" && (status as Record<string, unknown>).enable)
+}
+
+/**
+ * The accounts site that authenticates an account reached through an API endpoint.
+ *
+ * Path-style private deployments serve the console, and its root `/login`, on the
+ * same host as the API (`https://studio.example.com/api` → `https://studio.example.com`).
+ * Public cloud keeps it on `<account>.accounts.<root>`. The console meta script
+ * only exists where a console is served, so its presence on the endpoint's origin
+ * tells the two apart without sending credentials to a guessed host.
+ */
+export async function accountSiteForApiService(service: string, accountName: string): Promise<string> {
+  const { host, protocol } = splitEndpoint(service)
+  const origin = `${protocol}://${host}`
+  const meta = await loadAccountConsoleMeta(origin).catch(() => null)
+  return meta ? origin : accountLoginUrlForService(service, accountName)
+}
+
 export async function loginByAccountSite(
   accountName: string,
   username: string,
@@ -266,6 +289,15 @@ export async function loginByAccountSite(
     throw new Error(`ACCOUNT_LOGIN_FAILED: ${String(payload.message ?? "login failed")}`)
   }
   const token = extractJwtFromResponse(response.headers, payload)
+  if (!token && requiresMfa(payload)) {
+    // The console answers a correct password for an MFA account with code 0, no
+    // token and data.mfaStatus.enable; finishing needs an SMS/e-mail code behind an
+    // image captcha, or an authenticator code, which this flow cannot collect.
+    throw new Error(
+      "ACCOUNT_MFA_REQUIRED: the password is correct but this account requires multi-factor verification, " +
+      "which username/password login cannot complete. Sign in with the browser instead: cz-cli auth login <name>",
+    )
+  }
   if (!token) throw new Error("ACCOUNT_LOGIN_FAILED: token not found in login response")
   return {
     accountLoginUrl,
