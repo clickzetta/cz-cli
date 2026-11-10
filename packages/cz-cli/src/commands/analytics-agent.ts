@@ -353,7 +353,7 @@ function resourceDomainIds(value: unknown, format: string): number[] | null | un
   if (value === undefined || value === null) return value
   const parsed = typeof value === "string" ? parseJsonArray(value, "--domain-ids", format) : value
   if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)) {
-    return handledError("USAGE_ERROR", "domainIds must be a JSON array of positive integers; [] means no domain bindings", { format, exitCode: EXIT_USAGE_ERROR })
+    return handledError("USAGE_ERROR", "--domain-ids (body.domainIds) must be a JSON array of positive integers", { format, exitCode: EXIT_USAGE_ERROR })
   }
   return parsed
 }

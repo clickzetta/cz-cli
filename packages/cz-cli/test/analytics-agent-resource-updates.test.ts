@@ -189,6 +189,7 @@ describe("resource partial updates and optional domains", () => {
     for (const domainIds of [[0], [-1], [1.2], ["5"], [null], {}]) {
       const result = await run([resource, "list", "--body", JSON.stringify({ domainIds })])
       expect(result.code, result.output).toBe(2)
+      expect(JSON.parse(result.output).error).toMatchObject({ code: "USAGE_ERROR", message: expect.stringContaining("body.domainIds") })
       expect(requests).toHaveLength(0)
     }
   })
