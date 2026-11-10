@@ -636,7 +636,9 @@ async function loginWithAccountForApiService(
     service,
     20_000,
     site.url,
-    { requireEncryptKey: site.derived },
+    // Required for the own-origin site too: a console that publishes no key
+    // would otherwise receive the password in plaintext.
+    { requireEncryptKey: true },
   )
   const jwt = decodeJwtPayload(token)
   const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)

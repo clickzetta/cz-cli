@@ -332,7 +332,10 @@ export async function loginByAccountSite(
   // Without a public key the password would travel in plaintext to a host the
   // user did not name; callers on a guessed host refuse that.
   if (options.requireEncryptKey && !meta?.encryptKey) {
-    throw new Error("ACCOUNT_LOGIN_FAILED: the accounts site did not provide an encryption key; refusing to send the password unencrypted")
+    throw new Error(
+      "ACCOUNT_LOGIN_FAILED: the account-site login needs the console's encryption key and this site did not provide one, " +
+        "so the password was not sent. Pass --instance <name> to log in to a specific instance instead.",
+    )
   }
   const payloadPassword = meta?.encryptKey ? encryptPassword(password, meta.encryptKey) : password
   const response = await fetch(`${accountLoginUrl}/login`, {

@@ -155,7 +155,7 @@ describe("account login", () => {
     const baseUrl = `http://127.0.0.1:${address.port}`
     await expect(
       loginByAccountSite("acct", "user", "secret-123", baseUrl, 20_000, baseUrl, { requireEncryptKey: true }),
-    ).rejects.toThrow("unencrypted")
+    ).rejects.toThrow("encryption key")
     expect(posts).toBe(0)
     bare.close()
   })

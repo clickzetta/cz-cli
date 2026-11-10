@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { spawn, spawnSync } from "child_process"
 import { mkdtempSync, readFileSync } from "fs"
+import { generateKeyPairSync } from "node:crypto"
 import { createServer } from "http"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -53,6 +54,10 @@ function firstJson(output: string) {
 function readProfiles(home: string) {
   return readFileSync(join(home, ".clickzetta", "profiles.toml"), "utf-8")
 }
+
+const consolePublicKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey
+  .export({ format: "der", type: "spki" })
+  .toString("base64")
 
 const servers = new Set<ReturnType<typeof createServer>>()
 
@@ -564,10 +569,10 @@ describe("setup guidance", () => {
   // script and root /login) is served on the API host, with the API under /api.
   async function startAccountWithInstances(
     instances: string[],
-    options: { consoleOnService?: boolean; console?: boolean; mfa?: boolean; badPassword?: boolean } = {},
+    options: { consoleOnService?: boolean; console?: boolean; mfa?: boolean; badPassword?: boolean; key?: "valid" | "empty" | "blank" | "none" | "fail" } = {},
   ) {
     const api = options.consoleOnService ? "/api" : ""
-    const seen = { instanceLogins: [] as unknown[], accountLogins: [] as string[] }
+    const seen = { instanceLogins: [] as unknown[], accountLogins: [] as string[], accountPasswords: [] as string[] }
     const serveConsole = options.consoleOnService || options.console
     const server = createServer(async (request, response) => {
       const body = await new Promise<string>((resolve) => {
@@ -581,8 +586,14 @@ describe("setup guidance", () => {
         response.end(JSON.stringify(payload))
       }
       if (serveConsole && request.url?.startsWith("/one-combo-api/configCenter/script/getApolloConfig")) {
+        if (options.key === "fail") {
+          response.writeHead(502)
+          response.end("bad gateway")
+          return
+        }
+        const key = { empty: '"encryptKey":""', blank: '"encryptKey":"   "', none: '"other":1' }[options.key ?? "valid"]
         response.writeHead(200, { "content-type": "application/javascript" })
-        response.end(`window.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":""}`)
+        response.end(`window.__clickzettaFeConsoleMeta__ = {"apiGateway":"",${key ?? `"encryptKey":"${consolePublicKey}"`}}`)
         return
       }
       if (request.url === `${api}/clickzetta-portal/user/loginSingle` && request.method === "POST") {
@@ -592,6 +603,7 @@ describe("setup guidance", () => {
       }
       if (request.url === "/login" && request.method === "POST") {
         seen.accountLogins.push(request.headers.host ?? "")
+        seen.accountPasswords.push(JSON.parse(body).password)
         if (options.mfa) return json(200, { code: 0, data: { mfaStatus: { enable: true, phone: "138****0000" } } })
         return json(200, { code: 0, data: { token: "header.eyJ1c2VySWQiOjEsImFjY291bnRJZCI6M30.signature" } })
       }
@@ -675,6 +687,37 @@ describe("setup guidance", () => {
     expect(seen.instanceLogins).toEqual(["wrong", "acct"])
     expect(seen.accountLogins).toEqual([])
   })
+
+  test("existing-account setup posts an encrypted password to the endpoint's own console", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"], { console: true })
+
+    const result = await runAsync([
+      "setup", "--username", "u", "--password", "plain-secret", "--account-name", "acct",
+      "--service", `http://127.0.0.1:${port}`,
+    ])
+
+    expect(firstJson(result.stdout).step).toBe("workspace")
+    expect(seen.accountPasswords.length).toBe(1)
+    expect(seen.accountPasswords[0]).not.toBe("plain-secret")
+    expect(seen.accountPasswords[0]).toMatch(/^[A-Za-z0-9+/=]{100,}$/)
+  })
+
+  for (const key of ["empty", "blank", "none", "fail"] as const) {
+    test(`existing-account setup never posts the password when the own-origin console key is ${key}`, async () => {
+      const { port, seen } = await startAccountWithInstances(["prod"], { console: true, key })
+
+      const result = await runAsync([
+        "setup", "--username", "u", "--password", "plain-secret", "--account-name", "acct",
+        "--service", `http://127.0.0.1:${port}`,
+      ])
+
+      expect(result.exitCode).not.toBe(0)
+      expect(seen.accountLogins).toEqual([])
+      expect(result.stdout).not.toContain("plain-secret")
+      // "fail" means no console is detected at all, so the fallback is not offered.
+      expect(result.stdout).toContain("--instance")
+    })
+  }
 
   test("existing-account setup with a wrong password makes no account-site login request", async () => {
     const { port, seen } = await startAccountWithInstances(["prod"], { console: true, badPassword: true })
