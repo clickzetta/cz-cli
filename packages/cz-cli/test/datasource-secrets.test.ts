@@ -131,6 +131,18 @@ describe("maskSecrets", () => {
     expect(maskSecrets("jdbc:mysql://h.example.com:3306/db")).toBe("jdbc:mysql://h.example.com:3306/db")
   })
 
+  test("masks userinfo passwords containing @ or / by splitting on the last @", () => {
+    expect(maskSecrets("mongodb://u:p@ss@h.example.com:27017/db")).toBe("mongodb://u:********@h.example.com:27017/db")
+    expect(maskSecrets("mongodb://u:pa/ss@h.example.com:27017/db")).toBe("mongodb://u:********@h.example.com:27017/db")
+    expect(maskSecrets("postgresql://u:p@ss@[::1]:5432/db")).toBe("postgresql://u:********@[::1]:5432/db")
+  })
+
+  test("does not mistake ;-separated properties or @-free URLs for userinfo", () => {
+    expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")).toBe(
+      "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")
+    expect(maskSecrets("http://h.example.com/a/b?next=x")).toBe("http://h.example.com/a/b?next=x")
+  })
+
   test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
     const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
     expect(masked.access_key_id).toBe("")
