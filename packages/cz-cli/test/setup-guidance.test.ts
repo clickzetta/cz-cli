@@ -556,4 +556,109 @@ describe("setup guidance", () => {
     expect(readProfiles(home)).toContain(`service = "http://127.0.0.1:${address.port}/api"`)
     expect(readProfiles(home)).toContain('account_name = "acct"')
   })
+
+  // The account name is not an instance name. An API endpoint only accepts
+  // instance-scoped password login, so when that guess fails the account must be
+  // authenticated on its accounts site and its instances discovered instead.
+  async function startAccountWithInstances(instances: string[]) {
+    const seen = { instanceLogins: [] as unknown[], accountLogins: [] as string[] }
+    const server = createServer(async (request, response) => {
+      const body = await new Promise<string>((resolve) => {
+        let buffer = ""
+        request.setEncoding("utf8")
+        request.on("data", (chunk) => { buffer += chunk })
+        request.on("end", () => resolve(buffer))
+      })
+      const json = (status: number, payload: unknown) => {
+        response.writeHead(status, { "content-type": "application/json" })
+        response.end(JSON.stringify(payload))
+      }
+      if (request.url === "/clickzetta-portal/user/loginSingle" && request.method === "POST") {
+        seen.instanceLogins.push(JSON.parse(body).instanceName)
+        return json(400, { code: 400, message: "No such element" })
+      }
+      if (request.url === "/login" && request.method === "POST") {
+        seen.accountLogins.push(request.headers.host ?? "")
+        return json(200, { code: 0, data: { token: "header.eyJ1c2VySWQiOjEsImFjY291bnRJZCI6M30.signature" } })
+      }
+      if (request.url === "/clickzetta-portal/service/serviceInstanceList?accountId=3") {
+        return json(200, {
+          code: 0,
+          data: instances.map((instanceName, index) => ({
+            serviceId: 1, instanceId: 11 + index, instanceName, cspId: 1, regionId: 1,
+          })),
+        })
+      }
+      if (request.url === "/ide-authority/v1/workspace/listUserWorkspaces" && request.method === "POST") {
+        return json(200, {
+          code: 0,
+          data: ["ws1", "ws2"].map((workspaceName, index) => ({
+            workspaceName, workspaceId: `wid-${index}`, projectId: 9 + index, defaultSchemaName: "public", defaultVcName: "DEFAULT",
+          })),
+        })
+      }
+      json(404, { code: 404, message: "not found" })
+    })
+    servers.add(server)
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    return { port: address.port, seen }
+  }
+
+  test("existing-account setup on an api service discovers the only instance when the account name is not one", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"])
+    const service = `http://localhost:${port}`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(seen.instanceLogins).toEqual(["acct"])
+    expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("workspace")
+    expect(json.collected).toEqual({ username: "u", account_name: "acct", service, instance: "prod" })
+  })
+
+  test("existing-account setup on an api service asks for the instance when the account has several", async () => {
+    const { port } = await startAccountWithInstances(["prod", "staging"])
+    const service = `http://localhost:${port}`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("instance")
+    expect(json.status).toBe("needs_input")
+    expect(JSON.stringify(json)).toContain("staging")
+  })
+
+  test("existing-account setup with an explicit --instance does not fall back to account discovery", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"])
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--instance", "wrong",
+      "--service", `http://localhost:${port}`,
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    expect(seen.instanceLogins).toEqual(["wrong", "acct"])
+    expect(seen.accountLogins).toEqual([])
+  })
 })

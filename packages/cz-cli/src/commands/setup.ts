@@ -537,6 +537,16 @@ async function loginWithExistingAccount(
         errors.push(`INSTANCE_LOGIN_FAILED(${candidate}): ${error instanceof Error ? error.message : String(error)}`)
       }
     }
+    // API endpoints only offer instance-scoped login, so without --instance the
+    // account name above was just a guess. Authenticate the account on its
+    // accounts site instead and let the caller discover instances on the
+    // endpoint the user chose.
+    if (instanceHint?.trim()) throw new Error(errors.join("; "))
+    try {
+      return await loginWithAccountForApiService(username, password, accountName, normalizedService)
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error))
+    }
     throw new Error(errors.join("; "))
   }
 
@@ -574,6 +584,29 @@ async function loginWithExistingAccount(
     throw new Error(errors[0]!)
   }
   throw new Error(errors.join("; "))
+}
+
+async function loginWithAccountForApiService(
+  username: string,
+  password: string,
+  accountName: string,
+  service: string,
+): Promise<SetupAuthContext> {
+  const { data, token } = await loginByAccountSite(accountName, username, password, service, 20_000)
+  const jwt = decodeJwtPayload(token)
+  const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
+  if (!tenantId) throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
+  // Keep the endpoint the user chose rather than the accounts site's gateway:
+  // the profile must keep pointing at the deployment or region they asked for.
+  return {
+    token,
+    userId: coerceInt(jwt.userId ?? jwt.user_id ?? data.userId ?? data.id),
+    tenantId,
+    username: String(jwt.userName ?? data.username ?? username),
+    password,
+    service,
+    serviceUrl: toServiceUrl(service),
+  }
 }
 
 function isAccountConsoleInput(service: string): boolean {
