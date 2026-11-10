@@ -339,6 +339,185 @@ export async function checkCdcPrereqs(
 }
 
 // ---------------------------------------------------------------------------
+// Secret masking
+// ---------------------------------------------------------------------------
+// `datasource list` echoes connectionParams, which carries credential material
+// (OSS/S3 access keys, database passwords, tokens) — sometimes as a JSON-encoded
+// string, sometimes with credentials inline in a JDBC URL. Values are masked by
+// default; --show-secrets is the only path to plaintext.
+// Key spellings cover snake_case, kebab-case, dotted and camelCase forms
+// (`api_key`, `api-key`, `apiKey`). A JAAS config counts too: its single value
+// embeds credentials (`... username="u" password="x";`), so the whole
+// value is credential material and gets masked.
+const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|credential|passphrase|jaas|authorization|keytab|api[_\-.]?key|access[_\-.]?key|private[_\-.]?key|account[_\-.]?key)/i
+// ak/sk only count as a standalone segment (`ak`, `oss_sk`, `ak-id`, `ossAk`, `akId`) so
+// words that merely contain the letters (`task`, `disk`, `skip`) stay readable.
+const AK_SK_PATTERN = /(^|[_\-.])(ak|sk|AK|SK)([_\-.]|$)|[a-z0-9](Ak|AK|Sk|SK)([A-Z_\-.]|$)|^(ak|sk)[A-Z]/
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || AK_SK_PATTERN.test(key)
+}
+
+/**
+ * Replace credential values with '********' while keeping every field visible.
+ * Empty/null values stay as-is so a real empty credential remains
+ * distinguishable from NULL in text output.
+ */
+export function maskSecrets(value: unknown): unknown {
+  if (typeof value === "string") return maskSecretString(value)
+  if (value === null || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(maskSecrets)
+  const masked: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    masked[key] = isSecretKey(key) && val !== null && val !== undefined && val !== ""
+      ? "********"
+      : maskSecrets(val)
+  }
+  return masked
+}
+
+/**
+ * Mask credentials inside connection strings: URL userinfo passwords
+ * (`postgresql://user:x@host`), query params (`jdbc:...?password=x&useSSL=true`) and
+ * SQL Server-style `;`-separated properties (`jdbc:sqlserver://h;user=u;password=x`).
+ */
+function maskSecretString(value: string): string {
+  // JSON-encoded params parse and mask recursively; leading whitespace and a
+  // top-level array count too. Secret-free strings are returned byte-for-byte
+  // so whitespace and big-number precision survive the default output.
+  const trimmed = value.trimStart()
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    const parsed = tryParseJson(trimmed)
+    if (parsed !== undefined) {
+      const masked = JSON.stringify(maskSecrets(parsed))
+      return masked === JSON.stringify(parsed) ? value : masked
+    }
+  }
+  return maskConnectionParams(maskUrlUserinfo(maskOracleThinUserinfo(value)))
+}
+
+/**
+ * Mask the password in Oracle thin URLs, which carry credentials as
+ * `jdbc:oracle:thin:user/pw@…` (followed by `//host:port/service` or the legacy
+ * `host:port:sid` form) instead of `scheme://user:pw@` userinfo. The username
+ * stays readable; property-form passwords are handled by the param scanner.
+ */
+const ORACLE_THIN_CREDENTIALS = /(jdbc:oracle:thin:)([^:@/?\s;]+)\/(\S*)/gi
+
+function maskOracleThinUserinfo(value: string): string {
+  return value.replace(ORACLE_THIN_CREDENTIALS, (match, prefix: string, user: string, tail: string) => {
+    // Thin syntax separates credentials at the LAST @ (a `@` inside the
+    // password is legal), bounded by any `?`/`#` property tail.
+    const at = tail.split(/[?#]/)[0]!.lastIndexOf("@")
+    if (at === -1) return match
+    return `${prefix}${user}/********${tail.slice(at)}`
+  })
+}
+
+/**
+ * Mask `key=value` params in connection strings (`?`/`&`/`;`-separated), keeping
+ * non-secret params verbatim. SQL Server JDBC braces values that contain `;`
+ * (`password={a;b}`), so values are scanned rather than split on separators.
+ */
+function maskConnectionParams(value: string): string {
+  let out = ""
+  let i = 0
+  while (i < value.length) {
+    const sep = value[i]
+    if (sep !== "?" && sep !== "&" && sep !== ";") {
+      out += sep
+      i++
+      continue
+    }
+    let keyEnd = i + 1
+    while (keyEnd < value.length && value[keyEnd] !== "=" && value[keyEnd] !== "&" && value[keyEnd] !== ";" && value[keyEnd] !== "?") keyEnd++
+    if (value[keyEnd] !== "=") {
+      out += value.slice(i, keyEnd)
+      i = keyEnd
+      continue
+    }
+    const key = value.slice(i + 1, keyEnd)
+    const valueEnd = connectionParamValueEnd(value, keyEnd + 1, isSecretKey(key))
+    const raw = value.slice(keyEnd + 1, valueEnd)
+    out += isSecretKey(key) && raw !== "" ? `${sep}${key}=********` : value.slice(i, valueEnd)
+    i = valueEnd
+  }
+  return out
+}
+
+/**
+ * End index of a `key=value` param value. A value opening with `{` (SQL Server
+ * JDBC brace escaping, where `}}` is an escaped `}` and `;` is a legal value
+ * char) ends after its last `}` before the next `&`/`;`. A brace that never
+ * closes — an `&` (param boundary) or the end of the string arrives before any
+ * `}` — is not a braced value: secret values mask to end-of-string, non-secret
+ * values fall back to the plain rule (end at the next `&`/`;`) so the params
+ * after them are still scanned. Plain values end at the next `&`/`;`.
+ */
+function connectionParamValueEnd(value: string, start: number, secret: boolean): number {
+  let plainEnd = start
+  while (plainEnd < value.length && value[plainEnd] !== "&" && value[plainEnd] !== ";") plainEnd++
+  if (value[start] !== "{") return plainEnd
+  let i = start + 1
+  while (i < value.length) {
+    if (value[i] === "&") break
+    if (value[i] !== "}") {
+      i++
+      continue
+    }
+    const pairEnd = value[i + 1] === "}" ? i + 2 : i + 1
+    const nextSep = value.slice(pairEnd).search(/[&;]/)
+    const sepAt = nextSep === -1 ? value.length : pairEnd + nextSep
+    // This `}` (or `}}` pair) closes the value unless another `}` follows before
+    // the next separator — that would make this one an interior escaped brace.
+    const laterBrace = value.indexOf("}", pairEnd)
+    if (laterBrace === -1 || laterBrace >= sepAt) return pairEnd
+    i = pairEnd
+  }
+  return secret ? value.length : plainEnd
+}
+
+// A single host entry: a host name, `:port`, or bracketed IPv6. A host list
+// (comma-separated for replica sets / failover) is validated one token at a
+// time rather than with a repeated-group regex — a `(?:...(?:...)*)*` shape
+// backtracks exponentially on adversarial commas (CodeQL ReDoS).
+const HOST_ENTRY = /^(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?$/
+
+/**
+ * Mask the password in `scheme://user:password@host` userinfo, keeping the username.
+ * The split uses the LAST `@` before any `?`/`#`/whitespace so passwords that
+ * contain `@` or `/` (common unencoded in connection strings) are covered; a
+ * password with an unencoded `?` or `#` is a known gap — the scan stops at the
+ * first one and the userinfo is left unmasked. The text after the `@` must
+ * look like a host list (names, `:port`s, bracketed
+ * IPv6, comma-separated, optional `;`-property tail) so SQL Server property
+ * strings and credential-free `host:port` URLs are left alone.
+ */
+function maskUrlUserinfo(value: string): string {
+  return value.replace(/([a-z][\w+.-]*:\/\/)([^\s?#]+)/gi, (match, scheme: string, rest: string) => {
+    const at = rest.lastIndexOf("@")
+    const userinfo = rest.slice(0, at)
+    // a real userinfo never contains param separators — an `@` inside a `;`/`?`
+    // property value (SQL Server braces, JAAS configs) is not a userinfo `@`
+    if (at < 0 || /[;&?]/.test(userinfo)) return match
+    const colon = userinfo.indexOf(":")
+    if (colon < 1) return match
+    const host = rest.slice(at + 1).split("/")[0]!.split(";")[0]!
+    if (!host.split(",").every((entry) => HOST_ENTRY.test(entry))) return match
+    return scheme + userinfo.slice(0, colon + 1) + "********" + rest.slice(at)
+  })
+}
+
+function tryParseJson(value: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed !== null && typeof parsed === "object" ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
@@ -353,7 +532,12 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .option("name", { type: "string", describe: "Filter by name (fuzzy)" })
             .option("type", { type: "string", describe: `Filter by type: ${Object.keys(DS_TYPE_MAP).join(", ")}` })
             .option("page", { type: "number", default: 1, describe: "Page number" })
-            .option("page-size", { type: "number", default: 20, describe: "Items per page" }),
+            .option("page-size", { type: "number", default: 20, describe: "Items per page" })
+            .option("show-secrets", {
+              type: "boolean",
+              default: false,
+              describe: "Show plaintext values of sensitive fields (access keys, passwords, tokens) in connection params. Applies to this invocation only; it is never persisted. The output may contain credentials — do not share it.",
+            }),
         async (argv) => {
           const format = argv.format
           const t0 = Date.now()
@@ -372,7 +556,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               name: ds.dsName ?? ds.name,
               type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
               status: ds.status,
-              connectionParams: ds.connectionParams,
+              connectionParams: argv["show-secrets"] ? ds.connectionParams : maskSecrets(ds.connectionParams),
               testFailedReason:ds.testFailedReason
             }))
             logOperation("datasource list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
