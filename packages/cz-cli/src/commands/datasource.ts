@@ -393,7 +393,19 @@ function maskSecretString(value: string): string {
       return masked === JSON.stringify(parsed) ? value : masked
     }
   }
-  return maskConnectionParams(maskUrlUserinfo(value))
+  return maskConnectionParams(maskUrlUserinfo(maskOracleThinUserinfo(value)))
+}
+
+/**
+ * Mask the password in Oracle thin URLs, which carry credentials as
+ * `jdbc:oracle:thin:user/pw@…` (followed by `//host:port/service` or the legacy
+ * `host:port:sid` form) instead of `scheme://user:pw@` userinfo. The username
+ * stays readable; property-form passwords are handled by the param scanner.
+ */
+const ORACLE_THIN_CREDENTIALS = /(jdbc:oracle:thin:)([^:@/?\s;]+)\/([^@/?\s;]+)@/i
+
+function maskOracleThinUserinfo(value: string): string {
+  return value.replace(ORACLE_THIN_CREDENTIALS, "$1$2/********@")
 }
 
 /**

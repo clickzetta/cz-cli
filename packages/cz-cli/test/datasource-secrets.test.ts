@@ -148,6 +148,21 @@ describe("maskSecrets", () => {
       "jdbc:sqlserver://u:********@h1:1433;encrypt=true")
   })
 
+  test("masks Oracle thin inline user/password credentials", () => {
+    expect(maskSecrets("jdbc:oracle:thin:scott/S3cret@//h.example.com:1521/svc")).toBe(
+      "jdbc:oracle:thin:scott/********@//h.example.com:1521/svc")
+    expect(maskSecrets("jdbc:oracle:thin:scott/S3cret@h.example.com:1521:orcl")).toBe(
+      "jdbc:oracle:thin:scott/********@h.example.com:1521:orcl")
+    // credential-free thin URLs pass through
+    expect(maskSecrets("jdbc:oracle:thin:@//h.example.com:1521/svc")).toBe(
+      "jdbc:oracle:thin:@//h.example.com:1521/svc")
+    expect(maskSecrets("jdbc:oracle:thin://h.example.com:1521/svc")).toBe(
+      "jdbc:oracle:thin://h.example.com:1521/svc")
+    // property form is handled by the param scanner
+    expect(maskSecrets("jdbc:oracle:thin:@//h.example.com:1521/svc?user=scott&password=S3cret")).toBe(
+      "jdbc:oracle:thin:@//h.example.com:1521/svc?user=scott&password=********")
+  })
+
   test("does not mistake ;-separated properties or @-free URLs for userinfo", () => {
     expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")).toBe(
       "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")
