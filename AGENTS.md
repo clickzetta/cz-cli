@@ -4,7 +4,7 @@
 
 ## Project docs and maintenance
 
-- Start at [docs/INDEX.md](docs/INDEX.md), then read only the categories needed for the task. Keep confirmed knowledge and decisions in the relevant topic, with links to their source.
+- Start at [docs/INDEX.md](docs/INDEX.md), then read only the categories needed for the task. Update affected contracts with the change. Maintenance reflection records only evidenced misunderstandings, unresolved human decisions, and recurring failures; keep private evidence in local runtime records.
 - For self-maintenance sessions, disable client-private auto-memory and follow [the workflow](docs/maintenance/workflow.md). Check existing tasks before claiming work, use an exclusive worktree, and preserve the user's and other agents' changes.
 - Validate against the task's acceptance criteria and retain actual results, failures, and unrun checks. A fresh reviewer checks the final diff, commit SHA, and evidence; source changes require renewed review.
 - External actions follow the user's existing authorization and local runtime configuration. Distinguish local completion, reviewed changes, merged code, and a verified release in reports.

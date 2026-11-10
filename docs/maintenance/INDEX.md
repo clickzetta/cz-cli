@@ -3,13 +3,14 @@
 使用 Claude Code 原生 `/loop` 和 `Monitor`，模型为 `claude-sonnet-5-5`，项目知识通过 [docs 索引](../INDEX.md)按需读取。只在维护会话的启动参数中关闭 auto-memory，日常交互会话沿用原设置。
 
 - [工作流程](workflow.md)：认领、独占工作区、验收、交接与回报。
-- [GitHub prompt](prompts/github.md)：Issue、PR 与审查反馈。
-- [飞书 prompt](prompts/feishu.md)：目标群的反馈与 Bot 回报。
-- [维护 prompt](prompts/review.md)：代码健康与文档一致性。
+- [反馈 prompt](prompts/feedback.md)：统一处理 GitHub 与飞书。
+- [反思 prompt](prompts/reflection.md)：每十二小时整理易误解点、人工待决和重复故障。
+- [设计依据](design.md)：参考做法及采用范围。
+- [易误解点](understanding.md)、[人工待决](decisions.md)、[重复故障](recurring-failures.md)。
 
 ## 启用门槛
 
-本地试跑使用已提交且干净的控制 checkout，无需先合入 `main`。将其绝对路径写入本机 `config.json.native.maintenanceRoot`；三个循环以及实施、审查子 Agent 统一读取这里的 `AGENTS.md`、docs 和维护工具。每个执行阶段记录控制 checkout 的 `policySha`，阶段内保持该版本不变。
+本地试跑使用已提交且干净的控制 checkout，无需先合入 `main`。将其绝对路径写入本机 `config.json.native.maintenanceRoot`；两个循环以及实施、审查子 Agent 统一读取这里的 `AGENTS.md`、docs 和维护工具。每个执行阶段记录控制 checkout 的 `policySha`，阶段内保持该版本不变。
 
 启动时显式进入该目录，核对工作区干净且 `HEAD` 等于本机配置的 `native.policySha`；路径配置不会自动切换 Claude 的工作目录。子 Agent 从控制会话派出，将源码 worktree 作为明确路径传入。
 
@@ -22,7 +23,7 @@ bun scripts/maintenance.ts init
 bun scripts/maintenance.ts status
 ```
 
-核对旧任务、11 个待处理来源、权限和回执目录，再按下文启动、验收三个会话。清理旧 worktree 需要用户逐项确认，不阻塞启用。交接中更新实际监听状态和待修复故障，按当前配置与授权完成接入。
+核对旧任务、11 个待处理来源、权限和回执目录，再按下文启动、验收两个会话。清理旧 worktree 需要用户逐项确认，不阻塞启用。交接中更新实际监听状态和待修复故障，按当前配置与授权完成接入。
 
 ## 飞书事件前提
 
@@ -30,11 +31,11 @@ Bot 必须已入目标群，应用具备群全消息权限 `im:message.group_msg
 
 先用本机 `lark-cli event schema im.message.receive_v1` 和 `lark-cli event consume --help` 核对要求；1.0.58 的 schema 还预检 `im:message.p2p_msg:readonly`，不能仅凭群权限推断命令可用。飞书会话必须按[唤醒与监听](workflow.md#唤醒与监听)启动实际消费者，验证上游连接和真实目标群事件。缺失条件须查明并修复，不能只留下“以后验收”便宣称部署完成。
 
-## 三个会话
+## 两个会话
 
-下列命令用于在控制 checkout 根目录首次创建三个会话；已存在时使用原 ID 或服务器已有包装器恢复，不再创建副本。每次启动或恢复都携带相同的 `--settings`，不修改仓库或用户级记忆开关。GitHub 和飞书固定每五分钟补扫，代码与文档维护每三十分钟检查。安静或任务阻碍不延长来源补扫间隔；忙时排队，回到可处理边界先读取来源。
+仅在首次创建时运行下面命令。已有会话使用原 ID 恢复，先以 CronList 去重，不重复执行 /loop。切换旧三角色时先在安全边界保存任务、claim、后台执行者和外部回执，删除旧周期任务；保留一个反馈会话和一个反思会话，旧渠道会话停止后不再恢复。监听只能有一个 owner。
 
-当前维护会话已获用户授权使用 `bypassPermissions`，合入和发布仍经守卫工具。私有 settings 文件仅在本机保存连接信息并关闭 auto-memory，不提交仓库。先设置三个终端共用的路径：
+维护会话已获授权使用 bypassPermissions。私有 settings 只为维护会话关闭 auto-memory，保留现有连接配置，不能提交。进入控制 checkout，设置：
 
 ```sh
 CZ_MAINTENANCE_RUNTIME="$(git rev-parse --path-format=absolute --git-common-dir)/cz-maintenance"
@@ -42,44 +43,34 @@ CZ_MAINTENANCE_SETTINGS="$CZ_MAINTENANCE_RUNTIME/native-claude-settings.json"
 CZ_MAINTENANCE_WORKTREES="$(bun -e 'console.log((await Bun.file(Bun.argv[1]).json()).native.worktreeRoot)' "$CZ_MAINTENANCE_RUNTIME/config.json")"
 ```
 
-GitHub：
+反馈 Agent：
 
 ```sh
-claude --background --name cz-github --model claude-sonnet-5-5 \
-  --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete' \
-  --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
-  --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 5m 持续维护 GitHub，读取 docs/maintenance/prompts/github.md，先执行 intake，再按要求推进。'
-```
-
-飞书：下列参数开放监听工具，实际消费者仍由原会话中的 Monitor 启动。
-
-```sh
-claude --background --name cz-feishu --model claude-sonnet-5-5 \
+claude --background --name cz-feedback --model claude-sonnet-5-5 \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch,Monitor,TaskStop' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 5m 持续处理飞书反馈，读取 docs/maintenance/prompts/feishu.md，启动或复用实际连接的 Monitor，先执行 intake 再推进。'
+  '/loop 5m 读取 docs/maintenance/prompts/feedback.md，实际保持唯一飞书 Monitor，统一处理两个来源。'
 ```
 
-维护：
+反思 Agent：
 
 ```sh
-claude --background --name cz-review --model claude-sonnet-5-5 \
+claude --background --name cz-reflection --model claude-sonnet-5-5 \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 30m 持续检查代码与文档，读取 docs/maintenance/prompts/review.md，核对待处理来源和已有任务后推进。'
+  '/loop 12h 读取 docs/maintenance/prompts/reflection.md，整理有依据的易误解点、人工待决和重复故障。'
 ```
 
-三个角色共享任务认领，每轮最多推进一个实施任务；读取、记录与回复新反馈照常进行。每项改动另做独立审查。`/loop` 后面是让 Claude 读取文件的指令，不是执行文件的 shell 命令。
+每轮最多推进一个实施任务；接收、读取和回应其他反馈继续进行。长实施可派子 Agent，完成后另外派独立审查者。/loop 后面是让 Claude 读取文件的指令。
 
-通过 `claude agents` 查看运行与等待状态，`claude logs ID` 查看输出，`claude stop ID` 停止指定会话。后台原生会话由 Claude Code 自身管理。已有服务器包装器继续使用 `maintenance status`、`maintenance attach ROLE`、`maintenance respawn ROLE`，`ROLE` 为 `github`、`feishu`、`review`。恢复时使用原 ID，不创建副本；重启后在原会话用 `CronList` 去重、补建固定调度，并实际恢复飞书 Monitor。
+通过 claude agents、claude logs ID 和 claude stop ID 查看和停止原生会话。服务器现有包装器使用 maintenance attach feedback / reflection；使用原 ID，不创建副本。恢复后核对周期、到期及原生 Monitor 的实际状态，进程恢复本身不证明监听和调度已恢复。GitHub 当前用增量轮询，不声称已接 Webhook。
 
-## 部署验收
+## 验收与恢复
 
-在目标群验证一条新话题和一条旧话题回复：Monitor 收到事件、原会话唤醒、`intake feishu` 返回完整上下文、任务或回复落盘、原话题收到 Bot 回复，记录事件 ID、读取记录与 `message_id`。GitHub 用新 Issue 和仅新增评论、head 不变的 PR 验证同样链路。
+用真实 Issue、PR 评论和飞书自然到达的消息核对来源、任务关联、处置及 message_id。用户要求不发送飞书测试消息；未获得自然事件到回复证据前，只报告实际已核验的连接和读取。
 
-停止事件消费者后确认五分钟补扫仍能收取来源；再验证断线续建、到期续建和会话重启恢复。重放同一事件不重复建单或回复。测试结果和实际监听 owner、task ID、到期时间留在本机；所有环节通过后才报告完整部署成功。
+核对两个原生周期任务：反馈五分钟，反思十二小时；检查无遗留渠道定时器、重复消费者或活动实施者。重放来源用本地测试核对去重，不向群注入消息。真实 CI 和独立审查继续阻断不合格交付，发布只准 nightly。
 
-会话级设置见[官方说明](https://code.claude.com/docs/en/settings#change-a-setting-for-one-session)，循环的运行条件、到期与恢复见[原生调度说明](https://code.claude.com/docs/en/scheduled-tasks)。
+会话级设置见[官方说明](https://code.claude.com/docs/en/settings#change-a-setting-for-one-session)，循环的到期与恢复见[原生调度说明](https://code.claude.com/docs/en/scheduled-tasks)。
