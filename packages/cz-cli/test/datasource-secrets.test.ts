@@ -164,6 +164,30 @@ describe("maskSecrets", () => {
     expect(maskSecrets(original)).toBe(original)
   })
 
+  test("masks kebab-case, dotted and other common credential key spellings", () => {
+    const masked = maskSecrets({
+      "access-key-id": "{{SECRET_kf18vs2l}}",
+      "api-key": "fake-token",
+      "private-key": "-----BEGIN...",
+      "private.key": "-----BEGIN...",
+      credentials: "{{SECRET_bms7gq2x}}",
+      "private_key_passphrase": "{{SECRET_3owkrqvn}}",
+      host: "h.example.com",
+    }) as Record<string, unknown>
+    for (const key of ["access-key-id", "api-key", "private-key", "private.key", "credentials", "private_key_passphrase"])
+      expect(masked[key]).toBe("********")
+    expect(masked.host).toBe("h.example.com")
+  })
+
+  test("masks whole JAAS config values that embed credentials", () => {
+    const masked = maskSecrets({
+      "sasl.jaas.config": 'org.apache.kafka.PlainLoginModule required username="u" password="x";',
+    }) as Record<string, unknown>
+    expect(masked["sasl.jaas.config"]).toBe("********")
+    expect(maskSecrets('jdbc:kafka://b.example.com:9092?sasl.jaas.config=PlainLoginModule required username="u" password="x"&timeout=1000')).toBe(
+      "jdbc:kafka://b.example.com:9092?sasl.jaas.config=********&timeout=1000")
+  })
+
   test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
     const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
     expect(masked.access_key_id).toBe("")

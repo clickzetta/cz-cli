@@ -345,7 +345,11 @@ export async function checkCdcPrereqs(
 // (OSS/S3 access keys, database passwords, tokens) — sometimes as a JSON-encoded
 // string, sometimes with credentials inline in a JDBC URL. Values are masked by
 // default; --show-secrets is the only path to plaintext.
-const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|api_?key|access_?key|private_?key)/i
+// Key spellings cover snake_case, kebab-case, dotted and camelCase forms
+// (`api_key`, `api-key`, `apiKey`). A JAAS config counts too: its single value
+// embeds credentials (`... username="u" password="x";`), so the whole
+// value is credential material and gets masked.
+const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|credential|passphrase|jaas|api[_\-.]?key|access[_\-.]?key|private[_\-.]?key)/i
 // ak/sk only count as a standalone segment (`ak`, `oss_sk`, `ak-id`, `ossAk`, `akId`) so
 // words that merely contain the letters (`task`, `disk`, `skip`) stay readable.
 const AK_SK_PATTERN = /(^|[_\-.])(ak|sk|AK|SK)([_\-.]|$)|[a-z0-9](Ak|AK|Sk|SK)([A-Z_\-.]|$)|^(ak|sk)[A-Z]/
