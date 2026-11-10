@@ -3,7 +3,7 @@
 AI-Agent-friendly command-line interface for ClickZetta Lakehouse.
 
 ```bash
-curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://cz-cli.ai/install.sh | bash
 ```
 
 Restart your shell after installation.
@@ -199,8 +199,11 @@ sh setup.sh
 ### Pin a version
 
 ```bash
-CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://cz-cli.ai/install.sh | bash -s -- --version 2.0.8
 ```
+
+`2.0.8` is an example. The installer reads the version only from its arguments (`--version X`,
+`--version=X`, or a bare version), so setting a variable such as `CZ_VERSION` on `curl` has no effect.
 
 ### Environment variables
 
@@ -208,7 +211,6 @@ Installer:
 
 | Variable | Description |
 | --- | --- |
-| `CZ_VERSION` | Pin a specific version (e.g. `0.1.0`) |
 | `CZ_MIRROR` | Custom mirror base URL for downloads |
 | `NON_INTERACTIVE` | Skip all interactive prompts |
 
