@@ -458,24 +458,31 @@ function connectionParamValueEnd(value: string, start: number): number {
   return i
 }
 
-// A host (optionally `:port` or bracketed IPv6) — the text that must follow the
-// userinfo `@` for the `@` to really separate credentials from the host.
-const HOSTLIKE = /^(\[[^\]/]+\]|[^:/?#@;\s]+)(:\d+)?$/
+// A host list (comma-separated for replica sets / failover), each entry a host
+// name, `:port`, or bracketed IPv6 — the text that must follow the userinfo `@`
+// for the `@` to really separate credentials from the hosts.
+const HOSTLIKE = /^(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?(?:,(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?)*$/
 
 /**
  * Mask the password in `scheme://user:password@host` userinfo, keeping the username.
  * The split uses the LAST `@` before any `?`/`#`/whitespace so passwords that
  * contain `@` or `/` (common unencoded in connection strings) are fully covered;
- * the text after the `@` must look like a host so `;`-separated property strings
- * (SQL Server) and `host:port` URLs without credentials are left alone.
+ * the text after the `@` must look like a host list (names, `:port`s, bracketed
+ * IPv6, comma-separated, optional `;`-property tail) so SQL Server property
+ * strings and credential-free `host:port` URLs are left alone.
  */
 function maskUrlUserinfo(value: string): string {
   return value.replace(/([a-z][\w+.-]*:\/\/)([^\s?#]+)/gi, (match, scheme: string, rest: string) => {
     const at = rest.lastIndexOf("@")
-    const colon = rest.indexOf(":")
-    if (at < 0 || colon < 1 || colon > at) return match
-    if (!HOSTLIKE.test(rest.slice(at + 1).split("/")[0]!)) return match
-    return scheme + rest.slice(0, colon + 1) + "********" + rest.slice(at)
+    const userinfo = rest.slice(0, at)
+    // a real userinfo never contains param separators — an `@` inside a `;`/`?`
+    // property value (SQL Server braces, JAAS configs) is not a userinfo `@`
+    if (at < 0 || /[;&?]/.test(userinfo)) return match
+    const colon = userinfo.indexOf(":")
+    if (colon < 1) return match
+    const host = rest.slice(at + 1).split("/")[0]!.split(";")[0]!
+    if (!HOSTLIKE.test(host)) return match
+    return scheme + userinfo.slice(0, colon + 1) + "********" + rest.slice(at)
   })
 }
 

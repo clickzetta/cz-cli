@@ -137,6 +137,17 @@ describe("maskSecrets", () => {
     expect(maskSecrets("postgresql://u:p@ss@[::1]:5432/db")).toBe("postgresql://u:********@[::1]:5432/db")
   })
 
+  test("masks userinfo passwords in multi-host and ;-property URIs", () => {
+    expect(maskSecrets("mongodb://u:p@ss@h1:27017,h2:27017/db?replicaSet=rs0")).toBe(
+      "mongodb://u:********@h1:27017,h2:27017/db?replicaSet=rs0")
+    expect(maskSecrets("jdbc:mysql://u:p@ss@h1:3306,h2:3306/db")).toBe(
+      "jdbc:mysql://u:********@h1:3306,h2:3306/db")
+    expect(maskSecrets("mongodb://u:p@ss@[::1]:27017,h2:27017/db")).toBe(
+      "mongodb://u:********@[::1]:27017,h2:27017/db")
+    expect(maskSecrets("jdbc:sqlserver://u:p@ss@h1:1433;encrypt=true")).toBe(
+      "jdbc:sqlserver://u:********@h1:1433;encrypt=true")
+  })
+
   test("does not mistake ;-separated properties or @-free URLs for userinfo", () => {
     expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")).toBe(
       "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")

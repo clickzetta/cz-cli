@@ -44,8 +44,12 @@ beforeEach(() => {
           connectionParams: '  {"username":"u","password":"' + JSON_PW + '"}' },
         { id: 904, dsName: "params_arr", dsType: 5, status: 1,
           connectionParams: '[{"token":"' + ARRAY_PW + '"},{"host":"h.example.com"}]' },
+        { id: 905, dsName: "mongo_rs", dsType: 12, status: 1, connectionParams: {
+          password: "{{SECRET_qptpg0qa}}",
+          uri: "mongodb://u:{{SECRET_r9i0yaj2}}@h1:27017,h2:27017/db?replicaSet=rs0",
+        } },
       ],
-      total: 4,
+      total: 5,
     }))
 })
 
@@ -105,6 +109,15 @@ describe("datasource list secret masking", () => {
     expect(r.output).not.toContain(MYSQL_PW)
     expect(r.output).not.toContain(JSON_PW)
     expect(r.output).not.toContain(ARRAY_PW)
+  })
+
+  test("masks multi-host replica-set URIs in default json output", async () => {
+    const r = await execute("datasource list")
+    expect(r.exitCode).toBe(0)
+    const data = json(r).data as Record<string, unknown>[]
+    const params = data[4]!.connectionParams as Record<string, unknown>
+    expect(params.uri).toBe("mongodb://u:********@h1:27017,h2:27017/db?replicaSet=rs0")
+    expect(r.output).not.toContain("{{SECRET_r9i0yaj2}}")
   })
 
   test("--show-secrets reveals plaintext without confirmation", async () => {
