@@ -29,7 +29,7 @@ if (!compressionRegistry.get(CompressionType.ZSTD)) {
       : {
           decode: () => {
             throw new Error(
-              "Arrow result is ZSTD-compressed, but this runtime lacks zstd support (needs Node 22.15+ / 23.8+, or a Bun version with zlib zstd); disable IPC compression with cz.storage.arrow.ipc.codec=none",
+              "Arrow result is ZSTD-compressed, but this runtime lacks zstd support (needs Node 22.15+ / 23.8+, or a Bun version with zlib zstd); disable IPC compression by unsetting cz.storage.arrow.ipc.codec",
             )
           },
         },
@@ -42,7 +42,7 @@ if (!compressionRegistry.get(CompressionType.LZ4_FRAME)) {
       throw new Error(
         `Arrow result is LZ4_FRAME-compressed, which this client cannot decode; ${
           zstdAvailable ? "use cz.storage.arrow.ipc.codec=zstd or " : ""
-        }disable IPC compression`,
+        }disable IPC compression by unsetting cz.storage.arrow.ipc.codec`,
       )
     },
   })
