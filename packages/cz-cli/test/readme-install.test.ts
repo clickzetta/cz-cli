@@ -23,9 +23,13 @@ describe("README install commands", () => {
     expect(line).toMatch(/\|\s*bash\b/)
   })
 
-  test("a pinned version is passed to the installer, not set as a curl environment variable", () => {
-    const pinned = installCommands.filter((line) => /--version|\bbash -s\b/.test(line))
-    expect(pinned.length).toBeGreaterThan(0)
-    for (const line of installCommands) expect(line).not.toMatch(/^\s*CZ_VERSION=/)
+  test("a pinned version is passed to the installer as an argument", () => {
+    expect(installCommands.filter((line) => /\bbash -s -- --version\s+\d+\.\d+\.\d+/.test(line))).toHaveLength(1)
+  })
+
+  test("no install command sets a version through an environment variable", () => {
+    // Setting it on curl (or exporting it) never reaches the piped shell, and the installer ignores it.
+    expect(readme).not.toMatch(/^\s*(?:export\s+|env\s+)?(?:CZ_)?VERSION=\S+[^\n]*\bcurl\b/m)
+    expect(readme).not.toMatch(/\|\s*CZ_VERSION=/)
   })
 })

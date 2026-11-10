@@ -202,8 +202,8 @@ sh setup.sh
 curl -fsSL https://cz-cli.ai/install.sh | bash -s -- --version 2.0.8
 ```
 
-The version goes to the installer as `--version` (or a bare version argument), not as an
-environment variable on `curl`.
+`2.0.8` is an example. The installer reads the version only from its arguments (`--version X`,
+`--version=X`, or a bare version), so setting a variable such as `CZ_VERSION` on `curl` has no effect.
 
 ### Environment variables
 
