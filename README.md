@@ -3,7 +3,7 @@
 AI-Agent-friendly command-line interface for ClickZetta Lakehouse.
 
 ```bash
-curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://cz-cli.ai/install.sh | bash
 ```
 
 Restart your shell after installation.
@@ -71,6 +71,57 @@ cz-cli <command> [options]
 | `update` / `autoupdate` | Update cz-cli, or configure automatic updates |
 
 Every command takes `--help`.
+
+### Analytics Agent resource updates
+
+Resource definitions can be managed independently of analysis domains:
+
+```bash
+# Omit domain/datasource filters to list metrics, including independent ones.
+cz-cli analytics-agent metric list --page-size 20
+
+# An omitted datasource uses the backend's system datasource. Domain bindings are optional.
+cz-cli analytics-agent metric create --table-name workspace.schema.orders --name orders --expression 'count(*)'
+cz-cli analytics-agent metric validate --table-name workspace.schema.orders --name orders --expression 'count(*)'
+
+# Definition patches preserve omitted fields and all domain bindings.
+cz-cli analytics-agent metric update 342 --alias '["净营收"]'
+cz-cli analytics-agent metric update 342 --description '' --alias '[]'
+
+# Replace the COMPLETE binding list; [] removes all bindings.
+cz-cli analytics-agent metric update-domains 342 --domain-ids '[5,6]'
+cz-cli analytics-agent metric update-domains 342 --domain-ids '[]'
+
+# Patch a datasource without resending credentials, or validate a connection patch without saving.
+cz-cli analytics-agent datasource update 8 --name renamed
+cz-cli analytics-agent datasource update 8 --connection '{"host":"new-host"}' --validate-only
+
+# Update domain properties without resending its name.
+cz-cli analytics-agent domain update 5 --description 'New description'
+cz-cli analytics-agent domain update 5 --sample-questions '[]'
+
+# Answer Builder patches preserve the existing name, datasource and SQL/DSL.
+cz-cli analytics-agent answer-builder update 9 --analysis-desc 'New description'
+cz-cli analytics-agent answer-builder update 9 --domain-ids '[]'
+```
+
+Answer Builder `create` and `validate` also accept omitted `--domain-ids` or `[]`;
+name, datasource and a valid SQL/DSL definition are still required. Updating a
+SQL/DSL definition requires the complete replacement `--content` (including
+`outputColumns`); `--sql` can replace the SQL inside that supplied definition.
+Only non-SQL field updates can omit the definition; `--sql` alone still requires
+the complete DSL via `--content`, `--content-file`, or a JSON string in `body.content`.
+`--body` accepts advanced fields and version metadata. Metric and Answer Builder
+updates also expose `--base-version-id` and `--version-description`.
+
+For resource updates, omitted or null definition fields retain their current
+values, except that Answer Builder `body.content`, when supplied, must be a
+JSON-encoded DSL string. Data source connections merge by field. A blank datasource/domain name
+is rejected. A metric's description can be cleared with `''` and aliases with
+an explicit `[]`; an alias list containing only whitespace does not clear aliases.
+On list commands, omitted or empty domain filters mean no domain filter;
+they do not select only unbound resources. Existing knowledge commands retain
+their domain requirements.
 
 ## CLI configuration
 
@@ -148,8 +199,11 @@ sh setup.sh
 ### Pin a version
 
 ```bash
-CZ_VERSION=0.1.0 curl -fsSL https://github.com/clickzetta/cz-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://cz-cli.ai/install.sh | bash -s -- --version 2.0.8
 ```
+
+`2.0.8` is an example. The installer reads the version only from its arguments (`--version X`,
+`--version=X`, or a bare version), so setting a variable such as `CZ_VERSION` on `curl` has no effect.
 
 ### Environment variables
 
@@ -157,7 +211,6 @@ Installer:
 
 | Variable | Description |
 | --- | --- |
-| `CZ_VERSION` | Pin a specific version (e.g. `0.1.0`) |
 | `CZ_MIRROR` | Custom mirror base URL for downloads |
 | `NON_INTERACTIVE` | Skip all interactive prompts |
 

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { randomBytes, scryptSync } from "node:crypto"
 import type { AuthToken, ConnectionConfig, Credential, TokenSource } from "../types/index.js"
 import { loginWithPat, loginWithPassword } from "./login.js"
 import { refreshAccessToken } from "./oauth.js"
@@ -30,11 +30,18 @@ export function isTokenExpired(token: AuthToken): boolean {
 // session still coalesce refreshes, even across service endpoints.
 function cacheKey(config: ConnectionConfig): string {
   if (config.cacheKey) return `oauth:${config.cacheKey}`
-  const identity = config.pat ? ["pat", config.pat] : ["password", config.username, config.password]
-  // Cache keys must not retain plaintext passwords.
-  return createHash("sha256")
-    .update(JSON.stringify([toServiceUrl(config.service, config.protocol), config.instance, identity]))
-    .digest("hex")
+  const identity = config.pat
+    ? ["pat", "", secretDigest(config.pat)]
+    : ["password", config.username, secretDigest(config.password)]
+  return JSON.stringify([toServiceUrl(config.service, config.protocol), config.instance, identity])
+}
+
+// Cache keys must not retain plaintext secrets. The key only lives in this
+// process's Maps, so a per-process random salt with a deliberately slow KDF
+// (not a fast hash such as sha256) is enough to tell credentials apart.
+const keySalt = randomBytes(16)
+function secretDigest(secret: string | undefined): string {
+  return scryptSync(secret ?? "", keySalt, 16, { N: 1024 }).toString("hex")
 }
 
 /** Whether this config has credentials for a fresh portal login.
