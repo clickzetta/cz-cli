@@ -193,6 +193,13 @@ describe("maskSecrets", () => {
     expect(masked.host).toBe("h.example.com")
   })
 
+  test("masks Oracle thin passwords containing @ by splitting at the last @", () => {
+    expect(maskSecrets("jdbc:oracle:thin:scott/p@S3cret@//h.example.com:1521/svc")).toBe(
+      "jdbc:oracle:thin:scott/********@//h.example.com:1521/svc")
+    expect(maskSecrets("jdbc:oracle:thin:scott/p@S3cret@h.example.com:1521:orcl")).toBe(
+      "jdbc:oracle:thin:scott/********@h.example.com:1521:orcl")
+  })
+
   test("does not mistake ;-separated properties or @-free URLs for userinfo", () => {
     expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")).toBe(
       "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")

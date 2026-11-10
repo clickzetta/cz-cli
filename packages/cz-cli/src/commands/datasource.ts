@@ -402,10 +402,16 @@ function maskSecretString(value: string): string {
  * `host:port:sid` form) instead of `scheme://user:pw@` userinfo. The username
  * stays readable; property-form passwords are handled by the param scanner.
  */
-const ORACLE_THIN_CREDENTIALS = /(jdbc:oracle:thin:)([^:@/?\s;]+)\/([^@/?\s;]+)@/i
+const ORACLE_THIN_CREDENTIALS = /(jdbc:oracle:thin:)([^:@/?\s;]+)\/(\S*)/gi
 
 function maskOracleThinUserinfo(value: string): string {
-  return value.replace(ORACLE_THIN_CREDENTIALS, "$1$2/********@")
+  return value.replace(ORACLE_THIN_CREDENTIALS, (match, prefix: string, user: string, tail: string) => {
+    // Thin syntax separates credentials at the LAST @ (a `@` inside the
+    // password is legal), bounded by any `?`/`#` property tail.
+    const at = tail.split(/[?#]/)[0]!.lastIndexOf("@")
+    if (at === -1) return match
+    return `${prefix}${user}/********${tail.slice(at)}`
+  })
 }
 
 /**
