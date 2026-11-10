@@ -225,11 +225,16 @@ function extractJwtFromResponse(headers: Headers, payload: Record<string, unknow
   ].find((value) => value.trim())?.trim() ?? ""
 }
 
-async function loadAccountConsoleMeta(accountLoginUrl: string, timeoutMs = 20_000): Promise<AccountConsoleMeta | null> {
+async function loadAccountConsoleMeta(
+  accountLoginUrl: string,
+  timeoutMs = 20_000,
+  redirect: RequestRedirect = "follow",
+): Promise<AccountConsoleMeta | null> {
   const response = await fetch(
     `${accountLoginUrl}/one-combo-api/configCenter/script/getApolloConfig?dataId=clickzetta-fe-console&globalVarName=__clickzettaFeConsoleMeta__`,
     {
       headers: { accept: "*/*" },
+      redirect,
       signal: AbortSignal.timeout(timeoutMs),
     },
   )
@@ -268,9 +273,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function derivedAccountSiteForService(service: string, accountName: string): string | null {
   const parsed = parseApiService(service)
+  if (!isSafeAccountLabel(accountName)) return null
   if (!parsed || parsed.protocol !== "https:" || !isClickzettaHost(parsed.hostname)) return null
   // Built from the parsed host and port only, never from the raw string.
   return accountLoginUrlForService(`https://${parsed.host}`, accountName)
+}
+
+/** A single DNS label: the only shape an account name may take inside a derived host. */
+export function isSafeAccountLabel(name: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name.toLowerCase())
+}
+
+/**
+ * Last line of defense for the API-endpoint fallback, independent of how the URL
+ * was built: the site that will receive the password must be exactly the origin
+ * the user named, or the derived accounts host of a ClickZetta https endpoint.
+ */
+export function assertSafeAccountSite(accountLoginUrl: string, service: string, accountName: string): void {
+  const reject = (reason: string): never => {
+    throw new Error(`ACCOUNT_LOGIN_FAILED: refusing to send the password to an unexpected account site (${reason}). Pass --instance <name> to log in to a specific instance instead.`)
+  }
+  const site = URL.parse(accountLoginUrl)
+  const own = parseApiService(service)
+  if (!site || !own) return reject("invalid url")
+  if (site.username || site.password || site.search || site.hash) return reject("url carries extra components")
+  if (site.pathname !== "/" && site.pathname !== "") return reject("url carries a path")
+  if (accountLoginUrl.replace(/\/+$/, "") !== site.origin) return reject("url is not a plain origin")
+  if (site.origin === own.origin) return
+  if (site.protocol !== "https:" || !isClickzettaHost(site.hostname)) return reject("not an https ClickZetta host")
+  const expected = derivedAccountSiteForService(service, accountName)
+  if (!expected || URL.parse(expected)?.origin !== site.origin) return reject("host is not the derived accounts host")
 }
 
 /**
@@ -310,7 +342,7 @@ export async function accountSiteForApiService(
 ): Promise<{ url: string; derived: boolean } | null> {
   const parsed = parseApiService(service)
   if (!parsed) return null
-  const meta = await loadAccountConsoleMeta(parsed.origin, 5_000).catch(() => null)
+  const meta = await loadAccountConsoleMeta(parsed.origin, 5_000, "error").catch(() => null)
   if (meta) return { url: parsed.origin, derived: false }
   const derived = derivedAccountSiteForService(service, accountName)
   return derived ? { url: derived, derived: true } : null
@@ -326,7 +358,9 @@ export async function loginByAccountSite(
   options: { requireEncryptKey?: boolean } = {},
 ): Promise<AccountSiteLoginResult> {
   const accountLoginUrl = accountLoginUrlOverride || accountLoginUrlForService(serviceOrHost, accountName)
-  const meta = await loadAccountConsoleMeta(accountLoginUrl)
+  const strict = Boolean(options.requireEncryptKey)
+  if (strict) assertSafeAccountSite(accountLoginUrl, serviceOrHost, accountName)
+  const meta = await loadAccountConsoleMeta(accountLoginUrl, 20_000, strict ? "error" : "follow")
   const fallbackServiceHost = serviceHostFromInput(accountLoginUrlOverride ? stripProtocol(accountLoginUrlOverride) : stripProtocol(serviceOrHost))
   const serviceHost = stripProtocol(meta?.apiGateway || "") || fallbackServiceHost
   // Without a public key the password would travel in plaintext to a host the
@@ -345,6 +379,7 @@ export async function loginByAccountSite(
       accept: "application/json, text/plain, */*",
     },
     body: JSON.stringify({ username, password: payloadPassword, accountDisplayName: accountName }),
+    redirect: strict ? "error" : "follow",
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error(`ACCOUNT_LOGIN_FAILED: HTTP ${response.status}`)

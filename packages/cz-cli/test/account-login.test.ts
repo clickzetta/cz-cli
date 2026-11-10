@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { generateKeyPairSync } from "node:crypto"
 import { createServer } from "node:http"
-import { accountLoginUrlForService, accountSiteForApiService, derivedAccountSiteForService, loginByAccountSite, parseApiService, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
+import { accountLoginUrlForService, assertSafeAccountSite, isSafeAccountLabel, accountSiteForApiService, derivedAccountSiteForService, loginByAccountSite, parseApiService, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
 
 const { publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 1024,
@@ -227,4 +227,91 @@ describe("account login", () => {
     expect(requests.length).toBe(1)
     local.close()
   })
+
+  const hostileNames = ["evil.example/", "evil.example#", "evil.example?", "a/b", "a\\b", "a b", "", "a".repeat(64), "-a", "a-", "a.b", "a_b"]
+
+  test("derives an accounts host only from a single DNS label account name", () => {
+    for (const name of hostileNames) {
+      expect(isSafeAccountLabel(name)).toBe(false)
+      expect(derivedAccountSiteForService("https://api.clickzetta.com", name)).toBeNull()
+    }
+    expect(derivedAccountSiteForService("https://api.clickzetta.com", "ACCT")).toBe("https://ACCT.accounts.clickzetta.com")
+    expect(isSafeAccountLabel("a".repeat(63))).toBe(true)
+  })
+
+  test("a hostile account name never reaches a local server", async () => {
+    const requests: string[] = []
+    const local = createServer((request, response) => {
+      requests.push(`${request.method} ${request.url}`)
+      response.writeHead(404)
+      response.end()
+    })
+    await new Promise<void>((resolve) => local.listen(0, "127.0.0.1", () => resolve()))
+    const address = local.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    const target = `127.0.0.1:${address.port}`
+    for (const name of [`${target}/`, `${target}#`, `${target}?`]) {
+      // https://<name>.accounts.clickzetta.com would resolve to the local server if built unchecked.
+      expect(derivedAccountSiteForService("https://api.clickzetta.com", name)).toBeNull()
+      const url = `https://${name}.accounts.clickzetta.com`
+      await expect(
+        loginByAccountSite(name, "user", "secret-123", "https://api.clickzetta.com", 2_000, url, { requireEncryptKey: true }),
+      ).rejects.toThrow("refusing")
+    }
+    expect(requests).toEqual([])
+    local.close()
+  })
+
+  test("the last-line defense rejects urls with a path, query, userinfo or foreign host", () => {
+    const service = "https://api.clickzetta.com"
+    expect(() => assertSafeAccountSite("https://acct.accounts.clickzetta.com", service, "acct")).not.toThrow()
+    expect(() => assertSafeAccountSite("https://api.clickzetta.com", service, "acct")).not.toThrow()
+    for (const bad of [
+      "https://acct.accounts.clickzetta.com/x",
+      "https://acct.accounts.clickzetta.com?x=1",
+      "https://acct.accounts.clickzetta.com#x",
+      "https://u@acct.accounts.clickzetta.com",
+      "http://acct.accounts.clickzetta.com",
+      "https://other.accounts.clickzetta.com",
+      "https://acct.accounts.evil.example",
+      "https://evil.example/.uat-accounts.clickzetta.com",
+    ]) {
+      expect(() => assertSafeAccountSite(bad, service, "acct")).toThrow("refusing")
+    }
+    expect(() => assertSafeAccountSite("http://127.0.0.1:1", "http://127.0.0.1:1", "acct")).not.toThrow()
+    expect(() => assertSafeAccountSite("http://127.0.0.1:1/x", "http://127.0.0.1:1", "acct")).toThrow("refusing")
+  })
+
+  for (const stage of ["meta", "login"] as const) {
+    test(`refuses a redirect from the ${stage} request on the fallback`, async () => {
+      const second: string[] = []
+      const other = createServer((request, response) => {
+        second.push(`${request.method} ${request.url}`)
+        response.writeHead(200)
+        response.end(`x.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":"${publicKey.toString("base64")}"}`)
+      })
+      await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", () => resolve()))
+      const otherAddress = other.address()
+      if (!otherAddress || typeof otherAddress === "string") throw new Error("server address unavailable")
+      const first = createServer((request, response) => {
+        if (stage === "login" && request.url?.startsWith("/one-combo-api")) {
+          response.writeHead(200)
+          response.end(`x.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":"${publicKey.toString("base64")}"}`)
+          return
+        }
+        response.writeHead(307, { location: `http://127.0.0.1:${otherAddress.port}${request.url}` })
+        response.end()
+      })
+      await new Promise<void>((resolve) => first.listen(0, "127.0.0.1", () => resolve()))
+      const address = first.address()
+      if (!address || typeof address === "string") throw new Error("server address unavailable")
+      const baseUrl = `http://127.0.0.1:${address.port}`
+      await expect(
+        loginByAccountSite("acct", "user", "secret-123", baseUrl, 5_000, baseUrl, { requireEncryptKey: true }),
+      ).rejects.toThrow()
+      expect(second).toEqual([])
+      first.close()
+      other.close()
+    })
+  }
 })
