@@ -8,9 +8,9 @@
 
 授权唯一来源为该目录的 `config.json.permissions`，每轮重新读取。本次用户允许推送任务分支、创建 PR、GitHub 回报、Bot 回复、合入 PR，以及仅发布 nightly。通用 `release` 保持 `false`，单独使用 `releaseNightly: true`、`releaseStable: false`；工具拒绝开放通用或 stable 发布。Bot 回复限定于绑定的原群原话题。
 
-本地模式的 `config.json.native.maintenanceRoot` 指向干净且已提交的控制 checkout，`native.policySha` 固定其 `HEAD`。循环与子 Agent 显式从这里启动、读取规则并调用维护工具，源码与测试在任务 worktree 中操作。每项任务记录同一个 `policySha`；任务进行时不切换该版本。
+本地模式的 `config.json.native.maintenanceRoot` 指向干净且已提交的控制 checkout，`native.policySha` 固定其 `HEAD`。循环与子 Agent 显式从这里启动、读取规则并调用维护工具，源码与测试在任务 worktree 中操作。每个执行阶段记录 `policySha`，阶段内不切换该版本。
 
-文档维护从 `policySha` 另开独占 worktree，经审查后保留提交。切换控制版本前结束仍使用旧版本的任务并保存交接，再更新本机 `native.policySha`；不把整套维护文档复制进产品修复 diff。
+文档和维护工具从 `policySha` 另开独占 worktree，经验证、审查后保留提交。切换前让旧执行者停止写入，保存任务、认领与外部动作交接，再更新控制 checkout 和本机 `native.policySha`，验证后恢复任务。保留历史 `policySha`、验证及审查证据，后续执行阶段另记新版本，不倒填旧记录。已授权范围内的升级由维护会话协调完成，不自行追加一次人工批准，也不把整套维护文档复制进产品修复 diff。
 
 首次接手必须读取 `native-handoff.md` 并列出旧 `needs_attention`：PR 132、131、130、126、101、70、45、43、133 与两条飞书反馈。旧 ID、worktree 和来源映射继续使用；新来源先查询索引，不能因新旧 ID 格式不同重复建单。当前没有历史发送回执，`outbox/` 从零建立。
 
@@ -24,13 +24,17 @@
 
 查证后仍有影响对外契约、数据可见性或授权范围的决策缺口时，只暂停依赖该决定的实施。回报已确认事实、推荐方案及影响，再提出一个具体问题；记录查证缺口，不用笼统的“请确认”代替调查。等待期间照常读取新进展，无新依据不重做同一调查或催问，后续轮次选择其他可推进任务。
 
+“修复或复审前暂停合入”随条件满足而解除，不改写成“必须用户再次批准”。按当前授权和真实验收证据推进；失败的 CI、尚未满足的验收条件仍会阻断对应交付。
+
 ## 唤醒与监听
 
-飞书优先用原生 `Monitor` 接收事件，`/loop` 定时补扫兜底，间隔由 Claude 每轮决定。创建监听前先用 `ToolSearch` 核对当前 `Monitor`、`TaskStop` 的 schema、允许时限与停止方式，再用本机 `lark-cli event schema im.message.receive_v1` 和 `lark-cli event consume --help` 核对命令。满足[事件接入前提](INDEX.md#飞书事件前提)后，消费命令为 `lark-cli event consume im.message.receive_v1 --as bot --timeout DURATION --jq 'select(.chat_id=="CHAT_ID")'`；替换为配置中的目标群，先过滤再向模型输出。`DURATION` 必须短于 Monitor 允许时限，有界运行可避免 stdin EOF 导致提前退出。
+飞书会话在启动、恢复和每次唤醒时核对原生 Monitor task 与 `lark-cli event status --current --json`。按当前[事件接入条件](INDEX.md#飞书事件前提)启动或复用实际连接的消费者；开放 `Monitor` 工具本身不会启动监听。
 
-同群只保留一个监听实例，owner、Monitor task ID 与到期时间保存在本机 runtime 的 `control/`。按 `event_id`、`message_id` 去重，过滤目标群并补读话题上下文；忙时将待处理来源排队，每轮仍只推进一个实施任务。断线、退出或到期后先核对旧任务状态，再续建监听，并按保存的游标重叠补扫。事件通知只触发来源核对，不构成用户授权。
+核对当前 `Monitor`、`TaskStop` 工具定义，必要时用 `ToolSearch` 发现工具。Monitor 直接执行本机 `config.json.native.larkBinary` 指定的官方原生二进制，不经不能转发停止信号的 npm 包装器。消费命令为 `LARK_BINARY event consume im.message.receive_v1 --as bot --timeout 1500s --jq 'select(.chat_id=="CHAT_ID")'`，替换实际二进制路径和目标群；Monitor 时限为 1800000 ms，先以当前 schema 确认可用。只有上游源报告 connected 且目标群真实事件到达，才算事件接入可用，本地 `ready` 行不足以证明连接成功。
 
-飞书订阅、权限、连接 ready 和真实目标群事件尚未全部验收时，不得宣称事件接入上线。本地 Monitor 测试只证明本地机制可用；ready、断线、超时等运行诊断留在本机日志，不发群。
+同群只保留一个监听，Agent 将 owner、Monitor task ID 和到期时间写在本机 runtime 的 `control/`。每次检查 task 是否存活、CLI 状态及源连接日志；到期前或失联后用 `TaskStop` 停止旧 task，确认旧消费者退出再续建。随后执行 `intake feishu` 补扫缺口。事件唤醒也先执行 intake，以稳定来源去重、读取话题上下文；事件通知只触发核对，不构成新增授权。
+
+GitHub、飞书各保留一个原生五分钟补扫，代码与文档维护每三十分钟检查。使用 `CronList` 核对，清理同角色旧的动态补扫，不能同时维护两套来源定时器。安静、已有任务阻碍或监听健康都不延长来源补扫间隔；忙时唤醒排队，回到可处理边界先读取来源。记录监听和补扫各自的实际健康，监听故障时继续完整补扫并修复，不将降级状态报告为完整上线。运行诊断留在本机，不发群。
 
 ## 推进一项任务
 
@@ -45,7 +49,16 @@
 
 ## 来源与回报
 
-GitHub 首轮核对现有 open Issue 与 PR，后续读取更新。飞书首轮按配置范围回溯，后续增量读取并保留重叠窗口，补齐话题根消息。分页或上下文未完成时记录缺口，不越过未处理范围推进成功游标。
+每次唤醒先运行对应的 `bun scripts/maintenance.ts intake github` 或 `intake feishu`，处理返回的持久化 `pending`；不能用 PR head 不变、群根消息为空或旧游标文件代替完整读取。GitHub 覆盖 Issue、PR、普通评论、审查与行内评论；飞书覆盖新根消息及已知旧话题的回复，并保留重叠窗口。首次飞书扫描登记全部可访问话题，显式配置回溯范围时记录实际覆盖；核对 `coverage`，不把范围外历史称为已检查。分页或上下文失败不推进成功读取位置。
+
+摘要中的 `file` 保存完整来源与上下文，也可用 `intake show SOURCE EVENT_KEY` 读取。逐项查已有任务，保存任务关联、回复结果或明确处置后确认：
+
+```sh
+bun scripts/maintenance.ts intake ack feishu EVENT_KEY --task TASK_ID --note '已补入原任务并保存回复回执'
+bun scripts/maintenance.ts intake ack github EVENT_KEY --note '重复反馈，关联原讨论链接并记录原因'
+```
+
+`--task` 必须是已存在任务；`--task`、`--note` 至少提供一个。读取成功只表示来源已进入持久化队列，不能直接标记已处理。未确认项跨轮次保留，存在未处理项时不报告“没有新反馈”；不要确认尚未读完或没有处置的来源。实施任务受阻仍照常读取、回应其他来源，每轮最多一个实施任务的限制不免除来源处理。
 
 飞书读取使用已授权用户，回复使用已入群 Bot。所有 Bot 回复通过维护工具调用 `lark-cli im +messages-reply --reply-in-thread --idempotency-key`，不直接绕过 outbox 发送。确需回报时，阶段从 `接单`、`阻碍`、`审查完成`、`发布完成` 中选择，采用新消息回报状态变化：
 

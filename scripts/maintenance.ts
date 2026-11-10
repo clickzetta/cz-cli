@@ -2,10 +2,39 @@ import { findTask, initializeRuntime, loadRuntime, registerTask, saveTask } from
 import { readReceipts, reply } from "./maintenance/reply"
 import { mergePullRequest, readMergeReceipts } from "./maintenance/merge"
 import { readNightlyReceipts, reconcileNightlyRelease, releaseNightly } from "./maintenance/release"
+import { acknowledgeIntake, pendingIntake, scanIntake, showIntake } from "./maintenance/intake"
+import type { IntakeSource } from "./maintenance/intake"
 
 export async function main(args = Bun.argv.slice(2)) {
   const runtime = await loadRuntime()
   const action = args[0] ?? "status"
+  if (action === "intake") {
+    const operation = ["ack", "show", "pending"].includes(args[1]) ? args[1] : "scan"
+    const source = operation === "scan" ? args[1] : args[2]
+    if (source !== "feishu" && source !== "github") throw new Error("Intake source must be feishu or github")
+    if (operation === "scan" && args.length === 2) return scanIntake(runtime, source)
+    if (operation === "pending" && args.length === 3) return pendingIntake(runtime.directory, source)
+    if (operation === "show" && args.length === 4) return showIntake(runtime.directory, source, args[3])
+    if (operation === "ack") {
+      const options = args.slice(4)
+      const parsed = new Map<string, string>()
+      for (let index = 0; index < options.length; index++) {
+        const option = options[index]
+        if (!["--task", "--note"].includes(option) || parsed.has(option))
+          throw new Error("Unknown or repeated intake ack option")
+        const value = options[++index]
+        if (!value || value.startsWith("--")) throw new Error(`Missing value for ${option}`)
+        parsed.set(option, value)
+      }
+      return acknowledgeIntake(runtime, source as IntakeSource, args[3] ?? "", {
+        taskId: parsed.get("--task"),
+        note: parsed.get("--note"),
+      })
+    }
+    throw new Error(
+      "Use: intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT]",
+    )
+  }
   if (action === "init" && args.length === 1) {
     const initialized = await initializeRuntime(runtime.directory)
     return {
@@ -115,7 +144,7 @@ export async function main(args = Bun.argv.slice(2)) {
     })
   }
   throw new Error(
-    "Use: init | status | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
+    "Use: init | status | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
   )
 }
 
