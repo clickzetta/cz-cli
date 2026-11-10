@@ -564,10 +564,11 @@ describe("setup guidance", () => {
   // script and root /login) is served on the API host, with the API under /api.
   async function startAccountWithInstances(
     instances: string[],
-    options: { consoleOnService?: boolean; mfa?: boolean } = {},
+    options: { consoleOnService?: boolean; console?: boolean; mfa?: boolean; badPassword?: boolean } = {},
   ) {
     const api = options.consoleOnService ? "/api" : ""
     const seen = { instanceLogins: [] as unknown[], accountLogins: [] as string[] }
+    const serveConsole = options.consoleOnService || options.console
     const server = createServer(async (request, response) => {
       const body = await new Promise<string>((resolve) => {
         let buffer = ""
@@ -579,13 +580,14 @@ describe("setup guidance", () => {
         response.writeHead(status, { "content-type": "application/json" })
         response.end(JSON.stringify(payload))
       }
-      if (options.consoleOnService && request.url?.startsWith("/one-combo-api/configCenter/script/getApolloConfig")) {
+      if (serveConsole && request.url?.startsWith("/one-combo-api/configCenter/script/getApolloConfig")) {
         response.writeHead(200, { "content-type": "application/javascript" })
         response.end(`window.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":""}`)
         return
       }
       if (request.url === `${api}/clickzetta-portal/user/loginSingle` && request.method === "POST") {
         seen.instanceLogins.push(JSON.parse(body).instanceName)
+        if (options.badPassword) return json(200, { code: 1, message: "invalid username or password" })
         return json(400, { code: 400, message: "No such element" })
       }
       if (request.url === "/login" && request.method === "POST") {
@@ -619,8 +621,8 @@ describe("setup guidance", () => {
   }
 
   test("existing-account setup on an api service discovers the only instance when the account name is not one", async () => {
-    const { port, seen } = await startAccountWithInstances(["prod"])
-    const service = `http://localhost:${port}`
+    const { port, seen } = await startAccountWithInstances(["prod"], { console: true })
+    const service = `http://127.0.0.1:${port}`
 
     const result = await runAsync([
       "setup",
@@ -631,7 +633,7 @@ describe("setup guidance", () => {
     ])
 
     expect(seen.instanceLogins).toEqual(["acct"])
-    expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
+    expect(seen.accountLogins).toEqual([`127.0.0.1:${port}`])
     expect(result.exitCode).toBe(1)
     const json = firstJson(result.stdout)
     expect(json.step).toBe("workspace")
@@ -639,8 +641,8 @@ describe("setup guidance", () => {
   })
 
   test("existing-account setup on an api service asks for the instance when the account has several", async () => {
-    const { port } = await startAccountWithInstances(["prod", "staging"])
-    const service = `http://localhost:${port}`
+    const { port } = await startAccountWithInstances(["prod", "staging"], { console: true })
+    const service = `http://127.0.0.1:${port}`
 
     const result = await runAsync([
       "setup",
@@ -666,12 +668,46 @@ describe("setup guidance", () => {
       "--password", "p",
       "--account-name", "acct",
       "--instance", "wrong",
-      "--service", `http://localhost:${port}`,
+      "--service", `http://127.0.0.1:${port}`,
     ])
 
     expect(result.exitCode).not.toBe(0)
     expect(seen.instanceLogins).toEqual(["wrong", "acct"])
     expect(seen.accountLogins).toEqual([])
+  })
+
+  test("existing-account setup with a wrong password makes no account-site login request", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"], { console: true, badPassword: true })
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "wrong",
+      "--account-name", "acct",
+      "--service", `http://127.0.0.1:${port}`,
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    // The SDK retries a rejected password on its own; none of it may reach the account site.
+    expect(new Set(seen.instanceLogins)).toEqual(new Set(["acct"]))
+    expect(seen.accountLogins).toEqual([])
+    expect(result.stdout).not.toContain("ACCOUNT_LOGIN_FAILED")
+  })
+
+  test("existing-account setup never posts to an account site for an endpoint that serves no console", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"])
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", `http://localhost:${port}`,
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    expect(seen.accountLogins).toEqual([])
+    expect(result.stdout).toContain("--instance")
   })
 
   test("existing-account setup on a path-style private deployment authenticates at the site root", async () => {
@@ -695,8 +731,8 @@ describe("setup guidance", () => {
   })
 
   test("existing-account setup reports MFA instead of a missing token when the account requires it", async () => {
-    const { port, seen } = await startAccountWithInstances(["prod"], { mfa: true })
-    const service = `http://localhost:${port}`
+    const { port, seen } = await startAccountWithInstances(["prod"], { mfa: true, console: true })
+    const service = `http://127.0.0.1:${port}`
 
     const result = await runAsync([
       "setup",
@@ -706,13 +742,13 @@ describe("setup guidance", () => {
       "--service", service,
     ])
 
-    expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
+    expect(seen.accountLogins).toEqual([`127.0.0.1:${port}`])
     expect(result.exitCode).not.toBe(0)
     const json = firstJson(result.stdout).error as Record<string, unknown>
     expect(json.code).toBe("ACCOUNT_MFA_REQUIRED")
     // Browser sign-in must target this endpoint: without --oauth-url, `auth login`
     // only offers the public regions (or refuses when non-interactive).
-    expect(String(json.message)).toContain(`cz-cli auth login <name> --oauth-url ${service}`)
+    expect(String(json.message)).toContain(`cz-cli auth login <name> --oauth-url '${service}'`)
     expect(String(json.message)).not.toContain("token not found")
     expect(String(json.message)).not.toContain("INSTANCE_LOGIN_FAILED")
   })
@@ -722,11 +758,11 @@ describe("setup guidance", () => {
   test.skipIf(process.platform !== "linux")(
     "interactive setup reports MFA without prompting for an instance name",
     async () => {
-      const { port } = await startAccountWithInstances(["prod"], { mfa: true })
+      const { port } = await startAccountWithInstances(["prod"], { mfa: true, console: true })
       const home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))
       const child = spawn(
         "script",
-        ["-qec", `bun ./src/main.ts setup --username u --password p --account-name acct --service http://localhost:${port}`, "/dev/null"],
+        ["-qec", `bun ./src/main.ts setup --username u --password p --account-name acct --service http://127.0.0.1:${port}`, "/dev/null"],
         {
           cwd: import.meta.dir + "/..",
           env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home },

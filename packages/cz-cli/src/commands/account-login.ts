@@ -1,6 +1,6 @@
 import { constants, publicEncrypt } from "node:crypto"
 import { toServiceUrl } from "@clickzetta/sdk"
-import { CLICKZETTA_HOST_SUFFIXES } from "../llm/clickzetta-hosts.js"
+import { CLICKZETTA_HOST_SUFFIXES, isClickzettaHost } from "../llm/clickzetta-hosts.js"
 
 interface AccountConsoleMeta {
   apiGateway: string
@@ -261,19 +261,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The accounts site that authenticates an account reached through an API endpoint.
+ * The derived `<account>.accounts.<root>` site for an API endpoint, or null when
+ * the endpoint is not one we may send a password to on a guess. Only ClickZetta
+ * owned hosts qualify (the root-domain guess for any other host lands on a domain
+ * the user never named), and only over https.
+ */
+export function derivedAccountSiteForService(service: string, accountName: string): string | null {
+  const { host, protocol } = splitEndpoint(service)
+  if (protocol !== "https" || !isClickzettaHost(host.replace(/:\d+$/, ""))) return null
+  return accountLoginUrlForService(service, accountName)
+}
+
+/**
+ * The accounts site that authenticates an account reached through an API endpoint,
+ * or null when there is no site the password may safely go to.
  *
  * Path-style private deployments serve the console, and its root `/login`, on the
  * same host as the API (`https://studio.example.com/api` → `https://studio.example.com`).
  * Public cloud keeps it on `<account>.accounts.<root>`. The console meta script
- * only exists where a console is served, so its presence on the endpoint's origin
- * tells the two apart without sending credentials to a guessed host.
+ * only exists where a console is served, so its presence on the endpoint's own
+ * origin (a host the user named) tells the two apart. Otherwise only the derived
+ * host of a ClickZetta-owned endpoint is used; `derived` marks that case so the
+ * caller can refuse to send the password unencrypted.
  */
-export async function accountSiteForApiService(service: string, accountName: string): Promise<string> {
+export async function accountSiteForApiService(
+  service: string,
+  accountName: string,
+): Promise<{ url: string; derived: boolean } | null> {
   const { host, protocol } = splitEndpoint(service)
   const origin = `${protocol}://${host}`
   const meta = await loadAccountConsoleMeta(origin, 5_000).catch(() => null)
-  return meta ? origin : accountLoginUrlForService(service, accountName)
+  if (meta) return { url: origin, derived: false }
+  const derived = derivedAccountSiteForService(service, accountName)
+  return derived ? { url: derived, derived: true } : null
 }
 
 export async function loginByAccountSite(
@@ -283,11 +303,17 @@ export async function loginByAccountSite(
   serviceOrHost: string,
   timeoutMs = 20_000,
   accountLoginUrlOverride?: string,
+  options: { requireEncryptKey?: boolean } = {},
 ): Promise<AccountSiteLoginResult> {
   const accountLoginUrl = accountLoginUrlOverride || accountLoginUrlForService(serviceOrHost, accountName)
   const meta = await loadAccountConsoleMeta(accountLoginUrl)
   const fallbackServiceHost = serviceHostFromInput(accountLoginUrlOverride ? stripProtocol(accountLoginUrlOverride) : stripProtocol(serviceOrHost))
   const serviceHost = stripProtocol(meta?.apiGateway || "") || fallbackServiceHost
+  // Without a public key the password would travel in plaintext to a host the
+  // user did not name; callers on a guessed host refuse that.
+  if (options.requireEncryptKey && !meta?.encryptKey) {
+    throw new Error("ACCOUNT_LOGIN_FAILED: the accounts site did not provide an encryption key; refusing to send the password unencrypted")
+  }
   const payloadPassword = meta?.encryptKey ? encryptPassword(password, meta.encryptKey) : password
   const response = await fetch(`${accountLoginUrl}/login`, {
     method: "POST",

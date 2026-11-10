@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { generateKeyPairSync } from "node:crypto"
 import { createServer } from "node:http"
-import { accountLoginUrlForService, loginByAccountSite, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
+import { accountLoginUrlForService, derivedAccountSiteForService, loginByAccountSite, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
 
 const { publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 1024,
@@ -122,5 +122,59 @@ describe("account login", () => {
     expect(login.token).toBe("test-token")
     expect(login.serviceHost).toBe("dev-api.clickzetta.com")
     expect(login.serviceUrl).toBe("https://dev-api.clickzetta.com")
+  })
+
+  test("derives the accounts host only for https ClickZetta-owned hosts", () => {
+    expect(derivedAccountSiteForService("https://api.clickzetta.com", "acct")).toBe("https://acct.accounts.clickzetta.com")
+    expect(derivedAccountSiteForService("https://cn-shanghai-alicloud.api.clickzetta.com", "acct")).toBe(
+      "https://acct.accounts.clickzetta.com",
+    )
+    expect(derivedAccountSiteForService("https://api.singdata.com", "acct")).toBe("https://acct.accounts.singdata.com")
+    expect(derivedAccountSiteForService("https://lakehouse.example.co.uk", "acct")).toBeNull()
+    expect(derivedAccountSiteForService("https://api.corp.internal", "acct")).toBeNull()
+    expect(derivedAccountSiteForService("http://api.clickzetta.com", "acct")).toBeNull()
+    expect(derivedAccountSiteForService("https://clickzetta.com.evil.example", "acct")).toBeNull()
+    expect(derivedAccountSiteForService("https://evilclickzetta.com", "acct")).toBeNull()
+  })
+
+  test("refuses to post the password when the console meta has no encryption key", async () => {
+    let posts = 0
+    const bare = createServer((request, response) => {
+      if (request.url?.startsWith("/one-combo-api/configCenter/script/getApolloConfig")) {
+        response.writeHead(200)
+        response.end(`x.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":""}`)
+        return
+      }
+      if (request.url === "/login") posts += 1
+      response.writeHead(404)
+      response.end("{}")
+    })
+    await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", () => resolve()))
+    const address = bare.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    const baseUrl = `http://127.0.0.1:${address.port}`
+    await expect(
+      loginByAccountSite("acct", "user", "secret-123", baseUrl, 20_000, baseUrl, { requireEncryptKey: true }),
+    ).rejects.toThrow("unencrypted")
+    expect(posts).toBe(0)
+    bare.close()
+  })
+
+  test("refuses to post the password when the console meta request fails", async () => {
+    let posts = 0
+    const broken = createServer((request, response) => {
+      if (request.url === "/login") posts += 1
+      response.writeHead(502)
+      response.end("bad gateway")
+    })
+    await new Promise<void>((resolve) => broken.listen(0, "127.0.0.1", () => resolve()))
+    const address = broken.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    const baseUrl = `http://127.0.0.1:${address.port}`
+    await expect(
+      loginByAccountSite("acct", "user", "secret-123", baseUrl, 20_000, baseUrl, { requireEncryptKey: true }),
+    ).rejects.toThrow()
+    expect(posts).toBe(0)
+    broken.close()
   })
 })
