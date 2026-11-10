@@ -156,7 +156,8 @@ function requireEvent(input: unknown): MemoryEvent {
     typeof input.id !== "string" ||
     typeof input.taskId !== "string" ||
     !input.taskId.trim() ||
-    !["lesson", "correction", "usage"].includes(String(input.kind)) ||
+    typeof input.kind !== "string" ||
+    !["lesson", "correction", "usage"].includes(input.kind) ||
     typeof input.summary !== "string" ||
     !input.summary.trim() ||
     !strings(input.evidence) ||
@@ -183,7 +184,8 @@ function requireResolution(input: unknown): MemoryResolution {
     !Object.keys(input).every((key) =>
       ["disposition", "reason", "evidence", "memoryRefs", "policySha"].includes(key),
     ) ||
-    !["integrated", "duplicate", "no-change"].includes(String(input.disposition)) ||
+    typeof input.disposition !== "string" ||
+    !["integrated", "duplicate", "no-change"].includes(input.disposition) ||
     typeof input.reason !== "string" ||
     !input.reason.trim() ||
     !strings(input.evidence) ||

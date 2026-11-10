@@ -185,6 +185,26 @@ describe("maintenance memory evidence", () => {
     expect((await pendingMemory(data.directory)).pendingCount).toBe(2)
   })
 
+  test("enum values cannot coerce arrays or objects into valid kinds or bypass integration checks", async () => {
+    const data = fixture()
+    for (const kind of [["lesson"], { toString: () => "lesson" }, 1, null]) {
+      await expect(recordMemory(data.directory, { ...event(), kind })).rejects.toThrow("Memory event requires")
+      expect(existsSync(path.join(data.directory, "memory", "events", `${event().id}.json`))).toBe(false)
+    }
+    await recordMemory(data.directory, event())
+    for (const disposition of [["integrated"], { toString: () => "integrated" }, 1, null]) {
+      await expect(
+        resolveMemory(data.directory, event().id, {
+          disposition,
+          reason: "Attempt to resolve without activated policy or memory references",
+          evidence: ["tasks/task-existing/result.txt"],
+        }),
+      ).rejects.toThrow("Memory resolution requires")
+      expect(existsSync(path.join(data.directory, "memory", "resolutions", `${event().id}.json`))).toBe(false)
+      expect((await pendingMemory(data.directory)).pendingCount).toBe(1)
+    }
+  })
+
   test("integration requires provenance, preserves the event, and resolving twice is idempotent", async () => {
     const data = fixture()
     const active = await activate(data.directory)
