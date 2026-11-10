@@ -2,6 +2,9 @@
 
 使用 Claude Code 原生 `/loop` 和 `Monitor`，模型为 `claude-sonnet-5-5`，项目知识通过 [docs 索引](../INDEX.md)按需读取。只在维护会话的启动参数中关闭 auto-memory，日常交互会话沿用原设置。
 
+- [共享记忆入口](memory/INDEX.md)：按任务读取经验及候选纠错。
+- [回写与整理](memory-workflow.md)：持久经验队列、新上下文整理、纠错淘汰、验证及生效。
+- [离线行为验收](memory-cases.md)：用真实故障类型检查下一轮判断。
 - [工作流程](workflow.md)：认领、独占工作区、验收、交接与回报。
 - [反馈 prompt](prompts/feedback.md)：统一处理 GitHub 与飞书。
 - [反思 prompt](prompts/reflection.md)：每十二小时整理易误解点、人工待决和重复故障。
@@ -23,7 +26,7 @@ bun scripts/maintenance.ts init
 bun scripts/maintenance.ts status
 ```
 
-核对旧任务、11 个待处理来源、权限和回执目录，再按下文启动、验收两个会话。清理旧 worktree 需要用户逐项确认，不阻塞启用。交接中更新实际监听状态和待修复故障，按当前配置与授权完成接入。
+核对当前实际待处理来源、旧任务、权限和回执目录，再按下文启动、验收两个会话。清理旧 worktree 需要用户逐项确认，不阻塞启用。交接中更新实际监听状态和待修复故障，按当前配置与授权完成接入。
 
 ## 飞书事件前提
 

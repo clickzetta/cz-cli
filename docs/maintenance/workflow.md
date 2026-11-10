@@ -12,7 +12,7 @@
 
 文档和维护工具从 `policySha` 另开独占 worktree，经验证、审查后保留提交。切换前让旧执行者停止写入，保存任务、认领与外部动作交接，再更新控制 checkout 和本机 `native.policySha`，验证后恢复任务。保留历史 `policySha`、验证及审查证据，后续执行阶段另记新版本，不倒填旧记录。已授权范围内的升级由维护会话协调完成，不自行追加一次人工批准，也不把整套维护文档复制进产品修复 diff。
 
-首次接手必须读取 `native-handoff.md` 并列出旧 `needs_attention`：PR 132、131、130、126、101、70、45、43、133 与两条飞书反馈。旧 ID、worktree 和来源映射继续使用；新来源先查询索引，不能因新旧 ID 格式不同重复建单。当前没有历史发送回执，`outbox/` 从零建立。
+首次接手读取当前 `native-handoff.md`，用 `status` 核对实际待处理任务、执行者与回执。旧 ID、worktree 和来源映射继续使用；新来源先查询索引，不能因新旧 ID 格式不同重复建单。历史交接仅说明当时状态，不能覆盖现行授权、已完成回执或已满足的解除条件。
 
 每项任务保存来源、验收条件、owner、worktree、`policySha`、`baseSha`、`headSha`、`reviewedSha`、验证、审查结论、外部动作、阻碍与下一步。GitHub 与飞书指向同一问题时关联到已有任务。
 
@@ -41,7 +41,7 @@
 1. 核对当前配置、`native-handoff.md`、工具列出的旧任务与来源最新上下文。用稳定来源键查询旧 ID，再认领或注册任务；来源有更新时补充已有任务，不另建重复任务。
 2. 在 `claims/` 下原子创建该任务的目录，成功后记录 owner；已存在或归属不明时不接管。各会话只修改自己持有的任务与控制记录，不抢占未对账的认领。
 3. 新修复从更新后的 `origin/main` 精确 SHA 创建独占 worktree，记录 `baseSha`；显式给实施者控制 checkout 的规则入口与 `policySha`，不从源码 worktree 的旧指令猜测维护基线。PR 审查保留 PR head 和实际 merge-base；历史跨度异常时先交接，不直接移植整段差异。接手历史任务先核对现场与副作用。
-4. 实施完成后从控制 checkout 的 loop 会话中派新的审查子 Agent，只提供最终 diff、SHA、验收条件、验证日志、控制规则版本和源码入口，不提供实施者总结，也不继承其实施对话。审查者可读取源码和相关契约，结论与实际 `reviewedSha` 写入任务记录；审查后任何源码变化都重做审查。审查失败可返修，保留真实失败。
+4. 实施完成后从控制 checkout 的 loop 会话中派新的审查子 Agent，提供原始问题及最新决定、最终 diff、SHA、验收条件、验证日志、控制规则版本、记忆与源码入口，不以实施者总结替代原问题，也不继承其实施对话。审查者先独立检查验收条件是否覆盖原问题及相关部署/认证边界，再读取源码和相关契约，结论与实际 `reviewedSha` 写入任务记录；审查后任何源码变化都重做审查。审查失败可返修，保留真实失败。
 5. 独立审查通过后，保存 `phase: review`、`status: completed`、实际 `reviewedSha`，再按权限推送任务分支、创建 PR。合入统一使用 `bun scripts/maintenance.ts merge TASK PR` 预览，加 `--merge` 执行；工具核对最终远端 SHA、独立审查与 CI，保存实际 merge commit。管理员仅在 PR 审批规则上豁免，普通贡献者仍需一个批准，main 删除和 force push 保护保留。
 6. 产品修复合入后按[发布约定](../engineering/releases.md)发布 nightly，核对实际产物后回报；纯文档、测试或维护工具改动无需发版。不同任务可并行，分别认领、记录执行者并使用独占 worktree；同一任务不重复实施，审查、返修与交付继续关联原任务。没有执行者继续写入后才释放本人认领。
 
@@ -81,7 +81,7 @@ bun scripts/maintenance.ts reply TASK 阻碍 --event STABLE_EVENT --text-file dr
 
 [反馈 Agent](prompts/feedback.md)统一处理两个渠道，跨渠道同一问题关联原任务，来源身份、回复目标与授权仍分别核对。子 Agent 实施不增加常驻角色；每次派工保存执行者和 worktree，重启先查执行者是否仍在工作，避免重复实施；找不到存活执行者时按 worktree 现场和任务记录恢复或重新派工。
 
-[反思 Agent](prompts/reflection.md)每十二小时回看近期提交、任务和讨论，只更新[易误解点](understanding.md)、[人工待决](decisions.md)和[重复故障](recurring-failures.md)。保存上次已检查位置，无新发现不制造改动。发现代码故障交给已有反馈任务，不在反思会话平行实施。独立审查仍随每个任务进行。
+[反思 Agent](prompts/reflection.md)每十二小时回看近期提交、任务和讨论，只更新[易误解点](understanding.md)、[人工待决](decisions.md)和[重复故障](recurring-failures.md)。保存上次已检查位置，无新发现不制造改动。发现代码故障交给已有反馈任务，不在反思会话平行实施。独立审查仍随每个任务进行。共享经验从[记忆索引](memory/INDEX.md)按需读原文，执行者按[回写与整理约定](memory-workflow.md)留下新认识与反证；反思使用新上下文整理者，核验原始依据、过期条件和索引一致性，并用离线案例验证下一轮的判断。
 
 可公开的长期依据写入相应主题；人工待决和私有证据保存到 runtime `control/daily-decisions.md`，未决判断不提升为规则。相关修复开始前读取这些记录，决定已明确后更新任务，防止重复提问。
 

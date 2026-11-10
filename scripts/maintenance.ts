@@ -4,10 +4,19 @@ import { mergePullRequest, readMergeReceipts } from "./maintenance/merge"
 import { readNightlyReceipts, reconcileNightlyRelease, releaseNightly } from "./maintenance/release"
 import { acknowledgeIntake, pendingIntake, scanIntake, showIntake } from "./maintenance/intake"
 import type { IntakeSource } from "./maintenance/intake"
+import { pendingMemory, recordMemory, resolveMemory } from "./maintenance/memory"
 
 export async function main(args = Bun.argv.slice(2)) {
   const runtime = await loadRuntime()
   const action = args[0] ?? "status"
+  if (action === "memory") {
+    if (args[1] === "pending" && args.length === 2) return pendingMemory(runtime.directory)
+    if (args[1] === "record" && args.length === 3)
+      return recordMemory(runtime.directory, await Bun.file(args[2]).json())
+    if (args[1] === "resolve" && args.length === 4)
+      return resolveMemory(runtime.directory, args[2], await Bun.file(args[3]).json())
+    throw new Error("Use: memory record FILE | memory pending | memory resolve ID FILE")
+  }
   if (action === "intake") {
     const operation = ["ack", "show", "pending"].includes(args[1]) ? args[1] : "scan"
     const source = operation === "scan" ? args[1] : args[2]
@@ -144,7 +153,7 @@ export async function main(args = Bun.argv.slice(2)) {
     })
   }
   throw new Error(
-    "Use: init | status | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
+    "Use: init | status | memory record FILE | memory pending | memory resolve ID FILE | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
   )
 }
 

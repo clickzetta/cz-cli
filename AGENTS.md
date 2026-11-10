@@ -5,8 +5,8 @@
 ## Project docs and maintenance
 
 - Start at [docs/INDEX.md](docs/INDEX.md), then read only the categories needed for the task. Update affected contracts with the change. Maintenance reflection records only evidenced misunderstandings, unresolved human decisions, and recurring failures; keep private evidence in local runtime records.
-- For self-maintenance sessions, disable client-private auto-memory and follow [the workflow](docs/maintenance/workflow.md). Check existing tasks before claiming work, use an exclusive worktree, and preserve the user's and other agents' changes.
-- Validate against the task's acceptance criteria and retain actual results, failures, and unrun checks. A fresh reviewer checks the final diff, commit SHA, and evidence; source changes require renewed review.
+- For self-maintenance sessions, disable client-private auto-memory, read relevant original notes through the [shared memory index](docs/maintenance/memory/INDEX.md), and follow [the workflow](docs/maintenance/workflow.md). Capture evidenced lessons, corrections, and useful usage feedback via the [memory workflow](docs/maintenance/memory-workflow.md); do not manufacture notes for every task. Check existing tasks before claiming work, use an exclusive worktree, and preserve the user's and other agents' changes.
+- Validate against the task's acceptance criteria and retain actual results, failures, and unrun checks. A fresh reviewer first checks acceptance criteria against the original request and latest decisions, then checks the final diff, commit SHA, and evidence; source changes require renewed review.
 - External actions follow the user's existing authorization and local runtime configuration. Distinguish local completion, reviewed changes, merged code, and a verified release in reports.
 - Keep task progress, source cursors, and delivery receipts in local runtime records. Update topic docs when behavior or contracts change; do not create changes just to keep a loop busy.
 
