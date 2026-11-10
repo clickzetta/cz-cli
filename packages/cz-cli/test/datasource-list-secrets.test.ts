@@ -17,6 +17,8 @@ const { execute } = await import("../src/execute.ts")
 const OSS_AK = "{{SECRET_y0dzc8o5}}"
 const OSS_SK = "{{SECRET_r9i0yaj2}}"
 const MYSQL_PW = "{{SECRET_qptpg0qa}}"
+const JSON_PW = "{{SECRET_m4k7qz2p}}"
+const ARRAY_PW = "{{SECRET_w9e5rt8u}}"
 
 beforeEach(() => {
   clearTokenCache()
@@ -36,8 +38,14 @@ beforeEach(() => {
           username: "dbuser", password: MYSQL_PW,
           jdbcUrl: "jdbc:mysql://rm-bp.example.com:3306/db?password=" + MYSQL_PW + "&useSSL=false",
         } },
+        // connectionParams arrive as JSON strings too — with leading whitespace
+        // or as a top-level array
+        { id: 903, dsName: "params_str", dsType: 5, status: 1,
+          connectionParams: '  {"username":"u","password":"' + JSON_PW + '"}' },
+        { id: 904, dsName: "params_arr", dsType: 5, status: 1,
+          connectionParams: '[{"token":"' + ARRAY_PW + '"},{"host":"h.example.com"}]' },
       ],
-      total: 2,
+      total: 4,
     }))
 })
 
@@ -74,6 +82,16 @@ describe("datasource list secret masking", () => {
     expect(r.output).not.toContain(OSS_AK)
     expect(r.output).not.toContain(OSS_SK)
     expect(r.output).not.toContain(MYSQL_PW)
+  })
+
+  test("masks JSON-string params with leading whitespace or array form", async () => {
+    const r = await execute("datasource list")
+    expect(r.exitCode).toBe(0)
+    expect(r.output).not.toContain(JSON_PW)
+    expect(r.output).not.toContain(ARRAY_PW)
+    const data = json(r).data as Record<string, unknown>[]
+    expect(data[2]!.connectionParams).toBe('{"username":"u","password":"********"}')
+    expect(data[3]!.connectionParams).toBe('[{"token":"********"},{"host":"h.example.com"}]')
   })
 
   test("--show-secrets reveals plaintext without confirmation", async () => {

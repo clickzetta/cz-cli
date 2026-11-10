@@ -378,9 +378,16 @@ export function maskSecrets(value: unknown): unknown {
  * SQL Server-style `;`-separated properties (`jdbc:sqlserver://h;user=u;password=x`).
  */
 function maskSecretString(value: string): string {
-  if (value.startsWith("{")) {
-    const parsed = tryParseJsonObject(value)
-    if (parsed !== undefined) return JSON.stringify(maskSecrets(parsed))
+  // JSON-encoded params parse and mask recursively; leading whitespace and a
+  // top-level array count too. Secret-free strings are returned byte-for-byte
+  // so whitespace and big-number precision survive the default output.
+  const trimmed = value.trimStart()
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    const parsed = tryParseJson(trimmed)
+    if (parsed !== undefined) {
+      const masked = JSON.stringify(maskSecrets(parsed))
+      return masked === JSON.stringify(parsed) ? value : masked
+    }
   }
   return maskConnectionParams(maskUrlUserinfo(value))
 }
@@ -468,7 +475,7 @@ function maskUrlUserinfo(value: string): string {
   })
 }
 
-function tryParseJsonObject(value: string): unknown {
+function tryParseJson(value: string): unknown {
   try {
     const parsed: unknown = JSON.parse(value)
     return parsed !== null && typeof parsed === "object" ? parsed : undefined

@@ -154,6 +154,16 @@ describe("maskSecrets", () => {
       "jdbc:sqlserver://h.example.com;appName={my;app};encrypt=true")
   })
 
+  test("masks JSON strings with leading whitespace or a top-level array", () => {
+    expect(maskSecrets('  {"password":"fake-pw"}')).toBe('{"password":"********"}')
+    expect(maskSecrets('[{"token":"fake-token"},{"bucket":"b"}]')).toBe('[{"token":"********"},{"bucket":"b"}]')
+  })
+
+  test("returns secret-free JSON strings byte-for-byte", () => {
+    const original = '{ "bucket": "b", "large": 12345678901234567890 }'
+    expect(maskSecrets(original)).toBe(original)
+  })
+
   test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
     const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
     expect(masked.access_key_id).toBe("")
