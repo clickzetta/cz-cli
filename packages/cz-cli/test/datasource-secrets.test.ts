@@ -163,6 +163,16 @@ describe("maskSecrets", () => {
       "jdbc:oracle:thin:@//h.example.com:1521/svc?user=scott&password=********")
   })
 
+  test("unterminated braces in non-secret values do not hide later params", () => {
+    expect(maskSecrets("jdbc:sqlserver://h.example.com;appName={abc&password=S3cretTwo")).toBe(
+      "jdbc:sqlserver://h.example.com;appName={abc&password=********")
+    expect(maskSecrets("jdbc:sqlserver://h.example.com;appName={abc;password=S3cret;next=1")).toBe(
+      "jdbc:sqlserver://h.example.com;appName={abc;password=********;next=1")
+    // a secret value with an unterminated brace still masks to end-of-string
+    expect(maskSecrets("jdbc:sqlserver://h.example.com;password={S3cret;tail")).toBe(
+      "jdbc:sqlserver://h.example.com;password=********")
+  })
+
   test("does not mistake ;-separated properties or @-free URLs for userinfo", () => {
     expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")).toBe(
       "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")

@@ -431,7 +431,7 @@ function maskConnectionParams(value: string): string {
       continue
     }
     const key = value.slice(i + 1, keyEnd)
-    const valueEnd = connectionParamValueEnd(value, keyEnd + 1)
+    const valueEnd = connectionParamValueEnd(value, keyEnd + 1, isSecretKey(key))
     const raw = value.slice(keyEnd + 1, valueEnd)
     out += isSecretKey(key) && raw !== "" ? `${sep}${key}=********` : value.slice(i, valueEnd)
     i = valueEnd
@@ -441,19 +441,20 @@ function maskConnectionParams(value: string): string {
 
 /**
  * End index of a `key=value` param value. A value opening with `{` (SQL Server
- * JDBC brace escaping, where `}}` is an escaped `}`) ends after its last `}`
- * before the next `&`/`;` — so a `}` followed only by the next property closes
- * the value, while an unterminated brace masks to end-of-string instead of
- * leaking into the following property. Plain values end at the next `&`/`;`.
+ * JDBC brace escaping, where `}}` is an escaped `}` and `;` is a legal value
+ * char) ends after its last `}` before the next `&`/`;`. A brace that never
+ * closes — an `&` (param boundary) or the end of the string arrives before any
+ * `}` — is not a braced value: secret values mask to end-of-string, non-secret
+ * values fall back to the plain rule (end at the next `&`/`;`) so the params
+ * after them are still scanned. Plain values end at the next `&`/`;`.
  */
-function connectionParamValueEnd(value: string, start: number): number {
-  if (value[start] !== "{") {
-    let end = start
-    while (end < value.length && value[end] !== "&" && value[end] !== ";") end++
-    return end
-  }
+function connectionParamValueEnd(value: string, start: number, secret: boolean): number {
+  let plainEnd = start
+  while (plainEnd < value.length && value[plainEnd] !== "&" && value[plainEnd] !== ";") plainEnd++
+  if (value[start] !== "{") return plainEnd
   let i = start + 1
   while (i < value.length) {
+    if (value[i] === "&") break
     if (value[i] !== "}") {
       i++
       continue
@@ -467,7 +468,7 @@ function connectionParamValueEnd(value: string, start: number): number {
     if (laterBrace === -1 || laterBrace >= sepAt) return pairEnd
     i = pairEnd
   }
-  return i
+  return secret ? value.length : plainEnd
 }
 
 // A host list (comma-separated for replica sets / failover), each entry a host
