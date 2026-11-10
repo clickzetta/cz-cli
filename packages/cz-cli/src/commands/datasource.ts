@@ -479,8 +479,10 @@ const HOSTLIKE = /^(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?(?:,(?:\[[^\]/]+\]|[^:/
 /**
  * Mask the password in `scheme://user:password@host` userinfo, keeping the username.
  * The split uses the LAST `@` before any `?`/`#`/whitespace so passwords that
- * contain `@` or `/` (common unencoded in connection strings) are fully covered;
- * the text after the `@` must look like a host list (names, `:port`s, bracketed
+ * contain `@` or `/` (common unencoded in connection strings) are covered; a
+ * password with an unencoded `?` or `#` is a known gap — the scan stops at the
+ * first one and the userinfo is left unmasked. The text after the `@` must
+ * look like a host list (names, `:port`s, bracketed
  * IPv6, comma-separated, optional `;`-property tail) so SQL Server property
  * strings and credential-free `host:port` URLs are left alone.
  */
