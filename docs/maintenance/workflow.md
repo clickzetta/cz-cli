@@ -43,7 +43,7 @@
 3. 新修复从更新后的 `origin/main` 精确 SHA 创建独占 worktree，记录 `baseSha`；显式给实施者控制 checkout 的规则入口与 `policySha`，不从源码 worktree 的旧指令猜测维护基线。PR 审查保留 PR head 和实际 merge-base；历史跨度异常时先交接，不直接移植整段差异。接手历史任务先核对现场与副作用。
 4. 实施完成后从控制 checkout 的 loop 会话中派新的审查子 Agent，只提供最终 diff、SHA、验收条件、验证日志、控制规则版本和源码入口，不提供实施者总结，也不继承其实施对话。审查者可读取源码和相关契约，结论与实际 `reviewedSha` 写入任务记录；审查后任何源码变化都重做审查。审查失败可返修，保留真实失败。
 5. 独立审查通过后，保存 `phase: review`、`status: completed`、实际 `reviewedSha`，再按权限推送任务分支、创建 PR。合入统一使用 `bun scripts/maintenance.ts merge TASK PR` 预览，加 `--merge` 执行；工具核对最终远端 SHA、独立审查与 CI，保存实际 merge commit。管理员仅在 PR 审批规则上豁免，普通贡献者仍需一个批准，main 删除和 force push 保护保留。
-6. 产品修复合入后按[发布约定](../engineering/releases.md)发布 nightly，核对实际产物后回报；纯文档、测试或维护工具改动无需发版。每轮最多推进一个实施任务，审查、返修与交付属于同一任务。完成本轮或遇到决策、授权阻碍时保存交接并结束，不连续开新任务。没有执行者继续写入后才释放本人认领。
+6. 产品修复合入后按[发布约定](../engineering/releases.md)发布 nightly，核对实际产物后回报；纯文档、测试或维护工具改动无需发版。同时只推进一个实施任务，审查、返修与交付属于同一任务；受阻任务保存交接且无执行者继续写入后可暂挂，转办其他任务。没有执行者继续写入后才释放本人认领。
 
 `cz-test/test` 必须成功，其他失败或 pending 检查默认阻断。旧 `Claude Code Review` 有既存网关故障，本机可显式以 `mergePolicy.informationalWorkflows` 将这一工作流设为参考；它不能代替本地独立审查，不能豁免产品测试。移除该配置即恢复所有检查阻断。
 
@@ -79,10 +79,10 @@ bun scripts/maintenance.ts reply TASK 阻碍 --event STABLE_EVENT --text-file dr
 
 ## 两个角色与反思记录
 
-[反馈 Agent](prompts/feedback.md)统一处理两个渠道，跨渠道同一问题关联原任务，来源身份、回复目标与授权仍分别核对。子 Agent 实施不增加常驻角色；每次派工保存执行者和 worktree，重启先查执行者是否仍在工作，避免重复实施。
+[反馈 Agent](prompts/feedback.md)统一处理两个渠道，跨渠道同一问题关联原任务，来源身份、回复目标与授权仍分别核对。子 Agent 实施不增加常驻角色；每次派工保存执行者和 worktree，重启先查执行者是否仍在工作，避免重复实施；找不到存活执行者时按 worktree 现场和任务记录恢复或重新派工。
 
 [反思 Agent](prompts/reflection.md)每十二小时回看近期提交、任务和讨论，只更新[易误解点](understanding.md)、[人工待决](decisions.md)和[重复故障](recurring-failures.md)。保存上次已检查位置，无新发现不制造改动。发现代码故障交给已有反馈任务，不在反思会话平行实施。独立审查仍随每个任务进行。
 
 可公开的长期依据写入相应主题；人工待决和私有证据保存到 runtime `control/daily-decisions.md`，未决判断不提升为规则。相关修复开始前读取这些记录，决定已明确后更新任务，防止重复提问。
 
-两个会话每次唤醒核对原生周期任务的实际存活、创建时间和到期。按已安装 CLI 的工具返回值确认限制，提前续建将到期的任务；有三天寿命的版本在创建四十八小时后去重重建本角色 job，保留交接和唯一 owner，避免运行几天后静默停止。
+两个会话每次唤醒核对原生周期任务的实际存活、创建时间和到期。按已安装 CLI 的 CronCreate/CronList 返回确认实际到期，在到期前一天去重重建本角色 job；保留交接和唯一 owner，避免静默停止。原生调度可能延迟，五分钟是补扫周期，不承诺准点响应。
