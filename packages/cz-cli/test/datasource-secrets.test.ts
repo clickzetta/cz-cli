@@ -173,6 +173,23 @@ describe("maskSecrets", () => {
       "jdbc:sqlserver://h.example.com;password=********")
   })
 
+  test("masks accountKey, keytab and authorization credential keys", () => {
+    const masked = maskSecrets({
+      accountKey: "{{SECRET_bms7gq2x}}",
+      "account_key": "{{SECRET_bms7gq2x}}",
+      "account-key": "{{SECRET_bms7gq2x}}",
+      keytab: "BQIAAABF...",
+      authorization: "Basic dXNlcjpwdw==",
+      host: "h.example.com",
+    }) as Record<string, unknown>
+    expect(masked.accountKey).toBe("********")
+    expect(masked.account_key).toBe("********")
+    expect(masked["account-key"]).toBe("********")
+    expect(masked.keytab).toBe("********")
+    expect(masked.authorization).toBe("********")
+    expect(masked.host).toBe("h.example.com")
+  })
+
   test("does not mistake ;-separated properties or @-free URLs for userinfo", () => {
     expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")).toBe(
       "jdbc:sqlserver://h.example.com:1433;databaseName=db;user=u")

@@ -349,7 +349,7 @@ export async function checkCdcPrereqs(
 // (`api_key`, `api-key`, `apiKey`). A JAAS config counts too: its single value
 // embeds credentials (`... username="u" password="x";`), so the whole
 // value is credential material and gets masked.
-const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|credential|passphrase|jaas|api[_\-.]?key|access[_\-.]?key|private[_\-.]?key)/i
+const SECRET_KEY_PATTERN = /(password|passwd|pwd|secret|token|credential|passphrase|jaas|authorization|keytab|api[_\-.]?key|access[_\-.]?key|private[_\-.]?key|account[_\-.]?key)/i
 // ak/sk only count as a standalone segment (`ak`, `oss_sk`, `ak-id`, `ossAk`, `akId`) so
 // words that merely contain the letters (`task`, `disk`, `skip`) stay readable.
 const AK_SK_PATTERN = /(^|[_\-.])(ak|sk|AK|SK)([_\-.]|$)|[a-z0-9](Ak|AK|Sk|SK)([A-Z_\-.]|$)|^(ak|sk)[A-Z]/
