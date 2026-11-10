@@ -146,6 +146,9 @@ describe("maskSecrets", () => {
       "mongodb://u:********@[::1]:27017,h2:27017/db")
     expect(maskSecrets("jdbc:sqlserver://u:p@ss@h1:1433;encrypt=true")).toBe(
       "jdbc:sqlserver://u:********@h1:1433;encrypt=true")
+    // malformed lists (trailing comma, non-numeric port) are not host lists
+    expect(maskSecrets("mongodb://u:p@ss@h1:27017,/db")).toBe("mongodb://u:p@ss@h1:27017,/db")
+    expect(maskSecrets("mongodb://u:p@ss@h1:port/db")).toBe("mongodb://u:p@ss@h1:port/db")
   })
 
   test("masks Oracle thin inline user/password credentials", () => {

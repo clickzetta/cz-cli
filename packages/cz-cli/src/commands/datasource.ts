@@ -471,10 +471,11 @@ function connectionParamValueEnd(value: string, start: number, secret: boolean):
   return secret ? value.length : plainEnd
 }
 
-// A host list (comma-separated for replica sets / failover), each entry a host
-// name, `:port`, or bracketed IPv6 — the text that must follow the userinfo `@`
-// for the `@` to really separate credentials from the hosts.
-const HOSTLIKE = /^(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?(?:,(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?)*$/
+// A single host entry: a host name, `:port`, or bracketed IPv6. A host list
+// (comma-separated for replica sets / failover) is validated one token at a
+// time rather than with a repeated-group regex — a `(?:...(?:...)*)*` shape
+// backtracks exponentially on adversarial commas (CodeQL ReDoS).
+const HOST_ENTRY = /^(?:\[[^\]/]+\]|[^:/?#@;,\s]+)(?::\d+)?$/
 
 /**
  * Mask the password in `scheme://user:password@host` userinfo, keeping the username.
@@ -496,7 +497,7 @@ function maskUrlUserinfo(value: string): string {
     const colon = userinfo.indexOf(":")
     if (colon < 1) return match
     const host = rest.slice(at + 1).split("/")[0]!.split(";")[0]!
-    if (!HOSTLIKE.test(host)) return match
+    if (!host.split(",").every((entry) => HOST_ENTRY.test(entry))) return match
     return scheme + userinfo.slice(0, colon + 1) + "********" + rest.slice(at)
   })
 }
