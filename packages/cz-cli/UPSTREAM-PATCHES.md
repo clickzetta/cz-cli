@@ -43,7 +43,8 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/sche
 
 ### 1. Global directory namespace — product-identity isolation
 
-- **File:** `packages/core/src/global.ts`
+- **File:** `packages/core/src/global.ts` (+ the upstream test that asserts the old
+  value: `packages/core/test/global.test.ts`)
 - **Marker:** `//===== cz-cli change =====` around `const app = "clickzetta"`
 - **Upstream value:** `const app = "opencode"`
 - **What/why:** `app` is opencode's on-disk product identity; it derives
@@ -58,10 +59,13 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/sche
   redirection was rejected — it leaks into every child process (LSP, git, user
   commands).
 - **History:** applied on the 1.4.7 base (as `packages/opencode/src/global/index.ts`),
-  **LOST** in the 1.17.11 re-baseline, re-applied.
+  **LOST** in the 1.17.11 re-baseline, re-applied. The test assertion was left at
+  `"opencode"` after that re-apply and was corrected in PR 149; it is now wrapped in
+  the banner so the re-baseline grep finds it.
 - **No data migration:** old `~/.config/opencode` data is not moved; users
   re-authenticate under the clickzetta dirs (matches the 1.4.7 behavior).
-- **Verify:** run cz, confirm dirs resolve under `.../clickzetta`, not `.../opencode`.
+- **Verify:** run cz, confirm dirs resolve under `.../clickzetta`, not `.../opencode`;
+  `cd packages/core && bun test test/global.test.ts`.
 
 ### 2. Home-level config dir — `~/.opencode` → `~/.clickzetta`
 
