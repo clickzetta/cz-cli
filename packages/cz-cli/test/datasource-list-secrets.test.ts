@@ -94,6 +94,19 @@ describe("datasource list secret masking", () => {
     expect(data[3]!.connectionParams).toBe('[{"token":"********"},{"host":"h.example.com"}]')
   })
 
+  test("masks connection params in --format csv", async () => {
+    const r = await execute("datasource list --format csv")
+    expect(r.exitCode).toBe(0)
+    // connectionParams render as a JSON cell in csv (with csv quote-doubling);
+    // it must carry the mask, never the plaintext
+    expect(r.output).toContain('""access_key_id"":""********""')
+    expect(r.output).not.toContain(OSS_AK)
+    expect(r.output).not.toContain(OSS_SK)
+    expect(r.output).not.toContain(MYSQL_PW)
+    expect(r.output).not.toContain(JSON_PW)
+    expect(r.output).not.toContain(ARRAY_PW)
+  })
+
   test("--show-secrets reveals plaintext without confirmation", async () => {
     const r = await execute("datasource list --show-secrets")
     expect(r.exitCode).toBe(0)
