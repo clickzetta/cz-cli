@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { generateKeyPairSync } from "node:crypto"
 import { createServer } from "node:http"
-import { accountLoginUrlForService, derivedAccountSiteForService, loginByAccountSite, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
+import { accountLoginUrlForService, accountSiteForApiService, derivedAccountSiteForService, loginByAccountSite, parseApiService, parseAccountConsoleMeta, serviceEnvFromApiHost } from "../src/commands/account-login"
 
 const { publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 1024,
@@ -176,5 +176,55 @@ describe("account login", () => {
     ).rejects.toThrow()
     expect(posts).toBe(0)
     broken.close()
+  })
+
+  test("decides ClickZetta ownership from the parsed hostname only", () => {
+    expect(derivedAccountSiteForService("API.ClickZetta.com:8443", "acct")).toBe("https://acct.accounts.clickzetta.com:8443")
+    expect(derivedAccountSiteForService("https://API.ClickZetta.com:8443/api", "acct")).toBe(
+      "https://acct.accounts.clickzetta.com:8443",
+    )
+    for (const bad of [
+      "evil?x-api.clickzetta.com",
+      "evil#x-api.clickzetta.com",
+      "https://evil?x-api.clickzetta.com",
+      "https://evil#x-api.clickzetta.com",
+      "evil@x-api.clickzetta.com",
+      "https://user:pw@api.clickzetta.com",
+      "https://evil.example\\@api.clickzetta.com",
+      "evil.example\\x-api.clickzetta.com",
+      "evil x-api.clickzetta.com",
+      "https://api.clickzetta.com.",
+      "https://api.clickzetta.com?x=1",
+      "https://api.clickzetta.com/#frag",
+    ]) {
+      expect(parseApiService(bad)).toBeNull()
+      expect(derivedAccountSiteForService(bad, "acct")).toBeNull()
+    }
+  })
+
+  test("never probes or posts to a host a malformed service string would resolve to", async () => {
+    const requests: string[] = []
+    const local = createServer((request, response) => {
+      requests.push(`${request.method} ${request.url}`)
+      response.writeHead(200)
+      response.end(`x.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":""}`)
+    })
+    await new Promise<void>((resolve) => local.listen(0, "127.0.0.1", () => resolve()))
+    const address = local.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    const target = `127.0.0.1:${address.port}`
+    for (const bad of [
+      `http://${target}?x-api.clickzetta.com`,
+      `${target}#x-api.clickzetta.com`,
+      `http://user@${target}`,
+      `http://${target}\\@api.clickzetta.com`,
+    ]) {
+      expect(await accountSiteForApiService(bad, "acct")).toBeNull()
+    }
+    expect(requests).toEqual([])
+    // Control: the clean form of the same host is probed and accepted.
+    expect(await accountSiteForApiService(`http://${target}`, "acct")).toEqual({ url: `http://${target}`, derived: false })
+    expect(requests.length).toBe(1)
+    local.close()
   })
 })

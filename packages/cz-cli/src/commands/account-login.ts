@@ -267,9 +267,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * the user never named), and only over https.
  */
 export function derivedAccountSiteForService(service: string, accountName: string): string | null {
-  const { host, protocol } = splitEndpoint(service)
-  if (protocol !== "https" || !isClickzettaHost(host.replace(/:\d+$/, ""))) return null
-  return accountLoginUrlForService(service, accountName)
+  const parsed = parseApiService(service)
+  if (!parsed || parsed.protocol !== "https:" || !isClickzettaHost(parsed.hostname)) return null
+  // Built from the parsed host and port only, never from the raw string.
+  return accountLoginUrlForService(`https://${parsed.host}`, accountName)
+}
+
+/**
+ * Parse a user-supplied API service once, so every later decision (probe, derive,
+ * send the password) is made on the host a URL parser resolves. `splitEndpoint`
+ * only splits on `/`, so `evil?x-api.clickzetta.com` looks like a ClickZetta host
+ * as a string while its real host is `evil`. Returns null when anything could move
+ * the host: a query, fragment or userinfo, or an authority that the parser changed
+ * (backslash, space, `?`, `#`, `@`, a default port, and so on).
+ */
+export function parseApiService(service: string): URL | null {
+  const raw = service.trim()
+  const hasScheme = /^https?:\/\//i.test(raw)
+  const authority = (hasScheme ? raw.replace(/^https?:\/\//i, "") : raw).split("/")[0]!
+  const parsed = URL.parse(hasScheme ? raw : `https://${raw}`)
+  if (!parsed || !["http:", "https:"].includes(parsed.protocol)) return null
+  if (parsed.search || parsed.hash || parsed.username || parsed.password) return null
+  if (authority.toLowerCase() !== parsed.host || parsed.hostname.endsWith(".")) return null
+  return parsed
 }
 
 /**
@@ -288,10 +308,10 @@ export async function accountSiteForApiService(
   service: string,
   accountName: string,
 ): Promise<{ url: string; derived: boolean } | null> {
-  const { host, protocol } = splitEndpoint(service)
-  const origin = `${protocol}://${host}`
-  const meta = await loadAccountConsoleMeta(origin, 5_000).catch(() => null)
-  if (meta) return { url: origin, derived: false }
+  const parsed = parseApiService(service)
+  if (!parsed) return null
+  const meta = await loadAccountConsoleMeta(parsed.origin, 5_000).catch(() => null)
+  if (meta) return { url: parsed.origin, derived: false }
   const derived = derivedAccountSiteForService(service, accountName)
   return derived ? { url: derived, derived: true } : null
 }
