@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { onFetch, stubStudioContext } from "./support/cz-fixtures.js"
+import { clearConnectionContextForTest } from "../src/connection/context.js"
 
 // Network-boundary test: no mock.module of our own src. The real analytics-agent command runs
 // (registerAnalyticsAgentCommand → resolveAnalyticsContext → getStudioContext →
@@ -66,6 +67,9 @@ describe("analytics-agent domain joins", () => {
       ].join("\n"),
     )
     stubStudioContext({ tenantId: 55 })
+    // Other network suites use the same profile text with a different identity.
+    // Reset the memoised context as well as the SDK token cache in preload.
+    clearConnectionContextForTest()
   })
 
   afterEach(() => {

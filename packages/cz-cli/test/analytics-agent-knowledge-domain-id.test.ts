@@ -168,6 +168,82 @@ describe("analytics-agent knowledge domain-ids conversion", () => {
     expect(parsed.error.message).toContain("--domain-ids")
   })
 
+  test("metric update sends a definition-only partial update without domainIds", async () => {
+    let requestUrl = ""
+    let requestBody: Record<string, unknown> | undefined
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: 9 })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "update", "9", "--alias", "[]", "--description", "new description",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrl).toContain("/open/api/v1/analytics-agent/metrics/partialUpdate")
+    expect(requestBody).toMatchObject({ id: 9, alias: [], description: "new description" })
+    expect(requestBody).not.toHaveProperty("domainIds")
+  })
+
+  test("metric update rejects domain bindings and points to update-domains", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("fetch should not be called")
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "update", "9", "--domain-ids", "[5]", "--alias", "[\"revenue\"]",
+    ])
+
+    expect(result.exitCode).toBe(2)
+    expect(result.output).toContain("metric update-domains")
+  })
+
+  test("metric update-domains sends an empty array to clear bindings", async () => {
+    let requestUrl = ""
+    let requestBody: Record<string, unknown> | undefined
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(input)
+      requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      return jsonResponse({ success: true, data: 9 })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "update-domains", "9", "--domain-ids", "[]",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requestUrl).toContain("/open/api/v1/analytics-agent/metrics/updateDomains")
+    expect(requestBody).toEqual({ id: 9, domainIds: [] })
+  })
+
+  test("metric disable falls back to a status-only partial update", async () => {
+    const requests: Array<{ url: string; body?: Record<string, unknown> }> = []
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      requests.push({ url, body })
+      if (url.includes("/open/api/v1/analytics-agent/metrics/disable")) {
+        return new Response(JSON.stringify({ code: 404, message: "not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return jsonResponse({ success: true, data: 9 })
+    }) as typeof fetch
+
+    const result = await runAnalyticsCli([
+      "analytics-agent", "metric", "disable", "9",
+    ])
+
+    expect(result.exitCode).toBe(0)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.url).toContain("/open/api/v1/analytics-agent/metrics/disable")
+    expect(requests[1]?.url).toContain("/open/api/v1/analytics-agent/metrics/partialUpdate")
+    expect(requests[1]?.body).toEqual({ id: 9, status: "DISABLE" })
+  })
+
   test("answer-builder list maps --domain-ids into domainIds", async () => {
     let requestBody: Record<string, unknown> | undefined
 
