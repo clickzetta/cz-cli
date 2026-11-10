@@ -556,4 +556,194 @@ describe("setup guidance", () => {
     expect(readProfiles(home)).toContain(`service = "http://127.0.0.1:${address.port}/api"`)
     expect(readProfiles(home)).toContain('account_name = "acct"')
   })
+
+  // The account name is not an instance name. An API endpoint only accepts
+  // instance-scoped password login, so when that guess fails the account must be
+  // authenticated on its accounts site and its instances discovered instead.
+  // `consoleOnService` models a path-style private deployment: the console (its meta
+  // script and root /login) is served on the API host, with the API under /api.
+  async function startAccountWithInstances(
+    instances: string[],
+    options: { consoleOnService?: boolean; mfa?: boolean } = {},
+  ) {
+    const api = options.consoleOnService ? "/api" : ""
+    const seen = { instanceLogins: [] as unknown[], accountLogins: [] as string[] }
+    const server = createServer(async (request, response) => {
+      const body = await new Promise<string>((resolve) => {
+        let buffer = ""
+        request.setEncoding("utf8")
+        request.on("data", (chunk) => { buffer += chunk })
+        request.on("end", () => resolve(buffer))
+      })
+      const json = (status: number, payload: unknown) => {
+        response.writeHead(status, { "content-type": "application/json" })
+        response.end(JSON.stringify(payload))
+      }
+      if (options.consoleOnService && request.url?.startsWith("/one-combo-api/configCenter/script/getApolloConfig")) {
+        response.writeHead(200, { "content-type": "application/javascript" })
+        response.end(`window.__clickzettaFeConsoleMeta__ = {"apiGateway":"","encryptKey":""}`)
+        return
+      }
+      if (request.url === `${api}/clickzetta-portal/user/loginSingle` && request.method === "POST") {
+        seen.instanceLogins.push(JSON.parse(body).instanceName)
+        return json(400, { code: 400, message: "No such element" })
+      }
+      if (request.url === "/login" && request.method === "POST") {
+        seen.accountLogins.push(request.headers.host ?? "")
+        if (options.mfa) return json(200, { code: 0, data: { mfaStatus: { enable: true, phone: "138****0000" } } })
+        return json(200, { code: 0, data: { token: "header.eyJ1c2VySWQiOjEsImFjY291bnRJZCI6M30.signature" } })
+      }
+      if (request.url === `${api}/clickzetta-portal/service/serviceInstanceList?accountId=3`) {
+        return json(200, {
+          code: 0,
+          data: instances.map((instanceName, index) => ({
+            serviceId: 1, instanceId: 11 + index, instanceName, cspId: 1, regionId: 1,
+          })),
+        })
+      }
+      if (request.url === `${api}/ide-authority/v1/workspace/listUserWorkspaces` && request.method === "POST") {
+        return json(200, {
+          code: 0,
+          data: ["ws1", "ws2"].map((workspaceName, index) => ({
+            workspaceName, workspaceId: `wid-${index}`, projectId: 9 + index, defaultSchemaName: "public", defaultVcName: "DEFAULT",
+          })),
+        })
+      }
+      json(404, { code: 404, message: "not found" })
+    })
+    servers.add(server)
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    const address = server.address()
+    if (!address || typeof address === "string") throw new Error("server address unavailable")
+    return { port: address.port, seen }
+  }
+
+  test("existing-account setup on an api service discovers the only instance when the account name is not one", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"])
+    const service = `http://localhost:${port}`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(seen.instanceLogins).toEqual(["acct"])
+    expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("workspace")
+    expect(json.collected).toEqual({ username: "u", account_name: "acct", service, instance: "prod" })
+  })
+
+  test("existing-account setup on an api service asks for the instance when the account has several", async () => {
+    const { port } = await startAccountWithInstances(["prod", "staging"])
+    const service = `http://localhost:${port}`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("instance")
+    expect(json.status).toBe("needs_input")
+    expect(JSON.stringify(json)).toContain("staging")
+  })
+
+  test("existing-account setup with an explicit --instance does not fall back to account discovery", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"])
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--instance", "wrong",
+      "--service", `http://localhost:${port}`,
+    ])
+
+    expect(result.exitCode).not.toBe(0)
+    expect(seen.instanceLogins).toEqual(["wrong", "acct"])
+    expect(seen.accountLogins).toEqual([])
+  })
+
+  test("existing-account setup on a path-style private deployment authenticates at the site root", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"], { consoleOnService: true })
+    // 127.0.0.1 has no account subdomain form, so reaching /login proves the root was used.
+    const service = `http://127.0.0.1:${port}/api`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(seen.accountLogins).toEqual([`127.0.0.1:${port}`])
+    expect(result.exitCode).toBe(1)
+    const json = firstJson(result.stdout)
+    expect(json.step).toBe("workspace")
+    expect(json.collected).toEqual({ username: "u", account_name: "acct", service, instance: "prod" })
+  })
+
+  test("existing-account setup reports MFA instead of a missing token when the account requires it", async () => {
+    const { port, seen } = await startAccountWithInstances(["prod"], { mfa: true })
+    const service = `http://localhost:${port}`
+
+    const result = await runAsync([
+      "setup",
+      "--username", "u",
+      "--password", "p",
+      "--account-name", "acct",
+      "--service", service,
+    ])
+
+    expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
+    expect(result.exitCode).not.toBe(0)
+    const json = firstJson(result.stdout).error as Record<string, unknown>
+    expect(json.code).toBe("ACCOUNT_MFA_REQUIRED")
+    // Browser sign-in must target this endpoint: without --oauth-url, `auth login`
+    // only offers the public regions (or refuses when non-interactive).
+    expect(String(json.message)).toContain(`cz-cli auth login <name> --oauth-url ${service}`)
+    expect(String(json.message)).not.toContain("token not found")
+    expect(String(json.message)).not.toContain("INSTANCE_LOGIN_FAILED")
+  })
+
+  // The interactive flow used to treat every API-endpoint failure as a missing
+  // instance name and prompt for one. util-linux `script` gives the CLI a real TTY.
+  test.skipIf(process.platform !== "linux")(
+    "interactive setup reports MFA without prompting for an instance name",
+    async () => {
+      const { port } = await startAccountWithInstances(["prod"], { mfa: true })
+      const home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))
+      const child = spawn(
+        "script",
+        ["-qec", `bun ./src/main.ts setup --username u --password p --account-name acct --service http://localhost:${port}`, "/dev/null"],
+        {
+          cwd: import.meta.dir + "/..",
+          env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home },
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      )
+      let output = ""
+      child.stdout.on("data", (chunk) => { output += chunk.toString() })
+      // A prompt waits for input forever; give the flow a bounded window instead.
+      const timer = setTimeout(() => child.kill(), 20_000)
+      const exitCode = await new Promise<number | null>((resolve) => child.on("close", resolve))
+      clearTimeout(timer)
+
+      expect(output).toContain("ACCOUNT_MFA_REQUIRED")
+      expect(output).not.toContain("Instance name")
+      expect(exitCode).toBe(1)
+    },
+    30_000,
+  )
 })

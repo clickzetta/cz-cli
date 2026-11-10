@@ -225,16 +225,55 @@ function extractJwtFromResponse(headers: Headers, payload: Record<string, unknow
   ].find((value) => value.trim())?.trim() ?? ""
 }
 
-async function loadAccountConsoleMeta(accountLoginUrl: string): Promise<AccountConsoleMeta | null> {
+async function loadAccountConsoleMeta(accountLoginUrl: string, timeoutMs = 20_000): Promise<AccountConsoleMeta | null> {
   const response = await fetch(
     `${accountLoginUrl}/one-combo-api/configCenter/script/getApolloConfig?dataId=clickzetta-fe-console&globalVarName=__clickzettaFeConsoleMeta__`,
     {
       headers: { accept: "*/*" },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeoutMs),
     },
   )
   if (!response.ok) return null
   return parseAccountConsoleMeta(await response.text())
+}
+
+/**
+ * The password was accepted but the account requires multi-factor verification.
+ * Callers know the endpoint the user chose and turn this into guidance for it.
+ */
+export class AccountMfaRequiredError extends Error {
+  constructor() {
+    super(
+      "ACCOUNT_MFA_REQUIRED: the password is correct but this account requires multi-factor verification. " +
+        "Sign in with the browser instead: cz-cli auth login <name>",
+    )
+    this.name = "AccountMfaRequiredError"
+  }
+}
+
+function requiresMfa(payload: Record<string, unknown>): boolean {
+  const data = payload.data
+  return isRecord(data) && isRecord(data.mfaStatus) && Boolean(data.mfaStatus.enable)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+/**
+ * The accounts site that authenticates an account reached through an API endpoint.
+ *
+ * Path-style private deployments serve the console, and its root `/login`, on the
+ * same host as the API (`https://studio.example.com/api` → `https://studio.example.com`).
+ * Public cloud keeps it on `<account>.accounts.<root>`. The console meta script
+ * only exists where a console is served, so its presence on the endpoint's origin
+ * tells the two apart without sending credentials to a guessed host.
+ */
+export async function accountSiteForApiService(service: string, accountName: string): Promise<string> {
+  const { host, protocol } = splitEndpoint(service)
+  const origin = `${protocol}://${host}`
+  const meta = await loadAccountConsoleMeta(origin, 5_000).catch(() => null)
+  return meta ? origin : accountLoginUrlForService(service, accountName)
 }
 
 export async function loginByAccountSite(
@@ -266,6 +305,12 @@ export async function loginByAccountSite(
     throw new Error(`ACCOUNT_LOGIN_FAILED: ${String(payload.message ?? "login failed")}`)
   }
   const token = extractJwtFromResponse(response.headers, payload)
+  if (!token && requiresMfa(payload)) {
+    // The console answers a correct password for an MFA account with code 0, no
+    // token and data.mfaStatus.enable; finishing needs an SMS/e-mail code behind an
+    // image captcha, or an authenticator code, which this flow cannot collect.
+    throw new AccountMfaRequiredError()
+  }
   if (!token) throw new Error("ACCOUNT_LOGIN_FAILED: token not found in login response")
   return {
     accountLoginUrl,

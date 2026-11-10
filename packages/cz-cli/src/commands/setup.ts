@@ -16,7 +16,13 @@ import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
 import { patRefusedOrNoted, type PatGuardArgs } from "./pat-guard.js"
 import { execSql, isQueryResult } from "./exec.js"
-import { accountLoginUrlForService, loginByAccountSite, stripProtocol } from "./account-login.js"
+import {
+  AccountMfaRequiredError,
+  accountLoginUrlForService,
+  accountSiteForApiService,
+  loginByAccountSite,
+  stripProtocol,
+} from "./account-login.js"
 import { browserOpenCommandForPlatform } from "../util/browser.js"
 import { trackCommand, isSensitiveKey } from "../telemetry.js"
 import { profileTokenSource, verbatimTokenSource } from "../connection/token-source.js"
@@ -537,6 +543,19 @@ async function loginWithExistingAccount(
         errors.push(`INSTANCE_LOGIN_FAILED(${candidate}): ${error instanceof Error ? error.message : String(error)}`)
       }
     }
+    // API endpoints only offer instance-scoped login, so without --instance the
+    // account name above was just a guess. Authenticate the account on its
+    // accounts site instead and let the caller discover instances on the
+    // endpoint the user chose.
+    if (instanceHint?.trim()) throw new Error(errors.join("; "))
+    try {
+      return await loginWithAccountForApiService(username, password, accountName, normalizedService)
+    } catch (error) {
+      // The account and password are right, so the failed instance guess above
+      // is noise: report MFA on its own, with a sign-in that targets this endpoint.
+      if (error instanceof AccountMfaRequiredError) throw mfaRequired(normalizedService)
+      errors.push(error instanceof Error ? error.message : String(error))
+    }
     throw new Error(errors.join("; "))
   }
 
@@ -574,6 +593,46 @@ async function loginWithExistingAccount(
     throw new Error(errors[0]!)
   }
   throw new Error(errors.join("; "))
+}
+
+// Browser sign-in completes MFA, but `auth login` only knows the public regions by
+// default; the user's endpoint is the OAuth issuer to target (it is used verbatim).
+function mfaRequired(service: string): ProvisionError {
+  return new ProvisionError(
+    "ACCOUNT_MFA_REQUIRED",
+    "The password is correct, but this account requires multi-factor verification, which username/password login cannot complete. " +
+      `Sign in with the browser instead: cz-cli auth login <name> --oauth-url ${service}`,
+  )
+}
+
+async function loginWithAccountForApiService(
+  username: string,
+  password: string,
+  accountName: string,
+  service: string,
+): Promise<SetupAuthContext> {
+  const { data, token } = await loginByAccountSite(
+    accountName,
+    username,
+    password,
+    service,
+    20_000,
+    await accountSiteForApiService(service, accountName),
+  )
+  const jwt = decodeJwtPayload(token)
+  const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
+  if (!tenantId) throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
+  // Keep the endpoint the user chose rather than the accounts site's gateway:
+  // the profile must keep pointing at the deployment or region they asked for.
+  return {
+    token,
+    userId: coerceInt(jwt.userId ?? jwt.user_id ?? data.userId ?? data.id),
+    tenantId,
+    username: String(jwt.userName ?? data.username ?? username),
+    password,
+    service,
+    serviceUrl: toServiceUrl(service),
+  }
 }
 
 function isAccountConsoleInput(service: string): boolean {
@@ -1303,6 +1362,9 @@ async function runExistingAccountFlowTTY(
       setupValue(argv, "instance") || undefined,
     )
   } catch (loginError) {
+    // A structured failure (MFA) is not a missing instance name; asking for one
+    // could never succeed.
+    if (loginError instanceof ProvisionError) throw loginError
     if (!isAccountConsoleInput(normalizeServiceValue(service))) {
       process.stderr.write(
         `Login failed (${loginError instanceof Error ? loginError.message : String(loginError)}).\n` +
