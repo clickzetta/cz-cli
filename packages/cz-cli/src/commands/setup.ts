@@ -536,10 +536,15 @@ async function loginWithExistingAccount(
   const errors: string[] = []
 
   if (!isAccountConsoleInput(normalizedService)) {
+    let instanceMissing = candidates.length > 0
     for (const candidate of candidates) {
       try {
         return await loginWithInstanceCandidate(username, password, candidate, normalizedService)
       } catch (error) {
+        // loginWithPassword raises INSTANCE_CONFIG_ERROR only when the gateway
+        // says the instance does not exist; bad credentials and transport
+        // failures carry other codes.
+        if ((error as { code?: unknown } | null)?.code !== "INSTANCE_CONFIG_ERROR") instanceMissing = false
         errors.push(`INSTANCE_LOGIN_FAILED(${candidate}): ${error instanceof Error ? error.message : String(error)}`)
       }
     }
@@ -547,10 +552,15 @@ async function loginWithExistingAccount(
     // account name above was just a guess. Authenticate the account on its
     // accounts site instead and let the caller discover instances on the
     // endpoint the user chose.
-    if (instanceHint?.trim()) throw new Error(errors.join("; "))
+    // Fall back only when the instance does not exist: any other failure (wrong
+    // password, transport) would just repeat the attempt and advance lockout counters.
+    if (instanceHint?.trim() || !instanceMissing) throw new Error(errors.join("; "))
     try {
       return await loginWithAccountForApiService(username, password, accountName, normalizedService)
     } catch (error) {
+      if (error instanceof NoAccountSiteError) {
+        throw new Error(`${errors.join("; ")}. Pass --instance <name> to log in to a specific instance.`)
+      }
       // The account and password are right, so the failed instance guess above
       // is noise: report MFA on its own, with a sign-in that targets this endpoint.
       if (error instanceof AccountMfaRequiredError) throw mfaRequired(normalizedService)
@@ -601,9 +611,15 @@ function mfaRequired(service: string): ProvisionError {
   return new ProvisionError(
     "ACCOUNT_MFA_REQUIRED",
     "The password is correct, but this account requires multi-factor verification, which username/password login cannot complete. " +
-      `Sign in with the browser instead: cz-cli auth login <name> --oauth-url ${service}`,
+      `Sign in with the browser instead: cz-cli auth login <name> --oauth-url ${shellQuote(service)}`,
   )
 }
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+class NoAccountSiteError extends Error {}
 
 async function loginWithAccountForApiService(
   username: string,
@@ -611,13 +627,18 @@ async function loginWithAccountForApiService(
   accountName: string,
   service: string,
 ): Promise<SetupAuthContext> {
+  const site = await accountSiteForApiService(service, accountName)
+  if (!site) throw new NoAccountSiteError("no accounts site for this endpoint")
   const { data, token } = await loginByAccountSite(
     accountName,
     username,
     password,
     service,
     20_000,
-    await accountSiteForApiService(service, accountName),
+    site.url,
+    // Required for the own-origin site too: a console that publishes no key
+    // would otherwise receive the password in plaintext.
+    { requireEncryptKey: true },
   )
   const jwt = decodeJwtPayload(token)
   const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
