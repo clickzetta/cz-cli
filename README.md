@@ -109,13 +109,17 @@ Answer Builder `create` and `validate` also accept omitted `--domain-ids` or `[]
 name, datasource and a valid SQL/DSL definition are still required. Updating a
 SQL/DSL definition requires the complete replacement `--content` (including
 `outputColumns`); `--sql` can replace the SQL inside that supplied definition.
+Only non-SQL field updates can omit the definition; `--sql` alone still requires
+the complete DSL via `--content`, `--content-file`, or a JSON string in `body.content`.
 `--body` accepts advanced fields and version metadata. Metric and Answer Builder
 updates also expose `--base-version-id` and `--version-description`.
 
 For resource updates, omitted or null definition fields retain their current
-values. Data source connections merge by field. A blank datasource/domain name
+values, except that Answer Builder `body.content`, when supplied, must be a
+JSON-encoded DSL string. Data source connections merge by field. A blank datasource/domain name
 is rejected. A metric's description can be cleared with `''` and aliases with
-`[]`. On list commands, omitted or empty domain filters mean no domain filter;
+an explicit `[]`; an alias list containing only whitespace does not clear aliases.
+On list commands, omitted or empty domain filters mean no domain filter;
 they do not select only unbound resources. Existing knowledge commands retain
 their domain requirements.
 

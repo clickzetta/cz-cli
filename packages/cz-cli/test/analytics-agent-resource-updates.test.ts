@@ -75,6 +75,37 @@ describe("resource partial updates and optional domains", () => {
     expect(requests[0]?.body).toEqual({ id: 9, description: "", alias: [], baseVersionId: 12, versionDescription: "clear fields" })
   })
 
+  test.each(['[" "]', '["", "\\t"]', " , "])("metric alias %j does not implicitly clear existing aliases", async (alias) => {
+    expect((await run(["metric", "update", "9", "--description", "new description", "--alias", alias])).code).toBe(0)
+    expect(requests[0]?.body).toEqual({ id: 9, description: "new description" })
+  })
+
+  test.each([null, { sql: "x" }, [], 1, true].map((content) => [content]))("answer-builder update rejects non-string body content %j before HTTP", async (content) => {
+    const result = await run(["answer-builder", "update", "9", "--body", JSON.stringify({ content })])
+    expect(result.code, result.output + result.stderr).toBe(2)
+    expect(JSON.parse(result.output).error).toMatchObject({ code: "USAGE_ERROR", message: "body.content must be a JSON-encoded DSL string" })
+    expect(requests).toHaveLength(0)
+  })
+
+  test("answer-builder update validates DSL from body before HTTP", async () => {
+    const result = await run(["answer-builder", "update", "9", "--body", JSON.stringify({ content: '{"sql":"x"}' })])
+    expect(result.code, result.output).toBe(2)
+    expect(JSON.parse(result.output).error.message).toContain("outputColumns")
+    expect(requests).toHaveLength(0)
+  })
+
+  test("answer-builder update rejects object content from body-file before HTTP", async () => {
+    const bodyFile = join(home, "invalid-content-body.json")
+    await Bun.write(bodyFile, JSON.stringify({ content: { sql: "x" } }))
+    expect((await run(["answer-builder", "update", "9", "--body-file", bodyFile])).code).toBe(2)
+    expect(requests).toHaveLength(0)
+  })
+
+  test("answer-builder update accepts validated DSL strings from body", async () => {
+    expect((await run(["answer-builder", "update", "9", "--body", JSON.stringify({ content: dsl })])).code).toBe(0)
+    expect(requests[0]?.body).toEqual({ id: 9, content: dsl })
+  })
+
   test.each(["create", "validate"])("answer-builder %s accepts no domain and DSL from body", async (command) => {
     const result = await run(["answer-builder", command, "--analysis-name", "total", "--datasource-id", "8", "--body", JSON.stringify({ content: dsl })])
     expect(result.code, result.output).toBe(0)

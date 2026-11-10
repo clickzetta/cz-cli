@@ -180,6 +180,9 @@ async function readInlineOrFile(
 // Resolve the answer-builder content DSL. File inputs avoid shell expansion of
 // placeholders and preserve long JSON, SQL, quotes, and newlines verbatim.
 async function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: string, fallback?: unknown): Promise<string> {
+  if (fallback !== undefined && typeof fallback !== "string") {
+    return handledError("USAGE_ERROR", "body.content must be a JSON-encoded DSL string", { format, exitCode: EXIT_USAGE_ERROR })
+  }
   const rawContent = await readInlineOrFile(argv, "content", format) ?? (typeof fallback === "string" ? fallback : undefined)
   const sql = await readInlineOrFile(argv, "sql", format)
 
@@ -454,7 +457,7 @@ function parseStringList(raw: unknown, fieldName: string, allowEmpty = false): s
   if (raw === undefined || raw === null || raw === "") return undefined
   if (Array.isArray(raw)) {
     const values = raw.flatMap((item) => parseStringList(item, fieldName) ?? [])
-    return values.length > 0 || allowEmpty ? values : undefined
+    return values.length > 0 || (allowEmpty && raw.length === 0) ? values : undefined
   }
   if (typeof raw === "string") {
     const trimmed = raw.trim()
@@ -462,7 +465,7 @@ function parseStringList(raw: unknown, fieldName: string, allowEmpty = false): s
     if (trimmed.startsWith("[")) {
       const parsed = parseJsonArray(trimmed, fieldName)
       const values = (parsed ?? []).map((item) => String(item).trim()).filter(Boolean)
-      return values.length > 0 || allowEmpty ? values : undefined
+      return values.length > 0 || (allowEmpty && parsed?.length === 0) ? values : undefined
     }
     const values = trimmed.split(",").map((item) => item.trim()).filter(Boolean)
     return values.length > 0 ? values : undefined
@@ -3317,7 +3320,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("body-file", { type: "string", describe: "Read the base request body from a UTF-8 JSON object file" })
                 .option("base-version-id", { type: "number", describe: "Base version ID for optimistic concurrency" })
                 .option("version-description", { type: "string", describe: "Description of the new version" })
-                .option("status", { type: "string", choices: ["ENABLE", "DISABLE"], describe: "Metric status" })
+                .option("status", { type: "string", choices: ["ENABLE", "DISABLE"], describe: "Answer Builder status" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .example("cz-cli analytics-agent answer-builder update 9 --analysis-desc '新的说明'", "只更新描述，保留 SQL/DSL、名称、数据源和域绑定。")
                 .example("cz-cli analytics-agent answer-builder update 9 --domain-ids '[]'", "清空全部分析域绑定，保留定义。")
@@ -3326,7 +3329,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               const format = typeof argv.format === "string" ? argv.format : "json"
               const patch = await resolveAnswerBuilderBody(argv as Record<string, unknown>, format)
               const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
-              const content = argv.content !== undefined || argv["content-file"] !== undefined || argv.sql !== undefined || argv["sql-file"] !== undefined || typeof patch.content === "string"
+              const content = argv.content !== undefined || argv["content-file"] !== undefined || argv.sql !== undefined || argv["sql-file"] !== undefined || patch.content !== undefined
                 ? await resolveAnswerBuilderContent(argv as Record<string, unknown>, format, patch.content)
                 : undefined
               const body = mergeBody(patch, {
