@@ -696,20 +696,54 @@ describe("setup guidance", () => {
 
   test("existing-account setup reports MFA instead of a missing token when the account requires it", async () => {
     const { port, seen } = await startAccountWithInstances(["prod"], { mfa: true })
+    const service = `http://localhost:${port}`
 
     const result = await runAsync([
       "setup",
       "--username", "u",
       "--password", "p",
       "--account-name", "acct",
-      "--service", `http://localhost:${port}`,
+      "--service", service,
     ])
 
     expect(seen.accountLogins).toEqual([`acct.accounts.localhost:${port}`])
     expect(result.exitCode).not.toBe(0)
-    const output = result.stdout + result.stderr
-    expect(output).toContain("ACCOUNT_MFA_REQUIRED")
-    expect(output).toContain("cz-cli auth login <name>")
-    expect(output).not.toContain("token not found")
+    const json = firstJson(result.stdout).error as Record<string, unknown>
+    expect(json.code).toBe("ACCOUNT_MFA_REQUIRED")
+    // Browser sign-in must target this endpoint: without --oauth-url, `auth login`
+    // only offers the public regions (or refuses when non-interactive).
+    expect(String(json.message)).toContain(`cz-cli auth login <name> --oauth-url ${service}`)
+    expect(String(json.message)).not.toContain("token not found")
+    expect(String(json.message)).not.toContain("INSTANCE_LOGIN_FAILED")
   })
+
+  // The interactive flow used to treat every API-endpoint failure as a missing
+  // instance name and prompt for one. util-linux `script` gives the CLI a real TTY.
+  test.skipIf(process.platform !== "linux")(
+    "interactive setup reports MFA without prompting for an instance name",
+    async () => {
+      const { port } = await startAccountWithInstances(["prod"], { mfa: true })
+      const home = mkdtempSync(join(tmpdir(), "cz-setup-guidance-"))
+      const child = spawn(
+        "script",
+        ["-qec", `bun ./src/main.ts setup --username u --password p --account-name acct --service http://localhost:${port}`, "/dev/null"],
+        {
+          cwd: import.meta.dir + "/..",
+          env: { ...process.env, HOME: home, CLICKZETTA_TEST_HOME: home },
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      )
+      let output = ""
+      child.stdout.on("data", (chunk) => { output += chunk.toString() })
+      // A prompt waits for input forever; give the flow a bounded window instead.
+      const timer = setTimeout(() => child.kill(), 20_000)
+      const exitCode = await new Promise<number | null>((resolve) => child.on("close", resolve))
+      clearTimeout(timer)
+
+      expect(output).toContain("ACCOUNT_MFA_REQUIRED")
+      expect(output).not.toContain("Instance name")
+      expect(exitCode).toBe(1)
+    },
+    30_000,
+  )
 })

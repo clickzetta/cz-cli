@@ -225,23 +225,39 @@ function extractJwtFromResponse(headers: Headers, payload: Record<string, unknow
   ].find((value) => value.trim())?.trim() ?? ""
 }
 
-async function loadAccountConsoleMeta(accountLoginUrl: string): Promise<AccountConsoleMeta | null> {
+async function loadAccountConsoleMeta(accountLoginUrl: string, timeoutMs = 20_000): Promise<AccountConsoleMeta | null> {
   const response = await fetch(
     `${accountLoginUrl}/one-combo-api/configCenter/script/getApolloConfig?dataId=clickzetta-fe-console&globalVarName=__clickzettaFeConsoleMeta__`,
     {
       headers: { accept: "*/*" },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeoutMs),
     },
   )
   if (!response.ok) return null
   return parseAccountConsoleMeta(await response.text())
 }
 
+/**
+ * The password was accepted but the account requires multi-factor verification.
+ * Callers know the endpoint the user chose and turn this into guidance for it.
+ */
+export class AccountMfaRequiredError extends Error {
+  constructor() {
+    super(
+      "ACCOUNT_MFA_REQUIRED: the password is correct but this account requires multi-factor verification. " +
+        "Sign in with the browser instead: cz-cli auth login <name>",
+    )
+    this.name = "AccountMfaRequiredError"
+  }
+}
+
 function requiresMfa(payload: Record<string, unknown>): boolean {
   const data = payload.data
-  if (!data || typeof data !== "object") return false
-  const status = (data as Record<string, unknown>).mfaStatus
-  return Boolean(status && typeof status === "object" && (status as Record<string, unknown>).enable)
+  return isRecord(data) && isRecord(data.mfaStatus) && Boolean(data.mfaStatus.enable)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
 }
 
 /**
@@ -256,7 +272,7 @@ function requiresMfa(payload: Record<string, unknown>): boolean {
 export async function accountSiteForApiService(service: string, accountName: string): Promise<string> {
   const { host, protocol } = splitEndpoint(service)
   const origin = `${protocol}://${host}`
-  const meta = await loadAccountConsoleMeta(origin).catch(() => null)
+  const meta = await loadAccountConsoleMeta(origin, 5_000).catch(() => null)
   return meta ? origin : accountLoginUrlForService(service, accountName)
 }
 
@@ -293,10 +309,7 @@ export async function loginByAccountSite(
     // The console answers a correct password for an MFA account with code 0, no
     // token and data.mfaStatus.enable; finishing needs an SMS/e-mail code behind an
     // image captcha, or an authenticator code, which this flow cannot collect.
-    throw new Error(
-      "ACCOUNT_MFA_REQUIRED: the password is correct but this account requires multi-factor verification, " +
-      "which username/password login cannot complete. Sign in with the browser instead: cz-cli auth login <name>",
-    )
+    throw new AccountMfaRequiredError()
   }
   if (!token) throw new Error("ACCOUNT_LOGIN_FAILED: token not found in login response")
   return {
