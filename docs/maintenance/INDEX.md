@@ -63,7 +63,7 @@ claude --background --name cz-reflection --model claude-sonnet-5-5 \
   '/loop 12h 读取 docs/maintenance/prompts/reflection.md，整理有依据的易误解点、人工待决和重复故障。'
 ```
 
-同时只推进一个实施任务；接收、读取和回应其他反馈继续进行，受阻任务按工作流程暂挂。长实施可派子 Agent，完成后另外派独立审查者。/loop 后面是让 Claude 读取文件的指令。
+不同任务可由后台子 Agent 并行实施，各用独占 worktree；同一任务不重复派工，完成后另外派独立审查者。主会话持续接收、读取和回应反馈。/loop 后面是让 Claude 读取文件的指令。
 
 通过 claude agents、claude logs ID 和 claude stop ID 查看和停止原生会话。服务器现有包装器使用 maintenance attach feedback / reflection；使用原 ID，不创建副本。恢复后核对周期、到期及原生 Monitor 的实际状态，进程恢复本身不证明监听和调度已恢复。GitHub 当前用增量轮询，不声称已接 Webhook。
 

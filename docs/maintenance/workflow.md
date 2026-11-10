@@ -43,7 +43,7 @@
 3. 新修复从更新后的 `origin/main` 精确 SHA 创建独占 worktree，记录 `baseSha`；显式给实施者控制 checkout 的规则入口与 `policySha`，不从源码 worktree 的旧指令猜测维护基线。PR 审查保留 PR head 和实际 merge-base；历史跨度异常时先交接，不直接移植整段差异。接手历史任务先核对现场与副作用。
 4. 实施完成后从控制 checkout 的 loop 会话中派新的审查子 Agent，只提供最终 diff、SHA、验收条件、验证日志、控制规则版本和源码入口，不提供实施者总结，也不继承其实施对话。审查者可读取源码和相关契约，结论与实际 `reviewedSha` 写入任务记录；审查后任何源码变化都重做审查。审查失败可返修，保留真实失败。
 5. 独立审查通过后，保存 `phase: review`、`status: completed`、实际 `reviewedSha`，再按权限推送任务分支、创建 PR。合入统一使用 `bun scripts/maintenance.ts merge TASK PR` 预览，加 `--merge` 执行；工具核对最终远端 SHA、独立审查与 CI，保存实际 merge commit。管理员仅在 PR 审批规则上豁免，普通贡献者仍需一个批准，main 删除和 force push 保护保留。
-6. 产品修复合入后按[发布约定](../engineering/releases.md)发布 nightly，核对实际产物后回报；纯文档、测试或维护工具改动无需发版。同时只推进一个实施任务，审查、返修与交付属于同一任务；受阻任务保存交接且无执行者继续写入后可暂挂，转办其他任务。没有执行者继续写入后才释放本人认领。
+6. 产品修复合入后按[发布约定](../engineering/releases.md)发布 nightly，核对实际产物后回报；纯文档、测试或维护工具改动无需发版。不同任务可并行，分别认领、记录执行者并使用独占 worktree；同一任务不重复实施，审查、返修与交付继续关联原任务。没有执行者继续写入后才释放本人认领。
 
 `cz-test/test` 必须成功，其他失败或 pending 检查默认阻断。旧 `Claude Code Review` 有既存网关故障，本机可显式以 `mergePolicy.informationalWorkflows` 将这一工作流设为参考；它不能代替本地独立审查，不能豁免产品测试。移除该配置即恢复所有检查阻断。
 
@@ -58,7 +58,7 @@ bun scripts/maintenance.ts intake ack feishu EVENT_KEY --task TASK_ID --note '�
 bun scripts/maintenance.ts intake ack github EVENT_KEY --note '重复反馈，关联原讨论链接并记录原因'
 ```
 
-`--task` 必须是已存在任务；`--task`、`--note` 至少提供一个。读取成功只表示来源已进入持久化队列，不能直接标记已处理。未确认项跨轮次保留，存在未处理项时不报告“没有新反馈”；不要确认尚未读完或没有处置的来源。实施任务受阻仍照常读取、回应其他来源，每轮最多一个实施任务的限制不免除来源处理。
+`--task` 必须是已存在任务；`--task`、`--note` 至少提供一个。读取成功只表示来源已进入持久化队列，不能直接标记已处理。未确认项跨轮次保留，存在未处理项时不报告“没有新反馈”；不要确认尚未读完或没有处置的来源。实施任务受阻仍照常读取、回应其他来源。
 
 飞书读取使用已授权用户，回复使用已入群 Bot。所有 Bot 回复通过维护工具调用 `lark-cli im +messages-reply --reply-in-thread --idempotency-key`，不直接绕过 outbox 发送。确需回报时，阶段从 `接单`、`阻碍`、`审查完成`、`发布完成` 中选择，采用新消息回报状态变化：
 
