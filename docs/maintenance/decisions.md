@@ -1,7 +1,7 @@
-# 需要人工干预的事项
+# Human decisions
 
-公开文档只保留已确认且可公开的长期决定及依据；未决项与当日清单只在本机。反思 Agent 每轮核对仍未回答的产品定位、设计取舍和授权问题，每项保留日期、稳定任务 ID、事实、一个具体决定、推荐方案、影响和原讨论链接；原讨论已有答复就更新状态。
+Keep unresolved decisions in private runtime `control/daily-decisions.md`. Each entry records date, stable task ID, verified facts, one concrete decision, recommendation, impact and original discussion. Reflection checks for answers; feedback asks once in that discussion and updates the task when answered.
 
-当日实际待决清单保存在本机 runtime `control/daily-decisions.md`，由反馈 Agent 读取并在相关原讨论提问。这样飞书私有讨论、用户信息和运行细节不会随仓库公开。可公开的长期决定经确认后写入所属主题，保留依据；未决建议不能变成既定产品规则。
+Publish only confirmed, public long-term decisions in their topic docs, with sources. Keep private discussions, user details and runtime data local; unresolved proposals are not product rules.
 
-能通过源码、测试或已有讨论查清的事实由 Agent 自行解决；CI 失败、实施未完成不能自动改写为“等待用户批准”。只暂停依赖该决定的工作，决定已明确后恢复。
+Resolve facts through source, tests and existing discussions. Failed CI or unfinished implementation does not imply missing approval. Pause only work dependent on a real decision; resume when it is settled.

@@ -1,21 +1,27 @@
-# 反复出问题的链路
+# Recurring failures
 
-只保留能改变后续处理方式的重复故障，每项写清症状、证据、已知原因、恢复方法和预防检查。单次日志和完整排查过程留本机；未验证的原因明确标注未知。
+Keep lessons that change future handling: symptoms, evidence, known cause, recovery and preventive checks. Keep full investigations private; mark unknown causes explicitly.
 
-## 有 loop 不等于有事件监听
+<a id="有-loop-不等于有事件监听"></a>
 
-开放 Monitor 工具或看到本地 ready，不能证明飞书已连接。检查实际消费者、上游 connected、task ID 与消费者到期时间；先停止旧 task 并确认消费者退出，再续建，随后补扫缺口。真实消息尚未验证时如实报告；未经用户要求不往群里发测试消息。
+## A loop does not prove a listener exists
 
-依据：[监听规则](workflow.md#唤醒与监听)。实际连接、停止和续建证据留本机 `control/feishu-monitor.json`。
+Monitor access or local `ready` does not prove connectivity. Check the actual consumer, upstream `connected`, task ID and expiry. Stop the old task, verify consumer exit, then replace it and backfill gaps. Report unverified real-message delivery honestly; do not send Feishu test messages.
 
-## 根消息和 PR head 未变化，不代表没有新反馈
+See [monitoring](workflow.md#wakeups-and-monitoring). Keep connection, stop and renewal evidence in private `control/feishu-monitor.json`.
 
-旧话题回复、PR 普通评论及行内审查可能独立更新。补扫覆盖完整来源，逐项保存处置后 ack；稳定来源先找已有任务，不能重建。分页失败不越过缺口。
+<a id="根消息和-pr-head-未变化不代表没有新反馈"></a>
 
-依据：[来源规则](workflow.md#来源与回报)、[采集器](../../scripts/maintenance/intake.ts)及[回归测试](../../packages/cz-cli/test/maintenance-intake.test.ts)。
+## Unchanged roots or PR heads can still have new feedback
 
-## 独立审查沿用实施者的假设
+Old-thread replies, ordinary PR comments and inline reviews update independently. Scan all sources, save each disposition before ack, and link stable sources to existing tasks. Do not advance past failed pagination.
 
-有独立审查记录仍可能漏掉原问题：验收条件若已经假定某个部署入口存在，或测试只覆盖立即成功的响应，绿色测试无法证明其余原始场景成立。审查者先读原始问题与最新决定，独立确认验收范围，再检查差异和实际验证；“没有新回归”不足以证明原问题解决。未解决的原始场景必须明确阻断，真实产品范围调整则保留其决定依据。
+See [intake](workflow.md#intake-and-delivery), [collector](../../scripts/maintenance/intake.ts) and [regressions](../../packages/cz-cli/test/maintenance-intake.test.ts).
 
-依据：[独立审查约定](workflow.md#推进一项任务)、[认证检查入口](understanding.md#私有部署的认证入口)。历史调查与私有讨论保留在对应任务证据中；后续发现新条件时修订本条，不复制每日总结。
+<a id="独立审查沿用实施者的假设"></a>
+
+## Review inherits implementation assumptions
+
+Green tests can miss the original failure when acceptance assumes a deployment endpoint or tests only immediate auth success. Review the original request/latest decisions and independently verify coverage before checking the diff and results. “No new regression” does not prove the issue fixed. Unresolved original scenarios block approval; retain evidence for any genuine product-scope change.
+
+See [independent review](workflow.md#task-lifecycle) and [authentication checks](understanding.md#private-deployment-authentication). Keep investigations/private discussions with task evidence; revise this entry for new conditions instead of duplicating daily summaries.

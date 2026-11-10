@@ -1,11 +1,11 @@
-# cz-cli 项目文档
+# Project docs
 
-按任务进入对应分类，再读取需要的主题与原始资料。索引只负责导航；已确认的行为、约束和设计取舍更新到所属主题，同一事实保留一处来源。
+Choose a category, then read relevant original sources. Indexes navigate; each fact has one authoritative topic. Update affected contracts with the change.
 
-- [项目方向](project/INDEX.md)：产品定位与已确认的维护方式。
-- [领域知识](domains/INDEX.md)：配置、认证、SQL、会话、文件操作和 Agent 能力。
-- [开发与验证](engineering/INDEX.md)：测试入口、验收和上游定制边界。
-- [共享经验](maintenance/memory/INDEX.md)：易误解点、人工待决、重复故障；读取原文、核验现场并回写新证据。
-- [自动维护](maintenance/INDEX.md)：反馈与反思两个原生循环、任务交接与回报。
+- [Direction](project/INDEX.md): product positioning and agreed maintenance scope.
+- [Domains](domains/INDEX.md): configuration, authentication, SQL, sessions, files, and agent capabilities.
+- [Engineering](engineering/INDEX.md): verification and upstream customization boundaries.
+- [Shared memory](maintenance/memory/INDEX.md): misunderstandings, decisions, and recurring failures; verify facts and record new evidence.
+- [Maintenance](maintenance/INDEX.md): Feedback, Reflection, and durable handoff.
 
-仓库级执行规则见 [AGENTS.md](../AGENTS.md)。运行日志、任务进度、读取游标和凭据保存在本机，不作为项目规范。
+Follow [AGENTS](../AGENTS.md). Keep credentials, task state, cursors, and delivery receipts in private runtime records.

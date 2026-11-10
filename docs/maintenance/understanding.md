@@ -1,15 +1,19 @@
-# 易误解的设计与产品点
+# Common misunderstandings
 
-只记录已经导致错误判断、且有代码、测试、公开讨论或人工决定支撑的边界；每条包含“常见误解 → 实际约束 → 依据”。相关任务开始前按需读取。
+Record evidenced misunderstandings that affect decisions: misconception, actual constraint and source. Read relevant entries before acting.
 
-## 安装脚本的地址与版本参数
+<a id="安装脚本的地址与版本参数"></a>
 
-README 中的示例也可能与实际发布链路不一致。核对脚本的真实下载地址、返回内容及参数解析，不能仅凭文档假定存在 GitHub release asset，或假定脚本读取某个环境变量。
+## Installer URLs and version arguments
 
-依据：[Issue #148](https://github.com/clickzetta/cz-cli/issues/148)、[修复 PR #150](https://github.com/clickzetta/cz-cli/pull/150)。后续安装改动同时验证默认安装与指定版本示例。
+README examples may diverge from the release path. Verify the script's actual URL, response content and argument parsing; do not assume a GitHub release asset exists or an environment variable is read. Test both default and pinned-version examples.
 
-## 私有部署的认证入口
+Evidence: [Issue #148](https://github.com/clickzetta/cz-cli/issues/148), [PR #150](https://github.com/clickzetta/cz-cli/pull/150).
 
-处理登录问题时先确认部署提供的入口与完整认证响应，不能仅按公有站点的域名规则推导私有部署；测试中立即返回 token 不足以覆盖多步骤认证。需要 MFA 或其他挑战表示认证仍未完成，不能认定为密码错误或登录成功，也不能为通过测试关闭它。
+<a id="私有部署的认证入口"></a>
 
-查验入口：[登录与认证](../domains/authentication.md)、[账号入口实现](../../packages/cz-cli/src/commands/account-login.ts)。实现与测试以任务源码版本为准；是否增加新的认证能力须核对原需求和最新产品决定，不能把诊断建议当作已经支持的功能。此条保存检查方法，不声明当前实现覆盖所有部署。
+## Private deployment authentication
+
+Verify the deployment's endpoint and complete auth response; public-hostname conventions may not apply. Tests returning a token immediately do not cover multi-step auth. MFA/challenges mean authentication is incomplete, not a bad password or success; never disable them to pass a test.
+
+Check [authentication](../domains/authentication.md) and [account endpoint code](../../packages/cz-cli/src/commands/account-login.ts) at the task's source version. New capabilities require the original request and latest product decision; diagnostic advice does not establish support. This entry describes checks, not universal deployment coverage.

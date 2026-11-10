@@ -4,11 +4,12 @@
 
 ## Project docs and maintenance
 
-- Start at [docs/INDEX.md](docs/INDEX.md), then read only the categories needed for the task. Update affected contracts with the change. Maintenance reflection records only evidenced misunderstandings, unresolved human decisions, and recurring failures; keep private evidence in local runtime records.
-- For self-maintenance sessions, disable client-private auto-memory, read relevant original notes through the [shared memory index](docs/maintenance/memory/INDEX.md), and follow [the workflow](docs/maintenance/workflow.md). Capture evidenced lessons, corrections, and useful usage feedback via the [memory workflow](docs/maintenance/memory-workflow.md); do not manufacture notes for every task. Check existing tasks before claiming work, use an exclusive worktree, and preserve the user's and other agents' changes.
-- Validate against the task's acceptance criteria and retain actual results, failures, and unrun checks. A fresh reviewer first checks acceptance criteria against the original request and latest decisions, then checks the final diff, commit SHA, and evidence; source changes require renewed review.
-- External actions follow the user's existing authorization and local runtime configuration. Distinguish local completion, reviewed changes, merged code, and a verified release in reports.
-- Keep task progress, source cursors, and delivery receipts in local runtime records. Update topic docs when behavior or contracts change; do not create changes just to keep a loop busy.
+- Start at [docs/INDEX.md](docs/INDEX.md); read relevant original sources and update affected contracts.
+- Maintenance uses [shared memory](docs/maintenance/memory/INDEX.md), not client-private auto-memory. Follow the [workflow](docs/maintenance/workflow.md) and [memory protocol](docs/maintenance/memory-workflow.md). Record only evidenced lessons, corrections, and useful usage feedback.
+- Reconcile existing tasks, use exclusive worktrees, and preserve others' changes. Keep state, cursors, private evidence, and receipts in runtime.
+- Fresh reviewers check the original request and latest decisions before acceptance criteria, final diff, SHA, and actual evidence. Source changes require re-review; record failed and unrun checks.
+- Follow current authorization and runtime permissions. Distinguish local completion, review, merge, and verified release. Do not manufacture work for a loop.
+- Write role, delegation, and scheduling instructions in concise English. Reply to people in the discussion's language; preserve literal tool arguments and source evidence.
 
 ## Branch Names
 

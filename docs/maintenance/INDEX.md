@@ -1,44 +1,42 @@
-# 自动维护
+# Maintenance
 
-使用 Claude Code 原生 `/loop` 和 `Monitor`，模型为 `claude-sonnet-5-5`，项目知识通过 [docs 索引](../INDEX.md)按需读取。只在维护会话的启动参数中关闭 auto-memory，日常交互会话沿用原设置。
+Two Claude Code sessions use native `/loop` and `Monitor`. Default model: `claude-sonnet-5-5`. Disable client-private auto-memory only for these sessions; use [project docs](../INDEX.md) and shared notes on demand.
 
-- [共享记忆入口](memory/INDEX.md)：按任务读取经验及候选纠错。
-- [回写与整理](memory-workflow.md)：持久经验队列、新上下文整理、纠错淘汰、验证及生效。
-- [离线行为验收](memory-cases.md)：用真实故障类型检查下一轮判断。
-- [工作流程](workflow.md)：认领、独占工作区、验收、交接与回报。
-- [反馈 prompt](prompts/feedback.md)：统一处理 GitHub 与飞书。
-- [反思 prompt](prompts/reflection.md)：每十二小时整理易误解点、人工待决和重复故障。
-- [设计依据](design.md)：参考做法及采用范围。
-- [易误解点](understanding.md)、[人工待决](decisions.md)、[重复故障](recurring-failures.md)。
+- [Feedback](prompts/feedback.md): GitHub and Feishu intake, execution, and delivery.
+- [Reflection](prompts/reflection.md): twelve-hour evidence curation.
+- [Workflow](workflow.md): ownership, verification, guards, recovery, and handoff.
+- [Memory index](memory/INDEX.md) and [protocol](memory-workflow.md): read, record, curate, validate, activate.
+- [Offline cases](memory-cases.md): behavior checks with separate scoring.
+- [Rationale](design.md), [misunderstandings](understanding.md), [decisions](decisions.md), [recurring failures](recurring-failures.md).
 
-## 启用门槛
+<a id="启用门槛"></a>
 
-本地试跑使用已提交且干净的控制 checkout，无需先合入 `main`。将其绝对路径写入本机 `config.json.native.maintenanceRoot`；两个循环以及实施、审查子 Agent 统一读取这里的 `AGENTS.md`、docs 和维护工具。每个执行阶段记录控制 checkout 的 `policySha`，阶段内保持该版本不变。
+## Control checkout
 
-启动时显式进入该目录，核对工作区干净且 `HEAD` 等于本机配置的 `native.policySha`；路径配置不会自动切换 Claude 的工作目录。子 Agent 从控制会话派出，将源码 worktree 作为明确路径传入。
+Use a committed, clean checkout with absolute `config.json.native.maintenanceRoot` and matching `native.policySha`. Start all coordinators and delegates there; read its rules and run its maintenance tools. Pass task source worktrees explicitly. Policy and source SHAs are separate; keep each stage's policy fixed. Product fixes start from updated `origin/main`, never from stale rules in their source worktree. A local control rollout need not first merge into main.
 
-新修复的代码 worktree 仍从更新后的 `origin/main` 精确 SHA 创建；源码基线与维护规则版本分别记录。任务 worktree 即使尚不含新 docs，也不能退回其中旧版维护规则。后续团队部署时可将维护改动合入 `main`，本地试跑不依赖 PR。
-
-启用前由用户提供本机 URL、key 与认证方式，核对来源范围和外部授权，并验证一次模型连接与有边界的首轮任务。凭据不写进提示词或仓库。先在控制 checkout 根目录运行：
+Keep credentials in private settings. Verify existing credentials, source scope, authorization, model connectivity, and a bounded first task; request missing inputs only. From the control root:
 
 ```sh
 bun scripts/maintenance.ts init
 bun scripts/maintenance.ts status
 ```
 
-核对当前实际待处理来源、旧任务、权限和回执目录，再按下文启动、验收两个会话。清理旧 worktree 需要用户逐项确认，不阻塞启用。交接中更新实际监听状态和待修复故障，按当前配置与授权完成接入。
+Reconcile existing tasks, pending sources, owners, and receipts. Removing old user worktrees requires item-specific approval and does not block activation.
 
-## 飞书事件前提
+<a id="飞书事件前提"></a>
 
-Bot 必须已入目标群，应用具备群全消息权限 `im:message.group_msg`；用户身份可读消息或具备 `send_as_bot` 不等于已订阅 Bot 事件。在飞书开发者控制台选择长连接接收事件，订阅 `im.message.receive_v1`，并确认配置已发布生效。
+## Feishu prerequisites
 
-先用本机 `lark-cli event schema im.message.receive_v1` 和 `lark-cli event consume --help` 核对要求；1.0.58 的 schema 还预检 `im:message.p2p_msg:readonly`，不能仅凭群权限推断命令可用。飞书会话必须按[唤醒与监听](workflow.md#唤醒与监听)启动实际消费者，验证上游连接和真实目标群事件。缺失条件须查明并修复，不能只留下“以后验收”便宣称部署完成。
+The Bot must belong to the target group, with `im:message.group_msg`, long-connection delivery, and a published `im.message.receive_v1` subscription. User read access or `send_as_bot` alone is insufficient. Check the installed CLI's `event schema im.message.receive_v1` and `event consume --help`; version 1.0.58 also checked `im:message.p2p_msg:readonly`. Follow the [listener workflow](workflow.md#wakeups-and-monitoring), verify the actual consumer and upstream connection, and fix missing prerequisites rather than declaring acceptance complete.
 
-## 两个会话
+<a id="两个会话"></a>
 
-仅在首次创建时运行下面命令。已有会话使用原 ID 恢复，先以 CronList 去重，不重复执行 /loop。切换旧三角色时先在安全边界保存任务、claim、后台执行者和外部回执，删除旧周期任务；保留一个反馈会话和一个反思会话，旧渠道会话停止后不再恢复。监听只能有一个 owner。
+## Start or recover
 
-维护会话已获授权使用 bypassPermissions。私有 settings 只为维护会话关闭 auto-memory，保留现有连接配置，不能提交。进入控制 checkout，设置：
+Create each role only once. Recover existing session IDs; use CronList to deduplicate instead of repeating `/loop`. When retiring old channel roles, hand off tasks, claims, workers, and receipts at a safe boundary, then remove their jobs and stop them. Keep one listener owner.
+
+The existing maintenance authorization allows bypassPermissions. Use private settings that disable auto-memory without changing connection credentials:
 
 ```sh
 CZ_MAINTENANCE_RUNTIME="$(git rev-parse --path-format=absolute --git-common-dir)/cz-maintenance"
@@ -46,34 +44,30 @@ CZ_MAINTENANCE_SETTINGS="$CZ_MAINTENANCE_RUNTIME/native-claude-settings.json"
 CZ_MAINTENANCE_WORKTREES="$(bun -e 'console.log((await Bun.file(Bun.argv[1]).json()).native.worktreeRoot)' "$CZ_MAINTENANCE_RUNTIME/config.json")"
 ```
 
-反馈 Agent：
+First creation only:
 
 ```sh
 claude --background --name cz-feedback --model claude-sonnet-5-5 \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch,Monitor,TaskStop' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 5m 读取 docs/maintenance/prompts/feedback.md，实际保持唯一飞书 Monitor，统一处理两个来源。'
-```
+  '/loop 5m Read and follow docs/maintenance/prompts/feedback.md.'
 
-反思 Agent：
-
-```sh
 claude --background --name cz-reflection --model claude-sonnet-5-5 \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 12h 读取 docs/maintenance/prompts/reflection.md，整理有依据的易误解点、人工待决和重复故障。'
+  '/loop 12h Read and follow docs/maintenance/prompts/reflection.md.'
 ```
 
-不同任务可由后台子 Agent 并行实施，各用独占 worktree；同一任务不重复派工，完成后另外派独立审查者。主会话持续接收、读取和回应反馈。/loop 后面是让 Claude 读取文件的指令。
+Distinct tasks may run concurrently in exclusive worktrees; never duplicate a task's implementer. Review separately. The coordinator remains responsive.
 
-通过 claude agents、claude logs ID 和 claude stop ID 查看和停止原生会话。服务器现有包装器使用 maintenance attach feedback / reflection；使用原 ID，不创建副本。恢复后核对周期、到期及原生 Monitor 的实际状态，进程恢复本身不证明监听和调度已恢复。GitHub 当前用增量轮询，不声称已接 Webhook。
+Inspect with `claude agents` or `claude logs ID`; stop with `claude stop ID`. Existing server wrappers use `maintenance attach feedback` or `reflection`. Recovery must verify actual Cron/Monitor state and expiry, not just a process. GitHub currently polls; it has no webhook integration.
 
-## 验收与恢复
+<a id="验收与恢复"></a>
 
-用真实 Issue、PR 评论和飞书自然到达的消息核对来源、任务关联、处置及 message_id。用户要求不发送飞书测试消息；未获得自然事件到回复证据前，只报告实际已核验的连接和读取。
+## Acceptance
 
-核对两个原生周期任务：反馈五分钟，反思十二小时；检查无遗留渠道定时器、重复消费者或活动实施者。重放来源用本地测试核对去重，不向群注入消息。真实 CI 和独立审查继续阻断不合格交付，发布只准 nightly。
+Confirm one five-minute Feedback job, one twelve-hour Reflection job, and one listener, with no obsolete channel jobs or duplicate workers. Renew jobs before their reported expiry. Verify real Issue/PR updates, natural Feishu events, task links, dispositions, and receipts. Test replay/deduplication locally. **Never send Feishu test or diagnostic messages.** Report only observed connection, intake, and delivery evidence; natural-event-to-reply acceptance stays open until demonstrated. CI and independent review remain required; releases remain nightly-only.
 
-会话级设置见[官方说明](https://code.claude.com/docs/en/settings#change-a-setting-for-one-session)，循环的到期与恢复见[原生调度说明](https://code.claude.com/docs/en/scheduled-tasks)。
+See official [session settings](https://code.claude.com/docs/en/settings#change-a-setting-for-one-session) and [native scheduling](https://code.claude.com/docs/en/scheduled-tasks).

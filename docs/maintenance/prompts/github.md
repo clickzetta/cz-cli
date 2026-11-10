@@ -1,3 +1,3 @@
-# 入口已合并
+# Redirect
 
-GitHub 与飞书由同一个常驻会话处理，统一读取[反馈 prompt](feedback.md)。本文件仅保留旧链接，不创建单独渠道循环。
+Use the unified [Feedback prompt](feedback.md). Do not start a separate GitHub loop.

@@ -1,3 +1,3 @@
-# 入口已调整
+# Redirect
 
-低频整理使用[反思 prompt](reflection.md)，每十二小时一次。每项修复的独立审查仍随任务进行，不由此周期代替。
+Use [Reflection](reflection.md) for twelve-hour curation. Independent review still accompanies each implementation task.

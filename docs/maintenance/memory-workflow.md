@@ -1,62 +1,60 @@
-# 经验如何进入下一轮任务
+# Memory protocol
 
-反馈 Agent 使用并回写经验，反思 Agent 整理经验，新的执行与审查 Agent 验证它是否有用。两者共享[记忆索引](memory/INDEX.md)，不依赖任一会话的私有 auto-memory。只沉淀已经发生的易误解点、真正需要人工决定的事项和反复失败的链路。
+Feedback uses and records experience; Reflection curates it; fresh agents test whether it helps. Use the [shared index](memory/INDEX.md), not client-private auto-memory. Limit experience to evidenced misunderstandings, human decisions, and recurring failures.
 
-## 接手与回写
+## Read and record
 
-接手任务先读原始需求及最新讨论，再从记忆索引选相关原文，核对适用范围、依据和当前事实。派工时给新 Agent 原问题、验收条件、控制版本和记忆入口，不只给协调者的结论。事实调查可以继续；经验不能扩大授权。
+Start with the original request and latest decisions. Read relevant notes, their evidence, scope, and current facts. Give delegates these sources, acceptance criteria, and policy version, not just your interpretation. Memory never expands authorization.
 
-完成、被纠正或遇到真实阻碍时，只有存在新认识才回写：原判断是什么、什么证据改变了它、以后如何判断、应新增或修正哪条记忆。成功使用已有经验无需每次制造事件；发现漏检、误导、适用条件变化或明确节省重复调查时记录使用反馈。
+At completion, correction, or a real blocker, record a new insight only when useful: **previous belief, evidence, next-time action, affected note**. Record usage when a note misled, missed a condition, or demonstrably avoided repeat work. Routine successful reads need no event.
 
-使用已有任务 ID，创建私有 JSON 后执行 `bun scripts/maintenance.ts memory record FILE.json`：
+Create private JSON and run `bun scripts/maintenance.ts memory record FILE.json`:
 
 ```json
 {
   "id": "task-example-auth-evidence-1",
   "taskId": "task-example",
   "kind": "correction",
-  "summary": "原判断、反证，以及下次应先检查的条件；未确认的原因明确写未知。",
-  "evidence": ["原讨论或实际验证记录的可追溯位置"],
-  "memoryRefs": ["docs/maintenance/understanding.md#私有部署的认证入口"]
+  "summary": "Previous belief, counterevidence, and next-time check; mark unknown causes.",
+  "evidence": ["Traceable original discussion or verification record"],
+  "memoryRefs": ["docs/maintenance/understanding.md"]
 }
 ```
 
-示例 taskId 必须替换为工具已登记的实际任务；没有对应任务的发现先按已有流程登记 audit 来源。`kind` 为 `lesson`（新增经验）、`correction`（纠正旧经验）或 `usage`（使用效果）。`memoryRefs` 可以为空；`evidence` 必须有实际来源，不把待验证计划写成结果。
+Use a registered task ID; otherwise register an audit source through the existing task workflow. `kind` is `lesson`, `correction`, or `usage`. `memoryRefs` may be empty; evidence must be real, not planned verification.
 
-稳定 `id` 标识同一次发现，重试沿用相同内容；新证据使用新 ID，并在证据中关联旧事件。事件原文不可覆写，避免并行实施者覆盖彼此的认识。命令只保存本机经验，不改任务状态、发送消息或授予权限。
+Reuse the stable ID and identical content on retry. New evidence gets a new ID referencing the earlier event. Events are immutable; recording changes no task status, permission, or external state.
 
-## 十二小时整理
+## Curate every twelve hours
 
-1. 读取 `memory pending`，以及上次成功覆盖位置之后的任务、提交、反馈、验证和人工回答。首次回看最近一天；来源读取失败时保留缺口，不把游标越过未检查内容。新命令启用前的历史没有事件，仍从已有任务和真实证据补充有价值的经验，不倒填“当时已回写”。
-2. 有候选、反证或到期复核事项时，派**新的上下文**整理子 Agent。只给范围、原始证据位置、当前记忆与控制版本，不继承上一轮解释。协调者保存本轮范围、候选 ID、执行者和 worktree；同一轮已有整理者时不重复派工。
-3. 整理者确认原始来源，合并重复、补充条件、修正旧结论，核对人工问题是否已答。检查本轮涉及条目的索引与引用；每周至少轮转复核一个未在近期使用的主题，记录主题、检查时间和下一主题，避免只看新增而永久遗漏旧知识。无新认识可以不改文件。
-4. 对事实已变化、被推翻或没有后续用途的内容，移出活跃读取路径；保留证据出处和替代关系。不得因低频删除用户约束或关键例外。整理不能修改实际授权；需要产品决定的仍进入待决清单。
-5. 按下述验证要求检查改动，再交由新的独立审查者核验原始问题、证据、最终差异和 SHA。已知错误立即记录 correction，让后续任务核验；正式文档仍走控制版本切换。只有协调者负责提交待切换记录，子 Agent 不切换控制版本、不外发。
+1. Read `memory pending` and sources since the last successful cursor; start with the last day initially. Preserve failed-read gaps. For history predating this queue, inspect original tasks without inventing earlier write-backs.
+2. Delegate warranted curation to a **fresh context**, with scope, original sources, current notes, and policy version. Record candidate IDs, owner, and exclusive worktree; never dispatch a duplicate curator.
+3. Verify evidence and human answers; merge repeats, correct contradictions, and check affected indexes and references. Weekly, revisit at least one older topic. Record the topic, check time, and next topic in private `control/reflection-runtime.json`.
+4. Retire disproven, obsolete, or unhelpful notes from active indexes; retain provenance and replacement links in the original note or Git history. Never discard a user constraint or critical exception merely because it is rarely used. Unresolved product choices remain decisions, not rules.
+5. Record known errors immediately as corrections. Validate and independently review formal edits before activation. Curators neither switch policy nor send externally; coordinators own handoff and resolutions.
 
-整理后的条目用自然语言写清：**何时读它 → 当前结论与适用条件 → 依据及核验日期/版本 → 下次动作 → 失效或替代条件**。原因未知就写未知。临时暂停写清解除条件，现场状态写查询方法，历史事实标明当时；不要把历史快照写成当前事实。
+Write notes as **trigger → conclusion and conditions → evidence/date/version → next action → invalidation or replacement**. State unknowns. Record how to check live state; label historical facts and pause-release conditions explicitly. Keep the actionable paragraph short, link detailed evidence, and maintain one authoritative conclusion with consistent indexes.
 
-首段保持可直接使用，长调查过程通过链接下钻。一个结论保留一处原文，索引只负责找它；修改或迁移后同步修复索引、引用和相关条目的矛盾。
+## Validate and activate
 
-## 验证与生效
+For changed conclusions, scope, indexes, or pruning, run affected [offline cases](memory-cases.md) with fresh agents starting at `docs/INDEX.md`. Withhold answers and the curator's summary. A separate reviewer scores actual outputs; fix failures without relaxing criteria. Formatting or broken-link fixes need only relevant checks.
 
-整理的验收是下一个 Agent 能否找到正确依据并选对动作。修改结论、适用范围、索引结构或删减时，按[离线案例](memory-cases.md)选受影响场景，用新上下文 Agent 从 `docs/INDEX.md` 开始回答；不给评分标准或整理者的总结。审查者随后按独立标准判分；失败返修，不能靠放宽标准通过。纯排版或断链修复可只做相应检查。
+Save document revision/diff, model, input, answer, reading path, and score. Compare versions only with matching models, inputs, permissions, and fresh sessions. Without a baseline, claim no percentage improvement. Offline runs make no external writes; real usage and correction events test continuing value.
 
-记录受测文档版本/差异、模型、案例输入、实际回答、读取路径和评分。比较旧版与新版时保持相同模型、输入和工具权限，分别使用新会话；没有对照数据就只报告当前验收结果，不能声称提升百分比。离线检查不发真实消息、不合入或发布。真实任务中是否减少重复调查、重复提问和同类错误，继续由 usage/correction 反馈验证。
+Create an exclusive worktree from `policySha`, or extend the latest pending policy commit. Follow the [workflow](workflow.md). Record base/candidate SHAs, review and case evidence, and event IDs in `control/policy-pending.md`. **Curated, reviewed, and active are separate states.** Keep events pending until activation.
 
-文档从当前 `policySha` 或已有待切换提交开独占 worktree，按 [workflow](workflow.md)验证、审查并记录 `control/policy-pending.md`。记录基线、候选提交、审查与案例证据、处理的事件 ID；**已整理、已审查和已生效分别记录**。待切换时事件仍 pending，不因写好文档就标记已采用。
-
-反馈 Agent 在安全边界协调切换。确认控制 HEAD 与配置 `policySha` 一致后，用 `memory resolve ID FILE.json` 登记处置：
+Feedback coordinates the safe switch. After control HEAD and configured `policySha` match, run `memory resolve ID FILE.json`:
 
 ```json
 {
   "disposition": "integrated",
-  "reason": "新版本已生效，相关入口和原文一致。",
-  "evidence": ["control/本次切换与验证记录"],
-  "policySha": "实际生效的完整40位提交SHA",
-  "memoryRefs": ["docs/maintenance/understanding.md#对应条目"]
+  "reason": "Reviewed version is active; note and index agree.",
+  "evidence": ["control/actual-activation-record.json"],
+  "policySha": "ACTUAL_40_CHARACTER_ACTIVE_COMMIT_SHA",
+  "memoryRefs": ["docs/maintenance/understanding.md"]
 }
 ```
 
-`integrated` 必须有生效版本、记忆位置和实际证据。`duplicate` 引用已经处理的事件/现有记忆及原因；`no-change` 写出核验后无需修改的理由与证据。有待调查、待回答、待验证或待切换的事项不 resolve，继续留在 pending。处置不可覆写；后来出现反证就创建新的 correction，保留原过程。
+`integrated` requires the active version, note references, and real evidence. Coordinators may resolve `duplicate` with the existing event/note and rationale, or `no-change` with verified reasons and evidence. Investigation, decisions, validation, and activation still pending must not be resolved. Resolutions are immutable; later counterevidence becomes a new correction.
 
-事件队列是发现与整理的交接，任务来源、认领、外发回执、授权和完成状态仍由现有工具管理。工具能检查记录格式、幂等与版本绑定，不能替代对证据真实性和判断质量的审查。
+The journal carries learning evidence, not task ownership, authorization, or completion. Tools enforce format, idempotency, and version checks; independent review must still judge truth and usefulness.

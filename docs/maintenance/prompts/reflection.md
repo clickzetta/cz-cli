@@ -1,15 +1,13 @@
-# 反思循环
+# Reflection
 
-遵守根 [AGENTS.md](../../../AGENTS.md)、[工作流程](../workflow.md)及[记忆整理约定](../memory-workflow.md)，每十二小时检查 `memory pending` 和上次成功覆盖位置以来的任务、提交、真实反馈、人工回答与验证结果；首次看最近一天。保存成功覆盖范围、未读缺口和下次位置，不把扫描失败记为完成。
+Follow [AGENTS](../../../AGENTS.md), the [workflow](../workflow.md), and the [memory protocol](../memory-workflow.md). Run every twelve hours.
 
-只整理有证据的易误解点、真正需要人工决定的事项和重复故障，从[共享记忆索引](../memory/INDEX.md)进入相关原文。未经确认的解释不能成为产品规则，实际授权、任务状态、发送和发布结果由现有配置与回执决定。
+1. Read `memory pending` and changes since the last successful coverage point: tasks, commits, feedback, decisions, and verification. Start with the last day on first run. Preserve unread gaps; never advance a cursor past failed reads.
+2. Keep only evidenced misunderstandings, unresolved human decisions, and recurring failures. Read their [original notes](../memory/INDEX.md). Memory cannot grant permission or replace live task and delivery state.
+3. When evidence or a due topic warrants work, delegate to a fresh-context curator with original sources, scope, current notes, and policy version. Record its exclusive worktree and owner; do not duplicate a running curator. Rotate through old topics weekly.
+4. Verify, merge, correct, and retire notes while preserving conditions, exceptions, provenance, and replacement links. Update affected indexes together. Do not turn historical state or temporary pauses into permanent rules.
+5. Check human answers before updating private `control/daily-decisions.md`. Let Feedback ask in the original discussion. Route verifiable faults into existing tasks; create no parallel implementation queue or unsolicited report.
+6. Work from `policySha` or the latest pending policy commit. Run affected offline cases with fresh agents, then independent review of evidence, diff, and SHA. Fix failures without weakening criteria.
+7. Record reviewed commits, evidence, event IDs, and proposed dispositions in `control/policy-pending.md`. Feedback activates them safely and resolves integrated events afterward. Only coordinators resolve verified duplicates or no-change events; unresolved work stays pending.
 
-有候选、反证或旧知识需要复核时派新上下文整理子 Agent，给原始证据、相关记忆、范围和控制版本；不继承旧解释。保存执行者与独占 worktree，同一轮不重复派工。按整理约定轮转检查旧主题；无值得处理的内容只保存检查位置，不制造文档或消息。
-
-整理时核验依据、合并重复、修正冲突和失效结论，保留适用条件与重要例外。删减优先移出活跃阅读路径，证据仍可追溯；结论改变必须同步修复索引和引用。不得把临时暂停或历史状态写成永久规则。
-
-人工待决保留事实、一个具体决定、推荐方案、影响及原讨论；先核对是否已回答。私有内容留 runtime `control/daily-decisions.md`，交反馈 Agent 在相关原讨论处理，不群发日报或重复催问。可验证的代码故障关联已有任务或登记给反馈 Agent，不另起实施队列。
-
-整理改动从 `policySha` 或已有待切换提交开独占 worktree。按受影响的[离线案例](../memory-cases.md)验证新 Agent 能找到依据并选对动作，再派独立审查者检查原始证据、差异与 SHA；失败返修，不降低标准。私有原文不进入公开仓库，不全面补写设计文档。
-
-审查通过后保存提交、验证、候选事件 ID 与处置建议到 `control/policy-pending.md`；不推送 main、不发版、不直接切换运行版本。反馈 Agent 按 workflow 在安全边界激活后登记 integrated；待切换的事件仍 pending，重复/无需修改的事件核实后记录理由和证据再 resolve。
+If nothing warrants change, save coverage and stop. Do not publish, switch policy yourself, expose private sources, or invent documentation work.
