@@ -382,9 +382,69 @@ function maskSecretString(value: string): string {
     const parsed = tryParseJsonObject(value)
     if (parsed !== undefined) return JSON.stringify(maskSecrets(parsed))
   }
-  return maskUrlUserinfo(value)
-    .replace(/([?&;])([^=&;?]+)=[^&;]*/g, (param, sep: string, key: string) =>
-      isSecretKey(key) ? `${sep}${key}=********` : param)
+  return maskConnectionParams(maskUrlUserinfo(value))
+}
+
+/**
+ * Mask `key=value` params in connection strings (`?`/`&`/`;`-separated), keeping
+ * non-secret params verbatim. SQL Server JDBC braces values that contain `;`
+ * (`password={a;b}`), so values are scanned rather than split on separators.
+ */
+function maskConnectionParams(value: string): string {
+  let out = ""
+  let i = 0
+  while (i < value.length) {
+    const sep = value[i]
+    if (sep !== "?" && sep !== "&" && sep !== ";") {
+      out += sep
+      i++
+      continue
+    }
+    let keyEnd = i + 1
+    while (keyEnd < value.length && value[keyEnd] !== "=" && value[keyEnd] !== "&" && value[keyEnd] !== ";" && value[keyEnd] !== "?") keyEnd++
+    if (value[keyEnd] !== "=") {
+      out += value.slice(i, keyEnd)
+      i = keyEnd
+      continue
+    }
+    const key = value.slice(i + 1, keyEnd)
+    const valueEnd = connectionParamValueEnd(value, keyEnd + 1)
+    const raw = value.slice(keyEnd + 1, valueEnd)
+    out += isSecretKey(key) && raw !== "" ? `${sep}${key}=********` : value.slice(i, valueEnd)
+    i = valueEnd
+  }
+  return out
+}
+
+/**
+ * End index of a `key=value` param value. A value opening with `{` (SQL Server
+ * JDBC brace escaping, where `}}` is an escaped `}`) ends after its last `}`
+ * before the next `&`/`;` — so a `}` followed only by the next property closes
+ * the value, while an unterminated brace masks to end-of-string instead of
+ * leaking into the following property. Plain values end at the next `&`/`;`.
+ */
+function connectionParamValueEnd(value: string, start: number): number {
+  if (value[start] !== "{") {
+    let end = start
+    while (end < value.length && value[end] !== "&" && value[end] !== ";") end++
+    return end
+  }
+  let i = start + 1
+  while (i < value.length) {
+    if (value[i] !== "}") {
+      i++
+      continue
+    }
+    const pairEnd = value[i + 1] === "}" ? i + 2 : i + 1
+    const nextSep = value.slice(pairEnd).search(/[&;]/)
+    const sepAt = nextSep === -1 ? value.length : pairEnd + nextSep
+    // This `}` (or `}}` pair) closes the value unless another `}` follows before
+    // the next separator — that would make this one an interior escaped brace.
+    const laterBrace = value.indexOf("}", pairEnd)
+    if (laterBrace === -1 || laterBrace >= sepAt) return pairEnd
+    i = pairEnd
+  }
+  return i
 }
 
 // A host (optionally `:port` or bracketed IPv6) — the text that must follow the

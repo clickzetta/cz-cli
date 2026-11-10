@@ -143,6 +143,17 @@ describe("maskSecrets", () => {
     expect(maskSecrets("http://h.example.com/a/b?next=x")).toBe("http://h.example.com/a/b?next=x")
   })
 
+  test("masks brace-escaped SQL Server values without cutting at ';'", () => {
+    expect(maskSecrets("jdbc:sqlserver://h.example.com:1433;password={p@ss;w0rd};encrypt=true")).toBe(
+      "jdbc:sqlserver://h.example.com:1433;password=********;encrypt=true")
+    // `}}` inside a braced value is an escaped }, not the terminator
+    expect(maskSecrets("jdbc:sqlserver://h.example.com;password={a}}b};loginTimeout=3")).toBe(
+      "jdbc:sqlserver://h.example.com;password=********;loginTimeout=3")
+    // non-secret braced values stay readable and later properties still parse
+    expect(maskSecrets("jdbc:sqlserver://h.example.com;appName={my;app};encrypt=true")).toBe(
+      "jdbc:sqlserver://h.example.com;appName={my;app};encrypt=true")
+  })
+
   test("leaves empty and missing secrets as-is so NULL stays distinguishable", () => {
     const masked = maskSecrets({ access_key_id: "", access_key_secret: null }) as Record<string, unknown>
     expect(masked.access_key_id).toBe("")
