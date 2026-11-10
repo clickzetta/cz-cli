@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test"
 import { tableFromArrays, tableToIPC, CompressionType, RecordBatchStreamWriter, compressionRegistry, Utf8, Int32, Float64 } from "apache-arrow"
-import { decodeArrowPayload } from "../src/sql/arrow.js"
+import zlib from "node:zlib"
+import { decodeArrowPayload, fetchArrowFromUrls } from "../src/sql/arrow.js"
 
 function encodeTable(data: {
   id: Int32Array
@@ -89,6 +90,23 @@ describe("compressed Arrow IPC", () => {
     ])
   })
 
+  it("decodes a ZSTD-compressed stream fetched from a URL", async () => {
+    const body = Buffer.from(zstdStream, "base64")
+    const server = Bun.serve({ port: 0, fetch: () => new Response(body) })
+    try {
+      const { rows } = await fetchArrowFromUrls([`http://localhost:${server.port}/result`], columns)
+      expect(rows).toEqual([
+        [1, "alpha", 1.5],
+        [2, "beta", 2.5],
+        [3, "gamma", 3.5],
+        [4, "delta", 4.5],
+        [5, "epsilon", 5.5],
+      ])
+    } finally {
+      await server.stop(true)
+    }
+  })
+
   it("decodes ZSTD batches with nulls and repetitive data", () => {
     const count = 2000
     const table = tableFromArrays({
@@ -96,8 +114,18 @@ describe("compressed Arrow IPC", () => {
       name: Array.from({ length: count }, (_, i) => (i % 7 === 0 ? null : `row-${i % 3}`)),
       score: Float64Array.from({ length: count }, (_, i) => i / 4),
     })
+    // The shipped codec only decodes; give the writer an encoder for this test.
+    const shipped = compressionRegistry.get(CompressionType.ZSTD)!
+    compressionRegistry.set(CompressionType.ZSTD, {
+      encode: (data) => zlib.zstdCompressSync(data),
+      decode: shipped.decode,
+    })
     const writer = new RecordBatchStreamWriter({ compressionType: CompressionType.ZSTD })
-    writer.writeAll(table)
+    try {
+      writer.writeAll(table)
+    } finally {
+      compressionRegistry.set(CompressionType.ZSTD, shipped)
+    }
     const { rows } = decodeArrowPayload([Buffer.from(writer.toUint8Array(true)).toString("base64")], columns)
     expect(rows.length).toBe(count)
     expect(rows[0]).toEqual([0, null, 0])
