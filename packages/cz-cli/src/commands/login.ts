@@ -2,15 +2,34 @@ import type { Argv } from "yargs"
 import * as p from "@clack/prompts"
 import { toServiceUrl } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { error, success } from "../output/index.js"
+import { error, success, EXIT_USAGE_ERROR } from "../output/index.js"
 import { patRefusedOrNoted } from "./pat-guard.js"
 import { resolveLoginTarget, type LoginTarget } from "../connection/login-target.js"
 import { decodeCredential, provisionProfileFromCredential, provisionProfilesFromOAuthCombos, ProvisionError } from "../connection/provision.js"
 import { enumerateOAuthCombos, type OAuthConnCombo } from "../connection/oauth-enumerate.js"
-import { getDefaultProfileName, readSessionIssuer, sanitizeOAuthId } from "../connection/profile-store.js"
+import {
+  getDefaultProfileName,
+  oauthSessionProvisioned,
+  readLastProvider,
+  readSessionIssuer,
+  sanitizeOAuthId,
+  saveLastProvider,
+} from "../connection/profile-store.js"
 import { readLlmEntries } from "../llm/native-config.js"
 import { runAuthConfigure, SETUP_LOGIN_METHODS, type AuthConfigureArgs } from "./setup.js"
-import { loginWithBrowser, type BrowserLoginResult } from "./login-browser.js"
+import { loginWithBrowser } from "./login-browser.js"
+import {
+  DEVICE_FLOW_ENVIRONMENTS,
+  DEVICE_PROVIDERS,
+  deviceFlowSupported,
+  deviceProviderChoices,
+  loginWithDevice,
+  normalizeProvider,
+  TERMINAL_QR_PROVIDER_LIST,
+  BROWSER_QR_PROVIDER_LIST,
+  type DeviceProvider,
+} from "./login-device.js"
+import { discoverOAuthConfig, generateRequestId, type OAuthLoginResult } from "./oauth-userinfo.js"
 
 export interface LoginArgs extends GlobalArgs {
   // Kept as a hidden no-op for backward compatibility: browser OAuth is now the
@@ -20,6 +39,12 @@ export interface LoginArgs extends GlobalArgs {
   name?: string
   "oauth-url"?: string
   partition?: string
+  // Names the identity provider the device flow's verification page should use —
+  // one of DEVICE_PROVIDERS (login-device.ts), which is where the split between the
+  // scan platforms and the credential page is declared. Its PRESENCE is what selects
+  // device flow over the browser: the gateway requires a provider for device
+  // authorization, so "device flow" and "which provider" are one decision, not two.
+  provider?: string
   "login-method"?: string
   login?: string
   "account-name"?: string
@@ -32,19 +57,38 @@ export interface LoginArgs extends GlobalArgs {
 // orchestration without real network/browser. Note: NO resolveConnectionConfig
 // seam — the browser-OAuth path deliberately never reads a profile.
 export interface RunLoginDeps {
-  loginWithBrowser?: (opts: { baseUrl: string }) => Promise<BrowserLoginResult>
+  loginWithBrowser?: (opts: { baseUrl: string }) => Promise<OAuthLoginResult>
+  loginWithDevice?: (opts: {
+    baseUrl: string
+    provider: DeviceProvider
+  }) => Promise<OAuthLoginResult>
   resolveLoginTarget?: (args: { oauthUrl?: string; partition?: string; recordedIssuer?: string }) => Promise<LoginTarget>
   runAuthConfigure?: (argv: AuthConfigureArgs) => Promise<void>
   // Injectable enumerator (tests avoid real listUserWorkspaces network calls).
   enumerateOAuthCombos?: (input: {
-    token: BrowserLoginResult["token"]
+    token: OAuthLoginResult["token"]
     userId: number
     tenantId: number
-    instances: NonNullable<BrowserLoginResult["instances"]>
+    instances: NonNullable<OAuthLoginResult["instances"]>
   }) => Promise<OAuthConnCombo[]>
   // Injectable session-name prompt (TTY). Returns the entered name, or undefined
   // if cancelled / non-interactive. Tests inject a fake; default uses @clack.
   promptSessionName?: () => Promise<string | undefined>
+  // Injectable provider menu (TTY, no --provider). Resolves to the chosen device
+  // provider, to "browser" for the loopback flow, or to undefined when the user
+  // aborted. Note the three-way result: "aborted" must stay distinguishable from
+  // "chose the browser", or an Esc would silently sign the user in through the
+  // very flow they were trying to get away from.
+  // `remembered` is the stored route from a previous login (see readLastProvider);
+  // it is declared here because a seam that omits it lets the caller drop it
+  // silently — the preselection would just stop working with nothing failing.
+  promptProvider?: (
+    choices: Array<{ label: string; value: DeviceProvider }>,
+    remembered?: string,
+  ) => Promise<DeviceProvider | "browser" | undefined>
+  // Injectable capability probe: does this OAuth entry advertise device
+  // authorization? Only consulted to decide whether the menu is worth showing.
+  deviceFlowAvailable?: (baseUrl: string) => Promise<boolean>
 }
 
 /** Default TTY prompt for the session name. Non-TTY → undefined (caller errors). */
@@ -57,6 +101,95 @@ async function defaultPromptSessionName(): Promise<string | undefined> {
   })
   if (p.isCancel(result)) return undefined
   return String(result).trim()
+}
+
+/**
+ * Default provider menu: the browser loopback first (it is the historical default,
+ * so Enter keeps doing what it always did), then the scan platforms in the order
+ * `--provider` advertises them.
+ *
+ * `password` is deliberately NOT offered. From the user's side it is the same act
+ * as the browser option — open a page on this machine and type a ClickZetta
+ * username and password — and the difference (a device-code poll instead of a
+ * loopback callback) is the one thing they have no way to judge. Two menu entries
+ * that read alike and behave alike is a worse question than one. It stays reachable
+ * as `--provider password` for the narrow case that wants it: no third-party
+ * identity to scan with AND a loopback the network breaks.
+ *
+ * `initial` preselects the route this session used last, so a re-login is one Enter
+ * rather than the same choice made again. It is validated against the offered
+ * options before use: a remembered route can stop being on the menu (`password` did
+ * exactly that), and pointing @clack at an absent value highlights nothing.
+ *
+ * Returns "browser" for the loopback flow and undefined only when the user aborted.
+ * Collapsing those two into one value is the mistake this shape exists to prevent:
+ * an Esc would then be indistinguishable from choosing the browser, and the user
+ * would be signed in through the flow they just declined.
+ */
+async function defaultPromptProvider(
+  choices: Array<{ label: string; value: DeviceProvider }>,
+  initial?: string,
+): Promise<DeviceProvider | "browser" | undefined> {
+  const options: Array<{ label: string; value: DeviceProvider | "browser" }> = [
+    { label: "Browser sign-in (this machine)", value: "browser" },
+    ...choices,
+  ]
+  const chosen = await p.select<DeviceProvider | "browser">({
+    message: "How do you want to sign in?",
+    options,
+    initialValue: preselectedProvider(
+      options.map((option) => option.value),
+      initial,
+    ),
+  })
+  if (p.isCancel(chosen)) return undefined
+  return chosen
+}
+
+/**
+ * Which stored route may be preselected, given what the menu actually offers.
+ *
+ * A remembered route outlives the menu it was written for: `password` was offerable
+ * once and is not any more, and a stored value can predate a rename. Handing @clack
+ * a value absent from its options highlights nothing, so an unofferable hint has to
+ * degrade to "no preselection" and let the menu use its own first entry.
+ */
+export function preselectedProvider(
+  values: Array<DeviceProvider | "browser">,
+  remembered?: string,
+): DeviceProvider | "browser" | undefined {
+  return values.find((value) => value === remembered)
+}
+
+/**
+ * Does this OAuth entry advertise device authorization?
+ *
+ * Consulted only to decide whether showing the menu is honest: an entry without
+ * the endpoint has exactly one usable option, and offering four QR platforms that
+ * all end in DEVICE_FLOW_UNSUPPORTED is worse than not asking. A discovery failure
+ * answers "no" rather than throwing — the browser flow rediscovers the same
+ * metadata a moment later and reports the failure with its own request id, so
+ * failing here would only replace that error with a less specific one.
+ */
+async function defaultDeviceFlowAvailable(baseUrl: string): Promise<boolean> {
+  // A network round trip stands between the user's last keystroke and the menu.
+  // Unannounced it reads as the CLI having hung, so say what is being waited on.
+  const spinner = p.spinner()
+  spinner.start("Checking which sign-in methods this environment offers")
+  try {
+    const config = await discoverOAuthConfig(baseUrl, generateRequestId())
+    // login-device.ts's own predicate, not a second reading of the metadata: the
+    // two answers have to be the same one, or the menu offers a route the flow
+    // then refuses.
+    const available = deviceFlowSupported(config.serverMetadata())
+    spinner.stop(available ? "Sign-in methods available" : "Only browser sign-in is available here")
+    return available
+  } catch {
+    // The browser flow rediscovers the same metadata moments later and reports the
+    // failure with its own request id, so this stays a downgrade, not an error.
+    spinner.stop("Could not check for QR sign-in; continuing with browser sign-in")
+    return false
+  }
 }
 
 /**
@@ -83,6 +216,11 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
   // --credential returns without reaching the dispatch, so a `--credential … --pat …`
   // used to drop the PAT with neither the refusal nor the notice.
   if (patRefusedOrNoted(argv)) return
+
+  // Ahead of --credential for the same reason the --pat guard is: that branch
+  // returns without reaching the dispatch, so a conflict checked later would miss
+  // it entirely.
+  if (providerConflictRefused(argv)) return
 
   // --credential: new-user credential path (equivalent to old setup --credential).
   if (argv.credential) {
@@ -139,24 +277,79 @@ export async function runLogin(argv: LoginArgs, deps: RunLoginDeps = {}): Promis
     return
   }
 
-  // Default: browser OAuth.
-  await runBrowserLogin(argv, deps)
+  // Default: OAuth. --provider selects QR/device flow, otherwise the browser.
+  await runOAuthLogin(argv, deps)
 }
 
 
 /**
- * Default browser-OAuth path. The login target (which central OAuth entry to
- * hit) is resolved WITHOUT reading any profile — see {@link resolveLoginTarget}.
- * OAuth runs against the region-independent central host; the region-specific
- * business `service` is then read back from userinfo (gatewayMapping) and
- * written into the profile, so the profile reflects what was actually
- * authenticated rather than driving where login went. The success payload never
- * echoes tokens; on failure nothing is persisted and a non-zero exit code is set.
+ * Refuse `--provider` alongside a flag that routes to a different login flow.
+ * Returns true when the caller should stop.
+ *
+ * The dispatch below is ordered, so a `--provider` passed with `--username` or
+ * `--credential` never reaches OAuth: it is dropped, and the user gets whatever
+ * error the OTHER flow produces (typically `SETUP_INPUT_REQUIRED` asking for an
+ * account name), with no hint that the flag they cared about was ignored.
+ *
+ * `--provider password` makes this a likely mistake rather than a rare one — the
+ * value shares its name with the `--password` flag while meaning the opposite:
+ * the credentials are typed into the gateway's verification page, never handed to
+ * this CLI. Naming the conflict is the only way the user learns which of the two
+ * they actually invoked.
+ *
+ * The provider is echoed back only when it looks like one of the advertised
+ * spellings: the message reads as a runnable command line, and `runLogin` is
+ * reachable without yargs' `choices` (tests, the MCP surface). Same concern as
+ * `profileNameForHint` in pat-guard.ts.
  */
-async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void> {
+function providerConflictRefused(argv: LoginArgs): boolean {
+  if (!argv.provider) return false
+  const conflicts = (
+    [
+      ["--credential", argv.credential],
+      ["--username", argv.username],
+      ["--password", argv.password],
+      ["--login-method", argv["login-method"]],
+      ["--login", argv.login],
+    ] as const
+  )
+    .filter(([, value]) => value)
+    .map(([flag]) => flag)
+  if (conflicts.length === 0) return false
+
+  error(
+    "LOGIN_FLOW_CONFLICT",
+    `--provider selects the device flow, which cannot be combined with ${conflicts.join(", ")}. `
+    + `Device sign-in sends you to the gateway's own page and the CLI never sees a credential — `
+    + `drop --provider to sign in with the flags above, or drop them to use `
+    + `--provider ${/^[a-z]+$/.test(argv.provider) ? argv.provider : "<provider>"}.`,
+    { format: argv.format, exitCode: EXIT_USAGE_ERROR },
+  )
+  return true
+}
+
+/**
+ * Default OAuth path, in either of its two flavours. The login target (which
+ * central OAuth entry to hit) is resolved WITHOUT reading any profile — see
+ * {@link resolveLoginTarget}. OAuth runs against the region-independent central
+ * host; the region-specific business `service` is then read back from userinfo
+ * (gatewayMapping) and written into the profile, so the profile reflects what was
+ * actually authenticated rather than driving where login went. The success payload
+ * never echoes tokens; on failure nothing is persisted and a non-zero exit code is
+ * set.
+ *
+ * `--provider` swaps ONLY how the authorization is obtained (QR scan instead of a
+ * browser redirect). Everything downstream — instance/workspace enumeration,
+ * profile provisioning, LLM config, warnings, the success payload — is shared, so
+ * a device login and a browser login of the same account provision identically.
+ */
+async function runOAuthLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void> {
   const resolveTarget = deps.resolveLoginTarget ?? resolveLoginTarget
   const doBrowserLogin = deps.loginWithBrowser ?? loginWithBrowser
+  const doDeviceLogin = deps.loginWithDevice ?? loginWithDevice
   const enumerate = deps.enumerateOAuthCombos ?? enumerateOAuthCombos
+  const promptProvider = deps.promptProvider ?? defaultPromptProvider
+  const probeDeviceFlow = deps.deviceFlowAvailable ?? defaultDeviceFlowAvailable
 
   // Session name is required — it names the shared [oauth.<name>] token and the
   // <name>_<workspace>_<instance> profile prefix, so multiple accounts don't overwrite
@@ -182,7 +375,26 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
 
   const oauthId = sanitizeOAuthId(sessionName)
 
+  // Declared outside the try so the catch can tell which flow actually ran. It is
+  // not the same question as `argv.provider`: the interactive menu sets this while
+  // argv stays empty, and a failure there is a device failure to report.
+  let provider: DeviceProvider | undefined
+
   try {
+    // Validated before anything touches the network so a typo'd platform costs
+    // one line of output rather than a discovery round trip.
+    provider = argv.provider ? normalizeProvider(argv.provider) : undefined
+
+    // Every device provider needs a human at the keyboard: a phone to scan with,
+    // or a browser to open the password page in, plus the interactive choice in
+    // the multi-account case. Refuse up front rather than printing a code into a
+    // log file nobody is watching and then hanging until it expires.
+    if (provider && !process.stdin.isTTY) {
+      throw new Error(
+        "DEVICE_LOGIN_REQUIRES_TTY: device sign-in needs an interactive terminal (a human opens the page this prints)",
+      )
+    }
+
     const target = await resolveTarget({
       oauthUrl: argv["oauth-url"],
       partition: argv.partition,
@@ -201,9 +413,42 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // derived here — the server's own metadata decides where the browser goes.
     // This is why `--partition` resolves to a REGION host: only those declare a
     // self-referential issuer, which RFC 8414 requires (login-target.ts).
-    const { token, userInfo, instances } = await doBrowserLogin({
-      baseUrl: toServiceUrl(target.entryHost, target.protocol),
-    })
+    const baseUrl = toServiceUrl(target.entryHost, target.protocol)
+
+    // No --provider, but a human is watching: offer the choice instead of silently
+    // assuming the browser. Gated on the entry actually advertising device
+    // authorization, so the menu never lists scan options that all end in
+    // DEVICE_FLOW_UNSUPPORTED — an entry without the endpoint has one usable flow
+    // and nothing to ask about.
+    //
+    // Non-TTY is deliberately untouched: a pipeline keeps resolving to the browser
+    // flow rather than blocking on a menu nobody can answer. And the check is on
+    // `argv.provider`, not on `provider`, so an explicit flag always skips the menu.
+    if (!argv.provider && process.stdin.isTTY && (await probeDeviceFlow(baseUrl))) {
+      // Which routes the menu lists is PROVIDER_WIRE's `offerInMenu`, not its `scan`
+      // flag: see login-device.ts for why those are two decisions. `password` is off
+      // it because it reads and behaves like the browser option from the user's side
+      // — see defaultPromptProvider — and stays available as `--provider password`.
+      const chosen = await promptProvider(
+        deviceProviderChoices().filter((choice) => choice.offerInMenu),
+        readLastProvider(sanitizeOAuthId(sessionName)),
+      )
+      // Abort is NOT "chose the browser". Falling through here would sign the user
+      // in through the flow they just backed out of, which is worse than any error.
+      if (chosen === undefined) {
+        error("LOGIN_CANCELLED", "Sign-in cancelled at the provider choice. Nothing was written.", {
+          format: argv.format,
+          aiMessage:
+            `The user aborted the interactive provider menu; no token or profile was written. Re-run \`cz-cli auth login <name>\`, or pass --provider <${DEVICE_PROVIDERS.join("|")}> to skip the menu.`,
+        })
+        return
+      }
+      if (chosen !== "browser") provider = chosen
+    }
+
+    const { token, userInfo, instances } = provider
+      ? await doDeviceLogin({ baseUrl, provider })
+      : await doBrowserLogin({ baseUrl })
 
     // Prefer the region-specific business service userinfo reports (via
     // gatewayMapping). Fall back to the login entry host ONLY so a profile is
@@ -249,6 +494,12 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
         issuer: target.entryHost,
       },
     )
+
+    // Remember the route for the next re-login's menu. Only on the success path: a
+    // route that failed is not one to preselect. Must run AFTER provisioning:
+    // provisionProfilesFromOAuthCombos replaces `[oauth.<id>]` wholesale without
+    // going through writeOAuthEntry, so a hint saved before it would be erased.
+    saveLastProvider(sanitizeOAuthId(sessionName), provider ?? "browser")
 
     // Warn when the provisioned profile may not be able to run SQL, so success
     // isn't silently misleading (login reported OK but the profile is unusable).
@@ -342,6 +593,9 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     success(
       {
         logged_in: true,
+        // Which flow proved the identity. An agent reading this back can tell a
+        // QR sign-in from a browser one without re-deriving it from argv.
+        login_method: provider ? "device" : "browser",
         relogin,
         // Unchanged meaning: what profiles.toml says, i.e. the profile bare commands
         // will use. A re-login normally does not write it, so it can name another
@@ -383,9 +637,62 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
     // flattening everything to LOGIN_FAILED: an agent must distinguish "user
     // needs to supply something" (fixable) from "the browser/network failed"
     // (retry). resolveLoginTarget throws Errors prefixed with their own code.
-    const { code, aiMessage } = classifyLoginError(msg)
+    // `provider`, not `argv.provider`: a route chosen from the menu leaves argv
+    // empty, and blaming a browser window that never opened sends the user looking
+    // for the wrong thing. Matches `login_method` in the success payload.
+    const { code, aiMessage } = classifyLoginError(msg, provider ? "device" : "browser")
     error(code, msg, { format: argv.format, debug: argv.debug, aiMessage })
   }
+}
+
+/** Shared by the three codes that all mean "the gateway answered in a shape we do not handle". */
+const SERVER_SHAPE_ADVICE =
+  "The gateway's device sign-in endpoints answered in a shape this CLI does not handle, so retrying will not help. Report the error text; meanwhile drop --provider and use browser sign-in."
+
+/**
+ * Failure-message prefixes that ARE their own error code, each mapped to the
+ * advice that code needs.
+ *
+ * A table rather than a run of near-identical `if (msg.startsWith(X)) return { code:
+ * X, … }` branches: the code and the prefix are the same string, so the branch form
+ * spelled every one of them twice and invited a third spelling to drift in. The
+ * throwers (`login-device.ts`, `device-account-select.ts`, `resolveLoginTarget`)
+ * document these prefixes as their contract with this function.
+ *
+ * Matched in insertion order by `startsWith`; no key is a prefix of another, so the
+ * order is not load-bearing today — keep it that way when adding one.
+ */
+const LOGIN_ERROR_ADVICE: Record<string, string> = {
+  DEVICE_PROVIDER_INVALID: `Unknown --provider. Use one of: ${DEVICE_PROVIDERS.join(", ")}. Omit --provider entirely for browser sign-in.`,
+  DEVICE_LOGIN_REQUIRES_TTY:
+    "Device sign-in cannot run non-interactively — it prints a page for a human to open. In CI/agent contexts use `cz-cli auth login <name> --credential <base64>` or `--username/--password/--account-name` instead.",
+  DEVICE_FLOW_UNSUPPORTED:
+    `That OAuth entry does not advertise the endpoints QR sign-in needs, so it is unavailable there and retrying will not help — ${DEVICE_FLOW_ENVIRONMENTS}, so a custom --oauth-url host is the likely cause (e.g. use \`--partition cn\`). Drop --provider and use browser sign-in there.`,
+  DEVICE_CODE_EXPIRED: "The sign-in code expired before the scan completed. Re-run the same command to get a fresh code.",
+  DEVICE_AUTHORIZATION_DENIED: "The sign-in was declined on the phone. Re-run the command and approve the request to continue.",
+  // Endpoint derivation and unrecognised device states are server-shape problems,
+  // not user input: say so instead of advising a retry that will fail identically.
+  DEVICE_ENDPOINT_UNDERIVABLE: SERVER_SHAPE_ADVICE,
+  DEVICE_STATUS_UNEXPECTED: SERVER_SHAPE_ADVICE,
+  // An OK response that is not a JSON object at all — `null`, a bare string, an
+  // array. Its own code rather than folded into UNEXPECTED: that one names a device
+  // state the server reported, and claiming a state was reported by a response we
+  // could not read is how this used to be misdiagnosed.
+  DEVICE_STATUS_UNREADABLE: SERVER_SHAPE_ADVICE,
+  // NOT the shape advice, which it used to share: this code means the gateway
+  // answered and refused, and the message carries the server's own reason. Whether
+  // a retry helps depends on that reason, so quote it rather than ruling one out.
+  DEVICE_STATUS_FAILED:
+    "The gateway refused the device sign-in and its reason is in the error text — quote that reason to the user rather than a generic retry. A rejected account choice or a dropped device session both need a fresh `cz-cli auth login <name>`; a reason naming the identity (not yet bound, registration incomplete) has to be resolved on the gateway's own page first.",
+  // A transient transport failure, kept apart from DEVICE_STATUS_FAILED precisely
+  // because the advice is the opposite one. The poll loop already waits these out
+  // for as long as the device code lives, so reaching here means it outlasted the
+  // code or the failure hit the one-shot account commit.
+  DEVICE_STATUS_UNAVAILABLE:
+    "The gateway was unreachable or erroring (5xx/network), which is temporary and unrelated to the sign-in itself. Re-run `cz-cli auth login <name>` — a fresh code will be issued. If it keeps failing, check network/proxy reachability of the OAuth host before changing anything about the command.",
+  LOGIN_TARGET_REQUIRED:
+    "No sign-in target. Re-run with a region — `cz-cli auth login <name> --partition cn` (or intl) — or `--oauth-url <host>` for internal/self-hosted. See `cz-cli auth login --help`.",
+  LOGIN_CANCELLED: "Sign-in was cancelled before completing. Re-run `cz-cli auth login <name>` to try again.",
 }
 
 /**
@@ -393,19 +700,16 @@ async function runBrowserLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<voi
  * `aiMessage`. Expected input errors (target/cancel) keep their own code so
  * callers don't have to string-match; genuine runtime failures fall through to
  * LOGIN_FAILED with retry guidance.
+ *
+ * `flow` only shapes the generic fallback advice: telling someone whose QR scan
+ * timed out to re-open a browser sends them looking for a window that never
+ * opened. The codes in LOGIN_ERROR_ADVICE are recognised regardless. It has no
+ * default — the single caller knows which flow ran, and a default would silently
+ * answer "browser" for a device failure if a second caller ever forgot it.
  */
-function classifyLoginError(msg: string): { code: string; aiMessage: string } {
-  if (msg.startsWith("LOGIN_TARGET_REQUIRED")) {
-    return {
-      code: "LOGIN_TARGET_REQUIRED",
-      aiMessage: "No sign-in target. Re-run with a region — `cz-cli auth login <name> --partition cn` (or intl) — or `--oauth-url <host>` for internal/self-hosted. See `cz-cli auth login --help`.",
-    }
-  }
-  if (msg.startsWith("LOGIN_CANCELLED")) {
-    return {
-      code: "LOGIN_CANCELLED",
-      aiMessage: "Sign-in was cancelled before completing. Re-run `cz-cli auth login <name>` to try again.",
-    }
+function classifyLoginError(msg: string, flow: "browser" | "device"): { code: string; aiMessage: string } {
+  for (const [code, aiMessage] of Object.entries(LOGIN_ERROR_ADVICE)) {
+    if (msg.startsWith(code)) return { code, aiMessage }
   }
   // A callback timeout is not a generic failure: the browser could not reach our
   // loopback listener, which in practice means something is intercepting local
@@ -445,7 +749,10 @@ function classifyLoginError(msg: string): { code: string; aiMessage: string } {
   }
   return {
     code: "LOGIN_FAILED",
-    aiMessage: "Browser sign-in did not complete (network, timeout, or the authorization was not finished). Re-run `cz-cli auth login <name>`; for internal environments pass `--oauth-url <host>`. See `cz-cli auth login --help`.",
+    aiMessage:
+      flow === "device"
+        ? "QR sign-in did not complete (network, an expired code, or the scan was not finished). Re-run `cz-cli auth login <name> --provider <platform>`; for internal environments pass `--oauth-url <host>`. See `cz-cli auth login --help`."
+        : "Browser sign-in did not complete (network, timeout, or the authorization was not finished). Re-run `cz-cli auth login <name>`; for internal environments pass `--oauth-url <host>`. See `cz-cli auth login --help`.",
   }
 }
 
@@ -484,6 +791,16 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         .option("name", { type: "string", describe: SESSION_NAME_DESCRIBE })
         .option("oauth-url", { type: "string", describe: "OAuth issuer host (internal envs / custom domains), e.g. uat-api.clickzetta.com, used verbatim. Endpoints are discovered from it; distinct from the business --service. Alternative to --partition." })
         .option("partition", { type: "string", choices: ["cn", "intl"], describe: "Region to sign in to: cn (clickzetta.com) or intl (singdata.com). Prompted in a TTY; non-interactively either this or --oauth-url is required" })
+        .option("provider", {
+          type: "string",
+          describe: `Sign in through the device flow instead of the browser loopback: ${TERMINAL_QR_PROVIDER_LIST} prints a QR code to scan, ${BROWSER_QR_PROVIDER_LIST} opens a page with its own QR code (on another computer when this one has no browser, e.g. over SSH), password opens a ClickZetta username/password page. Passing it selects the device flow; requires an interactive terminal, and an OAuth entry that advertises device authorization. Omit it in a terminal to pick browser sign-in or a scan platform from a menu (password is flag-only); omit it non-interactively for the browser loopback`,
+        })
+        // Validated here instead of with `choices`, which would reject the aliases
+        // and case variants normalizeProvider accepts (see there).
+        .check((argv) => {
+          if (argv.provider !== undefined) normalizeProvider(argv.provider)
+          return true
+        })
         .option("login-method", {
           type: "string",
           choices: SETUP_LOGIN_METHODS.map((option) => option.value),
@@ -524,6 +841,8 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         .example("cz-cli auth login company-prod", "Browser OAuth (recommended), interactive: prompts for the region. 'company-prod' names the session; creates a profile per instance×workspace")
         .example("cz-cli auth login company-prod --partition cn", "Same, non-interactive: OAuth against China (clickzetta.com), no region prompt")
         .example("cz-cli auth login internal --oauth-url uat-api.clickzetta.com", "OAuth against an internal/self-hosted entry")
+        .example("cz-cli auth login company-prod --provider alipay --oauth-url uat-api.clickzetta.com", "QR sign-in: scan with Alipay instead of opening a browser (needs a TTY)")
+        .example("cz-cli auth login company-prod --provider password --oauth-url uat-api.clickzetta.com", "Device sign-in with a ClickZetta username/password typed into the gateway's own page, never onto argv (needs a TTY)")
         .example("cz-cli auth login my-profile --credential <base64>", "New user: provision a single profile from a registration credential")
         .example("cz-cli auth login my-profile --username <u> --password <p> --account-name <acct>", "Existing account, non-interactive (CI/scripts)")
         .epilogue(
@@ -532,6 +851,25 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
           "    discovers your instances/workspaces and creates one profile per\n" +
           "    combination (<name>_<workspace>_<instance>), all sharing the [oauth.<name>] token.\n" +
           "    Needs a region: prompted in a TTY, else pass --partition or --oauth-url.\n" +
+          "    --provider switches to the device flow, which provisions exactly the same\n" +
+          `    profiles: ${TERMINAL_QR_PROVIDER_LIST} prints a QR code to scan;\n` +
+          `    ${BROWSER_QR_PROVIDER_LIST} opens a browser page showing its own QR code; password\n` +
+          "    opens a page where you type a ClickZetta username and password (they go\n" +
+          "    to the gateway, never onto argv or into shell history). With no local\n" +
+          "    browser (SSH, no display) the page URL is printed to open on another\n" +
+          "    device -- a computer for the QR page, any device for password. Needs a TTY, and\n" +
+          "    an entry whose OAuth metadata advertises device authorization\n" +
+          `    (${DEVICE_FLOW_ENVIRONMENTS}).\n` +
+          "    Omit it and a terminal offers a menu: browser sign-in first, then the four\n" +
+          "    scan platforms. password is not on it -- from your side it is the same act\n" +
+          "    as browser sign-in (a page on this machine, your ClickZetta credentials),\n" +
+          "    so it stays a flag for the case that wants it: nothing to scan with AND a\n" +
+          "    local callback your network breaks. Non-interactively no menu appears and\n" +
+          "    the browser loopback is used, so scripts are unaffected.\n" +
+          "    An identity not yet bound to a ClickZetta account is not an error: the\n" +
+          "    verification page walks the user through binding or registration, and\n" +
+          "    this CLI just waits for it -- it never sees a password, a captcha or an\n" +
+          "    SMS code.\n" +
           "  --credential <b64>:   provision a single profile named <name> from a\n" +
           "    registration token. Without <name> the profile is named 'default'.\n" +
           "  --username/--password: existing account (also needs --account-name),\n" +

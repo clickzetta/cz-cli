@@ -3,12 +3,13 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AuthToken } from "@clickzetta/sdk"
-import { runLogin } from "../src/commands/login"
+import { preselectedProvider, runLogin } from "../src/commands/login"
+import { DEVICE_PROVIDERS } from "../src/commands/login-device"
 import type { LoginTarget } from "../src/connection/login-target"
-import type { BrowserLoginResult } from "../src/commands/login-browser"
 import { configureClickzettaLlm, provisionProfileFromOAuth } from "../src/connection/provision"
+import type { OAuthLoginResult } from "../src/commands/oauth-userinfo"
 import { runAuthConfigure } from "../src/commands/setup"
-import { loadProfiles, makeProfileTokenStore, saveProfiles } from "../src/connection/profile-store"
+import { loadProfiles, makeProfileTokenStore, readLastProvider, saveProfiles } from "../src/connection/profile-store"
 import { readLlmEntries, setActiveModel, writeLlmEntries } from "../src/llm/native-config"
 import { GlobalArgs } from "../src/cli"
 
@@ -37,7 +38,7 @@ const KNOWN_TOKEN: AuthToken = {
 const { instanceId: _loginInstanceId, ...KNOWN_TOKEN_WITHOUT_INSTANCE } = KNOWN_TOKEN
 const PERSISTED_TOKEN: AuthToken = { ...KNOWN_TOKEN_WITHOUT_INSTANCE, issuer: "api.example.com" }
 
-const KNOWN_RESULT: BrowserLoginResult = {
+const KNOWN_RESULT: OAuthLoginResult = {
   token: KNOWN_TOKEN,
   userInfo: {
     instanceName: "89b94150",
@@ -98,6 +99,18 @@ function makeArgs(overrides: Partial<GlobalArgs> & { browser?: boolean; name?: s
 // userinfo (gatewayMapping), not from here.
 function makeTarget(): LoginTarget {
   return { entryHost: "api.example.com", protocol: "https" }
+}
+
+// Device login refuses on a non-TTY, and the provider menu only appears on one, so
+// both suites need to claim or disclaim a terminal.
+async function withTty<T>(isTty: boolean, fn: () => Promise<T>): Promise<T> {
+  const original = process.stdin.isTTY
+  Object.defineProperty(process.stdin, "isTTY", { value: isTty, configurable: true })
+  try {
+    return await fn()
+  } finally {
+    Object.defineProperty(process.stdin, "isTTY", { value: original, configurable: true })
+  }
 }
 
 function profilesPath() {
@@ -211,7 +224,7 @@ describe("runLogin", () => {
       baseURL: "https://legacy-aimesh.clickzetta.com/",
     })
     setActiveModel(`${PROFILE}_0/qwen/qwen3-coder-plus`)
-    const resultWithInstances: BrowserLoginResult = {
+    const resultWithInstances: OAuthLoginResult = {
       ...KNOWN_RESULT,
       instances: [
         { instanceId: 159973, instanceName: "89b94150", service: "cn-shanghai-alicloud.api.clickzetta.com" },
@@ -835,5 +848,658 @@ describe("runLogin", () => {
     })
 
     expect((seen as { name?: string }).name).toBe("default")
+  })
+})
+
+// --provider selects the device (QR) flow. What it must NOT change is anything
+// downstream: the same token store, the same profile, the same LLM entry as a
+// browser login of the same account.
+describe("runLogin --provider (device flow)", () => {
+  function makeDeviceArgs(provider: string, overrides: Record<string, unknown> = {}) {
+    return { format: "json", debug: false, name: PROFILE, provider, ...overrides } as GlobalArgs & {
+      provider?: string
+    }
+  }
+
+
+  test("dispatches to the device flow and provisions exactly like a browser login", async () => {
+    let deviceCalls = 0
+    let browserCalls = 0
+    let sawProvider: string | undefined
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("alipay"), {
+          loginWithDevice: async ({ provider }) => {
+            deviceCalls++
+            sawProvider = provider
+            return KNOWN_RESULT
+          },
+          loginWithBrowser: async () => {
+            browserCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(deviceCalls).toBe(1)
+    expect(browserCalls).toBe(0)
+    // Normalized to the gateway's case-sensitive wire spelling.
+    expect(sawProvider).toBe("ALIPAY")
+
+    // Same downstream artifacts as the browser test above.
+    expect(makeProfileTokenStore(PROFILE).load()).toEqual(PERSISTED_TOKEN)
+    const text = readFileSync(profilesPath(), "utf-8")
+    expect(text).toContain('instance = "89b94150"')
+    expect(text).toContain('workspace = "quick_start"')
+
+    expect(out.text()).toContain('"login_method"')
+    expect(out.text()).toContain("device")
+    expect(out.text()).not.toContain("access-secret-xyz")
+    expect(process.exitCode).toBe(0)
+  })
+
+  test("reports login_method browser when no provider is passed", async () => {
+    const out = captureStdout()
+    try {
+      await runLogin(makeArgs(), {
+        loginWithBrowser: async () => KNOWN_RESULT,
+        resolveLoginTarget: async () => makeTarget(),
+      })
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("browser")
+    expect(process.exitCode).toBe(0)
+  })
+
+  test("refuses on a non-TTY before any network call, persisting nothing", async () => {
+    let deviceCalls = 0
+    let targetCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(false, () =>
+        runLogin(makeDeviceArgs("alipay"), {
+          loginWithDevice: async () => {
+            deviceCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => {
+            targetCalls++
+            return makeTarget()
+          },
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("DEVICE_LOGIN_REQUIRES_TTY")
+    expect(deviceCalls).toBe(0)
+    // The refusal lands before the region is even resolved (which can prompt).
+    expect(targetCalls).toBe(0)
+    expect(makeProfileTokenStore(PROFILE).load()).toBeUndefined()
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  test("rejects an unknown provider without starting a login", async () => {
+    let deviceCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("qq"), {
+          loginWithDevice: async () => {
+            deviceCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("DEVICE_PROVIDER_INVALID")
+    expect(deviceCalls).toBe(0)
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  // `--provider password` is the same device flow with a different verification
+  // page: the CLI still never sees a credential, and everything downstream — token
+  // store, profile, login_method — is identical to the scan providers.
+  test("password is a device provider like any other", async () => {
+    let sawProvider: string | undefined
+    let browserCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("password"), {
+          loginWithDevice: async ({ provider }) => {
+            sawProvider = provider
+            return KNOWN_RESULT
+          },
+          loginWithBrowser: async () => {
+            browserCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(sawProvider).toBe("PASSWORD")
+    expect(browserCalls).toBe(0)
+    expect(makeProfileTokenStore(PROFILE).load()).toEqual(PERSISTED_TOKEN)
+    expect(out.text()).toContain("device")
+    expect(process.exitCode).toBe(0)
+  })
+
+  // The dispatch is ordered, so --username used to win and --provider was dropped
+  // with no mention of it — the user got SETUP_INPUT_REQUIRED asking for an
+  // account name and no clue which flow they had actually invoked. `password`
+  // being both a provider VALUE and a flag NAME makes this the likely mistake.
+  test.each([
+    ["--username", { username: "someone" }],
+    ["--password", { password: "hunter2" }],
+    ["--credential", { credential: "eyJ4IjoxfQ==" }],
+    ["--login-method", { "login-method": "clickzetta" }],
+  ])("refuses --provider together with %s", async (_flag, extra) => {
+    let deviceCalls = 0
+    let configureCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("password", extra), {
+          loginWithDevice: async () => {
+            deviceCalls++
+            return KNOWN_RESULT
+          },
+          runAuthConfigure: async () => {
+            configureCalls++
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("LOGIN_FLOW_CONFLICT")
+    // Neither flow ran: the conflict is refused, not silently resolved either way.
+    expect(deviceCalls).toBe(0)
+    expect(configureCalls).toBe(0)
+    expect(makeProfileTokenStore(PROFILE).load()).toBeUndefined()
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  test("surfaces an entry without device flow as its own code, not LOGIN_FAILED", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("alipay"), {
+          loginWithDevice: async () => {
+            throw new Error("DEVICE_FLOW_UNSUPPORTED: 'https://api.example.com' does not advertise a device_authorization_endpoint")
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("DEVICE_FLOW_UNSUPPORTED")
+    expect(out.text()).not.toContain("LOGIN_FAILED")
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  // A 5xx that outlasted the device code and a response shape we cannot parse are
+  // opposite diagnoses, and they used to share one advice string that told the user
+  // retrying would not help. For the transient one that is wrong: re-running is
+  // exactly what fixes it.
+  test("a transient gateway failure is not advised as a permanent one", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("alipay"), {
+          loginWithDevice: async () => {
+            throw new Error("DEVICE_STATUS_UNAVAILABLE: the device status request failed (HTTP 503) (request id: tssdk-oauth-test)")
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("DEVICE_STATUS_UNAVAILABLE")
+    expect(out.text()).not.toContain("retrying will not help")
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  // A body of `null` used to reach here as a TypeError, which matches no prefix in
+  // the advice table and no `includes()` branch either, so every device failure with
+  // an unreadable body came out as a generic LOGIN_FAILED with retry advice.
+  test("an unreadable device response keeps its own code instead of LOGIN_FAILED", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeDeviceArgs("alipay"), {
+          loginWithDevice: async () => {
+            throw new Error(
+              "DEVICE_STATUS_UNREADABLE: the device status request answered HTTP 200 with a body that is not a JSON object, so it carries no device status (request id: tssdk-oauth-test)",
+            )
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("DEVICE_STATUS_UNREADABLE")
+    expect(out.text()).not.toContain("LOGIN_FAILED")
+    expect(process.exitCode).not.toBe(0)
+  })
+})
+
+// The interactive provider menu: shown only when no --provider was passed, a human
+// is watching, and the entry actually advertises device authorization. Everything
+// here injects both seams, because the real probe would reach the network and the
+// real menu would block on @clack.
+describe("runLogin provider menu", () => {
+  function makeMenuArgs(overrides: Record<string, unknown> = {}) {
+    return { format: "json", debug: false, name: PROFILE, ...overrides } as GlobalArgs & { provider?: string }
+  }
+
+  test("Enter on the first option signs in through the browser", async () => {
+    let browserCalls = 0
+    let deviceCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => "browser",
+          loginWithBrowser: async () => {
+            browserCalls++
+            return KNOWN_RESULT
+          },
+          loginWithDevice: async () => {
+            deviceCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(browserCalls).toBe(1)
+    expect(deviceCalls).toBe(0)
+    expect((JSON.parse(out.text()) as { data: Record<string, unknown> }).data.login_method).toBe("browser")
+    expect(process.exitCode).toBe(0)
+  })
+
+  test("choosing a platform reaches the device flow with that provider", async () => {
+    let sawProvider: string | undefined
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => "ALIPAY",
+          loginWithDevice: async ({ provider }) => {
+            sawProvider = provider
+            return KNOWN_RESULT
+          },
+          loginWithBrowser: async () => {
+            throw new Error("the browser flow must not run when a platform was chosen")
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(sawProvider).toBe("ALIPAY")
+    expect((JSON.parse(out.text()) as { data: Record<string, unknown> }).data.login_method).toBe("device")
+    expect(makeProfileTokenStore(PROFILE).load()).toEqual(PERSISTED_TOKEN)
+    expect(process.exitCode).toBe(0)
+  })
+
+  // Aborting must not fall through to the browser: that would sign the user in
+  // through the very flow they backed out of, and they would have no way to tell.
+  test("aborting the menu writes nothing and is not a browser sign-in", async () => {
+    let browserCalls = 0
+    let deviceCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => undefined,
+          loginWithBrowser: async () => {
+            browserCalls++
+            return KNOWN_RESULT
+          },
+          loginWithDevice: async () => {
+            deviceCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(out.text()).toContain("LOGIN_CANCELLED")
+    expect(browserCalls).toBe(0)
+    expect(deviceCalls).toBe(0)
+    expect(makeProfileTokenStore(PROFILE).load()).toBeUndefined()
+    expect(process.exitCode).not.toBe(0)
+  })
+
+  // Three ways the menu must stay out of the way. Each asserts the probe was not
+  // even attempted where it is pointless — it costs a discovery round trip, and on
+  // a non-TTY it would be spent on a question nobody can answer.
+  test.each([
+    ["an explicit --provider skips the menu", { provider: "alipay" }, true],
+    ["a non-TTY run never asks", {}, false],
+  ])("%s", async (_label, extra, isTty) => {
+    let menuCalls = 0
+    let probeCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(isTty as boolean, () =>
+        runLogin(makeMenuArgs(extra as Record<string, unknown>), {
+          deviceFlowAvailable: async () => {
+            probeCalls++
+            return true
+          },
+          promptProvider: async () => {
+            menuCalls++
+            return "browser"
+          },
+          loginWithBrowser: async () => KNOWN_RESULT,
+          loginWithDevice: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(menuCalls).toBe(0)
+    expect(probeCalls).toBe(0)
+    expect(process.exitCode).toBe(0)
+  })
+
+  // One usable option is not a choice. Asking here would list four QR platforms
+  // that all end in DEVICE_FLOW_UNSUPPORTED.
+  test("an entry without device flow goes straight to the browser", async () => {
+    let menuCalls = 0
+    let browserCalls = 0
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => false,
+          promptProvider: async () => {
+            menuCalls++
+            return "browser"
+          },
+          loginWithBrowser: async () => {
+            browserCalls++
+            return KNOWN_RESULT
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(menuCalls).toBe(0)
+    expect(browserCalls).toBe(1)
+    expect(process.exitCode).toBe(0)
+  })
+
+  // The menu's contents come from the same table the device flow uses, so a new
+  // platform in DEVICE_PROVIDERS reaches the menu with no edit in login.ts.
+  //
+  // `password` is the one route left out: it is the same act as the browser option
+  // from the user's side, and offering both makes the menu ask a question with two
+  // answers the user cannot tell apart. It stays reachable as --provider password,
+  // which the device suite above still covers.
+  test("offers the scan platforms and leaves password to the flag", async () => {
+    let offered: Array<{ label: string; value: string }> = []
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async (choices) => {
+            offered = choices
+            return "browser"
+          },
+          loginWithBrowser: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    expect(offered.map((choice) => choice.value)).toEqual(["WECHAT", "ALIPAY"])
+    // One short of the advertised list, and it is exactly `password` that is missing.
+    expect(offered).toHaveLength(DEVICE_PROVIDERS.length - 1)
+    expect(offered.map((choice) => choice.value)).not.toContain("PASSWORD")
+    // Every offered route says "scan", so none of them reads like the browser option.
+    expect(offered.every((choice) => choice.label.startsWith("Scan with"))).toBe(true)
+  })
+
+  // A re-login should be one Enter, not the same decision made again.
+  test("remembers the route a successful login used and offers it back", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => "ALIPAY",
+          loginWithDevice: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+    expect(readLastProvider(PROFILE)).toBe("ALIPAY")
+
+    // Second run: the remembered route reaches the menu as its preselection.
+    let initial: string | undefined
+    const second = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async (_choices, remembered) => {
+            initial = remembered
+            return "ALIPAY"
+          },
+          loginWithDevice: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      second.restore()
+    }
+    expect(initial).toBe("ALIPAY")
+  })
+
+  test("records the browser route too, so it can be preselected like any other", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => "browser",
+          loginWithBrowser: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+    expect(readLastProvider(PROFILE)).toBe("browser")
+  })
+
+  // A remembered route must not resurrect a failed attempt, and an aborted menu is
+  // not a route at all.
+  test("an aborted menu records nothing", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => undefined,
+          loginWithBrowser: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+    expect(readLastProvider(PROFILE)).toBeUndefined()
+  })
+
+  // The hint outlives the menu it was written for: `password` was offerable once and
+  // is not any more. Pointing @clack at an absent option highlights nothing, so the
+  // menu must fall back to its own first entry rather than trust the stored value.
+  test("a remembered route that is no longer offered does not preselect anything", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs({ provider: "password" }), {
+          loginWithDevice: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+    expect(readLastProvider(PROFILE)).toBe("PASSWORD")
+
+    let offered: Array<{ value: string }> = []
+    let initial: string | undefined
+    const second = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async (choices, remembered) => {
+            offered = choices
+            initial = remembered
+            return "browser"
+          },
+          loginWithBrowser: async () => KNOWN_RESULT,
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      second.restore()
+    }
+
+    // Handed over verbatim: the command layer does not second-guess the stored value,
+    // it is the menu that decides whether it is still offerable — preselectedProvider
+    // below.
+    expect(initial).toBe("PASSWORD")
+    expect(offered.map((choice) => choice.value)).not.toContain("PASSWORD")
+  })
+  // A failure after a menu choice is a DEVICE failure. `argv.provider` is empty on
+  // this path, so classifying on it told a user whose scan died to go look for a
+  // browser window that never opened, and to re-run the plain command.
+  test("a generic failure after a menu choice is reported as a device failure", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => "ALIPAY",
+          loginWithDevice: async () => {
+            throw new Error("socket hang up")
+          },
+          loginWithBrowser: async () => {
+            throw new Error("the browser flow must not run when a platform was chosen")
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    const payload = JSON.parse(out.text()) as { error: { code: string }; ai_message?: string }
+    expect(payload.error.code).toBe("LOGIN_FAILED")
+    expect(payload.ai_message).toContain("QR sign-in")
+    expect(payload.ai_message).not.toContain("Browser sign-in")
+  })
+
+  // The same failure with no provider chosen keeps the browser wording, so the
+  // fix above is a distinction and not a blanket relabel.
+  test("a generic failure after choosing the browser stays a browser failure", async () => {
+    const out = captureStdout()
+    try {
+      await withTty(true, () =>
+        runLogin(makeMenuArgs(), {
+          deviceFlowAvailable: async () => true,
+          promptProvider: async () => "browser",
+          loginWithBrowser: async () => {
+            throw new Error("socket hang up")
+          },
+          resolveLoginTarget: async () => makeTarget(),
+        }),
+      )
+    } finally {
+      out.restore()
+    }
+
+    const payload = JSON.parse(out.text()) as { error: { code: string }; ai_message?: string }
+    expect(payload.error.code).toBe("LOGIN_FAILED")
+    expect(payload.ai_message).toContain("Browser sign-in")
+  })
+})
+
+describe("preselectedProvider", () => {
+  test("preselects a remembered route the menu still offers", () => {
+    expect(preselectedProvider(["browser", "WECHAT", "ALIPAY"], "ALIPAY")).toBe("ALIPAY")
+    expect(preselectedProvider(["browser", "ALIPAY"], "browser")).toBe("browser")
+  })
+
+  // The case this function exists for: `password` used to be on the menu, so a
+  // profiles.toml written by an older build can still name it.
+  test("drops a remembered route the menu no longer offers", () => {
+    expect(preselectedProvider(["browser", "WECHAT", "ALIPAY"], "PASSWORD")).toBeUndefined()
+  })
+
+  test("no memory means no preselection", () => {
+    expect(preselectedProvider(["browser", "ALIPAY"], undefined)).toBeUndefined()
+    expect(preselectedProvider(["browser", "ALIPAY"], "")).toBeUndefined()
+  })
+
+  // A stored value is just text from a file the user can edit; it must not be
+  // returned merely because it looks plausible.
+  test("garbage in the file does not become a preselection", () => {
+    expect(preselectedProvider(["browser", "ALIPAY"], "feishu")).toBeUndefined()
+    expect(preselectedProvider(["browser", "ALIPAY"], "toString")).toBeUndefined()
   })
 })

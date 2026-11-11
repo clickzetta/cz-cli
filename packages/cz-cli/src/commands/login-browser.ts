@@ -4,14 +4,30 @@ import * as p from "@clack/prompts"
 import * as client from "openid-client"
 
 import {
-  OAUTH_CLIENT_ID,
   OAUTH_CODE_CHALLENGE_METHOD,
   OAUTH_SCOPE,
   startLoopbackCallback,
   type AuthToken,
 } from "@clickzetta/sdk"
 
-import { oauthBodyError, toInterfaceError } from "./oauth-error.js"
+import { toInterfaceError } from "./oauth-error.js"
+import {
+  collectUserInfo,
+  discoverOAuthConfig,
+  generateRequestId,
+  tokenFromResponse,
+  type OAuthLoginResult,
+} from "./oauth-userinfo.js"
+
+/**
+ * Browser loopback OAuth login (authorization code + PKCE).
+ *
+ * Everything that happens AFTER an authorization is obtained — discovery, the
+ * userinfo round trip, gatewayMapping parsing, the AuthToken shape — lives in
+ * `oauth-userinfo.ts`, shared with the device-flow login in `login-device.ts`.
+ * What stays here is specific to proving identity through a browser: the
+ * loopback listener, PKCE, `state`, and the manual-paste fallback.
+ */
 
 /**
  * Generate a random hex `state` for CSRF protection of the authorize round
@@ -43,185 +59,6 @@ function openSystemBrowser(url: string): void {
   } catch {
     // best-effort: ignore spawn failures, the URL was already printed
   }
-}
-
-/**
- * Connection context parsed from the `/oauth2/userinfo` response. Carried back
- * to `runLogin` so it can backfill the persisted token (userId/instanceId) and
- * write the logged-in context (instance/workspace/schema/vcluster/accountName)
- * into the current profile. All fields are optional: userinfo is best-effort.
- */
-export interface BrowserLoginResult {
-  token: AuthToken
-  userInfo?: {
-    instanceName?: string
-    workspace?: string
-    schema?: string
-    vcluster?: string
-    accountName?: string
-    accountId?: number
-    userId?: number
-    instanceId?: number
-    // Surfaced for LLM provisioning: the gateway API key + its base URL. These
-    // also live on `raw`, but exposing them here keeps provisioning off the
-    // untyped body.
-    apiKey?: string
-    aimeshEndpointBaseUrl?: string
-    // Region-specific business service host (no protocol) derived from the
-    // userinfo `gatewayMapping` for the default instance's `cspId-regionId`.
-    // This is the address SQL/business calls must use — the region-independent
-    // OAuth central host is only for login itself. Undefined when the mapping
-    // is absent or has no entry for the instance's region.
-    service?: string
-    // Account/tenant id used as tenantId for portal calls (listUserWorkspaces).
-    // Same value as accountId; surfaced explicitly for the enumeration step.
-    tenantId?: number
-  }
-  // Every instance the account can access, each resolved to its own region
-  // service via gatewayMapping[cspId-regionId]. Used to enumerate all
-  // (instance × workspace) combinations after login. Empty when userinfo failed.
-  instances?: OAuthInstance[]
-  // The unmodified `/oauth2/userinfo` body, present only when userinfo
-  // succeeded. Archived verbatim into the profile so nothing is discarded.
-  raw?: Record<string, unknown>
-}
-
-/** One accessible instance with its resolved region service (no protocol). */
-export interface OAuthInstance {
-  instanceId: number
-  instanceName: string
-  /** Region business service host (no protocol) from gatewayMapping, or undefined if unresolved. */
-  service?: string
-}
-
-function isOauthDebug(): boolean {
-  const flag = process.env.CZ_OAUTH_DEBUG
-  return flag === "1" || flag === "true"
-}
-
-function str(val: unknown): string | undefined {
-  return typeof val === "string" && val.length > 0 ? val : undefined
-}
-
-/**
- * Resolve the region-specific business service host for the default instance.
- *
- * The backend does NOT return a `service` field in userinfo. Instead it returns
- * `gatewayMapping`, a per-account JSON string keyed by `"<cspId>-<regionId>"`
- * whose values are the real region API bases, e.g.
- *   { "1-1": "https://cn-shanghai-alicloud.api.clickzetta.com", ... }
- * Each entry in `instanceList` carries its own `cspId`/`regionId`. We look up
- * the default instance's key to get the exact host to run business calls
- * against. Confirmed against live userinfo for both prod and uat accounts; the
- * same `"1-1"` key maps to different hosts per environment, which is precisely
- * why this must be read from userinfo rather than derived from a static table.
- *
- * Returns the host WITHOUT protocol (to match how profiles store `service`),
- * or undefined when the mapping or the instance's region entry is missing.
- */
-function serviceFromGatewayMapping(
-  body: Record<string, unknown>,
-  instance: Record<string, unknown> | undefined,
-): string | undefined {
-  if (!instance) return undefined
-  const cspId = typeof instance.cspId === "number" ? instance.cspId : undefined
-  const regionId = typeof instance.regionId === "number" ? instance.regionId : undefined
-  if (cspId === undefined || regionId === undefined) return undefined
-
-  let mapping: Record<string, unknown>
-  try {
-    const rawMapping = body.gatewayMapping
-    if (typeof rawMapping !== "string" || !rawMapping.trim()) return undefined
-    mapping = JSON.parse(rawMapping) as Record<string, unknown>
-  } catch {
-    return undefined
-  }
-
-  const url = mapping[`${cspId}-${regionId}`]
-  if (typeof url !== "string" || !url.trim()) return undefined
-  // Store as a bare host to match profile `service` semantics.
-  return url.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")
-}
-
-/**
- * Map the raw `/oauth2/userinfo` body to our connection context per the
- * confirmed dev response shape. `userId` falls back to parsing `sub`; both id
- * fields guard against NaN/absent so callers can decide whether to override.
- */
-function parseUserInfo(body: Record<string, unknown>): BrowserLoginResult["userInfo"] {
-  const userId = typeof body.userId === "number" ? body.userId : parseInt(String(body.sub), 10)
-  const instanceList = Array.isArray(body.instanceList) ? (body.instanceList as Array<Record<string, unknown>>) : []
-  const firstInstance = instanceList[0]
-  const instanceId = firstInstance && typeof firstInstance.id === "number" ? firstInstance.id : 0
-  const instanceName = str(body.instanceName) ?? (firstInstance ? str(firstInstance.name) : undefined)
-
-  return {
-    instanceName,
-    workspace: str(body.workspaceName),
-    schema: str(body.schema),
-    vcluster: str(body.virtualCluster),
-    accountName: str(body.accountName),
-    accountId: typeof body.account_id === "number" ? body.account_id : undefined,
-    userId: Number.isNaN(userId) ? undefined : userId,
-    instanceId,
-    apiKey: str(body.apiKey),
-    aimeshEndpointBaseUrl: str(body.aimeshEndpointBaseUrl),
-    service: serviceFromGatewayMapping(body, firstInstance),
-    tenantId: typeof body.account_id === "number" ? body.account_id : undefined,
-  }
-}
-
-/**
- * Build the full list of accessible instances, each resolved to its own region
- * service via gatewayMapping[cspId-regionId]. Feeds the (instance × workspace)
- * enumeration that generates one profile per combination. An instance whose
- * region has no gatewayMapping entry gets `service: undefined` — the caller
- * skips it (a workspace listing there would hit the wrong gateway).
- */
-function parseInstances(body: Record<string, unknown>): OAuthInstance[] {
-  const list = Array.isArray(body.instanceList) ? (body.instanceList as Array<Record<string, unknown>>) : []
-  return list
-    .map((inst): OAuthInstance | undefined => {
-      const instanceId = typeof inst.id === "number" ? inst.id : 0
-      const instanceName = str(inst.name) ?? ""
-      if (!instanceId || !instanceName) return undefined
-      return { instanceId, instanceName, service: serviceFromGatewayMapping(body, inst) }
-    })
-    .filter((x): x is OAuthInstance => x !== undefined)
-}
-
-/**
- * GET the discovered `userinfo_endpoint` with the access token and return the raw
- * body.
- *
- * Uses `fetchProtectedResource` rather than the library's `fetchUserInfo`: that
- * one runs `processUserInfoResponse`, which demands a string `sub` and an
- * `expectedSubject` we cannot know before the call. We want the untouched body,
- * since it is archived verbatim onto the profile.
- *
- * A 401 with a WWW-Authenticate header throws out of `fetchProtectedResource`
- * itself (as WWWAuthenticateChallengeError); a body-only error response comes
- * back as a non-ok Response, so both are converted here. Either way the caller
- * treats a userinfo failure as non-fatal (requirement 11.7).
- */
-async function fetchUserInfoBody(
-  config: client.Configuration,
-  userinfoEndpoint: string | undefined,
-  accessToken: string,
-  requestId: string,
-): Promise<Record<string, unknown>> {
-  if (!userinfoEndpoint) throw new Error("discovery document has no userinfo_endpoint")
-
-  let res: Response
-  try {
-    res = await client.fetchProtectedResource(config, accessToken, new URL(userinfoEndpoint), "GET")
-  } catch (err) {
-    throw toInterfaceError(err, requestId)
-  }
-
-  const body = (await res.json()) as Record<string, unknown>
-  if (!res.ok || typeof body.error === "string") throw oauthBodyError(body, res.status, requestId)
-  return body
 }
 
 export interface LoginWithBrowserOptions {
@@ -324,36 +161,6 @@ async function waitForCodeWithManualFallback(
 }
 
 /**
- * Generate the `requestId` header value the gateway logs correlate OAuth calls
- * by (requirement 7.7). Mirrors the SDK's format so gateway-side log queries
- * keep working across both paths. Random hex, no sensitive material.
- */
-function generateRequestId(): string {
-  const hex = Array.from(crypto.getRandomValues(new Uint8Array(6)))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-  return `tssdk-oauth-${hex}`
-}
-
-/**
- * Build the `customFetch` that injects our `requestId` header into every request
- * the library makes. The high-level helpers expose no header option, so this is
- * the only seam — and dropping the header is not an option: gateway log
- * correlation is a real operational dependency.
- */
-function fetchWithRequestId(requestId: string): client.CustomFetch {
-  return (url, options) =>
-    fetch(url, {
-      ...options,
-      headers: { ...options.headers, requestId },
-      // The library's FetchBody admits Uint8Array, which the DOM RequestInit
-      // type does not, though fetch accepts it at runtime. Cast the body alone
-      // rather than the whole init so the rest stays checked.
-      body: options.body as BodyInit | null | undefined,
-    })
-}
-
-/**
  * Browser loopback OAuth login orchestration (design Addendum 2, component I;
  * requirements 10.1/10.5/10.8/10.10).
  *
@@ -374,19 +181,9 @@ function fetchWithRequestId(requestId: string): client.CustomFetch {
  * trip on every expired-token command would buy nothing — each CLI invocation is
  * a fresh process with no cross-process cache, so it would be a permanent cost.
  */
-export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<BrowserLoginResult> {
+export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<OAuthLoginResult> {
   const requestId = generateRequestId()
-  // `algorithm: "oauth2"` selects RFC 8414's /.well-known/oauth-authorization-server.
-  // The library defaults to OIDC's /.well-known/openid-configuration, which the
-  // server does not serve — this is a live server constraint, not a preference.
-  const config = await client
-    .discovery(new URL(opts.baseUrl), OAUTH_CLIENT_ID, undefined, undefined, {
-      algorithm: "oauth2",
-      [client.customFetch]: fetchWithRequestId(requestId),
-    })
-    .catch((err) => {
-      throw toInterfaceError(err, requestId)
-    })
+  const config = await discoverOAuthConfig(opts.baseUrl, requestId)
   const meta = config.serverMetadata()
 
   const codeVerifier = client.randomPKCECodeVerifier()
@@ -437,41 +234,10 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<B
         throw toInterfaceError(err, requestId)
       })
 
-    const token: AuthToken = {
-      token: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      // expireTimeMs is a DURATION in ms (expires_in * 1000), matching the
-      // login.ts OAuth path and token.ts isTokenExpired semantics
-      // (elapsed = now - obtainedAt > expireTimeMs * EXPIRED_FACTOR). It must
-      // NOT be an absolute timestamp.
-      expireTimeMs: tokens.expires_in !== undefined ? tokens.expires_in * 1000 : 0,
-      obtainedAt: Date.now(),
-      // Populated below from userinfo when available; default to 0 so legacy
-      // consumers and the token store keep working when userinfo is missing.
-      instanceId: 0,
-      userId: 0,
-    }
+    const token: AuthToken = tokenFromResponse(tokens)
+    const context = await collectUserInfo(config, meta.userinfo_endpoint, token, requestId)
 
-    // Best-effort userinfo backfill (requirement 11.6/11.7). A userinfo failure
-    // must NOT fail the login: keep the token, leave userId/instanceId at 0.
-    let userInfo: BrowserLoginResult["userInfo"]
-    let instances: OAuthInstance[] | undefined
-    let raw: Record<string, unknown> | undefined
-    try {
-      const body = await fetchUserInfoBody(config, meta.userinfo_endpoint, tokens.access_token, requestId)
-      raw = body
-      const parsed = parseUserInfo(body)
-      if (isOauthDebug()) console.error(`[oauth-userinfo] keys=[${Object.keys(parsed ?? {}).join(",")}]`)
-      userInfo = parsed
-      instances = parseInstances(body)
-      // Only override when the parsed identity is a real, positive value.
-      if (parsed?.userId !== undefined && parsed.userId > 0) token.userId = parsed.userId
-      if (parsed?.instanceId !== undefined && parsed.instanceId > 0) token.instanceId = parsed.instanceId
-    } catch (err) {
-      if (isOauthDebug()) console.error(`[oauth-userinfo] failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-
-    return { token, userInfo, instances, raw }
+    return { token, ...context }
   } catch (err) {
     // Ensure the listener never leaks if we fail before/after waitForCode
     // settles. close() is a no-op once the core already settled.

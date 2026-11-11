@@ -12,6 +12,7 @@ import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { AUTH_TYPE, loadProfiles, type ProfileEntry, patchProfileUserId } from "../connection/profile-store.js"
 import { parseJdbcUrl } from "../connection/jdbc.js"
+import { parseJwtPayload } from "../connection/jwt.js"
 import { readLlmEntries, writeLlmEntries } from "../llm/native-config.js"
 import { decodeCredential, provisionProfileFromCredential, ProvisionError } from "../connection/provision.js"
 import { patRefusedOrNoted, type PatGuardArgs } from "./pat-guard.js"
@@ -502,17 +503,6 @@ async function saveJdbcProfile(
   })
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> {
-  try {
-    const parts = token.split(".")
-    if (parts.length < 2) return {}
-    const padded = parts[1]! + "=".repeat((4 - (parts[1]!.length % 4)) % 4)
-    return JSON.parse(Buffer.from(padded, "base64").toString("utf-8")) as Record<string, unknown>
-  } catch {
-    return {}
-  }
-}
-
 function coerceInt(value: unknown): number {
   const number = Number(value)
   return Number.isFinite(number) ? Math.trunc(number) : 0
@@ -581,7 +571,7 @@ async function loginWithExistingAccount(
       20_000,
       accountLoginUrl,
     )
-    const jwt = decodeJwtPayload(token)
+    const jwt = parseJwtPayload(token)
     const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
     if (!tenantId) {
       throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
@@ -640,7 +630,7 @@ async function loginWithAccountForApiService(
     // would otherwise receive the password in plaintext.
     { requireEncryptKey: true },
   )
-  const jwt = decodeJwtPayload(token)
+  const jwt = parseJwtPayload(token)
   const tenantId = coerceInt(jwt.accountId ?? jwt.tenantId ?? data.accountId ?? data.tenantId)
   if (!tenantId) throw new Error("ACCOUNT_LOGIN_FAILED: tenant/account id not found")
   // Keep the endpoint the user chose rather than the accounts site's gateway:
@@ -677,7 +667,7 @@ async function loginWithInstanceCandidate(
   const normalizedService = normalizeServiceValue(service)
   const serviceUrl = toServiceUrl(normalizedService)
   const login = await loginWithPassword(serviceUrl, username, password, instanceName)
-  const jwt = decodeJwtPayload(login.token)
+  const jwt = parseJwtPayload(login.token)
   let userId = coerceInt(jwt.userId ?? jwt.user_id ?? login.userId)
   let tenantId = coerceInt(jwt.accountId ?? jwt.tenantId)
   let resolvedUsername = String(jwt.userName ?? username)

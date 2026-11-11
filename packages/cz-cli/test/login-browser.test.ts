@@ -3,12 +3,9 @@ import { get } from "node:http"
 
 import { isLocalCallbackEnabled } from "@clickzetta/sdk"
 import { loginWithBrowser } from "../src/commands/login-browser"
+import { jsonResponse, restoreFetch, stubGlobalFetch, TOKEN_RESPONSE } from "./support/oauth-stub"
 
-const realFetch = globalThis.fetch
-
-afterEach(() => {
-  globalThis.fetch = realFetch
-})
+afterEach(restoreFetch)
 
 const ISSUER = "https://api.example.com"
 // The discovery document deliberately puts authorize on a DIFFERENT host from
@@ -57,20 +54,6 @@ function httpGet(url: string): Promise<void> {
   })
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  // openid-client requires an explicit JSON content-type on every response.
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
-}
-
-const TOKEN_RESPONSE = {
-  access_token: "access-xyz",
-  refresh_token: "refresh-xyz",
-  expires_in: 3600,
-  // Must be present and case-insensitively "bearer", else the library throws
-  // UnsupportedOperationError.
-  token_type: "Bearer",
-}
-
 const SAMPLE_USERINFO = {
   userId: 110000011361,
   accountName: "wynptmks",
@@ -101,7 +84,7 @@ interface StubOptions {
  */
 function stubFetch(opts: StubOptions = {}): { requests: string[] } {
   const requests: string[] = []
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  stubGlobalFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     requests.push(url)
     opts.onRequest?.(url, init)
@@ -114,7 +97,7 @@ function stubFetch(opts: StubOptions = {}): { requests: string[] } {
       return opts.userinfo ? opts.userinfo() : jsonResponse(SAMPLE_USERINFO)
     }
     throw new Error(`unexpected fetch to ${url}`)
-  }) as typeof fetch
+  })
   return { requests }
 }
 

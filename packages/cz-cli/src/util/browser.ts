@@ -10,3 +10,18 @@ export function browserOpenCommandForPlatform(platform: NodeJS.Platform, url: st
   if (platform === "win32") return { command: "cmd.exe", args: ["/c", "start", "", url] }
   return { command: "xdg-open", args: [url] }
 }
+
+/**
+ * Can a browser opened from this process reach the person at the keyboard?
+ *
+ * False over SSH even when the remote host has a desktop: `open`/`xdg-open` would
+ * launch a browser on the remote machine's screen, out of the user's sight, and the
+ * spawn still "succeeds", so the failure cannot be detected after the fact. On
+ * Linux and the BSDs a browser also needs a display server. macOS and Windows
+ * always have one for a local session.
+ */
+export function canOpenBrowser(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  if (env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY) return false
+  if (platform === "darwin" || platform === "win32") return true
+  return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY)
+}
