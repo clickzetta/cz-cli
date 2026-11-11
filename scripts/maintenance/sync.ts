@@ -25,8 +25,9 @@ export async function syncControl(cwd = process.cwd(), role?: string) {
 export async function acknowledgeRules(cwd: string, role: string, sha: string) {
   if (!roles.includes(role) || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("Use: rules-read worker|curator FULL_SHA")
   const root = await git(cwd, "rev-parse", "--show-toplevel")
-  await git(root, "merge-base", "--is-ancestor", sha, "HEAD").catch(() => {
-    throw new Error("That commit is not part of the control checkout; pass the `after` value sync returned")
+  // Cursors are shared by every worktree of this repository, so a task branch's commit must not qualify.
+  await git(root, "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main").catch(() => {
+    throw new Error("That commit is not on origin/main; pass the `after` value sync returned")
   })
   await writeCursor(await cursorFile(root, role), sha)
   return { role, rulesReadThrough: sha }
@@ -45,8 +46,9 @@ async function pendingRules(root: string, before: string, after: string, role?: 
       () => true,
       () => false,
     ))
-  if (!valid) await writeCursor(file, before)
-  // A damaged cursor hides how much was missed, so the caller is told to reread everything.
+  if (stored === "") await writeCursor(file, before)
+  // A damaged cursor hides how much was missed, so the caller is told to reread everything. It stays damaged
+  // until rules-read replaces it, so a round that dies first is told again.
   return { changedRules: await changedRules(root, valid ? stored : before, after), cursorReset: stored !== "" && !valid }
 }
 

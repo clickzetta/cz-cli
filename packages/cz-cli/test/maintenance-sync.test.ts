@@ -89,7 +89,8 @@ test("each role sees every rule change, even when another role synced first", as
 
   await git(repo.upstream, "rm", "--quiet", "docs/maintenance/retired.md")
   await git(repo.upstream, "commit", "-m", "docs: retire a note")
-  await syncControl(repo.control, "worker")
+  // The worker had read the note; its deletion leaves nothing to reread.
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual([])
   // The checkout no longer moves for the curator, and a deleted file is not something to reread.
   const curator = await syncControl(repo.control, "curator")
   expect(curator.before).not.toBe(start.after)
@@ -105,8 +106,14 @@ test("sync rejects unknown roles and reports a damaged cursor", async () => {
   await expect(syncControl(repo.control, "wroker")).rejects.toThrow("worker|curator")
   const head = (await syncControl(repo.control, "worker")).after
   await expect(acknowledgeRules(repo.control, "worker", "HEAD")).rejects.toThrow("FULL_SHA")
-  await expect(acknowledgeRules(repo.control, "worker", "0".repeat(40))).rejects.toThrow("not part of the control checkout")
+  await expect(acknowledgeRules(repo.control, "worker", "0".repeat(40))).rejects.toThrow("not on origin/main")
   await acknowledgeRules(repo.control, "worker", head)
+  await git(repo.control, "switch", "--quiet", "-c", "task")
+  await git(repo.control, "commit", "--allow-empty", "-m", "task work")
+  await expect(acknowledgeRules(repo.control, "worker", await git(repo.control, "rev-parse", "HEAD"))).rejects.toThrow(
+    "not on origin/main",
+  )
+  await git(repo.control, "switch", "--quiet", "main")
 
   const cursor = path.join(repo.control, ".git/cz-maintenance/control/rules-seen-worker")
   for (const damaged of ["not-a-commit\n", "--all\n", `${"0".repeat(40)}\n`]) {
@@ -115,6 +122,8 @@ test("sync rejects unknown roles and reports a damaged cursor", async () => {
     const result = await syncControl(repo.control, "worker")
     expect(result.cursorReset).toBe(true)
     expect(result.changedRules).toEqual(["docs/maintenance/workflow.md"])
+    // Unconfirmed, the reset is reported again even though nothing moves.
+    expect((await syncControl(repo.control, "worker")).cursorReset).toBe(true)
     await acknowledgeRules(repo.control, "worker", result.after)
     expect((await syncControl(repo.control, "worker")).cursorReset).toBe(false)
   }
