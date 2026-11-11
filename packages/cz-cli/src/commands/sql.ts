@@ -816,7 +816,10 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
     })
     return false
   }
-  const dangerous = analysis.statements.findIndex((item) => isUnrestrictedWrite(item.text))
+  const dangerous = analysis.unmodeled && /\b(?:DELETE|UPDATE)\b/i.test(sql)
+    ? // The scan cannot see WHERE boundaries past tokens it does not model, so fail closed.
+      Math.max(0, analysis.statements.findIndex((item) => /\b(?:DELETE|UPDATE)\b/i.test(item.text)))
+    : analysis.statements.findIndex((item) => isUnrestrictedWrite(item.text))
   if (dangerous >= 0) {
     error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", {
       format: argv.format,
