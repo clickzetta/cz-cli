@@ -1,6 +1,22 @@
 import type { HelpCase } from "../e2e-help-runner.ts"
 
 export const agentGatewayHelpCases: HelpCase[] = [
+  {
+    args: ["analytics-agent", "dataset", "--help"],
+    expectHeader: "cz-cli analytics-agent table",
+    expectCommands: ["list", "detail", "update", "semantics"],
+  },
+  {
+    args: ["analytics-agent", "dataset", "detail", "--help"],
+    expectHeader: "cz-cli analytics-agent dataset detail",
+    expectOptions: ["--dataset-id", "--table-name", "--datasource-id"],
+    expectText: ["short names"],
+  },
+  {
+    args: ["analytics-agent", "dataset", "update", "--help"],
+    expectHeader: "cz-cli analytics-agent dataset update",
+    expectOptions: ["--dataset-id", "--table-name", "--domain-id", "--datasource-id"],
+  },
   // agent (top-level description only — agent subcommands are executed by the internal runtime)
   {
     args: ["agent", "--help"],
@@ -122,7 +138,7 @@ export const agentGatewayHelpCases: HelpCase[] = [
     expectHeader: "cz-cli analytics-agent table update",
     expectOptions: ["--dataset-id", "--domain-id"],
     expectText: [
-      "--dataset-id and --domain-id are required",
+      "--dataset-id or --table-name",
       "owning domain ID explicitly",
       "domain detail <domainId> --with-tables",
     ],

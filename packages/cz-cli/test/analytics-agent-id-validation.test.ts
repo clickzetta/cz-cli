@@ -555,6 +555,9 @@ describe("analytics-agent id validation", () => {
       test("accepts and trims a valid name", async () => {
         let body: Record<string, unknown> | undefined
         globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(_input).includes("/datasets/list")) {
+            return jsonResponse({ success: true, data: [{ datasetId: 17, sourceId: 3, tableName: "orders" }] })
+          }
           body = JSON.parse(String(init?.body)) as Record<string, unknown>
           return jsonResponse({ success: true, data: {} })
         }) as typeof fetch

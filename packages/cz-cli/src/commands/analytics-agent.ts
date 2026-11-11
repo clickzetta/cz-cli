@@ -1641,6 +1641,78 @@ async function fetchAllDatasetsInDomain(
   return all
 }
 
+// Resolve against registered datasets, not a guessed view prefix: shared schemas
+// use physical tables and system views can live in a different workspace.
+async function resolveDatasetTable(
+  argv: Record<string, unknown>,
+  tableName: string,
+  filters: Record<string, unknown>,
+  ctx: ResolvedContext,
+): Promise<Record<string, unknown>> {
+  const normalize = (value: string) => value.replace(/`/g, "").trim().toLowerCase()
+  const input = normalize(tableName)
+  const config = resolveConnectionConfig(argv)
+  const workspace = normalize(config.workspace || "")
+  const schema = normalize(config.schema || "")
+  const datasets = new Map<string, Record<string, unknown>>()
+  const pageSize = 200
+  for (let pageNum = 1; pageNum <= 1000; pageNum++) {
+    const payload = await requestAnalytics(argv, ROUTES.datasetList, { ...filters, pageNum, pageSize }, {}, ctx)
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) throw new AnalyticsBusinessError(bizErr.code, bizErr.message)
+    const data = unwrapResponse(payload)
+    if (!Array.isArray(data)) throw new Error("Invalid dataset list response while resolving --table-name")
+    const before = datasets.size
+    for (const item of data) {
+      if (!item || typeof item !== "object" || typeof item.tableName !== "string") continue
+      datasets.set(String(item.datasetId ?? item.id ?? `${item.sourceId}:${item.tableName}`), item)
+    }
+    const page = extractPageInfo(payload)
+    if (page ? !page.has_more : data.length < pageSize) break
+    if (datasets.size === before || pageNum === 1000) {
+      throw new Error("Dataset pagination did not complete; use --dataset-id or narrow --datasource-id instead")
+    }
+  }
+  const names = (dataset: Record<string, unknown>) => [dataset.tableName, dataset.physicalTable]
+    .filter((name): name is string => typeof name === "string" && name.trim() !== "")
+    .map(normalize)
+  const all = [...datasets.values()].filter((dataset) => filters.sourceId === undefined
+    || String(dataset.sourceId) === String(filters.sourceId))
+  const inScope = (dataset: Record<string, unknown>) => {
+    const qualified = names(dataset).find((name) => name.split(".").length === 3)
+    const parts = qualified?.split(".")
+    return (!workspace || !parts || parts[0] === workspace) && (!schema || !parts || parts[1] === schema)
+  }
+  const exact = input.split(".").length === 3
+    ? all.filter((dataset) => normalize(String(dataset.tableName)) === input)
+    : []
+  if (exact.length === 1) return exact[0]!
+  const requested = input.split(".")
+  const matches = exact.length ? exact : all.filter((dataset) => names(dataset).some((name) => {
+    if (name === input) return input.includes(".") || inScope(dataset)
+    const parts = name.split(".")
+    if (requested.length > 3) return false
+    const leaf = parts.at(-1)!
+    if (requested.at(-1) !== leaf && requested.at(-1) !== leaf.replace(/^v_gpt_/, "")) return false
+    if (requested.length === 3) return parts.length === 3 && parts[0] === requested[0] && parts[1] === requested[1]
+    if (requested.length === 2 && parts.at(-2) !== requested[0]) return false
+    if (workspace && parts.length === 3 && parts[0] !== workspace) return false
+    if (schema && requested.length === 1 && parts.length >= 2 && parts.at(-2) !== schema) return false
+    return true
+  }))
+  if (matches.length === 1) return matches[0]!
+  const candidates = matches.length ? matches : all.filter((dataset) => names(dataset).some((name) =>
+    name.split(".").at(-1)!.replace(/^v_gpt_/, "") === input.split(".").at(-1)!.replace(/^v_gpt_/, ""),
+  ))
+  const paths = candidates.map((dataset) => `${dataset.tableName} (datasource ${dataset.sourceId ?? "unknown"}, dataset ${dataset.datasetId ?? dataset.id ?? "unknown"})`)
+  throw new AnalyticsBusinessError(
+    matches.length ? "AMBIGUOUS_DATASET" : "DATASET_NOT_FOUND",
+    matches.length
+      ? `Ambiguous --table-name '${tableName}'. Specify --datasource-id and/or a full table path. Candidates: ${paths.join(", ")}`
+      : `Dataset not found for --table-name '${tableName}' in the selected datasource/workspace/schema.${paths.length ? ` Did you mean: ${paths.join(", ")}?` : " List datasets and use the registered tableName or check the active profile."}`,
+  )
+}
+
 // Update a dataset's display name and/or description through the open dataset
 // API. The list step verifies the dataset belongs to the requested domain; the
 // open update endpoint supports partial updates, so only changed fields are sent.
@@ -1648,6 +1720,9 @@ async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
   const datasetId = positiveIntegerValue(argv["dataset-id"], "--dataset-id", format)
+  if (datasetId === undefined && !trimmedString(argv["table-name"])) {
+    handledError("USAGE_ERROR", "Provide --dataset-id or --table-name", { format, exitCode: EXIT_USAGE_ERROR })
+  }
   const domainId = requiredPositiveIntegerValue(argv["domain-id"], "--domain-id", format)
   const hasName = typeof argv.name === "string"
   const hasDesc = typeof argv.description === "string"
@@ -1661,13 +1736,14 @@ async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
   }
   try {
     const ctx = await resolveAnalyticsContext(argv)
-    const items = await fetchAllDatasetsInDomain(argv, domainId, ctx)
-    const current = items.find((d) => String(d.datasetId) === String(datasetId))
+    const current = datasetId === undefined
+      ? await resolveDatasetTable(argv, String(argv["table-name"]), { domainIds: [domainId], sourceId: argv["datasource-id"] }, ctx)
+      : (await fetchAllDatasetsInDomain(argv, domainId, ctx)).find((d) => String(d.datasetId) === String(datasetId))
     if (!current) {
       error("ANALYTICS_AGENT_ERROR", `dataset ${datasetId} not found in domain ${domainId}`, { format })
       return
     }
-    const body: Record<string, unknown> = { datasetId }
+    const body: Record<string, unknown> = { datasetId: current.datasetId ?? current.id }
     if (hasName) body.displayName = (argv.name as string).trim()
     if (hasDesc) body.description = argv.description
     const updated = await requestAnalyticsData(argv, ROUTES.datasetUpdate, body, {}, ctx)
@@ -1694,7 +1770,24 @@ async function executeAnalyticsCommand(
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
   try {
-    const payload = await requestAnalytics(argv, route, body, query)
+    validateAnalyticsIdArgs(argv, format)
+    validateAnalyticsNames(route, body, format)
+    const resolvesTable = [ROUTES.simpleMetricCreate, ROUTES.simpleMetricPartialUpdate, ROUTES.simpleMetricValidate, ROUTES.simpleMetricList].some((item) => item === route)
+      && typeof body.tableName === "string" && body.tableName.trim() !== ""
+    const resolvesDataset = route === ROUTES.datasetDetail && query.datasetId === undefined && typeof query.tableName === "string"
+    const ctx = resolvesTable || resolvesDataset ? await resolveAnalyticsContext(argv) : undefined
+    const currentMetric = resolvesTable && route === ROUTES.simpleMetricPartialUpdate && (body.datasourceId === undefined || body.datasourceId === null)
+      ? await requestAnalyticsData(argv, ROUTES.simpleMetricDetail, { id: body.id }, {}, ctx) as Record<string, unknown>
+      : undefined
+    const dataset = resolvesTable || resolvesDataset
+      ? await resolveDatasetTable(argv, String(resolvesDataset ? query.tableName : body.tableName), {
+        sourceId: resolvesDataset ? query.datasourceId : body.datasourceId ?? currentMetric?.datasourceId,
+        domainIds: resolvesDataset ? query.domainIds : body.domainIds ?? currentMetric?.domainIds,
+      }, ctx!)
+      : undefined
+    const payload = await requestAnalytics(argv, route, dataset && resolvesTable
+      ? { ...body, tableName: dataset.tableName, datasourceId: body.datasourceId ?? currentMetric?.datasourceId ?? dataset.sourceId }
+      : body, resolvesDataset && dataset ? { datasetId: dataset.datasetId ?? dataset.id } : query, ctx)
     const bizErr = extractBusinessError(payload)
     if (bizErr) {
       logOperation(name, { ok: false, timeMs: Date.now() - t0 })
@@ -1717,7 +1810,7 @@ async function executeAnalyticsCommand(
   } catch (err) {
     logOperation(name, { ok: false, timeMs: Date.now() - t0 })
     if (isHandledCliError(err)) return
-    error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+    error(err instanceof AnalyticsBusinessError ? err.code : "ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
       format,
       ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
@@ -2665,7 +2758,47 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           })
         return commandGroup(domain, "analytics-agent domain")
       })
-      .command("table", "Manage Analytics Agent table semantics", (table) => {
+      .command(["table", "dataset"], "Manage Analytics Agent datasets and table semantics", (table) => {
+        table.command(
+          "list",
+          "List registered datasets with their canonical table names",
+          (y) => y
+            .option("datasource-id", { type: "number", describe: "Datasource ID" })
+            .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array" })
+            .option("page-num", { type: "number", describe: "Page number" })
+            .option("page-size", { type: "number", describe: "Page size" }),
+          async (argv) => {
+            const format = typeof argv.format === "string" ? argv.format : "json"
+            const domainIds = resourceDomainIds(argv["domain-ids"], format)
+            await executeAnalyticsCommand("analytics-agent dataset list", argv as Record<string, unknown>, ROUTES.datasetList, {
+              sourceId: argv["datasource-id"], domainIds, pageNum: argv["page-num"], pageSize: argv["page-size"],
+            })
+          },
+        )
+        table.command(
+          "detail",
+          "Show a dataset by ID or resolve its table name in the current workspace/schema",
+          (y) => y
+            .option("dataset-id", { type: "number", describe: "Dataset ID" })
+            .option("table-name", { type: "string", describe: "Registered name or physical table name; short names are resolved from dataset metadata" })
+            .option("datasource-id", { type: "number", describe: "Datasource ID to restrict name resolution" })
+            .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array" })
+            .conflicts("dataset-id", "table-name"),
+          async (argv) => {
+            const format = typeof argv.format === "string" ? argv.format : "json"
+            const datasetId = positiveIntegerValue(argv["dataset-id"], "--dataset-id", format)
+            const domainIds = resourceDomainIds(argv["domain-ids"], format)
+            if (datasetId === undefined && !trimmedString(argv["table-name"])) {
+              handledError("USAGE_ERROR", "Provide --dataset-id or --table-name", { format, exitCode: EXIT_USAGE_ERROR })
+            }
+            await executeAnalyticsCommand("analytics-agent dataset detail", argv as Record<string, unknown>, ROUTES.datasetDetail, {}, {
+              datasetId,
+              tableName: argv["table-name"],
+              datasourceId: argv["datasource-id"],
+              domainIds,
+            })
+          },
+        )
         table.command("semantics", "Manage dataset column semantics", (semantics) => {
           semantics
             .command(
@@ -2805,19 +2938,23 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
         })
         table.command(
           "update",
-          "Update a dataset in one domain (--dataset-id and --domain-id are required)",
+          "Update a dataset in one domain (--dataset-id or --table-name, and --domain-id are required)",
           (y) =>
             y
-              .option("dataset-id", { type: "number", demandOption: true, describe: "Dataset ID" })
-              .option("domain-id", { type: "number", demandOption: true, describe: "Required domain scope; never inferred from the dataset ID" })
+              .option("dataset-id", { type: "number", describe: "Dataset ID (or use --table-name)" })
+              .option("table-name", { type: "string", describe: "Registered or physical table name; resolves short names in the current workspace/schema" })
+              .option("datasource-id", { type: "number", describe: "Datasource ID to restrict name resolution" })
+              .conflicts("dataset-id", "table-name")
+              .option("domain-id", { type: "number", demandOption: true, describe: "Required domain scope; never inferred from the dataset ID or table name" })
               .option("name", { type: "string", describe: "New display name" })
               .option("description", { type: "string", describe: "New description" })
               .epilogue([
-                "IMPORTANT: pass both the dataset ID and its owning domain ID explicitly.",
+                "IMPORTANT: pass a dataset ID or table name and its owning domain ID explicitly.",
                 "Use 'domain detail <domainId> --with-tables' to verify that the dataset belongs to the domain.",
                 "",
                 "Example:",
                 "  cz-cli analytics-agent table update --dataset-id 9 --domain-id 2 --name orders",
+                "  cz-cli analytics-agent dataset update --table-name orders --domain-id 2 --description 'Order facts'",
               ].join("\n")),
           async (argv) => runTableUpdate(argv as Record<string, unknown>),
         )
@@ -2994,7 +3131,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               y
                 .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for no domain filter" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
-                .option("table-name", { type: "string", describe: "Filter by table name" })
+                .option("table-name", { type: "string", describe: "Filter by registered or physical table name; short names resolve in the current workspace/schema" })
                 .option("page-num", { type: "number", describe: "Page number" })
                 .option("page-size", { type: "number", describe: "Page size" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
@@ -3022,7 +3159,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               y
                 .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for an unbound definition" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID; defaults to the system datasource when omitted" })
-                .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
+                .option("table-name", { type: "string", demandOption: true, describe: "Registered or physical table name; short names resolve in the current workspace/schema" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
@@ -3061,7 +3198,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" })
                 .option("domain-ids", { type: "string", hidden: true, describe: "Use metric update-domains instead" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
-                .option("table-name", { type: "string", describe: "Table name" })
+                .option("table-name", { type: "string", describe: "Registered or physical table name; short names resolve in the current workspace/schema" })
                 .option("name", { type: "string", describe: "Metric name" })
                 .option("expression", { type: "string", describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric aliases, JSON array or comma-separated list; '[]' clears aliases" })
@@ -3137,7 +3274,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
               y
                 .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for an unbound definition" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID; defaults to the system datasource when omitted" })
-                .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
+                .option("table-name", { type: "string", demandOption: true, describe: "Registered or physical table name; short names resolve in the current workspace/schema" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })

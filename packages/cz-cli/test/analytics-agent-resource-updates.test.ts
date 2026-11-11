@@ -14,6 +14,7 @@ const server = Bun.serve({
     const url = new URL(request.url)
     requests.push({ path: url.pathname, method: request.method, body: await request.json() })
     if (url.pathname.endsWith("/disable")) return Response.json({ message: "not found" }, { status: 404 })
+    if (url.pathname.endsWith("/datasets/list")) return Response.json({ success: true, data: [{ datasetId: 17, sourceId: 8, tableName: "orders" }] })
     if (url.pathname.endsWith("/list")) return Response.json({ success: true, data: [] })
     return Response.json({ success: true, data: 9 })
   },
@@ -55,13 +56,16 @@ describe("resource partial updates and optional domains", () => {
   test.each(["create", "validate"])("metric %s accepts omitted domain and default datasource", async (command) => {
     const result = await run(["metric", command, ...definition])
     expect(result.code, result.output + result.stderr).toBe(0)
-    expect(requests).toEqual([{ path: `/open/api/v1/analytics-agent/metrics/${command}`, method: "POST", body: { tableName: "orders", names: ["total"], aggExpr: "count(*)" } }])
+    expect(requests).toEqual([
+      { path: "/open/api/v1/analytics-agent/datasets/list", method: "POST", body: { pageNum: 1, pageSize: 200 } },
+      { path: `/open/api/v1/analytics-agent/metrics/${command}`, method: "POST", body: { tableName: "orders", datasourceId: 8, names: ["total"], aggExpr: "count(*)" } },
+    ])
   })
 
   test.each(["create", "validate"])("metric %s preserves explicit empty domains", async (command) => {
     const result = await run(["metric", command, ...definition, "--domain-ids", "[]"])
     expect(result.code, result.output).toBe(0)
-    expect(requests[0]?.body.domainIds).toEqual([])
+    expect(requests.at(-1)?.body.domainIds).toEqual([])
   })
 
   test("metric list needs no domain or datasource filter", async () => {

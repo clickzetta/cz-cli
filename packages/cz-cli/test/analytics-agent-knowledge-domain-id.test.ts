@@ -109,6 +109,9 @@ describe("analytics-agent knowledge domain-ids conversion", () => {
     let requestBody: Record<string, unknown> | undefined
 
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(_input).includes("/datasets/list")) {
+        return jsonResponse({ success: true, data: [{ datasetId: 17, sourceId: 8, tableName: "orders" }] })
+      }
       requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
       return jsonResponse({ success: true, data: "123" })
     }) as typeof fetch
