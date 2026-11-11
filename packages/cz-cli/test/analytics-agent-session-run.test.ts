@@ -581,4 +581,56 @@ describe("analytics-agent session run", () => {
     expect(result.output).toContain("tenant 10")
     expect(result.output).toContain("55")
   })
+
+  describe("polling deadline", () => {
+    const thinking = {
+      success: true,
+      data: { questionId: 123, responses: [{ resGroupId: 1, dataType: "thinking", modelRes: { data: { message: "secret-step" } } }] },
+    }
+    const finished = {
+      success: true,
+      data: {
+        questionId: 123,
+        responses: [
+          { resGroupId: 1, dataType: "summary", modelRes: { data: { message: "final answer" } } },
+          { resGroupId: 1, dataType: "finish", modelRes: { data: { message: "done" } } },
+        ],
+      },
+    }
+    const runArgs = ["analytics-agent", "session", "run", "--session-id", "7", "--domain-id", "5", "--msg", "hello"]
+
+    test("session run fails with ANALYTICS_POLL_TIMEOUT when no terminal response arrives", async () => {
+      onStudio("/open/text2insight/query", () => ({ data: { questionId: 123 } }))
+      onStudio("/open/safe_question_poll", () => thinking)
+      const result = await runAnalyticsCli([...runArgs, "--timeout-ms", "50", "--interval-ms", "10"])
+      expect(result.exitCode).not.toBe(0)
+      const out = JSON.parse(result.output.trim())
+      expect(out.error.code).toBe("ANALYTICS_POLL_TIMEOUT")
+      expect(out.questionId).toBe(123)
+      expect(out.last_data_type).toBe("thinking")
+      expect(result.output).not.toContain("secret-step")
+    })
+
+    test("session run succeeds when the terminal response arrives exactly at the deadline", async () => {
+      onStudio("/open/text2insight/query", () => ({ data: { questionId: 123 } }))
+      onStudio("/open/safe_question_poll", () => finished)
+      const result = await runAnalyticsCli([...runArgs, "--timeout-ms", "0", "--interval-ms", "10"])
+      expect(result.exitCode).toBe(0)
+      expect(result.output).toContain("final answer")
+    })
+
+    test("session result --wait fails with ANALYTICS_POLL_TIMEOUT on a never-terminal question", async () => {
+      onStudio("/open/safe_question_poll", () => thinking)
+      const result = await runAnalyticsCli(["analytics-agent", "session", "result", "123", "--wait", "--timeout-ms", "50", "--interval-ms", "10"])
+      expect(result.exitCode).not.toBe(0)
+      expect(JSON.parse(result.output.trim()).error.code).toBe("ANALYTICS_POLL_TIMEOUT")
+    })
+
+    test("session result --wait succeeds on a terminal response at the deadline", async () => {
+      onStudio("/open/safe_question_poll", () => finished)
+      const result = await runAnalyticsCli(["analytics-agent", "session", "result", "123", "--wait", "--timeout-ms", "0", "--interval-ms", "10"])
+      expect(result.exitCode).toBe(0)
+      expect(result.output).toContain("final answer")
+    })
+  })
 })
