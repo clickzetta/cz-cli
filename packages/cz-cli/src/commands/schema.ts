@@ -6,7 +6,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getExecContext, execSql, isQueryResult, validateIdentifier, classifyExecError, rowsToRecords } from "./exec.js"
-import { getShowTableName } from "./table.js"
+import { getShowTableName, parseLimit, usageError } from "./table.js"
 
 const DEFAULT_LIMIT = 100
 
@@ -19,14 +19,15 @@ export function registerSchemaCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .option("like", { type: "string", describe: "Filter pattern" })
-            .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
+            .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows (0 or --no-limit for unlimited)" }),
         async (argv) => {
           const format = argv.format
           try {
+            const limit = parseLimit(argv.limit, DEFAULT_LIMIT)
+            if (limit === undefined) return usageError(format)
             const ctx = await getExecContext(argv)
             let sql = "SHOW SCHEMAS"
             if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
-            const limit = argv.limit ?? DEFAULT_LIMIT
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
