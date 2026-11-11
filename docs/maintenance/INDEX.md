@@ -1,6 +1,6 @@
 # Maintenance
 
-Two Claude Code sessions use native `/loop` and `Monitor`. The repository does not pin a model; choose it in local runtime configuration. Disable client-private auto-memory only for these sessions; use [project docs](../INDEX.md) and shared notes on demand.
+Two Claude Code sessions use native `/loop` and `Monitor`. The repository does not pin a model; choose it in local runtime configuration, including a stronger one for reviewers. Disable client-private auto-memory only for these sessions; use [project docs](../INDEX.md) and shared notes on demand.
 
 - [Worker](prompts/worker.md): GitHub and Feishu intake, execution, and delivery. It delegates with the [implementer](prompts/delegate-implement.md) and [reviewer](prompts/delegate-review.md) briefs.
 - [Curator](prompts/curator.md): twelve-hour curation of shared memory from what actually happened.
@@ -13,7 +13,7 @@ Two Claude Code sessions use native `/loop` and `Monitor`. The repository does n
 
 ## Control checkout
 
-The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync ROLE` at each wake, which fast-forwards it to `origin/main` and returns `changedRules`: `AGENTS.md` and the files under `docs/maintenance`, notes included, that changed since that role last synced. Roles share the checkout, so each keeps its own cursor in runtime `control/rules-seen-ROLE`. A running session rereads those files before acting; merged rules take effect only once they are reread, so the wake prompt asks for it explicitly. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
+The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync ROLE` at each wake, which fast-forwards it to `origin/main` and returns `changedRules`: `AGENTS.md` and the files under `docs/maintenance`, notes included, that changed since that role last synced. Roles share the checkout, so each keeps its own cursor in runtime `control/rules-seen-ROLE`, and the cursor moves only when the role confirms the read with `rules-read ROLE SHA`: a round that dies after syncing is told again. A running session rereads those files before acting; merged rules take effect only once they are reread, so the wake prompt asks for it explicitly. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
 
 To move a deployment off the old pinned `native.policySha`, stop both roles at a safe boundary, then in the control checkout run `git switch main && git merge --ff-only origin/main`, remove `native.policySha` from `config.json`, run `sync`, and restart.
 
@@ -44,7 +44,7 @@ The existing maintenance authorization allows bypassPermissions. Use private set
 CZ_MAINTENANCE_RUNTIME="$(git rev-parse --path-format=absolute --git-common-dir)/cz-maintenance"
 CZ_MAINTENANCE_SETTINGS="$CZ_MAINTENANCE_RUNTIME/native-claude-settings.json"
 CZ_MAINTENANCE_WORKTREES="$(bun -e 'console.log((await Bun.file(Bun.argv[1]).json()).native.worktreeRoot)' "$CZ_MAINTENANCE_RUNTIME/config.json")"
-# The Curator reads session transcripts here.
+# The Curator reads session transcripts here. Give maintenance its own CLAUDE_CONFIG_DIR so this holds no unrelated projects.
 CZ_MAINTENANCE_TRANSCRIPTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 ```
 
@@ -68,7 +68,7 @@ Distinct tasks may run concurrently in exclusive worktrees; never duplicate a ta
 
 The wake prompt above is the only one: scheduled jobs, wrappers, and recovery reuse it verbatim instead of restating rules. A long-lived session drifts from the files it read hours ago, so restart each role at a safe boundary at least daily and after a large rule change; the handoff and task state carry everything it needs.
 
-Inspect with `claude agents` or `claude logs ID`; stop with `claude stop ID`. Existing server wrappers use `maintenance attach worker` or `curator`. Runtime files that carry the old role names (`feedback-runtime.json`, `reflection-runtime.json`) are renamed at the cutover; other historical records keep their names. Recovery must verify actual Cron/Monitor state and expiry, not just a process. GitHub currently polls; it has no webhook integration.
+Inspect with `claude agents` or `claude logs ID`; stop with `claude stop ID`. Existing server wrappers use `maintenance attach worker` or `curator`. Of the runtime files, only `control/reflection-runtime.json` is renamed, to `curator-runtime.json`; other records keep their historical names. Recovery must verify actual Cron/Monitor state and expiry, not just a process. GitHub currently polls; it has no webhook integration.
 
 <a id="验收与恢复"></a>
 

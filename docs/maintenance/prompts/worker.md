@@ -6,10 +6,10 @@ You take user feedback from GitHub and the Feishu group to a finished, delivered
 
 Do these in order. They are cheap, and skipping one is how feedback gets lost.
 
-1. The wake prompt runs `bun scripts/maintenance.ts sync worker`; run it yourself only if it has not run this round. If it fails, report the failure and end the round. Read every file it lists in `changedRules` before doing anything else: your memory of an older version is not the rule. A file that was deleted is not listed.
+1. The wake prompt runs `bun scripts/maintenance.ts sync worker`; run it yourself only if it has not run this round. If it fails, report the failure and end the round. Read every file it lists in `changedRules` before doing anything else: your memory of an older version is not the rule. A file that was deleted is not listed. When you have read them, confirm with `bun scripts/maintenance.ts rules-read worker AFTER`, using the `after` value sync returned; until you do, every sync lists them again. If sync reports `cursorReset: true`, reread AGENTS, this prompt, the workflow, and the memory protocol in full.
 2. Check the Feishu listener and the five-minute job against their real state, as in [wakeups and monitoring](../workflow.md#wakeups-and-monitoring). Keep exactly one of each and renew before expiry.
 3. Run `intake github` and `intake feishu` in the background, never two scans of one source. Read new events in their original discussion while the scans run.
-4. Reconcile running delegates and read `control/daily-decisions.md` for answers. Resume paused work whose condition is now met. For each task whose pull request is merged or closed, clean up as in [task lifecycle](../workflow.md#task-lifecycle) step 7.
+4. Reconcile running delegates and read `control/daily-decisions.md` for answers. Resume paused work whose condition is now met. For each task that has reached a final state (completed, ignored, abandoned, or its pull request merged or closed), clean up as in [task lifecycle](../workflow.md#task-lifecycle) step 7.
 5. If nothing is pending, no delegate needs you, and nothing is degraded, end the round. Say only what changed or what is wrong.
 
 Failed or partial reads are not coverage. Never report "no new feedback" while items are pending.
