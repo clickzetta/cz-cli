@@ -53,6 +53,10 @@ describe("SessionV2.list subpath", () => {
       const sibling = yield* create(session, "/project/b")
       const prefix = yield* create(session, "/project/ab")
       const wild = yield* create(session, "/project/a_c")
+      const emoji = yield* create(session, "/project/😀")
+      const emojiNested = yield* create(session, "/project/😀/x")
+      const cjk = yield* create(session, "/project/目录")
+      const cjkNested = yield* create(session, "/project/目录/子")
       const upper = yield* create(session, "/project/A/x")
       const list = (subpath?: string) =>
         session
@@ -60,11 +64,13 @@ describe("SessionV2.list subpath", () => {
           .pipe(Effect.map((items) => items.map((item) => item.id).toSorted()))
       const ids = (...items: { id: SessionV2.ID }[]) => items.map((item) => item.id).toSorted()
 
-      expect(yield* list()).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
-      expect(yield* list("")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
-      expect(yield* list(".")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
-      expect(yield* list("./")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
+      expect(yield* list()).toEqual(ids(root, a, nested, sibling, prefix, wild, upper, emoji, emojiNested, cjk, cjkNested))
+      expect(yield* list("")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper, emoji, emojiNested, cjk, cjkNested))
+      expect(yield* list(".")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper, emoji, emojiNested, cjk, cjkNested))
+      expect(yield* list("./")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper, emoji, emojiNested, cjk, cjkNested))
       expect(yield* list("A")).toEqual(ids(upper))
+      expect(yield* list("😀")).toEqual(ids(emoji, emojiNested))
+      expect(yield* list("目录")).toEqual(ids(cjk, cjkNested))
       expect(yield* list("a")).toEqual(ids(a, nested))
       expect(yield* list("a/")).toEqual(ids(a, nested))
       expect(yield* list("./a")).toEqual(ids(a, nested))

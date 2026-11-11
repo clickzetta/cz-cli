@@ -270,7 +270,8 @@ export const layer = Layer.unwrap(
               // Honor `subpath` (upstream accepts it but never queries it; clickzetta/cz-cli#161).
               // Matches the directory itself plus descendants, never sibling prefixes ("ab" for "a").
               // The descendant match uses substr(), not LIKE: SQLite LIKE is ASCII case-insensitive
-              // and would leak "A/x" into subpath "a". An empty subpath, "." or "./" means the whole
+              // and would leak "A/x" into subpath "a". length() is SQLite's, because substr counts code
+              // points while JS .length counts UTF-16 units (breaks non-BMP names such as emoji). An empty subpath, "." or "./" means the whole
               // project. Also adds the `sql` import above.
               if ("project" in input && input.subpath) {
                 const subpath = input.subpath
@@ -281,7 +282,7 @@ export const layer = Layer.unwrap(
                   conditions.push(
                     or(
                       eq(SessionTable.path, subpath),
-                      sql`substr(${SessionTable.path}, 1, ${subpath.length + 1}) = ${subpath + "/"}`,
+                      sql`substr(${SessionTable.path}, 1, length(${subpath}) + 1) = ${subpath + "/"}`,
                     )!,
                   )
               }
