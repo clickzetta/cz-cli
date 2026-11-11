@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { DateTime, Effect, Layer, Schema, Context, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, like, lt, or, sql, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { WorkspaceV2 } from "./workspace"
 import { ModelV2 } from "./model"
@@ -266,6 +266,17 @@ export const layer = Layer.unwrap(
               if ("directory" in input) conditions.push(eq(SessionTable.directory, input.directory))
               if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
               if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
+              if ("project" in input && input.subpath) {
+                // Match the directory itself and its descendants, never sibling prefixes such as "ab" for "a".
+                const subpath = input.subpath.replaceAll("\\", "/").replace(/^(\.\/)+/, "").replace(/\/+$/, "")
+                if (subpath && subpath !== ".")
+                  conditions.push(
+                    or(
+                      eq(SessionTable.path, subpath),
+                      sql`${SessionTable.path} LIKE ${subpath.replace(/[\\%_]/g, "\\$&") + "/%"} ESCAPE '\\'`,
+                    )!,
+                  )
+              }
               if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
               if (input.anchor) {
                 conditions.push(
