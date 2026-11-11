@@ -113,7 +113,8 @@ function monthIsEveryMonth(month: string): boolean {
     const stepN = Number(step)
     if (!Number.isInteger(stepN) || stepN < 1) return false
     const num = (t: string) => (MONTH_NAMES.includes(t) ? MONTH_NAMES.indexOf(t) + 1 : /^\d+$/.test(t) ? Number(t) : NaN)
-    const [lo, hi] = range === "*" ? [1, 12] : range.includes("-") ? range.split("-", 2).map(num) : [num(range), stepN > 1 ? 12 : num(range)]
+    // Quartz N/S runs from N to the end of the range, whatever the step.
+    const [lo, hi] = range === "*" ? [1, 12] : range.includes("-") ? range.split("-", 2).map(num) : [num(range), raw.includes("/") ? 12 : num(range)]
     if (!(lo >= 1 && hi <= 12 && lo <= hi)) return false
     for (let m = lo; m <= hi; m += stepN) months.add(m)
   }
@@ -136,24 +137,32 @@ function normalizeFields(fields: CronFields): CronFields {
   return out
 }
 
+// Day fields are copied into the output unchanged, so any well-formed list of values,
+// ranges and steps is kept; only out-of-range values (and weekday 0) are rejected.
 function unsupportedDayOrWeek(fields: CronFields): string | null {
   if (fields.day !== "*" && fields.day !== "?") {
-    for (const d of fields.day.split(",")) {
-      if (!/^\d{1,2}$/.test(d) || Number(d) < 1 || Number(d) > 31) {
-        return `Unsupported day-of-month field '${fields.day}': only * or a comma list of days 1-31 is supported (got '${d}').`
-      }
+    const bad = fields.day.split(",").find(part => !isListPart(part, d => /^\d{1,2}$/.test(d) && Number(d) >= 1 && Number(d) <= 31))
+    if (bad !== undefined) {
+      return `Unsupported day-of-month field '${fields.day}': use days 1-31 as values, ranges, steps or lists (got '${bad}').`
     }
   }
   if (fields.week !== "*" && fields.week !== "?") {
-    for (const part of fields.week.toUpperCase().split(",")) {
-      const ends = part.split("-")
-      const valid = ends.length <= 2 && ends.every(e => e in STUDIO_WEEKDAY_NAMES || /^[1-7]$/.test(e))
-      if (!valid) {
-        return `Unsupported day-of-week field '${fields.week}': use 1-7 (MON=1 ... SUN=7), names, ranges or lists (got '${part}'; 0 and steps are not supported, use 7 for Sunday).`
-      }
+    const bad = fields.week.toUpperCase().split(",").find(part => !isListPart(part, d => d in STUDIO_WEEKDAY_NAMES || /^[1-7]$/.test(d)))
+    if (bad !== undefined) {
+      return `Unsupported day-of-week field '${fields.week}': use 1-7 (MON=1 ... SUN=7) or names as values, ranges, steps or lists (got '${bad}'; 0 is not supported, use 7 for Sunday).`
     }
   }
   return null
+}
+
+// One comma-separated part: V, A-B, *, each optionally followed by /S with S >= 1.
+function isListPart(part: string, isValue: (token: string) => boolean): boolean {
+  const [range, step, ...rest] = part.split("/")
+  if (rest.length) return false
+  if (step !== undefined && !(/^\d{1,2}$/.test(step) && Number(step) >= 1)) return false
+  if (range === "*") return step !== undefined
+  const ends = range.split("-")
+  return ends.length <= 2 && ends.every(isValue)
 }
 
 /** Reject any field shape the Studio schedule model cannot express, instead of silently narrowing or widening it. */

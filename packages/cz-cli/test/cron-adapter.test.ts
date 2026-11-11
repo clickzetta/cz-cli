@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { convertAgentCron } from "../src/cron-adapter"
+import { convertAgentCron, cronNextRuns } from "../src/cron-adapter"
 
 describe("convertAgentCron minute-gap encoding", () => {
   test("preserves a non-zero start minute with a minute gap", () => {
@@ -159,7 +159,7 @@ describe("convertAgentCron review follow-ups (#192)", () => {
   })
 
   test("day-of-month is validated", () => {
-    for (const d of ["32", "0", "*/2", "1-5", "abc"]) {
+    for (const d of ["32", "0", "1-32", "*/0", "1-5-7", "abc"]) {
       const r = convertAgentCron(`0 0 ${d} * *`)
       expect(r.ok).toBe(false)
       expect(r.error).toContain("day-of-month")
@@ -174,6 +174,37 @@ describe("convertAgentCron review follow-ups (#192)", () => {
     expect(convertAgentCron("0 9 * * 8").ok).toBe(false)
     expect(convertAgentCron("0 9 * * 7").outputCron).toBe("0 00 09 ? * 7 *")
     expect(convertAgentCron("0 9 * * MON-FRI").outputCron).toBe("0 00 09 ? * 1,2,3,4,5 *")
+  })
+
+  // These converted faithfully before #192; the day fields are copied through unchanged.
+  const keptDays: Array<[string, string]> = [
+    ["0 0 1-5 * *", "0 00 00 1-5 * ? *"],
+    ["0 0 */2 * *", "0 00 00 */2 * ? *"],
+    ["0 0 1/5 * *", "0 00 00 1/5 * ? *"],
+    ["0 0 1-5,10 * *", "0 00 00 1-5,10 * ? *"],
+    ["0 9 * * */2", "0 00 09 ? * */2 *"],
+    ["0 9 * * 1-5/2", "0 00 09 ? * 1-5/2 *"],
+    ["0 9 * * MON/2", "0 00 09 ? * MON/2 *"],
+  ]
+  for (const [input, out] of keptDays) {
+    test(`day range/step ${input} keeps old output with the same run times`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+      const from = new Date(2026, 0, 1)
+      expect(cronNextRuns(r.outputCron!, 10, from)).toEqual(cronNextRuns(input, 10, from))
+    })
+  }
+
+  for (const month of ["1/1", "JAN/1", "1-12/1"]) {
+    test(`Quartz month ${month} runs to December and normalises to *`, () => {
+      const r = convertAgentCron(`0 0 * ${month} *`)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe("0 00 00 * * ? *")
+    })
+  }
+  test("Quartz month N/S that skips months stays rejected", () => {
+    for (const month of ["2/1", "1/2"]) expect(convertAgentCron(`0 0 * ${month} *`).error).toContain("month field")
   })
 
   test("Quartz N/S hour means N-23/S", () => {
