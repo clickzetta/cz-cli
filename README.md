@@ -74,13 +74,37 @@ Every command takes `--help`.
 
 ### Analytics Agent resource updates
 
+Metric `--table-name` accepts registered names and physical table names. Short names
+are resolved against registered dataset metadata in the current workspace/schema
+(from the selected profile or `--workspace` / `--schema`). For example, `fact_orders`
+can resolve to `quick_start.ecommerce_sales_analytics.v_gpt_fact_orders`. The CLI
+uses the actual registered name, including datasets without a `v_gpt_` view.
+Use `--datasource-id` to restrict the lookup. If several datasets match, the CLI
+lists their full paths and IDs and does not submit the operation. Names in a
+different workspace/schema are suggested instead of silently selected.
+
+```bash
+cz-cli analytics-agent metric create --datasource-id 8 --table-name fact_orders --name order_count --expression 'count(*)'
+cz-cli analytics-agent dataset list --datasource-id 8
+cz-cli analytics-agent dataset detail --datasource-id 8 --table-name fact_orders
+cz-cli analytics-agent dataset update --domain-id 5 --datasource-id 8 --table-name fact_orders --description 'Order facts'
+```
+
+`dataset` is an alias of `analytics-agent table`; existing ID-based commands still
+work. Name lookup reads all dataset list pages before selecting a unique match.
+For a metric table update, an omitted datasource retains the metric's existing
+datasource. For a create/validate or table-filtered list, a unique match supplies
+the dataset's datasource; ambiguity requires an explicit selection. Operations
+without a table name do not perform this lookup. SQL expressions and join
+definitions are not rewritten.
+
 Resource definitions can be managed independently of analysis domains:
 
 ```bash
 # Omit domain/datasource filters to list metrics, including independent ones.
 cz-cli analytics-agent metric list --page-size 20
 
-# An omitted datasource uses the backend's system datasource. Domain bindings are optional.
+# Table names resolve from registered datasets. Domain bindings are optional.
 cz-cli analytics-agent metric create --table-name workspace.schema.orders --name orders --expression 'count(*)'
 cz-cli analytics-agent metric validate --table-name workspace.schema.orders --name orders --expression 'count(*)'
 
