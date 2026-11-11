@@ -34,6 +34,21 @@ describe("workspaceLakehouseDatasources", () => {
     expect(workspaceLakehouseDatasources(rows, { projectId: 7, workspaceName: "ws" }).map((d) => d.id)).toEqual([1])
   })
 
+  test("skips rows whose connectionParams is null or not an object", () => {
+    const rows = [
+      { id: 1, dsType: 1, connectionParams: "null" },
+      { id: 2, dsType: 1, connectionParams: "[1]" },
+      { id: 3, dsType: 1, connectionParams: null },
+      ds(263, { projectId: 60001, workspaceName: "wanxin-test-ws-03" }),
+    ]
+    expect(workspaceLakehouseDatasources(rows, { projectId: 60001, workspaceName: "wanxin-test-ws-03" }).map((d) => d.id)).toEqual([263])
+  })
+
+  test("rejects rows without projectId when the workspace projectId is known", () => {
+    const rows = [ds(5, { workspaceName: "wanxin-test-ws-03" }), ds(263, { projectId: 60001 })]
+    expect(workspaceLakehouseDatasources(rows, { projectId: 60001, workspaceName: "wanxin-test-ws-03" }).map((d) => d.id)).toEqual([263])
+  })
+
   test("returns nothing when no datasource points at the workspace", () => {
     expect(workspaceLakehouseDatasources(list, { projectId: 1, workspaceName: "nope" })).toEqual([])
   })

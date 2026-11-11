@@ -130,11 +130,11 @@ async function listAllDatasources(
 }
 
 function connectionParamsOf(ds: Record<string, unknown>): Record<string, unknown> {
-  const raw = ds.connectionParams
+  let raw = ds.connectionParams
   if (typeof raw === "string") {
-    try { return JSON.parse(raw) as Record<string, unknown> } catch { return {} }
+    try { raw = JSON.parse(raw) } catch { return {} }
   }
-  return raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
 }
 
 /**
@@ -149,8 +149,9 @@ export function workspaceLakehouseDatasources(
   return list.filter((ds) => {
     if (ds.dsType !== undefined && Number(ds.dsType) !== 1) return false
     const params = connectionParamsOf(ds)
-    if (workspace.projectId != null && params.projectId != null) {
-      return Number(params.projectId) === Number(workspace.projectId)
+    // A known project ID is authoritative: a row without one cannot be shown to belong here.
+    if (workspace.projectId != null) {
+      return params.projectId != null && Number(params.projectId) === Number(workspace.projectId)
     }
     return !!workspace.workspaceName && params.workspaceName === workspace.workspaceName
   })
