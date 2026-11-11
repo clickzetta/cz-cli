@@ -174,7 +174,9 @@ async function fetchTextFromUrls(urls: string[], columnCount: number, signal?: A
     if (!resp.ok) {
       throw new Error(`Failed to fetch result data from presigned URL: HTTP ${resp.status}`)
     }
-    const text = await resp.text()
+    // A runtime may end a body read early with partial data when the signal aborts mid-body.
+    const text = await abortable(resp.text(), signal)
+    signal?.throwIfAborted()
     const rows = splitRows(text)
     for (const row of rows) {
       if (columnCount > 1 && !row) continue
