@@ -44,7 +44,7 @@ const create = (session: SessionV2.Interface, directory: string) =>
   session.create({ location: Location.Ref.make({ directory: AbsolutePath.make(directory) }) })
 
 describe("SessionV2.list subpath", () => {
-  it.effect("limits project listings to the directory and its descendants", () =>
+  it.effect("limits project listings to the directory and its descendants (empty, \".\" and \"./\" mean the whole project)", () =>
     Effect.gen(function* () {
       const session = yield* SessionV2.Service
       const root = yield* create(session, "/project")
@@ -53,13 +53,18 @@ describe("SessionV2.list subpath", () => {
       const sibling = yield* create(session, "/project/b")
       const prefix = yield* create(session, "/project/ab")
       const wild = yield* create(session, "/project/a_c")
+      const upper = yield* create(session, "/project/A/x")
       const list = (subpath?: string) =>
         session
           .list({ project: ProjectV2.ID.global, subpath: subpath === undefined ? undefined : RelativePath.make(subpath) })
           .pipe(Effect.map((items) => items.map((item) => item.id).toSorted()))
       const ids = (...items: { id: SessionV2.ID }[]) => items.map((item) => item.id).toSorted()
 
-      expect(yield* list()).toEqual(ids(root, a, nested, sibling, prefix, wild))
+      expect(yield* list()).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
+      expect(yield* list("")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
+      expect(yield* list(".")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
+      expect(yield* list("./")).toEqual(ids(root, a, nested, sibling, prefix, wild, upper))
+      expect(yield* list("A")).toEqual(ids(upper))
       expect(yield* list("a")).toEqual(ids(a, nested))
       expect(yield* list("a/")).toEqual(ids(a, nested))
       expect(yield* list("./a")).toEqual(ids(a, nested))
