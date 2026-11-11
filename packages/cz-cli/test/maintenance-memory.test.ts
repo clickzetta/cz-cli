@@ -238,7 +238,7 @@ describe("maintenance memory evidence", () => {
     ).rejects.toThrow("Conflicting memory record")
   })
 
-  test("integration requires the commit on origin/main; legacy policySha resolutions still read", async () => {
+  test("integration requires the commit on origin/main; legacy policySha is history only", async () => {
     const data = repoFixture()
     await recordMemory(data.directory, event())
     await recordMemory(data.directory, event("legacy-event"))
@@ -251,7 +251,10 @@ describe("maintenance memory evidence", () => {
     const first = await resolveMemory(data.directory, event().id, { ...resolution(), commit: main.sha })
     expect(await resolveMemory(data.directory, event().id, { ...resolution(), commit: main.sha })).toEqual(first)
     const legacy = { ...resolution(), commit: undefined, policySha: main.sha }
-    await resolveMemory(data.directory, "legacy-event", legacy)
+    await expect(resolveMemory(data.directory, "legacy-event", legacy)).rejects.toThrow("policySha is read-only history")
+    // A resolution stored before the cutover still reads and closes its event.
+    const stored = path.join(data.directory, "memory", "resolutions", "legacy-event.json")
+    writeFileSync(stored, JSON.stringify({ version: 1, recordedAt: new Date().toISOString(), data: legacy }))
     expect(await pendingMemory(data.directory)).toEqual({ pendingCount: 0, pending: [] })
   })
 

@@ -51,7 +51,20 @@ test("sync refuses another branch, local edits, and diverged local commits", asy
   await expect(syncControl(repo.control)).rejects.toThrow("local changes")
   rmSync(path.join(repo.control, "edit.md"))
 
+  await git(repo.control, "switch", "--quiet", "--detach")
+  await expect(syncControl(repo.control)).rejects.toThrow("detached HEAD")
+  await git(repo.control, "switch", "--quiet", "main")
+
+  // Ahead only: a fast-forward is a no-op, yet the local commit must not run.
   await git(repo.control, "commit", "--allow-empty", "-m", "local commit")
+  await expect(syncControl(repo.control)).rejects.toThrow("commits not on origin/main")
+
   await git(repo.upstream, "commit", "--allow-empty", "-m", "upstream commit")
   await expect(syncControl(repo.control)).rejects.toThrow("git merge failed")
+})
+
+test("sync fails when origin is unreachable", async () => {
+  const repo = await setup()
+  await git(repo.control, "remote", "set-url", "origin", path.join(repo.upstream, "missing"))
+  await expect(syncControl(repo.control)).rejects.toThrow("git fetch failed")
 })

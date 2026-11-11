@@ -81,6 +81,8 @@ export async function pendingMemory(directory: string) {
 export async function resolveMemory(directory: string, id: string, input: unknown) {
   requireId(id)
   const resolution = requireResolution(input)
+  if (resolution.policySha !== undefined)
+    throw new Error("New resolutions record the merged main commit as `commit`; policySha is read-only history")
   const event = await read(path.join(directory, "memory", "events", `${id}.json`), requireEvent)
   if (event.data.id !== id) throw new Error("Memory event filename does not match its ID")
   const file = path.join(directory, "memory", "resolutions", `${id}.json`)
@@ -92,9 +94,16 @@ export async function resolveMemory(directory: string, id: string, input: unknow
   }
   if (resolution.disposition === "integrated") {
     // Memory is live once its commit is on main: every loop syncs the control checkout to origin/main.
-    const commit = resolution.commit ?? resolution.policySha
     const child = Bun.spawn(
-      ["git", "--git-dir", path.dirname(directory), "merge-base", "--is-ancestor", commit!, "refs/remotes/origin/main"],
+      [
+        "git",
+        "--git-dir",
+        path.dirname(directory),
+        "merge-base",
+        "--is-ancestor",
+        resolution.commit!,
+        "refs/remotes/origin/main",
+      ],
       { stdout: "pipe", stderr: "pipe" },
     )
     const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])

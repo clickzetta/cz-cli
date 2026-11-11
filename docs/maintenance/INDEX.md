@@ -15,6 +15,8 @@ Two Claude Code sessions use native `/loop` and `Monitor`. Default model: `claud
 
 The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync` at each wake, which fast-forwards it to `origin/main`; rules and memory therefore take effect as soon as they are merged. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
 
+To move a deployment off the old pinned `native.policySha`, stop both roles at a safe boundary, then in the control checkout run `git switch main && git merge --ff-only origin/main`, remove `native.policySha` from `config.json`, run `sync`, and restart. Resolutions already stored with `policySha` remain valid history.
+
 Keep credentials in private settings. Verify existing credentials, source scope, authorization, model connectivity, and a bounded first task; request missing inputs only. From the control root:
 
 ```sh
@@ -22,7 +24,7 @@ bun scripts/maintenance.ts init
 bun scripts/maintenance.ts status
 ```
 
-Reconcile existing tasks, pending sources, owners, and receipts. Removing old user worktrees requires item-specific approval and does not block activation.
+Reconcile existing tasks, pending sources, owners, and receipts. Removing old user worktrees requires item-specific approval and does not block startup.
 
 <a id="飞书事件前提"></a>
 
