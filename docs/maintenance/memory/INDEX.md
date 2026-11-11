@@ -2,11 +2,11 @@
 
 Select a relevant note, then read its original evidence and verify current facts. Search by topic or symptom if needed; do not load the whole archive. Indexes navigate, not restate conclusions.
 
-| Task                                                            | Entry                                                                                            |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Installation, authentication, or misunderstood product behavior | [Misunderstandings](../understanding.md)                                                         |
-| Unresolved product, design, or authorization decisions          | [Decisions](../decisions.md), private `control/daily-decisions.md`, then latest original replies |
-| Repeated intake, monitoring, handoff, or verification failures  | [Recurring failures](../recurring-failures.md)                                                   |
+| Task                                                                           | Entry                                                                                            |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Installation, authentication, or misunderstood product behavior                | [Misunderstandings](../understanding.md)                                                         |
+| Unresolved product, design, or authorization decisions                         | [Decisions](../decisions.md), private `control/daily-decisions.md`, then latest original replies |
+| Repeated intake, monitoring, handoff, merge, network, or verification failures | [Recurring failures](../recurring-failures.md)                                                   |
 
 Run `bun scripts/maintenance.ts memory pending` when taking a task. Inspect relevant candidate files and evidence; candidates are not established rules. Verify contradictions before reusing a note.
 
