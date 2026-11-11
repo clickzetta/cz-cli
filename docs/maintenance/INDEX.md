@@ -5,7 +5,7 @@ Two Claude Code sessions use native `/loop` and `Monitor`. Default model: `claud
 - [Feedback](prompts/feedback.md): GitHub and Feishu intake, execution, and delivery.
 - [Reflection](prompts/reflection.md): twelve-hour evidence curation.
 - [Workflow](workflow.md): ownership, verification, guards, recovery, and handoff.
-- [Memory index](memory/INDEX.md) and [protocol](memory-workflow.md): read, record, curate, validate, activate.
+- [Memory index](memory/INDEX.md) and [protocol](memory-workflow.md): read, record, curate, validate, merge.
 - [Offline cases](memory-cases.md): behavior checks with separate scoring.
 - [Rationale](design.md), [misunderstandings](understanding.md), [decisions](decisions.md), [recurring failures](recurring-failures.md).
 
@@ -13,7 +13,7 @@ Two Claude Code sessions use native `/loop` and `Monitor`. Default model: `claud
 
 ## Control checkout
 
-Use a committed, clean checkout with absolute `config.json.native.maintenanceRoot` and matching `native.policySha`. Start all coordinators and delegates there; read its rules and run its maintenance tools. Pass task source worktrees explicitly. Policy and source SHAs are separate; keep each stage's policy fixed. Product fixes start from updated `origin/main`, never from stale rules in their source worktree. A local control rollout need not first merge into main.
+The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync` at each wake, which fast-forwards it to `origin/main`; rules and memory therefore take effect as soon as they are merged. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
 
 Keep credentials in private settings. Verify existing credentials, source scope, authorization, model connectivity, and a bounded first task; request missing inputs only. From the control root:
 

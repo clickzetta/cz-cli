@@ -16,7 +16,7 @@ Store results and raw answers privately. Never register synthetic tasks in the l
 ```json
 {
   "caseId": "M01",
-  "policySha": "<actual commit>",
+  "commit": "<main commit under test>",
   "caseRevision": "<commit or content hash>",
   "model": "<actual model or unknown>",
   "reasoning": "<actual setting or unknown>",

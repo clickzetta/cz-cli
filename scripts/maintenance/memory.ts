@@ -27,6 +27,8 @@ export type MemoryResolution = {
   reason: string
   evidence: string[]
   memoryRefs: string[]
+  commit?: string
+  /** Legacy name from pinned-policy deployments; kept so historical resolutions stay readable. */
   policySha?: string
 }
 
@@ -89,25 +91,15 @@ export async function resolveMemory(directory: string, id: string, input: unknow
     return { id, ...stored.data, recordedAt: stored.recordedAt, file }
   }
   if (resolution.disposition === "integrated") {
-    const native = (await readRuntime(directory)).config.native
-    if (!record(native) || typeof native.maintenanceRoot !== "string" || !path.isAbsolute(native.maintenanceRoot))
-      throw new Error("Integrated memory requires native.maintenanceRoot and an active native.policySha")
-    if (native.policySha !== resolution.policySha)
-      throw new Error(
-        "Integrated memory policySha must match the active native.policySha; activate the reviewed version first",
-      )
-    const child = Bun.spawn(["git", "-C", native.maintenanceRoot, "rev-parse", "HEAD"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [head, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ])
-    if (exitCode !== 0) throw new Error(`Cannot verify the active memory checkout: ${stderr.trim()}`)
-    if (head.trim() !== resolution.policySha)
-      throw new Error("Integrated memory requires the control checkout HEAD to match native.policySha")
+    // Memory is live once its commit is on main: every loop syncs the control checkout to origin/main.
+    const commit = resolution.commit ?? resolution.policySha
+    const child = Bun.spawn(
+      ["git", "--git-dir", path.dirname(directory), "merge-base", "--is-ancestor", commit!, "refs/remotes/origin/main"],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])
+    if (exitCode === 1) throw new Error("Integrated memory commit is not on origin/main; merge it and run sync first")
+    if (exitCode !== 0) throw new Error(`Cannot verify the memory commit against origin/main: ${stderr.trim()}`)
   }
   const stored = await publish(file, resolution, requireResolution)
   return { id, ...stored.data, recordedAt: stored.recordedAt, file }
@@ -182,7 +174,7 @@ function requireResolution(input: unknown): MemoryResolution {
   if (
     !record(input) ||
     !Object.keys(input).every((key) =>
-      ["disposition", "reason", "evidence", "memoryRefs", "policySha"].includes(key),
+      ["disposition", "reason", "evidence", "memoryRefs", "commit", "policySha"].includes(key),
     ) ||
     typeof input.disposition !== "string" ||
     !["integrated", "duplicate", "no-change"].includes(input.disposition) ||
@@ -191,19 +183,22 @@ function requireResolution(input: unknown): MemoryResolution {
     !strings(input.evidence) ||
     !input.evidence.length ||
     (input.memoryRefs !== undefined && !strings(input.memoryRefs)) ||
-    (input.policySha !== undefined &&
-      (typeof input.policySha !== "string" || !/^[a-f0-9]{40}$/.test(input.policySha))) ||
+    [input.commit, input.policySha].some(
+      (sha) => sha !== undefined && (typeof sha !== "string" || !/^[a-f0-9]{40}$/.test(sha)),
+    ) ||
+    (input.commit !== undefined && input.policySha !== undefined) ||
     (input.disposition === "integrated" &&
-      (typeof input.policySha !== "string" || !strings(input.memoryRefs) || !input.memoryRefs.length))
+      ((input.commit ?? input.policySha) === undefined || !strings(input.memoryRefs) || !input.memoryRefs.length))
   )
     throw new Error(
-      "Memory resolution requires disposition, reason and evidence; integrated also requires policySha and memoryRefs",
+      "Memory resolution requires disposition, reason and evidence; integrated also requires commit and memoryRefs",
     )
   return {
     disposition: input.disposition as MemoryResolution["disposition"],
     reason: input.reason,
     evidence: input.evidence,
     memoryRefs: strings(input.memoryRefs) ? input.memoryRefs : [],
+    ...(typeof input.commit === "string" ? { commit: input.commit } : {}),
     ...(typeof input.policySha === "string" ? { policySha: input.policySha } : {}),
   }
 }

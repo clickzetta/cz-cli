@@ -79,7 +79,7 @@ function resolution() {
     disposition: "integrated",
     reason: "The verified lesson is now in the installation guidance.",
     evidence: ["control/reviews/installation-memory.md"],
-    policySha: "b".repeat(40),
+    commit: "b".repeat(40),
     memoryRefs: ["docs/maintenance/understanding.md#installation"],
   }
 }
@@ -94,35 +94,42 @@ async function run(argv: string[], cwd?: string) {
   return { stdout, stderr, exitCode }
 }
 
-async function activate(directory: string) {
-  const root = path.join(directory, "control-repo")
-  expect((await run(["git", "init", root])).exitCode).toBe(0)
-  expect(
-    (
-      await run([
-        "git",
-        "-C",
-        root,
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "user.name=Memory test",
-        "-c",
-        "user.email=memory@example.test",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "test: memory policy",
-      ])
-    ).exitCode,
-  ).toBe(0)
-  const sha = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()
-  const config = path.join(directory, "config.json")
-  writeFileSync(
-    config,
-    JSON.stringify({ ...JSON.parse(readFileSync(config, "utf8")), native: { maintenanceRoot: root, policySha: sha } }),
-  )
-  return { root, sha, config }
+// Fake the runtime's repository: `directory` lives at <repo>/.git/cz-maintenance, and
+// refs/remotes/origin/main points at a fresh commit, as after `sync`.
+async function mainCommit(directory: string) {
+  const repo = path.dirname(path.dirname(directory))
+  if (!existsSync(path.join(repo, ".git", "HEAD"))) expect((await run(["git", "init", repo])).exitCode).toBe(0)
+  const commit = async (message: string) => {
+    expect(
+      (
+        await run([
+          "git",
+          "-C",
+          repo,
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-c",
+          "user.name=Memory test",
+          "-c",
+          "user.email=memory@example.test",
+          "commit",
+          "--allow-empty",
+          "-m",
+          message,
+        ])
+      ).exitCode,
+    ).toBe(0)
+    return (await run(["git", "-C", repo, "rev-parse", "HEAD"])).stdout.trim()
+  }
+  const sha = await commit("docs: merged memory")
+  expect((await run(["git", "-C", repo, "update-ref", "refs/remotes/origin/main", sha])).exitCode).toBe(0)
+  return { repo, sha, unmerged: await commit("docs: not merged") }
+}
+
+function repoFixture() {
+  const root = mkdtempSync(path.join(tmpdir(), "maintenance-memory-repo-"))
+  directories.push(root)
+  return fixture(path.join(root, ".git", "cz-maintenance"))
 }
 
 describe("maintenance memory evidence", () => {
@@ -206,14 +213,15 @@ describe("maintenance memory evidence", () => {
   })
 
   test("integration requires provenance, preserves the event, and resolving twice is idempotent", async () => {
-    const data = fixture()
-    const active = await activate(data.directory)
-    const integrated = { ...resolution(), policySha: active.sha }
+    const data = repoFixture()
+    const main = await mainCommit(data.directory)
+    const integrated = { ...resolution(), commit: main.sha }
     const saved = await recordMemory(data.directory, event())
     const original = readFileSync(saved.file, "utf8")
     for (const input of [
-      { ...resolution(), policySha: undefined },
-      { ...resolution(), policySha: "short-sha" },
+      { ...resolution(), commit: undefined },
+      { ...resolution(), commit: "short-sha" },
+      { ...resolution(), policySha: main.sha },
       { ...resolution(), memoryRefs: [] },
       { ...resolution(), evidence: [] },
       { ...resolution(), disposition: "deferred" },
@@ -230,30 +238,21 @@ describe("maintenance memory evidence", () => {
     ).rejects.toThrow("Conflicting memory record")
   })
 
-  test("integration waits for matching active config and checkout while historical retries survive upgrades", async () => {
-    const data = fixture()
+  test("integration requires the commit on origin/main; legacy policySha resolutions still read", async () => {
+    const data = repoFixture()
     await recordMemory(data.directory, event())
-    await expect(resolveMemory(data.directory, event().id, resolution())).rejects.toThrow(
-      "requires native.maintenanceRoot",
+    await recordMemory(data.directory, event("legacy-event"))
+    const main = await mainCommit(data.directory)
+    await expect(resolveMemory(data.directory, event().id, { ...resolution(), commit: main.unmerged })).rejects.toThrow(
+      "not on origin/main",
     )
-    const active = await activate(data.directory)
-    await expect(resolveMemory(data.directory, event().id, resolution())).rejects.toThrow(
-      "activate the reviewed version first",
-    )
-    const config = JSON.parse(readFileSync(active.config, "utf8"))
-    writeFileSync(
-      active.config,
-      JSON.stringify({ ...config, native: { ...config.native, policySha: resolution().policySha } }),
-    )
-    await expect(resolveMemory(data.directory, event().id, resolution())).rejects.toThrow("checkout HEAD")
-    expect((await pendingMemory(data.directory)).pendingCount).toBe(1)
-    writeFileSync(active.config, JSON.stringify(config))
-    const integrated = { ...resolution(), policySha: active.sha }
-    const first = await resolveMemory(data.directory, event().id, integrated)
-    const upgraded = await activate(data.directory)
-    expect(upgraded.sha).not.toBe(active.sha)
-    expect(await resolveMemory(data.directory, event().id, integrated)).toEqual(first)
-    expect((await pendingMemory(data.directory)).pendingCount).toBe(0)
+    await expect(resolveMemory(data.directory, event().id, resolution())).rejects.toThrow("Cannot verify")
+    expect((await pendingMemory(data.directory)).pendingCount).toBe(2)
+    const first = await resolveMemory(data.directory, event().id, { ...resolution(), commit: main.sha })
+    expect(await resolveMemory(data.directory, event().id, { ...resolution(), commit: main.sha })).toEqual(first)
+    const legacy = { ...resolution(), commit: undefined, policySha: main.sha }
+    await resolveMemory(data.directory, "legacy-event", legacy)
+    expect(await pendingMemory(data.directory)).toEqual({ pendingCount: 0, pending: [] })
   })
 
   test("no-change and duplicate decisions require evidence but no invented document commit", async () => {
@@ -323,11 +322,11 @@ describe("maintenance memory evidence", () => {
     directories.push(root)
     expect((await run(["git", "init", root])).exitCode).toBe(0)
     const data = fixture(path.join(root, ".git", "cz-maintenance"))
-    const active = await activate(data.directory)
+    const main = await mainCommit(data.directory)
     const input = path.join(root, "event.json")
     const decision = path.join(root, "resolution.json")
     writeFileSync(input, JSON.stringify(event()))
-    writeFileSync(decision, JSON.stringify({ ...resolution(), policySha: active.sha }))
+    writeFileSync(decision, JSON.stringify({ ...resolution(), commit: main.sha }))
     const recorded = await run([process.execPath, maintenance, "memory", "record", input], root)
     expect(recorded.exitCode).toBe(0)
     expect(JSON.parse(recorded.stdout).file).toBe(

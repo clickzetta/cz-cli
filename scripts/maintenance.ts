@@ -5,8 +5,10 @@ import { readNightlyReceipts, reconcileNightlyRelease, releaseNightly } from "./
 import { acknowledgeIntake, pendingIntake, scanIntake, showIntake } from "./maintenance/intake"
 import type { IntakeSource } from "./maintenance/intake"
 import { pendingMemory, recordMemory, resolveMemory } from "./maintenance/memory"
+import { syncControl } from "./maintenance/sync"
 
 export async function main(args = Bun.argv.slice(2)) {
+  if (args[0] === "sync" && args.length === 1) return syncControl()
   const runtime = await loadRuntime()
   const action = args[0] ?? "status"
   if (action === "memory") {
@@ -153,7 +155,7 @@ export async function main(args = Bun.argv.slice(2)) {
     })
   }
   throw new Error(
-    "Use: init | status | memory record FILE | memory pending | memory resolve ID FILE | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
+    "Use: sync | init | status | memory record FILE | memory pending | memory resolve ID FILE | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
   )
 }
 
