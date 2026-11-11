@@ -24,15 +24,17 @@ export async function syncControl(cwd = process.cwd(), role?: string) {
 // A role confirms it has reread the rules up to a commit; until then every sync lists them again.
 export async function acknowledgeRules(cwd: string, role: string, sha: string) {
   if (!roles.includes(role) || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("Use: rules-read worker|curator FULL_SHA")
-  // Cursors are shared by every worktree of this repository, so judge the commit from the control checkout:
-  // a task branch's commit, or one fetched but not yet synced, would move the cursor past unread rules.
-  const control = path.dirname(await git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+  // Same root as sync, so both judge the same HEAD; cursors are shared by every worktree of this repository,
+  // and a task branch's commit, or one fetched but not yet synced, would move the cursor past unread rules.
+  const root = await git(cwd, "rev-parse", "--show-toplevel")
+  if ((await git(root, "symbolic-ref", "--quiet", "--short", "HEAD").catch(() => "")) !== "main")
+    throw new Error("Run rules-read from the control checkout on main")
   await Promise.all(
-    ["HEAD", "refs/remotes/origin/main"].map((ref) => git(control, "merge-base", "--is-ancestor", sha, ref)),
+    ["HEAD", "refs/remotes/origin/main"].map((ref) => git(root, "merge-base", "--is-ancestor", sha, ref)),
   ).catch(() => {
     throw new Error("That commit is not on origin/main as the control checkout has it; run sync first and pass its `after` value")
   })
-  await writeCursor(await cursorFile(control, role), sha)
+  await writeCursor(await cursorFile(root, role), sha)
   return { role, rulesReadThrough: sha }
 }
 

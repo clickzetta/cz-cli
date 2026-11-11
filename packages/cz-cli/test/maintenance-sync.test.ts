@@ -111,7 +111,7 @@ test("sync rejects unknown roles and reports a damaged cursor", async () => {
   await git(repo.control, "switch", "--quiet", "-c", "task")
   await git(repo.control, "commit", "--allow-empty", "-m", "task work")
   await expect(acknowledgeRules(repo.control, "worker", await git(repo.control, "rev-parse", "HEAD"))).rejects.toThrow(
-    "not on origin/main",
+    "from the control checkout",
   )
   await git(repo.control, "switch", "--quiet", "main")
   // Fetched but not synced: the checkout has not shown these rules to anyone yet.
@@ -133,6 +133,21 @@ test("sync rejects unknown roles and reports a damaged cursor", async () => {
     await acknowledgeRules(repo.control, "worker", result.after)
     expect((await syncControl(repo.control, "worker")).cursorReset).toBe(false)
   }
+})
+
+test("a control checkout that is a linked worktree confirms against its own HEAD", async () => {
+  const repo = await setup()
+  const linked = path.join(path.dirname(repo.control), "linked")
+  // The primary worktree stays behind on a detached HEAD, as a developer's checkout would.
+  await git(repo.control, "switch", "--quiet", "--detach")
+  await git(repo.control, "worktree", "add", "--quiet", linked, "main")
+  await syncControl(linked, "worker")
+  await commitRule(repo.upstream, "docs/maintenance/workflow.md", "one\n")
+  const result = await syncControl(linked, "worker")
+  expect(result.changedRules).toEqual(["docs/maintenance/workflow.md"])
+  await expect(acknowledgeRules(repo.control, "worker", result.after)).rejects.toThrow("from the control checkout")
+  await acknowledgeRules(linked, "worker", result.after)
+  expect((await syncControl(linked, "worker")).changedRules).toEqual([])
 })
 
 test("sync refuses another branch, local edits, and diverged local commits", async () => {
