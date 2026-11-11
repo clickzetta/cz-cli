@@ -9,6 +9,7 @@ import { logOperation } from "../logger.js"
 import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
 import { findTopLevelLimit } from "../sql/limit-probe.js"
+import { isUnrestrictedWrite } from "../sql/write-guard.js"
 import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
@@ -18,8 +19,6 @@ const COLUMN_NOT_FOUND_RE = /(Unknown column|Column.*?not found)/i
 const TABLE_FROM_SQL_RE = /\b(?:FROM|INTO|UPDATE|TABLE)\s+(?:[\w.]+\.)?(\w+)/i
 const SQL_DIALECT_ERROR_RE = /\b(?:syntax error|parse error|parser error|unexpected token)\b/i
 const COPY_FILE_FORMAT_ERROR_RE = /\bfile format not specified\b/i
-const DANGEROUS_WRITE_RE = /^\s*(DELETE|UPDATE)\b/i
-const WHERE_RE = /\bWHERE\b/i
 
 const DEFAULT_FIELD_MAX = 3000
 
@@ -817,7 +816,7 @@ function validateSqlInput(sql: string, argv: SqlArgs, hints: Record<string, stri
     })
     return false
   }
-  const dangerous = analysis.statements.findIndex((item) => DANGEROUS_WRITE_RE.test(item.text) && !WHERE_RE.test(item.text))
+  const dangerous = analysis.statements.findIndex((item) => isUnrestrictedWrite(item.text))
   if (dangerous >= 0) {
     error("DANGEROUS_WRITE", "DELETE/UPDATE without WHERE clause. Add a WHERE clause or use a more specific statement.", {
       format: argv.format,
