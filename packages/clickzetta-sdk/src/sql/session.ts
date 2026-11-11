@@ -504,6 +504,7 @@ export class SqlSession {
       ) {
         const result = await pollJobResult(clientOpts, jobId, {
           jobTimeoutMs: prepared.jobTimeoutMs > 0 ? prepared.jobTimeoutMs : undefined,
+          cancelOnTimeout: true,
           timezone: this.timezoneHint,
           maxRetries: prepared.maxRetry > 0 ? prepared.maxRetry : undefined,
           resubmitFn: () => this.execute(sql, options),
@@ -530,6 +531,7 @@ export class SqlSession {
     }
     const result = await pollJobResult(clientOpts, jobId, {
       jobTimeoutMs: prepared.jobTimeoutMs > 0 ? prepared.jobTimeoutMs : undefined,
+      cancelOnTimeout: true,
       timezone: this.timezoneHint,
       maxRetries: prepared.maxRetry > 0 ? prepared.maxRetry : undefined,
       resubmitFn: () => this.execute(sql, options),
