@@ -153,12 +153,12 @@ export const DEVICE_FLOW_ENVIRONMENTS =
  * would reach the gateway as a bare `invalid_request` with no hint.
  */
 export function normalizeProvider(value: string): DeviceProvider {
-  const normalized = value.trim().toUpperCase()
-  if (normalized === "WECHAT") return "WECHAT"
-  if (normalized === "ALIPAY") return "ALIPAY"
-  if (normalized === "PASSWORD") return "PASSWORD"
+  // Looked up in PROVIDER_WIRE, not listed again: a hand-written list here would
+  // reject a platform the table, the help text and the menu already advertise.
+  const match = DEVICE_PROVIDER_VALUES.find((provider) => provider === value.trim().toUpperCase())
+  if (match) return match
   throw new UsageError(
-    `DEVICE_PROVIDER_INVALID: unknown --provider '${value}'. Supported: ${DEVICE_PROVIDERS.join(", ")}`,
+    `DEVICE_PROVIDER_INVALID: unknown --provider '${value}'. Supported: browser, ${DEVICE_PROVIDERS.join(", ")}`,
   )
 }
 
@@ -361,6 +361,10 @@ export async function loginWithDevice(opts: LoginWithDeviceOptions): Promise<OAu
       throw toInterfaceError(err, requestId)
     })
 
+  // The code's lifetime counts from here, the closest we can get to when the
+  // server issued it.
+  const deadline = Date.now() + authorization.expires_in * 1000
+
   // RFC 8628 §3.3: `verification_uri_complete` is optional; fall back to the
   // bare URI, which the user completes by typing the `user_code` we also print.
   const verificationUrl = authorization.verification_uri_complete ?? authorization.verification_uri
@@ -388,9 +392,19 @@ export async function loginWithDevice(opts: LoginWithDeviceOptions): Promise<OAu
   // interval if the token endpoint has not caught up with the status endpoint yet
   // — 0 would turn that race into a hot loop until `expires_in`. A `slow_down`
   // from the server still self-corrects (the library adds 5).
+  //
+  // Bounded by what is left of `expires_in`, not by the library default: without a
+  // signal openid-client restarts a full `expires_in` window here, after the status
+  // poll above has already spent most of the code's life.
+  const tokenSignal = AbortSignal.timeout(Math.max(1, deadline - Date.now()))
   const tokens = await client
-    .pollDeviceAuthorizationGrant(config, { ...authorization, interval: 1 })
+    .pollDeviceAuthorizationGrant(config, { ...authorization, interval: 1 }, undefined, { signal: tokenSignal })
     .catch((err) => {
+      if (tokenSignal.aborted) {
+        throw new Error(
+          `DEVICE_CODE_EXPIRED: the sign-in code expired after ${authorization.expires_in}s before the token was issued`,
+        )
+      }
       throw toInterfaceError(err, requestId)
     })
 

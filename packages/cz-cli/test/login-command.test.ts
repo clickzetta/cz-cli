@@ -1125,6 +1125,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => "browser",
           loginWithBrowser: async () => {
@@ -1154,6 +1155,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => "ALIPAY",
           loginWithDevice: async ({ provider }) => {
@@ -1185,6 +1187,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => undefined,
           loginWithBrowser: async () => {
@@ -1222,6 +1225,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(isTty as boolean, () =>
         runLogin(makeMenuArgs(extra as Record<string, unknown>), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => {
             probeCalls++
             return true
@@ -1253,6 +1257,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => false,
           promptProvider: async () => {
             menuCalls++
@@ -1287,6 +1292,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async (choices) => {
             offered = choices
@@ -1314,6 +1320,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => "ALIPAY",
           loginWithDevice: async () => KNOWN_RESULT,
@@ -1331,6 +1338,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async (_choices, remembered) => {
             initial = remembered
@@ -1351,6 +1359,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => "browser",
           loginWithBrowser: async () => KNOWN_RESULT,
@@ -1370,6 +1379,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => undefined,
           loginWithBrowser: async () => KNOWN_RESULT,
@@ -1405,6 +1415,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async (choices, remembered) => {
             offered = choices
@@ -1433,6 +1444,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => "ALIPAY",
           loginWithDevice: async () => {
@@ -1461,6 +1473,7 @@ describe("runLogin provider menu", () => {
     try {
       await withTty(true, () =>
         runLogin(makeMenuArgs(), {
+          browserAvailable: () => false,
           deviceFlowAvailable: async () => true,
           promptProvider: async () => "browser",
           loginWithBrowser: async () => {
@@ -1501,5 +1514,92 @@ describe("preselectedProvider", () => {
   test("garbage in the file does not become a preselection", () => {
     expect(preselectedProvider(["browser", "ALIPAY"], "feishu")).toBeUndefined()
     expect(preselectedProvider(["browser", "ALIPAY"], "toString")).toBeUndefined()
+  })
+})
+
+// Whether a plain interactive login shows the menu depends on where it runs. A local
+// desktop keeps the old behaviour — straight to the browser, no discovery round trip —
+// and the menu is reserved for terminals where a browser cannot reach the user.
+describe("runLogin default route by environment", () => {
+  function makeArgs(overrides: Record<string, unknown> = {}) {
+    return { format: "json", debug: false, name: PROFILE, ...overrides } as GlobalArgs & { provider?: string }
+  }
+
+  function trackedDeps(browserAvailable: boolean) {
+    const calls = { probe: 0, menu: 0, browser: 0, device: 0 }
+    return {
+      calls,
+      deps: {
+        browserAvailable: () => browserAvailable,
+        deviceFlowAvailable: async () => {
+          calls.probe++
+          return true
+        },
+        promptProvider: async () => {
+          calls.menu++
+          return "ALIPAY" as const
+        },
+        loginWithBrowser: async () => {
+          calls.browser++
+          return KNOWN_RESULT
+        },
+        loginWithDevice: async () => {
+          calls.device++
+          return KNOWN_RESULT
+        },
+        resolveLoginTarget: async () => makeTarget(),
+      },
+    }
+  }
+
+  test("a desktop terminal goes straight to the browser without probing or asking", async () => {
+    const { calls, deps } = trackedDeps(true)
+    const out = captureStdout()
+    try {
+      await withTty(true, () => runLogin(makeArgs(), deps))
+    } finally {
+      out.restore()
+    }
+    expect(calls).toEqual({ probe: 0, menu: 0, browser: 1, device: 0 })
+    expect(process.exitCode).toBe(0)
+  })
+
+  test("a terminal with no local browser offers the menu", async () => {
+    const { calls, deps } = trackedDeps(false)
+    const out = captureStdout()
+    try {
+      await withTty(true, () => runLogin(makeArgs(), deps))
+    } finally {
+      out.restore()
+    }
+    expect(calls).toEqual({ probe: 1, menu: 1, browser: 0, device: 1 })
+    expect(process.exitCode).toBe(0)
+  })
+
+  // The explicit spelling of the default, so a pty-driven script never meets the menu.
+  test.each(["browser", "Browser"])("--provider %s pins the browser even where the menu would show", async (value) => {
+    const { calls, deps } = trackedDeps(false)
+    const out = captureStdout()
+    try {
+      await withTty(true, () => runLogin(makeArgs({ provider: value }), deps))
+    } finally {
+      out.restore()
+    }
+    expect(calls).toEqual({ probe: 0, menu: 0, browser: 1, device: 0 })
+    expect((JSON.parse(out.text()) as { data: Record<string, unknown> }).data.login_method).toBe("browser")
+    expect(process.exitCode).toBe(0)
+  })
+
+  test("--provider browser is not a device flow, so it needs no terminal", async () => {
+    const { calls, deps } = trackedDeps(false)
+    const out = captureStdout()
+    try {
+      await withTty(false, () => runLogin(makeArgs({ provider: "browser" }), deps))
+    } finally {
+      out.restore()
+    }
+    expect(out.text()).not.toContain("DEVICE_LOGIN_REQUIRES_TTY")
+    expect(calls.browser).toBe(1)
+    expect(process.exitCode).toBe(0)
   })
 })

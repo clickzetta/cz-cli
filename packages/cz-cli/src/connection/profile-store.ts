@@ -1004,6 +1004,7 @@ export function saveSharedOAuthToken(id: string, token: AuthToken): void {
  * section without that merge, so the login flow saves it after provisioning.
  */
 export function saveLastProvider(id: string, provider: string): void {
+  // Cannot fail a login: patchOAuthEntry swallows read/write errors itself.
   patchOAuthEntry(id, { last_provider: provider })
 }
 

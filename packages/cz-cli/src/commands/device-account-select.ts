@@ -370,6 +370,9 @@ export async function resolveAccountSelection(opts: ResolveAccountSelectionOptio
   // once per login: a flapping gateway would otherwise add a line every interval
   // for as long as `expires_in` allows.
   let reportedOutage = false
+  // The account the user picked, kept across a commit that has to be retried so a
+  // gateway hiccup does not ask the same question twice.
+  let picked: DeviceAccountCandidate | undefined
   const expired = () =>
     new Error(`DEVICE_CODE_EXPIRED: the sign-in code expired after ${opts.expiresInSeconds}s without being authorized`)
   // Each private call gets whatever is left of `expires_in`. An abort is reported
@@ -433,10 +436,20 @@ export async function resolveAccountSelection(opts: ResolveAccountSelectionOptio
       // includes the single-binding case — so the select-user POST below is still
       // required, but asking the user (and telling them they are bound to
       // "several" accounts) would be both pointless and false.
-      const selected = users.length === 1 ? users[0] : await prompt(users)
+      const remembered = users.find(
+        (user) => user.accountId === picked?.accountId && user.userId === picked?.userId,
+      )
+      const selected = users.length === 1 ? users[0] : (remembered ?? (await prompt(users)))
       if (!selected) throw new Error("LOGIN_CANCELLED: account selection was cancelled")
+      picked = selected
 
-      await post(
+      // A transient failure here is waited out like one on the status poll: this is
+      // the step right after the user scanned and chose, the worst place to lose
+      // them. It does not resend the commit blindly — whether the gateway applied a
+      // commit whose answer was lost is unknown, so the loop re-reads the status
+      // instead: SUCCESS if it did, a fresh NEED_SELECT_USER (and ticket) if not,
+      // answered with the account already picked.
+      const committed = await post(
         selectEndpoint,
         {
           deviceCode: opts.deviceCode,
@@ -445,8 +458,21 @@ export async function resolveAccountSelection(opts: ResolveAccountSelectionOptio
           userId: selected.userId,
         },
         "committing the account choice",
+      ).then(
+        () => true,
+        (err: unknown) => {
+          if (!(err instanceof DeviceRequestError) || !err.retryable) throw err
+          if (isOauthDebug()) console.error(`[oauth-device] tolerating: ${err.message}`)
+          if (!reportedOutage) {
+            print("  the gateway is not answering right now — still waiting")
+            reportedOutage = true
+          }
+          return false
+        },
       )
-      return
+      if (committed) return
+      await sleep(intervalMs)
+      continue
     }
 
     // Terminal failures.

@@ -30,6 +30,7 @@ import {
   type DeviceProvider,
 } from "./login-device.js"
 import { discoverOAuthConfig, generateRequestId, type OAuthLoginResult } from "./oauth-userinfo.js"
+import { canOpenBrowser } from "../util/browser.js"
 
 export interface LoginArgs extends GlobalArgs {
   // Kept as a hidden no-op for backward compatibility: browser OAuth is now the
@@ -89,6 +90,9 @@ export interface RunLoginDeps {
   // Injectable capability probe: does this OAuth entry advertise device
   // authorization? Only consulted to decide whether the menu is worth showing.
   deviceFlowAvailable?: (baseUrl: string) => Promise<boolean>
+  // Injectable: can a browser opened here reach the user? Decides whether a plain
+  // interactive login goes straight to the browser or offers the menu.
+  browserAvailable?: () => boolean
 }
 
 /** Default TTY prompt for the session name. Non-TTY → undefined (caller errors). */
@@ -165,7 +169,7 @@ export function preselectedProvider(
  * Does this OAuth entry advertise device authorization?
  *
  * Consulted only to decide whether showing the menu is honest: an entry without
- * the endpoint has exactly one usable option, and offering four QR platforms that
+ * the endpoint has exactly one usable option, and offering scan platforms that
  * all end in DEVICE_FLOW_UNSUPPORTED is worse than not asking. A discovery failure
  * answers "no" rather than throwing — the browser flow rediscovers the same
  * metadata a moment later and reports the failure with its own request id, so
@@ -319,13 +323,18 @@ function providerConflictRefused(argv: LoginArgs): boolean {
 
   error(
     "LOGIN_FLOW_CONFLICT",
-    `--provider selects the device flow, which cannot be combined with ${conflicts.join(", ")}. `
-    + `Device sign-in sends you to the gateway's own page and the CLI never sees a credential — `
+    `--provider selects an OAuth sign-in flow, which cannot be combined with ${conflicts.join(", ")}. `
+    + `OAuth sign-in happens on the gateway's own page and the CLI never sees a credential — `
     + `drop --provider to sign in with the flags above, or drop them to use `
     + `--provider ${/^[a-z]+$/.test(argv.provider) ? argv.provider : "<provider>"}.`,
     { format: argv.format, exitCode: EXIT_USAGE_ERROR },
   )
   return true
+}
+
+/** `--provider browser`: the loopback flow, named explicitly. Not a device provider. */
+function isBrowserProvider(value: string): boolean {
+  return value.trim().toLowerCase() === "browser"
 }
 
 /**
@@ -350,6 +359,7 @@ async function runOAuthLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void>
   const enumerate = deps.enumerateOAuthCombos ?? enumerateOAuthCombos
   const promptProvider = deps.promptProvider ?? defaultPromptProvider
   const probeDeviceFlow = deps.deviceFlowAvailable ?? defaultDeviceFlowAvailable
+  const browserAvailable = deps.browserAvailable ?? (() => canOpenBrowser(process.env, process.platform))
 
   // Session name is required — it names the shared [oauth.<name>] token and the
   // <name>_<workspace>_<instance> profile prefix, so multiple accounts don't overwrite
@@ -383,7 +393,9 @@ async function runOAuthLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void>
   try {
     // Validated before anything touches the network so a typo'd platform costs
     // one line of output rather than a discovery round trip.
-    provider = argv.provider ? normalizeProvider(argv.provider) : undefined
+    // `--provider browser` names the loopback flow explicitly, so a script can pin
+    // it regardless of whether this environment would otherwise show the menu.
+    provider = argv.provider && !isBrowserProvider(argv.provider) ? normalizeProvider(argv.provider) : undefined
 
     // Every device provider needs a human at the keyboard: a phone to scan with,
     // or a browser to open the password page in, plus the interactive choice in
@@ -415,23 +427,29 @@ async function runOAuthLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void>
     // self-referential issuer, which RFC 8414 requires (login-target.ts).
     const baseUrl = toServiceUrl(target.entryHost, target.protocol)
 
-    // No --provider, but a human is watching: offer the choice instead of silently
-    // assuming the browser. Gated on the entry actually advertising device
-    // authorization, so the menu never lists scan options that all end in
-    // DEVICE_FLOW_UNSUPPORTED — an entry without the endpoint has one usable flow
-    // and nothing to ask about.
+    // No --provider and a human is watching. Where a browser opened here reaches
+    // the user (a local desktop), the browser flow works as it always did, so go
+    // straight to it — no discovery round trip, no extra question. Scanning needs no
+    // pointer from here: the accounts sign-in page the browser lands on offers the
+    // third-party logins itself. Where it cannot (SSH, no display) the browser
+    // flow is the awkward one: the page opens nowhere the user can see and the
+    // redirect to 127.0.0.1 never comes back, so that is where the menu earns its
+    // place. It is still gated on the entry advertising device authorization, so it
+    // never lists scan options that all end in DEVICE_FLOW_UNSUPPORTED.
     //
     // Non-TTY is deliberately untouched: a pipeline keeps resolving to the browser
     // flow rather than blocking on a menu nobody can answer. And the check is on
-    // `argv.provider`, not on `provider`, so an explicit flag always skips the menu.
-    if (!argv.provider && process.stdin.isTTY && (await probeDeviceFlow(baseUrl))) {
+    // `argv.provider`, not on `provider`, so any explicit flag — `browser`
+    // included — skips the menu.
+    const interactive = !argv.provider && process.stdin.isTTY
+    if (interactive && !browserAvailable() && (await probeDeviceFlow(baseUrl))) {
       // Which routes the menu lists is PROVIDER_WIRE's `offerInMenu`, not its `scan`
       // flag: see login-device.ts for why those are two decisions. `password` is off
       // it because it reads and behaves like the browser option from the user's side
       // — see defaultPromptProvider — and stays available as `--provider password`.
       const chosen = await promptProvider(
         deviceProviderChoices().filter((choice) => choice.offerInMenu),
-        readLastProvider(sanitizeOAuthId(sessionName)),
+        readLastProvider(oauthId),
       )
       // Abort is NOT "chose the browser". Falling through here would sign the user
       // in through the flow they just backed out of, which is worse than any error.
@@ -499,7 +517,7 @@ async function runOAuthLogin(argv: LoginArgs, deps: RunLoginDeps): Promise<void>
     // route that failed is not one to preselect. Must run AFTER provisioning:
     // provisionProfilesFromOAuthCombos replaces `[oauth.<id>]` wholesale without
     // going through writeOAuthEntry, so a hint saved before it would be erased.
-    saveLastProvider(sanitizeOAuthId(sessionName), provider ?? "browser")
+    saveLastProvider(oauthId, provider ?? "browser")
 
     // Warn when the provisioned profile may not be able to run SQL, so success
     // isn't silently misleading (login reported OK but the profile is unusable).
@@ -663,7 +681,7 @@ const SERVER_SHAPE_ADVICE =
  * order is not load-bearing today — keep it that way when adding one.
  */
 const LOGIN_ERROR_ADVICE: Record<string, string> = {
-  DEVICE_PROVIDER_INVALID: `Unknown --provider. Use one of: ${DEVICE_PROVIDERS.join(", ")}. Omit --provider entirely for browser sign-in.`,
+  DEVICE_PROVIDER_INVALID: `Unknown --provider. Use one of: browser, ${DEVICE_PROVIDERS.join(", ")}.`,
   DEVICE_LOGIN_REQUIRES_TTY:
     "Device sign-in cannot run non-interactively — it prints a page for a human to open. In CI/agent contexts use `cz-cli auth login <name> --credential <base64>` or `--username/--password/--account-name` instead.",
   DEVICE_FLOW_UNSUPPORTED:
@@ -793,12 +811,12 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
         .option("partition", { type: "string", choices: ["cn", "intl"], describe: "Region to sign in to: cn (clickzetta.com) or intl (singdata.com). Prompted in a TTY; non-interactively either this or --oauth-url is required" })
         .option("provider", {
           type: "string",
-          describe: `Sign in through the device flow instead of the browser loopback: ${TERMINAL_QR_PROVIDER_LIST} prints a QR code to scan, ${BROWSER_QR_PROVIDER_LIST} opens a page with its own QR code (on another computer when this one has no browser, e.g. over SSH), password opens a ClickZetta username/password page. Passing it selects the device flow; requires an interactive terminal, and an OAuth entry that advertises device authorization. Omit it in a terminal to pick browser sign-in or a scan platform from a menu (password is flag-only); omit it non-interactively for the browser loopback`,
+          describe: `How to sign in: browser is the loopback flow; ${TERMINAL_QR_PROVIDER_LIST} prints a QR code to scan, ${BROWSER_QR_PROVIDER_LIST} opens a page with its own QR code (on another computer when this one has no browser, e.g. over SSH), password opens a ClickZetta username/password page. All but browser use the device flow, which needs an interactive terminal and an OAuth entry that advertises device authorization. Omitted: browser sign-in, except in a terminal with no local browser (SSH, no display), which offers a menu`,
         })
         // Validated here instead of with `choices`, which would reject the aliases
         // and case variants normalizeProvider accepts (see there).
         .check((argv) => {
-          if (argv.provider !== undefined) normalizeProvider(argv.provider)
+          if (argv.provider !== undefined && !isBrowserProvider(argv.provider)) normalizeProvider(argv.provider)
           return true
         })
         .option("login-method", {
@@ -860,12 +878,12 @@ export function buildLoginCommand<T>(y: Argv<T>): Argv<T> {
           "    device -- a computer for the QR page, any device for password. Needs a TTY, and\n" +
           "    an entry whose OAuth metadata advertises device authorization\n" +
           `    (${DEVICE_FLOW_ENVIRONMENTS}).\n` +
-          "    Omit it and a terminal offers a menu: browser sign-in first, then the four\n" +
-          "    scan platforms. password is not on it -- from your side it is the same act\n" +
-          "    as browser sign-in (a page on this machine, your ClickZetta credentials),\n" +
-          "    so it stays a flag for the case that wants it: nothing to scan with AND a\n" +
-          "    local callback your network breaks. Non-interactively no menu appears and\n" +
-          "    the browser loopback is used, so scripts are unaffected.\n" +
+          "    Omit it and a desktop terminal goes straight to browser sign-in, as before.\n" +
+          "    A terminal with no local browser (SSH, no display) instead offers a menu:\n" +
+          "    browser sign-in, then the scan platforms. password is not on it -- it is the\n" +
+          "    same act as browser sign-in from your side -- so it stays a flag.\n" +
+          "    Non-interactively no menu appears and the browser loopback is used, so\n" +
+          "    scripts are unaffected; --provider browser pins that choice explicitly.\n" +
           "    An identity not yet bound to a ClickZetta account is not an error: the\n" +
           "    verification page walks the user through binding or registration, and\n" +
           "    this CLI just waits for it -- it never sees a password, a captcha or an\n" +

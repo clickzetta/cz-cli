@@ -178,6 +178,42 @@ describe("resolveAccountSelection", () => {
     })
   })
 
+  // A 503 on the commit used to fail the login right after the user had scanned and
+  // chosen. It is now waited out by re-reading the status, and the pick is reused
+  // rather than asked again.
+  test("a transient failure committing the choice is waited out without asking again", async () => {
+    let selectCalls = 0
+    const calls = stubDeviceFetch([TWO_CANDIDATES, TWO_CANDIDATES], {
+      selectResponse: () => {
+        selectCalls += 1
+        return selectCalls === 1 ? httpError(503, "busy") : jsonResponse({ code: 0, data: {} })
+      },
+    })
+    let asked = 0
+    const { opts } = baseOptions()
+
+    await resolveAccountSelection({
+      ...opts,
+      print: () => {},
+      promptAccount: async (users) => {
+        asked += 1
+        return users[1]
+      },
+    })
+
+    expect(asked).toBe(1)
+    const commits = calls.filter((c) => c.url === SELECT_URL)
+    expect(commits).toHaveLength(2)
+    expect(commits.every((c) => c.body.accountId === 112408)).toBe(true)
+  })
+
+  test("a rejected commit still fails at once", async () => {
+    stubDeviceFetch([TWO_CANDIDATES], { selectResponse: () => httpError(400, "bad ticket") })
+    await expect(
+      resolveAccountSelection({ ...baseOptions().opts, promptAccount: async (users) => users[0] }),
+    ).rejects.toThrow(/DEVICE_STATUS_FAILED.*bad ticket/)
+  })
+
   test("waits through pending polls before asking which account", async () => {
     stubDeviceFetch([{ deviceStatus: "AUTHORIZATION_PENDING" }, TWO_CANDIDATES])
     const { slept, opts } = baseOptions()

@@ -18,7 +18,7 @@ import {
   tokenFromResponse,
   type OAuthLoginResult,
 } from "./oauth-userinfo.js"
-import { browserOpenCommandForPlatform } from "../util/browser.js"
+import { browserOpenCommandForPlatform, canOpenBrowser } from "../util/browser.js"
 
 /**
  * Browser loopback OAuth login (authorization code + PKCE).
@@ -70,6 +70,9 @@ export interface LoginWithBrowserOptions {
   openBrowser?: (url: string) => void
   // Optional callback timeout in ms (forwarded to startLoopbackCallback).
   timeoutMs?: number
+  // Whether a browser opened here reaches the user. Defaults to canOpenBrowser on
+  // the real environment; false over SSH or without a display.
+  browserAvailable?: boolean
   // Injectable prompt for the manual-paste fallback. Returns the redirect URL the
   // user copied out of the browser, or undefined if they cancelled / it is
   // non-interactive. Tests inject a fake; the default prompts on a TTY.
@@ -199,8 +202,18 @@ export async function loginWithBrowser(opts: LoginWithBrowserOptions): Promise<O
       state,
     })
 
-    console.log(`Open this URL in your browser to sign in:\n${authorizeUrl.href}`)
-    ;(opts.openBrowser ?? openSystemBrowser)(authorizeUrl.href)
+    // Over SSH or without a display a launched browser lands somewhere the user
+    // cannot see, and the redirect to 127.0.0.1 would reach that machine, not this
+    // one. Say so up front, so the manual-paste fallback below is the expected
+    // path rather than a surprise after a timeout.
+    const local = opts.browserAvailable ?? canOpenBrowser(process.env, process.platform)
+    console.log(
+      local
+        ? `Open this URL in your browser to sign in:\n${authorizeUrl.href}`
+        : `No browser on this machine. Open this URL in a browser on your computer and sign in:\n${authorizeUrl.href}\n` +
+            "The final page will not load (it points at this machine); copy its full address and paste it here.",
+    )
+    if (local) (opts.openBrowser ?? openSystemBrowser)(authorizeUrl.href)
 
     const code = await waitForCodeWithManualFallback(cb, state, opts.promptManualUrl)
 
