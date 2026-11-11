@@ -72,10 +72,11 @@ test("a genuine 401 rotates and resubmits exactly once at the exec level", async
   try {
     const { ctx, rotations } = context(s.url)
     await expect(execSqlWithRetry(ctx, "select 1")).rejects.toThrow(/401/)
-    // Transport rotates once per request (2 requests: original + its retry is
-    // capped by maxRetries 0), exec adds one rotation and one resubmit.
-    expect(s.requests.filter((p) => p.includes("submitJob")).length).toBe(2)
-    expect(rotations.length).toBeGreaterThanOrEqual(1)
+    // Two execSql attempts. At maxRetries 0 the transport never rotates on its
+    // own, so the only rotation is the exec layer's one before its single
+    // resubmit — exactly one, never a loop.
+    expect(rotations).toHaveLength(1)
+    expect(s.requests.filter((p) => p.includes("submitJob"))).toHaveLength(2)
   } finally {
     s.server.stop(true)
   }
