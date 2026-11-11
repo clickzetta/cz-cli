@@ -217,12 +217,12 @@ function unsupportedShape(fields: CronFields): string | null {
   return unsupportedDayOrWeek(fields)
 }
 
-function parseHourRange(token: string): { start: string; end: string; step: string | null } {
+function parseHourToken(token: string, quartzSteps: boolean): { start: string; end: string; step: string | null } {
   let step: string | null = null
   let base = token
   if (token.includes("/")) { [base, step] = token.split("/", 2) }
-  if (base === "*") return { start: "0", end: "23", step }
-  if (step && !base.includes("-")) return { start: base, end: "23", step } // Quartz N/S means N-23/S
+  if (quartzSteps && base === "*") return { start: "0", end: "23", step }
+  if (quartzSteps && step && !base.includes("-")) return { start: base, end: "23", step } // Quartz N/S means N-23/S
   if (base.includes("-")) {
     const [start, end] = base.split("-", 2)
     return { start, end, step }
@@ -230,15 +230,18 @@ function parseHourRange(token: string): { start: string; end: string; step: stri
   return { start: base, end: base, step }
 }
 
-function decodeToUi(rawFields: CronFields): { param: UiParam; warnings: string[]; error?: string } {
-  const fields = normalizeFields(rawFields)
+// strict=false is the pre-#178 decoder, kept byte-for-byte so its exact conversions keep their output.
+// strict=true normalises equivalent forms and rejects shapes the Studio model cannot express.
+function decodeToUi(rawFields: CronFields, strict: boolean): { param: UiParam; warnings: string[]; error?: string } {
+  const fields = strict ? normalizeFields(rawFields) : rawFields
+  const parseHourRange = (token: string) => parseHourToken(token, strict)
   const warnings: string[] = []
   const param: UiParam = { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null }
 
   const unsupported = hasUnsupportedToken(fields)
   if (unsupported) return { param, warnings, error: unsupported }
 
-  const shape = unsupportedShape(fields)
+  const shape = strict ? unsupportedShape(fields) : null
   if (shape) return { param, warnings, error: shape }
 
   if (fields.day !== "*" && fields.day !== "?" && fields.week !== "*" && fields.week !== "?") {
@@ -423,23 +426,78 @@ export function cronNextRuns(expr: string, count = 5, from?: Date): string[] {
 
 /**
  * Convert agent cron expression to Studio-compatible format.
- * Validates, decodes to UI params, re-encodes with constraints.
+ * The pre-#178 conversion is kept whenever its output provably selects the same schedule,
+ * so exact conversions never change; otherwise the strict decoder normalises or rejects.
  */
 export function convertAgentCron(expr: string): CronResult {
   const inputCron = expr.trim().replace(/\s+/g, " ")
   try {
     const fields = parseCron(expr)
-    const { param, warnings, error: decodeErr } = decodeToUi(fields)
-    if (decodeErr) {
-      return { ok: false, inputCron, outputCron: null, uiParam: param, warnings, error: decodeErr }
-    }
-    const outputCron = encodeFromUi(param)
-    return { ok: true, inputCron, outputCron, uiParam: param, warnings }
+    const legacy = convertFields(inputCron, fields, false)
+    if (legacy.ok && sameSchedule(fields, legacy.outputCron!)) return legacy
+    const strict = convertFields(inputCron, fields, true)
+    if (!strict.ok || sameSchedule(fields, strict.outputCron!)) return strict
+    return { ...strict, ok: false, outputCron: null, error: `Cron '${inputCron}' cannot be expressed exactly as a Studio schedule (closest form '${strict.outputCron}' differs).` }
   } catch (e) {
-    return {
-      ok: false, inputCron, outputCron: null,
-      uiParam: { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null },
-      warnings: [], error: e instanceof Error ? e.message : String(e),
-    }
+    return failure(inputCron, e)
   }
+}
+
+function convertFields(inputCron: string, fields: CronFields, strict: boolean): CronResult {
+  try {
+    const { param, warnings, error: decodeErr } = decodeToUi(fields, strict)
+    if (decodeErr) return { ok: false, inputCron, outputCron: null, uiParam: param, warnings, error: decodeErr }
+    return { ok: true, inputCron, outputCron: encodeFromUi(param), uiParam: param, warnings }
+  } catch (e) {
+    return failure(inputCron, e)
+  }
+}
+
+function failure(inputCron: string, e: unknown): CronResult {
+  return {
+    ok: false, inputCron, outputCron: null,
+    uiParam: { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null },
+    warnings: [], error: e instanceof Error ? e.message : String(e),
+  }
+}
+
+// True when every field of the output selects exactly the values the input field selects.
+// Invalid input values (weekday 0, day 32, a zero step) make the input unprovable, so it is not the same.
+function sameSchedule(input: CronFields, output: string): boolean {
+  const out = parseCron(output)
+  const MONTHS = Object.fromEntries(MONTH_NAMES.map((m, i) => [m, i + 1]))
+  const pairs: Array<[string, string, number, number, Record<string, number>]> = [
+    [input.second, out.second, 0, 59, {}],
+    [input.minute, out.minute, 0, 59, {}],
+    [input.hour, out.hour, 0, 23, {}],
+    [input.day, out.day, 1, 31, {}],
+    [input.month, out.month, 1, 12, MONTHS],
+    [input.week, out.week, 1, 7, STUDIO_WEEKDAY_NAMES],
+  ]
+  if (input.year !== out.year) return false
+  return pairs.every(([a, b, min, max, names]) => {
+    const x = fieldValues(a, min, max, names)
+    const y = fieldValues(b, min, max, names)
+    return x !== null && y !== null && x.length === y.length && x.every((v, i) => v === y[i])
+  })
+}
+
+// Sorted values a Quartz field selects: *, ?, V, A-B (wrapping past max), V/S (V to max), A-B/S and lists.
+function fieldValues(field: string, min: number, max: number, names: Record<string, number>): number[] | null {
+  const size = max - min + 1
+  const value = (t: string) => (t in names ? names[t] : /^\d{1,2}$/.test(t) ? Number(t) : NaN)
+  const values = new Set<number>()
+  for (const part of field.toUpperCase().split(",")) {
+    const match = /^([^/-]+)(?:-([^/-]+))?(?:\/(\d{1,2}))?$/.exec(part)
+    if (!match) return null
+    const star = match[1] === "*" || match[1] === "?"
+    if (star && match[2] !== undefined) return null
+    const lo = star ? min : value(match[1])
+    const hi = star ? max : match[2] !== undefined ? value(match[2]) : match[3] !== undefined ? max : lo
+    const step = match[3] === undefined ? 1 : Number(match[3])
+    if (!(lo >= min && lo <= max && hi >= min && hi <= max && step >= 1)) return null
+    const span = hi >= lo ? hi - lo : hi + size - lo
+    for (let k = 0; k <= span; k += step) values.add(((lo - min + k) % size) + min)
+  }
+  return [...values].sort((a, b) => a - b)
 }

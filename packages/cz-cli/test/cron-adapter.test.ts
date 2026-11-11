@@ -97,7 +97,6 @@ describe("convertAgentCron rejects fields it cannot express (#178)", () => {
     ["0 0 * * * ? 2030", "year field '2030'"],
     ["30 0 9 * * ? *", "second field '30'"],
     ["*/5 */2 * * *", "step in both fields"],
-    ["0 18-9 * * *", "start is after end"],
     ["0 99 * * *", "out of range"],
   ]
   for (const [input, part] of rejected) {
@@ -233,6 +232,30 @@ describe("convertAgentCron review follow-ups (#192)", () => {
       expect(cronNextRuns(r.outputCron!, 500, from)).toEqual(cronNextRuns(input, 500, from))
     })
   }
+  // Single-value minute ranges and wrapped hour ranges converted exactly on main and keep main's output.
+  const keptFromMain: Array<[string, string]> = [
+    ["5-5 9 * * *", "0 05 09 * * ? *"],
+    ["0-0 9 * * *", "0 00 09 * * ? *"],
+    ["59-59 * * * *", "0 59 * * * ? *"],
+    ["0 1-1 9 * * *", "0 01 09 * * ? *"],
+    ["0 22-2 * * *", "0 00 22-02/1 * * ? *"],
+    ["*/5 22-2 * * *", "0 */5 22-02 * * ? *"],
+    ["0 18-9 * * *", "0 00 18-09/1 * * ? *"],
+  ]
+  for (const [input, out] of keptFromMain) {
+    test(`${input} keeps main's output`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+    })
+  }
+  test("a wrapped hour range keeps main's Studio schedule window", () => {
+    const r = convertAgentCron("0 22-2 * * *")
+    expect(r.uiParam.scheduleStartTime).toBe("22:00")
+    expect(r.uiParam.scheduleEndTime).toBe("02:59")
+    expect(r.uiParam.timeGap).toBe(1)
+  })
+
   test("hour steps that skip hours stay rejected with a minute step", () => {
     for (const input of ["*/5 */2 * * *", "*/5 8/2 * * *", "* 9-17/3 * * *"]) expect(convertAgentCron(input).error).toContain("step in both fields")
     expect(convertAgentCron("0 8,12 * * *").error).toContain("hour field '8,12'")
