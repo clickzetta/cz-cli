@@ -448,6 +448,23 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/sche
   (uat-aimesh does; cn-shanghai-alicloud does not, as of 2026-09-01) and confirm the Quota
   section paints token rows.
 
+### 14. `SessionV2.list` honors `subpath`
+
+- **File:** `packages/core/src/session.ts` (`SessionV2.list`, plus the `sql` import from `drizzle-orm`).
+- **Marker:** `//======================== cz-cli change ========================` around the subpath condition.
+- **Upstream value:** `subpath` is accepted by the service and HTTP API schemas but never added to the
+  database query, so a directory-scoped listing returns sibling sessions.
+- **What/why:** adds a `WHERE path = subpath OR substr(path, 1, len + 1) = subpath || '/'` condition
+  when `project` and `subpath` are given (clickzetta/cz-cli#161, PR 164). It runs in the query, so it
+  applies before sorting and `limit`. `substr` is used instead of `LIKE` because SQLite `LIKE` is
+  ASCII case-insensitive. An empty subpath, `.` and `./` mean the whole project; `..` is not normalized.
+- **Why intrusive (no hook):** no plugin API, env flag or config reaches the `WHERE` clause. Filtering
+  after the call in `packages/cz-cli` would run after `limit`, which is the bug.
+- **History:** added in PR 164. Upstream has not fixed it as of this entry; retire the patch if a
+  re-baseline brings an upstream fix.
+- **Verify:** `cd packages/core && bun test test/session-list-subpath.test.ts`. The test lives in its own
+  file, so it survives a re-baseline and fails loudly if the fix is dropped.
+
 ## HOOK-based customizations (safe — live entirely in the cz layer)
 
 These do **not** edit upstream files. They are listed so a re-baseline can confirm
