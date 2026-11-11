@@ -372,7 +372,8 @@ async function fetchGithub(runtime: Runtime, since: string, through: string, run
   const entries: Entry[] = []
   const add = (kind: string, raw: Record<string, unknown>, number: string, version: unknown[]) => {
     if (!/^[1-9]\d*$/.test(number)) throw new Error("GitHub event has no issue or pull number")
-    // AI review and other automation post as bots; their comments are not user feedback.
+    // AI review and other automation post as bots. Their comments, reviews, and the issues or PRs
+    // they open (Dependabot, for example) are not user feedback, so none of them become pending.
     if (isBotAuthor(raw.user)) return
     const root = roots.get(number)
     const updatedAt = iso(raw.updated_at ?? raw.submitted_at ?? raw.created_at ?? root?.updated_at)

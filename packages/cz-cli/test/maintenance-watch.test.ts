@@ -65,6 +65,29 @@ test("the watcher announces each new human event once and ignores AI review", as
   ])
 })
 
+test("a PR whose only new activity is a bot comment wakes nobody", async () => {
+  const lines: string[] = []
+  const time = clock(Date.parse("2026-11-11T10:00:00Z"))
+  // GitHub lists the PR row with its human author and a fresh updated_at after AI review comments.
+  const pr = {
+    id: 40,
+    number: 40,
+    user: human,
+    created_at: "2026-11-01T08:00:00Z",
+    updated_at: "2026-11-11T10:00:20Z",
+    pull_request: {},
+    html_url: "https://github.com/o/r/pull/40",
+  }
+  const review = { id: 41, user: bot, updated_at: "2026-11-11T10:00:20Z", issue_url: "x/issues/40", html_url: "https://github.com/o/r/pull/40#c41" }
+  const opened = { ...pr, id: 42, number: 42, created_at: "2026-11-11T10:00:40Z", html_url: "https://github.com/o/r/pull/42" }
+  const run = fake({ "r/issues": [[pr, opened]], "issues/comments": [[review]] })
+  await watchGithub({ repository: "o/r" }, { seconds: 60, run, emit: (l) => lines.push(l), ...time })
+  expect(lines.filter((l) => l.startsWith("github "))).toEqual([
+    "github pull-request #42 by alice: https://github.com/o/r/pull/42",
+    "github watch ended; start a new watcher before the next round",
+  ])
+})
+
 test("an edited comment is announced again", async () => {
   const lines: string[] = []
   const time = clock(Date.parse("2026-11-11T10:00:00Z"))
@@ -80,23 +103,22 @@ test("a failed poll is reported, keeps the window, and backs off", async () => {
   const lines: string[] = []
   const time = clock(Date.parse("2026-11-11T10:00:00Z"))
   const calls: string[] = []
-  const state = { first: true }
+  const issuePolls = { count: 0 }
   const ok = fake({}, calls)
   const run: IntakeRunner = async (argv) => {
-    if (state.first) {
-      state.first = false
-      return { stdout: "", stderr: "timeout", exitCode: 1 }
-    }
+    const url = String(argv.at(-1))
+    if (url.includes("/issues?")) issuePolls.count++
+    // The first round succeeds, the second fails; every other round succeeds.
+    if (url.includes("/issues?") && issuePolls.count === 2) return { stdout: "", stderr: "timeout", exitCode: 1 }
     return ok(argv)
   }
-  await watchGithub({ repository: "o/r" }, { seconds: 300, run, emit: (l) => lines.push(l), ...time })
+  await watchGithub({ repository: "o/r" }, { seconds: 400, run, emit: (l) => lines.push(l), ...time })
   expect(lines[0]).toBe("github watch error (1): gh api failed (exit 1)")
-  // The retry asks for the same window as the failed attempt, not a later one.
+  // Recorded calls are the successful ones: at +0, then the retry at +180 (60s, then 120s of
+  // backoff), then +240, +300, +360. The retry asks for the window the failed round asked for.
   const sinces = calls.filter((c) => c.includes("/issues?")).map((c) => new URL(`https://x${c}`).searchParams.get("since"))
-  expect(sinces[0]).toBe("2026-11-11T09:59:00.000Z")
-  // Backoff: after the failure the watcher waits 120s, not 60s, so the recorded polls land at
-  // +120, +180 and +240 instead of +60, +120, +180 and +240.
-  expect(sinces).toHaveLength(3)
+  expect(sinces.slice(0, 2)).toEqual(["2026-11-11T09:59:00.000Z", "2026-11-11T09:59:00.000Z"])
+  expect(sinces).toHaveLength(5)
 })
 
 test("the watcher stops at its deadline", async () => {

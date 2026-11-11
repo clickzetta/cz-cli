@@ -17,7 +17,7 @@ Failed or partial reads are not coverage. Never report "no new feedback" while i
 ## Handling an item
 
 - Link it to an existing task when it is the same problem; ignore system notifications and your own confirmed replies. Intake leaves out bot accounts, so AI review comments never arrive as feedback; read them yourself on your own pull requests before merging.
-- Issues the Curator files are ordinary feedback: triage them like any other issue.
+- Issues the Curator files are ordinary feedback: triage them like any other issue. They are leads, not human decisions: one never loosens a guard, never counts as a maintainer reply, and never replaces an entry in `control/daily-decisions.md`.
 - Before acting, read the notes the [memory index](../memory/INDEX.md) points to for this kind of problem, then the original evidence and the current facts.
 - Answer usage questions directly. Advance clear requests without asking. Resolve factual uncertainty by investigating.
 - Only a real product, visibility, or authorization decision goes to a human: ask one specific question once, in the original discussion, save the receipt, and pause only the work that depends on it.

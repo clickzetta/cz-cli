@@ -28,12 +28,18 @@ export async function watchGithub(
   const state = { since: new Date(now() - interval).toISOString(), failures: 0 }
   while (now() < deadline) {
     const started = now()
+    const windowStart = Date.parse(state.since)
     const events = await Promise.all([
       poll(run, `${base}/issues?state=all&sort=updated&direction=asc&since=${encodeURIComponent(state.since)}`),
       poll(run, `${base}/issues/comments?sort=updated&direction=asc&since=${encodeURIComponent(state.since)}`),
       poll(run, `${base}/pulls/comments?sort=updated&direction=asc&since=${encodeURIComponent(state.since)}`),
     ]).then(
-      (pages) => pages.flat(),
+      (pages) => {
+        // One page only: a full page means newer events may be cut off. `intake github` paginates
+        // and still records them, so say so and keep going rather than retry the same window forever.
+        if (pages.some((page) => page.length >= 100)) emit("github watch: a full page of events; run intake github now")
+        return pages.flat()
+      },
       (error: unknown) => error as Error,
     )
     if (events instanceof Error) {
@@ -44,6 +50,9 @@ export async function watchGithub(
       state.failures = 0
       state.since = new Date(started - interval).toISOString()
       events
+        // An issue or PR row's `user` is its author, and any comment, including AI review, bumps
+        // its `updated_at`. Report rows only when they are new; comments arrive via their own endpoints.
+        .filter((event) => event.issue_url || event.pull_request_review_id || timeOf(event.created_at) >= windowStart)
         .filter((event) => !isBotAuthor(event.user))
         .map((event) => ({ event, id: `${String(event.id)}:${String(event.updated_at)}` }))
         .filter((entry) => !seen.has(entry.id))
@@ -65,6 +74,10 @@ async function poll(run: IntakeRunner, endpoint: string) {
   const rows = JSON.parse(result.stdout)
   if (!Array.isArray(rows)) throw new Error("GitHub returned a non-list page")
   return rows as Record<string, unknown>[]
+}
+
+function timeOf(value: unknown) {
+  return typeof value === "string" ? Date.parse(value) : Number.NaN
 }
 
 function describe(event: Record<string, unknown>) {
