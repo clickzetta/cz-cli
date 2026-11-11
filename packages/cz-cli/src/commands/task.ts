@@ -16,6 +16,7 @@ import {
   saveCdcTask,
   getTableSyncStatus,
   openApiRequest,
+  toServiceUrl,
   startCdcTask,
   stopCdcTask,
   getCdcTaskRunStatus,
@@ -614,9 +615,18 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
           try { body = JSON.parse(String(argv.body)) } catch {
             error("INVALID_ARGUMENTS", "--body is not valid JSON.", { format, exitCode: 2 }); return
           }
-          const sc = await ctx(argv)
-          const resp = await openApiRequest(sc.baseUrl, path, body, { accessKey, secretKey })
-          logOperation("task cdc openapi", { ok: resp.status === 200 })
+          // AK/SK authenticate the call, so only the service address is needed: no login or workspace.
+          const conn = resolveConnectionConfig(argv as Parameters<typeof resolveConnectionConfig>[0])
+          const resp = await openApiRequest(toServiceUrl(conn.service, conn.protocol), path, body, { accessKey, secretKey })
+          const ok = resp.status >= 200 && resp.status < 300
+          logOperation("task cdc openapi", { ok })
+          if (!ok) {
+            error("OPENAPI_HTTP_ERROR", `OpenAPI ${path} returned HTTP ${resp.status}.`, {
+              format,
+              extra: { data: { path, http_status: resp.status, response: resp.body } },
+            })
+            return
+          }
           success({ path, http_status: resp.status, response: resp.body }, { format })
         } catch (err) {
           reportTaskError(err, format)

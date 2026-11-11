@@ -30,11 +30,18 @@ export const DS_TYPE_NAMES: Record<number, string> = {
   51: "DynamoDB",
 }
 
-/** One read-only statement (SELECT / SHOW / DESC / EXPLAIN). */
+/**
+ * One read-only statement (SELECT / SHOW / DESC / EXPLAIN). EXPLAIN ANALYZE is rejected:
+ * PostgreSQL and MySQL run the explained statement, so it would execute writes.
+ */
 export function isReadOnlySql(sql: string): boolean {
-  const body = sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/, "").trim()
-  if (body.replace(/;\s*$/, "").includes(";")) return false
-  return /^(select|show|desc|describe|explain)\b/i.test(body)
+  // Blank out string literals, quoted identifiers and comments so a ';' or keyword inside them is ignored.
+  const code = sql.replace(/'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`|--[^\n]*|\/\*[\s\S]*?\*\//g, (m) =>
+    m.startsWith("--") || m.startsWith("/*") ? " " : "''",
+  ).trim()
+  if (code.replace(/;\s*$/, "").includes(";")) return false
+  if (!/^(select|show|desc|describe|explain)\b/i.test(code)) return false
+  return !/^explain\b[\s\S]*\banaly[sz]e\b/i.test(code)
 }
 
 export function parseDsType(value: string): number | undefined {
