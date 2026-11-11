@@ -24,12 +24,15 @@ export async function syncControl(cwd = process.cwd(), role?: string) {
 // A role confirms it has reread the rules up to a commit; until then every sync lists them again.
 export async function acknowledgeRules(cwd: string, role: string, sha: string) {
   if (!roles.includes(role) || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("Use: rules-read worker|curator FULL_SHA")
-  const root = await git(cwd, "rev-parse", "--show-toplevel")
-  // Cursors are shared by every worktree of this repository, so a task branch's commit must not qualify.
-  await git(root, "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main").catch(() => {
-    throw new Error("That commit is not on origin/main; pass the `after` value sync returned")
+  // Cursors are shared by every worktree of this repository, so judge the commit from the control checkout:
+  // a task branch's commit, or one fetched but not yet synced, would move the cursor past unread rules.
+  const control = path.dirname(await git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+  await Promise.all(
+    ["HEAD", "refs/remotes/origin/main"].map((ref) => git(control, "merge-base", "--is-ancestor", sha, ref)),
+  ).catch(() => {
+    throw new Error("That commit is not on origin/main as the control checkout has it; run sync first and pass its `after` value")
   })
-  await writeCursor(await cursorFile(root, role), sha)
+  await writeCursor(await cursorFile(control, role), sha)
   return { role, rulesReadThrough: sha }
 }
 
@@ -39,17 +42,18 @@ export async function acknowledgeRules(cwd: string, role: string, sha: string) {
 async function pendingRules(root: string, before: string, after: string, role?: string) {
   if (!role) return { changedRules: await changedRules(root, before, after), cursorReset: false }
   const file = await cursorFile(root, role)
-  const stored = (await Bun.file(file).exists()) ? (await Bun.file(file).text()).trim() : ""
+  const exists = await Bun.file(file).exists()
+  const stored = exists ? (await Bun.file(file).text()).trim() : ""
   const valid =
     /^[0-9a-f]{40}$/.test(stored) &&
     (await git(root, "merge-base", "--is-ancestor", stored, after).then(
       () => true,
       () => false,
     ))
-  if (stored === "") await writeCursor(file, before)
+  if (!exists) await writeCursor(file, before)
   // A damaged cursor hides how much was missed, so the caller is told to reread everything. It stays damaged
   // until rules-read replaces it, so a round that dies first is told again.
-  return { changedRules: await changedRules(root, valid ? stored : before, after), cursorReset: stored !== "" && !valid }
+  return { changedRules: await changedRules(root, valid ? stored : before, after), cursorReset: exists && !valid }
 }
 
 async function changedRules(root: string, from: string, to: string) {

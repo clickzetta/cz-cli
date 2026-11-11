@@ -114,9 +114,15 @@ test("sync rejects unknown roles and reports a damaged cursor", async () => {
     "not on origin/main",
   )
   await git(repo.control, "switch", "--quiet", "main")
+  // Fetched but not synced: the checkout has not shown these rules to anyone yet.
+  await git(repo.upstream, "commit", "--allow-empty", "-m", "ahead")
+  await git(repo.control, "fetch", "--quiet", "origin", "main")
+  await expect(
+    acknowledgeRules(repo.control, "worker", await git(repo.control, "rev-parse", "refs/remotes/origin/main")),
+  ).rejects.toThrow("run sync first")
 
   const cursor = path.join(repo.control, ".git/cz-maintenance/control/rules-seen-worker")
-  for (const damaged of ["not-a-commit\n", "--all\n", `${"0".repeat(40)}\n`]) {
+  for (const damaged of ["not-a-commit\n", "--all\n", `${"0".repeat(40)}\n`, "\n"]) {
     writeFileSync(cursor, damaged)
     await commitRule(repo.upstream, "docs/maintenance/workflow.md", damaged)
     const result = await syncControl(repo.control, "worker")
