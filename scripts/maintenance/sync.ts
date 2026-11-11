@@ -12,7 +12,14 @@ export async function syncControl(cwd = process.cwd()) {
   // A fast-forward is a no-op when the checkout is ahead, so compare directly: local commits must not run.
   if (after !== (await git(root, "rev-parse", "refs/remotes/origin/main")))
     throw new Error("The control checkout has commits not on origin/main; it is read-only, so reconcile them")
-  return { root, before, after, updated: before !== after }
+  // Long-lived sessions act on the rules they remember; naming what moved is their cue to reread it.
+  const changedRules =
+    before === after
+      ? []
+      : (await git(root, "diff", "--name-only", before, after, "--", "AGENTS.md", "docs/maintenance"))
+          .split("\n")
+          .filter(Boolean)
+  return { root, before, after, updated: before !== after, changedRules }
 }
 
 async function git(cwd: string, ...args: string[]) {

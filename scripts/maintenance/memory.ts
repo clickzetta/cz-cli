@@ -4,7 +4,7 @@ import path from "node:path"
 import { readRuntime } from "./state"
 
 // Memory itself is the Markdown under docs/maintenance/memory. This file is only the queue between
-// Feedback (records evidenced events) and Reflection (resolves them after updating the docs).
+// the Worker (records evidenced events) and the Curator (resolves them after updating the docs).
 // One JSON file per event in memory/events, one per decision in memory/resolutions; never overwritten.
 
 export type MemoryEvent = {

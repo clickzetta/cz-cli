@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { syncControl } from "../../../scripts/maintenance/sync"
@@ -39,6 +39,20 @@ test("sync fast-forwards the control checkout to origin/main", async () => {
   expect(result.updated).toBe(true)
   expect(result.after).toBe(await git(repo.upstream, "rev-parse", "HEAD"))
   expect(await Bun.file(path.join(repo.control, "note.md")).text()).toBe("merged memory\n")
+})
+
+test("sync names the rule files that changed so a running session rereads them", async () => {
+  const repo = await setup()
+  expect((await syncControl(repo.control)).changedRules).toEqual([])
+  mkdirSync(path.join(repo.upstream, "docs/maintenance/prompts"), { recursive: true })
+  mkdirSync(path.join(repo.upstream, "packages"), { recursive: true })
+  writeFileSync(path.join(repo.upstream, "docs/maintenance/prompts/worker.md"), "rule\n")
+  writeFileSync(path.join(repo.upstream, "AGENTS.md"), "rule\n")
+  writeFileSync(path.join(repo.upstream, "packages/code.ts"), "code\n")
+  await git(repo.upstream, "add", ".")
+  await git(repo.upstream, "commit", "-m", "docs: change rules and code")
+  expect((await syncControl(repo.control)).changedRules).toEqual(["AGENTS.md", "docs/maintenance/prompts/worker.md"])
+  expect((await syncControl(repo.control)).changedRules).toEqual([])
 })
 
 test("sync refuses another branch, local edits, and diverged local commits", async () => {
