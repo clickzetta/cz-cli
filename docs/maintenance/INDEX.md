@@ -1,6 +1,6 @@
 # Maintenance
 
-Two Claude Code sessions use native `/loop` and `Monitor`. Default model: `claude-sonnet-5-5`. Disable client-private auto-memory only for these sessions; use [project docs](../INDEX.md) and shared notes on demand.
+Two Claude Code sessions use native `/loop` and `Monitor`. The repository does not pin a model; choose it in local runtime configuration. Disable client-private auto-memory only for these sessions; use [project docs](../INDEX.md) and shared notes on demand.
 
 - [Feedback](prompts/feedback.md): GitHub and Feishu intake, execution, and delivery.
 - [Reflection](prompts/reflection.md): twelve-hour evidence curation.
@@ -49,13 +49,13 @@ CZ_MAINTENANCE_WORKTREES="$(bun -e 'console.log((await Bun.file(Bun.argv[1]).jso
 First creation only:
 
 ```sh
-claude --background --name cz-feedback --model claude-sonnet-5-5 \
+claude --background --name cz-feedback \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch,Monitor,TaskStop' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
   '/loop 5m Read and follow docs/maintenance/prompts/feedback.md.'
 
-claude --background --name cz-reflection --model claude-sonnet-5-5 \
+claude --background --name cz-reflection \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
