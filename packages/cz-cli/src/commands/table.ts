@@ -4,13 +4,25 @@ import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
 import { JobStatus, quote, request, type QueryResult } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, successRows, error } from "../output/index.js"
+import { success, successRows, error, type OutputOptions } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { classifyExecError, execSql, getExecContext, isQueryResult, rowsToRecords, validateIdentifier } from "./exec.js"
 import { parseVolumePath, quoteIdentifiers, validateRelativePath } from "@clickzetta/sdk/fsutil"
 
 const DEFAULT_LIMIT = 100
 const DEFAULT_PREVIEW_LIMIT = 10
+
+// yargs parses `--no-limit` on a number option as 0; both mean unlimited (same as `sql --limit 0`).
+// Returns undefined for negative or non-finite input.
+function parseLimit(value: number | undefined, fallback: number) {
+  const limit = value ?? fallback
+  if (!Number.isInteger(limit) || limit < 0) return undefined
+  return limit === 0 ? Infinity : limit
+}
+
+function usageError(format: OutputOptions["format"]) {
+  error("USAGE_ERROR", "--limit must be a non-negative integer (0 or --no-limit for unlimited).", { format, exitCode: 2 })
+}
 
 /**
  * Parse the `properties` cell from `DESC EXTENDED` output. The server encodes
@@ -123,17 +135,18 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             .option("schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
             .option("filter-schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
             .option("like", { type: "string", describe: "Filter pattern" })
-            .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
+            .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows (0 or --no-limit for unlimited)" }),
         async (argv) => {
           const format = argv.format
           try {
             const ctx = await getExecContext(argv)
-            const limit = argv.limit ?? DEFAULT_LIMIT
+            const limit = parseLimit(argv.limit, DEFAULT_LIMIT)
+            if (limit === undefined) return usageError(format)
             let sql = "SHOW TABLES"
             const schemaFilter = argv.in ?? argv["schema"] ?? argv["filter-schema"]
             if (schemaFilter) sql += ` IN ${validateIdentifier(schemaFilter, "schema name")}`
             if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
-            sql += ` LIMIT ${limit + 1}`
+            if (limit !== Infinity) sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -195,13 +208,14 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Table name" })
-            .option("limit", { type: "number", default: DEFAULT_PREVIEW_LIMIT, describe: "Number of rows" }),
+            .option("limit", { type: "number", default: DEFAULT_PREVIEW_LIMIT, describe: "Number of rows (0 or --no-limit for unlimited)" }),
         async (argv) => {
           const format = argv.format
           try {
             const ctx = await getExecContext(argv)
-            const limit = argv.limit ?? DEFAULT_PREVIEW_LIMIT
-            const sql = `SELECT * FROM ${validateIdentifier(argv.name as string, "table name")} LIMIT ${limit}`
+            const limit = parseLimit(argv.limit, DEFAULT_PREVIEW_LIMIT)
+            if (limit === undefined) return usageError(format)
+            const sql = `SELECT * FROM ${validateIdentifier(argv.name as string, "table name")}${limit === Infinity ? "" : ` LIMIT ${limit}`}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
@@ -281,18 +295,19 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
             .option("schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
             .option("filter-schema", { type: "string", describe: "Filter by schema name (alias of --in)", hidden: true })
             .option("like", { type: "string", describe: "Filter pattern" })
-            .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows" }),
+            .option("limit", { type: "number", default: DEFAULT_LIMIT, describe: "Max rows (0 or --no-limit for unlimited)" }),
         async (argv) => {
           const format = argv.format
           try {
             const ctx = await getExecContext(argv)
-            const limit = argv.limit ?? DEFAULT_LIMIT
+            const limit = parseLimit(argv.limit, DEFAULT_LIMIT)
+            if (limit === undefined) return usageError(format)
             let sql = "SHOW TABLES HISTORY"
             const schemaFilter = argv.in ?? argv["schema"] ?? argv["filter-schema"]
             if (schemaFilter) sql += ` IN ${validateIdentifier(schemaFilter, "schema name")}`
             if (argv.name) sql += ` LIKE '${String(argv.name).replace(/'/g, "''")}'`
             else if (argv.like) sql += ` LIKE '${argv.like.replace(/'/g, "''")}'`
-            sql += ` LIMIT ${limit + 1}`
+            if (limit !== Infinity) sql += ` LIMIT ${limit + 1}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
             if (!isQueryResult(r) || r.status === JobStatus.FAILED) {
