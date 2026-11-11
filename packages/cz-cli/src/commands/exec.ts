@@ -178,12 +178,12 @@ export async function execSql(
     if (raw?.status?.state && ["SUCCEED", "FAILED", "CANCELLED"].includes(raw.status.state)) {
       const errorCode = retryableSubmitCode(submitResp)
       if (isRetryableErrorCode(errorCode)) {
-        result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
+        result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, cancelOnTimeout: true, timezone })
       } else {
         result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone, lease.signal)
       }
     } else {
-      result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
+      result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, cancelOnTimeout: true, timezone })
     }
 
     disposition = "terminal"

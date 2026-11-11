@@ -20,6 +20,8 @@ function nextSleepMs(current: number): number {
 
 interface PollJobResultParams {
   jobTimeoutMs?: number
+  /** Cancel the job when jobTimeoutMs elapses. Only for callers that own the job; read-only waiters must leave it running. */
+  cancelOnTimeout?: boolean
   /** utils.py:278-300 as_timezone — timezone for TIMESTAMP_LTZ conversion */
   timezone?: string
   /** Max polling iterations before giving up (default unlimited, matches Python max_tries=-1). Use jobTimeoutMs for time-based limits. */
@@ -465,7 +467,7 @@ export function pollJobResult(
 
 async function pollUntilTerminal(opts: ClientOptions, jobId: JobID, params: PollJobResultParams): Promise<QueryResult> {
   const startTime = Date.now()
-  const { jobTimeoutMs, timezone, maxRetries = Infinity, resubmitFn } = params
+  const { jobTimeoutMs, cancelOnTimeout, timezone, maxRetries = Infinity, resubmitFn } = params
   const serviceInfo = normalizeServiceEndpoint(opts.context?.service ?? opts.baseUrl)
 
   const requestBody = {
@@ -493,11 +495,13 @@ async function pollUntilTerminal(opts: ClientOptions, jobId: JobID, params: Poll
     }
 
     if (jobTimeoutMs !== undefined && Date.now() - startTime > jobTimeoutMs) {
-      try {
-        const { cancelJob } = await import("./cancel.js")
-        await cancelJob(opts, jobId)
-      } catch {
-        /* best-effort cancel */
+      if (cancelOnTimeout) {
+        try {
+          const { cancelJob } = await import("./cancel.js")
+          await cancelJob(opts, jobId)
+        } catch {
+          /* best-effort cancel */
+        }
       }
       throw new OperationalError(`Job ${jobId.id} timed out after ${jobTimeoutMs}ms`, { jobId: jobId.id })
     }
