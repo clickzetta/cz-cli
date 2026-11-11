@@ -199,13 +199,17 @@ async function derive(config: ConnectionConfig, profileName: string | undefined)
   // credential are all per-(host, instance), so agreeing on one half proves nothing — a
   // connection can name the profile's instance on a DIFFERENT host (`--service … --instance
   // <same name>`), and the id there is not this profile's.
-  const entryIsThisConnection = sameService && instanceNameFromProfile
+  // An explicit PAT (--pat / CZ_PAT) that differs from the profile's own authenticates as a
+  // possibly different user and tenant. The profile's cached user_id/account_id describe the
+  // profile's credential, so they must neither answer for this one nor be written back from it.
+  const credentialOverridden = !!config.pat && !!candidate && config.pat !== candidate.pat
+  const entryIsThisConnection = sameService && instanceNameFromProfile && !credentialOverridden
   const entry = entryIsThisConnection ? candidate : undefined
   const tokens = profileTokenSource(config)
   const credential = await tokens.get()
   const baseUrl = toServiceUrl(config.service, config.protocol)
   // From the candidate, not `entry`: the lookup only needs the account, which is the host's.
-  const accountId = (sameService ? numericField(candidate?.account_id) : undefined) ?? 0
+  const accountId = (sameService && !credentialOverridden ? numericField(candidate?.account_id) : undefined) ?? 0
 
   // Write-back needs the STRICTER test, not just the name: patchProfileInstanceId only writes
   // when absent, so one invocation that resolved an id on another host would pin the profile to
