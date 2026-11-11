@@ -242,3 +242,14 @@ describe("task merge", () => {
     ])
   })
 })
+
+describe("task create-setup cron validation", () => {
+  test("invalid cron is rejected before any task is created", async () => {
+    const result = await execute("task create-setup orphan_check --folder 454001 --type SQL --content 'select 1' --cron '0 8,12 * * *'")
+    expect(result.exitCode).toBe(2)
+    expect(firstJson(result.output).error).toMatchObject({ code: "INVALID_CRON" })
+    expect(createCalls).toHaveLength(0)
+    expect(saveContentCalls).toHaveLength(0)
+    expect(saveConfigCalls).toHaveLength(0)
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { convertAgentCron } from "../src/cron-adapter"
+import { convertAgentCron, cronNextRuns } from "../src/cron-adapter"
 
 describe("convertAgentCron minute-gap encoding", () => {
   test("preserves a non-zero start minute with a minute gap", () => {
@@ -86,5 +86,203 @@ describe("convertAgentCron hour=* with fixed minute (hourly)", () => {
     const r1 = convertAgentCron("0 30 8-18 * * ? *")
     const r2 = convertAgentCron(r1.outputCron!)
     expect(r2.outputCron).toBe(r1.outputCron)
+  })
+})
+
+describe("convertAgentCron rejects fields it cannot express (#178)", () => {
+  const rejected: Array<[string, string]> = [
+    ["0 8,12 * * *", "hour field '8,12'"],
+    ["0,30 9 * * *", "minute field '0,30'"],
+    ["0 0 1 1 *", "month field '1'"],
+    ["0 0 * * * ? 2030", "year field '2030'"],
+    ["30 0 9 * * ? *", "second field '30'"],
+    ["*/5 */2 * * *", "step in both fields"],
+    ["0 99 * * *", "out of range"],
+  ]
+  for (const [input, part] of rejected) {
+    test(`rejects ${input}`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(false)
+      expect(r.outputCron).toBeNull()
+      expect(r.error).toContain(part)
+    })
+  }
+
+  test("0 */2 * * * converts faithfully instead of producing NaN", () => {
+    const r = convertAgentCron("0 */2 * * *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 00-23/2 * * ? *")
+    expect(r.outputCron).not.toContain("NaN")
+  })
+
+  test("normal expressions keep working", () => {
+    expect(convertAgentCron("0 0 * * *").outputCron).toBe("0 00 00 * * ? *")
+    expect(convertAgentCron("30 2 * * 1").outputCron).toBe("0 30 02 ? * 1 *")
+    expect(convertAgentCron("*/5 * * * *").outputCron).toBe("0 */5 * * * ? *")
+    expect(convertAgentCron("0 0 1 * *").outputCron).toBe("0 00 00 1 * ? *")
+    expect(convertAgentCron("0 30 9 * * ? *").outputCron).toBe("0 30 09 * * ? *")
+  })
+})
+
+describe("convertAgentCron review follow-ups (#192)", () => {
+  const old: Array<[string, string]> = [
+    ["0-59/5 * * * *", "0 */5 * * * ? *"],
+    ["0-59/10 * * * *", "0 */10 * * * ? *"],
+    ["0-59/2 * * * *", "0 */2 * * * ? *"],
+    ["0-59/15 * * * *", "0 */15 * * * ? *"],
+    ["0-55/5 * * * *", "0 */5 * * * ? *"],
+    ["10-50/10 * * * *", "0 10/10 * * * ? *"],
+  ]
+  for (const [input, out] of old) {
+    test(`minute range step ${input} keeps old output`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+    })
+  }
+
+  test("minute range step that is not equivalent to a start/step is rejected", () => {
+    expect(convertAgentCron("0-20/15 * * * *").ok).toBe(false)
+  })
+
+  for (const month of ["*", "1-12", "*/1", "1,2,3,4,5,6,7,8,9,10,11,12", "JAN-DEC"]) {
+    test(`month ${month} normalises to *`, () => {
+      const r = convertAgentCron(`0 0 * ${month} *`)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe("0 00 00 * * ? *")
+    })
+  }
+  test("partial month sets stay rejected", () => {
+    expect(convertAgentCron("0 0 * 1-6 *").ok).toBe(false)
+    expect(convertAgentCron("0 0 * */2 *").ok).toBe(false)
+  })
+
+  test("day-of-month is validated", () => {
+    for (const d of ["32", "0", "1-32", "*/0", "1-5-7", "abc"]) {
+      const r = convertAgentCron(`0 0 ${d} * *`)
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain("day-of-month")
+    }
+    expect(convertAgentCron("0 0 1,15 * *").outputCron).toBe("0 00 00 1,15 * ? *")
+  })
+
+  test("day-of-week is validated; Unix 0 is rejected, 7/names accepted", () => {
+    const zero = convertAgentCron("0 9 * * 0")
+    expect(zero.ok).toBe(false)
+    expect(zero.error).toContain("day-of-week")
+    expect(convertAgentCron("0 9 * * 8").ok).toBe(false)
+    expect(convertAgentCron("0 9 * * 7").outputCron).toBe("0 00 09 ? * 7 *")
+    expect(convertAgentCron("0 9 * * MON-FRI").outputCron).toBe("0 00 09 ? * 1,2,3,4,5 *")
+  })
+
+  // These converted faithfully before #192; the day fields are copied through unchanged.
+  const keptDays: Array<[string, string]> = [
+    ["0 0 1-5 * *", "0 00 00 1-5 * ? *"],
+    ["0 0 */2 * *", "0 00 00 */2 * ? *"],
+    ["0 0 1/5 * *", "0 00 00 1/5 * ? *"],
+    ["0 0 1-5,10 * *", "0 00 00 1-5,10 * ? *"],
+    ["0 9 * * */2", "0 00 09 ? * */2 *"],
+    ["0 9 * * 1-5/2", "0 00 09 ? * 1-5/2 *"],
+    ["0 9 * * MON/2", "0 00 09 ? * MON/2 *"],
+  ]
+  for (const [input, out] of keptDays) {
+    test(`day range/step ${input} keeps old output with the same run times`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+      const from = new Date(2026, 0, 1)
+      expect(cronNextRuns(r.outputCron!, 10, from)).toEqual(cronNextRuns(input, 10, from))
+    })
+  }
+
+  for (const month of ["1/1", "JAN/1", "1-12/1"]) {
+    test(`Quartz month ${month} runs to December and normalises to *`, () => {
+      const r = convertAgentCron(`0 0 * ${month} *`)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe("0 00 00 * * ? *")
+    })
+  }
+  test("Quartz month N/S that skips months stays rejected", () => {
+    for (const month of ["2/1", "1/2"]) expect(convertAgentCron(`0 0 * ${month} *`).error).toContain("month field")
+  })
+
+  test("Quartz N/S hour means N-23/S", () => {
+    const r = convertAgentCron("0 0 8/2 * * ? *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 08-23/2 * * ? *")
+  })
+
+  // Hour steps or lists that select one block of hours are that block; main converted these faithfully.
+  const hourBlocks: Array<[string, string]> = [
+    ["*/5 0-23/1 * * *", "0 */5 * * * ? *"],
+    ["*/5 9-17/1 * * *", "0 */5 09-17 * * ? *"],
+    ["* 9-17/1 * * *", "0 * 09-17 * * ? *"],
+    ["10-50/10 0-23/1 * * *", "0 10/10 * * * ? *"],
+    ["*/5 3/25 * * *", "0 */5 03-03 * * ? *"],
+    ["0 9,9 * * *", "0 00 09 * * ? *"],
+    ["0,0 9 * * *", "0 00 09 * * ? *"],
+    ["*/5 9/1 * * *", "0 */5 09-23 * * ? *"],
+  ]
+  for (const [input, out] of hourBlocks) {
+    test(`hour block ${input} converts with the same run times`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+      const from = new Date(2026, 0, 1)
+      expect(cronNextRuns(r.outputCron!, 500, from)).toEqual(cronNextRuns(input, 500, from))
+    })
+  }
+  // Single-value minute ranges and wrapped hour ranges converted exactly on main and keep main's output.
+  const keptFromMain: Array<[string, string]> = [
+    ["5-5 9 * * *", "0 05 09 * * ? *"],
+    ["0-0 9 * * *", "0 00 09 * * ? *"],
+    ["59-59 * * * *", "0 59 * * * ? *"],
+    ["0 1-1 9 * * *", "0 01 09 * * ? *"],
+    ["0 22-2 * * *", "0 00 22-02/1 * * ? *"],
+    ["*/5 22-2 * * *", "0 */5 22-02 * * ? *"],
+    ["0 18-9 * * *", "0 00 18-09/1 * * ? *"],
+  ]
+  for (const [input, out] of keptFromMain) {
+    test(`${input} keeps main's output`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+    })
+  }
+  // Every-year year forms and zero-padded numbers converted exactly on main and keep main's output.
+  const keptForms: Array<[string, string]> = [
+    ["0 0 9 * * ? */1", "0 00 09 * * ? *"],
+    ["0 0 9 * * ? 1970-2099", "0 00 09 * * ? *"],
+    ["0 0 9 * * ? 1970/1", "0 00 09 * * ? *"],
+    ["005 9 * * *", "0 05 09 * * ? *"],
+    ["0 009 * * *", "0 00 09 * * ? *"],
+    ["0 9 ? * 001", "0 00 09 ? * 1 *"],
+    ["0 0 9 001 * ?", "0 00 09 001 * ? *"],
+    ["0 0 9 * 001-012 ?", "0 00 09 * * ? *"],
+  ]
+  for (const [input, out] of keptForms) {
+    test(`${input} keeps main's output`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+    })
+  }
+  test("specific or partial years and zero-padded out-of-range values stay rejected", () => {
+    for (const input of ["0 0 9 * * ? 2026", "0 0 9 * * ? 1970-2098", "0 0 9 * * ? 2099-1970"]) expect(convertAgentCron(input).error).toContain("year field")
+    expect(convertAgentCron("0 0024 * * *").error).toContain("out of range")
+    expect(convertAgentCron("0 9 * * 000").error).toContain("day-of-week")
+    expect(convertAgentCron("0 9 00 * *").error).toContain("day-of-month")
+  })
+
+  test("a wrapped hour range keeps main's Studio schedule window", () => {
+    const r = convertAgentCron("0 22-2 * * *")
+    expect(r.uiParam.scheduleStartTime).toBe("22:00")
+    expect(r.uiParam.scheduleEndTime).toBe("02:59")
+    expect(r.uiParam.timeGap).toBe(1)
+  })
+
+  test("hour steps that skip hours stay rejected with a minute step", () => {
+    for (const input of ["*/5 */2 * * *", "*/5 8/2 * * *", "* 9-17/3 * * *"]) expect(convertAgentCron(input).error).toContain("step in both fields")
+    expect(convertAgentCron("0 8,12 * * *").error).toContain("hour field '8,12'")
   })
 })

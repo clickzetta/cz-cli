@@ -99,10 +99,130 @@ function hasUnsupportedToken(fields: CronFields): string | null {
   return null
 }
 
-function parseHourRange(token: string): { start: string; end: string; step: string | null } {
+const INT = "\\d+"
+const MINUTE_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d+$/, new RegExp(`^${INT}/\\d+$`)]
+const HOUR_FORMS = [new RegExp(`^${INT}/\\d+$`), new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d+$/, new RegExp(`^${INT}-${INT}$`), new RegExp(`^${INT}-${INT}/\\d+$`)]
+
+const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+// True when the month field selects every month (1-12, star-slash-1, JAN-DEC, a full list).
+function monthIsEveryMonth(month: string): boolean {
+  const months = new Set<number>()
+  for (const raw of month.toUpperCase().split(",")) {
+    const [range, step = "1"] = raw.split("/")
+    const stepN = Number(step)
+    if (!Number.isInteger(stepN) || stepN < 1) return false
+    const num = (t: string) => (MONTH_NAMES.includes(t) ? MONTH_NAMES.indexOf(t) + 1 : /^\d+$/.test(t) ? Number(t) : NaN)
+    // Quartz N/S runs from N to the end of the range, whatever the step.
+    const [lo, hi] = range === "*" ? [1, 12] : range.includes("-") ? range.split("-", 2).map(num) : [num(range), raw.includes("/") ? 12 : num(range)]
+    if (!(lo >= 1 && hi <= 12 && lo <= hi)) return false
+    for (let m = lo; m <= hi; m += stepN) months.add(m)
+  }
+  return months.size === 12
+}
+
+/**
+ * Rewrite fields that are exactly equivalent to a simpler form the encoder understands.
+ * Anything not provably equivalent is left alone for unsupportedShape to reject.
+ */
+function normalizeFields(fields: CronFields): CronFields {
+  const out = { ...fields }
+  if (out.month !== "*" && out.month !== "?" && monthIsEveryMonth(out.month)) out.month = "*"
+  const range = /^(\d+)-(\d+)\/(\d+)$/.exec(out.minute)
+  if (range) {
+    const [a, b, n] = range.slice(1).map(Number)
+    // A-B/N equals A/N only when no step value lies between B and 59.
+    if (n >= 1 && a <= b && b <= 59 && Math.floor((59 - a) / n) === Math.floor((b - a) / n)) out.minute = `${a}/${n}`
+  }
+  // A list repeating one minute (0,0) is that minute.
+  if (/^\d+(,\d+)+$/.test(out.minute) && new Set(out.minute.split(",").map(Number)).size === 1) out.minute = String(Number(out.minute.split(",")[0]))
+  // An hour step or list that selects one block of consecutive hours (0-23/1, 9-17/1, 3/25, 9,9) is that block.
+  // Rewrite only shapes that would otherwise be rejected, so outputs that were already faithful keep their form.
+  const minuteStepped = out.minute === "*" || out.minute.includes("/")
+  if (out.hour.includes(",") || (minuteStepped && out.hour.includes("/"))) {
+    const hours = hourSet(out.hour)
+    if (hours && hours.at(-1)! - hours[0] === hours.length - 1) {
+      out.hour = hours.length === 24 ? "*" : hours.length === 1 ? String(hours[0]) : `${hours[0]}-${hours.at(-1)}`
+    }
+  }
+  return out
+}
+
+// Sorted hours selected by a field of *, N, A-B parts with optional /S (Quartz N/S means N-23/S); null if malformed.
+function hourSet(hour: string): number[] | null {
+  const hours = new Set<number>()
+  for (const part of hour.split(",")) {
+    const match = /^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/.exec(part)
+    if (!match || (match[1] === "*" && match[2] !== undefined)) return null
+    const lo = match[1] === "*" ? 0 : Number(match[1])
+    const hi = match[1] === "*" ? 23 : match[2] !== undefined ? Number(match[2]) : match[3] !== undefined ? 23 : lo
+    const step = match[3] === undefined ? 1 : Number(match[3])
+    if (step < 1 || lo > hi || hi > 23) return null
+    for (let h = lo; h <= hi; h += step) hours.add(h)
+  }
+  return [...hours].sort((a, b) => a - b)
+}
+
+// Day fields are copied into the output unchanged, so any well-formed list of values,
+// ranges and steps is kept; only out-of-range values (and weekday 0) are rejected.
+function unsupportedDayOrWeek(fields: CronFields): string | null {
+  if (fields.day !== "*" && fields.day !== "?") {
+    const bad = fields.day.split(",").find(part => !isListPart(part, d => /^\d+$/.test(d) && Number(d) >= 1 && Number(d) <= 31))
+    if (bad !== undefined) {
+      return `Unsupported day-of-month field '${fields.day}': use days 1-31 as values, ranges, steps or lists (got '${bad}').`
+    }
+  }
+  if (fields.week !== "*" && fields.week !== "?") {
+    const bad = fields.week.toUpperCase().split(",").find(part => !isListPart(part, d => d in STUDIO_WEEKDAY_NAMES || /^0*[1-7]$/.test(d)))
+    if (bad !== undefined) {
+      return `Unsupported day-of-week field '${fields.week}': use 1-7 (MON=1 ... SUN=7) or names as values, ranges, steps or lists (got '${bad}'; 0 is not supported, use 7 for Sunday).`
+    }
+  }
+  return null
+}
+
+// One comma-separated part: V, A-B, *, each optionally followed by /S with S >= 1.
+function isListPart(part: string, isValue: (token: string) => boolean): boolean {
+  const [range, step, ...rest] = part.split("/")
+  if (rest.length) return false
+  if (step !== undefined && !(/^\d+$/.test(step) && Number(step) >= 1)) return false
+  if (range === "*") return step !== undefined
+  const ends = range.split("-")
+  return ends.length <= 2 && ends.every(isValue)
+}
+
+/** Reject any field shape the Studio schedule model cannot express, instead of silently narrowing or widening it. */
+function unsupportedShape(fields: CronFields): string | null {
+  if (!/^0+$/.test(fields.second)) return `Unsupported second field '${fields.second}': only 0 is supported.`
+  if (fields.month !== "*" && fields.month !== "?") return `Unsupported month field '${fields.month}': only * is supported (yearly/monthly-subset schedules cannot be expressed).`
+  if (fields.year !== "*") return `Unsupported year field '${fields.year}': only * is supported.`
+  if (!MINUTE_FORMS.some(r => r.test(fields.minute))) {
+    return `Unsupported minute field '${fields.minute}': only a single value, *, */N or N/N are supported (lists and ranges cannot be expressed).`
+  }
+  if (!HOUR_FORMS.some(r => r.test(fields.hour))) {
+    return `Unsupported hour field '${fields.hour}': only a single value, *, */N, A-B or A-B/N are supported (lists cannot be expressed).`
+  }
+  const minuteStepped = fields.minute === "*" || fields.minute.includes("/")
+  if (minuteStepped && fields.hour.includes("/")) {
+    return `Unsupported combination of minute '${fields.minute}' and hour '${fields.hour}': a step in both fields cannot be expressed.`
+  }
+  if (!minuteStepped && !/^\d+$/.test(fields.minute)) return `Unsupported minute field '${fields.minute}'.`
+  const minuteBase = fields.minute.split("/")[0]
+  if (/^\d+$/.test(minuteBase) && Number(minuteBase) > 59) return `Minute out of range in '${fields.minute}'.`
+  for (const h of fields.hour.split("/")[0].split("-")) if (/^\d+$/.test(h) && Number(h) > 23) return `Hour out of range in '${fields.hour}'.`
+  if (fields.hour.includes("-")) {
+    const [a, b] = fields.hour.split("/")[0].split("-").map(Number)
+    if (a > b) return `Unsupported hour range '${fields.hour}': start is after end.`
+  }
+  return unsupportedDayOrWeek(fields)
+}
+
+function parseHourToken(token: string, quartzSteps: boolean): { start: string; end: string; step: string | null } {
   let step: string | null = null
   let base = token
   if (token.includes("/")) { [base, step] = token.split("/", 2) }
+  if (quartzSteps && base === "*") return { start: "0", end: "23", step }
+  if (quartzSteps && step && !base.includes("-")) return { start: base, end: "23", step } // Quartz N/S means N-23/S
   if (base.includes("-")) {
     const [start, end] = base.split("-", 2)
     return { start, end, step }
@@ -110,12 +230,19 @@ function parseHourRange(token: string): { start: string; end: string; step: stri
   return { start: base, end: base, step }
 }
 
-function decodeToUi(fields: CronFields): { param: UiParam; warnings: string[]; error?: string } {
+// strict=false is the pre-#178 decoder, kept byte-for-byte so its exact conversions keep their output.
+// strict=true normalises equivalent forms and rejects shapes the Studio model cannot express.
+function decodeToUi(rawFields: CronFields, strict: boolean): { param: UiParam; warnings: string[]; error?: string } {
+  const fields = strict ? normalizeFields(rawFields) : rawFields
+  const parseHourRange = (token: string) => parseHourToken(token, strict)
   const warnings: string[] = []
   const param: UiParam = { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null }
 
   const unsupported = hasUnsupportedToken(fields)
   if (unsupported) return { param, warnings, error: unsupported }
+
+  const shape = strict ? unsupportedShape(fields) : null
+  if (shape) return { param, warnings, error: shape }
 
   if (fields.day !== "*" && fields.day !== "?" && fields.week !== "*" && fields.week !== "?") {
     return { param, warnings, error: "Both day-of-month and day-of-week are specific." }
@@ -299,23 +426,81 @@ export function cronNextRuns(expr: string, count = 5, from?: Date): string[] {
 
 /**
  * Convert agent cron expression to Studio-compatible format.
- * Validates, decodes to UI params, re-encodes with constraints.
+ * The pre-#178 conversion is kept whenever its output provably selects the same schedule,
+ * so exact conversions never change; otherwise the strict decoder normalises or rejects.
  */
 export function convertAgentCron(expr: string): CronResult {
   const inputCron = expr.trim().replace(/\s+/g, " ")
   try {
     const fields = parseCron(expr)
-    const { param, warnings, error: decodeErr } = decodeToUi(fields)
-    if (decodeErr) {
-      return { ok: false, inputCron, outputCron: null, uiParam: param, warnings, error: decodeErr }
-    }
-    const outputCron = encodeFromUi(param)
-    return { ok: true, inputCron, outputCron, uiParam: param, warnings }
+    const legacy = convertFields(inputCron, fields, false)
+    if (legacy.ok && sameSchedule(fields, legacy.outputCron!)) return legacy
+    const strict = convertFields(inputCron, fields, true)
+    if (!strict.ok || sameSchedule(fields, strict.outputCron!)) return strict
+    return { ...strict, ok: false, outputCron: null, error: `Cron '${inputCron}' cannot be expressed exactly as a Studio schedule (closest form '${strict.outputCron}' differs).` }
   } catch (e) {
-    return {
-      ok: false, inputCron, outputCron: null,
-      uiParam: { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null },
-      warnings: [], error: e instanceof Error ? e.message : String(e),
-    }
+    return failure(inputCron, e)
   }
+}
+
+function convertFields(inputCron: string, fields: CronFields, strict: boolean): CronResult {
+  try {
+    const { param, warnings, error: decodeErr } = decodeToUi(fields, strict)
+    if (decodeErr) return { ok: false, inputCron, outputCron: null, uiParam: param, warnings, error: decodeErr }
+    return { ok: true, inputCron, outputCron: encodeFromUi(param), uiParam: param, warnings }
+  } catch (e) {
+    return failure(inputCron, e)
+  }
+}
+
+function failure(inputCron: string, e: unknown): CronResult {
+  return {
+    ok: false, inputCron, outputCron: null,
+    uiParam: { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null },
+    warnings: [], error: e instanceof Error ? e.message : String(e),
+  }
+}
+
+// True when every field of the output selects exactly the values the input field selects.
+// Invalid input values (weekday 0, day 32, a zero step) make the input unprovable, so it is not the same.
+function sameSchedule(input: CronFields, output: string): boolean {
+  const out = parseCron(output)
+  const MONTHS = Object.fromEntries(MONTH_NAMES.map((m, i) => [m, i + 1]))
+  const pairs: Array<[string, string, number, number, Record<string, number>]> = [
+    [input.second, out.second, 0, 59, {}],
+    [input.minute, out.minute, 0, 59, {}],
+    [input.hour, out.hour, 0, 23, {}],
+    [input.day, out.day, 1, 31, {}],
+    [input.month, out.month, 1, 12, MONTHS],
+    [input.week, out.week, 1, 7, STUDIO_WEEKDAY_NAMES],
+  ]
+  const years = [fieldValues(input.year, 1970, 2099, {}, false), fieldValues(out.year, 1970, 2099, {}, false)]
+  if (years.some(y => y === null) || years[0]!.join() !== years[1]!.join()) return false
+  return pairs.every(([a, b, min, max, names]) => {
+    const x = fieldValues(a, min, max, names)
+    const y = fieldValues(b, min, max, names)
+    return x !== null && y !== null && x.length === y.length && x.every((v, i) => v === y[i])
+  })
+}
+
+// Sorted values a Quartz field selects: *, ?, V, A-B (wrapping past max unless wrap=false), V/S (V to max), A-B/S and lists.
+// Numbers may have leading zeros; bounds are checked before any expansion.
+function fieldValues(field: string, min: number, max: number, names: Record<string, number>, wrap = true): number[] | null {
+  const size = max - min + 1
+  const value = (t: string) => (t in names ? names[t] : /^\d+$/.test(t) ? Number(t) : NaN)
+  const values = new Set<number>()
+  for (const part of field.toUpperCase().split(",")) {
+    const match = /^([^/-]+)(?:-([^/-]+))?(?:\/(\d+))?$/.exec(part)
+    if (!match) return null
+    const star = match[1] === "*" || match[1] === "?"
+    if (star && match[2] !== undefined) return null
+    const lo = star ? min : value(match[1])
+    const hi = star ? max : match[2] !== undefined ? value(match[2]) : match[3] !== undefined ? max : lo
+    const step = match[3] === undefined ? 1 : Number(match[3])
+    if (!(lo >= min && lo <= max && hi >= min && hi <= max && step >= 1)) return null
+    if (!wrap && hi < lo) return null
+    const span = hi >= lo ? hi - lo : hi + size - lo
+    for (let k = 0; k <= span; k += step) values.add(((lo - min + k) % size) + min)
+  }
+  return [...values].sort((a, b) => a - b)
 }
