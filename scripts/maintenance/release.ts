@@ -88,7 +88,7 @@ export async function releaseNightly(input: NightlyInput, run: ReleaseRunner = e
         hash(Buffer.from(content.content, "base64").toString("utf8")) !==
           hash(await Bun.file(path.join(control, file)).text())
       )
-        throw new Error("Merged release workflow and publisher must match the reviewed control version")
+        throw new Error("Merged release workflow and publisher must match the control checkout")
     }
     const runs = await api(
       `/repos/${repository}/actions/workflows/cz-test.yml/runs?head_sha=${input.sha}&status=success&per_page=100`,
