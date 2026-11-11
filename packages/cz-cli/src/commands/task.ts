@@ -1465,10 +1465,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
             const oldData = isRecord(oldResp.data) ? oldResp.data : {}
             const mergeTaskName = String(taskDetail.dataFileName ?? taskDetail.fileName ?? oldData.dataFileName ?? argv.task)
-            const cronText = (argv.cron as string | undefined) ?? (oldData.cronExpress as string | undefined) ?? "0 00 00 * * ? *"
-            const cronResult = convertAgentCron(cronText)
-            if (!cronResult.ok || !cronResult.outputCron) {
-              error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 })
+            const storedCron = argv.cron == null ? (oldData.cronExpress as string | undefined) : undefined
+            const cronResult = convertAgentCron((argv.cron as string | undefined) ?? storedCron ?? "0 00 00 * * ? *")
+            const shouldRegenerateSchedule = argv.cron != null || !Array.isArray(oldData.schedule)
+            // The stored cron came from Studio (its UI or an older cz-cli). When its stored schedule is kept,
+            // save it back unchanged instead of rejecting a cron the user never typed.
+            const cronExpress = cronResult.ok && cronResult.outputCron
+              ? cronResult.outputCron
+              : shouldRegenerateSchedule ? undefined : storedCron
+            if (!cronExpress) {
+              const message = cronResult.error ?? "Invalid cron expression"
+              error("INVALID_CRON", storedCron
+                ? `The task's stored cron '${storedCron}' cannot be converted to a Studio schedule: ${message} Pass --cron to set a new schedule.`
+                : message, { format, exitCode: 2 })
               return
             }
             const dependencies = await Promise.all(dependencyNames.map(async (dependencyName) => {
@@ -1513,13 +1522,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const activeStartTime = formatIsoStartOfDay(oldData.activeStartTime as string | undefined)
             const configProperties = mergeConfigProperties(oldData.configProperties)
             const vc = await resolveScheduleVc(sc, argv, oldData)
-            const shouldRegenerateSchedule = argv.cron != null || !Array.isArray(oldData.schedule)
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
               projectId: sc.projectId,
               updateBy: String(sc.userId),
               instanceName: sc.instanceName,
-              cronExpress: cronResult.outputCron,
+              cronExpress,
               activeStartTime,
               activeEndTime: formatIsoStartOfDay((oldData.activeEndTime as string | undefined) ?? "2099-01-01"),
               ownerCnName: String(taskDetail.ownerCnName ?? taskDetailData.ownerCnName ?? sc.userId),

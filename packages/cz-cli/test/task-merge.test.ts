@@ -13,6 +13,7 @@ const saveContentCalls: Array<Record<string, unknown>> = []
 const saveConfigCalls: Array<Record<string, unknown>> = []
 const submitTaskCalls: Array<Record<string, unknown>> = []
 let mergeHasConfig = true
+let storedConfig: Record<string, unknown> = {}
 
 const { execute } = await import("../src/execute.ts")
 
@@ -30,6 +31,7 @@ beforeEach(() => {
   saveConfigCalls.length = 0
   submitTaskCalls.length = 0
   mergeHasConfig = true
+  storedConfig = {}
   writeFileSync(
     join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
     "[profiles.test]\npat = 'pat'\nworkspace = 'quick_start'\ninstance = 'tmwmzxzs'\n",
@@ -95,6 +97,7 @@ beforeEach(() => {
       configProperties: "{\"extConfig\":{},\"enableAutoMv\":false}",
       dataFileName: "merge_task",
       fileDescription: "",
+      ...storedConfig,
     },
   }))
   // resolveVclusterId → listVclusters
@@ -207,6 +210,55 @@ describe("task merge", () => {
 
     expect(result.exitCode).toBe(2)
     expect(json.error).toMatchObject({ code: "INVALID_CRON" })
+    expect(saveContentCalls).toHaveLength(0)
+    expect(saveConfigCalls).toHaveLength(0)
+  })
+
+  // Crons Studio can hold (set in the Studio UI or by an older cz-cli) that the adapter cannot re-express exactly.
+  const STORED_SCHEDULE = { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "2026-06-29 00:00:00" }
+  for (const cron of ["0 0 0 * 1,3 ? *", "0 5,20 3 * * ? *", "0 0 1,5,9 * * ? *", "0 0 0 * * ? 2027", "0 0 0 ? * 0 *"]) {
+    test(`save-merge without --cron saves the stored cron '${cron}' back unchanged`, async () => {
+      storedConfig = { cronExpress: cron, ...STORED_SCHEDULE }
+      const result = await execute("task save-merge merge_task --dependency select_3")
+
+      if (result.exitCode !== 0) console.log(result.output)
+      expect(result.exitCode).toBe(0)
+      expect(saveContentCalls).toHaveLength(1)
+      expect(saveConfigCalls).toHaveLength(1)
+      expect(saveConfigCalls[0]).toMatchObject({ cronExpress: cron, ...STORED_SCHEDULE })
+    })
+  }
+
+  test("save-merge without --cron still converts a stored cron the adapter expresses exactly", async () => {
+    storedConfig = { cronExpress: "0 30 8 * * ? *", ...STORED_SCHEDULE }
+    const result = await execute("task save-merge merge_task --dependency select_3")
+
+    if (result.exitCode !== 0) console.log(result.output)
+    expect(result.exitCode).toBe(0)
+    expect(saveConfigCalls[0]).toMatchObject({ cronExpress: "0 30 08 * * ? *", ...STORED_SCHEDULE })
+  })
+
+  test("save-merge names the stored cron when it must rebuild a schedule it cannot convert", async () => {
+    storedConfig = { cronExpress: "0 5,20 3 * * ? *" }
+    const result = await execute("task save-merge merge_task --dependency select_3")
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(2)
+    expect(json.error).toMatchObject({ code: "INVALID_CRON" })
+    expect(String((json.error as Record<string, unknown>).message)).toContain("stored cron '0 5,20 3 * * ? *'")
+    expect(String((json.error as Record<string, unknown>).message)).toContain("--cron")
+    expect(saveContentCalls).toHaveLength(0)
+    expect(saveConfigCalls).toHaveLength(0)
+  })
+
+  test("save-merge rejects an invalid --cron even when the stored cron is valid", async () => {
+    storedConfig = { cronExpress: "0 30 8 * * ? *", ...STORED_SCHEDULE }
+    const result = await execute("task save-merge merge_task --dependency select_3 --cron '0 8,12 * * *'")
+    const json = firstJson(result.output)
+
+    expect(result.exitCode).toBe(2)
+    expect(json.error).toMatchObject({ code: "INVALID_CRON" })
+    expect(String((json.error as Record<string, unknown>).message)).not.toContain("stored cron")
     expect(saveContentCalls).toHaveLength(0)
     expect(saveConfigCalls).toHaveLength(0)
   })
