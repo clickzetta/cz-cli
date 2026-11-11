@@ -22,6 +22,20 @@ permissions:
   contents: read
 
 jobs:
+  windows-http-security:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Verify HTTP decoding boundary on Windows
+        working-directory: packages/cz-cli
+        run: bun test test/http-security.test.ts
+
   test:
     runs-on: ubuntu-latest
     steps:

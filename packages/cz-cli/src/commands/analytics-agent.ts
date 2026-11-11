@@ -26,7 +26,8 @@ const ROUTES = {
   datasourceDelete: { method: "DELETE", path: (argv: Record<string, unknown>) => `/open/api/v1/datasources/${encodePath(argv["datasource-id"])}` },
   simpleMetricList: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/list" },
   simpleMetricCreate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/create" },
-  simpleMetricUpdate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/update" },
+  simpleMetricPartialUpdate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/partialUpdate" },
+  simpleMetricUpdateDomains: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/updateDomains" },
   simpleMetricDelete: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/delete" },
   simpleMetricDetail: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/detail" },
   simpleMetricValidate: { method: "POST", path: "/open/api/v1/analytics-agent/metrics/validate" },
@@ -122,7 +123,7 @@ class AnalyticsBusinessError extends Error {
   }
 }
 
-function parseJsonObject(raw: string | undefined, fieldName: string): Record<string, unknown> {
+function parseJsonObject(raw: string | undefined, fieldName: string, format?: string): Record<string, unknown> {
   if (!raw) return {}
   try {
     const parsed = JSON.parse(raw)
@@ -131,7 +132,9 @@ function parseJsonObject(raw: string | undefined, fieldName: string): Record<str
     }
     return parsed as Record<string, unknown>
   } catch (err) {
-    throw new Error(`Invalid ${fieldName}: ${err instanceof Error ? err.message : String(err)}`)
+    const message = `Invalid ${fieldName}: ${err instanceof Error ? err.message : String(err)}`
+    if (format !== undefined) handledError("USAGE_ERROR", message, { format, exitCode: EXIT_USAGE_ERROR })
+    throw new Error(message)
   }
 }
 
@@ -143,7 +146,7 @@ function parseOptionalJsonObject(raw: string | undefined, fieldName: string): Re
 function validateAnswerBuilderMetricNames(dsl: Record<string, unknown>, format: string): void {
   const outputColumns = dsl.outputColumns
   if (!Array.isArray(outputColumns) || outputColumns.length === 0) {
-    handledError("USAGE_ERROR", "--content outputColumns must include at least one non-empty metricName", { format })
+    handledError("USAGE_ERROR", "--content outputColumns must include at least one non-empty metricName", { format, exitCode: EXIT_USAGE_ERROR })
   }
   const invalidIndex = (outputColumns as unknown[]).findIndex((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return true
@@ -151,7 +154,7 @@ function validateAnswerBuilderMetricNames(dsl: Record<string, unknown>, format: 
     return typeof metricName !== "string" || metricName.trim() === ""
   })
   if (invalidIndex >= 0) {
-    handledError("USAGE_ERROR", `--content outputColumns[${invalidIndex}].metricName must be non-empty`, { format })
+    handledError("USAGE_ERROR", `--content outputColumns[${invalidIndex}].metricName must be non-empty`, { format, exitCode: EXIT_USAGE_ERROR })
   }
 }
 
@@ -176,19 +179,22 @@ async function readInlineOrFile(
 
 // Resolve the answer-builder content DSL. File inputs avoid shell expansion of
 // placeholders and preserve long JSON, SQL, quotes, and newlines verbatim.
-async function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: string): Promise<string> {
-  const rawContent = await readInlineOrFile(argv, "content", format)
+async function resolveAnswerBuilderContent(argv: Record<string, unknown>, format: string, fallback?: unknown): Promise<string> {
+  if (fallback !== undefined && typeof fallback !== "string") {
+    return handledError("USAGE_ERROR", "body.content must be a JSON-encoded DSL string", { format, exitCode: EXIT_USAGE_ERROR })
+  }
+  const rawContent = await readInlineOrFile(argv, "content", format) ?? (typeof fallback === "string" ? fallback : undefined)
   const sql = await readInlineOrFile(argv, "sql", format)
 
   if (rawContent === undefined && sql === undefined) {
-    handledError("USAGE_ERROR", "Provide --content (DSL JSON) or --sql.", { format })
+    handledError("USAGE_ERROR", "Provide --content (DSL JSON) or --sql.", { format, exitCode: EXIT_USAGE_ERROR })
   }
 
   let dsl: Record<string, unknown>
   try {
     dsl = rawContent ? parseJsonObject(rawContent, "--content") : {}
   } catch (err) {
-    return handledError("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+    return handledError("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format, exitCode: EXIT_USAGE_ERROR })
   }
   if (sql !== undefined) dsl.sql = sql
   validateAnswerBuilderMetricNames(dsl, format)
@@ -196,7 +202,7 @@ async function resolveAnswerBuilderContent(argv: Record<string, unknown>, format
 }
 
 async function resolveAnswerBuilderBody(argv: Record<string, unknown>, format: string): Promise<Record<string, unknown>> {
-  return parseJsonObject(await readInlineOrFile(argv, "body", format), argv["body-file"] === undefined ? "--body" : "--body-file")
+  return parseJsonObject(await readInlineOrFile(argv, "body", format), argv["body-file"] === undefined ? "--body" : "--body-file", format)
 }
 
 // Syntax reference shown in the epilogue of answer-builder create/validate.
@@ -342,6 +348,16 @@ function optionalPositiveIntegerJsonArray(raw: string | undefined, optionName: s
   return optionalPositiveIntegerArray(parsed, optionName, format)
 }
 
+// Resource bindings distinguish omission (retain/default) from [] (unbound).
+function resourceDomainIds(value: unknown, format: string): number[] | null | undefined {
+  if (value === undefined || value === null) return value
+  const parsed = typeof value === "string" ? parseJsonArray(value, "--domain-ids", format) : value
+  if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)) {
+    return handledError("USAGE_ERROR", "--domain-ids (body.domainIds) must be a JSON array of positive integers", { format, exitCode: EXIT_USAGE_ERROR })
+  }
+  return parsed
+}
+
 function requiredPositiveIntegerJsonArray(raw: string | undefined, optionName: string, format: string): number[] {
   if (raw === undefined || raw.trim() === "") {
     handledError("USAGE_ERROR", `${optionName} is required and must be a JSON array of positive integers`, {
@@ -422,7 +438,7 @@ function resolveSessionCreateTitle(
   )
 }
 
-function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] | undefined {
+function parseJsonArray(raw: string | undefined, fieldName: string, format?: string): unknown[] | undefined {
   if (!raw) return undefined
   try {
     const parsed = JSON.parse(raw)
@@ -431,15 +447,17 @@ function parseJsonArray(raw: string | undefined, fieldName: string): unknown[] |
     }
     return parsed
   } catch (err) {
-    throw new Error(`Invalid ${fieldName}: ${err instanceof Error ? err.message : String(err)}`)
+    const message = `Invalid ${fieldName}: ${err instanceof Error ? err.message : String(err)}`
+    if (format !== undefined) handledError("USAGE_ERROR", message, { format, exitCode: EXIT_USAGE_ERROR })
+    throw new Error(message)
   }
 }
 
-function parseStringList(raw: unknown, fieldName: string): string[] | undefined {
+function parseStringList(raw: unknown, fieldName: string, allowEmpty = false): string[] | undefined {
   if (raw === undefined || raw === null || raw === "") return undefined
   if (Array.isArray(raw)) {
     const values = raw.flatMap((item) => parseStringList(item, fieldName) ?? [])
-    return values.length > 0 ? values : undefined
+    return values.length > 0 || (allowEmpty && raw.length === 0) ? values : undefined
   }
   if (typeof raw === "string") {
     const trimmed = raw.trim()
@@ -447,7 +465,7 @@ function parseStringList(raw: unknown, fieldName: string): string[] | undefined 
     if (trimmed.startsWith("[")) {
       const parsed = parseJsonArray(trimmed, fieldName)
       const values = (parsed ?? []).map((item) => String(item).trim()).filter(Boolean)
-      return values.length > 0 ? values : undefined
+      return values.length > 0 || (allowEmpty && parsed?.length === 0) ? values : undefined
     }
     const values = trimmed.split(",").map((item) => item.trim()).filter(Boolean)
     return values.length > 0 ? values : undefined
@@ -516,8 +534,11 @@ function validateAnalyticsNames(route: AnalyticsRoute, body: Record<string, unkn
     body.name = requiredName(body.name, "--name / body.name", format)
     return
   }
-  if ([ROUTES.simpleMetricCreate, ROUTES.simpleMetricUpdate, ROUTES.simpleMetricValidate].some((candidate) => candidate === route)) {
-    body.tableName = requiredName(body.tableName, "--table-name / body.tableName", format)
+  if ([ROUTES.simpleMetricCreate, ROUTES.simpleMetricPartialUpdate, ROUTES.simpleMetricValidate].some((candidate) => candidate === route)) {
+    if (route !== ROUTES.simpleMetricPartialUpdate || body.tableName != null) {
+      body.tableName = requiredName(body.tableName, "--table-name / body.tableName", format)
+    }
+    if (route === ROUTES.simpleMetricPartialUpdate && body.names == null) return
     if (!Array.isArray(body.names) || body.names.length === 0) {
       handledError("USAGE_ERROR", "--name / body.names must contain at least one non-empty name", { format, exitCode: EXIT_USAGE_ERROR })
     }
@@ -525,7 +546,9 @@ function validateAnalyticsNames(route: AnalyticsRoute, body: Record<string, unkn
     return
   }
   if ([ROUTES.answerBuilderCreate, ROUTES.answerBuilderUpdate, ROUTES.answerBuilderValidate].some((candidate) => candidate === route)) {
-    body.analysisName = requiredName(body.analysisName, "--analysis-name / body.analysisName", format)
+    if (route !== ROUTES.answerBuilderUpdate || body.analysisName != null) {
+      body.analysisName = requiredName(body.analysisName, "--analysis-name / body.analysisName", format)
+    }
   }
   if (route === ROUTES.datasetUpdate && Object.hasOwn(body, "displayName")) {
     body.displayName = requiredName(body.displayName, "--name / body.displayName", format)
@@ -1360,65 +1383,8 @@ async function executeSessionRunCommand(
   }
 }
 
-function domainIdsFromObject(value: unknown): number[] | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  const item = value as Record<string, unknown>
-  const direct = numberArray(item.domainIds)
-  if (direct && direct.length > 0) return direct
-  const domains = item.domains
-  if (!Array.isArray(domains)) return undefined
-  const ids = domains
-    .map((domain) => {
-      if (!domain || typeof domain !== "object" || Array.isArray(domain)) return undefined
-      const raw = (domain as Record<string, unknown>).id ?? (domain as Record<string, unknown>).domainId
-      return numberValue(raw)
-    })
-    .filter((id): id is number => id !== undefined)
-  return ids.length > 0 ? ids : undefined
-}
-
 function shouldFallbackStatusCommand(err: { code: string; message: string }): boolean {
   return /not found/i.test(err.message) || /不存在/.test(err.message)
-}
-
-function buildMetricUpdateBodyFromDetail(detail: unknown, status: "ENABLE" | "DISABLE"): Record<string, unknown> | null {
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null
-  const item = detail as Record<string, unknown>
-  const domainIds = domainIdsFromObject(item)
-  if (!domainIds || domainIds.length === 0) return null
-  const names = stringArray(item.names) ?? (typeof item.name === "string" ? [item.name] : undefined)
-  if (!names || names.length === 0) return null
-  return mergeBody({}, {
-    id: item.id,
-    datasourceId: item.datasourceId,
-    tableName: item.tableName,
-    names,
-    aggExpr: item.aggExpr,
-    alias: stringArray(item.alias),
-    description: item.description,
-    domainIds,
-    ext: item.ext,
-    status,
-  })
-}
-
-function buildAnswerBuilderUpdateBodyFromDetail(detail: unknown, status: "ENABLE" | "DISABLE"): Record<string, unknown> | null {
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null
-  const item = detail as Record<string, unknown>
-  const domainIds = domainIdsFromObject(item)
-  if (!domainIds || domainIds.length === 0) return null
-  if (typeof item.analysisName !== "string" || item.analysisName.trim() === "") return null
-  if (item.datasourceId === undefined || typeof item.content !== "string" || item.content.trim() === "") return null
-  return mergeBody({}, {
-    id: item.id,
-    analysisName: item.analysisName,
-    analysisDesc: item.analysisDesc,
-    datasourceId: item.datasourceId,
-    domainIds,
-    content: item.content,
-    extObj: item.extObj,
-    status,
-  })
 }
 
 async function executeStatusCommandWithUpdateFallback(
@@ -1426,10 +1392,8 @@ async function executeStatusCommandWithUpdateFallback(
   argv: Record<string, unknown>,
   primaryRoute: AnalyticsRoute,
   primaryBody: Record<string, unknown>,
-  detailRoute: AnalyticsRoute,
-  detailBody: Record<string, unknown>,
   updateRoute: AnalyticsRoute,
-  buildUpdateBody: (detail: unknown) => Record<string, unknown> | null,
+  updateBody: Record<string, unknown>,
 ): Promise<void> {
   const format = typeof argv.format === "string" ? argv.format : "json"
   const t0 = Date.now()
@@ -1450,22 +1414,9 @@ async function executeStatusCommandWithUpdateFallback(
       }
     } catch (err) {
       if (!(err instanceof AnalyticsHttpError)) throw err
-      if ((err.request.status ?? 0) < 500) throw err
+      if ((err.request.status ?? 0) < 500 && ![404, 405].includes(err.request.status ?? 0)) throw err
     }
 
-    const detailPayload = await requestAnalytics(argv, detailRoute, detailBody, {}, ctx)
-    const detailErr = extractBusinessError(detailPayload)
-    if (detailErr) {
-      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
-      error(detailErr.code, detailErr.message, { format })
-      return
-    }
-    const updateBody = buildUpdateBody(unwrapResponse(detailPayload))
-    if (!updateBody) {
-      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
-      error("ANALYTICS_AGENT_ERROR", `${name} fallback could not build update payload from detail response`, { format })
-      return
-    }
     const updatePayload = await requestAnalytics(argv, updateRoute, updateBody, {}, ctx)
     const updateErr = extractBusinessError(updatePayload)
     if (updateErr) {
@@ -1547,18 +1498,14 @@ function extractBatchTargets(data: unknown, nameKey: string): BatchTargetItem[] 
   return targets
 }
 
-// Per-item status change that throws on failure (for batch use), mirroring the
-// single-item disable's primary→detail→update fallback: some ids reject the
-// direct enable/disable endpoint and must be flipped via a full update payload.
+// Partial updates preserve definitions and bindings, including unbound resources.
 async function applyStatusChangeWithFallback(
   argv: Record<string, unknown>,
   id: number,
   status: "ENABLE" | "DISABLE",
   ctx: ResolvedContext,
   primaryRoute: AnalyticsRoute,
-  detailRoute: AnalyticsRoute,
   updateRoute: AnalyticsRoute,
-  buildUpdateBody: (detail: unknown, status: "ENABLE" | "DISABLE") => Record<string, unknown> | null,
 ): Promise<void> {
   const body = { id }
   try {
@@ -1566,15 +1513,11 @@ async function applyStatusChangeWithFallback(
     return
   } catch (err) {
     const isNotFound = err instanceof AnalyticsBusinessError && shouldFallbackStatusCommand(err)
-    const isServerErr = err instanceof AnalyticsHttpError && (err.request.status ?? 0) >= 500
+    const isServerErr = err instanceof AnalyticsHttpError
+      && ((err.request.status ?? 0) >= 500 || [404, 405].includes(err.request.status ?? 0))
     if (!isNotFound && !isServerErr) throw err
   }
-  const detail = await requestAnalyticsData(argv, detailRoute, body, {}, ctx)
-  const updateBody = buildUpdateBody(detail, status)
-  if (!updateBody) {
-    throw new AnalyticsBusinessError("ANALYTICS_AGENT_ERROR", `could not build update payload for id ${id}`)
-  }
-  await requestAnalyticsData(argv, updateRoute, updateBody, {}, ctx)
+  await requestAnalyticsData(argv, updateRoute, { id, status }, {}, ctx)
 }
 
 async function runBatchStatusChange(
@@ -2310,20 +2253,23 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "update <datasource-id>",
-            "Update datasource",
+            "Partially update a datasource; omitted connection fields are retained",
             (y) =>
               y
                 .positional("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
                 .option("name", { type: "string", describe: "Datasource name" })
                 .option("type", { type: "string", describe: "Datasource type" })
-                .option("connection", { type: "string", describe: "Datasource connection JSON object" })
+                .option("connection", { type: "string", describe: "Connection field patch; omitted connection fields and credentials are retained" })
                 .option("validate-only", { type: "boolean", describe: "Validate connection without updating datasource" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" }),
+                .option("body", { type: "string", describe: "Patch request body as JSON object" })
+                .example("cz-cli analytics-agent datasource update 8 --name renamed", "只改名称，保留连接和凭据。")
+                .example("cz-cli analytics-agent datasource update 8 --connection '{\"host\":\"new-host\"}' --validate-only", "使用合并后的配置验证连接，不保存修改。"),
             async (argv) => {
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const body = mergeBody(parseJsonObject(argv.body, "--body", format), {
                 name: argv.name,
                 type: argv.type,
-                connection: parseOptionalJsonObject(argv.connection, "--connection"),
+                connection: argv.connection === undefined ? undefined : parseJsonObject(argv.connection, "--connection", format),
                 validateOnly: argv["validate-only"],
               })
               await executeAnalyticsCommand("analytics-agent datasource update", argv as Record<string, unknown>, ROUTES.datasourceUpdate, body)
@@ -2434,7 +2380,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "update <domain-id>",
-            "Update domain",
+            "Partially update a domain; omitted fields retain their values",
             (y) =>
               y
                 .positional("domain-id", { type: "number", demandOption: true, describe: "Domain ID" })
@@ -2445,11 +2391,12 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .example("cz-cli analytics-agent domain update 27 --sample-questions '[\"Q1\"]'", "Update a domain's sample questions"),
             async (argv) => {
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const body = mergeBody(parseJsonObject(argv.body, "--body", format), {
                 name: argv.name,
                 description: argv.description,
                 datasourceId: argv["datasource-id"],
-                sampleQuestions: parseJsonArray(argv["sample-questions"], "--sample-questions"),
+                sampleQuestions: parseJsonArray(argv["sample-questions"], "--sample-questions", format),
               })
               await executeAnalyticsCommand("analytics-agent domain update", argv as Record<string, unknown>, ROUTES.domainUpdate, body)
             },
@@ -3042,21 +2989,23 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
         metric
           .command(
             "list",
-            "List metrics for one or more domains",
+            "List metrics with optional domain and datasource filters",
             (y) =>
               y
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for no domain filter" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("table-name", { type: "string", describe: "Filter by table name" })
                 .option("page-num", { type: "number", describe: "Page number" })
                 .option("page-size", { type: "number", describe: "Page size" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent metric list --page-size 20", "不按分析域过滤，分页列出指标。")
                 .example("cz-cli analytics-agent metric list --domain-ids '[5]'", "如果只查一个域，就这样写。")
                 .example("cz-cli analytics-agent metric list --domain-ids '[5,6]'", "如果要同时查多个域，就这样写。"),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const patch = parseJsonObject(argv.body, "--body", format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const body = mergeBody(patch, {
                 domainIds,
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
@@ -3071,14 +3020,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "Create a simple metric",
             (y) =>
               y
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
-                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for an unbound definition" })
+                .option("datasource-id", { type: "number", describe: "Datasource ID; defaults to the system datasource when omitted" })
                 .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
                 .option("description", { type: "string", describe: "Metric description" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent metric create --table-name orders --name total --expression 'count(*)'", "创建独立指标，使用系统默认数据源。")
                 .example(
                   "cz-cli analytics-agent metric create --domain-ids '[5]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
                   "如果只创建到一个域，就这样写。",
@@ -3089,8 +3039,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const patch = parseJsonObject(argv.body, "--body", format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const body = mergeBody(patch, {
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
                 names: [argv.name],
@@ -3104,40 +3055,69 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "update <metric-id>",
-            "Update a metric",
+            "Partially update a metric definition, preserving all domain bindings",
             (y) =>
               y
                 .positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" })
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
-                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
-                .option("name", { type: "string", demandOption: true, describe: "Metric name" })
-                .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
-                .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
-                .option("description", { type: "string", describe: "Metric description" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .option("domain-ids", { type: "string", hidden: true, describe: "Use metric update-domains instead" })
+                .option("datasource-id", { type: "number", describe: "Datasource ID" })
+                .option("table-name", { type: "string", describe: "Table name" })
+                .option("name", { type: "string", describe: "Metric name" })
+                .option("expression", { type: "string", describe: "Metric aggregate expression" })
+                .option("alias", { type: "string", describe: "Metric aliases, JSON array or comma-separated list; '[]' clears aliases" })
+                .option("description", { type: "string", describe: "Metric description; an empty string clears it" })
+                .option("base-version-id", { type: "number", describe: "Base version ID for optimistic concurrency" })
+                .option("version-description", { type: "string", describe: "Description of the new version" })
+                .option("status", { type: "string", choices: ["ENABLE", "DISABLE"], describe: "Metric status" })
+                .option("body", { type: "string", describe: "Patch JSON object; domainIds is not supported. Omitted or null fields retain their values" })
                 .example(
-                  "cz-cli analytics-agent metric update 9 --domain-ids '[5]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
-                  "如果只更新一个域，就这样写。",
+                  "cz-cli analytics-agent metric update 9 --alias '[\"净营收\"]'",
+                  "只更新别名，保留现有定义和分析域绑定。",
                 )
                 .example(
-                  "cz-cli analytics-agent metric update 9 --domain-ids '[5,6]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
-                  "如果要同时更新多个域，就这样写。",
+                  "cz-cli analytics-agent metric update 9 --description '更新后的描述'",
+                  "只更新描述；修改分析域绑定请使用 metric update-domains。",
                 ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
-                id: argv["metric-id"],
-                datasourceId: argv["datasource-id"],
+              const body = mergeBody(parseJsonObject(argv.body, "--body", format), {
+                id: requiredPositiveIntegerValue(argv["metric-id"], "--metric-id", format),
+                datasourceId: positiveIntegerValue(argv["datasource-id"], "--datasource-id", format),
                 tableName: argv["table-name"],
-                names: [argv.name],
+                names: argv.name === undefined ? undefined : [argv.name],
                 aggExpr: argv.expression,
-                alias: parseStringList(argv.alias, "--alias"),
+                alias: parseStringList(argv.alias, "--alias", true),
                 description: argv.description,
-                domainIds,
+                baseVersionId: positiveIntegerValue(argv["base-version-id"], "--base-version-id", format),
+                versionDescription: argv["version-description"],
+                status: argv.status,
               })
-              await executeAnalyticsCommand("analytics-agent metric update", argv as Record<string, unknown>, ROUTES.simpleMetricUpdate, body)
+              if (argv["domain-ids"] !== undefined || "domainIds" in body || "domains" in body) {
+                handledError("USAGE_ERROR", "Use metric update-domains to change domain bindings; metric update only changes the definition", { format, exitCode: EXIT_USAGE_ERROR })
+              }
+              if (!["datasourceId", "tableName", "names", "description", "aggExpr", "aggFunction", "aggCol", "ext", "alias", "status"].some((key) => body[key] !== undefined && body[key] !== null)) {
+                handledError("USAGE_ERROR", "At least one metric definition field is required", { format, exitCode: EXIT_USAGE_ERROR })
+              }
+              await executeAnalyticsCommand("analytics-agent metric update", argv as Record<string, unknown>, ROUTES.simpleMetricPartialUpdate, body)
+            },
+          )
+          .command(
+            "update-domains <metric-id>",
+            "Replace a metric's domain bindings without changing its definition",
+            (y) =>
+              y
+                .positional("metric-id", { type: "number", demandOption: true, describe: "Metric ID" })
+                .option("domain-ids", { type: "string", demandOption: true, describe: "Complete domain IDs JSON array; '[]' clears all bindings" })
+                .example("cz-cli analytics-agent metric update-domains 9 --domain-ids '[5,6]'", "替换全部分析域绑定为 5 和 6。")
+                .example("cz-cli analytics-agent metric update-domains 9 --domain-ids '[]'", "清空全部分析域绑定，保留指标定义。"),
+            async (argv) => {
+              const format = typeof argv.format === "string" ? argv.format : "json"
+              const id = requiredPositiveIntegerValue(argv["metric-id"], "--metric-id", format)
+              const domainIds = resourceDomainIds(argv["domain-ids"], format)
+              if (!domainIds) {
+                handledError("USAGE_ERROR", "--domain-ids must be a JSON array of positive integers; use [] to clear all bindings", { format, exitCode: EXIT_USAGE_ERROR })
+              }
+              await executeAnalyticsCommand("analytics-agent metric update-domains", argv as Record<string, unknown>, ROUTES.simpleMetricUpdateDomains, { id, domainIds })
             },
           )
           .command(
@@ -3155,14 +3135,15 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "Validate a metric definition",
             (y) =>
               y
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
-                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
+                .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for an unbound definition" })
+                .option("datasource-id", { type: "number", describe: "Datasource ID; defaults to the system datasource when omitted" })
                 .option("table-name", { type: "string", demandOption: true, describe: "Table name" })
                 .option("name", { type: "string", demandOption: true, describe: "Metric name" })
                 .option("expression", { type: "string", demandOption: true, describe: "Metric aggregate expression" })
                 .option("alias", { type: "string", describe: "Metric alias list, JSON array or comma-separated list" })
                 .option("description", { type: "string", describe: "Metric description" })
                 .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent metric validate --table-name orders --name total --expression 'count(*)'", "校验独立指标，使用系统默认数据源。")
                 .example(
                   "cz-cli analytics-agent metric validate --domain-ids '[5]' --datasource-id 824 --table-name orders --name total_amount --expression sum(amount)",
                   "如果只校验一个域，就这样写。",
@@ -3173,8 +3154,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 ),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const patch = parseJsonObject(argv.body, "--body", format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const body = mergeBody(patch, {
                 datasourceId: argv["datasource-id"],
                 tableName: argv["table-name"],
                 names: [argv.name],
@@ -3249,10 +3231,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   argv as Record<string, unknown>,
                   ROUTES.simpleMetricDisable,
                   body,
-                  ROUTES.simpleMetricDetail,
-                  body,
-                  ROUTES.simpleMetricUpdate,
-                  (detail) => buildMetricUpdateBodyFromDetail(detail, "DISABLE"),
+                  ROUTES.simpleMetricPartialUpdate,
+                  { id: target.id, status: "DISABLE" },
                 )
                 return
               }
@@ -3265,8 +3245,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 "names",
                 (id, ctx) => applyStatusChangeWithFallback(
                   argv as Record<string, unknown>, id, "DISABLE", ctx,
-                  ROUTES.simpleMetricDisable, ROUTES.simpleMetricDetail, ROUTES.simpleMetricUpdate,
-                  buildMetricUpdateBodyFromDetail,
+                  ROUTES.simpleMetricDisable, ROUTES.simpleMetricPartialUpdate,
                 ),
               )
             },
@@ -3293,7 +3272,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for an unbound definition" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("content-file", { type: "string", describe: "Read Analysis DSL JSON from a UTF-8 file; recommended for long or non-ASCII content" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
@@ -3311,9 +3290,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
-              const body = mergeBody(await resolveAnswerBuilderBody(argv as Record<string, unknown>, format), {
+              const patch = await resolveAnswerBuilderBody(argv as Record<string, unknown>, format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format, patch.content)
+              const body = mergeBody(patch, {
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
@@ -3325,41 +3305,47 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
           )
           .command(
             "update <analysis-id>",
-            "Update an answer builder",
+            "Partially update an answer builder; omitted fields retain their values",
             (y) =>
               y
                 .positional("analysis-id", { type: "number", demandOption: true, describe: "Answer builder ID" })
-                .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
+                .option("analysis-name", { type: "string", describe: "Answer builder name" })
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
-                .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("datasource-id", { type: "number", describe: "Datasource ID" })
+                .option("domain-ids", { type: "string", describe: "Domain IDs JSON array; omit to retain bindings, [] clears all bindings" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("content-file", { type: "string", describe: "Read Analysis DSL JSON from a UTF-8 file; recommended for long or non-ASCII content" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
                 .option("sql-file", { type: "string", describe: "Read SQL verbatim from a UTF-8 file; recommended for multiline SQL or ${...} placeholders" })
-                .option("body", { type: "string", describe: "Full request body as JSON object" })
                 .option("body-file", { type: "string", describe: "Read the base request body from a UTF-8 JSON object file" })
-                .example(
-                  "cz-cli analytics-agent answer-builder update 9 --analysis-name total-sales --datasource-id 824 --domain-ids '[5]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
-                  "如果只更新一个域，就这样写。",
-                )
-                .example(
-                  "cz-cli analytics-agent answer-builder update 9 --analysis-name total-sales --datasource-id 824 --domain-ids '[5,6]' --content '{\"outputColumns\":[{\"name\":\"total_amount\",\"metricName\":\"total_amount\",\"type\":\"decimal\"}]}' --sql 'select sum(amount) as total_amount'",
-                  "如果要同时更新多个域，就这样写。",
-                )
+                .option("base-version-id", { type: "number", describe: "Base version ID for optimistic concurrency" })
+                .option("version-description", { type: "string", describe: "Description of the new version" })
+                .option("status", { type: "string", choices: ["ENABLE", "DISABLE"], describe: "Answer Builder status" })
+                .option("body", { type: "string", describe: "Full request body as JSON object" })
+                .example("cz-cli analytics-agent answer-builder update 9 --analysis-desc '新的说明'", "只更新描述，保留 SQL/DSL、名称、数据源和域绑定。")
+                .example("cz-cli analytics-agent answer-builder update 9 --domain-ids '[]'", "清空全部分析域绑定，保留定义。")
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
-              const body = mergeBody(await resolveAnswerBuilderBody(argv as Record<string, unknown>, format), {
-                id: argv["analysis-id"],
+              const patch = await resolveAnswerBuilderBody(argv as Record<string, unknown>, format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const content = argv.content !== undefined || argv["content-file"] !== undefined || argv.sql !== undefined || argv["sql-file"] !== undefined || patch.content !== undefined
+                ? await resolveAnswerBuilderContent(argv as Record<string, unknown>, format, patch.content)
+                : undefined
+              const body = mergeBody(patch, {
+                id: requiredPositiveIntegerValue(argv["analysis-id"], "--analysis-id", format),
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],
                 domainIds,
                 content,
+                baseVersionId: positiveIntegerValue(argv["base-version-id"], "--base-version-id", format),
+                versionDescription: argv["version-description"],
+                status: argv.status,
               })
+              if (!["analysisName", "analysisDesc", "datasourceId", "domainIds", "content", "status", "extObj"].some((key) => body[key] !== undefined && body[key] !== null)) {
+                handledError("USAGE_ERROR", "At least one answer builder field is required", { format, exitCode: EXIT_USAGE_ERROR })
+              }
               await executeAnalyticsCommand("analytics-agent answer-builder update", argv as Record<string, unknown>, ROUTES.answerBuilderUpdate, body)
             },
           )
@@ -3426,10 +3412,8 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   argv as Record<string, unknown>,
                   ROUTES.answerBuilderDisable,
                   body,
-                  ROUTES.answerBuilderDetail,
-                  body,
                   ROUTES.answerBuilderUpdate,
-                  (detail) => buildAnswerBuilderUpdateBodyFromDetail(detail, "DISABLE"),
+                  { id: target.id, status: "DISABLE" },
                 )
                 return
               }
@@ -3442,8 +3426,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 "analysisName",
                 (id, ctx) => applyStatusChangeWithFallback(
                   argv as Record<string, unknown>, id, "DISABLE", ctx,
-                  ROUTES.answerBuilderDisable, ROUTES.answerBuilderDetail, ROUTES.answerBuilderUpdate,
-                  buildAnswerBuilderUpdateBodyFromDetail,
+                  ROUTES.answerBuilderDisable, ROUTES.answerBuilderUpdate,
                 ),
               )
             },
@@ -3473,7 +3456,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
             "List answer builders",
             (y) =>
               y
-                .option("domain-ids", { type: "string", describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for no domain filter" })
                 .option("datasource-id", { type: "number", describe: "Datasource ID" })
                 .option("page-num", { type: "number", describe: "Page number" })
                 .option("page-size", { type: "number", describe: "Page size" })
@@ -3482,8 +3465,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .example("cz-cli analytics-agent answer-builder list --domain-ids '[5,6]'", "如果要同时查多个域，就这样写。"),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = optionalPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const body = mergeBody(parseJsonObject(argv.body, "--body"), {
+              const patch = parseJsonObject(argv.body, "--body", format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const body = mergeBody(patch, {
                 domainIds,
                 datasourceId: argv["datasource-id"],
                 pageNum: argv["page-num"],
@@ -3500,7 +3484,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .option("analysis-name", { type: "string", demandOption: true, describe: "Answer builder name" })
                 .option("analysis-desc", { type: "string", describe: "Answer builder description" })
                 .option("datasource-id", { type: "number", demandOption: true, describe: "Datasource ID" })
-                .option("domain-ids", { type: "string", demandOption: true, describe: "Domain IDs JSON array, e.g. '[5]' or '[5,6]'" })
+                .option("domain-ids", { type: "string", describe: "Optional domain IDs JSON array; omit or use [] for an unbound definition" })
                 .option("content", { type: "string", describe: "Analysis DSL JSON (chartParams/outputColumns/relatedTables/sql) — see the syntax reference below" })
                 .option("content-file", { type: "string", describe: "Read Analysis DSL JSON from a UTF-8 file; recommended for long or non-ASCII content" })
                 .option("sql", { type: "string", describe: "SQL body, injected into content.sql. Single-quote it so the shell keeps ${...} placeholders intact (see notes below)" })
@@ -3518,9 +3502,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 .epilogue(ANSWER_BUILDER_DSL_HELP),
             async (argv) => {
               const format = typeof argv.format === "string" ? argv.format : "json"
-              const domainIds = requiredPositiveIntegerJsonArray(argv["domain-ids"], "--domain-ids", format)
-              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format)
-              const body = mergeBody(await resolveAnswerBuilderBody(argv as Record<string, unknown>, format), {
+              const patch = await resolveAnswerBuilderBody(argv as Record<string, unknown>, format)
+              const domainIds = resourceDomainIds(argv["domain-ids"] ?? patch.domainIds, format)
+              const content = await resolveAnswerBuilderContent(argv as Record<string, unknown>, format, patch.content)
+              const body = mergeBody(patch, {
                 analysisName: argv["analysis-name"],
                 analysisDesc: argv["analysis-desc"],
                 datasourceId: argv["datasource-id"],

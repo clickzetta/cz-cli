@@ -46,3 +46,27 @@ test("changing a password cannot reuse the previous credential's token", async (
     server.stop(true)
   }
 })
+
+test("concurrent calls with one credential share a login while different PATs do not share tokens", async () => {
+  const pats: string[] = []
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const body = await request.json() as { accessToken: string }
+      pats.push(body.accessToken)
+      await Bun.sleep(50)
+      return Response.json({ code: 0, data: { token: `pat-${body.accessToken}`, instanceId: 1, userId: 1, expireTime: 600_000 } })
+    },
+  })
+  const config = { ...DEFAULT_CONNECTION, service: `127.0.0.1:${server.port}`, protocol: "http", instance: "same", pat: "one" }
+  try {
+    const same = await Promise.all([getToken(config), getToken({ ...config }), getToken({ ...config })])
+    expect(same.map((token) => token.token)).toEqual(["pat-one", "pat-one", "pat-one"])
+    expect(pats).toEqual(["one"])
+    expect((await getToken({ ...config, pat: "two" })).token).toBe("pat-two")
+    expect(pats).toEqual(["one", "two"])
+  } finally {
+    server.stop(true)
+  }
+})

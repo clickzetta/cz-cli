@@ -1,6 +1,6 @@
 import { constants, publicEncrypt } from "node:crypto"
 import { toServiceUrl } from "@clickzetta/sdk"
-import { CLICKZETTA_HOST_SUFFIXES } from "../llm/clickzetta-hosts.js"
+import { CLICKZETTA_HOST_SUFFIXES, isClickzettaHost } from "../llm/clickzetta-hosts.js"
 
 interface AccountConsoleMeta {
   apiGateway: string
@@ -225,16 +225,127 @@ function extractJwtFromResponse(headers: Headers, payload: Record<string, unknow
   ].find((value) => value.trim())?.trim() ?? ""
 }
 
-async function loadAccountConsoleMeta(accountLoginUrl: string): Promise<AccountConsoleMeta | null> {
+async function loadAccountConsoleMeta(
+  accountLoginUrl: string,
+  timeoutMs = 20_000,
+  redirect: RequestRedirect = "follow",
+): Promise<AccountConsoleMeta | null> {
   const response = await fetch(
     `${accountLoginUrl}/one-combo-api/configCenter/script/getApolloConfig?dataId=clickzetta-fe-console&globalVarName=__clickzettaFeConsoleMeta__`,
     {
       headers: { accept: "*/*" },
-      signal: AbortSignal.timeout(20_000),
+      redirect,
+      signal: AbortSignal.timeout(timeoutMs),
     },
   )
   if (!response.ok) return null
   return parseAccountConsoleMeta(await response.text())
+}
+
+/**
+ * The password was accepted but the account requires multi-factor verification.
+ * Callers know the endpoint the user chose and turn this into guidance for it.
+ */
+export class AccountMfaRequiredError extends Error {
+  constructor() {
+    super(
+      "ACCOUNT_MFA_REQUIRED: the password is correct but this account requires multi-factor verification. " +
+        "Sign in with the browser instead: cz-cli auth login <name>",
+    )
+    this.name = "AccountMfaRequiredError"
+  }
+}
+
+function requiresMfa(payload: Record<string, unknown>): boolean {
+  const data = payload.data
+  return isRecord(data) && isRecord(data.mfaStatus) && Boolean(data.mfaStatus.enable)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+/**
+ * The derived `<account>.accounts.<root>` site for an API endpoint, or null when
+ * the endpoint is not one we may send a password to on a guess. Only ClickZetta
+ * owned hosts qualify (the root-domain guess for any other host lands on a domain
+ * the user never named), and only over https.
+ */
+export function derivedAccountSiteForService(service: string, accountName: string): string | null {
+  const parsed = parseApiService(service)
+  if (!isSafeAccountLabel(accountName)) return null
+  if (!parsed || parsed.protocol !== "https:" || !isClickzettaHost(parsed.hostname)) return null
+  // Built from the parsed host and port only, never from the raw string.
+  return accountLoginUrlForService(`https://${parsed.host}`, accountName)
+}
+
+/** A single DNS label: the only shape an account name may take inside a derived host. */
+export function isSafeAccountLabel(name: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name.toLowerCase())
+}
+
+/**
+ * Last line of defense for the API-endpoint fallback, independent of how the URL
+ * was built: the site that will receive the password must be exactly the origin
+ * the user named, or the derived accounts host of a ClickZetta https endpoint.
+ */
+export function assertSafeAccountSite(accountLoginUrl: string, service: string, accountName: string): void {
+  const reject = (reason: string): never => {
+    throw new Error(`ACCOUNT_LOGIN_FAILED: refusing to send the password to an unexpected account site (${reason}). Pass --instance <name> to log in to a specific instance instead.`)
+  }
+  const site = URL.parse(accountLoginUrl)
+  const own = parseApiService(service)
+  if (!site || !own) return reject("invalid url")
+  if (site.username || site.password || site.search || site.hash) return reject("url carries extra components")
+  if (site.pathname !== "/" && site.pathname !== "") return reject("url carries a path")
+  if (accountLoginUrl.replace(/\/+$/, "") !== site.origin) return reject("url is not a plain origin")
+  if (site.origin === own.origin) return
+  if (site.protocol !== "https:" || !isClickzettaHost(site.hostname)) return reject("not an https ClickZetta host")
+  const expected = derivedAccountSiteForService(service, accountName)
+  if (!expected || URL.parse(expected)?.origin !== site.origin) return reject("host is not the derived accounts host")
+}
+
+/**
+ * Parse a user-supplied API service once, so every later decision (probe, derive,
+ * send the password) is made on the host a URL parser resolves. `splitEndpoint`
+ * only splits on `/`, so `evil?x-api.clickzetta.com` looks like a ClickZetta host
+ * as a string while its real host is `evil`. Returns null when anything could move
+ * the host: a query, fragment or userinfo, or an authority that the parser changed
+ * (backslash, space, `?`, `#`, `@`, a default port, and so on).
+ */
+export function parseApiService(service: string): URL | null {
+  const raw = service.trim()
+  const hasScheme = /^https?:\/\//i.test(raw)
+  const authority = (hasScheme ? raw.replace(/^https?:\/\//i, "") : raw).split("/")[0]!
+  const parsed = URL.parse(hasScheme ? raw : `https://${raw}`)
+  if (!parsed || !["http:", "https:"].includes(parsed.protocol)) return null
+  if (parsed.search || parsed.hash || parsed.username || parsed.password) return null
+  if (authority.toLowerCase() !== parsed.host || parsed.hostname.endsWith(".")) return null
+  return parsed
+}
+
+/**
+ * The accounts site that authenticates an account reached through an API endpoint,
+ * or null when there is no site the password may safely go to.
+ *
+ * Path-style private deployments serve the console, and its root `/login`, on the
+ * same host as the API (`https://studio.example.com/api` → `https://studio.example.com`).
+ * Public cloud keeps it on `<account>.accounts.<root>`. The console meta script
+ * only exists where a console is served, so its presence on the endpoint's own
+ * origin (a host the user named) tells the two apart. Otherwise only the derived
+ * host of a ClickZetta-owned endpoint is used; `derived` marks that case so the
+ * caller can refuse to send the password unencrypted.
+ */
+export async function accountSiteForApiService(
+  service: string,
+  accountName: string,
+): Promise<{ url: string; derived: boolean } | null> {
+  const parsed = parseApiService(service)
+  if (!parsed) return null
+  const meta = await loadAccountConsoleMeta(parsed.origin, 5_000, "error").catch(() => null)
+  if (meta) return { url: parsed.origin, derived: false }
+  const derived = derivedAccountSiteForService(service, accountName)
+  return derived ? { url: derived, derived: true } : null
 }
 
 export async function loginByAccountSite(
@@ -244,11 +355,22 @@ export async function loginByAccountSite(
   serviceOrHost: string,
   timeoutMs = 20_000,
   accountLoginUrlOverride?: string,
+  options: { requireEncryptKey?: boolean } = {},
 ): Promise<AccountSiteLoginResult> {
   const accountLoginUrl = accountLoginUrlOverride || accountLoginUrlForService(serviceOrHost, accountName)
-  const meta = await loadAccountConsoleMeta(accountLoginUrl)
+  const strict = Boolean(options.requireEncryptKey)
+  if (strict) assertSafeAccountSite(accountLoginUrl, serviceOrHost, accountName)
+  const meta = await loadAccountConsoleMeta(accountLoginUrl, 20_000, strict ? "error" : "follow")
   const fallbackServiceHost = serviceHostFromInput(accountLoginUrlOverride ? stripProtocol(accountLoginUrlOverride) : stripProtocol(serviceOrHost))
   const serviceHost = stripProtocol(meta?.apiGateway || "") || fallbackServiceHost
+  // Without a public key the password would travel in plaintext to a host the
+  // user did not name; callers on a guessed host refuse that.
+  if (options.requireEncryptKey && !meta?.encryptKey) {
+    throw new Error(
+      "ACCOUNT_LOGIN_FAILED: the account-site login needs the console's encryption key and this site did not provide one, " +
+        "so the password was not sent. Pass --instance <name> to log in to a specific instance instead.",
+    )
+  }
   const payloadPassword = meta?.encryptKey ? encryptPassword(password, meta.encryptKey) : password
   const response = await fetch(`${accountLoginUrl}/login`, {
     method: "POST",
@@ -257,6 +379,7 @@ export async function loginByAccountSite(
       accept: "application/json, text/plain, */*",
     },
     body: JSON.stringify({ username, password: payloadPassword, accountDisplayName: accountName }),
+    redirect: strict ? "error" : "follow",
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) throw new Error(`ACCOUNT_LOGIN_FAILED: HTTP ${response.status}`)
@@ -266,6 +389,12 @@ export async function loginByAccountSite(
     throw new Error(`ACCOUNT_LOGIN_FAILED: ${String(payload.message ?? "login failed")}`)
   }
   const token = extractJwtFromResponse(response.headers, payload)
+  if (!token && requiresMfa(payload)) {
+    // The console answers a correct password for an MFA account with code 0, no
+    // token and data.mfaStatus.enable; finishing needs an SMS/e-mail code behind an
+    // image captcha, or an authenticator code, which this flow cannot collect.
+    throw new AccountMfaRequiredError()
+  }
   if (!token) throw new Error("ACCOUNT_LOGIN_FAILED: token not found in login response")
   return {
     accountLoginUrl,

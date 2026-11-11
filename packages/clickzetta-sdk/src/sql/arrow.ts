@@ -9,13 +9,48 @@
  * Each element of `resultSet.data.data` is one IPC message.
  */
 
-import { tableFromIPC, type Schema, type DataType, type Data, type Vector } from "apache-arrow"
+import { CompressionType, compressionRegistry, tableFromIPC, type Schema, type DataType, type Data, type Vector } from "apache-arrow"
+import zlib from "node:zlib"
 import type { ColumnSchema } from "./types.js"
 import { normaliseTimestampValue } from "./time.js"
 
+// apache-arrow ships no IPC buffer codecs, so a result written with
+// `cz.storage.arrow.ipc.codec=zstd` fails to read with "Record batch is
+// compressed but codec not found". Register them once; decodeArrowPayload and
+// fetchArrowFromUrls both go through tableFromIPC and so share the registry.
+// Codecs another module already registered are left alone. Only decode is
+// needed: this client reads results and never writes compressed streams.
+const zstdAvailable = typeof zlib.zstdDecompressSync === "function"
+if (!compressionRegistry.get(CompressionType.ZSTD)) {
+  compressionRegistry.set(
+    CompressionType.ZSTD,
+    zstdAvailable
+      ? { decode: (data) => zlib.zstdDecompressSync(data) }
+      : {
+          decode: () => {
+            throw new Error(
+              "Arrow result is ZSTD-compressed, but this runtime lacks zstd support (needs Node 22.15+ / 23.8+, or a Bun version with zlib zstd); disable IPC compression by unsetting cz.storage.arrow.ipc.codec",
+            )
+          },
+        },
+  )
+}
+// LZ4 frames are not decoded yet: name the codec instead of the opaque default.
+if (!compressionRegistry.get(CompressionType.LZ4_FRAME)) {
+  compressionRegistry.set(CompressionType.LZ4_FRAME, {
+    decode: () => {
+      throw new Error(
+        `Arrow result is LZ4_FRAME-compressed, which this client cannot decode; ${
+          zstdAvailable ? "use cz.storage.arrow.ipc.codec=zstd or " : ""
+        }disable IPC compression by unsetting cz.storage.arrow.ipc.codec`,
+      )
+    },
+  })
+}
+
 /**
- * Base64 → Uint8Array. Node/Bun provide atob; we decode to bytes without
- * depending on the Buffer global so this file stays isomorphic.
+ * Base64 → Uint8Array. Node/Bun provide atob; this avoids the Buffer global
+ * but the file is not browser-only (it imports node:zlib).
  */
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64)
