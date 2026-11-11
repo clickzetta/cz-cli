@@ -8,7 +8,7 @@ import {
   type StudioConfig,
 } from "@clickzetta/sdk"
 import type { GlobalArgs } from "../cli.js"
-import { success, error, isHandledCliError } from "../output/index.js"
+import { success, error, handledError, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext, type StudioContext } from "./studio-context.js"
 import { confirm } from "../confirm.js"
@@ -115,14 +115,24 @@ function convertRunDependency(data: Record<string, unknown>): Record<string, unk
   return out
 }
 
-function parseWindowBoundary(value: string, endOfDay: boolean): number {
-  const ms = new Date(value).getTime()
-  if (isNaN(ms)) return Date.now()
-  // If date-only (YYYY-MM-DD), add end-of-day for --to boundary
-  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
-    return ms + 86400000 - 1 // 23:59:59.999
+// Window boundaries are interpreted in the machine's local time zone: date-only values
+// mean local start/end of day, and datetimes without an offset are local. An explicit
+// offset or Z is honoured. Invalid values are rejected rather than replaced by "now".
+export function parseWindowBoundary(value: string, endOfDay: boolean, format?: string): number {
+  const text = value.trim()
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/i.exec(text)
+  const [y, mo, d] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0]
+  const calendar = new Date(Date.UTC(y, mo - 1, d))
+  const valid = !!m
+    && calendar.getUTCFullYear() === y && calendar.getUTCMonth() === mo - 1 && calendar.getUTCDate() === d
+    && (m[4] === undefined || (Number(m[4]) < 24 && Number(m[5]) < 60 && Number(m[6] ?? 0) < 60))
+  if (!m || !valid) {
+    return handledError("INVALID_ARGUMENTS", `Invalid date/time "${value}". Use YYYY-MM-DD or ISO 8601 (YYYY-MM-DDTHH:MM:SS[Z|+HH:MM]).`, { format, exitCode: 2 })
   }
-  return ms
+  // Date-only: local midnight (month index form is local, unlike new Date("YYYY-MM-DD")).
+  if (m[4] === undefined) return endOfDay ? new Date(y, mo - 1, d + 1).getTime() - 1 : new Date(y, mo - 1, d).getTime()
+  // ISO datetime without offset is parsed as local time by Date.
+  return new Date(text.replace(" ", "T")).getTime()
 }
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioContext> {
@@ -153,11 +163,11 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
+            const now = Date.now()
+            const fromMs = argv.from ? parseWindowBoundary(argv.from as string, false, format) : now - 86400000
+            const toMs = argv.to ? parseWindowBoundary(argv.to as string, true, format) : now
             const sc = await ctx(argv)
             const pageSize = argv.limit ?? argv["page-size"]
-            const now = Date.now()
-            const fromMs = argv.from ? parseWindowBoundary(argv.from as string, false) : now - 86400000
-            const toMs = argv.to ? parseWindowBoundary(argv.to as string, true) : now
             const statusList = argv.status
               ? (argv.status as string[]).map((s) => STATUS_MAP[s.toUpperCase()] ?? Number(s))
               : undefined
@@ -396,6 +406,13 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
+            if ((argv.from && !argv.to) || (!argv.from && argv.to)) {
+              error("INVALID_ARGUMENTS", "--from and --to must be provided together, or omit both.", { format, exitCode: 2 })
+              return
+            }
+            const nowMs = Date.now()
+            const bizStartDate = argv.from ? parseWindowBoundary(argv.from as string, false, format) : nowMs
+            const bizEndDate = argv.to ? parseWindowBoundary(argv.to as string, true, format) : nowMs
             const sc = await ctx(argv)
             const taskId = await resolveTaskId(sc, argv.task as string, format)
             if (!argv.yes) {
@@ -406,18 +423,11 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
                 return
               }
             }
-            if ((argv.from && !argv.to) || (!argv.from && argv.to)) {
-              error("INVALID_ARGUMENTS", "--from and --to must be provided together, or omit both.", { format, exitCode: 2 })
-              return
-            }
             const createBy = sc.userName.trim()
             if (!createBy) {
               error("INVALID_ARGUMENTS", "Current login does not expose a user name required by Studio refill API. Re-authenticate or refresh your profile, then retry.", { format, exitCode: 2 })
               return
             }
-            const nowMs = Date.now()
-            const bizStartDate = argv.from ? parseWindowBoundary(argv.from as string, false) : nowMs
-            const bizEndDate = argv.to ? parseWindowBoundary(argv.to as string, true) : nowMs
             const params: Record<string, unknown> = {
               scheduleTaskId: taskId,
               sqlVcCode: argv.vc,
@@ -484,10 +494,10 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
-            const sc = await ctx(argv)
             const now = Date.now()
-            const fromMs = argv.from ? parseWindowBoundary(argv.from as string, false) : now - 86400000
-            const toMs = argv.to ? parseWindowBoundary(argv.to as string, true) : now
+            const fromMs = argv.from ? parseWindowBoundary(argv.from as string, false, format) : now - 86400000
+            const toMs = argv.to ? parseWindowBoundary(argv.to as string, true, format) : now
+            const sc = await ctx(argv)
             const resp = await getInstanceStats(sc, {
               projectId: sc.projectId,
               queryStartPlanTime: fromMs,
