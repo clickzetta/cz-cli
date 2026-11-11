@@ -62,3 +62,11 @@ for (const c of cases) {
     expect(submitted).toEqual([])
   })
 }
+
+test("bad --limit gives a usage error without credentials", async () => {
+  await Bun.file(join(requireTestHome(), ".clickzetta", "profiles.toml")).write("[profiles.test]\nworkspace = 'ws0'\n")
+  const result = await execute("table", ["list", "--limit", "-1"])
+  expect(result.exitCode).toBe(2)
+  expect(result.output).toContain("USAGE_ERROR")
+  expect(submitted).toEqual([])
+})

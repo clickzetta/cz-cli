@@ -14,13 +14,13 @@ const DEFAULT_PREVIEW_LIMIT = 10
 
 // yargs parses `--no-limit` on a number option as 0; both mean unlimited (same as `sql --limit 0`).
 // Returns undefined for negative or non-finite input.
-function parseLimit(value: number | undefined, fallback: number) {
+export function parseLimit(value: number | undefined, fallback: number) {
   const limit = value ?? fallback
   if (!Number.isInteger(limit) || limit < 0) return undefined
   return limit === 0 ? Infinity : limit
 }
 
-function usageError(format: OutputOptions["format"]) {
+export function usageError(format: OutputOptions["format"]) {
   error("USAGE_ERROR", "--limit must be a non-negative integer (0 or --no-limit for unlimited).", { format, exitCode: 2 })
 }
 
@@ -139,9 +139,9 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
-            const ctx = await getExecContext(argv)
             const limit = parseLimit(argv.limit, DEFAULT_LIMIT)
             if (limit === undefined) return usageError(format)
+            const ctx = await getExecContext(argv)
             let sql = "SHOW TABLES"
             const schemaFilter = argv.in ?? argv["schema"] ?? argv["filter-schema"]
             if (schemaFilter) sql += ` IN ${validateIdentifier(schemaFilter, "schema name")}`
@@ -208,13 +208,13 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true, describe: "Table name" })
-            .option("limit", { type: "number", default: DEFAULT_PREVIEW_LIMIT, describe: "Number of rows (0 or --no-limit for unlimited)" }),
+            .option("limit", { type: "number", default: DEFAULT_PREVIEW_LIMIT, describe: "Number of rows (0 or --no-limit reads the whole table)" }),
         async (argv) => {
           const format = argv.format
           try {
-            const ctx = await getExecContext(argv)
             const limit = parseLimit(argv.limit, DEFAULT_PREVIEW_LIMIT)
             if (limit === undefined) return usageError(format)
+            const ctx = await getExecContext(argv)
             const sql = `SELECT * FROM ${validateIdentifier(argv.name as string, "table name")}${limit === Infinity ? "" : ` LIMIT ${limit}`}`
             const t0 = Date.now()
             const r = await execSql(ctx, sql)
@@ -299,9 +299,9 @@ export function registerTableCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
-            const ctx = await getExecContext(argv)
             const limit = parseLimit(argv.limit, DEFAULT_LIMIT)
             if (limit === undefined) return usageError(format)
+            const ctx = await getExecContext(argv)
             let sql = "SHOW TABLES HISTORY"
             const schemaFilter = argv.in ?? argv["schema"] ?? argv["filter-schema"]
             if (schemaFilter) sql += ` IN ${validateIdentifier(schemaFilter, "schema name")}`
