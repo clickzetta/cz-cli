@@ -1207,6 +1207,29 @@ function isTerminalResponse(payload: unknown): boolean {
   return ["finish", "finish_stop", "error"].includes(latestResponseDataType(payload))
 }
 
+// A deadline that elapses before a finish/error response is a failure, not an answer.
+// Only the last response's dataType is echoed; the payload itself may carry model output.
+function pollTimeoutError(
+  timeoutMs: number,
+  payload: unknown,
+  resume: Record<string, unknown>,
+  format: string | undefined,
+): [string, string, { format: string | undefined; extra: Record<string, unknown> }] {
+  const lastDataType = latestResponseDataType(payload)
+  return [
+    "ANALYTICS_POLL_TIMEOUT",
+    `Analytics Agent did not reach a terminal response within ${timeoutMs} ms`,
+    {
+      format,
+      extra: {
+        timeout_ms: timeoutMs,
+        last_data_type: lastDataType || null,
+        ...(resume.questionId !== undefined ? { questionId: resume.questionId } : {}),
+      },
+    },
+  ]
+}
+
 function extractModelMessage(entry: unknown): string | undefined {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined
   const e = entry as Record<string, unknown>
@@ -1352,6 +1375,11 @@ async function executeSessionRunCommand(
     if (pollErr) {
       logOperation(name, { ok: false, timeMs: Date.now() - t0 })
       error(pollErr.code, pollErr.message, { format })
+      return
+    }
+    if (!isTerminalResponse(payload)) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(...pollTimeoutError(timeoutMs, payload, { questionId }, format))
       return
     }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
@@ -2163,6 +2191,11 @@ async function executeAnalyticsPollCommand(
       if (isTerminalResponse(payload) || Date.now() >= deadline) break
       await Bun.sleep(intervalMs)
     } while (true)
+    if (!isTerminalResponse(payload)) {
+      logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+      error(...pollTimeoutError(timeoutMs, payload, body, format))
+      return
+    }
     logOperation(name, { ok: true, timeMs: Date.now() - t0 })
     const summary = extractSummaryString(payload) ?? extractFinalSummary(payload)
     if (summary) {
