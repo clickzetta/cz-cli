@@ -81,8 +81,6 @@ export async function pendingMemory(directory: string) {
 export async function resolveMemory(directory: string, id: string, input: unknown) {
   requireId(id)
   const resolution = requireResolution(input)
-  if (resolution.policySha !== undefined)
-    throw new Error("New resolutions record the merged main commit as `commit`; policySha is read-only history")
   const event = await read(path.join(directory, "memory", "events", `${id}.json`), requireEvent)
   if (event.data.id !== id) throw new Error("Memory event filename does not match its ID")
   const file = path.join(directory, "memory", "resolutions", `${id}.json`)
@@ -92,6 +90,9 @@ export async function resolveMemory(directory: string, id: string, input: unknow
       throw new Error("Conflicting memory record; preserve the old resolution and record new evidence separately")
     return { id, ...stored.data, recordedAt: stored.recordedAt, file }
   }
+  // Checked after the stored-record retry above, so a pre-cutover resolution still retries idempotently.
+  if (resolution.policySha !== undefined)
+    throw new Error("New resolutions record the merged main commit as `commit`; policySha is read-only history")
   if (resolution.disposition === "integrated") {
     // Memory is live once its commit is on main: every loop syncs the control checkout to origin/main.
     const child = Bun.spawn(

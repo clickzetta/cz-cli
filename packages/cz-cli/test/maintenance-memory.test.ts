@@ -256,6 +256,7 @@ describe("maintenance memory evidence", () => {
     const stored = path.join(data.directory, "memory", "resolutions", "legacy-event.json")
     writeFileSync(stored, JSON.stringify({ version: 1, recordedAt: new Date().toISOString(), data: legacy }))
     expect(await pendingMemory(data.directory)).toEqual({ pendingCount: 0, pending: [] })
+    expect((await resolveMemory(data.directory, "legacy-event", legacy)).policySha).toBe(main.sha)
   })
 
   test("no-change and duplicate decisions require evidence but no invented document commit", async () => {
