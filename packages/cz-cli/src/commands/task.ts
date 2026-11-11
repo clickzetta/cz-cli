@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import type { SaveTaskConfigParams } from "@clickzetta/sdk"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
 import {
@@ -908,6 +909,46 @@ function studioScheduleFieldsFromCron(cronResult: CronResult, activeStartTime: u
     isScheduleRateTypeOff: false,
     useActiveEndTime: false,
     enableAutoMv: Boolean(config.enableAutoMv),
+  }
+}
+
+/**
+ * The saved schedule config of an existing task as saveTaskConfig params, so a save that
+ * changes one field does not reset the others to the SDK's creation defaults.
+ */
+async function existingMergeTaskConfig(sc: StudioConfig, fileId: number): Promise<SaveTaskConfigParams> {
+  const resp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
+  const old = isRecord(resp.data) ? resp.data : {}
+  const str = (v: unknown) => (v == null ? undefined : String(v))
+  const num = (v: unknown) => (v == null || v === "" ? undefined : Number(v))
+  return {
+    dataFileId: fileId,
+    projectId: sc.projectId,
+    updateBy: String(sc.userId),
+    instanceName: sc.instanceName,
+    cronExpress: str(old.cronExpress),
+    activeStartTime: old.activeStartTime ? formatIsoStartOfDay(String(old.activeStartTime)) : undefined,
+    activeEndTime: old.activeEndTime ? formatIsoStartOfDay(String(old.activeEndTime)) : undefined,
+    ownerCnName: str(old.ownerCnName),
+    ownerEnName: str(old.ownerEnName),
+    schemaName: str(old.schemaName),
+    etlVcCode: str(old.etlVcCode),
+    etlVcId: old.etlVcId as string | number | undefined,
+    retryCount: num(old.retryCount),
+    retryIntervalTime: num(old.retryIntervalTime),
+    retryIntervalTimeUnit: str(old.retryIntervalTimeUnit),
+    rerunProperty: str(old.rerunProperty),
+    selfDependsJob: num(old.selfDependsJob),
+    executeTimeout: num(old.executeTimeout),
+    executeTimeoutUnit: str(old.executeTimeoutUnit),
+    dataFileInputListReqs: configList(old.dataFileDependencyDTOS).map(normalizeDependencyStrategy),
+    dataFileOutputListReqs: configList(old.fileOutputTableDTOS),
+    configProperties: old.configProperties,
+    taskPriority: str(old.taskPriority),
+    dependencyTimeout: num(old.dependencyTimeout),
+    dependencyTimeoutUnit: str(old.dependencyTimeoutUnit),
+    scheduleRateType: num(old.scheduleRateType),
+    ...existingStudioScheduleFields(old),
   }
 }
 
@@ -1904,16 +1945,19 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const vcName = argv.vc as string | undefined
             if (vcName) {
               const resolvedVcId = await resolveVclusterId(sc, vcName).catch(() => undefined)
-              await saveTaskConfig(sc, {
-                dataFileId: pipelineId,
-                projectId: sc.projectId,
-                updateBy: String(sc.userId),
-                instanceName: sc.instanceName,
-                etlVcCode: vcName,
-                ...(resolvedVcId != null && { etlVcId: resolvedVcId }),
-                activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
-                activeEndTime: "2099-01-01T00:00:00.000Z",
-              })
+              const vcFields = { etlVcCode: vcName, ...(resolvedVcId != null && { etlVcId: resolvedVcId }) }
+              await saveTaskConfig(sc, argv["task-id"] != null
+                // Existing task: change only the VC and keep the rest of its schedule config.
+                ? { ...await existingMergeTaskConfig(sc, pipelineId), ...vcFields }
+                : {
+                  dataFileId: pipelineId,
+                  projectId: sc.projectId,
+                  updateBy: String(sc.userId),
+                  instanceName: sc.instanceName,
+                  ...vcFields,
+                  activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                  activeEndTime: "2099-01-01T00:00:00.000Z",
+                })
             }
 
             logOperation("task create-merge-sync", { ok: true })
