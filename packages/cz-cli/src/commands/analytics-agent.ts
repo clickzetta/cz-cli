@@ -1683,8 +1683,9 @@ async function resolveDatasetTable(
     const parts = qualified?.split(".")
     return (!workspace || !parts || parts[0] === workspace) && (!schema || !parts || parts[1] === schema)
   }
-  const exact = all.filter((dataset) => normalize(String(dataset.tableName)) === input
-    && (input.includes(".") || inScope(dataset)))
+  const exact = input.split(".").length === 3
+    ? all.filter((dataset) => normalize(String(dataset.tableName)) === input)
+    : []
   if (exact.length === 1) return exact[0]!
   const requested = input.split(".")
   const matches = exact.length ? exact : all.filter((dataset) => names(dataset).some((name) => {
@@ -1775,7 +1776,7 @@ async function executeAnalyticsCommand(
       && typeof body.tableName === "string" && body.tableName.trim() !== ""
     const resolvesDataset = route === ROUTES.datasetDetail && query.datasetId === undefined && typeof query.tableName === "string"
     const ctx = resolvesTable || resolvesDataset ? await resolveAnalyticsContext(argv) : undefined
-    const currentMetric = resolvesTable && route === ROUTES.simpleMetricPartialUpdate && body.datasourceId === undefined
+    const currentMetric = resolvesTable && route === ROUTES.simpleMetricPartialUpdate && (body.datasourceId === undefined || body.datasourceId === null)
       ? await requestAnalyticsData(argv, ROUTES.simpleMetricDetail, { id: body.id }, {}, ctx) as Record<string, unknown>
       : undefined
     const dataset = resolvesTable || resolvesDataset

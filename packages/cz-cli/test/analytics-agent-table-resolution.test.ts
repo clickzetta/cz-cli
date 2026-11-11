@@ -125,6 +125,16 @@ describe("dataset metadata resolves table names", () => {
     expect(requests.at(-1)?.body.datasourceId).toBe(9)
   })
 
+  test.each(["fact_orders", "ecommerce_sales_analytics.fact_orders"])("a registered short name %s does not bypass ambiguity", async (name) => {
+    datasets = [orders, { datasetId: 18, sourceId: 8, tableName: name }]
+    const result = await run(["metric", "create", "--table-name", name, ...definition])
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain("AMBIGUOUS_DATASET")
+    expect(result.output).toContain(canonical)
+    expect(result.output).toContain("dataset 18")
+    expect(requests).toHaveLength(1)
+  })
+
   test("wrong scope suggests the actual registered path without writing", async () => {
     const result = await run(["metric", "create", "--table-name", "fact_orders", "--schema", "wrong", ...definition])
     expect(result.code).not.toBe(0)
@@ -167,8 +177,9 @@ describe("dataset metadata resolves table names", () => {
     expect(requests).toHaveLength(1)
   })
 
-  test("metric table patches retain the existing datasource and domain scope", async () => {
-    expect((await run(["metric", "update", "9", "--body", '{"tableName":"fact_orders"}'])).code).toBe(0)
+  test.each([undefined, null])("metric table patches with datasource %s retain the existing datasource and domain scope", async (datasourceId) => {
+    datasets = [orders, { ...orders, datasetId: 18, sourceId: 9 }]
+    expect((await run(["metric", "update", "9", "--body", JSON.stringify({ tableName: "fact_orders", datasourceId })])).code).toBe(0)
     expect(requests[0]?.path).toEndWith("/metrics/detail")
     expect(requests[1]?.body).toEqual({ sourceId: 8, domainIds: [5], pageNum: 1, pageSize: 200 })
     expect(requests.at(-1)?.body).toEqual({ id: 9, tableName: canonical, datasourceId: 8 })
