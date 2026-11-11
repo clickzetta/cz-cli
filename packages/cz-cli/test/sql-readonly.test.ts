@@ -191,6 +191,60 @@ for (const sql of [
   })
 }
 
+for (const sql of [
+  "UPDATE t SET a=(SELECT max(b) FROM u WHERE c=1)",
+  "WITH x AS (SELECT 1) DELETE FROM t",
+  "WITH x AS (SELECT 1 WHERE 1=1) UPDATE t SET a=1",
+  "/* c */ WITH x AS (SELECT 1) DELETE FROM t",
+  "DELETE FROM t -- WHERE id=1",
+  "DELETE FROM t /* WHERE id=1 */",
+  "UPDATE t SET a='x' || \"WHERE\"",
+  "UPDATE t SET a=u.b FROM u",
+  "UPDATE t SET a=u.b FROM (SELECT 1 b FROM u WHERE 1=1) u",
+  "DELETE FROM t USING (SELECT 1 FROM u WHERE x=1) u",
+  "WITH select AS (SELECT 1) DELETE FROM t",
+  "WITH values AS (SELECT 1) DELETE FROM t",
+  "WITH insert AS (SELECT 1) UPDATE t SET a=1",
+  "WITH merge AS (SELECT 1) DELETE FROM t",
+  "WITH table AS (SELECT 1) DELETE FROM t",
+  "WITH RECURSIVE r AS (SELECT 1) DELETE FROM t",
+  "WITH a AS (SELECT 1), delete AS (SELECT 2) DELETE FROM t",
+  "WITH a(x, y) AS (SELECT 1, 2) DELETE FROM t",
+  "(DELETE FROM t)",
+  "((DELETE FROM t))",
+  "(UPDATE t SET a=1)",
+  "DELETE FROM t # WHERE 1=1",
+  "DELETE FROM t \\ WHERE 1=1",
+  "UPDATE t SET a=$$ WHERE $$",
+  "UPDATE t SET a=$tag$ WHERE $tag$",
+]) {
+  test(`DELETE/UPDATE without a top-level WHERE is rejected: ${sql}`, async () => {
+    const result = await execute("sql", [sql, "--write"])
+    expect(JSON.parse(result.output).error.code).toBe("DANGEROUS_WRITE")
+    expect(submitted).toEqual([])
+  })
+}
+
+for (const sql of [
+  "DELETE FROM t WHERE id=1",
+  "UPDATE t SET a=1 WHERE id=1",
+  "WITH select AS (SELECT 1 AS id) DELETE FROM t WHERE id=1",
+  "WITH RECURSIVE a(x) AS (SELECT 1), b AS (SELECT 2) UPDATE t SET a=1 WHERE id=1",
+  "(DELETE FROM t WHERE id=1)",
+  "UPDATE t SET a=(SELECT max(b) FROM u WHERE c=1) WHERE id=1",
+  "WITH x AS (SELECT 1 AS id) DELETE FROM t WHERE id IN (SELECT id FROM x)",
+  "DELETE FROM t WHERE id IN (SELECT id FROM u)",
+  "UPDATE t SET a=u.b FROM u WHERE t.id=u.id",
+  "/* WHERE */ DELETE FROM t WHERE id=1 -- tail",
+  "MERGE INTO t USING s ON t.id=s.id WHEN MATCHED THEN DELETE",
+]) {
+  test(`DELETE/UPDATE with a top-level WHERE is allowed: ${sql}`, async () => {
+    const result = await execute("sql", [sql, "--write"])
+    expect(result.exitCode).toBe(0)
+    expect(submitted.length).toBe(1)
+  })
+}
+
 test("reviewed session directives continue to work with leading comments", async () => {
   const result = await execute("sql", ["/* a /* b */ c */ SET cz.sql.timezone=UTC; SELECT 1", "--limit", "0"])
   expect(result.exitCode).toBe(0)
