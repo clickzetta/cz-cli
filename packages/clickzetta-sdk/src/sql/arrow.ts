@@ -235,12 +235,13 @@ export async function fetchArrowFromUrls(
   urls: string[],
   metadataColumns: ColumnSchema[],
   timezone?: string,
+  signal?: AbortSignal,
 ): Promise<{ columns: ColumnSchema[]; rows: unknown[][] }> {
   let resolvedColumns = deduplicateColumns(metadataColumns)
   const allRows: unknown[][] = []
 
   for (const url of urls) {
-    const resp = await fetch(url)
+    const resp = await fetch(url, { signal })
     if (!resp.ok) {
       throw new Error(`Failed to fetch Arrow payload from presigned URL: HTTP ${resp.status}`)
     }
