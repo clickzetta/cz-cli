@@ -212,4 +212,29 @@ describe("convertAgentCron review follow-ups (#192)", () => {
     expect(r.ok).toBe(true)
     expect(r.outputCron).toBe("0 00 08-23/2 * * ? *")
   })
+
+  // Hour steps or lists that select one block of hours are that block; main converted these faithfully.
+  const hourBlocks: Array<[string, string]> = [
+    ["*/5 0-23/1 * * *", "0 */5 * * * ? *"],
+    ["*/5 9-17/1 * * *", "0 */5 09-17 * * ? *"],
+    ["* 9-17/1 * * *", "0 * 09-17 * * ? *"],
+    ["10-50/10 0-23/1 * * *", "0 10/10 * * * ? *"],
+    ["*/5 3/25 * * *", "0 */5 03-03 * * ? *"],
+    ["0 9,9 * * *", "0 00 09 * * ? *"],
+    ["0,0 9 * * *", "0 00 09 * * ? *"],
+    ["*/5 9/1 * * *", "0 */5 09-23 * * ? *"],
+  ]
+  for (const [input, out] of hourBlocks) {
+    test(`hour block ${input} converts with the same run times`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+      const from = new Date(2026, 0, 1)
+      expect(cronNextRuns(r.outputCron!, 500, from)).toEqual(cronNextRuns(input, 500, from))
+    })
+  }
+  test("hour steps that skip hours stay rejected with a minute step", () => {
+    for (const input of ["*/5 */2 * * *", "*/5 8/2 * * *", "* 9-17/3 * * *"]) expect(convertAgentCron(input).error).toContain("step in both fields")
+    expect(convertAgentCron("0 8,12 * * *").error).toContain("hour field '8,12'")
+  })
 })

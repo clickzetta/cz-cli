@@ -134,7 +134,33 @@ function normalizeFields(fields: CronFields): CronFields {
     // A-B/N equals A/N only when no step value lies between B and 59.
     if (n >= 1 && a <= b && b <= 59 && Math.floor((59 - a) / n) === Math.floor((b - a) / n)) out.minute = `${a}/${n}`
   }
+  // A list repeating one minute (0,0) is that minute.
+  if (/^\d{1,2}(,\d{1,2})+$/.test(out.minute) && new Set(out.minute.split(",").map(Number)).size === 1) out.minute = String(Number(out.minute.split(",")[0]))
+  // An hour step or list that selects one block of consecutive hours (0-23/1, 9-17/1, 3/25, 9,9) is that block.
+  // Rewrite only shapes that would otherwise be rejected, so outputs that were already faithful keep their form.
+  const minuteStepped = out.minute === "*" || out.minute.includes("/")
+  if (out.hour.includes(",") || (minuteStepped && out.hour.includes("/"))) {
+    const hours = hourSet(out.hour)
+    if (hours && hours.at(-1)! - hours[0] === hours.length - 1) {
+      out.hour = hours.length === 24 ? "*" : hours.length === 1 ? String(hours[0]) : `${hours[0]}-${hours.at(-1)}`
+    }
+  }
   return out
+}
+
+// Sorted hours selected by a field of *, N, A-B parts with optional /S (Quartz N/S means N-23/S); null if malformed.
+function hourSet(hour: string): number[] | null {
+  const hours = new Set<number>()
+  for (const part of hour.split(",")) {
+    const match = /^(\*|\d{1,2})(?:-(\d{1,2}))?(?:\/(\d{1,2}))?$/.exec(part)
+    if (!match || (match[1] === "*" && match[2] !== undefined)) return null
+    const lo = match[1] === "*" ? 0 : Number(match[1])
+    const hi = match[1] === "*" ? 23 : match[2] !== undefined ? Number(match[2]) : match[3] !== undefined ? 23 : lo
+    const step = match[3] === undefined ? 1 : Number(match[3])
+    if (step < 1 || lo > hi || hi > 23) return null
+    for (let h = lo; h <= hi; h += step) hours.add(h)
+  }
+  return [...hours].sort((a, b) => a - b)
 }
 
 // Day fields are copied into the output unchanged, so any well-formed list of values,
