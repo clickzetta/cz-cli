@@ -8,10 +8,10 @@ import { maskRows } from "../output/masking.js"
 import { logOperation } from "../logger.js"
 import { type ExecContext, classifyExecError, execSql, execSqlWithRetry, getExecContext, isQueryResult, validateIdentifier } from "./exec.js"
 import { formatBillingError } from "./billing-error.js"
+import { findTopLevelLimit } from "../sql/limit-probe.js"
 import { czConfigBool, CZ_CONFIG_FILE } from "../config/cz-config.js"
 
 const SELECT_RE = /^\s*(SELECT\b|WITH\b[\s\S]*?\bSELECT\b|SHOW\b)/i
-const LIMIT_RE = /\bLIMIT\s+\d+/i
 const SHOW_RE = /^\s*SHOW\b/i
 const TABLE_NOT_FOUND_RE = /Table.*?not found/i
 const COLUMN_NOT_FOUND_RE = /(Unknown column|Column.*?not found)/i
@@ -375,7 +375,8 @@ async function executeSingle(
   const isSelect = /^\s*(SELECT|SHOW)\b/i.test(text) || (analysis.kind === "readonly" && SELECT_RE.test(text))
   const canRewrite = analysis.kind === "readonly" && analysis.statements.length === 1 && Object.keys(hints).every(isReadonlySqlSetting)
   const isShow = SHOW_RE.test(text)
-  const hasLimit = LIMIT_RE.test(text)
+  const topLimit = findTopLevelLimit(text)
+  const hasLimit = !!topLimit
   const rowLimit = argv.limit === 0 ? Infinity : argv.limit
   const t0 = Date.now()
 
@@ -447,11 +448,10 @@ async function executeSingle(
 
   // Sync mode: SELECT with user LIMIT N → probe with N+1 to detect truncation
   if (isSelect && canRewrite && hasLimit && !isShow && !!argv.limit) {
-    const limitMatch = text.match(/\bLIMIT\s+(\d+)/i)
-    if (limitMatch) {
-      const userLimit = parseInt(limitMatch[1], 10)
-      const offset = analysis.statements[0].start + limitMatch.index!
-      const probeSql = sql.slice(0, offset) + `LIMIT ${userLimit + 1}` + sql.slice(offset + limitMatch[0].length)
+    if (topLimit) {
+      const userLimit = topLimit.value
+      const offset = analysis.statements[0].start + topLimit.index
+      const probeSql = sql.slice(0, offset) + `LIMIT ${userLimit + 1}` + sql.slice(offset + topLimit.length)
       const r = await execSqlWithRetry(ctx, probeSql, { hints, timeoutMs: argv.timeout * 1000, configStatements, onJobId })
       if (!isQueryResult(r)) { error("UNEXPECTED_RESULT", "Expected query result but got async marker.", { format }); return }
       if (r.status === JobStatus.FAILED) {
