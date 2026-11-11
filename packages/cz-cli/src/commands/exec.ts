@@ -220,9 +220,10 @@ function abortFailure(jobId: string, reason: unknown, cause: unknown) {
 }
 
 function isAuthError(err: unknown): boolean {
-  if (err instanceof ClickZettaApiError && err.statusCode === 401) return true
-  if (err instanceof Error && err.message.includes("401")) return true
-  return false
+  // Structured signal only. Messages embed job IDs (timestamp + base36), which
+  // often contain "401", so a message substring match misreads job failures as
+  // auth failures and re-submits the SQL.
+  return err instanceof ClickZettaApiError && err.statusCode === 401
 }
 
 function isNetworkError(err: unknown): boolean {
