@@ -13,7 +13,7 @@ Two Claude Code sessions use native `/loop` and `Monitor`. The repository does n
 
 ## Control checkout
 
-The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync` at each wake, which fast-forwards it to `origin/main` and returns `changedRules`: the files under `AGENTS.md` and `docs/maintenance` that moved. A running session rereads those files before acting; merged rules take effect only once they are reread, so the wake prompt asks for it explicitly. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
+The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync ROLE` at each wake, which fast-forwards it to `origin/main` and returns `changedRules`: `AGENTS.md` and the files under `docs/maintenance`, notes included, that changed since that role last synced. Roles share the checkout, so each keeps its own cursor in runtime `control/rules-seen-ROLE`. A running session rereads those files before acting; merged rules take effect only once they are reread, so the wake prompt asks for it explicitly. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
 
 To move a deployment off the old pinned `native.policySha`, stop both roles at a safe boundary, then in the control checkout run `git switch main && git merge --ff-only origin/main`, remove `native.policySha` from `config.json`, run `sync`, and restart.
 
@@ -36,7 +36,7 @@ The Bot must belong to the target group, with `im:message.group_msg`, long-conne
 
 ## Start or recover
 
-Create each role only once. Recover existing session IDs; use CronList to deduplicate instead of repeating `/loop`. When retiring old channel roles, hand off tasks, claims, workers, and receipts at a safe boundary, then remove their jobs and stop them. Keep one listener owner.
+Create each role only once. Recover existing session IDs; use CronList to deduplicate instead of repeating `/loop`. When retiring old channel roles, hand off tasks, claims, delegates, and receipts at a safe boundary, then remove their jobs and stop them. Keep one listener owner.
 
 The existing maintenance authorization allows bypassPermissions. Use private settings that disable auto-memory without changing connection credentials:
 
@@ -55,25 +55,25 @@ claude --background --name cz-worker \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch,Monitor,TaskStop' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 5m Run bun scripts/maintenance.ts sync, reread every file it lists in changedRules, then follow docs/maintenance/prompts/worker.md.'
+  '/loop 5m Run bun scripts/maintenance.ts sync worker, then read docs/maintenance/prompts/worker.md and every file listed in changedRules, and follow them.'
 
 claude --background --name cz-curator \
   --permission-mode bypassPermissions --allowedTools 'Bash,Agent,Skill,CronCreate,CronList,CronDelete,ToolSearch' \
   --add-dir "$CZ_MAINTENANCE_RUNTIME" --add-dir "$CZ_MAINTENANCE_WORKTREES" --add-dir "$CZ_MAINTENANCE_TRANSCRIPTS" \
   --settings "$CZ_MAINTENANCE_SETTINGS" \
-  '/loop 12h Run bun scripts/maintenance.ts sync, reread every file it lists in changedRules, then follow docs/maintenance/prompts/curator.md.'
+  '/loop 12h Run bun scripts/maintenance.ts sync curator, then read docs/maintenance/prompts/curator.md and every file listed in changedRules, and follow them.'
 ```
 
 Distinct tasks may run concurrently in exclusive worktrees; never duplicate a task's implementer. Review separately. The coordinator remains responsive.
 
 The wake prompt above is the only one: scheduled jobs, wrappers, and recovery reuse it verbatim instead of restating rules. A long-lived session drifts from the files it read hours ago, so restart each role at a safe boundary at least daily and after a large rule change; the handoff and task state carry everything it needs.
 
-Inspect with `claude agents` or `claude logs ID`; stop with `claude stop ID`. Existing server wrappers use `maintenance attach worker` or `curator`. Recovery must verify actual Cron/Monitor state and expiry, not just a process. GitHub currently polls; it has no webhook integration.
+Inspect with `claude agents` or `claude logs ID`; stop with `claude stop ID`. Existing server wrappers use `maintenance attach worker` or `curator`. Runtime files that carry the old role names (`feedback-runtime.json`, `reflection-runtime.json`) are renamed at the cutover; other historical records keep their names. Recovery must verify actual Cron/Monitor state and expiry, not just a process. GitHub currently polls; it has no webhook integration.
 
 <a id="验收与恢复"></a>
 
 ## Acceptance
 
-Confirm one five-minute Worker job, one twelve-hour Curator job, and one listener, with no obsolete channel jobs or duplicate workers. Renew jobs before their reported expiry. Verify real Issue/PR updates, natural Feishu events, task links, dispositions, and receipts. Test replay/deduplication locally. **Never send Feishu test or diagnostic messages.** Report only observed connection, intake, and delivery evidence; natural-event-to-reply acceptance stays open until demonstrated. CI and independent review remain required; releases remain nightly-only.
+Confirm one five-minute Worker job, one twelve-hour Curator job, and one listener, with no obsolete channel jobs or duplicate delegates. Renew jobs before their reported expiry. Verify real Issue/PR updates, natural Feishu events, task links, dispositions, and receipts. Test replay/deduplication locally. **Never send Feishu test or diagnostic messages.** Report only observed connection, intake, and delivery evidence; natural-event-to-reply acceptance stays open until demonstrated. CI and independent review remain required; releases remain nightly-only.
 
 See official [session settings](https://code.claude.com/docs/en/settings#change-a-setting-for-one-session) and [native scheduling](https://code.claude.com/docs/en/scheduled-tasks).

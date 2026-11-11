@@ -55,6 +55,45 @@ test("sync names the rule files that changed so a running session rereads them",
   expect((await syncControl(repo.control)).changedRules).toEqual([])
 })
 
+test("each role sees a rule change once, even when another role synced first", async () => {
+  const repo = await setup()
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual([])
+  expect((await syncControl(repo.control, "curator")).changedRules).toEqual([])
+  mkdirSync(path.join(repo.upstream, "docs/maintenance"), { recursive: true })
+  writeFileSync(path.join(repo.upstream, "docs/maintenance/workflow.md"), "one\n")
+  writeFileSync(path.join(repo.upstream, "docs/maintenance/retired.md"), "old\n")
+  await git(repo.upstream, "add", ".")
+  await git(repo.upstream, "commit", "-m", "docs: first rule change")
+  const listed = ["docs/maintenance/retired.md", "docs/maintenance/workflow.md"]
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual(listed)
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual([])
+
+  // The checkout no longer moves for the curator, yet it must still learn about every change since its last sync.
+  writeFileSync(path.join(repo.upstream, "docs/maintenance/workflow.md"), "two\n")
+  await git(repo.upstream, "rm", "--quiet", "docs/maintenance/retired.md")
+  await git(repo.upstream, "add", ".")
+  await git(repo.upstream, "commit", "-m", "docs: second rule change")
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual(["docs/maintenance/workflow.md"])
+  const curator = await syncControl(repo.control, "curator")
+  expect(curator.updated).toBe(false)
+  expect(curator.changedRules).toEqual(["docs/maintenance/workflow.md"])
+  expect((await syncControl(repo.control, "curator")).changedRules).toEqual([])
+  expect(await git(repo.control, "status", "--porcelain")).toBe("")
+})
+
+test("sync rejects a malformed role and survives an unreadable cursor", async () => {
+  const repo = await setup()
+  await expect(syncControl(repo.control, "../escape")).rejects.toThrow("lowercase letters")
+  await syncControl(repo.control, "worker")
+  writeFileSync(path.join(repo.control, ".git/cz-maintenance/control/rules-seen-worker"), "not-a-commit\n")
+  mkdirSync(path.join(repo.upstream, "docs/maintenance"), { recursive: true })
+  writeFileSync(path.join(repo.upstream, "docs/maintenance/workflow.md"), "rule\n")
+  await git(repo.upstream, "add", ".")
+  await git(repo.upstream, "commit", "-m", "docs: rule change")
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual(["docs/maintenance/workflow.md"])
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual([])
+})
+
 test("sync refuses another branch, local edits, and diverged local commits", async () => {
   const repo = await setup()
   await git(repo.control, "switch", "--quiet", "-c", "pinned")

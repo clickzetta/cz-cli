@@ -8,7 +8,7 @@ import { pendingMemory, recordMemory, resolveMemory } from "./maintenance/memory
 import { syncControl } from "./maintenance/sync"
 
 export async function main(args = Bun.argv.slice(2)) {
-  if (args[0] === "sync" && args.length === 1) return syncControl()
+  if (args[0] === "sync" && args.length <= 2) return syncControl(process.cwd(), args[1])
   const runtime = await loadRuntime()
   const action = args[0] ?? "status"
   if (action === "memory") {
@@ -155,7 +155,7 @@ export async function main(args = Bun.argv.slice(2)) {
     })
   }
   throw new Error(
-    "Use: sync | init | status | memory record FILE | memory pending | memory resolve ID FILE | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
+    "Use: sync [ROLE] | init | status | memory record FILE | memory pending | memory resolve ID FILE | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
   )
 }
 

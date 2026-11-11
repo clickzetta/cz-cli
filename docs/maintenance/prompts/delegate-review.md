@@ -1,6 +1,6 @@
 # Reviewer brief
 
-The Worker fills in every field and sends the result as the delegate's whole prompt. Launch it from the control session with a fresh context, on the most capable model available (`model: "opus"` in the Agent call). Never pass the implementer's conversation or its summary in place of the request.
+The Worker fills in every field and sends the result as the delegate's whole prompt. Launch it from the control session with a fresh context, on the most capable model the session can select for a delegate (the `opus` alias in the Agent call, which names no version). Never pass the implementer's conversation or its summary in place of the request.
 
 ```text
 You are an independent reviewer for TASK_ID. You are read-only on GitHub: no comments, reviews, pushes, or merges. Do not edit the control checkout at CONTROL_ROOT.
