@@ -99,10 +99,41 @@ function hasUnsupportedToken(fields: CronFields): string | null {
   return null
 }
 
+const INT = "\\d{1,2}"
+const MINUTE_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}/\\d{1,2}$`)]
+const HOUR_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}-${INT}$`), new RegExp(`^${INT}-${INT}/\\d{1,2}$`)]
+
+/** Reject any field shape the Studio schedule model cannot express, instead of silently narrowing or widening it. */
+function unsupportedShape(fields: CronFields): string | null {
+  if (!/^0+$/.test(fields.second)) return `Unsupported second field '${fields.second}': only 0 is supported.`
+  if (fields.month !== "*" && fields.month !== "?") return `Unsupported month field '${fields.month}': only * is supported (yearly/monthly-subset schedules cannot be expressed).`
+  if (fields.year !== "*") return `Unsupported year field '${fields.year}': only * is supported.`
+  if (!MINUTE_FORMS.some(r => r.test(fields.minute))) {
+    return `Unsupported minute field '${fields.minute}': only a single value, *, */N or N/N are supported (lists and ranges cannot be expressed).`
+  }
+  if (!HOUR_FORMS.some(r => r.test(fields.hour))) {
+    return `Unsupported hour field '${fields.hour}': only a single value, *, */N, A-B or A-B/N are supported (lists cannot be expressed).`
+  }
+  const minuteStepped = fields.minute === "*" || fields.minute.includes("/")
+  if (minuteStepped && fields.hour.includes("/")) {
+    return `Unsupported combination of minute '${fields.minute}' and hour '${fields.hour}': a step in both fields cannot be expressed.`
+  }
+  if (!minuteStepped && !/^\d+$/.test(fields.minute)) return `Unsupported minute field '${fields.minute}'.`
+  const minuteBase = fields.minute.split("/")[0]
+  if (/^\d+$/.test(minuteBase) && Number(minuteBase) > 59) return `Minute out of range in '${fields.minute}'.`
+  for (const h of fields.hour.split("/")[0].split("-")) if (/^\d+$/.test(h) && Number(h) > 23) return `Hour out of range in '${fields.hour}'.`
+  if (fields.hour.includes("-")) {
+    const [a, b] = fields.hour.split("/")[0].split("-").map(Number)
+    if (a > b) return `Unsupported hour range '${fields.hour}': start is after end.`
+  }
+  return null
+}
+
 function parseHourRange(token: string): { start: string; end: string; step: string | null } {
   let step: string | null = null
   let base = token
   if (token.includes("/")) { [base, step] = token.split("/", 2) }
+  if (base === "*") return { start: "0", end: "23", step }
   if (base.includes("-")) {
     const [start, end] = base.split("-", 2)
     return { start, end, step }
@@ -116,6 +147,9 @@ function decodeToUi(fields: CronFields): { param: UiParam; warnings: string[]; e
 
   const unsupported = hasUnsupportedToken(fields)
   if (unsupported) return { param, warnings, error: unsupported }
+
+  const shape = unsupportedShape(fields)
+  if (shape) return { param, warnings, error: shape }
 
   if (fields.day !== "*" && fields.day !== "?" && fields.week !== "*" && fields.week !== "?") {
     return { param, warnings, error: "Both day-of-month and day-of-week are specific." }

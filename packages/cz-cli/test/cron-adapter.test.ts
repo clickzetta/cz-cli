@@ -88,3 +88,39 @@ describe("convertAgentCron hour=* with fixed minute (hourly)", () => {
     expect(r2.outputCron).toBe(r1.outputCron)
   })
 })
+
+describe("convertAgentCron rejects fields it cannot express (#178)", () => {
+  const rejected: Array<[string, string]> = [
+    ["0 8,12 * * *", "hour field '8,12'"],
+    ["0,30 9 * * *", "minute field '0,30'"],
+    ["0 0 1 1 *", "month field '1'"],
+    ["0 0 * * * ? 2030", "year field '2030'"],
+    ["30 0 9 * * ? *", "second field '30'"],
+    ["*/5 */2 * * *", "step in both fields"],
+    ["0 18-9 * * *", "start is after end"],
+    ["0 99 * * *", "out of range"],
+  ]
+  for (const [input, part] of rejected) {
+    test(`rejects ${input}`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(false)
+      expect(r.outputCron).toBeNull()
+      expect(r.error).toContain(part)
+    })
+  }
+
+  test("0 */2 * * * converts faithfully instead of producing NaN", () => {
+    const r = convertAgentCron("0 */2 * * *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 00-23/2 * * ? *")
+    expect(r.outputCron).not.toContain("NaN")
+  })
+
+  test("normal expressions keep working", () => {
+    expect(convertAgentCron("0 0 * * *").outputCron).toBe("0 00 00 * * ? *")
+    expect(convertAgentCron("30 2 * * 1").outputCron).toBe("0 30 02 ? * 1 *")
+    expect(convertAgentCron("*/5 * * * *").outputCron).toBe("0 */5 * * * ? *")
+    expect(convertAgentCron("0 0 1 * *").outputCron).toBe("0 00 00 1 * ? *")
+    expect(convertAgentCron("0 30 9 * * ? *").outputCron).toBe("0 30 09 * * ? *")
+  })
+})
