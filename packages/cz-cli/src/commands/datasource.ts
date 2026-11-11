@@ -33,10 +33,13 @@ export const DS_TYPE_NAMES: Record<number, string> = {
 /**
  * One read-only statement (SELECT / SHOW / DESC / EXPLAIN). EXPLAIN ANALYZE is rejected:
  * PostgreSQL and MySQL run the explained statement, so it would execute writes.
+ * Any backslash is rejected: MySQL treats \' as an escaped quote but PostgreSQL standard strings
+ * do not, so the dialects disagree on where a literal ends and a second statement could hide.
  */
 export function isReadOnlySql(sql: string): boolean {
+  if (sql.includes("\\")) return false
   // Blank out string literals, quoted identifiers and comments so a ';' or keyword inside them is ignored.
-  const code = sql.replace(/'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`|--[^\n]*|\/\*[\s\S]*?\*\//g, (m) =>
+  const code = sql.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`|--[^\n]*|\/\*[\s\S]*?\*\//g, (m) =>
     m.startsWith("--") || m.startsWith("/*") ? " " : "''",
   ).trim()
   if (code.replace(/;\s*$/, "").includes(";")) return false

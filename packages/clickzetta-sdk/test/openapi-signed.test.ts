@@ -69,4 +69,23 @@ describe("openApiRequest", () => {
 
     expect(resp).toEqual({ status: 502, body: "bad gateway" })
   })
+
+  test("redacts the access key, secret and signature from the response", async () => {
+    let signature = ""
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      signature = new URL(url).searchParams.get("Signature") ?? ""
+      const h = init.headers as Record<string, string>
+      return new Response(JSON.stringify({ ak: h.accessKey, sign: h.sign, q: url, sk: "secret/key+12345" }), { status: 401 })
+    }) as unknown as typeof fetch
+    const resp = await openApiRequest("https://api.test.invalid", "/openapi/v2/di/listX", {}, {
+      accessKey: "access-key-12345",
+      secretKey: "secret/key+12345",
+    })
+    const text = JSON.stringify(resp.body)
+    expect(signature.length).toBeGreaterThanOrEqual(8)
+    for (const secret of ["access-key-12345", "secret/key+12345", signature, encodeURIComponent(signature)]) {
+      expect(text).not.toContain(secret)
+    }
+    expect((resp.body as Record<string, string>).ak).toBe("***")
+  })
 })

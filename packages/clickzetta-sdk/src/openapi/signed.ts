@@ -75,7 +75,15 @@ export async function openApiRequest<T = unknown>(
     },
     body: method === "GET" || body === undefined ? undefined : JSON.stringify(body),
   })
-  const text = await resp.text()
+  // Never hand back the credentials or the signature, even if an error page echoes the request.
+  // Values shorter than 8 characters are not real keys and would mangle ordinary text.
+  let text = await resp.text()
+  for (const secret of [credentials.accessKey, credentials.secretKey, signature]) {
+    if (!secret || secret.length < 8) continue
+    for (const form of new Set([secret, encodeURIComponent(secret), secret.replace(/\//g, "\\/")])) {
+      text = text.split(form).join("***")
+    }
+  }
   let parsed: unknown = text
   try { parsed = JSON.parse(text) } catch { /* keep raw text */ }
   return { status: resp.status, body: parsed as T }

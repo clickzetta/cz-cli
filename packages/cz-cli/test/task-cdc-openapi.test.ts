@@ -9,6 +9,8 @@ const { execute } = await import("../src/execute.ts")
 const calls: string[] = []
 let status = 200
 let responseBody: unknown = { success: true, data: { ok: 1 } }
+// A function builds the body from the request, e.g. to echo it back.
+type Echo = (url: string, headers: Record<string, string>) => unknown
 
 function firstJson(output: string) {
   return JSON.parse(output.trim().split("\n")[0] ?? "{}") as Record<string, any>
@@ -27,9 +29,10 @@ beforeEach(() => {
   )
   onFetch({
     match: () => true,
-    respond: (url) => {
+    respond: (url, _method, _body, headers) => {
       calls.push(url)
-      return new Response(typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody), { status })
+      const out = typeof responseBody === "function" ? (responseBody as Echo)(url, headers) : responseBody
+      return new Response(typeof out === "string" ? out : JSON.stringify(out), { status })
     },
   })
 })
@@ -59,5 +62,24 @@ describe("task cdc openapi", () => {
     const j = firstJson(r.output)
     expect(j.error?.code).toBe("OPENAPI_HTTP_ERROR")
     expect(j.data).toMatchObject({ http_status: code, response: responseBody })
+  })
+
+  test("keeps the access key, secret and signature out of an echoed error body", async () => {
+    process.env.CZ_OPENAPI_AK = "ak-visible-123"
+    process.env.CZ_OPENAPI_SK = "sk/secret+456"
+    status = 401
+    let signature = ""
+    responseBody = ((url, headers) => {
+      signature = new URL(url).searchParams.get("Signature") ?? ""
+      return { echo: { url, accessKey: headers.accesskey, sign: headers.sign, sk: "sk/secret+456" } }
+    }) satisfies Echo
+    const r = await execute("task cdc openapi /openapi/v2/realtime/getTableSyncStatus --body {}")
+    expect(r.exitCode).not.toBe(0)
+    expect(firstJson(r.output).error?.code).toBe("OPENAPI_HTTP_ERROR")
+    expect(signature).not.toBe("")
+    for (const secret of ["ak-visible-123", "sk/secret+456", signature, encodeURIComponent(signature)]) {
+      expect(r.output).not.toContain(secret)
+    }
+    expect(r.output).toContain("***")
   })
 })

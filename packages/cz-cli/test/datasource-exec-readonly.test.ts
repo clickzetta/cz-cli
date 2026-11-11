@@ -39,6 +39,8 @@ describe("isReadOnlySql", () => {
       "explain analyse update t set a = 1",
       "explain (analyze, buffers) delete from t",
       "select ';'; drop table t",
+      String.raw`select 'a\'; delete from t; --'`,
+      String.raw`select 'a\\' from t`,
     ]) {
       expect(isReadOnlySql(sql)).toBe(false)
     }
@@ -54,6 +56,19 @@ describe("datasource exec", () => {
     const calls: string[] = []
     onFetch({ match: () => true, respond: (url) => { calls.push(url); return { code: 0, data: {} } } })
     const result = await execute(`datasource exec pg_src --sql "EXPLAIN ANALYZE DELETE FROM t"`)
+    expect(result.exitCode).toBe(2)
+    expect(result.output).toContain("INVALID_ARGUMENTS")
+    expect(calls).toEqual([])
+  })
+
+  test("rejects a backslash-escaped quote hiding a second statement before sending any request", async () => {
+    writeFileSync(
+      join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
+      "[profiles.test]\npat = 'pat'\nworkspace = 'quick_start'\ninstance = 'tmwmzxzs'\n",
+    )
+    const calls: string[] = []
+    onFetch({ match: () => true, respond: (url) => { calls.push(url); return { code: 0, data: {} } } })
+    const result = await execute("datasource exec pg_src", ["--sql", String.raw`select 'a\'; delete from t; --'`])
     expect(result.exitCode).toBe(2)
     expect(result.output).toContain("INVALID_ARGUMENTS")
     expect(calls).toEqual([])
