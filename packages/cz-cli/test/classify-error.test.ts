@@ -14,10 +14,24 @@ describe("classifyExecError", () => {
     expect(r.aiMessage).toContain("Authentication failed")
   })
 
-  test("Error message containing '401' → AUTH_ERROR", () => {
+  test("ClickZettaApiError with statusCode 401 and '401' in its message → AUTH_ERROR", () => {
+    const r = classifyExecError(new ClickZettaApiError("HTTP_401", "HTTP 401: token is invalid", 401))
+    expect(r.code).toBe("AUTH_ERROR")
+  })
+
+  // Auth is classified on the structured statusCode only. Job IDs (timestamp +
+  // base36) often contain "401" and error messages embed them, so a message
+  // substring match misread job failures as auth failures (issue #170).
+  test("plain Error whose message merely contains '401' → EXEC_ERROR, not AUTH_ERROR", () => {
     const err = new Error("Request failed with status 401")
     const r = classifyExecError(err)
-    expect(r.code).toBe("AUTH_ERROR")
+    expect(r.code).toBe("EXEC_ERROR")
+  })
+
+  test("plain Error with '401' in an embedded job ID → EXEC_ERROR, not AUTH_ERROR", () => {
+    const err = Object.assign(new Error("Job 20261111140103401abc failed"), { jobId: "20261111140103401abc" })
+    const r = classifyExecError(err)
+    expect(r.code).not.toBe("AUTH_ERROR")
   })
 
   test("socket closed → CONNECTION_ERROR", () => {

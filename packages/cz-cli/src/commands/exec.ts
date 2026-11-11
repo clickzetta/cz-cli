@@ -220,9 +220,10 @@ function abortFailure(jobId: string, reason: unknown, cause: unknown) {
 }
 
 function isAuthError(err: unknown): boolean {
-  if (err instanceof ClickZettaApiError && err.statusCode === 401) return true
-  if (err instanceof Error && err.message.includes("401")) return true
-  return false
+  // Structured signal only. Messages embed job IDs (timestamp + base36), which
+  // often contain "401", so a message substring match misreads job failures as
+  // auth failures and re-submits the SQL.
+  return err instanceof ClickZettaApiError && err.statusCode === 401
 }
 
 function isNetworkError(err: unknown): boolean {
@@ -294,8 +295,8 @@ function errorCode(err: unknown) {
 }
 
 /**
- * Execute SQL with automatic 401 retry. On auth failure, clears the token
- * cache, re-authenticates, and retries the operation once with a fresh token.
+ * Execute SQL with automatic 401 retry. On an HTTP 401, rotates the credential
+ * through the context's token source and re-runs the statement once.
  */
 export async function execSqlWithRetry(
   ctx: ExecContext,
@@ -312,10 +313,13 @@ export async function execSqlWithRetry(
     return await execSql(ctx, sql, opts)
   } catch (err) {
     if (!isAuthError(err)) throw err
-    // The SQL gateway reports some auth failures in the body rather than as a
-    // 401, so the transport's own rotation never sees them; rotate explicitly
-    // and retry once. clientOpts needs no patching: its source re-reads the
-    // rotated token on the next request.
+    // Only an HTTP 401 reaches here, and the transport has already offered its
+    // own single rotation for that request: the source could not rotate, the
+    // rotated credential was rejected too, or the 401 came on the last attempt.
+    // Ask the source once more and re-run the whole statement once; a source
+    // with no rotation path returns undefined and the original 401 stands.
+    // clientOpts needs no patching: its source re-reads the rotated token on
+    // the next request.
     //
     // Rotation goes through the context's OWN source, not forceRefreshToken(config):
     // a cookie-pinned profile has no rotation path, and handing its config to the
