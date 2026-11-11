@@ -7,6 +7,9 @@ Select a relevant note, then read its original evidence and verify current facts
 | Installation, authentication, or misunderstood product behavior                | [Misunderstandings](../understanding.md)                                                         |
 | Unresolved product, design, or authorization decisions                         | [Decisions](../decisions.md), private `control/daily-decisions.md`, then latest original replies |
 | Repeated intake, monitoring, handoff, merge, network, or verification failures | [Recurring failures](../recurring-failures.md)                                                   |
+| A known mistake in cz-cli or the ClickZetta SDK                                | [cli pitfalls](../../cli/pitfalls.md)                                                            |
+| A known mistake in upstream opencode, injection, plugins, or re-baselining     | [opencode pitfalls](../../opencode/pitfalls.md)                                                  |
+| A known mistake in tests, CI, pushing, or releases                             | [engineering pitfalls](../../engineering/pitfalls.md)                                            |
 
 Run `bun scripts/maintenance.ts memory pending` when taking a task. Inspect relevant candidate files and evidence; candidates are not established rules. Verify contradictions before reusing a note.
 
