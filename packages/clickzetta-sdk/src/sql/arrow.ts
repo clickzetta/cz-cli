@@ -9,6 +9,7 @@
  * Each element of `resultSet.data.data` is one IPC message.
  */
 
+import { abortable } from "../abort.js"
 import { CompressionType, compressionRegistry, tableFromIPC, type Schema, type DataType, type Data, type Vector } from "apache-arrow"
 import zlib from "node:zlib"
 import type { ColumnSchema } from "./types.js"
@@ -245,7 +246,9 @@ export async function fetchArrowFromUrls(
     if (!resp.ok) {
       throw new Error(`Failed to fetch Arrow payload from presigned URL: HTTP ${resp.status}`)
     }
-    const buf = new Uint8Array(await resp.arrayBuffer())
+    // A runtime may end a body read early with partial data when the signal aborts mid-body.
+    const buf = new Uint8Array(await abortable(resp.arrayBuffer(), signal))
+    signal?.throwIfAborted()
     const table = tableFromIPC(buf)
     if (resolvedColumns.length === 0) {
       resolvedColumns = schemaFromArrow(table.schema, metadataColumns)
