@@ -15,7 +15,7 @@ import { onFetch, onStudio, requireTestHome, studioOk, stubStudioContext } from 
 
 const { getStudioContext, getGatewayContext } = await import("../src/commands/studio-context.ts")
 const { getExecContext } = await import("../src/commands/exec.ts")
-const { clearConnectionContextForTest } = await import("../src/connection/context.ts")
+const { clearConnectionContextForTest, connectionContext } = await import("../src/connection/context.ts")
 
 const previousProfile = process.env.CZ_PROFILE
 const profilesPath = () => join(requireTestHome(), ".clickzetta", "profiles.toml")
@@ -162,4 +162,38 @@ test("the three entry points share one lookup", async () => {
   expect(studio.instanceId).toBe(ctx.instanceId)
   expect(gateway.instanceId).toBe(ctx.instanceId)
   expect(lookups.length).toBe(1)
+})
+
+/**
+ * An explicit PAT is a different credential from the profile's own: the profile's cached
+ * user_id/account_id describe the profile's user, so they must not answer for the override.
+ */
+function writePatProfile() {
+  writeFileSync(
+    profilesPath(),
+    [
+      'default_profile = "pat_0"', "",
+      "[profiles.pat_0]",
+      'pat = "profile-pat"', 'service = "uat-api.clickzetta.com"', 'instance = "inst"',
+      'workspace = "wanxin_test_04"', "user_id = 13", "account_id = 10", "",
+    ].join("\n"),
+    "utf-8",
+  )
+}
+
+test("an overriding PAT does not keep the profile's cached user and tenant", async () => {
+  writePatProfile()
+  stubStudioContext({ userId: 99, tenantId: 20 })
+  const ctx = await connectionContext({ profile: "pat_0", pat: "different-user-pat" })
+  expect((await ctx.token()).userId).toBe(99)
+  expect(await ctx.identity()).toMatchObject({ userId: 99, tenantId: 20 })
+  // The override's identity must not be written back onto the profile either.
+  expect(await Bun.file(profilesPath()).text()).toContain("user_id = 13")
+})
+
+test("without an override the cached user and tenant still answer", async () => {
+  writePatProfile()
+  stubStudioContext({ userId: 99, tenantId: 20 })
+  const ctx = await connectionContext({ profile: "pat_0" })
+  expect(await ctx.identity()).toEqual({ userId: 13, tenantId: 10 })
 })
