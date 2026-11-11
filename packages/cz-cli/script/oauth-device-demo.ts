@@ -254,12 +254,12 @@ async function main() {
     throw new Error(`userinfo 请求失败: HTTP ${response.status} ${await response.text()}`)
   }
   // 只打印白名单字段：userinfo 里还有 apiKey 等凭据（CLI 用它配置 LLM），
-  // 和上面的 token 一样不能出现在终端、日志或录屏里。其余字段只列出名字。
+  // 和上面的 token 一样不能出现在终端、日志或录屏里。其余字段只列出名字，
+  // 凭据字段连"是否存在"也不单独读取。
   const userinfo = (await response.json()) as Record<string, unknown>
   const shown = ["sub", "userId", "accountName", "account_id", "instanceName", "workspaceName"]
   console.log("[5] userinfo:", {
     ...Object.fromEntries(shown.filter((key) => key in userinfo).map((key) => [key, userinfo[key]])),
-    has_api_key: Boolean(userinfo.apiKey),
     other_fields: Object.keys(userinfo).filter((key) => !shown.includes(key)),
   })
 }

@@ -437,7 +437,9 @@ describe("loginWithDevice on entries without device flow", () => {
 
   test("names the issuer that lacks the endpoint", async () => {
     stubFetch({ discovery: DISCOVERY_NO_DEVICE })
-    await expect(loginWithDevice(makeOptions().opts)).rejects.toThrow(new RegExp(ISSUER))
+    // A substring match, not `new RegExp(ISSUER)`: the dots in the host would be
+    // regex wildcards and match hosts other than the issuer.
+    await expect(loginWithDevice(makeOptions().opts)).rejects.toThrow(ISSUER)
   })
 })
 

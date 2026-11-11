@@ -18,6 +18,7 @@ import {
   tokenFromResponse,
   type OAuthLoginResult,
 } from "./oauth-userinfo.js"
+import { browserOpenCommandForPlatform } from "../util/browser.js"
 
 /**
  * Browser loopback OAuth login (authorization code + PKCE).
@@ -42,18 +43,16 @@ function randomState(): string {
 
 /**
  * Best-effort cross-platform system browser opener (design Addendum 2, step 4).
- * darwin → `open`, win32 → `start ""`, else `xdg-open`. Failures are swallowed:
- * the authorize URL is already printed to the terminal so the user can open it
- * manually while the loopback listener keeps waiting (requirement 10.5).
+ * Failures are swallowed: the authorize URL is already printed to the terminal so
+ * the user can open it manually while the loopback listener keeps waiting
+ * (requirement 10.5). Uses the shared opener rather than `start` through a shell:
+ * the authorize URL always carries several `&`-joined parameters, which cmd.exe
+ * would split into separate commands.
  */
 function openSystemBrowser(url: string): void {
-  const isWindows = process.platform === "win32"
-  const command = process.platform === "darwin" ? "open" : isWindows ? "start" : "xdg-open"
-  // Windows `start` is a shell builtin and treats the first quoted arg as the
-  // window title, hence the leading empty string.
-  const args = isWindows ? ["", url] : [url]
+  const opener = browserOpenCommandForPlatform(process.platform, url)
   try {
-    const child = spawn(command, args, { stdio: "ignore", detached: true, shell: isWindows })
+    const child = spawn(opener.command, opener.args, { stdio: "ignore", detached: true })
     child.on("error", () => {})
     child.unref()
   } catch {

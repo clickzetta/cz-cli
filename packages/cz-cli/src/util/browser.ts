@@ -4,10 +4,18 @@
 // gets pre-bundled, so importing setup.ts would drag an interactive-prompt
 // dependency into a plugin bundle. setup.ts re-exports it for its own callers.
 
-/** The shell command that hands a URL to the platform's default browser. */
+/**
+ * The command that hands a URL to the platform's default browser.
+ *
+ * Every variant takes the URL as a plain argv entry that no shell parses. Windows
+ * used to go through `cmd.exe /c start "" <url>`, where cmd treats `&` as a
+ * command separator: a URL with a second query parameter was cut at the `&` and
+ * the remainder run as a command. `url.dll,FileProtocolHandler` receives the URL
+ * verbatim and opens it with the registered handler, without a console window.
+ */
 export function browserOpenCommandForPlatform(platform: NodeJS.Platform, url: string): { command: string; args: string[] } {
   if (platform === "darwin") return { command: "open", args: [url] }
-  if (platform === "win32") return { command: "cmd.exe", args: ["/c", "start", "", url] }
+  if (platform === "win32") return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] }
   return { command: "xdg-open", args: [url] }
 }
 
