@@ -124,3 +124,61 @@ describe("convertAgentCron rejects fields it cannot express (#178)", () => {
     expect(convertAgentCron("0 30 9 * * ? *").outputCron).toBe("0 30 09 * * ? *")
   })
 })
+
+describe("convertAgentCron review follow-ups (#192)", () => {
+  const old: Array<[string, string]> = [
+    ["0-59/5 * * * *", "0 */5 * * * ? *"],
+    ["0-59/10 * * * *", "0 */10 * * * ? *"],
+    ["0-59/2 * * * *", "0 */2 * * * ? *"],
+    ["0-59/15 * * * *", "0 */15 * * * ? *"],
+    ["0-55/5 * * * *", "0 */5 * * * ? *"],
+    ["10-50/10 * * * *", "0 10/10 * * * ? *"],
+  ]
+  for (const [input, out] of old) {
+    test(`minute range step ${input} keeps old output`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+    })
+  }
+
+  test("minute range step that is not equivalent to a start/step is rejected", () => {
+    expect(convertAgentCron("0-20/15 * * * *").ok).toBe(false)
+  })
+
+  for (const month of ["*", "1-12", "*/1", "1,2,3,4,5,6,7,8,9,10,11,12", "JAN-DEC"]) {
+    test(`month ${month} normalises to *`, () => {
+      const r = convertAgentCron(`0 0 * ${month} *`)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe("0 00 00 * * ? *")
+    })
+  }
+  test("partial month sets stay rejected", () => {
+    expect(convertAgentCron("0 0 * 1-6 *").ok).toBe(false)
+    expect(convertAgentCron("0 0 * */2 *").ok).toBe(false)
+  })
+
+  test("day-of-month is validated", () => {
+    for (const d of ["32", "0", "*/2", "1-5", "abc"]) {
+      const r = convertAgentCron(`0 0 ${d} * *`)
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain("day-of-month")
+    }
+    expect(convertAgentCron("0 0 1,15 * *").outputCron).toBe("0 00 00 1,15 * ? *")
+  })
+
+  test("day-of-week is validated; Unix 0 is rejected, 7/names accepted", () => {
+    const zero = convertAgentCron("0 9 * * 0")
+    expect(zero.ok).toBe(false)
+    expect(zero.error).toContain("day-of-week")
+    expect(convertAgentCron("0 9 * * 8").ok).toBe(false)
+    expect(convertAgentCron("0 9 * * 7").outputCron).toBe("0 00 09 ? * 7 *")
+    expect(convertAgentCron("0 9 * * MON-FRI").outputCron).toBe("0 00 09 ? * 1,2,3,4,5 *")
+  })
+
+  test("Quartz N/S hour means N-23/S", () => {
+    const r = convertAgentCron("0 0 8/2 * * ? *")
+    expect(r.ok).toBe(true)
+    expect(r.outputCron).toBe("0 00 08-23/2 * * ? *")
+  })
+})

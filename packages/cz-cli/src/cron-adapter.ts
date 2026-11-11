@@ -101,7 +101,60 @@ function hasUnsupportedToken(fields: CronFields): string | null {
 
 const INT = "\\d{1,2}"
 const MINUTE_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}/\\d{1,2}$`)]
-const HOUR_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}-${INT}$`), new RegExp(`^${INT}-${INT}/\\d{1,2}$`)]
+const HOUR_FORMS = [new RegExp(`^${INT}/\\d{1,2}$`), new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}-${INT}$`), new RegExp(`^${INT}-${INT}/\\d{1,2}$`)]
+
+const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+// True when the month field selects every month (1-12, star-slash-1, JAN-DEC, a full list).
+function monthIsEveryMonth(month: string): boolean {
+  const months = new Set<number>()
+  for (const raw of month.toUpperCase().split(",")) {
+    const [range, step = "1"] = raw.split("/")
+    const stepN = Number(step)
+    if (!Number.isInteger(stepN) || stepN < 1) return false
+    const num = (t: string) => (MONTH_NAMES.includes(t) ? MONTH_NAMES.indexOf(t) + 1 : /^\d+$/.test(t) ? Number(t) : NaN)
+    const [lo, hi] = range === "*" ? [1, 12] : range.includes("-") ? range.split("-", 2).map(num) : [num(range), stepN > 1 ? 12 : num(range)]
+    if (!(lo >= 1 && hi <= 12 && lo <= hi)) return false
+    for (let m = lo; m <= hi; m += stepN) months.add(m)
+  }
+  return months.size === 12
+}
+
+/**
+ * Rewrite fields that are exactly equivalent to a simpler form the encoder understands.
+ * Anything not provably equivalent is left alone for unsupportedShape to reject.
+ */
+function normalizeFields(fields: CronFields): CronFields {
+  const out = { ...fields }
+  if (out.month !== "*" && out.month !== "?" && monthIsEveryMonth(out.month)) out.month = "*"
+  const range = /^(\d{1,2})-(\d{1,2})\/(\d{1,2})$/.exec(out.minute)
+  if (range) {
+    const [a, b, n] = range.slice(1).map(Number)
+    // A-B/N equals A/N only when no step value lies between B and 59.
+    if (n >= 1 && a <= b && b <= 59 && Math.floor((59 - a) / n) === Math.floor((b - a) / n)) out.minute = `${a}/${n}`
+  }
+  return out
+}
+
+function unsupportedDayOrWeek(fields: CronFields): string | null {
+  if (fields.day !== "*" && fields.day !== "?") {
+    for (const d of fields.day.split(",")) {
+      if (!/^\d{1,2}$/.test(d) || Number(d) < 1 || Number(d) > 31) {
+        return `Unsupported day-of-month field '${fields.day}': only * or a comma list of days 1-31 is supported (got '${d}').`
+      }
+    }
+  }
+  if (fields.week !== "*" && fields.week !== "?") {
+    for (const part of fields.week.toUpperCase().split(",")) {
+      const ends = part.split("-")
+      const valid = ends.length <= 2 && ends.every(e => e in STUDIO_WEEKDAY_NAMES || /^[1-7]$/.test(e))
+      if (!valid) {
+        return `Unsupported day-of-week field '${fields.week}': use 1-7 (MON=1 ... SUN=7), names, ranges or lists (got '${part}'; 0 and steps are not supported, use 7 for Sunday).`
+      }
+    }
+  }
+  return null
+}
 
 /** Reject any field shape the Studio schedule model cannot express, instead of silently narrowing or widening it. */
 function unsupportedShape(fields: CronFields): string | null {
@@ -126,7 +179,7 @@ function unsupportedShape(fields: CronFields): string | null {
     const [a, b] = fields.hour.split("/")[0].split("-").map(Number)
     if (a > b) return `Unsupported hour range '${fields.hour}': start is after end.`
   }
-  return null
+  return unsupportedDayOrWeek(fields)
 }
 
 function parseHourRange(token: string): { start: string; end: string; step: string | null } {
@@ -134,6 +187,7 @@ function parseHourRange(token: string): { start: string; end: string; step: stri
   let base = token
   if (token.includes("/")) { [base, step] = token.split("/", 2) }
   if (base === "*") return { start: "0", end: "23", step }
+  if (step && !base.includes("-")) return { start: base, end: "23", step } // Quartz N/S means N-23/S
   if (base.includes("-")) {
     const [start, end] = base.split("-", 2)
     return { start, end, step }
@@ -141,7 +195,8 @@ function parseHourRange(token: string): { start: string; end: string; step: stri
   return { start: base, end: base, step }
 }
 
-function decodeToUi(fields: CronFields): { param: UiParam; warnings: string[]; error?: string } {
+function decodeToUi(rawFields: CronFields): { param: UiParam; warnings: string[]; error?: string } {
+  const fields = normalizeFields(rawFields)
   const warnings: string[] = []
   const param: UiParam = { schedule: [["everyday"]], frequency: "1", scheduleStartTime: "00:00", scheduleEndTime: null, timeGap: null }
 

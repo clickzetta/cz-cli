@@ -1958,6 +1958,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (argv.content && argv.file) {
               error("INVALID_ARGUMENTS", "Provide --content or --file, not both.", { format, exitCode: 2 }); return
             }
+            // Validate the cron before anything is created so INVALID_CRON cannot leave an orphan task.
+            const cronResult = argv.cron ? convertAgentCron(argv.cron as string) : undefined
+            if (cronResult && (!cronResult.ok || !cronResult.outputCron)) {
+              error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 }); return
+            }
             if (!argv.content && !argv.file && !argv.cron) {
               process.stderr.write("Warning: no --content/--file or --cron provided. Task will be created as an empty draft.\n")
             }
@@ -2055,11 +2060,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               }
 
               // Step 3: save cron (optional)
-              if (argv.cron) {
-                const cronResult = convertAgentCron(argv.cron as string)
-                if (!cronResult.ok || !cronResult.outputCron) {
-                  error("INVALID_CRON", cronResult.error ?? "Invalid cron expression", { format, exitCode: 2 }); return
-                }
+              if (cronResult?.outputCron) {
                 const oldConfigProps: Record<string, unknown> = {}
                 const activeStartTime = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
                 await saveTaskConfig(sc, {
