@@ -249,6 +249,31 @@ describe("convertAgentCron review follow-ups (#192)", () => {
       expect(r.outputCron).toBe(out)
     })
   }
+  // Every-year year forms and zero-padded numbers converted exactly on main and keep main's output.
+  const keptForms: Array<[string, string]> = [
+    ["0 0 9 * * ? */1", "0 00 09 * * ? *"],
+    ["0 0 9 * * ? 1970-2099", "0 00 09 * * ? *"],
+    ["0 0 9 * * ? 1970/1", "0 00 09 * * ? *"],
+    ["005 9 * * *", "0 05 09 * * ? *"],
+    ["0 009 * * *", "0 00 09 * * ? *"],
+    ["0 9 ? * 001", "0 00 09 ? * 1 *"],
+    ["0 0 9 001 * ?", "0 00 09 001 * ? *"],
+    ["0 0 9 * 001-012 ?", "0 00 09 * * ? *"],
+  ]
+  for (const [input, out] of keptForms) {
+    test(`${input} keeps main's output`, () => {
+      const r = convertAgentCron(input)
+      expect(r.ok).toBe(true)
+      expect(r.outputCron).toBe(out)
+    })
+  }
+  test("specific or partial years and zero-padded out-of-range values stay rejected", () => {
+    for (const input of ["0 0 9 * * ? 2026", "0 0 9 * * ? 1970-2098", "0 0 9 * * ? 2099-1970"]) expect(convertAgentCron(input).error).toContain("year field")
+    expect(convertAgentCron("0 0024 * * *").error).toContain("out of range")
+    expect(convertAgentCron("0 9 * * 000").error).toContain("day-of-week")
+    expect(convertAgentCron("0 9 00 * *").error).toContain("day-of-month")
+  })
+
   test("a wrapped hour range keeps main's Studio schedule window", () => {
     const r = convertAgentCron("0 22-2 * * *")
     expect(r.uiParam.scheduleStartTime).toBe("22:00")

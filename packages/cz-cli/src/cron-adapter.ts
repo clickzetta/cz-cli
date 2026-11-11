@@ -99,9 +99,9 @@ function hasUnsupportedToken(fields: CronFields): string | null {
   return null
 }
 
-const INT = "\\d{1,2}"
-const MINUTE_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}/\\d{1,2}$`)]
-const HOUR_FORMS = [new RegExp(`^${INT}/\\d{1,2}$`), new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d{1,2}$/, new RegExp(`^${INT}-${INT}$`), new RegExp(`^${INT}-${INT}/\\d{1,2}$`)]
+const INT = "\\d+"
+const MINUTE_FORMS = [new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d+$/, new RegExp(`^${INT}/\\d+$`)]
+const HOUR_FORMS = [new RegExp(`^${INT}/\\d+$`), new RegExp(`^${INT}$`), /^\*$/, /^\*\/\d+$/, new RegExp(`^${INT}-${INT}$`), new RegExp(`^${INT}-${INT}/\\d+$`)]
 
 const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
@@ -128,14 +128,14 @@ function monthIsEveryMonth(month: string): boolean {
 function normalizeFields(fields: CronFields): CronFields {
   const out = { ...fields }
   if (out.month !== "*" && out.month !== "?" && monthIsEveryMonth(out.month)) out.month = "*"
-  const range = /^(\d{1,2})-(\d{1,2})\/(\d{1,2})$/.exec(out.minute)
+  const range = /^(\d+)-(\d+)\/(\d+)$/.exec(out.minute)
   if (range) {
     const [a, b, n] = range.slice(1).map(Number)
     // A-B/N equals A/N only when no step value lies between B and 59.
     if (n >= 1 && a <= b && b <= 59 && Math.floor((59 - a) / n) === Math.floor((b - a) / n)) out.minute = `${a}/${n}`
   }
   // A list repeating one minute (0,0) is that minute.
-  if (/^\d{1,2}(,\d{1,2})+$/.test(out.minute) && new Set(out.minute.split(",").map(Number)).size === 1) out.minute = String(Number(out.minute.split(",")[0]))
+  if (/^\d+(,\d+)+$/.test(out.minute) && new Set(out.minute.split(",").map(Number)).size === 1) out.minute = String(Number(out.minute.split(",")[0]))
   // An hour step or list that selects one block of consecutive hours (0-23/1, 9-17/1, 3/25, 9,9) is that block.
   // Rewrite only shapes that would otherwise be rejected, so outputs that were already faithful keep their form.
   const minuteStepped = out.minute === "*" || out.minute.includes("/")
@@ -152,7 +152,7 @@ function normalizeFields(fields: CronFields): CronFields {
 function hourSet(hour: string): number[] | null {
   const hours = new Set<number>()
   for (const part of hour.split(",")) {
-    const match = /^(\*|\d{1,2})(?:-(\d{1,2}))?(?:\/(\d{1,2}))?$/.exec(part)
+    const match = /^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/.exec(part)
     if (!match || (match[1] === "*" && match[2] !== undefined)) return null
     const lo = match[1] === "*" ? 0 : Number(match[1])
     const hi = match[1] === "*" ? 23 : match[2] !== undefined ? Number(match[2]) : match[3] !== undefined ? 23 : lo
@@ -167,13 +167,13 @@ function hourSet(hour: string): number[] | null {
 // ranges and steps is kept; only out-of-range values (and weekday 0) are rejected.
 function unsupportedDayOrWeek(fields: CronFields): string | null {
   if (fields.day !== "*" && fields.day !== "?") {
-    const bad = fields.day.split(",").find(part => !isListPart(part, d => /^\d{1,2}$/.test(d) && Number(d) >= 1 && Number(d) <= 31))
+    const bad = fields.day.split(",").find(part => !isListPart(part, d => /^\d+$/.test(d) && Number(d) >= 1 && Number(d) <= 31))
     if (bad !== undefined) {
       return `Unsupported day-of-month field '${fields.day}': use days 1-31 as values, ranges, steps or lists (got '${bad}').`
     }
   }
   if (fields.week !== "*" && fields.week !== "?") {
-    const bad = fields.week.toUpperCase().split(",").find(part => !isListPart(part, d => d in STUDIO_WEEKDAY_NAMES || /^[1-7]$/.test(d)))
+    const bad = fields.week.toUpperCase().split(",").find(part => !isListPart(part, d => d in STUDIO_WEEKDAY_NAMES || /^0*[1-7]$/.test(d)))
     if (bad !== undefined) {
       return `Unsupported day-of-week field '${fields.week}': use 1-7 (MON=1 ... SUN=7) or names as values, ranges, steps or lists (got '${bad}'; 0 is not supported, use 7 for Sunday).`
     }
@@ -185,7 +185,7 @@ function unsupportedDayOrWeek(fields: CronFields): string | null {
 function isListPart(part: string, isValue: (token: string) => boolean): boolean {
   const [range, step, ...rest] = part.split("/")
   if (rest.length) return false
-  if (step !== undefined && !(/^\d{1,2}$/.test(step) && Number(step) >= 1)) return false
+  if (step !== undefined && !(/^\d+$/.test(step) && Number(step) >= 1)) return false
   if (range === "*") return step !== undefined
   const ends = range.split("-")
   return ends.length <= 2 && ends.every(isValue)
@@ -474,7 +474,8 @@ function sameSchedule(input: CronFields, output: string): boolean {
     [input.month, out.month, 1, 12, MONTHS],
     [input.week, out.week, 1, 7, STUDIO_WEEKDAY_NAMES],
   ]
-  if (input.year !== out.year) return false
+  const years = [fieldValues(input.year, 1970, 2099, {}, false), fieldValues(out.year, 1970, 2099, {}, false)]
+  if (years.some(y => y === null) || years[0]!.join() !== years[1]!.join()) return false
   return pairs.every(([a, b, min, max, names]) => {
     const x = fieldValues(a, min, max, names)
     const y = fieldValues(b, min, max, names)
@@ -482,13 +483,14 @@ function sameSchedule(input: CronFields, output: string): boolean {
   })
 }
 
-// Sorted values a Quartz field selects: *, ?, V, A-B (wrapping past max), V/S (V to max), A-B/S and lists.
-function fieldValues(field: string, min: number, max: number, names: Record<string, number>): number[] | null {
+// Sorted values a Quartz field selects: *, ?, V, A-B (wrapping past max unless wrap=false), V/S (V to max), A-B/S and lists.
+// Numbers may have leading zeros; bounds are checked before any expansion.
+function fieldValues(field: string, min: number, max: number, names: Record<string, number>, wrap = true): number[] | null {
   const size = max - min + 1
-  const value = (t: string) => (t in names ? names[t] : /^\d{1,2}$/.test(t) ? Number(t) : NaN)
+  const value = (t: string) => (t in names ? names[t] : /^\d+$/.test(t) ? Number(t) : NaN)
   const values = new Set<number>()
   for (const part of field.toUpperCase().split(",")) {
-    const match = /^([^/-]+)(?:-([^/-]+))?(?:\/(\d{1,2}))?$/.exec(part)
+    const match = /^([^/-]+)(?:-([^/-]+))?(?:\/(\d+))?$/.exec(part)
     if (!match) return null
     const star = match[1] === "*" || match[1] === "?"
     if (star && match[2] !== undefined) return null
@@ -496,6 +498,7 @@ function fieldValues(field: string, min: number, max: number, names: Record<stri
     const hi = star ? max : match[2] !== undefined ? value(match[2]) : match[3] !== undefined ? max : lo
     const step = match[3] === undefined ? 1 : Number(match[3])
     if (!(lo >= min && lo <= max && hi >= min && hi <= max && step >= 1)) return null
+    if (!wrap && hi < lo) return null
     const span = hi >= lo ? hi - lo : hi + size - lo
     for (let k = 0; k <= span; k += step) values.add(((lo - min + k) % size) + min)
   }
