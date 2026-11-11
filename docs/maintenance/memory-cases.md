@@ -29,7 +29,7 @@ Use at most 350 words in four compact sections:
 ## M01
 
 ```text
-Snapshot time: 2026-11-10T10:05:00Z. You own the unified GitHub/group feedback loop.
+Snapshot time: 2026-11-10T10:05:00Z. You are the Worker and own the unified GitHub/group loop.
 
 fixture:task.json
 {"id":"task-case-01","source":"github:example/demo:401","status":"running","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","lastRead":"2026-11-10T10:00:00Z"}
@@ -44,13 +44,13 @@ How should this input be handled? Can you report "No new feedback; source inspec
 ## M02
 
 ```text
-You are restoring the feedback loop.
+You are restoring the Worker loop.
 
 fixture:launcher.txt
-allowedTools includes Monitor and TaskStop. The five-minute feedback job is alive.
+allowedTools includes Monitor and TaskStop. The five-minute Worker job is alive.
 
 fixture:monitor.json
-{"owner":"feedback","taskId":"monitor-case-02","localState":"ready","consumerProcess":"running","upstreamState":"connecting","lastTargetEvent":null,"expiresAt":"2026-11-10T11:00:00Z"}
+{"owner":"worker","taskId":"monitor-case-02","localState":"ready","consumerProcess":"running","upstreamState":"connecting","lastTargetEvent":null,"expiresAt":"2026-11-10T11:00:00Z"}
 
 fixture:observations.txt
 Time: 2026-11-10T10:30:00Z. Group history reads succeed. No new natural message has arrived. The user prohibits group test messages. There is no evidence of a second consumer.

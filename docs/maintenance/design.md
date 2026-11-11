@@ -1,6 +1,6 @@
 # Design rationale
 
-Two native roles share existing intake, task state, receipts, and project memory. Feedback handles events and delegates long implementation; Reflection curates evidence every twelve hours. Review and necessary contract updates accompany each task.
+Two native roles share existing intake, task state, receipts, and project memory. The Worker handles events and delegates long implementation; the Curator reads what happened every twelve hours and curates shared memory with wide latitude over what to keep and how to organise it. Review and necessary contract updates accompany each task.
 
 - [Building effective agents](https://www.anthropic.com/research/building-effective-agents): prefer simple, composable workflows; add no scheduler framework.
 - [Long-running agent harnesses](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents): preserve verifiable progress, isolated worktrees, exact-SHA review, and handoff.

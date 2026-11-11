@@ -1,3 +1,3 @@
 # Redirect
 
-Use the unified [Feedback prompt](feedback.md). Do not start a separate GitHub loop.
+Use the unified [Worker prompt](worker.md). Do not start a separate GitHub loop.
