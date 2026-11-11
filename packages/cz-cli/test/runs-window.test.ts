@@ -83,6 +83,11 @@ describe("runs invalid window is a usage error before any request", () => {
     ["runs stats --from 2026-02-30", "Asia/Shanghai"],
     ["runs refill 123 --from 2026-13-01 --to 2026-11-10 -y", "Asia/Shanghai"],
     ["runs refill 123 --from 2026-11-10 --to 2026-11-10T25:00:00 -y", "Asia/Shanghai"],
+    ...["+99:99", "+0060", "+2360", "-99:00"].flatMap((off) => [
+      [`runs list --from 2026-11-10T08:00:00${off}`, "Asia/Shanghai"],
+      [`runs stats --to 2026-11-10T08:00:00${off}`, "America/Los_Angeles"],
+      [`runs refill 4242 --from 2026-11-10T08:00:00${off} --to 2026-11-10 -y`, "Asia/Shanghai"],
+    ]),
   ])("%s (%s)", async (command, tz) => {
     const result = await run(command.split(" "), tz)
     const json = JSON.parse(result.output.trim().split("\n")[0] ?? "{}")

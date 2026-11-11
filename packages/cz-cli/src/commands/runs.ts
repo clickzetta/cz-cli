@@ -126,13 +126,18 @@ export function parseWindowBoundary(value: string, endOfDay: boolean, format?: s
   const valid = !!m
     && calendar.getUTCFullYear() === y && calendar.getUTCMonth() === mo - 1 && calendar.getUTCDate() === d
     && (m[4] === undefined || (Number(m[4]) < 24 && Number(m[5]) < 60 && Number(m[6] ?? 0) < 60))
-  if (!m || !valid) {
+  const offset = m?.[7] && /^[+-](\d{2}):?(\d{2})$/.exec(m[7])
+  // Offsets beyond real-world zones (+99:99, +00:60) make Date return NaN.
+  const offsetValid = !offset || (Number(offset[1]) <= 23 && Number(offset[2]) < 60)
+  // Date-only: local midnight (month index form is local, unlike new Date("YYYY-MM-DD")).
+  // ISO datetime without offset is parsed as local time by Date.
+  const ms = !m || !valid || !offsetValid ? NaN
+    : m[4] === undefined ? (endOfDay ? new Date(y, mo - 1, d + 1).getTime() - 1 : new Date(y, mo - 1, d).getTime())
+    : new Date(text.replace(" ", "T")).getTime()
+  if (Number.isNaN(ms)) {
     return handledError("INVALID_ARGUMENTS", `Invalid date/time "${value}". Use YYYY-MM-DD or ISO 8601 (YYYY-MM-DDTHH:MM:SS[Z|+HH:MM]).`, { format, exitCode: 2 })
   }
-  // Date-only: local midnight (month index form is local, unlike new Date("YYYY-MM-DD")).
-  if (m[4] === undefined) return endOfDay ? new Date(y, mo - 1, d + 1).getTime() - 1 : new Date(y, mo - 1, d).getTime()
-  // ISO datetime without offset is parsed as local time by Date.
-  return new Date(text.replace(" ", "T")).getTime()
+  return ms
 }
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioContext> {
@@ -155,8 +160,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
             .option("task", { type: "string", describe: "Filter by task name or ID" })
             .option("status", { type: "array", string: true, choices: ["SUCCESS", "WAITING", "FAILED", "RUNNING"], describe: "Filter by status (multiple allowed). SUCCESS=completed OK, WAITING=queued, FAILED=errored, RUNNING=in progress" })
             .option("run-type", { type: "string", choices: ["SCHEDULE", "TEMP", "REFILL"], describe: "Run type: SCHEDULE=scheduled runs, TEMP=ad-hoc executions, REFILL=backfill jobs" })
-            .option("from", { type: "string", describe: "Start time filter (ISO 8601 or YYYY-MM-DD). Defaults to 24h ago." })
-            .option("to", { type: "string", describe: "End time filter (ISO 8601 or YYYY-MM-DD). Defaults to now." })
+            .option("from", { type: "string", describe: "Start time filter (ISO 8601 or YYYY-MM-DD). Local time unless an offset (Z, +HH:MM) is given; a bare date means start of day. Defaults to 24h ago." })
+            .option("to", { type: "string", describe: "End time filter (ISO 8601 or YYYY-MM-DD). Local time unless an offset (Z, +HH:MM) is given; a bare date means end of day. Defaults to now." })
             .option("page", { type: "number", default: 1 })
             .option("page-size", { type: "number", default: 10 })
             .option("limit", { type: "number", describe: "Alias of --page-size" }),
@@ -398,8 +403,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true, describe: "Task name or ID" })
-            .option("from", { type: "string", describe: "Backfill start. Accepts YYYY-MM-DD (start of day) or ISO datetime YYYY-MM-DDTHH:MM:SS for sub-day schedules (hourly/minutely). Must be used together with --to." })
-            .option("to", { type: "string", describe: "Backfill end. Accepts YYYY-MM-DD (end of day, 23:59:59) or ISO datetime YYYY-MM-DDTHH:MM:SS. For hourly/minutely tasks use exact datetime to avoid missing instances. Must be used together with --from." })
+            .option("from", { type: "string", describe: "Backfill start. Accepts YYYY-MM-DD (start of day) or ISO datetime YYYY-MM-DDTHH:MM:SS for sub-day schedules (hourly/minutely). Times are local unless an offset (Z, +HH:MM) is given. Must be used together with --to." })
+            .option("to", { type: "string", describe: "Backfill end. Accepts YYYY-MM-DD (end of day, 23:59:59) or ISO datetime YYYY-MM-DDTHH:MM:SS. Times are local unless an offset (Z, +HH:MM) is given. For hourly/minutely tasks use exact datetime to avoid missing instances. Must be used together with --from." })
             .option("vc", { type: "string", default: "DEFAULT", describe: "VC code" })
             .option("name", { type: "string", describe: "Backfill job name. The backend operator/createBy comes from the current logged-in user and cannot be overridden here." })
             .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
@@ -489,8 +494,8 @@ export function registerRunsCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .option("task", { type: "string", describe: "Task name or ID filter" })
-            .option("from", { type: "string", describe: "Start time (ISO)" })
-            .option("to", { type: "string", describe: "End time (ISO)" }),
+            .option("from", { type: "string", describe: "Start time (ISO 8601 or YYYY-MM-DD). Local time unless an offset (Z, +HH:MM) is given; a bare date means start of day. Defaults to 24h ago." })
+            .option("to", { type: "string", describe: "End time (ISO 8601 or YYYY-MM-DD). Local time unless an offset (Z, +HH:MM) is given; a bare date means end of day. Defaults to now." }),
         async (argv) => {
           const format = argv.format
           try {
