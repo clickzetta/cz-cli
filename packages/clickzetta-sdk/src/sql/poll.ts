@@ -167,10 +167,10 @@ function textToRows(dataList: string[], columnCount: number): (string | null)[][
 /**
  * Fetch TEXT data from presigned URLs and parse into rows.
  */
-async function fetchTextFromUrls(urls: string[], columnCount: number): Promise<(string | null)[][]> {
+async function fetchTextFromUrls(urls: string[], columnCount: number, signal?: AbortSignal): Promise<(string | null)[][]> {
   const results: (string | null)[][] = []
   for (const url of urls) {
-    const resp = await fetch(url)
+    const resp = await fetch(url, { signal })
     if (!resp.ok) {
       throw new Error(`Failed to fetch result data from presigned URL: HTTP ${resp.status}`)
     }
@@ -393,7 +393,12 @@ function parseResultSet(
  * Parse a raw LH job response (from either submitJob HYBRID or getJob)
  * into a QueryResult. Handles embedded TEXT data and presigned URL fetching.
  */
-export async function parseJobResponse(raw: LhJobResponse, jobId: JobID, timezone?: string): Promise<QueryResult> {
+export async function parseJobResponse(
+  raw: LhJobResponse,
+  jobId: JobID,
+  timezone?: string,
+  signal?: AbortSignal,
+): Promise<QueryResult> {
   const state = raw.status?.state ?? "UNKNOWN"
   const status = toJobStatus(state)
 
@@ -418,11 +423,11 @@ export async function parseJobResponse(raw: LhJobResponse, jobId: JobID, timezon
   if (isAsync && raw.resultSet?.location?.presignedUrls) {
     const urls = raw.resultSet.location.presignedUrls
     if (format === "ARROW") {
-      const decoded = await fetchArrowFromUrls(urls, columns, timeZone)
+      const decoded = await fetchArrowFromUrls(urls, columns, timeZone, signal)
       finalCols = decoded.columns
       finalRows = decoded.rows
     } else {
-      const rawRows = await fetchTextFromUrls(urls, columns.length)
+      const rawRows = await fetchTextFromUrls(urls, columns.length, signal)
       finalRows = rawRows.map((rawRow) => {
         const row: unknown[] = []
         for (let i = 0; i < columns.length; i++) {

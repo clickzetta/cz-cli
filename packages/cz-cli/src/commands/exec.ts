@@ -180,7 +180,7 @@ export async function execSql(
       if (isRetryableErrorCode(errorCode)) {
         result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
       } else {
-        result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone)
+        result = await parseJobResponse(submitResp as Parameters<typeof parseJobResponse>[0], jobId, timezone, lease.signal)
       }
     } else {
       result = await pollJobResult(client, jobId, { jobTimeoutMs: opts?.timeoutMs, timezone })
