@@ -1,4 +1,5 @@
 import type { Argv } from "yargs"
+import type { SaveTaskConfigParams } from "@clickzetta/sdk"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
 import {
@@ -14,6 +15,11 @@ import {
   getInstanceStats, getTaskRunStats,
   getAllDownstream, previewScheduleInstanceTimes,
   saveCdcTask,
+  checkMergeRule,
+  startMergeRuleEdit,
+  cacheMergeRule,
+  saveMergeTaskContent,
+  type MergeRule,
   startCdcTask,
   stopCdcTask,
   getCdcTaskRunStatus,
@@ -906,6 +912,46 @@ function studioScheduleFieldsFromCron(cronResult: CronResult, activeStartTime: u
   }
 }
 
+/**
+ * The saved schedule config of an existing task as saveTaskConfig params, so a save that
+ * changes one field does not reset the others to the SDK's creation defaults.
+ */
+async function existingMergeTaskConfig(sc: StudioConfig, fileId: number): Promise<SaveTaskConfigParams> {
+  const resp = await getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId })
+  const old = isRecord(resp.data) ? resp.data : {}
+  const str = (v: unknown) => (v == null ? undefined : String(v))
+  const num = (v: unknown) => (v == null || v === "" ? undefined : Number(v))
+  return {
+    dataFileId: fileId,
+    projectId: sc.projectId,
+    updateBy: String(sc.userId),
+    instanceName: sc.instanceName,
+    cronExpress: str(old.cronExpress),
+    activeStartTime: old.activeStartTime ? formatIsoStartOfDay(String(old.activeStartTime)) : undefined,
+    activeEndTime: old.activeEndTime ? formatIsoStartOfDay(String(old.activeEndTime)) : undefined,
+    ownerCnName: str(old.ownerCnName),
+    ownerEnName: str(old.ownerEnName),
+    schemaName: str(old.schemaName),
+    etlVcCode: str(old.etlVcCode),
+    etlVcId: old.etlVcId as string | number | undefined,
+    retryCount: num(old.retryCount),
+    retryIntervalTime: num(old.retryIntervalTime),
+    retryIntervalTimeUnit: str(old.retryIntervalTimeUnit),
+    rerunProperty: str(old.rerunProperty),
+    selfDependsJob: num(old.selfDependsJob),
+    executeTimeout: num(old.executeTimeout),
+    executeTimeoutUnit: str(old.executeTimeoutUnit),
+    dataFileInputListReqs: configList(old.dataFileDependencyDTOS).map(normalizeDependencyStrategy),
+    dataFileOutputListReqs: configList(old.fileOutputTableDTOS),
+    configProperties: old.configProperties,
+    taskPriority: str(old.taskPriority),
+    dependencyTimeout: num(old.dependencyTimeout),
+    dependencyTimeoutUnit: str(old.dependencyTimeoutUnit),
+    scheduleRateType: num(old.scheduleRateType),
+    ...existingStudioScheduleFields(old),
+  }
+}
+
 function existingStudioScheduleFields(data: Record<string, unknown>) {
   return {
     ...(Array.isArray(data.schedule) && { schedule: data.schedule as unknown[][] }),
@@ -1730,6 +1776,222 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })
           } catch (err) {
             reportTaskError(err, format)
+          }
+        },
+      )
+      .command(
+        "create-merge-sync <name>",
+        "Create a multi-table merge realtime task (MULTI_REALTIME, pipelineType=2): source tables merged into one Lakehouse table",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true, describe: "Task name" })
+            .option("folder", { type: "string", demandOption: true, describe: "Folder ID or name" })
+            .option("source", { type: "string", demandOption: true, describe: "Source MySQL-family datasource name or ID" })
+            .option("tables", { type: "string", demandOption: true, describe: "Comma-separated source table names merged into the target table" })
+            .option("source-db", { type: "string", demandOption: true, describe: "Source MySQL database holding --tables" })
+            .option("extra-source", { type: "array", string: true, describe: "Another source merged into the same target, as <datasource>:<database>:<t1,t2>. Repeatable." })
+            .option("target", { type: "string", describe: "Target Lakehouse datasource name or ID (auto-resolves if omitted)" })
+            .option("target-schema", { type: "string", demandOption: true, describe: "Target Lakehouse schema" })
+            .option("target-table", { type: "string", demandOption: true, describe: "Target (merged) Lakehouse table" })
+            .option("merge-into", { type: "boolean", default: false, describe: "Write with periodic MERGE INTO (sinkConnection.syncMode=2, flinkx MULTI_STREAM_V4); default is direct write (V3)" })
+            .option("merge-vc", { type: "string", default: "DEFAULT", describe: "Virtual cluster for MERGE INTO (with --merge-into)" })
+            .option("merge-interval", { type: "number", default: 5, describe: "MERGE INTO interval in minutes (with --merge-into)" })
+            .option("vc", { type: "string", describe: "Virtual cluster name for CDC execution" })
+            .option("task-id", { type: "number", describe: "Configure this existing MULTI_REALTIME task (e.g. one left unconfigured by a failed run) instead of creating one" })
+            .option("description", { type: "string", describe: "Task description" }),
+        async (argv) => {
+          const format = argv.format
+          let fileId: number | undefined
+          try {
+            const sc = await ctx(argv)
+            const MYSQL_TYPES = new Set([5, 17, 18, 19, 39])
+            const sourceDs = await resolveDatasource(sc, String(argv.source))
+            if (!sourceDs.dsType || !MYSQL_TYPES.has(sourceDs.dsType)) {
+              error("UNSUPPORTED_DATASOURCE", `create-merge-sync supports MySQL-family sources only (dsType 5,17,18,19,39); '${argv.source}' has dsType=${sourceDs.dsType}.`, { format, exitCode: 2 }); return
+            }
+            const tables = String(argv.tables).split(",").map((s) => s.trim()).filter(Boolean)
+            if (!tables.length) {
+              error("INVALID_ARGUMENTS", "--tables must list at least one source table.", { format, exitCode: 2 }); return
+            }
+            const sources = [{ ds: sourceDs, db: String(argv["source-db"]), tables }]
+            for (const raw of (argv["extra-source"] as string[] | undefined) ?? []) {
+              const [dsName, db, tableList] = String(raw).split(":")
+              const extraTables = (tableList ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+              if (!dsName || !db || !extraTables.length) {
+                error("INVALID_ARGUMENTS", `--extra-source '${raw}' must be <datasource>:<database>:<t1,t2>.`, { format, exitCode: 2 }); return
+              }
+              const ds = await resolveDatasource(sc, dsName)
+              if (!ds.dsType || !MYSQL_TYPES.has(ds.dsType)) {
+                error("UNSUPPORTED_DATASOURCE", `create-merge-sync supports MySQL-family sources only; '${dsName}' has dsType=${ds.dsType}.`, { format, exitCode: 2 }); return
+              }
+              if (sources.some((s) => s.ds.id === ds.id)) {
+                error("INVALID_ARGUMENTS", `Datasource '${dsName}' is listed twice; put all its tables in one source.`, { format, exitCode: 2 }); return
+              }
+              sources.push({ ds, db, tables: extraTables })
+            }
+            const targetSchema = String(argv["target-schema"])
+            const targetTable = String(argv["target-table"])
+            const mergeInto = argv["merge-into"] as boolean
+
+            let target: { id: number; name: string }
+            if (argv.target) {
+              const targetDs = await resolveDatasource(sc, String(argv.target))
+              if ((targetDs.dsType ?? 1) !== 1) {
+                error("INVALID_ARGUMENTS", `'${targetDs.name}' is not a Lakehouse datasource.`, { format, exitCode: 2 }); return
+              }
+              target = { id: targetDs.id, name: targetDs.name }
+            } else {
+              const lhDs = await autoResolveLakehouseDs(sc)
+              if (!lhDs) {
+                error("DATASOURCE_NOT_FOUND", "No Lakehouse datasource found. Please specify --target.", { format, exitCode: 2 }); return
+              }
+              target = lhDs
+            }
+            let mergeVcId: string | undefined
+            if (mergeInto) {
+              mergeVcId = await resolveVclusterId(sc, String(argv["merge-vc"]))
+              if (!mergeVcId) {
+                error("INVALID_ARGUMENTS", `Virtual cluster '${argv["merge-vc"]}' not found for --merge-vc.`, { format, exitCode: 2 }); return
+              }
+            }
+
+            if (argv["task-id"] != null) {
+              fileId = await resolveCdcPipelineId(sc, String(argv["task-id"]), format)
+            } else {
+              const folderRaw = (argv.folder as string).trim()
+              const folderId = /^\d+$/.test(folderRaw)
+                ? parseInt(folderRaw, 10)
+                : await resolveFolderIdByName(sc, folderRaw, format)
+              const existing = await listTasks(sc, { projectId: sc.projectId, page: 1, pageSize: 50, folderId, fileName: argv.name as string })
+              const existingData = (existing.data && typeof existing.data === "object" ? existing.data : {}) as Record<string, unknown>
+              const existingList = Array.isArray(existingData.list) ? existingData.list as Record<string, unknown>[] : []
+              if (existingList.find(t => String(t.dataFileName ?? t.fileName ?? "") === argv.name)) {
+                error("DUPLICATE_TASK", `Task '${argv.name}' already exists in this folder.`, { format, exitCode: 2 }); return
+              }
+              const created = await createTask(sc, {
+                fileType: String(StudioFileType.MultipleRISync),
+                createdBy: String(sc.userId),
+                projectId: sc.projectId,
+                dataFileName: argv.name as string,
+                fileDescription: argv.description as string | undefined,
+                dataFolderId: folderId,
+                workspaceName: sc.workspaceName,
+              })
+              fileId = Number(created.data)
+            }
+            const pipelineId = fileId
+
+            // Same sequence as the Studio merge page: open an edit session, check each merge target
+            // (rocket expands the rule into source tables + unioned schema), cache it, then save the
+            // content in that session so admin persists the cached table list / schema.
+            const sessionUid = crypto.randomUUID()
+            await startMergeRuleEdit(sc, pipelineId, sessionUid)
+            // One rule per source datasource. For MySQL sources rocket matches the database as the
+            // schema (namespace) level.
+            const rules: MergeRule[] = sources.map((s) => ({
+              datasourceExpression: { exact: [s.ds.id] },
+              dbExpression: {},
+              schemaExpression: { exact: [s.db] },
+              tableExpression: { exact: s.tables },
+            }))
+            const check = await checkMergeRule(sc, { pipelineId: pipelineId, projectId: sc.projectId, virtualSchema: targetSchema, virtualTable: targetTable, pipelineRule: rules })
+            if (!check?.valid || !check.tableListStr || !check.tableSchemaStr) {
+              error("MERGE_RULE_INVALID", `Merge rule check failed for ${targetSchema}.${targetTable}; task ${pipelineId} is not configured.`, { format, exitCode: 2, extra: { task_id: pipelineId, check } }); return
+            }
+            await cacheMergeRule(sc, sessionUid, {
+              pipelineId: pipelineId,
+              virtualSchema: targetSchema,
+              virtualTable: targetTable,
+              tableListStr: check.tableListStr,
+              tableSchemaStr: check.tableSchemaStr,
+            })
+            // tableListStr looks like {0:{<dsId>:[{"name":"t1",...},...]}} (not strict JSON).
+            const matchedCount = (check.tableListStr.match(/"name":/g) ?? []).length
+
+            const content = {
+              templateKey: 1,
+              userParams: {},
+              pipelineType: 2,
+              heterogeneous: false,
+              supportNoPK: false,
+              dynamicFlag: false,
+              sourceConnection: {
+                datasource: sources.map((s) => ({ datasourceId: s.ds.id, datasourceName: s.ds.name, type: s.ds.dsType })),
+                params: { readMode: "BINLOG", dsType: sourceDs.dsType, supportNoPK: false, heterogeneous: false, operatorType: "source" },
+              },
+              sinkConnection: {
+                datasourceId: target.id,
+                datasourceName: target.name,
+                type: 1,
+                syncMode: mergeInto ? 2 : 1,
+                ...(mergeInto && {
+                  mergeVcId,
+                  mergeVcCode: String(argv["merge-vc"]),
+                  mergeIntervalMinutes: argv["merge-interval"] as number,
+                }),
+                params: { dsType: 1, operatorType: "sink" },
+              },
+              nameRule: { schema: { mode: "2" }, table: { mode: "1" } },
+              setting: { groupingStrategy: { strategy: "SIZE", batchSize: 10, connections: 4 } },
+              sourceEventTypes: ["c", "u", "d"],
+              dirtyDataEnabled: false,
+              syncAllAtFirst: true,
+              jobs: [{
+                source: { dataObject: targetTable, namespace: targetSchema, columns: [] },
+                sink: { dataObject: targetTable, namespace: targetSchema, columns: [] },
+              }],
+              pipelineRule: [{ virtualSchema: targetSchema, virtualTable: targetTable, rule: rules, tc: matchedCount }],
+            }
+            await saveMergeTaskContent(sc, sessionUid, {
+              dataFileId: pipelineId,
+              dataFileContent: content,
+              projectId: sc.projectId,
+              updateBy: String(sc.userId),
+              instanceName: sc.instanceName,
+            })
+
+            const vcName = argv.vc as string | undefined
+            if (vcName) {
+              const resolvedVcId = await resolveVclusterId(sc, vcName).catch(() => undefined)
+              const vcFields = { etlVcCode: vcName, ...(resolvedVcId != null && { etlVcId: resolvedVcId }) }
+              await saveTaskConfig(sc, argv["task-id"] != null
+                // Existing task: change only the VC and keep the rest of its schedule config.
+                ? { ...await existingMergeTaskConfig(sc, pipelineId), ...vcFields }
+                : {
+                  dataFileId: pipelineId,
+                  projectId: sc.projectId,
+                  updateBy: String(sc.userId),
+                  instanceName: sc.instanceName,
+                  ...vcFields,
+                  activeStartTime: new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+                  activeEndTime: "2099-01-01T00:00:00.000Z",
+                })
+            }
+
+            logOperation("task create-merge-sync", { ok: true })
+            success({
+              task_id: pipelineId,
+              task_name: argv.name,
+              pipeline_type: "multi-table merge",
+              write_mode: mergeInto ? "merge into (V4)" : "direct (V3)",
+              sources: sources.map((s) => ({ datasource: s.ds.name, database: s.db, tables: s.tables })),
+              target: { datasource: target.name, schema: targetSchema, table: targetTable },
+              matched_source_tables: matchedCount,
+              studio_url: studioUrl(sc, pipelineId),
+            }, {
+              format,
+              aiMessage: `Multi-table merge task created (id=${pipelineId}). Next: deploy with 'cz-cli task deploy ${pipelineId} -y', then start with 'cz-cli task start ${pipelineId}'.`,
+            })
+          } catch (err) {
+            if (fileId != null && !isHandledCliError(err)) {
+              error("TASK_ERROR", err instanceof Error ? err.message : String(err), {
+                format,
+                aiMessage: `Task ${fileId} exists but is not fully configured. Fix the cause, then re-run with --task-id ${fileId}.`,
+                extra: { task_id: fileId },
+              })
+            } else {
+              reportTaskError(err, format)
+            }
           }
         },
       )
