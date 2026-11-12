@@ -129,6 +129,55 @@ async function listAllDatasources(
   return all
 }
 
+function connectionParamsOf(ds: Record<string, unknown>): Record<string, unknown> {
+  let raw = ds.connectionParams
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw) } catch { return {} }
+  }
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+}
+
+/**
+ * The Lakehouse datasources that belong to a workspace. A Lakehouse datasource's
+ * connectionParams names the workspace it points at (projectId / workspaceName); the
+ * datasource list itself is not scoped to the current workspace.
+ */
+export function workspaceLakehouseDatasources(
+  list: Record<string, unknown>[],
+  workspace: { projectId?: number; workspaceName?: string },
+): Record<string, unknown>[] {
+  return list.filter((ds) => {
+    if (ds.dsType !== undefined && Number(ds.dsType) !== 1) return false
+    const params = connectionParamsOf(ds)
+    // A known project ID is authoritative: a row without one cannot be shown to belong here.
+    if (workspace.projectId != null) {
+      return params.projectId != null && Number(params.projectId) === Number(workspace.projectId)
+    }
+    return !!workspace.workspaceName && params.workspaceName === workspace.workspaceName
+  })
+}
+
+/**
+ * The Lakehouse datasource of the current workspace, used when a command's --target is
+ * omitted. Returns null when the workspace has none; throws when it has several, so the
+ * caller never writes into a datasource it was not asked for.
+ */
+export async function resolveWorkspaceLakehouseDatasource(sc: StudioConfig): Promise<ResolvedDatasource | null> {
+  const matches = workspaceLakehouseDatasources(await listAllDatasources(sc, { dsType: 1 }), {
+    projectId: sc.projectId,
+    workspaceName: sc.workspaceName,
+  })
+  if (matches.length === 0) return null
+  if (matches.length > 1) {
+    const names = matches.map((ds) => `${ds.dsName ?? ds.name} (id=${ds.id ?? ds.dsId})`).join(", ")
+    handledError(
+      "DATASOURCE_AMBIGUOUS",
+      `Workspace '${sc.workspaceName}' has several Lakehouse datasources: ${names}. Pass --target.`,
+    )
+  }
+  return toResolved(matches[0]!, "LAKEHOUSE")
+}
+
 function toResolved(ds: Record<string, unknown>, fallbackName: string): ResolvedDatasource {
   return {
     id: Number(ds.id ?? ds.dsId),
