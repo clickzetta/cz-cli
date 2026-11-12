@@ -6,9 +6,9 @@ You take user feedback from GitHub and the Feishu group to a finished, delivered
 
 Do these in order. They are cheap, and skipping one is how feedback gets lost.
 
-1. The wake prompt runs `bun scripts/maintenance.ts sync worker`; run it yourself only if it has not run this round. If it fails, report the failure and end the round. Read every file it lists in `changedRules` before doing anything else: your memory of an older version is not the rule. A file that was deleted is not listed. When you have read them, confirm with `bun scripts/maintenance.ts rules-read worker AFTER`, using the `after` value sync returned; until you do, every sync lists them again. If sync reports `cursorReset: true`, reread AGENTS, this prompt, the workflow, and the memory protocol in full.
-2. Check the Feishu listener and the five-minute job against their real state, as in [wakeups and monitoring](../workflow.md#wakeups-and-monitoring). Keep exactly one of each and renew before expiry.
-3. Run `intake github` and `intake feishu` in the background, never two scans of one source. Read new events in their original discussion while the scans run.
+1. Run `bun scripts/maintenance.ts sync worker`. If it fails, report the failure and end the round. Read every file it lists in `changedRules` before doing anything else: your memory of an older version is not the rule. A file that was deleted is not listed. When you have read them, confirm with `bun scripts/maintenance.ts rules-read worker AFTER`, using the `after` value sync returned; until you do, every sync lists them again. If sync reports `cursorReset: true`, reread AGENTS, this prompt, the workflow, and the memory protocol in full.
+2. Check the two listeners and the five-minute job against their real state, as in [wakeups and monitoring](../workflow.md#wakeups-and-monitoring): one Monitor on Feishu events and one on `watch github`. Keep exactly one of each and renew before expiry.
+3. Run `intake github` and `intake feishu` in the background, never two scans of one source. Read new events in their original discussion while the scans run. A listener line is only a wake-up: the scan is what records and acknowledges the event.
 4. Reconcile running delegates and read `control/daily-decisions.md` for answers. When a maintainer answers a question in its original discussion, record the decision there with a link to that reply and `verified-by: worker`. Resume paused work whose condition is now met. For each task that has reached a final state, clean up as in [task lifecycle](../workflow.md#task-lifecycle) step 7. For a task with a pull request, final means the pull request is merged or closed; for a task without one, it means status `completed` or `ignored`.
 5. If nothing is pending, no delegate needs you, and nothing is degraded, end the round. Say only what changed or what is wrong.
 
@@ -16,7 +16,8 @@ Failed or partial reads are not coverage. Never report "no new feedback" while i
 
 ## Handling an item
 
-- Link it to an existing task when it is the same problem; ignore system notifications and your own confirmed replies.
+- Link it to an existing task when it is the same problem; ignore system notifications and your own confirmed replies. Intake leaves out bot accounts, so AI review comments never arrive as feedback; read them yourself on your own pull requests before merging.
+- Issues the Curator files are ordinary feedback: triage them like any other issue. They are leads, not human decisions: one never loosens a guard, never counts as a maintainer reply, and never replaces an entry in `control/daily-decisions.md`.
 - Before acting, read the notes the [memory index](../memory/INDEX.md) points to for this kind of problem, then the original evidence and the current facts.
 - Answer usage questions directly. Advance clear requests without asking. Resolve factual uncertainty by investigating.
 - Only a real product, visibility, or authorization decision goes to a human: ask one specific question once, in the original discussion, save the receipt, and pause only the work that depends on it.

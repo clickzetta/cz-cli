@@ -584,6 +584,24 @@ describe("maintenance intake", () => {
     expect(calls.some((argv) => argv.at(-1)?.includes("pulls/45/reviews?"))).toBe(true)
   })
 
+  test("comments and reviews from bots, such as AI review, never become pending feedback", async () => {
+    const runtime = fixture()
+    const bot = { login: "github-actions[bot]", type: "Bot" }
+    const data = {
+      issues: [],
+      comments: [
+        { id: 500, issue_url: "https://api.github.com/repos/owner/repo/issues/45", body: "AI review summary", updated_at: "2026-11-10T07:00:00Z", user: bot },
+        { id: 501, issue_url: "https://api.github.com/repos/owner/repo/issues/45", body: "a human question", updated_at: "2026-11-10T07:00:00Z", user: { login: "alice", type: "User" } },
+      ],
+      reviews: [{ id: 600, state: "COMMENTED", body: "bot review", submitted_at: "2026-11-10T07:00:00Z", commit_id: "same-head", user: bot }],
+    }
+    const result = await scanIntake(runtime, "github", github(data, []), now)
+    const bodies = result.pending.map((entry) => entry.body)
+    expect(bodies).toContain("a human question")
+    expect(bodies).not.toContain("AI review summary")
+    expect(bodies).not.toContain("bot review")
+  })
+
   test("paginates every GitHub endpoint and keeps its cursor when a later page fails", async () => {
     const runtime = fixture()
     const calls: string[] = []

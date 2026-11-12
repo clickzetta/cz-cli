@@ -16,4 +16,4 @@ Evidence: [Issue #148](https://github.com/clickzetta/cz-cli/issues/148), [PR #15
 
 Verify the deployment's endpoint and complete auth response; public-hostname conventions may not apply. Tests returning a token immediately do not cover multi-step auth. MFA/challenges mean authentication is incomplete, not a bad password or success; never disable them to pass a test.
 
-Check [authentication](../domains/authentication.md) and [account endpoint code](../../packages/cz-cli/src/commands/account-login.ts) at the task's source version. New capabilities require the original request and latest product decision; diagnostic advice does not establish support. This entry describes checks, not universal deployment coverage.
+Check [authentication](../cli/authentication.md) and [account endpoint code](../../packages/cz-cli/src/commands/account-login.ts) at the task's source version. New capabilities require the original request and latest product decision; diagnostic advice does not establish support. This entry describes checks, not universal deployment coverage.

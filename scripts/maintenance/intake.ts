@@ -372,6 +372,9 @@ async function fetchGithub(runtime: Runtime, since: string, through: string, run
   const entries: Entry[] = []
   const add = (kind: string, raw: Record<string, unknown>, number: string, version: unknown[]) => {
     if (!/^[1-9]\d*$/.test(number)) throw new Error("GitHub event has no issue or pull number")
+    // AI review and other automation post as bots. Their comments, reviews, and the issues or PRs
+    // they open (Dependabot, for example) are not user feedback, so none of them become pending.
+    if (isBotAuthor(raw.user)) return
     const root = roots.get(number)
     const updatedAt = iso(raw.updated_at ?? raw.submitted_at ?? raw.created_at ?? root?.updated_at)
     const body = typeof raw.body === "string" ? raw.body : ""
@@ -436,6 +439,12 @@ async function fetchGithub(runtime: Runtime, since: string, through: string, run
     )
   }
   return entries
+}
+
+// GitHub marks app and Actions accounts with type "Bot" and a "[bot]" login suffix.
+export function isBotAuthor(user: unknown) {
+  if (!record(user)) return false
+  return user.type === "Bot" || (typeof user.login === "string" && user.login.endsWith("[bot]"))
 }
 
 function makeEntry(runtime: Runtime, entry: Omit<Entry, "key" | "sourceId" | "taskId">, version: unknown[]) {

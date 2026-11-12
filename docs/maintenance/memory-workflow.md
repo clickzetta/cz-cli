@@ -2,6 +2,8 @@
 
 The Worker uses and records experience; the Curator curates it; fresh agents test whether it helps. Use the [shared index](memory/INDEX.md), not client-private auto-memory. Every note rests on evidence; the Curator chooses the topics and their structure.
 
+Memory lives in two places. Lessons about code sit next to that code's topic, in `docs/cli/pitfalls.md`, `docs/opencode/pitfalls.md`, and `docs/engineering/pitfalls.md`. Lessons about the loops themselves stay here: misunderstandings, decisions, and recurring failures. Both are curated the same way.
+
 ## Read and record
 
 Start with the original request and latest decisions. Read relevant notes, their evidence, scope, and current facts. Give delegates these sources and acceptance criteria, not just your interpretation. Memory never expands authorization.
@@ -25,7 +27,7 @@ Use a registered task ID; otherwise register an audit source through the existin
 
 Reuse the stable ID and identical content on retry. New evidence gets a new ID referencing the earlier event. Events are immutable; recording changes no task status, permission, or external state.
 
-## Curate every twelve hours
+## Curate daily
 
 1. Read the original material since the last successful cursor: session transcripts, issues, pull requests, comments, reviews, Feishu threads, runtime records, commits, and `memory pending`. The queue is a hint, not the boundary; an empty queue does not end the run. Start with the last day initially. Preserve failed-read gaps. For history predating this queue, inspect original tasks without inventing earlier write-backs.
 2. Delegate reading and editing to **fresh contexts**, with scope, original sources, and current notes. Record candidate IDs, owner, and exclusive worktree; never dispatch a duplicate editor.
