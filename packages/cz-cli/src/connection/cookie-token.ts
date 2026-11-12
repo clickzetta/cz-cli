@@ -1,5 +1,6 @@
 import { staticTokenSource, toServiceUrl, type AuthToken, type ConnectionConfig } from "@clickzetta/sdk"
 import { resolveInstanceIdByName } from "./instance-id.js"
+import { parseJwtPayload } from "./jwt.js"
 
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
   return Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]
@@ -23,16 +24,6 @@ function cookieValue(cookie: string, name: string): string | undefined {
 export function hasCookieToken(config: ConnectionConfig): boolean {
   const cookie = getHeader(config.customHeaders, "Cookie") ?? ""
   return cookieValue(cookie, "X-ClickZetta-Token") !== undefined
-}
-
-function parseJwtPayload(token: string): Record<string, unknown> {
-  const payload = token.split(".")[1]
-  if (!payload) return {}
-  try {
-    return JSON.parse(Buffer.from(payload, "base64url").toString("utf-8")) as Record<string, unknown>
-  } catch {
-    return {}
-  }
 }
 
 function numeric(value: unknown): number {
@@ -75,7 +66,11 @@ export async function getCookieToken(config: ConnectionConfig): Promise<AuthToke
     token,
     instanceId,
     userId,
-    expireTimeMs: exp ? Math.max(0, exp * 1000 - Date.now()) : 0,
+    // Floored at 1ms for an expired `exp`, not 0: isTokenExpired reads a falsy
+    // `expireTimeMs` as "not expired" and would never refresh it. The bare 0 for
+    // a cookie with no `exp` at all is a different statement — lifetime unknown,
+    // nothing to compare against — and stays.
+    expireTimeMs: exp ? Math.max(1, exp * 1000 - Date.now()) : 0,
     obtainedAt: Date.now(),
   }
 }
