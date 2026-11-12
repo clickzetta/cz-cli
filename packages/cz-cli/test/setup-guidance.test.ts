@@ -99,10 +99,13 @@ describe("setup guidance", () => {
     )
   })
 
-  test("uses cmd.exe for Windows browser open because start is a shell builtin", () => {
-    expect(browserOpenCommandForPlatform("win32", "https://accounts.clickzetta.com/register?ref=cz-cli")).toEqual({
-      command: "cmd.exe",
-      args: ["/c", "start", "", "https://accounts.clickzetta.com/register?ref=cz-cli"],
+  // cmd.exe would split this URL at `&` and run the rest as a command; the
+  // opener must hand it over as one argv entry that no shell parses.
+  test("opens a multi-parameter URL on Windows without a shell", () => {
+    const url = "https://accounts.clickzetta.com/register?ref=cz-cli&next=/home"
+    expect(browserOpenCommandForPlatform("win32", url)).toEqual({
+      command: "rundll32",
+      args: ["url.dll,FileProtocolHandler", url],
     })
   })
 
