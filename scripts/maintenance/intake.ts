@@ -42,7 +42,7 @@ export async function scanIntake(
   run: IntakeRunner = executeIntake,
   now = new Date(),
 ) {
-  return locked(runtime.directory, source, async () => {
+  return locked(runtime.directory, `${source}.scan`, async () => {
     const previous = await ledger(runtime.directory, source)
     const through = now.toISOString()
     const since = new Date(
@@ -58,27 +58,35 @@ export async function scanIntake(
             eventReceipts: previous.eventReceipts,
             coverage: previous.coverage,
           }
-    const next: Ledger = {
-      ...previous,
-      observed: { ...previous.observed },
-      threads: fetched.threads,
-      eventReceipts: fetched.eventReceipts,
-      coverage: fetched.coverage,
-      pending: [...previous.pending],
-    }
     const candidates = [...new Map(fetched.entries.map((entry) => [entry.key, entry])).values()]
+    // Entries are immutable and scan-owned; keep their individual fsyncs outside the ledger lock.
     for (const entry of candidates) {
-      const identity = `${entry.kind}:${entry.id}`
-      if (next.observed[identity] === entry.key) continue
       const file = entryPath(runtime.directory, source, entry.key)
       if (!existsSync(file)) save(file, entry)
-      if (!next.pending.includes(entry.key)) next.pending.push(entry.key)
-      next.observed[identity] = entry.key
     }
-    next.pending = next.pending.filter((key) => !existsSync(ackPath(runtime.directory, source, key)))
-    next.fetchedThrough = through
-    if (!next.pending.length) next.processedThrough = through
-    save(ledgerPath(runtime.directory, source), next)
+    const next = await locked(runtime.directory, source, async () => {
+      // Acknowledgements may commit while pages are fetched. Merge into the latest ledger.
+      const current = await ledger(runtime.directory, source)
+      const next: Ledger = {
+        ...current,
+        observed: { ...current.observed },
+        threads: fetched.threads,
+        eventReceipts: fetched.eventReceipts,
+        coverage: fetched.coverage,
+        pending: [...current.pending],
+      }
+      for (const entry of candidates) {
+        const identity = `${entry.kind}:${entry.id}`
+        if (next.observed[identity] === entry.key) continue
+        if (!next.pending.includes(entry.key)) next.pending.push(entry.key)
+        next.observed[identity] = entry.key
+      }
+      next.pending = next.pending.filter((key) => !existsSync(ackPath(runtime.directory, source, key)))
+      next.fetchedThrough = through
+      if (!next.pending.length) next.processedThrough = through
+      save(ledgerPath(runtime.directory, source), next)
+      return next
+    })
     return summarize(runtime.directory, source, next)
   })
 }
@@ -570,7 +578,11 @@ async function summarize(directory: string, source: IntakeSource, current: Ledge
   }
 }
 
-async function locked<T>(directory: string, source: IntakeSource, operation: () => Promise<T>) {
+async function locked<T>(
+  directory: string,
+  source: IntakeSource | `${IntakeSource}.scan`,
+  operation: () => Promise<T>,
+) {
   mkdirSync(path.join(directory, "intake"), { recursive: true, mode: 0o700 })
   const file = path.join(directory, "intake", `${source}.lock`)
   // A kernel lock held by a pipe-bound helper is released even if Bun receives
@@ -580,10 +592,12 @@ async function locked<T>(directory: string, source: IntakeSource, operation: () 
       "python3",
       "-u",
       "-c",
-      `import fcntl,json,os,sys
+      `import fcntl,json,os,signal,sys
 fd=os.open(sys.argv[1],os.O_CREAT|os.O_RDWR,0o600)
-try: fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+if sys.argv[4]=="ledger": signal.alarm(5)
+try: fcntl.flock(fd,fcntl.LOCK_EX|(fcntl.LOCK_NB if sys.argv[4]=="scan" else 0))
 except BlockingIOError: sys.exit(73)
+signal.alarm(0)
 os.ftruncate(fd,0)
 os.write(fd,json.dumps({"pid":os.getpid(),"parentPid":int(sys.argv[3]),"nonce":sys.argv[2]}).encode())
 os.fsync(fd)
@@ -594,6 +608,7 @@ os.close(fd)
       file,
       randomUUID(),
       String(process.pid),
+      source.endsWith(".scan") ? "scan" : "ledger",
     ],
     { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
   )

@@ -689,7 +689,69 @@ describe("maintenance intake", () => {
     expect(readFileSync(file, "utf8")).toBe(before)
   })
 
-  test("kernel ownership rejects a concurrent reader and recovers after the owner receives SIGKILL", async () => {
+  test("acknowledgements commit during slow scans and survive successful or failed publication", async () => {
+    const runtime = fixture()
+    const initial = await scanIntake(
+      runtime,
+      "feishu",
+      lark(() => ({ messages: [message("om_old", "old")] })),
+      now,
+    )
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const scanning = scanIntake(
+      runtime,
+      "feishu",
+      async (argv) => {
+        entered.resolve()
+        await release.promise
+        return lark(() => ({ messages: [message("om_old", "old"), message("om_new", "new")] }))(argv)
+      },
+      later,
+    )
+    await entered.promise
+    try {
+      await acknowledgeIntake(runtime, "feishu", initial.pending[0].key, { note: "Handled while fetching" })
+      expect((await pendingIntake(runtime.directory, "feishu")).pendingCount).toBe(0)
+    } finally {
+      release.resolve()
+      await scanning
+    }
+    const published = await pendingIntake(runtime.directory, "feishu")
+    expect(published.pending.map((entry) => entry.id)).toEqual(["om_new"])
+    expect(published.fetchedThrough).toBe(later.toISOString())
+
+    const failedEntered = Promise.withResolvers<void>()
+    const failedRelease = Promise.withResolvers<void>()
+    const failing = scanIntake(
+      runtime,
+      "feishu",
+      async () => {
+        failedEntered.resolve()
+        await failedRelease.promise
+        return { stdout: "", stderr: "offline", exitCode: 1 }
+      },
+      new Date(later.getTime() + 300_000),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    await failedEntered.promise
+    try {
+      await acknowledgeIntake(runtime, "feishu", published.pending[0].key, { note: "Handled before failed fetch" })
+    } finally {
+      failedRelease.resolve()
+      await failing
+    }
+    expect(await failing).toBeInstanceOf(Error)
+    const remaining = await pendingIntake(runtime.directory, "feishu")
+    expect(remaining.pendingCount).toBe(0)
+    expect(remaining.fetchedThrough).toBe(later.toISOString())
+    expect(remaining.processedThrough).toBe(later.toISOString())
+    expect(existsSync(path.join(runtime.directory, "intake/ack/feishu", `${published.pending[0].key}.json`))).toBe(true)
+  })
+
+  test("kernel ownership rejects a concurrent scan and recovers after the owner receives SIGKILL", async () => {
     const runtime = fixture()
     const ready = path.join(runtime.directory, "ready")
     const script = path.join(runtime.directory, "hold.ts")
@@ -709,7 +771,7 @@ await scanIntake(JSON.parse(process.env.CZ_TEST_INTAKE_RUNTIME!), "feishu", asyn
     try {
       for (let attempt = 0; attempt < 200 && !existsSync(ready); attempt++) await Bun.sleep(10)
       expect(existsSync(ready)).toBe(true)
-      const lock = path.join(runtime.directory, "intake/feishu.lock")
+      const lock = path.join(runtime.directory, "intake/feishu.scan.lock")
       const previous = JSON.parse(readFileSync(lock, "utf8"))
       await expect(
         scanIntake(

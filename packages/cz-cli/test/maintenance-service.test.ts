@@ -173,9 +173,9 @@ ${mode}
   }
 }
 
-test("Codex exit zero requires a completed turn and final response, and stores the transcript", async () => {
+test("Codex completion accepts recovered notices but rejects terminal and protocol failures", async () => {
   const input = await executorFixture(
-    "await Bun.write(output,'finished'); console.log(JSON.stringify({type:'turn.completed'}));",
+    "console.log(JSON.stringify({type:'error',message:'intermediate transport notice'})); await Bun.write(output,'finished'); console.log(JSON.stringify({type:'turn.completed'}));",
   )
   const result = await executeCodex(input)
   expect(result.success).toBe(true)
@@ -185,11 +185,27 @@ test("Codex exit zero requires a completed turn and final response, and stores t
   )
   const incomplete = await executorFixture("await Bun.write(output,'partial');")
   expect((await executeCodex(incomplete)).success).toBe(false)
+  const unfinished = await executorFixture(
+    "await Bun.write(output,'partial'); console.log(JSON.stringify({type:'turn.completed'})); console.log(JSON.stringify({type:'turn.started'}));",
+  )
+  expect((await executeCodex(unfinished)).success).toBe(false)
   const failed = await executorFixture(
-    "await Bun.write(output,'partial'); console.log(JSON.stringify({type:'turn.failed'}));",
+    "await Bun.write(output,'partial'); console.log(JSON.stringify({type:'turn.failed'})); console.log(JSON.stringify({type:'turn.completed'}));",
   )
   expect((await executeCodex(failed)).success).toBe(false)
-})
+  const trailing = await executorFixture(
+    "await Bun.write(output,'partial'); console.log(JSON.stringify({type:'turn.completed'})); console.log(JSON.stringify({type:'error'}));",
+  )
+  expect((await executeCodex(trailing)).success).toBe(false)
+  const malformed = await executorFixture(
+    "await Bun.write(output,'partial'); console.log('invalid json'); console.log(JSON.stringify({type:'turn.completed'}));",
+  )
+  expect((await executeCodex(malformed)).success).toBe(false)
+  const fatal = await executorFixture(
+    "console.log(JSON.stringify({type:'error'})); await Bun.write(output,'partial'); console.log(JSON.stringify({type:'turn.completed'})); process.exitCode=1;",
+  )
+  expect((await executeCodex(fatal)).success).toBe(false)
+}, 15_000)
 
 test("stopping an executor terminates it and reports an interrupted result", async () => {
   const input = await executorFixture("setInterval(()=>{},1000)")

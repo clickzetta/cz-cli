@@ -139,9 +139,12 @@ export async function executeCodex(input: {
         state.thread = event.thread_id
         input.onThread(state.thread)
       }
+      if (event.type === "turn.started" || event.type === "error") state.completed = false
       if (event.type === "turn.completed") state.completed = true
+      // Codex 0.167.1 also emits error for recoverable StreamError notices, without will_retry.
+      // Only a later completion and exit zero can establish recovery within this same execution.
+      if (event.type === "turn.failed") state.failed = true
       if (event.type === "turn.failed" || event.type === "error") {
-        state.failed = true
         state.detail = "Codex reported an error; inspect the private run transcript"
       }
     } catch {
