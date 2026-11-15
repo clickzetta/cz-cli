@@ -19,6 +19,31 @@ function fixture() {
   return { directory, store }
 }
 
+test("initialization waits for a concurrent writer before changing journal mode and schema", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "maintenance-initialize-"))
+  directories.push(directory)
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import {Database} from 'bun:sqlite';
+const db=new Database(Bun.argv[1],{create:true});
+db.exec('CREATE TABLE owner (id INTEGER PRIMARY KEY, token TEXT, pid INTEGER); BEGIN IMMEDIATE');
+console.log('locked'); await Bun.sleep(300); db.exec('COMMIT'); db.close()`,
+      path.join(directory, "service.sqlite"),
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  )
+  const reader = child.stdout.getReader()
+  await reader.read()
+  reader.releaseLock()
+  const store = new ServiceStore(directory)
+  stores.push(store)
+  expect(await child.exited).toBe(0)
+  expect(store.status().roles.length).toBe(2)
+  expect(store.db.query("SELECT identity FROM owner").all()).toEqual([])
+})
+
 test("deduplicates and batches durable wakeups, while new input waits for the next run", () => {
   const data = fixture()
   data.store.enqueue("worker", "a", "first")

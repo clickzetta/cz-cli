@@ -120,7 +120,8 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
     )
     const duplicate = start()
     expect(await duplicate.exited).toBe(1)
-    expect(await new Response(duplicate.stderr).text()).toContain("already owned")
+    expect(await new Response(duplicate.stderr).text()).toContain("control/service-error.json")
+    expect((await Bun.file(path.join(runtime, "control/service-error.json")).json()).error).toContain("already owned")
     first.kill("SIGTERM")
     expect(await first.exited).toBe(0)
     expect(store.status().owner).toBeNull()
@@ -180,6 +181,14 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
     expect((await Bun.file(startupDiagnostic).json()).error).not.toContain(env.CZ_TEST_API_KEY)
     expect(statSync(startupDiagnostic).mode & 0o777).toBe(0o600)
     expect(await new Response(third.stderr).text()).not.toContain(env.CZ_TEST_API_KEY)
+
+    config.native.codex.supervision.control = path.join(directory, env.CZ_TEST_API_KEY)
+    await Bun.write(path.join(runtime, "config.json"), JSON.stringify(config))
+    const fourth = start()
+    expect(await fourth.exited).toBe(1)
+    expect((await Bun.file(startupDiagnostic).json()).error).toContain("[REDACTED]")
+    expect((await Bun.file(startupDiagnostic).json()).error).not.toContain(env.CZ_TEST_API_KEY)
+    expect(await new Response(fourth.stderr).text()).not.toContain(env.CZ_TEST_API_KEY)
   } finally {
     children.forEach((child) => {
       if (child.exitCode === null) child.kill("SIGTERM")

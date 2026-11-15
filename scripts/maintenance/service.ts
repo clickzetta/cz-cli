@@ -8,8 +8,10 @@ import { syncControl } from "./sync"
 
 export async function serviceCommand(args: string[]) {
   const runtime = await loadRuntime()
-  const store = new ServiceStore(path.join(runtime.directory, "control"))
+  const state = { store: undefined as ServiceStore | undefined }
   try {
+    const store = new ServiceStore(path.join(runtime.directory, "control"))
+    state.store = store
     if (args[0] === "status" && args.length === 1) return store.status()
     if (args[0] === "pause" && args.length === 3) {
       store.pause(requireRole(args[1]), args[2])
@@ -39,8 +41,12 @@ export async function serviceCommand(args: string[]) {
     throw new Error(
       "Use: service status | run | pause ROLE REASON | resume ROLE RECONCILIATION | followup ID ROLE ISO_DATE REASON | cancel ID",
     )
+  } catch (error) {
+    if (args[0] !== "run") throw error
+    await writeDiagnostic(runtime.directory, "service-error.json", error)
+    throw new Error("Maintenance startup or scheduling failed; inspect private control/service-error.json")
   } finally {
-    store.db.close()
+    state.store?.db.close()
   }
 }
 
@@ -145,9 +151,6 @@ async function serve(store: ServiceStore, directory: string) {
         if (signal.signal.aborted) done()
       })
     }
-  } catch (error) {
-    await writeDiagnostic(directory, "service-error.json", error)
-    throw new Error("Maintenance startup or scheduling failed; inspect private control/service-error.json")
   } finally {
     signal.abort()
     await state.active
