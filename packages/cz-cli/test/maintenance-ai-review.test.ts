@@ -134,3 +134,21 @@ console.log(JSON.stringify({type:'turn.completed'}));`,
     rmSync(directory, { recursive: true, force: true })
   }
 }, 30000)
+
+test("addition lines beginning with plus signs are source, not diff headers", () => {
+  const changed = changedLines("diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -0,0 +1,2 @@\n+++i\n+doWork()\n")
+  expect([...changed.get("a.ts")!]).toEqual([1, 2])
+  expect(
+    validateReview(
+      {
+        reviewedSha: "head",
+        summary: "Checked increment",
+        findings: [
+          { path: "a.ts", line: 2, severity: "MEDIUM", confidence: "high", body: "Finding on second added line" },
+        ],
+      },
+      "head",
+      changed,
+    ).findings[0].line,
+  ).toBe(2)
+})

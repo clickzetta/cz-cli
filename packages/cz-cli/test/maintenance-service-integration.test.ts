@@ -60,6 +60,9 @@ test("supervised rounds serialize, survive restart and retain durable followups"
     await run(["git", "clone", "--quiet", upstream, control])
     for (const [name, body] of Object.entries({
       gh: "console.log('[]')",
+      "systemd-run-fixture":
+        "const args=process.argv.slice(2);const child=Bun.spawn(args.slice(args.indexOf('--')+1),{stdin:'inherit',stdout:'inherit',stderr:'inherit'});process.exit(await child.exited)",
+      "systemctl-fixture": "console.log(process.argv.includes('--property=MainPID') ? process.ppid : 'LoadState=not-found\\nActiveState=inactive')",
       "lark-cli": "console.log(JSON.stringify({ok:true,identity:'user',data:{items:[],has_more:false}}))",
       "codex-fixture": `import {mkdirSync,rmdirSync} from 'node:fs';
 const output=process.argv[process.argv.indexOf('--output-last-message')+1]; await Bun.stdin.text();
@@ -93,6 +96,12 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
             home: directory,
             sandbox: "read-only",
             timeoutSeconds: 60,
+            supervision: {
+              run: path.join(directory, "systemd-run-fixture"),
+              control: path.join(directory, "systemctl-fixture"),
+              unit: "fixture-parent.service",
+              environmentFile: path.join(directory, "service.env"),
+            },
           },
         },
       }),

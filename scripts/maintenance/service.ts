@@ -35,7 +35,11 @@ export async function serviceCommand(args: string[]) {
       const native = runtime.config.native as { codex?: unknown; scheduleMode?: string } | undefined
       if (native?.scheduleMode !== "codex-service")
         throw new Error("Set native.scheduleMode to codex-service after retiring legacy loops")
-      codexSettings(native.codex)
+      const supervisor = codexSettings(native.codex).supervision
+      if (!supervisor) throw new Error("Maintenance rounds require per-round systemd supervision")
+      const check = Bun.spawn([supervisor.control, "--user", "show", "--property=MainPID", "--value", supervisor.unit], { stdout: "pipe", stderr: "ignore" })
+      const [pid, code] = await Promise.all([new Response(check.stdout).text(), check.exited])
+      if (code !== 0 || Number(pid.trim()) !== process.pid) throw new Error("Start maintenance through its configured parent systemd service")
       return await serve(store, runtime.directory)
     }
     throw new Error(
@@ -112,8 +116,10 @@ async function serve(store: ServiceStore, directory: string) {
                 onThread: (thread) => store.recordThread(run.id, thread),
               })
               store.finish(run.id, result, Date.now())
+              if (result.unsafe) signal.abort()
               store.health(`model:${run.role}`, Date.now(), result.detail)
             } catch {
+              signal.abort()
               store.finish(
                 run.id,
                 { success: false, detail: "Round failed; inspect run evidence and reconcile before resume" },

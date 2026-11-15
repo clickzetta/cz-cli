@@ -185,3 +185,12 @@ test("an already aborted executor and missing executable fail without a hanging 
       .success,
   ).toBe(false)
 })
+
+test("owner recovery distinguishes reused process IDs from the original process identity", () => {
+  const data = fixture()
+  const token = data.store.acquire()
+  data.store.db.query("UPDATE owner SET identity=?").run("previous-boot:previous-process")
+  const recovery = data.store.acquire()
+  expect(recovery).not.toBe(token)
+  data.store.release(recovery)
+})

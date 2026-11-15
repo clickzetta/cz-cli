@@ -12,7 +12,13 @@ Keep a dedicated private `CODEX_HOME`, with only the selected provider/model and
   "home": "/absolute/private/codex-home",
   "model": "YOUR_CONFIGURED_MODEL",
   "sandbox": "danger-full-access",
-  "timeoutSeconds": 3600
+  "timeoutSeconds": 3600,
+  "supervision": {
+    "run": "/usr/bin/systemd-run",
+    "control": "/usr/bin/systemctl",
+    "unit": "cz-maintenance.service",
+    "environmentFile": "/absolute/private/service.env"
+  }
 }
 ```
 
@@ -20,7 +26,7 @@ The sandbox is explicit: unattended execution uses `approval_policy="never"`; re
 
 Before takeover, stop legacy Claude loops, Monitor consumers and interactive maintenance writers. Preserve their full handoff and dedicated transcript directory. Confirm `codex login status`, then run a bounded, read-only `codex exec --json` against the actual configured model and endpoint; a local config file is not authentication evidence.
 
-Install [the user service](../../scripts/maintenance/cz-maintenance.service), adapting absolute Bun/checkout paths if necessary. Put existing GitHub/Lark/tool environment in its private `service.env` (mode 0600); provider credentials belong in the Codex home. Verify user lingering, `systemd-analyze --user verify`, then `systemctl --user daemon-reload` and `systemctl --user enable --now cz-maintenance`. Use this supervisor for deployment: `KillMode=control-group` terminates all children if the daemon crashes, including detached tool processes. A bare shell process is not equivalent supervision.
+Install [the user service](../../scripts/maintenance/cz-maintenance.service), adapting absolute Bun/checkout paths if necessary. Put existing GitHub/Lark/tool environment in its private `service.env` (mode 0600); provider credentials belong in the Codex home. Keep `CODEX_HOME` out of that environment file so each round uses the explicit configured home. Verify user lingering, `systemd-analyze --user verify`, then `systemctl --user daemon-reload` and `systemctl --user enable --now cz-maintenance`. Use this supervisor for deployment: `KillMode=control-group` terminates all children if the daemon crashes, including detached tool processes. Every model round also runs in its own transient service, bound to the parent unit, with a runtime deadline and control-group cleanup. The executor confirms that unit stopped before admitting another round; uncertain cleanup stops the parent. Parent-only process-group cleanup cannot contain a tool that calls `setsid()`. A bare shell process is not equivalent supervision.
 
 On startup and before each provider round the clean control checkout fast-forwards to `origin/main`. A changed commit defers pending events and exits, so systemd restarts with the new code. Dirty, divergent or non-main control checkouts fail closed. No source edits belong there.
 
@@ -38,7 +44,7 @@ bun scripts/maintenance.ts service resume worker 'Checked writers, task worktree
 
 Followups use stable unique IDs, an explicit timezone and a concrete reconciliation condition. Creating the same definition twice preserves its original deadline, even after it fired; use a new ID for a new check. Conflicting definitions fail. Cancellation removes an unclaimed wakeup, and cannot undo a round already running. Missed recurring periods coalesce into one wakeup after downtime, rather than replaying every elapsed interval.
 
-`pause` prevents the next role round; it does not interrupt the active one. `systemctl --user stop cz-maintenance` stops the daemon and active model/tools. Stop, provider errors, timeouts and crash recovery pause affected roles before replay. Restart does not clear pauses. Inspect private `control/runs/RUN_ID/{prompt.txt,events.jsonl,stderr.log,response.txt}`, task worktrees and outgoing receipts; reconcile all possible side effects, then resume with an evidence-based note. Do not change keys or fabricate success to evade failure. Source scans continue while roles are paused.
+`pause` prevents the next role round; it does not interrupt the active one. `systemctl --user stop cz-maintenance` stops the daemon and active model/tools. Stop, provider errors, timeouts and crash recovery pause affected roles before replay. Owner checks include boot and process-start identity, so unrelated processes that reuse a saved PID cannot block recovery. Restart does not clear pauses. Inspect private `control/runs/RUN_ID/{prompt.txt,events.jsonl,stderr.log,response.txt}`, task worktrees and outgoing receipts; reconcile all possible side effects, then resume with an evidence-based note. Do not change keys or fabricate success to evade failure. Source scans continue while roles are paused.
 
 The scan interval is one minute, Worker reconciliation five minutes and Curator curation daily. Idle Worker ticks do not invoke a model. Source scans and model execution have separate health records. Polling replaces the previous expiring native listeners; no Feishu long-connection or immediate-response claim follows from successful polling. A pending item remains in the original intake until the Worker explicitly acknowledges its disposition.
 

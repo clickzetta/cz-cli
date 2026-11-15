@@ -1,7 +1,6 @@
 [Unit]
 Description=cz-cli durable Codex maintenance
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

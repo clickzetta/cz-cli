@@ -42,9 +42,14 @@ export function validateReview(value: unknown, sha: string, changed: Map<string,
 
 export function changedLines(diff: string) {
   const changed = new Map<string, Set<number>>()
-  const state = { file: "", line: 0 }
+  const state = { file: "", line: 0, hunk: false }
   diff.split("\n").forEach((line) => {
-    if (line.startsWith("+++ b/")) {
+    if (line.startsWith("diff --git ")) {
+      state.hunk = false
+      state.file = ""
+      return
+    }
+    if (!state.hunk && line.startsWith("+++ b/")) {
       state.file = line.slice(6)
       changed.set(state.file, new Set())
       return
@@ -52,10 +57,11 @@ export function changedLines(diff: string) {
     const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
     if (hunk) {
       state.line = Number(hunk[1])
+      state.hunk = true
       return
     }
-    if (line.startsWith("+") && !line.startsWith("+++")) changed.get(state.file)?.add(state.line++)
-    if (line.startsWith(" ")) state.line++
+    if (state.hunk && line.startsWith("+")) changed.get(state.file)?.add(state.line++)
+    if (state.hunk && line.startsWith(" ")) state.line++
   })
   return changed
 }

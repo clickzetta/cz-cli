@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { randomUUID } from "node:crypto"
-import { chmodSync, mkdirSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { chmodSync, mkdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 
 export type Role = "worker" | "curator"
@@ -27,7 +28,7 @@ export class ServiceStore {
       PRAGMA journal_mode=WAL;
       PRAGMA synchronous=FULL;
       PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS owner (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, pid INTEGER);
+      CREATE TABLE IF NOT EXISTS owner (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, pid INTEGER, identity TEXT);
       CREATE TABLE IF NOT EXISTS roles (role TEXT PRIMARY KEY, paused TEXT, retry_at INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0);
       INSERT OR IGNORE INTO roles(role) VALUES ('worker'), ('curator');
       CREATE TABLE IF NOT EXISTS wakes (id INTEGER PRIMARY KEY, role TEXT NOT NULL, event_key TEXT NOT NULL, reason TEXT NOT NULL, run_id TEXT, UNIQUE(role,event_key));
@@ -35,20 +36,33 @@ export class ServiceStore {
       CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, status TEXT NOT NULL, thread_id TEXT, detail TEXT);
       CREATE TABLE IF NOT EXISTS health (source TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, success_at INTEGER, failures INTEGER NOT NULL, detail TEXT);
     `)
+    if (
+      !this.db
+        .query<{ name: string }, []>("PRAGMA table_info(owner)")
+        .all()
+        .some((column) => column.name === "identity")
+    )
+      this.db.exec("ALTER TABLE owner ADD COLUMN identity TEXT")
   }
 
   acquire() {
     return this.db
       .transaction(() => {
-        const owner = this.db.query<{ token: string; pid: number }, []>("SELECT token,pid FROM owner WHERE id=1").get()
-        if (owner && alive(owner.pid)) throw new Error(`Maintenance service already owned by PID ${owner.pid}`)
+        const owner = this.db
+          .query<{ token: string; pid: number; identity: string | null }, []>("SELECT * FROM owner WHERE id=1")
+          .get()
+        const identity = owner && processIdentity(owner.pid)
+        if (identity && (!owner.identity || owner.identity === identity))
+          throw new Error(`Maintenance service already owned by PID ${owner.pid}`)
         // An interrupted provider run may have performed external effects. Never blindly replay it.
         this.db
           .exec(`UPDATE roles SET paused='Interrupted run: reconcile delegates, worktrees and receipts before resume'
         WHERE role IN (SELECT role FROM runs WHERE status='running');
         UPDATE runs SET status='interrupted' WHERE status='running';`)
         const token = randomUUID()
-        this.db.query("INSERT OR REPLACE INTO owner VALUES (1,?,?)").run(token, process.pid)
+        this.db
+          .query("INSERT OR REPLACE INTO owner(id,token,pid,identity) VALUES (1,?,?,?)")
+          .run(token, process.pid, processIdentity(process.pid)!)
         return token
       })
       .immediate()
@@ -235,12 +249,26 @@ export function requireRole(value: string): Role {
   return value
 }
 
-function alive(pid: number) {
+function processIdentity(pid: number) {
   try {
-    process.kill(pid, 0)
-    return true
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
+      if (fields[0] === "Z") return
+      return `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:${fields[19]}`
+    }
+    return (
+      execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || undefined
+    )
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false
+    if (
+      ["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "") ||
+      (error as { status?: number }).status === 1
+    )
+      return
     throw error
   }
 }
