@@ -2,6 +2,7 @@
  * True when a statement is a DELETE or UPDATE (optionally parenthesized and/or
  * behind a WITH list) that has no WHERE at its own parenthesis depth. Words in
  * subqueries, string literals, quoted identifiers, and comments do not count.
+ * Accepts raw SQL or SDK analyzeSql() statement.text, whose quoted spans are `?`.
  * Fails closed: a WITH list that cannot be followed is treated as unrestricted
  * when a DELETE or UPDATE appears anywhere in the statement.
  */
@@ -50,7 +51,9 @@ function skipGroup(tokens: Token[], open: number) {
   return close === -1 ? -1 : close + 1
 }
 
-// Words are upper-cased; every quoted run becomes "Q". Parens and commas are tokens.
+// Words are upper-cased; every quoted run or SDK masked quote becomes "Q".
+// Keep the SDK placeholder as a token so quoted CTE names survive masking.
+// Parens and commas are tokens.
 // An opening paren carries the outer depth, and its matching close carries it too.
 function tokenize(sql: string) {
   const tokens: Token[] = []
@@ -81,7 +84,9 @@ function tokenize(sql: string) {
       tokens.push({ text: "Q", depth })
       continue
     }
-    if (c === "(") {
+    if (c === "?") {
+      tokens.push({ text: "Q", depth })
+    } else if (c === "(") {
       tokens.push({ text: "(", depth })
       depth++
     } else if (c === ")") {

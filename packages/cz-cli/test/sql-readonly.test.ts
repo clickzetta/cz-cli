@@ -245,6 +245,43 @@ for (const sql of [
   })
 }
 
+// Exercise SDK masking through CLI validation, rather than only the raw-SQL guard.
+for (const quote of ['"', "`"]) {
+  for (const columns of ["", `(${quote}id${quote}, ${quote}WHERE${quote})`]) {
+    for (const write of ["DELETE FROM t", "UPDATE t SET a=1"]) {
+      const cte = `WITH ${quote}x${quote}${columns} AS (SELECT 1, 2 WHERE 1=1)`
+      test(`quoted CTE permits a restricted write: ${cte} ${write}`, async () => {
+        const sql = `${cte} ${write} WHERE id=1`
+        const result = await execute("sql", [sql, "--write"])
+        expect(result.exitCode).toBe(0)
+        expect(submitted).toEqual([`${sql}\n;`])
+      })
+      test(`quoted CTE WHERE cannot restrict the outer write: ${cte} ${write}`, async () => {
+        const result = await execute("sql", [`${cte} ${write}`, "--write"])
+        expect(JSON.parse(result.output).error.code).toBe("DANGEROUS_WRITE")
+        expect(submitted).toEqual([])
+      })
+    }
+  }
+}
+
+for (const sql of [
+  'WITH "x" (SELECT 1) DELETE FROM t WHERE id=1',
+  'WITH "x" AS SELECT 1 DELETE FROM t WHERE id=1',
+  'WITH "x" AS (SELECT 1) DELETE FROM "WHERE"',
+  "WITH `x` AS (SELECT 1) UPDATE t SET a='WHERE id=1'",
+  'WITH "x"("id") AS (SELECT 1) UPDATE t SET a=(SELECT id FROM "x" WHERE id=1)',
+  "WITH `x`(`id`) AS (SELECT 1) DELETE FROM t USING (SELECT id FROM `x` WHERE id=1) u",
+  'WITH "x" AS (SELECT 1) DELETE FROM t WHERE id=1; DELETE FROM t',
+  "WITH `x` AS (SELECT 1) UPDATE t SET a=1 WHERE id=1; UPDATE t SET a=2",
+]) {
+  test(`quoted CTE does not bypass subquery or multi-statement protection: ${sql}`, async () => {
+    const result = await execute("sql", [sql, "--write"])
+    expect(JSON.parse(result.output).error.code).toBe("DANGEROUS_WRITE")
+    expect(submitted).toEqual([])
+  })
+}
+
 test("reviewed session directives continue to work with leading comments", async () => {
   const result = await execute("sql", ["/* a /* b */ c */ SET cz.sql.timezone=UTC; SELECT 1", "--limit", "0"])
   expect(result.exitCode).toBe(0)
