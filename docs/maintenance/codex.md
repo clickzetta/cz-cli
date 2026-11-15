@@ -1,5 +1,9 @@
 # Codex maintenance service
 
+The external `cz-cli-maintainer` project owns the controller implementation, tests and deployment. This repository keeps maintenance docs, AGENTS.md and the independent Action AI review. Do not add controller code or an executable compatibility wrapper here.
+
+When the operator parks historical work, persist `intakeAfter` as a timezone-qualified ISO timestamp in private runtime `config.json`. The external controller admits only source events updated at or after that boundary; new replies in older threads still qualify. Preserve existing historical events and task records with explicit deferred dispositions, put active old tasks in `needs_attention` and cancel their one-shot followups. A startup wake or recurring timer does not authorize resuming, delivering, releasing or cleaning up parked tasks. New feedback or explicit user authorization is required to revisit them.
+
 The supervisor owns wakeups; Codex performs bounded rounds. Keep the existing `cz-maintenance` runtime, intake acknowledgements, tasks, claims, worktrees, outbox and release receipts. `control/service.sqlite` adds scheduling state, not a second task or delivery ledger. WAL transactions deduplicate wakeups, batch a role's pending events and admit at most one provider round across both roles. New input during a round waits for the next one.
 
 ## Configuration and deployment
@@ -26,20 +30,22 @@ The sandbox is explicit: unattended execution uses `approval_policy="never"`; re
 
 Before takeover, stop legacy Claude loops, Monitor consumers and interactive maintenance writers. Preserve their full handoff and dedicated transcript directory. Confirm `codex login status`, then run a bounded, read-only `codex exec --json` against the actual configured model and endpoint; a local config file is not authentication evidence.
 
-Install [the user service](../../scripts/maintenance/cz-maintenance.service), adapting absolute Bun/checkout paths if necessary. Put existing GitHub/Lark/tool environment in its private `service.env` (mode 0600); provider credentials belong in the Codex home. Keep `CODEX_HOME` out of that environment file so each round uses the explicit configured home. Verify user lingering, `systemd-analyze --user verify`, then `systemctl --user daemon-reload` and `systemctl --user enable --now cz-maintenance`. Use this supervisor for deployment: `KillMode=control-group` terminates all children if the daemon crashes, including detached tool processes. Every model round also runs in its own transient service, bound to the parent unit, with a runtime deadline and control-group cleanup. Each production round revalidates its configured parent-unit binding; an invalid hot reload stops the daemon and pauses the role. The executor confirms that unit stopped before admitting another round; uncertain cleanup stops the parent. Parent-only process-group cleanup cannot contain a tool that calls `setsid()`. A bare shell process is not equivalent supervision.
+Install the reviewed external controller in a versioned directory, with its `controller/current` symlink selecting the deployed controller commit. The external project's `deploy/cz-maintenance.service` supplies the unit: keep `WorkingDirectory` on the product control checkout and set `ExecStart` to the absolute external `current/src/cli.ts`. Install `cz-maintenance` on operator and service PATH, invoking that external entrypoint; it accepts `--repo /absolute/control/checkout` when called elsewhere. Keep runtime identity in the target checkout's existing Git common directory, including when it is a linked worktree.
 
-On startup and before each provider round the clean control checkout fast-forwards to `origin/main`. Read synchronization respects the operator's Git and proxy configuration; the separate push guard still requires a direct connection. A changed commit defers pending events and exits, so systemd restarts with the new code. Dirty, divergent or non-main control checkouts fail closed. No source edits belong there.
+Put existing GitHub/Lark/tool environment in private `service.env` (mode 0600); provider credentials belong in the Codex home. Preserve tool paths and Git SSH routing when adding the command directory to PATH. Keep `CODEX_HOME` out of the environment file so each round uses the explicit configured home. Verify user lingering, `systemd-analyze --user verify`, then `systemctl --user daemon-reload` and `systemctl --user enable --now cz-maintenance`. `KillMode=control-group` terminates all children if the daemon crashes, including detached tool processes. Every model round also runs in its own transient service, bound to the parent unit, with a runtime deadline and control-group cleanup. Each production round revalidates its configured parent-unit binding; an invalid hot reload stops the daemon and pauses the role. The executor confirms that unit stopped before admitting another round; uncertain cleanup stops the parent. Parent-only process-group cleanup cannot contain a tool that calls `setsid()`.
+
+On startup and before each provider round the clean product control checkout fast-forwards to `origin/main`. Read synchronization respects the operator's Git and proxy configuration; the separate push guard still requires a direct connection. Product rule updates do not change the external controller version or restart it. Deploying a controller update requires its own reviewed commit and an explicit stopped-service version switch. Dirty, divergent or non-main product control checkouts fail closed. No source edits belong there.
 
 ## Operating commands
 
 Run from the control checkout:
 
 ```sh
-bun scripts/maintenance.ts service status
-bun scripts/maintenance.ts service pause worker 'Maintenance window; stop after the active round'
-bun scripts/maintenance.ts service followup task-ci-HEAD worker 2026-12-01T10:00:00Z 'Recheck TASK CI and preserve the original request'
-bun scripts/maintenance.ts service cancel task-ci-HEAD
-bun scripts/maintenance.ts service resume worker 'Checked writers, task worktrees, PR/release state and reply receipts; safe to continue'
+cz-maintenance service status
+cz-maintenance service pause worker 'Maintenance window; stop after the active round'
+cz-maintenance service followup task-ci-HEAD worker 2026-12-01T10:00:00Z 'Recheck TASK CI and preserve the original request'
+cz-maintenance service cancel task-ci-HEAD
+cz-maintenance service resume worker 'Checked writers, task worktrees, PR/release state and reply receipts; safe to continue'
 ```
 
 Followups use stable unique IDs, an explicit timezone and a concrete reconciliation condition. Creating the same definition twice preserves its original deadline, even after it fired; use a new ID for a new check. Conflicting definitions fail. Cancellation removes an unclaimed wakeup, and cannot undo a round already running. Missed recurring periods coalesce into one wakeup after downtime, rather than replaying every elapsed interval.
@@ -54,9 +60,9 @@ Every round starts a fresh context. Read AGENTS, the role prompt, relevant topic
 
 ## Acceptance and rollback
 
-Run maintenance unit tests and tools typecheck from `packages/cz-cli`, then independent review of the exact head. On Linux verify real authentication, both intake sources, singleton ownership, clean stop with no surviving children, restart with persisted timers and explicit interrupted-run reconciliation. Keep actual logs and release/deployment SHAs in private runtime records. Natural input-to-reply acceptance requires actual traffic and receipts; never send diagnostic Feishu messages.
+Run `bun test` and `bun typecheck` in the external controller project, then independent review of its exact commit and the repository boundary change. Action review has its own checks in `.github/scripts`. On Linux verify real authentication, both intake sources, singleton ownership, clean stop with no surviving children, restart with persisted timers and explicit interrupted-run reconciliation. Confirm the external CLI resolves the original runtime from the target checkout, that historical state is preserved and that product updates do not reload controller code. Keep actual logs and separate product/controller deployment SHAs in private runtime records. Natural input-to-reply acceptance requires actual traffic and receipts; never send diagnostic Feishu messages.
 
-Before rollout back up runtime configuration and record the deployed commit. SQLite and all original intake/task/outbox records are preserved on rollback. Stop the new unit before changing code or credentials. Reconcile interrupted work before restoring a previous runtime; never run Claude loops alongside the Codex service. AI review has its own workflow/configuration and must be validated separately.
+Before rollout pause the next rounds, let active work finish and reconcile its effects. Stop the daemon and scanners, persist the original business manifest and a consistent SQLite backup, then switch only the external executable/unit. Do not move or recreate the control clone, runtime or historical task worktrees. Start paused, compare the protected state and verify sources before resuming. Record both the deployed controller commit and product baseline. SQLite and all original intake/task/outbox records are preserved on rollback. Stop the unit before switching controller versions. Reconcile interrupted work before restoring a previous runtime; never run Claude loops alongside the Codex service. AI review has its own workflow/configuration and must be validated separately.
 
 ## AI review
 

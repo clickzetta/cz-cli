@@ -1,6 +1,6 @@
 # Maintenance
 
-An external service runs bounded Codex Worker and Curator sessions. Durable intake, timers and task state survive a model process or host restart. The repository does not pin a model; choose it in private runtime configuration. Use [project docs](../INDEX.md) and shared notes on demand instead of client-private auto-memory.
+The external `cz-cli-maintainer` project supplies the service, maintenance tools, tests and deployment. This repository retains docs, AGENTS.md and Action AI review; it does not contain a controller or executable wrapper. The service runs bounded Codex Worker and Curator sessions. Durable intake, timers and task state survive a model process or host restart. The repository does not pin a model; choose it in private runtime configuration. Use [project docs](../INDEX.md) and shared notes on demand instead of client-private auto-memory.
 
 - [Worker](prompts/worker.md): GitHub and Feishu intake, execution, and delivery. It delegates with the [implementer](prompts/delegate-implement.md) and [reviewer](prompts/delegate-review.md) briefs.
 - [Curator](prompts/curator.md): daily curation of shared memory from what actually happened, plus a review of the day's merged code that files GitHub issues.
@@ -14,15 +14,15 @@ An external service runs bounded Codex Worker and Curator sessions. Durable inta
 
 ## Control checkout
 
-The control checkout is a clean clone on `main` and is never edited in place. Every role runs `bun scripts/maintenance.ts sync ROLE` at each wake, which fast-forwards it to `origin/main` and returns `changedRules`: `AGENTS.md` and every changed file under `docs/`, including domain pitfalls and indexes, that changed since that role last confirmed a read. Roles share the checkout, so each keeps its own cursor in runtime `control/rules-seen-ROLE`, and the cursor moves only when the role confirms the read with `rules-read ROLE SHA`: a round that dies after syncing is told again. A running session rereads those files before acting; merged rules take effect only once they are reread, so step 1 of each role prompt asks for it explicitly. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
+The control checkout is a clean clone on `main` and is never edited in place. Every role runs `cz-maintenance sync ROLE` at each wake, which fast-forwards it to `origin/main` and returns `changedRules`: `AGENTS.md` and every changed file under `docs/`, including domain pitfalls and indexes, that changed since that role last confirmed a read. Roles share the checkout, so each keeps its own cursor in runtime `control/rules-seen-ROLE`, and the cursor moves only when the role confirms the read with `rules-read ROLE SHA`: a round that dies after syncing is told again. A running session rereads those files before acting; merged rules take effect only once they are reread, so step 1 of each role prompt asks for it explicitly. Start all coordinators and delegates there and run its maintenance tools. Pass task source worktrees explicitly; product fixes start from updated `origin/main`.
 
 To move a deployment off the old pinned `native.policySha`, stop both roles at a safe boundary, then in the control checkout run `git switch main && git merge --ff-only origin/main`, remove `native.policySha` from `config.json`, run `sync`, and restart.
 
 Keep credentials in private settings. Verify existing credentials, source scope, authorization, model connectivity, and a bounded first task; request missing inputs only. From the control root:
 
 ```sh
-bun scripts/maintenance.ts init
-bun scripts/maintenance.ts status
+cz-maintenance init
+cz-maintenance status
 ```
 
 Reconcile existing tasks, pending sources, owners, and receipts. Removing old user worktrees requires item-specific approval and does not block startup.

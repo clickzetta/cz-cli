@@ -16,7 +16,7 @@ See [monitoring](workflow.md#wakeups-and-monitoring). Keep connection, stop and 
 
 Old-thread replies, ordinary PR comments and inline reviews update independently. Scan all sources, save each disposition before ack, and link stable sources to existing tasks. Do not advance past failed pagination.
 
-See [intake](workflow.md#intake-and-delivery), [collector](../../scripts/maintenance/intake.ts) and [regressions](../../packages/cz-cli/test/maintenance-intake.test.ts).
+See [intake](workflow.md#intake-and-delivery). Collector implementation and acknowledgement regressions belong to the external `cz-cli-maintainer` project (`src/intake.ts` and `test/intake.test.ts`).
 
 <a id="独立审查沿用实施者的假设"></a>
 

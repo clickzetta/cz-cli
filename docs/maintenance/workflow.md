@@ -1,6 +1,6 @@
 # Maintenance workflow
 
-Follow [AGENTS.md](../../AGENTS.md). Use `gh` for GitHub and `lark-cli` for the bound group; verify commands and identities with their current help/schema. Run maintenance commands from the control checkout: `bun scripts/maintenance.ts COMMAND`.
+Follow [AGENTS.md](../../AGENTS.md). Use `gh` for GitHub and `lark-cli` for the bound group; verify commands and identities with their current help/schema. Run the separately installed external controller from the product control checkout: `cz-maintenance COMMAND`, or use `cz-maintenance --repo /absolute/control/checkout COMMAND`. This repository contains no maintenance implementation or wrapper; only docs, AGENTS.md and Action AI review remain here.
 
 <a id="本机记录"></a>
 
@@ -9,7 +9,7 @@ Follow [AGENTS.md](../../AGENTS.md). Use `gh` for GitHub and `lark-cli` for the 
 - Both roles share `cz-maintenance/` under `git rev-parse --git-common-dir`; `config.json`, `native-handoff.md`, `claims/`, `tasks/` and `control/` live there. Run `init` to index legacy tasks and `status` to inspect tasks, permissions and receipts. Preserve legacy state, configuration, cursors and worktrees; new progress/source mappings use `native-state.json`. Legacy executor/interval fields do not schedule native jobs.
 - Read `config.json.permissions` each round. Existing authorization covers task-branch pushes, PRs, original-thread GitHub/Bot replies, guarded merges and nightly releases. Keep `release: false`, `releaseNightly: true`, `releaseStable: false`; Bot replies stay in the bound original group/thread. Check each external action's authorization.
 - The control checkout (`native.maintenanceRoot`) is a clean clone on `main`. Each role round starts with `sync ROLE`, which fast-forwards it to `origin/main`, refuses local edits or another branch, and lists in `changedRules` the rule and note files that changed since that role last confirmed a read; reread those, then confirm with `rules-read ROLE SHA`. Start loops/subagents and invoke maintenance tools there; edit/test source in the task worktree. Keep source and release SHAs distinct.
-- Develop maintenance/docs changes in an exclusive worktree from updated `origin/main`. After independent review, open a PR and merge it with `gh pr merge --admin --squash`; the next `sync` makes it live. Keep maintenance changes out of product-fix diffs. A rule change takes effect on the next wake, including for tasks already in progress.
+- Develop repository docs/AGENTS/Action review changes in an exclusive worktree from updated `origin/main`. Finish the scoped implementation, local checks and independent exact-head review before pushing and opening its PR; consolidate fixes for the same task there. The next `sync` makes merged rules available, and the role must reread them. Controller implementation and tests belong to the external `cz-cli-maintainer` project; review, test and deploy its commit separately. Product sync never upgrades controller code. Keep maintenance changes out of product-fix diffs.
 - On takeover, read all of `native-handoff.md`, not its tail: pending actions sit in the middle, the closing summary may not repeat them. Then reconcile actual tasks, delegates and receipts with `status`. Reuse IDs, worktrees and source mappings. Historical summaries cannot override current authorization, completion receipts or satisfied release conditions.
 - Each task records sources, acceptance criteria, owner, worktree, `baseSha`, `headSha`, `reviewedSha`, validation, review outcome, external actions, blockers and next steps. Link cross-channel reports of the same problem to it. Use `task github:<owner>/<repo>:<number>` or `task lark:<chat_id>:<message_id>`; `register ITEM.json` deduplicates sources and `save TASK.json` saves progress. Keep task bodies and temporary JSON private.
 
@@ -56,8 +56,8 @@ Run `intake github` and `intake feishu` and process their durable `pending` queu
 Read full source/context from each summary's `file` or `intake show SOURCE EVENT_KEY`. Resolve its task, save the association and reply receipt or explicit disposition, then acknowledge:
 
 ```sh
-bun scripts/maintenance.ts intake ack feishu EVENT_KEY --task TASK_ID --note 'Linked to the existing task; reply receipt saved'
-bun scripts/maintenance.ts intake ack github EVENT_KEY --note 'Duplicate; original discussion and reason recorded'
+cz-maintenance intake ack feishu EVENT_KEY --task TASK_ID --note 'Linked to the existing task; reply receipt saved'
+cz-maintenance intake ack github EVENT_KEY --note 'Duplicate; original discussion and reason recorded'
 ```
 
 `--task` must exist; supply at least `--task` or `--note`. Fetching only queues input; it does not finish processing. Keep unread/unhandled items pending across rounds and never report “no new feedback” while they remain. Blocked implementation must not stop other intake/replies.
@@ -67,8 +67,8 @@ Each source has one scan owner. Network pagination holds a separate scan lock so
 Read Feishu as the authorized user; reply as the Bot already in the group. Route all Bot replies through maintenance's `lark-cli im +messages-reply --reply-in-thread --idempotency-key` wrapper and outbox. Phase values are protocol literals: `接单`, `阻碍`, `审查完成`, `发布完成`.
 
 ```sh
-bun scripts/maintenance.ts reply TASK 阻碍 --event STABLE_EVENT --text-file draft.txt
-bun scripts/maintenance.ts reply TASK 阻碍 --event STABLE_EVENT --text-file draft.txt --send
+cz-maintenance reply TASK 阻碍 --event STABLE_EVENT --text-file draft.txt
+cz-maintenance reply TASK 阻碍 --event STABLE_EVENT --text-file draft.txt --send
 ```
 
 The first command previews. Use one stable event ID per real state change, such as `blocker-missing-scope` or `review-<SHA>`. Retries keep its ID and text. Under an atomic lock, the tool allocates `<task>-<phase>-<sequence>` only for new events and reuses existing keys. It saves target, text, key and `sending` before dispatch, then `sent` and `message_id` on success. Inspect receipts with `status`.

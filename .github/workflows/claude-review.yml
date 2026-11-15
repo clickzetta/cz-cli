@@ -18,6 +18,7 @@ on:
       - "infra/**"
       - "script/**"
       - "scripts/**"
+      - ".github/scripts/**"
       - ".github/workflows/claude-review.yml"
       - "!**/*.md"
       - ".github/codex-review-prompt.md"
@@ -89,7 +90,7 @@ jobs:
           CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
         run: |
           export CODEX_BINARY="$(command -v codex)"
-          bun scripts/maintenance/ai-review.ts
+          bun .github/scripts/ai-review.ts
       - name: Remove private model state
         if: always()
         run: rm -rf "$RUNNER_TEMP/cz-ai-review"

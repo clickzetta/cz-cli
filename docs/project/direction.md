@@ -8,4 +8,4 @@ cz-cli 为人和 AI Agent 提供 ClickZetta Lakehouse 命令行入口。产品�
 
 项目知识按领域保存在仓库 docs，通过索引按需读取。已确认的行为、约束和取舍更新到对应主题；任务日志与执行进度保存在本机运行记录中。
 
-开发自维护由两个常驻会话承担：Worker 统一处理 GitHub 与飞书的反馈，Curator 每天回看实际发生的事、整理共享记忆，并把发现的代码问题提成 issue 交给 Worker，具体约定见[维护导航](../maintenance/INDEX.md)。
+开发自维护由仓库外的维护服务调度 Worker 和 Curator 的有限轮次：Worker 统一处理 GitHub 与飞书的反馈，Curator 每天回看实际发生的事、整理共享记忆，并把发现的代码问题提成 issue 交给 Worker。维护实现和部署独立于产品仓库，具体约定见[维护导航](../maintenance/INDEX.md)。
