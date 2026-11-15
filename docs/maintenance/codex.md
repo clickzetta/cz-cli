@@ -2,6 +2,8 @@
 
 The external `cz-cli-maintainer` project owns the controller implementation, tests and deployment. This repository keeps maintenance docs, AGENTS.md and the independent Action AI review. Do not add controller code or an executable compatibility wrapper here.
 
+When the operator parks historical work, persist `intakeAfter` as a timezone-qualified ISO timestamp in private runtime `config.json`. The external controller admits only source events updated at or after that boundary; new replies in older threads still qualify. Preserve existing historical events and task records with explicit deferred dispositions, put active old tasks in `needs_attention` and cancel their one-shot followups. A startup wake or recurring timer does not authorize resuming, delivering, releasing or cleaning up parked tasks. New feedback or explicit user authorization is required to revisit them.
+
 The supervisor owns wakeups; Codex performs bounded rounds. Keep the existing `cz-maintenance` runtime, intake acknowledgements, tasks, claims, worktrees, outbox and release receipts. `control/service.sqlite` adds scheduling state, not a second task or delivery ledger. WAL transactions deduplicate wakeups, batch a role's pending events and admit at most one provider round across both roles. New input during a round waits for the next one.
 
 ## Configuration and deployment
