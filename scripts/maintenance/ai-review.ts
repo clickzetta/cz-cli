@@ -222,9 +222,9 @@ export async function runReview() {
     throw new Error("Review contains private configuration; refusing to publish")
   if (process.env.CODEX_REVIEW_DRY_RUN === "true") return { dryRun: true, head, findings: review.findings.length }
   const current = JSON.parse(await command(["gh", "api", `repos/${repository}/pulls/${number}`]))
-  if (current.head.sha !== head || current.state !== "open")
-    throw new Error("PR head/state changed; refusing a stale review")
-  const marker = `<!-- codex-review:${head} -->`
+  if (current.head.sha !== head || current.base.sha !== base || current.state !== "open")
+    throw new Error("PR head/base/state changed; refusing a stale review")
+  const marker = `<!-- codex-review:${base}:${head} -->`
   const prior = JSON.parse(
     await command(["gh", "api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/reviews`]),
   )

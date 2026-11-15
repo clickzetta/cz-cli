@@ -81,7 +81,7 @@ test("AI review runner withholds GitHub credentials, validates output and dedupl
       gh: `const args=process.argv.slice(2); const file=${JSON.stringify(posted)};
 if(args.includes('POST')) { await Bun.write(file,await Bun.file(args.at(-1)).text()); console.log('{}'); }
 else if(args.at(-1).endsWith('/reviews')) console.log(JSON.stringify([await Bun.file(file).exists()?[{body:JSON.parse(await Bun.file(file).text()).body,user:{login:'github-actions[bot]'}}]:[]]));
-else console.log(JSON.stringify({head:{sha:${JSON.stringify(head)}},state:'open'}));`,
+else console.log(JSON.stringify({head:{sha:${JSON.stringify(head)}},base:{sha:process.env.RUNNER_TEMP.endsWith('/stale-base')?'0'.repeat(40):${JSON.stringify(base)}},state:'open'}));`,
       "codex-fixture": `if(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.CODEX_REVIEW_API_KEY) process.exit(20);
 const args=process.argv.slice(2); await Bun.stdin.text();
 const summary=process.env.CODEX_HOME.includes('/escaped/')?'private-fixture-key':'Reviewed source; no tests executed';
@@ -130,6 +130,8 @@ console.log(JSON.stringify({type:'turn.completed'}));`,
       return JSON.parse(stdout)
     }
     expect((await execute(false, "escaped", 1)).rejected).toBe(true)
+    expect(await Bun.file(posted).exists()).toBe(false)
+    expect((await execute(false, "stale-base", 1)).rejected).toBe(true)
     expect(await Bun.file(posted).exists()).toBe(false)
     expect((await execute(true, "dry")).dryRun).toBe(true)
     expect(await Bun.file(posted).exists()).toBe(false)

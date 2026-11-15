@@ -83,7 +83,8 @@ test("provider failures preserve input and pause requests until explicit reconci
   const run = data.store.claim(1)!
   data.store.recordThread(run.id, "thread-123")
   data.store.finish(run.id, { success: false, detail: "Quota exhausted" }, 2)
-  for (let i = 0; i < 300; i++) expect(data.store.claim(3 + i)).toBeUndefined()
+  expect(data.store.claim(3)).toBeUndefined()
+  expect(data.store.claim(86_400_000)).toBeUndefined()
   expect(data.store.status().runs[0].thread_id).toBe("thread-123")
   data.store.enqueue("worker", "later", "input while paused")
   data.store.resume("worker", "Quota restored and previous effects checked")
@@ -101,14 +102,25 @@ test("a code update defers the run without losing events, and idle tick removal 
   expect(data.store.claim(2)?.events[0].event_key).toBe("intake:a")
 })
 
-test("source health preserves the last success and counts consecutive failures", () => {
+test("source outages persist health and wake an idle worker once until recovery", () => {
   const data = fixture()
   data.store.health("github", 1)
   data.store.health("github", 2, "network")
-  data.store.health("github", 3, "network")
-  expect(data.store.status().health).toMatchObject([{ success_at: 1, checked_at: 3, failures: 2 }])
-  data.store.health("github", 4)
-  expect(data.store.status().health).toMatchObject([{ success_at: 4, failures: 0, detail: null }])
+  const reopened = new ServiceStore(data.directory)
+  stores.push(reopened)
+  reopened.health("github", 3, "network")
+  expect(reopened.status().health).toMatchObject([{ success_at: 1, checked_at: 3, failures: 2 }])
+  reopened.enqueue("worker", "timer:worker-reconcile:3", "poll")
+  reopened.discardIdleWorkerTicks(true)
+  const run = reopened.claim(3)!
+  expect(run.role).toBe("worker")
+  expect(run.events.map((event) => event.event_key)).toEqual(["intake-failure:github:2"])
+  reopened.finish(run.id, { success: true }, 3)
+  expect(reopened.claim(4)).toBeUndefined()
+  reopened.health("github", 4)
+  expect(reopened.status().health).toMatchObject([{ success_at: 4, failures: 0, detail: null }])
+  reopened.health("github", 5, "network again")
+  expect(reopened.claim(5)?.events.length).toBe(1)
 })
 
 async function executorFixture(mode: string) {

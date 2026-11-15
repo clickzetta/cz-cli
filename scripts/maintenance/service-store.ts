@@ -222,12 +222,20 @@ export class ServiceStore {
 
   health(source: string, now: number, error?: string) {
     this.db
-      .query(
-        `INSERT INTO health VALUES (?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET
+      .transaction(() => {
+        const health = this.db
+          .query<{ failures: number }, [string, number, number | null, number, string | null]>(
+            `INSERT INTO health VALUES (?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET
       checked_at=excluded.checked_at,success_at=COALESCE(excluded.success_at,health.success_at),
-      failures=CASE WHEN excluded.detail IS NULL THEN 0 ELSE health.failures+1 END,detail=excluded.detail`,
-      )
-      .run(source, now, error ? null : now, error ? 1 : 0, error ?? null)
+      failures=CASE WHEN excluded.detail IS NULL THEN 0 ELSE health.failures+1 END,detail=excluded.detail
+      RETURNING failures`,
+          )
+          .get(source, now, error ? null : now, error ? 1 : 0, error ?? null)
+        // Persist one investigation wake per outage, atomically with its first failure.
+        if (health?.failures === 1 && (source === "github" || source === "feishu"))
+          this.enqueue("worker", `intake-failure:${source}:${now}`, `Investigate ${source} intake failure`)
+      })
+      .immediate()
   }
 
   status() {
