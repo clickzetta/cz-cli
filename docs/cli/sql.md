@@ -24,6 +24,8 @@ SQL 维护同时检查 CLI 命令与 SDK 执行链，关注提交、轮询、取
 
 后两类返回 `SQL_READONLY_UNKNOWN`；加 `--dry-run` 时改为直接返回 `SQL_NOT_READONLY`。普通查询、优化器 hint（`/*+ … */`）、其他查询设置和无法分类的 SQL 不再因无法识别而要求 `--write`。`--write` 不绕过无 `WHERE` 的 `DELETE`/`UPDATE` 拦截。`--dry-run` 只接受识别为只读的查询。
 
+`DELETE`/`UPDATE` 的 `WHERE` 必须位于写语句自身的括号层级；CTE、子查询、字符串、注释或引用标识符里的 `WHERE` 不算。带双引号或反引号的 CTE 名及列名列表不影响这一判断；整段输入中的任一无约束写入都会在提交前被拒绝。CLI 消费 SDK 的掩码文本时，必须保留代表引用内容的 `?` 占位记号，避免丢失 CTE 名。
+
 来源：[检查与审批](../../packages/cz-cli/src/commands/sql.ts) 中的 `validateSqlInput`、[SDK 分类](../../packages/clickzetta-sdk/src/sql/readonly.ts)、[扫描](../../packages/clickzetta-sdk/src/sql/scan.ts)、[CLI 验证](../../packages/cz-cli/test/sql-readonly.test.ts)，引入于 PR #126。
 
 验证命令与证据要求见[开发与验证](../engineering/verification.md)。
