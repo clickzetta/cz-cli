@@ -37,9 +37,13 @@ export async function serviceCommand(args: string[]) {
         throw new Error("Set native.scheduleMode to codex-service after retiring legacy loops")
       const supervisor = codexSettings(native.codex).supervision
       if (!supervisor) throw new Error("Maintenance rounds require per-round systemd supervision")
-      const check = Bun.spawn([supervisor.control, "--user", "show", "--property=MainPID", "--value", supervisor.unit], { stdout: "pipe", stderr: "ignore" })
+      const check = Bun.spawn(
+        [supervisor.control, "--user", "show", "--property=MainPID", "--value", supervisor.unit],
+        { stdout: "pipe", stderr: "ignore" },
+      )
       const [pid, code] = await Promise.all([new Response(check.stdout).text(), check.exited])
-      if (code !== 0 || Number(pid.trim()) !== process.pid) throw new Error("Start maintenance through its configured parent systemd service")
+      if (code !== 0 || Number(pid.trim()) !== process.pid)
+        throw new Error("Start maintenance through its configured parent systemd service")
       return await serve(store, runtime.directory)
     }
     throw new Error(
