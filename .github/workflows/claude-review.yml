@@ -29,16 +29,15 @@ on:
       - "!packages/*/src/generated-effect/**"
       - "!**/__snapshots__/**"
 
-concurrency:
-  group: codex-review-${{ github.event.pull_request.number || inputs.pull_request }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
 jobs:
   review:
     if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false && (github.event.action != 'edited' || github.event.changes.base))
+    concurrency:
+      group: codex-review-${{ github.event.pull_request.number || inputs.pull_request }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
