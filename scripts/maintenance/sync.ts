@@ -32,7 +32,9 @@ export async function acknowledgeRules(cwd: string, role: string, sha: string) {
   await Promise.all(
     ["HEAD", "refs/remotes/origin/main"].map((ref) => git(root, "merge-base", "--is-ancestor", sha, ref)),
   ).catch(() => {
-    throw new Error("That commit is not on origin/main as the control checkout has it; run sync first and pass its `after` value")
+    throw new Error(
+      "That commit is not on origin/main as the control checkout has it; run sync first and pass its `after` value",
+    )
   })
   await writeCursor(await cursorFile(root, role), sha)
   return { role, rulesReadThrough: sha }
@@ -81,8 +83,8 @@ async function writeCursor(file: string, sha: string) {
 }
 
 async function git(cwd: string, ...args: string[]) {
-  // Fetches go direct, like the release guard: the server's proxy variables must not apply to git.
-  const child = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe", env: unproxied() })
+  // Read synchronization follows the operator's network configuration; pushes enforce their own direct route.
+  const child = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -90,11 +92,4 @@ async function git(cwd: string, ...args: string[]) {
   ])
   if (exitCode !== 0) throw new Error(`git ${args[0]} failed: ${stderr.trim()}`)
   return stdout.trim()
-}
-
-function unproxied() {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !/^(http|https|all)_proxy$/i.test(key)),
-  )
-  return { ...env, NO_PROXY: "*", no_proxy: "*" }
 }

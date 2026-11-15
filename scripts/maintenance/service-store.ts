@@ -25,9 +25,13 @@ export class ServiceStore {
     this.db = new Database(file, { create: true, strict: true })
     chmodSync(file, 0o600)
     this.db.exec(`
+      PRAGMA busy_timeout=5000;
       PRAGMA journal_mode=WAL;
       PRAGMA synchronous=FULL;
-      PRAGMA busy_timeout=5000;
+    `)
+    this.db
+      .transaction(() => {
+        this.db.exec(`
       CREATE TABLE IF NOT EXISTS owner (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, pid INTEGER, identity TEXT);
       CREATE TABLE IF NOT EXISTS roles (role TEXT PRIMARY KEY, paused TEXT, retry_at INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0);
       INSERT OR IGNORE INTO roles(role) VALUES ('worker'), ('curator');
@@ -35,14 +39,16 @@ export class ServiceStore {
       CREATE TABLE IF NOT EXISTS timers (id TEXT PRIMARY KEY, role TEXT NOT NULL, due_at INTEGER NOT NULL, interval_ms INTEGER, reason TEXT NOT NULL, fired_at INTEGER);
       CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, status TEXT NOT NULL, thread_id TEXT, detail TEXT);
       CREATE TABLE IF NOT EXISTS health (source TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, success_at INTEGER, failures INTEGER NOT NULL, detail TEXT);
-    `)
-    if (
-      !this.db
-        .query<{ name: string }, []>("PRAGMA table_info(owner)")
-        .all()
-        .some((column) => column.name === "identity")
-    )
-      this.db.exec("ALTER TABLE owner ADD COLUMN identity TEXT")
+      `)
+        if (
+          !this.db
+            .query<{ name: string }, []>("PRAGMA table_info(owner)")
+            .all()
+            .some((column) => column.name === "identity")
+        )
+          this.db.exec("ALTER TABLE owner ADD COLUMN identity TEXT")
+      })
+      .immediate()
   }
 
   acquire() {
