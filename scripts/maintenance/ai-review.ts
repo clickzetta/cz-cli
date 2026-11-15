@@ -123,9 +123,23 @@ export async function runReview() {
       `model = ${JSON.stringify(model)}`,
       'model_reasoning_effort = "high"',
       "project_doc_max_bytes = 0",
+      'web_search = "disabled"',
+      `[projects.${JSON.stringify(source)}]`,
+      'trust_level = "untrusted"',
       "[features]",
       "memories = false",
       "multi_agent = false",
+      "shell_snapshot = false",
+      "use_legacy_landlock = false",
+      "[permissions.review.filesystem]",
+      '":root" = "deny"',
+      '":minimal" = "read"',
+      `${JSON.stringify(root)} = "read"`,
+      `${JSON.stringify(source)} = "read"`,
+      `${JSON.stringify(home)} = "deny"`,
+      '"/proc" = "deny"',
+      "[permissions.review.network]",
+      "enabled = false",
       "[model_providers.review]",
       'name = "Review"',
       `base_url = ${JSON.stringify(url)}`,
@@ -192,19 +206,20 @@ export async function runReview() {
     id: head,
     role: "worker",
     schema,
-    settings: { binary: required("CODEX_BINARY"), home, model, sandbox: "read-only", timeoutSeconds: 900 },
-    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    settings: { binary: required("CODEX_BINARY"), home, model, permissionProfile: "review", timeoutSeconds: 900 },
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
     prompt,
     signal: new AbortController().signal,
     onThread: () => {},
   })
   if (!result.success) throw new Error("Codex review failed; no review was posted")
   const response = await Bun.file(path.join(directory, "control/runs", head, "response.txt")).text()
+  const review = validateReview(JSON.parse(response), head, changedLines(diff))
   // Never publish a credential even if untrusted source persuaded the model to repeat it.
   const secrets = [key, url, process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter((value): value is string => !!value)
-  if (secrets.some((secret) => response.includes(secret)))
+  const publication = [review.summary, ...review.findings.flatMap((finding) => [finding.path, finding.body])]
+  if (secrets.some((secret) => publication.some((value) => value.includes(secret))))
     throw new Error("Review contains private configuration; refusing to publish")
-  const review = validateReview(JSON.parse(response), head, changedLines(diff))
   if (process.env.CODEX_REVIEW_DRY_RUN === "true") return { dryRun: true, head, findings: review.findings.length }
   const current = JSON.parse(await command(["gh", "api", `repos/${repository}/pulls/${number}`]))
   if (current.head.sha !== head || current.state !== "open")

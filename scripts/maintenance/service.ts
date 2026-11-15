@@ -33,17 +33,7 @@ export async function serviceCommand(args: string[]) {
     }
     if (args[0] === "run" && args.length === 1) {
       const native = runtime.config.native as { codex?: unknown; scheduleMode?: string } | undefined
-      if (native?.scheduleMode !== "codex-service")
-        throw new Error("Set native.scheduleMode to codex-service after retiring legacy loops")
-      const supervisor = codexSettings(native.codex).supervision
-      if (!supervisor) throw new Error("Maintenance rounds require per-round systemd supervision")
-      const check = Bun.spawn(
-        [supervisor.control, "--user", "show", "--property=MainPID", "--value", supervisor.unit],
-        { stdout: "pipe", stderr: "ignore" },
-      )
-      const [pid, code] = await Promise.all([new Response(check.stdout).text(), check.exited])
-      if (code !== 0 || Number(pid.trim()) !== process.pid)
-        throw new Error("Start maintenance through its configured parent systemd service")
+      await supervisedSettings(native)
       return await serve(store, runtime.directory)
     }
     throw new Error(
@@ -107,8 +97,8 @@ async function serve(store: ServiceStore, directory: string) {
                 state.restart = true
                 return
               }
-              const native = runtime.config.native as { codex?: unknown } | undefined
-              const settings = codexSettings(native?.codex)
+              const native = runtime.config.native as { codex?: unknown; scheduleMode?: string } | undefined
+              const settings = await supervisedSettings(native)
               const result = await executeCodex({
                 root: synced.root,
                 directory,
@@ -155,6 +145,21 @@ async function serve(store: ServiceStore, directory: string) {
     store.release(token)
   }
   return { stopped: true, restartRequired: state.restart }
+}
+
+async function supervisedSettings(native: { codex?: unknown; scheduleMode?: string } | undefined) {
+  if (native?.scheduleMode !== "codex-service")
+    throw new Error("Set native.scheduleMode to codex-service after retiring legacy loops")
+  const settings = codexSettings(native.codex)
+  if (!settings.supervision) throw new Error("Maintenance rounds require per-round systemd supervision")
+  const check = Bun.spawn(
+    [settings.supervision.control, "--user", "show", "--property=MainPID", "--value", settings.supervision.unit],
+    { stdout: "pipe", stderr: "ignore" },
+  )
+  const [pid, code] = await Promise.all([new Response(check.stdout).text(), check.exited])
+  if (code !== 0 || Number(pid.trim()) !== process.pid)
+    throw new Error("Start maintenance through its configured parent systemd service")
+  return settings
 }
 
 function roundPrompt(root: string, directory: string, role: Role, id: string, events: unknown, timeout: number) {

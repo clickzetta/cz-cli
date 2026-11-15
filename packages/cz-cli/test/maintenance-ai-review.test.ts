@@ -84,14 +84,16 @@ else if(args.at(-1).endsWith('/reviews')) console.log(JSON.stringify([await Bun.
 else console.log(JSON.stringify({head:{sha:${JSON.stringify(head)}},state:'open'}));`,
       "codex-fixture": `if(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.CODEX_REVIEW_API_KEY) process.exit(20);
 const args=process.argv.slice(2); await Bun.stdin.text();
-await Bun.write(args[args.indexOf('--output-last-message')+1],JSON.stringify({reviewedSha:${JSON.stringify(head)},summary:'Reviewed source; no tests executed',findings:[{path:'a.ts',line:1,severity:'HIGH',confidence:'high',body:'Concrete fixture finding'}]}));
+const summary=process.env.CODEX_HOME.includes('/escaped/')?'private-fixture-key':'Reviewed source; no tests executed';
+const response=JSON.stringify({reviewedSha:${JSON.stringify(head)},summary,findings:[{path:'a.ts',line:1,severity:'HIGH',confidence:'high',body:'Concrete fixture finding'}]});
+await Bun.write(args[args.indexOf('--output-last-message')+1],response.replaceAll('-',String.fromCharCode(92)+'u002d'));
 console.log(JSON.stringify({type:'turn.completed'}));`,
     })) {
       const file = path.join(directory, name)
       await Bun.write(file, `#!${process.execPath}\n${body}`)
       chmodSync(file, 0o700)
     }
-    const execute = async (dry: boolean, suffix: string) => {
+    const execute = async (dry: boolean, suffix: string, expectedCode = 0) => {
       const child = Bun.spawn(
         [process.execPath, path.resolve(import.meta.dir, "../../../scripts/maintenance/ai-review.ts")],
         {
@@ -120,9 +122,15 @@ console.log(JSON.stringify({type:'turn.completed'}));`,
         new Response(child.stderr).text(),
         child.exited,
       ])
-      expect(stderr + ` exit=${code}`).toContain("exit=0")
+      expect(code).toBe(expectedCode)
+      if (code !== 0) {
+        expect(stdout + stderr).not.toContain("private-fixture-key")
+        return { rejected: true }
+      }
       return JSON.parse(stdout)
     }
+    expect((await execute(false, "escaped", 1)).rejected).toBe(true)
+    expect(await Bun.file(posted).exists()).toBe(false)
     expect((await execute(true, "dry")).dryRun).toBe(true)
     expect(await Bun.file(posted).exists()).toBe(false)
     expect((await execute(false, "real")).findings).toBe(1)

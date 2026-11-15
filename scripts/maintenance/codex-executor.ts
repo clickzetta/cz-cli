@@ -9,7 +9,8 @@ export type CodexSettings = {
   home: string
   model?: string
   profile?: string
-  sandbox: "read-only" | "workspace-write" | "danger-full-access"
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access"
+  permissionProfile?: string
   timeoutSeconds: number
   supervision?: { run: string; control: string; unit: string; environmentFile: string }
 }
@@ -22,14 +23,20 @@ export function codexSettings(value: unknown): CodexSettings {
     !path.isAbsolute(settings.binary) ||
     typeof settings.home !== "string" ||
     !path.isAbsolute(settings.home) ||
-    !["read-only", "workspace-write", "danger-full-access"].includes(settings.sandbox ?? "") ||
+    (settings.permissionProfile === undefined
+      ? !["read-only", "workspace-write", "danger-full-access"].includes(settings.sandbox ?? "")
+      : settings.sandbox !== undefined ||
+        typeof settings.permissionProfile !== "string" ||
+        !settings.permissionProfile.trim()) ||
     !Number.isInteger(settings.timeoutSeconds) ||
     settings.timeoutSeconds! < 60 ||
     settings.timeoutSeconds! > 7200 ||
     (settings.model !== undefined && (typeof settings.model !== "string" || !settings.model.trim())) ||
     (settings.profile !== undefined && (typeof settings.profile !== "string" || !settings.profile.trim()))
   )
-    throw new Error("native.codex requires absolute binary/home, explicit sandbox and timeoutSeconds (60..7200)")
+    throw new Error(
+      "native.codex requires absolute binary/home, one explicit sandbox or permissionProfile and timeoutSeconds (60..7200)",
+    )
   if (
     settings.supervision &&
     (!path.isAbsolute(settings.supervision.run ?? "") ||
@@ -62,16 +69,17 @@ export async function executeCodex(input: {
   chmodSync(path.join(directory, "prompt.txt"), 0o600)
   const events = createWriteStream(path.join(directory, "events.jsonl"), { mode: 0o600 })
   const errors = createWriteStream(path.join(directory, "stderr.log"), { mode: 0o600 })
-  const args = [
-    "-c",
-    'approval_policy="never"',
-    "exec",
-    "--json",
-    "--sandbox",
-    input.settings.sandbox,
-    "--output-last-message",
-    output,
-  ]
+  const args = ["-c", 'approval_policy="never"', "exec", "--json", "--output-last-message", output]
+  // --sandbox selects the legacy policy and overrides named permission profiles.
+  if (input.settings.permissionProfile)
+    args.push(
+      "-c",
+      `default_permissions=${JSON.stringify(input.settings.permissionProfile)}`,
+      "--ignore-rules",
+      "--strict-config",
+    )
+  else if (input.settings.sandbox) args.push("--sandbox", input.settings.sandbox)
+  else throw new Error("Codex execution requires an explicit permission boundary")
   if (input.settings.model) args.push("--model", input.settings.model)
   if (input.settings.profile) args.push("--profile", input.settings.profile)
   if (input.schema) args.push("--output-schema", input.schema)

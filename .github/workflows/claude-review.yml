@@ -11,16 +11,16 @@ on:
         description: Validate without publishing a review
         default: true
         type: boolean
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "packages/**"
       - "infra/**"
       - "script/**"
       - "scripts/**"
-      - ".github/codex-review-prompt.md"
       - ".github/workflows/claude-review.yml"
       - "!**/*.md"
+      - ".github/codex-review-prompt.md"
       - "!**/*.txt"
       - "!**/dist/**"
       - "!**/node_modules/**"
@@ -75,6 +75,9 @@ jobs:
             const file = Bun.file(process.env.GITHUB_OUTPUT);
             await Bun.write(file, await file.text() + `head=${pr.head.sha}\nbase=${pr.base.sha}\n`);
           '
+      # Match Codex Action's default privilege reduction on an ephemeral runner.
+      - name: Remove passwordless privilege escalation
+        run: sudo rm -f /etc/sudoers.d/runner /usr/bin/sudo /bin/sudo
       - name: Review immutable head and publish validated inline findings
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

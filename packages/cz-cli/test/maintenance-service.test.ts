@@ -164,6 +164,15 @@ test("stopping an executor terminates it and reports an interrupted result", asy
 test("Codex configuration rejects incomplete or implicit permission settings", () => {
   expect(() => codexSettings({ binary: "codex" })).toThrow()
   expect(() => codexSettings({ binary: "/bin/codex", home: "/private/home", timeoutSeconds: 60 })).toThrow()
+  expect(() =>
+    codexSettings({
+      binary: "/bin/codex",
+      home: "/private/home",
+      timeoutSeconds: 60,
+      sandbox: "read-only",
+      permissionProfile: "review",
+    }),
+  ).toThrow()
 })
 
 test("cancelling a fired timer removes only its unclaimed wakeup", () => {

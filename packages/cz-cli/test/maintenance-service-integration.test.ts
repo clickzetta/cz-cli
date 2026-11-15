@@ -62,7 +62,8 @@ test("supervised rounds serialize, survive restart and retain durable followups"
       gh: "console.log('[]')",
       "systemd-run-fixture":
         "const args=process.argv.slice(2);const child=Bun.spawn(args.slice(args.indexOf('--')+1),{stdin:'inherit',stdout:'inherit',stderr:'inherit'});process.exit(await child.exited)",
-      "systemctl-fixture": "console.log(process.argv.includes('--property=MainPID') ? process.ppid : 'LoadState=not-found\\nActiveState=inactive')",
+      "systemctl-fixture":
+        "console.log(process.argv.includes('--property=MainPID') ? process.ppid : 'LoadState=not-found\\nActiveState=inactive')",
       "lark-cli": "console.log(JSON.stringify({ok:true,identity:'user',data:{items:[],has_more:false}}))",
       "codex-fixture": `import {mkdirSync,rmdirSync} from 'node:fs';
 const output=process.argv[process.argv.indexOf('--output-last-message')+1]; await Bun.stdin.text();
@@ -129,10 +130,22 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
     )
     const second = start()
     await waitFor(() => store.status().runs.filter((run) => run.status === "completed").length === 3)
-    second.kill("SIGTERM")
-    expect(await second.exited).toBe(0)
     expect(store.status().runs.every((run) => run.status === "completed")).toBe(true)
     expect(store.status().timers.length).toBe(2)
+
+    // Reloaded configuration must never downgrade a production round to a bare process.
+    const config = await Bun.file(path.join(runtime, "config.json")).json()
+    delete config.native.codex.supervision
+    await Bun.write(path.join(runtime, "config.json"), JSON.stringify(config))
+    store.enqueue("worker", "changed-configuration", "Reconcile configuration")
+    expect(await second.exited).toBe(0)
+    expect(store.status().runs.filter((run) => run.status === "completed").length).toBe(3)
+    const failed = store.status().runs.find((run) => run.status === "failed")
+    expect(failed).toBeDefined()
+    expect(Bun.file(path.join(runtime, "control/runs", failed!.id, "events.jsonl")).size).toBe(0)
+    expect(store.status().roles).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: "worker", paused: expect.any(String) })]),
+    )
   } finally {
     children.forEach((child) => {
       if (child.exitCode === null) child.kill("SIGTERM")
