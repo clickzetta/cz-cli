@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { ServiceStore } from "../../../scripts/maintenance/service-store"
@@ -133,13 +133,30 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
     expect(store.status().runs.every((run) => run.status === "completed")).toBe(true)
     expect(store.status().timers.length).toBe(2)
 
+    // A broken source must remain unacknowledged without preventing another role from running.
+    store.pause("worker", "Source failure acceptance")
+    const ledger = path.join(runtime, "intake/github.json")
+    const original = await Bun.file(ledger).text()
+    const missing = "0".repeat(64)
+    await Bun.write(ledger, JSON.stringify({ ...JSON.parse(original), pending: [missing] }))
+    store.enqueue("curator", "healthy-role", "Continue independent curation")
+    await waitFor(() => store.status().runs.filter((run) => run.status === "completed").length === 4)
+    expect(second.exitCode).toBeNull()
+    const diagnostic = path.join(runtime, "control/intake-github-error.json")
+    expect((await Bun.file(diagnostic).json()).error).toContain(missing)
+    expect(statSync(diagnostic).mode & 0o777).toBe(0o600)
+    expect((await Bun.file(ledger).json()).pending).toEqual([missing])
+    await Bun.write(ledger, original)
+    store.resume("worker", "Restored the source fixture; no external effects occurred")
+    await waitFor(() => store.status().runs.filter((run) => run.status === "completed").length === 5)
+
     // Reloaded configuration must never downgrade a production round to a bare process.
     const config = await Bun.file(path.join(runtime, "config.json")).json()
     delete config.native.codex.supervision
     await Bun.write(path.join(runtime, "config.json"), JSON.stringify(config))
     store.enqueue("worker", "changed-configuration", "Reconcile configuration")
     expect(await second.exited).toBe(0)
-    expect(store.status().runs.filter((run) => run.status === "completed").length).toBe(3)
+    expect(store.status().runs.filter((run) => run.status === "completed").length).toBe(5)
     const failed = store.status().runs.find((run) => run.status === "failed")
     expect(failed).toBeDefined()
     expect(Bun.file(path.join(runtime, "control/runs", failed!.id, "events.jsonl")).size).toBe(0)

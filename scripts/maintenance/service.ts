@@ -74,8 +74,8 @@ async function serve(store: ServiceStore, directory: string) {
                 store.enqueue("worker", `intake:${source}:${event.key}`, `${source} input ${event.key}`),
               )
               store.health(source, Date.now())
-            } catch {
-              store.health(source, Date.now(), "Intake failed; inspect source access and private runtime records")
+            } catch (error) {
+              await sourceFailure(store, directory, source, error)
             }
           }),
         )
@@ -83,10 +83,16 @@ async function serve(store: ServiceStore, directory: string) {
       if (!state.active && !signal.signal.aborted) {
         const runtime = await loadRuntime()
         const pending = await Promise.all(
-          (["github", "feishu"] as const).map((source) => pendingIntake(directory, source)),
+          (["github", "feishu"] as const).map(async (source) => {
+            try {
+              return await pendingIntake(directory, source)
+            } catch (error) {
+              await sourceFailure(store, directory, source, error)
+            }
+          }),
         )
         const busy = runtime.tasks.some((task) => ["pending", "running", "review"].includes(task.status))
-        store.discardIdleWorkerTicks(!busy && pending.every((source) => source.pending.length === 0))
+        store.discardIdleWorkerTicks(!busy && pending.every((source) => source?.pending.length === 0))
         const run = store.claim(Date.now())
         if (run) {
           state.active = (async () => {
@@ -145,6 +151,22 @@ async function serve(store: ServiceStore, directory: string) {
     store.release(token)
   }
   return { stopped: true, restartRequired: state.restart }
+}
+
+async function sourceFailure(store: ServiceStore, directory: string, source: string, error: unknown) {
+  const detail = Object.entries(process.env)
+    .filter(([key, value]) => /TOKEN|PASSWORD|SECRET|AUTH|KEY/i.test(key) && value)
+    .reduce(
+      (text, [, value]) => text.replaceAll(value!, "[REDACTED]"),
+      error instanceof Error ? (error.stack ?? error.message) : String(error),
+    )
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+  await Bun.write(
+    path.join(directory, "control", `intake-${source}-error.json`),
+    JSON.stringify({ source, at: new Date().toISOString(), error: detail }),
+    { mode: 0o600 },
+  )
+  store.health(source, Date.now(), `Intake failed; inspect private control/intake-${source}-error.json`)
 }
 
 async function supervisedSettings(native: { codex?: unknown; scheduleMode?: string } | undefined) {
