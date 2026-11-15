@@ -52,7 +52,9 @@ test("a non-401 API error mentioning 401 is not an auth error", () => {
 })
 
 test("a real 401 API error is AUTH_ERROR", () => {
-  expect(classifyExecError(new ClickZettaApiError("HTTP_401", "HTTP 401: token is invalid", 401)).code).toBe("AUTH_ERROR")
+  expect(classifyExecError(new ClickZettaApiError("HTTP_401", "HTTP 401: token is invalid", 401)).code).toBe(
+    "AUTH_ERROR",
+  )
 })
 
 test("a non-401 failure mentioning 401 does not rotate the credential or resubmit the SQL", async () => {
@@ -79,5 +81,115 @@ test("a genuine 401 rotates and resubmits exactly once at the exec level", async
     expect(s.requests.filter((p) => p.includes("submitJob"))).toHaveLength(2)
   } finally {
     s.server.stop(true)
+  }
+})
+
+for (const maxRetries of [0, undefined]) {
+  test(`polling 401 never replays admitted SQL (retries: ${maxRetries ?? "default"})`, async () => {
+    const submissions: { id: string; sql: string }[] = []
+    const polls: string[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const body = await req.json()
+        if (new URL(req.url).pathname === "/lh/submitJob") {
+          submissions.push({ id: body.jobDesc.jobId.id, sql: body.jobDesc.sqlJob.query[0] })
+          return Response.json({ status: { state: "RUNNING" } })
+        }
+        if (new URL(req.url).pathname === "/lh/getJob") {
+          polls.push(body.getResultRequest.jobId.id)
+          return new Response("expired", { status: 401 })
+        }
+        // Cancellation is acknowledged but remains unconfirmed.
+        return Response.json({})
+      },
+    })
+    try {
+      const { ctx, rotations } = context(`http://localhost:${server.port}`)
+      ctx.clientOpts.maxRetries = maxRetries
+      const error = await execSqlWithRetry(ctx, "insert into t values (1)").catch((error: unknown) => error)
+      expect(error).toBeInstanceOf(ClickZettaApiError)
+      expect(classifyExecError(error).code).toBe("AUTH_ERROR")
+      expect(submissions).toHaveLength(1)
+      expect(submissions[0]?.sql).toContain("insert into t values (1)")
+      expect(polls.length).toBeGreaterThan(0)
+      expect(new Set(polls)).toEqual(new Set([submissions[0]!.id]))
+      if (maxRetries === 0) expect(rotations).toHaveLength(0)
+    } finally {
+      server.stop(true)
+    }
+  })
+}
+
+test("transport rotation polls the same job with the returned credential", async () => {
+  const submissions: string[] = []
+  const polls: { id: string; token: string | null; cookie: string | null }[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = await req.json()
+      if (new URL(req.url).pathname === "/lh/submitJob") {
+        submissions.push(body.jobDesc.jobId.id)
+        return Response.json({ status: { state: "RUNNING" } })
+      }
+      polls.push({
+        id: body.getResultRequest.jobId.id,
+        token: req.headers.get("x-clickzetta-token"),
+        cookie: req.headers.get("cookie"),
+      })
+      if (polls.length === 1) return new Response("expired", { status: 401 })
+      return Response.json({ status: { state: "SUCCEED" } })
+    },
+  })
+  try {
+    const { ctx } = context(`http://localhost:${server.port}`)
+    ctx.clientOpts.maxRetries = undefined
+    const rejected: Credential[] = []
+    ctx.clientOpts.tokens = {
+      get: async () => ({ token: "old", headers: { Cookie: "old-cookie" }, userId: 1, instanceId: 1 }),
+      rotate: async (credential) => {
+        rejected.push(credential)
+        // Deliberately do not persist: the transport must use the return value.
+        return { token: "fresh", headers: { Cookie: "fresh-cookie" }, userId: 1, instanceId: 1 }
+      },
+    }
+    expect((await execSqlWithRetry(ctx, "insert into t values (1)")).status).toBe("SUCCEEDED")
+    expect(submissions).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]?.token).toBe("old")
+    expect(polls).toEqual([
+      { id: submissions[0]!, token: "old", cookie: "old-cookie" },
+      { id: submissions[0]!, token: "fresh", cookie: "fresh-cookie" },
+    ])
+  } finally {
+    server.stop(true)
+  }
+})
+
+test("a rejected submission recovers through its own token source", async () => {
+  const tokens: (string | null)[] = []
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      tokens.push(req.headers.get("x-clickzetta-token"))
+      if (tokens.length === 1) return new Response("expired", { status: 401 })
+      return Response.json({ status: { state: "SUCCEED" } })
+    },
+  })
+  try {
+    const { ctx } = context(`http://localhost:${server.port}`)
+    const credential = { token: "old", userId: 1, instanceId: 1 }
+    ctx.clientOpts.tokens = {
+      get: async () => credential,
+      rotate: async (rejected) => {
+        expect(rejected).toBe(credential)
+        credential.token = "fresh"
+        return credential
+      },
+    }
+    expect((await execSqlWithRetry(ctx, "select 1")).status).toBe("SUCCEEDED")
+    expect(tokens).toEqual(["old", "fresh"])
+  } finally {
+    server.stop(true)
   }
 })

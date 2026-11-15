@@ -117,7 +117,7 @@ function retryableSubmitCode(raw: unknown): string | undefined {
   return typeof respStatus?.errorCode === "string" && respStatus.errorCode ? respStatus.errorCode : undefined
 }
 
-export async function execSql(
+async function executeSql(
   ctx: ExecContext,
   sql: string,
   opts?: {
@@ -127,6 +127,7 @@ export async function execSql(
     configStatements?: string[]
     onJobId?: (id: string) => void
   },
+  onAdmitted?: () => void,
 ): Promise<QueryResult | ExecResult> {
   const normalizedSql = sql + "\n;"
   const timezone = opts?.hints?.["cz.sql.timezone"]
@@ -167,6 +168,7 @@ export async function execSql(
       if (status && status >= 400 && status < 500 && ![408, 409, 429].includes(status)) disposition = "terminal"
       throw error
     })
+    onAdmitted?.()
     if (opts?.asynchronous) {
       disposition = "detached"
       return { jobId: jobId.id, status: "RUNNING" as const }
@@ -205,6 +207,10 @@ export async function execSql(
   } finally {
     await lease.finish(disposition)
   }
+}
+
+export function execSql(ctx: ExecContext, sql: string, opts?: Parameters<typeof executeSql>[2]) {
+  return executeSql(ctx, sql, opts)
 }
 
 /** Name the abort cause; classifyExecError maps "timed out" to JOB_TIMEOUT and other codes verbatim. */
@@ -295,8 +301,8 @@ function errorCode(err: unknown) {
 }
 
 /**
- * Execute SQL with automatic 401 retry. On an HTTP 401, rotates the credential
- * through the context's token source and re-runs the statement once.
+ * Retry a rejected submission once after credential rotation. Once admitted,
+ * authentication recovery belongs to the transport for the existing job.
  */
 export async function execSqlWithRetry(
   ctx: ExecContext,
@@ -309,14 +315,18 @@ export async function execSqlWithRetry(
     onJobId?: (id: string) => void
   },
 ): Promise<QueryResult | ExecResult> {
+  let admitted = false
   try {
-    return await execSql(ctx, sql, opts)
+    return await executeSql(ctx, sql, opts, () => {
+      admitted = true
+    })
   } catch (err) {
-    if (!isAuthError(err)) throw err
+    // Polling, result decoding and volume transfer failures must never replay SQL.
+    if (admitted || !isAuthError(err)) throw err
     // Only an HTTP 401 reaches here, and the transport has already offered its
     // own single rotation for that request: the source could not rotate, the
     // rotated credential was rejected too, or the 401 came on the last attempt.
-    // Ask the source once more and re-run the whole statement once; a source
+    // Before admission only, ask the source once more and retry once; a source
     // with no rotation path returns undefined and the original 401 stands.
     // clientOpts needs no patching: its source re-reads the rotated token on
     // the next request.
