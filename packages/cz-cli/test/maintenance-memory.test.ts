@@ -311,7 +311,9 @@ describe("maintenance memory evidence", () => {
     expect(distinct.find((result) => result.exitCode !== 0)?.stderr).toContain("Conflicting memory record")
     const queue = await pendingMemory(data.directory)
     expect(queue.pendingCount).toBe(2)
-    expect(["first claim", "second claim"]).toContain(queue.pending.find((item) => item.id === "racing-event")?.summary)
+    const winner = queue.pending.find((item) => item.id === "racing-event")
+    expect(winner).toBeDefined()
+    expect(["first claim", "second claim"]).toContain(winner!.summary)
   })
 
   test("CLI records, lists and resolves evidence in the repository runtime", async () => {

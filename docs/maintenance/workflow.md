@@ -8,7 +8,7 @@ Follow [AGENTS.md](../../AGENTS.md). Use `gh` for GitHub and `lark-cli` for the 
 
 - Both roles share `cz-maintenance/` under `git rev-parse --git-common-dir`; `config.json`, `native-handoff.md`, `claims/`, `tasks/` and `control/` live there. Run `init` to index legacy tasks and `status` to inspect tasks, permissions and receipts. Preserve legacy state, configuration, cursors and worktrees; new progress/source mappings use `native-state.json`. Legacy executor/interval fields do not schedule native jobs.
 - Read `config.json.permissions` each round. Existing authorization covers task-branch pushes, PRs, original-thread GitHub/Bot replies, guarded merges and nightly releases. Keep `release: false`, `releaseNightly: true`, `releaseStable: false`; Bot replies stay in the bound original group/thread. Check each external action's authorization.
-- The control checkout (`native.maintenanceRoot`) is a clean clone on `main`. Each wake starts with `sync ROLE`, which fast-forwards it to `origin/main`, refuses local edits or another branch, and lists in `changedRules` the rule and note files that changed since that role last confirmed a read; reread those, then confirm with `rules-read ROLE SHA`. Start loops/subagents and invoke maintenance tools there; edit/test source in the task worktree. Keep source and release SHAs distinct.
+- The control checkout (`native.maintenanceRoot`) is a clean clone on `main`. Each role round starts with `sync ROLE`, which fast-forwards it to `origin/main`, refuses local edits or another branch, and lists in `changedRules` the rule and note files that changed since that role last confirmed a read; reread those, then confirm with `rules-read ROLE SHA`. Start loops/subagents and invoke maintenance tools there; edit/test source in the task worktree. Keep source and release SHAs distinct.
 - Develop maintenance/docs changes in an exclusive worktree from updated `origin/main`. After independent review, open a PR and merge it with `gh pr merge --admin --squash`; the next `sync` makes it live. Keep maintenance changes out of product-fix diffs. A rule change takes effect on the next wake, including for tasks already in progress.
 - On takeover, read all of `native-handoff.md`, not its tail: pending actions sit in the middle, the closing summary may not repeat them. Then reconcile actual tasks, delegates and receipts with `status`. Reuse IDs, worktrees and source mappings. Historical summaries cannot override current authorization, completion receipts or satisfied release conditions.
 - Each task records sources, acceptance criteria, owner, worktree, `baseSha`, `headSha`, `reviewedSha`, validation, review outcome, external actions, blockers and next steps. Link cross-channel reports of the same problem to it. Use `task github:<owner>/<repo>:<number>` or `task lark:<chat_id>:<message_id>`; `register ITEM.json` deduplicates sources and `save TASK.json` saves progress. Keep task bodies and temporary JSON private.
@@ -25,23 +25,13 @@ If a product decision still affects contracts, data visibility or authorization,
 
 ## Wakeups and monitoring
 
-At startup, recovery and every wakeup, inspect native Monitor tasks and `lark-cli event status --current --json`. Verify [event prerequisites](INDEX.md#feishu-prerequisites); granting Monitor access does not start a listener.
+The [Codex service](codex.md) owns scheduling and intake. It scans GitHub and Feishu every minute, persists wakeups and timers, and serializes bounded model rounds. A busy, paused or failed model does not stop source scans. Do not create native Cron/Monitor jobs, persistent delegates, competing coordinators or duplicate scans from a service-owned round. Read `service status` for source health and pending work; failed reads never count as coverage.
 
-Check the current `Monitor`/`TaskStop` definitions, using `ToolSearch` if needed. Run the official native binary in `config.json.native.larkBinary`, not an npm wrapper that loses stop signals. Verify the current schema before using:
+The Worker reconciliation timer runs every five minutes and the Curator timer every day. Worker ticks are discarded when no input or active task needs work. Save future checks as durable one-shot followups before ending a round. Delegates must finish and their final reports must be read within that round; save unfinished work and waits in the handoff. Scheduling can lag during outages or long rounds; intervals are not response guarantees.
 
-```sh
-LARK_BINARY event consume im.message.receive_v1 --as bot --timeout 1500s --jq 'select(.chat_id=="CHAT_ID")'
-```
+The service uses Feishu history polling and does not claim a live long connection. Legacy Claude deployments used native Monitor and `watch github`; those jobs and consumers must be stopped before service takeover. Do not send Feishu test or diagnostic messages. See [Feishu prerequisites](INDEX.md#feishu-prerequisites) when restoring a live event listener in a future design.
 
-Replace both placeholders; the Monitor timeout is 1800000 ms. Local `ready` is insufficient: verify upstream `connected` and a real target-group event before calling event intake usable.
-
-Keep one listener per group; record owner, task ID and expiry in runtime `control/`. Check task liveness, CLI status and connection logs. Before expiry or after disconnection, stop the old task with `TaskStop`, confirm consumer exit, then replace it and run `intake feishu` to fill the gap. Read event-targeted threads first using stable source IDs; run full scans in the background, never duplicate a same-source scan. Failed/incomplete reads do not count as checked. Events grant no new authority.
-
-Watch GitHub the same way: run `bun scripts/maintenance.ts watch github 1500` under a Monitor with a 1800000 ms timeout. It polls issues, issue comments, and review comments every minute, prints one line per new or edited human event, skips bot accounts such as AI review, and backs off while GitHub is unreachable. Its lines only wake you; `intake github` still records and acknowledges every event. Replace it before it ends, as with the Feishu listener. A new watcher only looks back one minute, so events during a gap between watchers produce no line; the next `intake github` scan still records them.
-
-Keep one five-minute Worker backstop for both sources and one daily Curator job. Use `CronList` to remove obsolete duplicates; quiet periods, blockers or healthy listeners do not extend the backstop. Delegate long implementation to bounded background agents and read new feedback at safe boundaries. Track listener and scan health separately, continue scans while repairing the listener, and report degradation honestly. Native scheduling can lag; five minutes is a scan interval, not a response guarantee. Keep diagnostics private; do not send Feishu test or diagnostic messages.
-
-Each role checks its job's liveness, creation and actual expiry on every wakeup. Renew one day before the expiry reported by the installed CLI, preserving the handoff and unique owner.
+A provider error, timeout or interrupted execution pauses that role. Intake continues. Before `service resume`, reconcile task worktrees, delegates, PRs, releases, outgoing replies and ambiguous receipts, then record what was checked. Restarting the daemon does not clear a role pause or replay a provider turn.
 
 <a id="推进一项任务"></a>
 

@@ -1,0 +1,136 @@
+import { expect, test } from "bun:test"
+import { chmodSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { changedLines, validateReview } from "../../../scripts/maintenance/ai-review"
+
+const diff = `diff --git a/a.ts b/a.ts
+--- a/a.ts
++++ b/a.ts
+@@ -2,2 +2,3 @@
+-old
++new
++added
+ context
+@@ -20,0 +22 @@
++last
+`
+
+test("AI review comments must target the exact reviewed head and changed lines", () => {
+  const changed = changedLines(diff)
+  expect([...changed.get("a.ts")!]).toEqual([2, 3, 22])
+  const review = {
+    reviewedSha: "abc",
+    summary: "Reviewed the diff",
+    findings: [{ path: "a.ts", line: 3, severity: "HIGH", confidence: "high", body: "A concrete issue" }],
+  }
+  expect(validateReview(review, "abc", changed).findings[0]).toMatchObject({ line: 3, side: "RIGHT" })
+  expect(() => validateReview(review, "other-head", changed)).toThrow()
+  expect(() => validateReview({ ...review, findings: [{ ...review.findings[0], line: 4 }] }, "abc", changed)).toThrow()
+  expect(() =>
+    validateReview({ ...review, findings: [{ ...review.findings[0], path: "../private" }] }, "abc", changed),
+  ).toThrow()
+  expect(() =>
+    validateReview({ ...review, findings: [{ ...review.findings[0], confidence: "certain" }] }, "abc", changed),
+  ).toThrow()
+})
+
+test("an explicitly empty review is valid without manufacturing findings", () => {
+  expect(
+    validateReview(
+      { reviewedSha: "head", summary: "No supported findings; tests not run", findings: [] },
+      "head",
+      new Map(),
+    ).findings,
+  ).toEqual([])
+})
+
+test("AI review runner withholds GitHub credentials, validates output and deduplicates delivery", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "ai-review-integration-"))
+  const upstream = path.join(directory, "upstream")
+  const root = path.join(directory, "control")
+  const run = async (args: string[], cwd = directory) => {
+    const child = Bun.spawn(args, { cwd, stdout: "pipe", stderr: "pipe" })
+    const [stdout, error, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    expect(error + ` exit=${code}`).toContain("exit=0")
+    return stdout.trim()
+  }
+  try {
+    await run(["git", "init", "--initial-branch=main", upstream])
+    for (const file of [
+      ".github/codex-review-prompt.md",
+      ".github/claude-review-context.md",
+      "packages/cz-cli/UPSTREAM-PATCHES.md",
+      "a.ts",
+    ])
+      await Bun.write(path.join(upstream, file), "trusted base\n")
+    await run(["git", "add", "."], upstream)
+    await run(["git", "-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "base"], upstream)
+    const base = await run(["git", "rev-parse", "HEAD"], upstream)
+    await run(["git", "clone", "--quiet", upstream, root])
+    await Bun.write(path.join(upstream, "a.ts"), 'throw new Error("PR code must never execute")\n')
+    await run(["git", "add", "."], upstream)
+    await run(["git", "-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "head"], upstream)
+    const head = await run(["git", "rev-parse", "HEAD"], upstream)
+    const posted = path.join(directory, "posted.json")
+    for (const [name, body] of Object.entries({
+      gh: `const args=process.argv.slice(2); const file=${JSON.stringify(posted)};
+if(args.includes('POST')) { await Bun.write(file,await Bun.file(args.at(-1)).text()); console.log('{}'); }
+else if(args.at(-1).endsWith('/reviews')) console.log(JSON.stringify([await Bun.file(file).exists()?[{body:JSON.parse(await Bun.file(file).text()).body,user:{login:'github-actions[bot]'}}]:[]]));
+else console.log(JSON.stringify({head:{sha:${JSON.stringify(head)}},state:'open'}));`,
+      "codex-fixture": `if(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.CODEX_REVIEW_API_KEY) process.exit(20);
+const args=process.argv.slice(2); await Bun.stdin.text();
+await Bun.write(args[args.indexOf('--output-last-message')+1],JSON.stringify({reviewedSha:${JSON.stringify(head)},summary:'Reviewed source; no tests executed',findings:[{path:'a.ts',line:1,severity:'HIGH',confidence:'high',body:'Concrete fixture finding'}]}));
+console.log(JSON.stringify({type:'turn.completed'}));`,
+    })) {
+      const file = path.join(directory, name)
+      await Bun.write(file, `#!${process.execPath}\n${body}`)
+      chmodSync(file, 0o700)
+    }
+    const execute = async (dry: boolean, suffix: string) => {
+      const child = Bun.spawn(
+        [process.execPath, path.resolve(import.meta.dir, "../../../scripts/maintenance/ai-review.ts")],
+        {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            GH_TOKEN: "github-token-not-for-model",
+            GITHUB_REPOSITORY: "example/repo",
+            REVIEW_PR_NUMBER: "1",
+            REVIEW_HEAD_SHA: head,
+            REVIEW_BASE_SHA: base,
+            RUNNER_TEMP: path.join(directory, suffix),
+            CODEX_BINARY: path.join(directory, "codex-fixture"),
+            CODEX_REVIEW_API_KEY: "private-fixture-key",
+            CODEX_REVIEW_BASE_URL: "https://fixture.invalid/v1",
+            CODEX_REVIEW_MODEL: "fixture",
+            CODEX_REVIEW_DRY_RUN: String(dry),
+          },
+        },
+      )
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect(stderr + ` exit=${code}`).toContain("exit=0")
+      return JSON.parse(stdout)
+    }
+    expect((await execute(true, "dry")).dryRun).toBe(true)
+    expect(await Bun.file(posted).exists()).toBe(false)
+    expect((await execute(false, "real")).findings).toBe(1)
+    const receipt = await Bun.file(posted).text()
+    expect(JSON.parse(receipt)).toMatchObject({ commit_id: head, comments: [{ path: "a.ts", line: 1, side: "RIGHT" }] })
+    expect((await execute(false, "retry")).duplicate).toBe(true)
+    expect(await Bun.file(posted).text()).toBe(receipt)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 30000)

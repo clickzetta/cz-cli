@@ -10,10 +10,7 @@ opencode: most packages are upstream code carried forward, while the
 ClickZetta-specific work lives in `packages/cz-cli`,
 `packages/clickzetta-sdk`, and `packages/clickzetta-ai-gateway`.
 
-`AGENTS.md` at the repo root is inherited from upstream and still says the
-default branch is `dev` — that line is wrong for this fork; ignore it. The rest
-of `AGENTS.md` (the Style Guide section) does apply, so read it when a change
-looks stylistically unusual.
+`AGENTS.md` applies. This ClickZetta fork uses `main`; upstream uses `dev`.
 
 ## Cross-package imports — raise as a question, not a violation
 

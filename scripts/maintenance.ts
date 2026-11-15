@@ -11,6 +11,10 @@ import { watchGithub } from "./maintenance/watch"
 export async function main(args = Bun.argv.slice(2)) {
   if (args[0] === "sync" && args.length <= 2) return syncControl(process.cwd(), args[1])
   if (args[0] === "rules-read" && args.length === 3) return acknowledgeRules(process.cwd(), args[1], args[2])
+  if (args[0] === "service") {
+    const { serviceCommand } = await import("./maintenance/service")
+    return serviceCommand(args.slice(1))
+  }
   const runtime = await loadRuntime()
   const action = args[0] ?? "status"
   if (action === "memory") {
@@ -163,7 +167,7 @@ export async function main(args = Bun.argv.slice(2)) {
     })
   }
   throw new Error(
-    "Use: sync [worker|curator] | rules-read ROLE SHA | init | status | memory record FILE | memory pending | memory resolve ID FILE | watch github SECONDS | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
+    "Use: service status|run|pause|resume|followup|cancel | sync [worker|curator] | rules-read ROLE SHA | init | status | memory record FILE | memory pending | memory resolve ID FILE | watch github SECONDS | intake SOURCE | intake pending SOURCE | intake show SOURCE KEY | intake ack SOURCE KEY [--task ID] [--note TEXT] | task ID_OR_SOURCE | register ITEM.json | save TASK.json | reply TASK PHASE --event EVENT --text-file FILE [--send] | merge TASK PR [--merge] | nightly VERSION SHA [--publish] | nightly-status SHA",
   )
 }
 

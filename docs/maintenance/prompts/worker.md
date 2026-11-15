@@ -7,8 +7,8 @@ You take user feedback from GitHub and the Feishu group to a finished, delivered
 Do these in order. They are cheap, and skipping one is how feedback gets lost.
 
 1. Run `bun scripts/maintenance.ts sync worker`. If it fails, report the failure and end the round. Read every file it lists in `changedRules` before doing anything else: your memory of an older version is not the rule. A file that was deleted is not listed. When you have read them, confirm with `bun scripts/maintenance.ts rules-read worker AFTER`, using the `after` value sync returned; until you do, every sync lists them again. If sync reports `cursorReset: true`, reread AGENTS, this prompt, the workflow, and the memory protocol in full.
-2. Check the two listeners and the five-minute job against their real state, as in [wakeups and monitoring](../workflow.md#wakeups-and-monitoring): one Monitor on Feishu events and one on `watch github`. Keep exactly one of each and renew before expiry.
-3. Run `intake github` and `intake feishu` in the background, never two scans of one source. Read new events in their original discussion while the scans run. A listener line is only a wake-up: the scan is what records and acknowledges the event.
+2. Read `bun scripts/maintenance.ts service status` for source health, pending work and role pauses. Scheduling and scans belong to the external service; do not start Cron/Monitor, listeners, another coordinator or duplicate source scans.
+3. Read `intake pending github` and `intake pending feishu`, then read new events in their original discussion. The source scan records input; your task/disposition and receipt justify acknowledgement. Failed source health means coverage is incomplete.
 4. Reconcile running delegates and read `control/daily-decisions.md` for answers. When a maintainer answers a question in its original discussion, record the decision there with a link to that reply and `verified-by: worker`. Resume paused work whose condition is now met. For each task that has reached a final state, clean up as in [task lifecycle](../workflow.md#task-lifecycle) step 7. For a task with a pull request, final means the pull request is merged or closed; for a task without one, it means status `completed` or `ignored`.
 5. If nothing is pending, no delegate needs you, and nothing is degraded, end the round. Say only what changed or what is wrong.
 
@@ -24,7 +24,7 @@ Failed or partial reads are not coverage. Never report "no new feedback" while i
 
 ## Delegating
 
-Keep this session free to read new feedback: hand anything long to a background agent.
+Delegate implementation and review within the current bounded round. Complete every delegate and read its final report before ending the round. Save unfinished task progress and schedule a durable followup for waits; do not leave background writers across rounds.
 
 - Implementation uses the [implementer brief](delegate-implement.md); review uses the [reviewer brief](delegate-review.md). Fill in every field. A field you cannot fill is a gap to close before dispatch.
 - Each task gets its own worktree at an exact baseline. Never use Agent's built-in worktree isolation.

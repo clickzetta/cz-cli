@@ -9,7 +9,18 @@ afterEach(() => directories.splice(0).forEach((directory) => rmSync(directory, {
 
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn(
-    ["git", "-C", cwd, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Sync", "-c", "user.email=s@example.test", ...args],
+    [
+      "git",
+      "-C",
+      cwd,
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "user.name=Sync",
+      "-c",
+      "user.email=s@example.test",
+      ...args,
+    ],
     { stdout: "pipe", stderr: "pipe" },
   )
   const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited])
@@ -176,4 +187,16 @@ test("sync fails when origin is unreachable", async () => {
   const repo = await setup()
   await git(repo.control, "remote", "set-url", "origin", path.join(repo.upstream, "missing"))
   await expect(syncControl(repo.control)).rejects.toThrow("git fetch failed")
+})
+
+test("module memories and indexes are reported until explicitly read", async () => {
+  const repo = await setup()
+  await syncControl(repo.control, "worker")
+  await commitRule(repo.upstream, "docs/cli/pitfalls.md", "A corrected SQL constraint")
+  await commitRule(repo.upstream, "docs/INDEX.md", "Updated reading paths")
+  const result = await syncControl(repo.control, "worker")
+  expect(result.changedRules).toEqual(["docs/INDEX.md", "docs/cli/pitfalls.md"])
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual(result.changedRules)
+  await acknowledgeRules(repo.control, "worker", result.after)
+  expect((await syncControl(repo.control, "worker")).changedRules).toEqual([])
 })
