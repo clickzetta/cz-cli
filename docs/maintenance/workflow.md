@@ -62,6 +62,8 @@ bun scripts/maintenance.ts intake ack github EVENT_KEY --note 'Duplicate; origin
 
 `--task` must exist; supply at least `--task` or `--note`. Fetching only queues input; it does not finish processing. Keep unread/unhandled items pending across rounds and never report “no new feedback” while they remain. Blocked implementation must not stop other intake/replies.
 
+Each source has one scan owner. Network pagination holds a separate scan lock so Workers can acknowledge existing input during a slow scan. Publication briefly locks and rereads the current ledger, preserving acknowledgements before adding new input and advancing the fetched cursor. A failed fetch never publishes partial input or rolls back an acknowledgement. Stop previous scanner processes before upgrading the intake implementation.
+
 Read Feishu as the authorized user; reply as the Bot already in the group. Route all Bot replies through maintenance's `lark-cli im +messages-reply --reply-in-thread --idempotency-key` wrapper and outbox. Phase values are protocol literals: `接单`, `阻碍`, `审查完成`, `发布完成`.
 
 ```sh
