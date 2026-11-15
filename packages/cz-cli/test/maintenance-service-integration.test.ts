@@ -11,7 +11,7 @@ test("supervised rounds serialize, survive restart and retain durable followups"
   const control = path.join(directory, "control")
   const command = path.resolve(import.meta.dir, "../../../scripts/maintenance.ts")
   const children: ReturnType<typeof Bun.spawn>[] = []
-  const env = { ...process.env, PATH: `${directory}:${process.env.PATH}` }
+  const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, CZ_TEST_API_KEY: "0".repeat(64) }
   const run = async (args: string[], cwd = directory) => {
     const child = Bun.spawn(args, { cwd, env, stdout: "pipe", stderr: "pipe" })
     const [out, error, code] = await Promise.all([
@@ -143,7 +143,8 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
     await waitFor(() => store.status().runs.filter((run) => run.status === "completed").length === 4)
     expect(second.exitCode).toBeNull()
     const diagnostic = path.join(runtime, "control/intake-github-error.json")
-    expect((await Bun.file(diagnostic).json()).error).toContain(missing)
+    expect((await Bun.file(diagnostic).json()).error).toContain("[REDACTED]")
+    expect((await Bun.file(diagnostic).json()).error).not.toContain(missing)
     expect(statSync(diagnostic).mode & 0o777).toBe(0o600)
     expect((await Bun.file(ledger).json()).pending).toEqual([missing])
     await Bun.write(ledger, original)
@@ -152,6 +153,7 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
 
     // Reloaded configuration must never downgrade a production round to a bare process.
     const config = await Bun.file(path.join(runtime, "config.json")).json()
+    const supervision = config.native.codex.supervision
     delete config.native.codex.supervision
     await Bun.write(path.join(runtime, "config.json"), JSON.stringify(config))
     store.enqueue("worker", "changed-configuration", "Reconcile configuration")
@@ -160,9 +162,24 @@ rmdirSync(${JSON.stringify(path.join(directory, "model-lock"))});`,
     const failed = store.status().runs.find((run) => run.status === "failed")
     expect(failed).toBeDefined()
     expect(Bun.file(path.join(runtime, "control/runs", failed!.id, "events.jsonl")).size).toBe(0)
+    const roundDiagnostic = path.join(runtime, "control/runs", failed!.id, "error.json")
+    expect((await Bun.file(roundDiagnostic).json()).error).toContain("per-round systemd supervision")
+    expect(statSync(roundDiagnostic).mode & 0o777).toBe(0o600)
     expect(store.status().roles).toEqual(
       expect.arrayContaining([expect.objectContaining({ role: "worker", paused: expect.any(String) })]),
     )
+
+    // A startup sync failure also preserves a private cause without launching a model.
+    config.native.codex.supervision = supervision
+    await Bun.write(path.join(runtime, "config.json"), JSON.stringify(config))
+    await run(["git", "remote", "set-url", "origin", path.join(directory, env.CZ_TEST_API_KEY)], control)
+    const third = start()
+    expect(await third.exited).toBe(1)
+    const startupDiagnostic = path.join(runtime, "control/service-error.json")
+    expect((await Bun.file(startupDiagnostic).json()).error).toContain("git fetch failed")
+    expect((await Bun.file(startupDiagnostic).json()).error).not.toContain(env.CZ_TEST_API_KEY)
+    expect(statSync(startupDiagnostic).mode & 0o777).toBe(0o600)
+    expect(await new Response(third.stderr).text()).not.toContain(env.CZ_TEST_API_KEY)
   } finally {
     children.forEach((child) => {
       if (child.exitCode === null) child.kill("SIGTERM")

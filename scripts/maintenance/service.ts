@@ -118,11 +118,13 @@ async function serve(store: ServiceStore, directory: string) {
               store.finish(run.id, result, Date.now())
               if (result.unsafe) signal.abort()
               store.health(`model:${run.role}`, Date.now(), result.detail)
-            } catch {
+            } catch (error) {
               signal.abort()
+              const file = `runs/${run.id}/error.json`
+              await writeDiagnostic(directory, file, error)
               store.finish(
                 run.id,
-                { success: false, detail: "Round failed; inspect run evidence and reconcile before resume" },
+                { success: false, detail: `Round failed; inspect private control/${file} and reconcile before resume` },
                 Date.now(),
               )
               store.health(`model:${run.role}`, Date.now(), "Round failed")
@@ -143,6 +145,9 @@ async function serve(store: ServiceStore, directory: string) {
         if (signal.signal.aborted) done()
       })
     }
+  } catch (error) {
+    await writeDiagnostic(directory, "service-error.json", error)
+    throw new Error("Maintenance startup or scheduling failed; inspect private control/service-error.json")
   } finally {
     signal.abort()
     await state.active
@@ -154,19 +159,23 @@ async function serve(store: ServiceStore, directory: string) {
 }
 
 async function sourceFailure(store: ServiceStore, directory: string, source: string, error: unknown) {
+  await writeDiagnostic(directory, `intake-${source}-error.json`, error)
+  store.health(source, Date.now(), `Intake failed; inspect private control/intake-${source}-error.json`)
+}
+
+async function writeDiagnostic(directory: string, file: string, error: unknown) {
   const detail = Object.entries(process.env)
-    .filter(([key, value]) => /TOKEN|PASSWORD|SECRET|AUTH|KEY/i.test(key) && value)
+    .filter(([key, value]) => /TOKEN|PASSWORD|SECRET|AUTH|KEY|PROXY|(?:^|_)URL$/i.test(key) && value)
     .reduce(
       (text, [, value]) => text.replaceAll(value!, "[REDACTED]"),
       error instanceof Error ? (error.stack ?? error.message) : String(error),
     )
     .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
   await Bun.write(
-    path.join(directory, "control", `intake-${source}-error.json`),
-    JSON.stringify({ source, at: new Date().toISOString(), error: detail }),
+    path.join(directory, "control", file),
+    JSON.stringify({ at: new Date().toISOString(), error: detail }),
     { mode: 0o600 },
   )
-  store.health(source, Date.now(), `Intake failed; inspect private control/intake-${source}-error.json`)
 }
 
 async function supervisedSettings(native: { codex?: unknown; scheduleMode?: string } | undefined) {
