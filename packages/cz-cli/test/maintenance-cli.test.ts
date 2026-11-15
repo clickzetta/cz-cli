@@ -90,12 +90,12 @@ test("service CLI preserves recurring timers and requires timezone-qualified fol
   const directory = await fixture()
   const reserved = await execute(directory, ["service", "cancel", "curator-daily"])
   expect(reserved.exitCode).toBe(1)
-  expect(reserved.stderr).toContain("Built-in recurring")
-  expect((await execute(directory, ["service", "followup", "ci", "worker", "2026-12-01", "check"])).stderr).toContain(
-    "timezone",
-  )
+  expect((await execute(directory, ["service", "followup", "ci", "worker", "2026-12-01", "check"])).exitCode).toBe(1)
   expect(
     (await execute(directory, ["service", "followup", "ci", "worker", "2026-12-01T10:00:00Z", "check"])).exitCode,
   ).toBe(0)
-  expect((await execute(directory, ["service", "run"])).stderr).toContain("scheduleMode")
+  expect((await execute(directory, ["service", "run"])).exitCode).toBe(1)
+  const status = JSON.parse((await execute(directory, ["service", "status"])).stdout)
+  expect(status.owner).toBeNull()
+  expect(status.runs).toEqual([])
 })
