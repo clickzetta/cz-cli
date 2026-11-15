@@ -85,3 +85,17 @@ test("CLI rejects malformed delivery options before a write can occur", async ()
   expect(result.stderr).toContain("repeated reply option")
   expect(await Bun.file(path.join(directory, ".git", "cz-maintenance", "outbox")).exists()).toBe(false)
 })
+
+test("service CLI preserves recurring timers and requires timezone-qualified followups", async () => {
+  const directory = await fixture()
+  const reserved = await execute(directory, ["service", "cancel", "curator-daily"])
+  expect(reserved.exitCode).toBe(1)
+  expect(reserved.stderr).toContain("Built-in recurring")
+  expect((await execute(directory, ["service", "followup", "ci", "worker", "2026-12-01", "check"])).stderr).toContain(
+    "timezone",
+  )
+  expect(
+    (await execute(directory, ["service", "followup", "ci", "worker", "2026-12-01T10:00:00Z", "check"])).exitCode,
+  ).toBe(0)
+  expect((await execute(directory, ["service", "run"])).stderr).toContain("scheduleMode")
+})

@@ -61,7 +61,7 @@ async function pendingRules(root: string, before: string, after: string, role?: 
 async function changedRules(root: string, from: string, to: string) {
   if (from === to) return []
   // Deleted files are left out: there is nothing to reread.
-  return (await git(root, "diff", "--name-only", "--diff-filter=d", from, to, "--", "AGENTS.md", "docs/maintenance"))
+  return (await git(root, "diff", "--name-only", "--diff-filter=d", from, to, "--", "AGENTS.md", "docs"))
     .split("\n")
     .filter(Boolean)
 }

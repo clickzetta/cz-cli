@@ -49,6 +49,10 @@ jobs:
         working-directory: packages/cz-cli
         run: bun run typecheck
 
+      - name: Typecheck maintenance tools and tests
+        working-directory: packages/cz-cli
+        run: bun run typecheck --project tsconfig.tools.json
+
       - name: Run cz-cli unit tests
         working-directory: packages/cz-cli
         # test script runs with --isolate: several suites (e.g.

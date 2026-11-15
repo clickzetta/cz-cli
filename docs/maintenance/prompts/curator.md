@@ -21,7 +21,7 @@ Places where work went worse than it had to, and where a written note would have
 
 Go to the original material. Summaries, statuses, and an empty queue tell you little.
 
-- **Session transcripts** of the Worker, its delegates, and your own past runs, under the Claude config directory's `projects/`. Read only the project directories whose names encode the control checkout or the task worktree root; other projects on the machine are not yours to open. This is where detours, retries, and skipped steps are visible, and nowhere else.
+- **Session transcripts** of the Worker, its delegates, and your own past runs, under runtime `control/runs/*/events.jsonl` and the dedicated Codex home's `sessions/`. Historical Claude transcripts remain under the dedicated Claude config directory's `projects/`. Read only the project directories whose names encode the control checkout or the task worktree root; other projects on the machine are not yours to open. This is where detours, retries, and skipped steps are visible, and nowhere else.
 - **GitHub**: issues, pull requests, comments, reviews, inline comments, and CI runs since your last coverage point, read in full, not just their state.
 - **Feishu threads** already captured under runtime `intake/`, and the replies in the outbox.
 - **Runtime records**: tasks, review outcomes, `memory pending`, and `control/daily-decisions.md`.
