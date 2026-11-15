@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync } from "node:fs"
 import path from "node:path"
-import { executeCodex } from "./codex-executor"
+import { executeReview } from "./review-executor"
 
 export function validateReview(value: unknown, sha: string, changed: Map<string, Set<number>>) {
   if (!value || typeof value !== "object") throw new Error("Review is not an object")
@@ -112,6 +112,8 @@ export async function runReview() {
   const home = path.join(directory, "codex")
   const source = path.join(directory, "source")
   mkdirSync(home, { recursive: true, mode: 0o700 })
+  chmodSync(directory, 0o700)
+  chmodSync(home, 0o700)
   const key = required("CODEX_REVIEW_API_KEY")
   const url = required("CODEX_REVIEW_BASE_URL")
   const model = required("CODEX_REVIEW_MODEL")
@@ -200,20 +202,16 @@ export async function runReview() {
     `Read ${path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md")} for the trusted patch ledger.`,
     "Inspect the diff using git and read full surrounding files; do not execute source.",
   ].join("\n")
-  const result = await executeCodex({
-    root: source,
-    directory,
-    id: head,
-    role: "worker",
+  const response = await executeReview({
+    binary: required("CODEX_BINARY"),
+    home,
+    source,
+    directory: path.join(directory, "run"),
+    model,
     schema,
-    settings: { binary: required("CODEX_BINARY"), home, model, permissionProfile: "review", timeoutSeconds: 900 },
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
     prompt,
-    signal: new AbortController().signal,
-    onThread: () => {},
   })
-  if (!result.success) throw new Error("Codex review failed; no review was posted")
-  const response = await Bun.file(path.join(directory, "control/runs", head, "response.txt")).text()
+  if (!response) throw new Error("Codex review failed; no review was posted")
   const review = validateReview(JSON.parse(response), head, changedLines(diff))
   // Never publish a credential even if untrusted source persuaded the model to repeat it.
   const secrets = [key, url, process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter((value): value is string => !!value)

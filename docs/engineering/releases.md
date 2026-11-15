@@ -5,9 +5,9 @@
 只有已合入 `main`、对应 SHA 的 `cz-test` 成功且发布代码包含渠道保护时，才能从控制 checkout 使用：
 
 ```sh
-bun scripts/maintenance.ts nightly VERSION MERGED_SHA
-bun scripts/maintenance.ts nightly VERSION MERGED_SHA --publish
-bun scripts/maintenance.ts nightly-status MERGED_SHA
+cz-maintenance nightly VERSION MERGED_SHA
+cz-maintenance nightly VERSION MERGED_SHA --publish
+cz-maintenance nightly-status MERGED_SHA
 ```
 
 首条命令仅预览。工具核对精确 SHA、CI、发布代码和 lineage，再推送一个绑定该 SHA 的 nightly tag，由现有 [release-cos](../../.github/workflows/release-cos.yml) 执行；不再重复 dispatch。发布回执和未知结果留在公共运行目录，先对账再继续。

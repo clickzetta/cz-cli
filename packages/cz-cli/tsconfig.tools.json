@@ -1,5 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": ["../../scripts/maintenance.ts", "../../scripts/maintenance/**/*.ts", "test/maintenance-*.test.ts"],
-  "exclude": ["node_modules"]
-}

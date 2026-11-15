@@ -10,7 +10,7 @@ Start with the original request and latest decisions. Read relevant notes, their
 
 Record an event whenever a person corrects or reverses your answer or change, a reviewer rejects work for a cause that could recur, the same failure appears a second time, or a note misled you or was missing. State **previous belief, evidence, next-time action, affected note**. Record usage when a note demonstrably avoided repeat work. Routine successful reads need no event.
 
-Create private JSON and run `bun scripts/maintenance.ts memory record FILE.json`:
+Create private JSON and run `cz-maintenance memory record FILE.json`:
 
 ```json
 {
@@ -43,7 +43,7 @@ For changed conclusions, scope, indexes, or pruning, run affected [offline cases
 
 Save document revision/diff, model, input, answer, reading path, and score. Compare versions only with matching models, inputs, permissions, and fresh sessions. Without a baseline, claim no percentage improvement. Offline runs make no external writes; real usage and correction events test continuing value.
 
-Curate in an exclusive worktree from updated `origin/main` and open a docs-only PR. After independent review, merge it with `gh pr merge --admin --squash` and run `bun scripts/maintenance.ts sync`. Agents pick it up on their next read: the control checkout tracks main and every new task worktree starts from it. **Recorded, reviewed, and merged are separate states.** Keep events pending until the merge.
+Curate in an exclusive worktree from updated `origin/main` and open a docs-only PR. After independent review, merge it with `gh pr merge --admin --squash` and run `cz-maintenance sync`. Agents pick it up on their next read: the control checkout tracks main and every new task worktree starts from it. **Recorded, reviewed, and merged are separate states.** Keep events pending until the merge.
 
 Then run `memory resolve ID FILE.json` with the merged main commit:
 

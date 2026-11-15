@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { changedLines, validateReview } from "../../../scripts/maintenance/ai-review"
+import { changedLines, validateReview } from "../ai-review"
 
 const diff = `diff --git a/a.ts b/a.ts
 --- a/a.ts
@@ -84,6 +84,7 @@ else if(args.at(-1).endsWith('/reviews')) console.log(JSON.stringify([await Bun.
 else console.log(JSON.stringify({head:{sha:${JSON.stringify(head)}},base:{sha:process.env.RUNNER_TEMP.endsWith('/stale-base')?'0'.repeat(40):${JSON.stringify(base)}},state:'open'}));`,
       "codex-fixture": `if(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.CODEX_REVIEW_API_KEY) process.exit(20);
 const args=process.argv.slice(2); await Bun.stdin.text();
+if(args.includes('--sandbox') || !args.includes('--strict-config') || !args.includes('--ignore-rules') || !args.includes('default_permissions="review"')) process.exit(21);
 const summary=process.env.CODEX_HOME.includes('/escaped/')?'private-fixture-key':'Reviewed source; no tests executed';
 const response=JSON.stringify({reviewedSha:${JSON.stringify(head)},summary,findings:[{path:'a.ts',line:1,severity:'HIGH',confidence:'high',body:'Concrete fixture finding'}]});
 await Bun.write(args[args.indexOf('--output-last-message')+1],response.replaceAll('-',String.fromCharCode(92)+'u002d'));
@@ -94,29 +95,26 @@ console.log(JSON.stringify({type:'turn.completed'}));`,
       chmodSync(file, 0o700)
     }
     const execute = async (dry: boolean, suffix: string, expectedCode = 0) => {
-      const child = Bun.spawn(
-        [process.execPath, path.resolve(import.meta.dir, "../../../scripts/maintenance/ai-review.ts")],
-        {
-          cwd: root,
-          stdout: "pipe",
-          stderr: "pipe",
-          env: {
-            ...process.env,
-            PATH: `${directory}:${process.env.PATH}`,
-            GH_TOKEN: "github-token-not-for-model",
-            GITHUB_REPOSITORY: "example/repo",
-            REVIEW_PR_NUMBER: "1",
-            REVIEW_HEAD_SHA: head,
-            REVIEW_BASE_SHA: base,
-            RUNNER_TEMP: path.join(directory, suffix),
-            CODEX_BINARY: path.join(directory, "codex-fixture"),
-            CODEX_REVIEW_API_KEY: "private-fixture-key",
-            CODEX_REVIEW_BASE_URL: "https://fixture.invalid/v1",
-            CODEX_REVIEW_MODEL: "fixture",
-            CODEX_REVIEW_DRY_RUN: String(dry),
-          },
+      const child = Bun.spawn([process.execPath, path.resolve(import.meta.dir, "../ai-review.ts")], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          GH_TOKEN: "github-token-not-for-model",
+          GITHUB_REPOSITORY: "example/repo",
+          REVIEW_PR_NUMBER: "1",
+          REVIEW_HEAD_SHA: head,
+          REVIEW_BASE_SHA: base,
+          RUNNER_TEMP: path.join(directory, suffix),
+          CODEX_BINARY: path.join(directory, "codex-fixture"),
+          CODEX_REVIEW_API_KEY: "private-fixture-key",
+          CODEX_REVIEW_BASE_URL: "https://fixture.invalid/v1",
+          CODEX_REVIEW_MODEL: "fixture",
+          CODEX_REVIEW_DRY_RUN: String(dry),
         },
-      )
+      })
       const [stdout, stderr, code] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),

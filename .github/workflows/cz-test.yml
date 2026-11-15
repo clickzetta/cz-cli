@@ -49,9 +49,12 @@ jobs:
         working-directory: packages/cz-cli
         run: bun run typecheck
 
-      - name: Typecheck maintenance tools and tests
-        working-directory: packages/cz-cli
-        run: bun run typecheck --project tsconfig.tools.json
+      - name: Verify Action AI review
+        working-directory: .github/scripts
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun typecheck
+          bun test --timeout 30000 test
 
       - name: Run cz-cli unit tests
         working-directory: packages/cz-cli
