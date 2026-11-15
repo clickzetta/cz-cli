@@ -31,7 +31,7 @@ The Worker reconciliation timer runs every five minutes and the Curator timer ev
 
 The service uses Feishu history polling and does not claim a live long connection. Legacy Claude deployments used native Monitor and `watch github`; those jobs and consumers must be stopped before service takeover. Do not send Feishu test or diagnostic messages. See [Feishu prerequisites](INDEX.md#feishu-prerequisites) when restoring a live event listener in a future design.
 
-A provider error, timeout or interrupted execution pauses that role. Intake continues. Before `service resume`, reconcile task worktrees, delegates, PRs, releases, outgoing replies and ambiguous receipts, then record what was checked. Restarting the daemon does not clear a role pause or replay a provider turn.
+A terminal provider failure, timeout or interrupted execution pauses that role. Codex's own recoverable stream notices stay within the current execution; only its confirmed completion can establish recovery. Intake continues. Before `service resume`, reconcile task worktrees, delegates, PRs, releases, outgoing replies and ambiguous receipts, then record what was checked. Restarting the daemon does not clear a role pause or replay a provider turn.
 
 <a id="推进一项任务"></a>
 
