@@ -49,8 +49,10 @@ export function changedLines(diff: string) {
       state.file = ""
       return
     }
-    if (!state.hunk && line.startsWith("+++ b/")) {
-      state.file = line.slice(6)
+    if (!state.hunk && line.startsWith("+++ ")) {
+      const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
+      if (!file.startsWith("b/")) return
+      state.file = file.slice(2)
       changed.set(state.file, new Set())
       return
     }
@@ -64,6 +66,32 @@ export function changedLines(diff: string) {
     if (state.hunk && line.startsWith(" ")) state.line++
   })
   return changed
+}
+
+function decodeGitPath(value: string) {
+  if (!value.startsWith('"')) return value
+  if (!value.endsWith('"')) throw new Error("Invalid Git pathname")
+  const escapes: Record<string, string> = {
+    a: "\x07",
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+    '"': '"',
+    "\\": "\\",
+  }
+  const encoder = new TextEncoder()
+  // Git C-quotes UTF-8 bytes with octal escapes, which JSON.parse cannot decode.
+  const bytes = (value.slice(1, -1).match(/\\(?:[0-7]{1,3}|.)|[^\\]+/g) ?? []).flatMap((token) => {
+    if (!token.startsWith("\\")) return [...encoder.encode(token)]
+    if (/^\\[0-7]{1,3}$/.test(token)) return [Number.parseInt(token.slice(1), 8)]
+    const character = escapes[token.slice(1)]
+    if (character === undefined) throw new Error("Invalid Git pathname escape")
+    return [...encoder.encode(character)]
+  })
+  return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes))
 }
 
 export async function runReview() {
@@ -110,7 +138,17 @@ export async function runReview() {
   chmodSync(path.join(home, "config.toml"), 0o600)
   await command(["git", "fetch", "--no-tags", "origin", head, base])
   await command(["git", "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", source, head])
-  const diff = await command(["git", "diff", "--no-ext-diff", "--no-renames", "--unified=0", `${base}...${head}`])
+  const diff = await command([
+    "git",
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-renames",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "--unified=0",
+    `${base}...${head}`,
+  ])
   const schema = path.join(directory, "schema.json")
   await Bun.write(
     schema,

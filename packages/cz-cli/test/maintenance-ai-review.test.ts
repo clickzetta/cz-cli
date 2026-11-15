@@ -152,3 +152,59 @@ test("addition lines beginning with plus signs are source, not diff headers", ()
     ).findings[0].line,
   ).toBe(2)
 })
+
+test("Git-generated Unicode, whitespace and escaped paths retain valid finding locations", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "review-git-paths-"))
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(["git", ...args], { cwd: directory, stdout: "pipe", stderr: "pipe" })
+    const [out, error, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    expect(error + ` exit=${code}`).toContain("exit=0")
+    return out
+  }
+  try {
+    await run(["init", "-q"])
+    const files = ["查询.sql", "tab\tname.ts", 'quote"name.ts', "back\\slash.ts", "space name.ts"]
+    await Promise.all(files.map((file) => Bun.write(path.join(directory, file), "++i\ndoWork()\n")))
+    await run(["add", "."])
+    const diff = await run([
+      "-c",
+      "core.quotePath=true",
+      "diff",
+      "--cached",
+      "--no-color",
+      "--no-ext-diff",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+    ])
+    const changed = changedLines(diff)
+    files.forEach((file) => {
+      expect([...changed.get(file)!]).toEqual([1, 2])
+      expect(
+        validateReview(
+          {
+            reviewedSha: "head",
+            summary: "Reviewed actual Git output",
+            findings: [
+              {
+                path: file,
+                line: 2,
+                severity: "HIGH",
+                confidence: "high",
+                body: "A concrete finding on the second line",
+              },
+            ],
+          },
+          "head",
+          changed,
+        ).findings[0].path,
+      ).toBe(file)
+    })
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
