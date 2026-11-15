@@ -8,6 +8,12 @@ SQL 维护同时检查 CLI 命令与 SDK 执行链，关注提交、轮询、取
 - [SDK 提交](../../packages/clickzetta-sdk/src/sql/submit.ts)、[轮询](../../packages/clickzetta-sdk/src/sql/poll.ts)、[取消](../../packages/clickzetta-sdk/src/sql/cancel.ts)。
 - [CLI 回归验证](../../packages/cz-cli/test/sql-cancellation.test.ts)、[SDK 取消验证](../../packages/clickzetta-sdk/test/cancel.test.ts)。
 
+## 认证恢复与提交边界
+
+`execSqlWithRetry` 只在提交被结构化 HTTP 401 拒绝、尚未成功接纳时，通过当前上下文自己的 token source 轮换并重试一次。提交成功后，轮询的认证恢复只由 SDK transport 在同一 Job ID 上处理；恢复失败时保留 `AUTH_ERROR` 并执行原作业的清理，不因轮询、结果解析或 Volume 传输的 401 重新提交 SQL。即使取消尚未确认，也不得创建另一作业。transport `maxRetries: 0` 时轮询 401 直接失败；默认重试允许轮换凭据后继续查询原作业。
+
+回归验证：[认证错误与提交边界](../../packages/cz-cli/test/exec-auth-error.test.ts)。
+
 ## 写入审批
 
 `cz-cli sql` 在执行前做字符串级检查，只用于防止误写，不能证明 SQL 无副作用。需要用户批准后加 `--write` 的情况：
