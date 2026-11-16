@@ -116,3 +116,14 @@ Required:
 - Preserve target, event, key, body, attempt time, unknown outcome, failed reconciliation, and next step in the handoff; do not mark sent/failed without evidence.
 
 Blockers: resending to force certainty; replacing the key; changing unknown to failed; inventing a message ID or success.
+
+## M09
+
+Required:
+
+- Reuse the supplied version and access limitation. Any additional customer measurement must have a specific unresolved purpose and an owner who can obtain it.
+- Advance the error-message improvement and internal installation checks using the available code evidence. Identify the installation details needed for customer-specific diagnosis without making them prerequisites for every part.
+- Scope the archive conclusion to the inspected downloads and verify same-version asset recovery before recommending an untested forced-update command as a working repair.
+- Write the support reply in English, answer the reporter's questions, and give a concrete next action.
+
+Blockers: asking for the known version without a reason; requiring the inaccessible reporter to execute customer commands; waiting for customer details before all work; presenting the untested repair as verified; authored reply text in another language.

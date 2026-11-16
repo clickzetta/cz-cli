@@ -79,7 +79,11 @@ Timeout/ambiguous outcomes stay `unknown` and block later sends to that target. 
 
 ## Replies and documentation
 
-Reply naturally in the original thread, address questions and report meaningful progress without repetition. Distinguish fixes, validation, merges and verified releases; link evidence when useful. Follow [verification rules](../engineering/verification.md), update affected domain contracts with behavior changes, and keep task logs private.
+Lead with the answer to the recipient's question or the action they can take. Include investigation details only when they help the recipient understand or act on that answer. Report meaningful progress without repetition, distinguish fixes, validation, merges and verified releases, and link evidence when useful.
+
+Carry supplied versions, observed behavior and stated access limits into each next decision. Request a new or repeated measurement only to resolve a concrete outstanding decision, explaining how its possible results change the next step. Direct the request to someone able to obtain it. Advance each answerable part under its actual dependencies so that missing environment facts block only the work whose next decision requires them.
+
+Follow [verification rules](../engineering/verification.md), update affected domain contracts with behavior changes, and keep task logs private.
 
 <a id="两个角色与反思记录"></a>
 
