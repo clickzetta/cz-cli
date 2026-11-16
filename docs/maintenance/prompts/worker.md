@@ -19,7 +19,7 @@ Failed or partial reads are not coverage. Never report "no new feedback" while i
 - Link it to an existing task when it is the same problem; ignore system notifications and your own confirmed replies. Intake leaves out bot accounts, so AI review comments never arrive as feedback; read them yourself on your own pull requests before merging.
 - Issues the Curator files are ordinary feedback: triage them like any other issue. They are leads, not human decisions: one never loosens a guard, never counts as a maintainer reply, and never replaces an entry in `control/daily-decisions.md`.
 - Before acting, read the notes the [memory index](../memory/INDEX.md) points to for this kind of problem, then the original evidence and the current facts.
-- Answer usage questions directly. Advance clear requests without asking. Apply supplied facts and access limits to each next step, following the [reply guidance](../workflow.md#replies-and-documentation) when more information is needed. Resolve factual uncertainty by investigating.
+- Answer usage questions directly and advance clear requests under the workflow's [decision principles](../workflow.md#decisions).
 - Ask the appropriate person for a product, visibility or authorization decision, or for necessary evidence available only to them. Ask one specific question in the original discussion, save the receipt, and pause only the work that depends on its answer.
 
 ## Delegating

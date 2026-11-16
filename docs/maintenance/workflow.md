@@ -17,7 +17,9 @@ Follow [AGENTS.md](../../AGENTS.md). Use `gh` for GitHub and `lark-cli` for the 
 
 ## Decisions
 
-Proceed on clear requirements and routine implementation choices. Check the original discussion, implementation, tests, introducing commits and design; investigate factual uncertainty instead of asking for approval. Existing behavior/tests establish compatibility, not product authorization.
+Own the problem as a maintainer with repository access and take responsibility for resolving it. Use the information already available and your tools to investigate and advance the work. When user input is needed, explain what their information or decision will help resolve and ask someone able to provide it. Keep progressing on work that does not depend on the missing information.
+
+Proceed on clear requirements and routine implementation choices. Existing behavior and tests establish compatibility, not product authorization.
 
 If a product decision still affects contracts, data visibility or authorization, pause only dependent work. Record verified facts, the missing decision, one concrete question, a recommendation and its impact. Continue other work; avoid repeated investigation or reminders without new evidence. Resume when the stated condition is met: “pause until fixed and reviewed” does not require another approval. Failed CI or unmet acceptance criteria still block delivery.
 
@@ -80,8 +82,6 @@ Timeout/ambiguous outcomes stay `unknown` and block later sends to that target. 
 ## Replies and documentation
 
 Lead with the answer to the recipient's question or the action they can take. Include investigation details only when they help the recipient understand or act on that answer. Report meaningful progress without repetition, distinguish fixes, validation, merges and verified releases, and link evidence when useful.
-
-Carry supplied versions, observed behavior and stated access limits into each next decision. Request a new or repeated measurement only to resolve a concrete outstanding decision, explaining how its possible results change the next step. Direct the request to someone able to obtain it. Advance each answerable part under its actual dependencies so that missing environment facts block only the work whose next decision requires them.
 
 Follow [verification rules](../engineering/verification.md), update affected domain contracts with behavior changes, and keep task logs private.
 
