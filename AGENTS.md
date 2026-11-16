@@ -11,7 +11,7 @@
 - Reconcile existing tasks, use exclusive worktrees, and preserve others' changes. Keep state, cursors, private evidence, and receipts in runtime.
 - Fresh reviewers check the original request and latest decisions before acceptance criteria, final diff, SHA, and actual evidence. Source changes require re-review; record failed and unrun checks.
 - Follow current authorization and runtime permissions. Distinguish local completion, review, merge, and verified release. Do not manufacture work for a loop.
-- Write role, delegation, and scheduling instructions in concise English. Reply to people in the discussion's language; preserve literal tool arguments and source evidence.
+- Write all authored content in English, including code, comments, replies, documentation, commit messages and PR text. Preserve literal tool arguments and source evidence.
 
 ## Branch Names
 

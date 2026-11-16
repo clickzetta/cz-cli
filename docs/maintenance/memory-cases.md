@@ -163,3 +163,22 @@ Time: 2026-11-10T10:30:00Z. The send timed out; the original thread was not chec
 Old handoff: retry with a new key so the user gets an answer.
 How should this be handled? Can you conclude that nothing was sent, and what should the next handoff preserve?
 ```
+
+## M09
+
+```text
+You own a support reply in a discussion written in Simplified Chinese. The operator requires authored content in English.
+
+fixture:report.txt
+The affected version is 2.0.8. `cz-cli mcp serve` fails with `Missing runtime asset: gateway.js`. The reporter has no access to the customer machine.
+The reporter asks whether the official package includes the asset, whether installation and upgrades preserve it, and whether the error should provide actionable repair instructions.
+
+fixture:investigation.txt
+The five inspected public download archives contain gateway.js beside the executable. Historical GitHub Release assets were not inspected. The resolver checks its source-tree candidate and the directory containing process.execPath, then reports only the asset name.
+Customer installation method, actual executable path and directory listing are unavailable. The inspected installer exits successfully when it finds the same version, without checking assets. A proposed forced-update repair has not been tested.
+
+fixture:handoff.txt
+The error-message improvement is small and safe, but wait for the customer's installation method before proposing or implementing it. Ask the reporter to run cz-cli --version and provide a directory listing.
+
+Assess the handoff. Draft a short support reply and identify the next work that can proceed with the available evidence.
+```
