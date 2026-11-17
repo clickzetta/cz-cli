@@ -242,12 +242,8 @@ async function tableExists(
 ): Promise<boolean> {
   const sql = checkTableSql(dsType, schema, table)
   if (!sql) return false
-  try {
-    const resp = await executeDatasourceSql(sc, datasourceId, sql)
-    return interpretExists(dsType, resp.data)
-  } catch {
-    return false
-  }
+  const resp = await executeDatasourceSql(sc, datasourceId, sql)
+  return interpretExists(dsType, resp.data)
 }
 
 async function schemaExists(
@@ -258,12 +254,8 @@ async function schemaExists(
 ): Promise<boolean> {
   const sql = checkSchemaSql(dsType, schema)
   if (!sql) return true // unsupported probe → assume present, don't block
-  try {
-    const resp = await executeDatasourceSql(sc, datasourceId, sql)
-    return interpretExists(dsType, resp.data)
-  } catch {
-    return false
-  }
+  const resp = await executeDatasourceSql(sc, datasourceId, sql)
+  return interpretExists(dsType, resp.data)
 }
 
 async function ensureSchema(
@@ -1115,8 +1107,24 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
                 error(code, hint, { format, exitCode: 2 })
                 return
               }
+            } else if (isEsSource) {
+              // getDdl converts ES metadata to Lakehouse types on the server. Paired
+              // metadata reads the sink table, so create it before requesting mapping.
+              await createSinkTableFromSource(
+                sc,
+                { id: sourceDs.id, dsType: sourceDs.dsType, schema: sourceSchema, table: sourceTable },
+                { id: sinkDs.id, dsType: sinkDs.dsType, schema: sinkSchema, table: sinkTable },
+                execOptions,
+                partitionColumn,
+                format,
+              )
+              meta = await getColumnMapMeta(
+                sc,
+                { dsType: sourceDs.dsType, id: sourceDs.id, schema: sourceSchema, table: sourceTable },
+                { dsType: sinkDs.dsType, id: sinkDs.id, schema: sinkSchema, table: sinkTable },
+              )
             } else if (schemalessSource) {
-              // Elasticsearch/Kafka sources can't produce a mirrorable DDL. Fetch column
+              // Kafka sources can't produce a mirrorable DDL. Fetch column
               // metadata first (it returns the typed Lakehouse sink columns), then build the
               // Lakehouse sink table from those columns.
               meta = await getColumnMapMeta(
