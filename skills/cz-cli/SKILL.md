@@ -35,6 +35,10 @@ You have no direct Lakehouse access. Always delegate via cz-cli.
 - Create offline batch sync tasks with Cron scheduling — single-table (task_type=10) or multi-table (task_type=291)
 - Manage sync task lifecycle: start, stop, offline, backfill, add tables, re-sync individual tables
 
+#### Ad-hoc task execution outcomes
+
+When `task execute` returns an error, retain `data.task_id`, `data.run_id` (when present), `data.submission_status`, and `data.execution_status`. `EXECUTE_TIMEOUT` means the CLI stopped waiting. `EXECUTE_STATUS_UNKNOWN` means a submitted run could not be read. `EXECUTE_SUBMISSION_UNKNOWN` means the request may have been accepted without returning an ID. Do not resubmit automatically: inspect the existing run or the task's TEMP runs first. `EXECUTE_FAILED` retains the failed run's identity. The SDK sends an ad-hoc submission only once.
+
 #### Offline integration sync (`cz-cli task integration`)
 Configure offline data-integration (batch sync) task content. Create the task skeleton first, then configure its content:
 
