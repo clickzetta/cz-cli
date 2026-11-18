@@ -25,6 +25,8 @@ import {
   recoverCdcTables,
   listRealtimeTasks,
   listPipelineTables,
+  queryTasksByTable,
+  type TableMatchType,
   parseTaskDependencyOut,
   startRealtimeTask,
   stopRealtimeTask,
@@ -455,6 +457,10 @@ async function resolveCdcPipelineId(sc: StudioConfig, task: string, format: stri
   return fileId
 }
 
+const TABLE_MATCH_TYPES: Record<string, TableMatchType> = { exact: "MATCH", like: "LIKE", prefix: "START_WITH", suffix: "END_WITH" }
+
+const PIPELINE_TYPE_NAMES: Record<number, string> = { 1: "MULTI_TABLE_MIRROR", 2: "MULTI_TABLE_MERGE", 3: "DATABASE_MIRROR" }
+
 function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
   const tableOp = (
     apiFn: (sc: StudioConfig, pipelineId: number, tableIds: (number | string)[], workspace: string) => Promise<{ data: unknown }>,
@@ -537,6 +543,64 @@ function registerCdcCommands(cdcYargs: Argv<GlobalArgs>): Argv<GlobalArgs> {
           })
           logOperation("task cdc tables", { ok: true })
           success({ task_id: fileId, tables: resp.data }, { format, rowsKey: "tables" })
+        } catch (err) {
+          reportTaskError(err, format)
+        }
+      },
+    )
+    .command(
+      "lookup",
+      "Find which realtime pipelines sync a source table, by datasource, database and table, across all tasks. One row per source table and pipeline; no rows means no task syncs it.",
+      (y) =>
+        y
+          .option("datasource", { type: "string", demandOption: true, describe: "Source datasource name or ID" })
+          .option("db", { type: "string", describe: "Source database (exact match)" })
+          .option("schema", { type: "string", describe: "Source schema, PostgreSQL only (exact match)" })
+          .option("table", { type: "string", demandOption: true, describe: "Source table name" })
+          .option("match", { type: "string", choices: Object.keys(TABLE_MATCH_TYPES), default: "exact", describe: "How --table is matched: exact, like (contains), prefix or suffix" })
+          .option("page", { type: "number", default: 1, describe: "Page index (default: 1)" })
+          .option("page-size", { type: "number", default: 20, describe: "Page size (default: 20, max: 200)" }),
+      async (argv) => {
+        const format = argv.format
+        try {
+          const pageSize = argv["page-size"] as number
+          if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+            error("INVALID_ARGUMENTS", "--page-size must be between 1 and 200", { format, exitCode: 2 })
+            return
+          }
+          const sc = await ctx(argv)
+          const ds = await resolveDatasource(sc, String(argv.datasource))
+          const exact = (value: unknown) => (value ? { type: "MATCH" as const, value: String(value) } : undefined)
+          const resp = await queryTasksByTable(sc, {
+            datasourceId: ds.id,
+            sourceDb: exact(argv.db),
+            sourceSchema: exact(argv.schema),
+            sourceTable: { type: TABLE_MATCH_TYPES[argv.match as string]!, value: String(argv.table) },
+            page: argv.page as number,
+            pageSize,
+          })
+          const data = resp.data ?? {}
+          const rows = (data.list ?? []).map((row) => ({
+            task_id: row.taskPipelineId,
+            task_name: row.taskName,
+            pipeline_type: PIPELINE_TYPE_NAMES[Number(row.pipelineType)] ?? row.pipelineType,
+            pipeline_status: row.pipelineStatus,
+            datasource_id: row.datasourceId,
+            source_db: row.sourceDb,
+            source_schema: row.sourceSchema,
+            source_table: row.sourceTable,
+            target_db: row.targetDb,
+            target_schema: row.targetSchema,
+            target_table: row.targetTable,
+            snapshot_task_status: row.snapshotTaskStatus,
+          }))
+          logOperation("task cdc lookup", { ok: true, rows: rows.length })
+          success(rows, {
+            format,
+            aiMessage: rows.length === 0 && (data.total ?? 0) === 0
+              ? `No pipeline syncs ${argv.table} of datasource '${ds.name}' (id ${ds.id}).`
+              : `Page ${argv.page}, showing ${rows.length} of ${data.total ?? rows.length} rows (one per source table and pipeline) for datasource '${ds.name}' (id ${ds.id}).`,
+          })
         } catch (err) {
           reportTaskError(err, format)
         }
