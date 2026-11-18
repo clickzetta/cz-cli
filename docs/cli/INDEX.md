@@ -10,6 +10,7 @@
 - [作业信息](jobs.md)：Job profile 的展示、原始输出和文件导出。
 - [文件操作](filesystem.md)：Volume 路径、传输和命令边界。
 - [Skill 安装](skills.md)：安装目标与命令行为。
+- [Datasource list](datasource-list.md)：按工作空间过滤、`scope` 字段、被过滤的总数，以及只做校验的 tenant / instance 参数。
 - [Analytics Agent](analytics-agent.md)：服务配置、知识库与对话。
 - [Data Agent](data-agent.md)：data_engineer 提示词、内置 skill 和写操作门。
 - [输出](output.md)：输出格式、错误结构和退出码。

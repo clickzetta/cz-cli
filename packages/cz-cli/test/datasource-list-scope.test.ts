@@ -33,6 +33,9 @@ const backendRows = [
     connectionParams: { host: "smb.example.com", port: "445" } },
   { id: 6, dsName: "hbase_d", dsType: 10, status: 1, relatedProjectIds: "41004",
     connectionParams: { quorum: "zk" } },
+  // No membership from the backend: kept, but never asserted to belong to the workspace.
+  { id: 7, dsName: "unknown_missing", dsType: 5, status: 1, connectionParams: { jdbcUrl: "jdbc:mysql://u1:3306" } },
+  { id: 8, dsName: "unknown_null", dsType: 5, status: 1, relatedProjectIds: null, connectionParams: { jdbcUrl: "jdbc:mysql://u2:3306" } },
 ]
 
 beforeEach(() => {
@@ -66,13 +69,16 @@ describe("datasource list scope", () => {
     expect(listBodies[0]!.workspace).toBe("wanxin_test_04")
   })
 
-  test("drops rows of other workspaces and marks shared ones", async () => {
+  test("drops rows of other workspaces, marks shared ones and keeps unknown membership explicit", async () => {
     const r = await execute("datasource list")
     const rows = rowsOf(r)
-    expect(rows.map((row) => row.id)).toEqual([1, 2, 3, 5, 6])
+    expect(rows.map((row) => row.id)).toEqual([1, 2, 3, 5, 6, 7, 8])
     expect(rows.find((row) => row.id === 2)!.scope).toBe("shared")
     expect(rows.find((row) => row.id === 1)!.scope).toBe("workspace")
     expect(rows.find((row) => row.id === 3)!.scope).toBe("workspace")
+    expect(rows.find((row) => row.id === 7)!.scope).toBe("unknown")
+    expect(rows.find((row) => row.id === 8)!.scope).toBe("unknown")
+    expect(parse(r).ai_message).toContain("2 row(s) carry no workspace membership")
     expect(parse(r).ai_message).toContain("Dropped 1 row")
     expect(parse(r).ai_message).toContain("project 41004")
   })
@@ -104,17 +110,17 @@ describe("datasource list scope", () => {
   test("accepts matching --tenant-id and --instance-id", async () => {
     const r = await execute("datasource list --tenant-id 10 --instance-id 86")
     expect(r.exitCode).toBe(0)
-    expect(rowsOf(r)).toHaveLength(5)
+    expect(rowsOf(r)).toHaveLength(7)
   })
 
-  test("rejects a different --tenant-id without calling the backend", async () => {
+  test("rejects a different --tenant-id without sending the datasource list request", async () => {
     const r = await execute("datasource list --tenant-id 11")
     expect(r.exitCode).not.toBe(0)
     expect((parse(r).error as Record<string, unknown>).code).toBe("SCOPE_MISMATCH")
     expect(listBodies).toHaveLength(0)
   })
 
-  test("rejects a different --instance-id without calling the backend", async () => {
+  test("rejects a different --instance-id without sending the datasource list request", async () => {
     const r = await execute("datasource list --instance-id 999")
     expect(r.exitCode).not.toBe(0)
     expect((parse(r).error as Record<string, unknown>).code).toBe("SCOPE_MISMATCH")

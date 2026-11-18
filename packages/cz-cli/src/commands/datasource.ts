@@ -601,6 +601,7 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             const fetched = (Array.isArray(data.list) ? data.list : Array.isArray(resp.data) ? resp.data : []) as Record<string, unknown>[]
             const list = fetched.filter((ds) => datasourceScope(ds.relatedProjectIds, sc.projectId) !== "other")
             const outOfScope = fetched.length - list.length
+            const unknownScope = list.filter((ds) => datasourceScope(ds.relatedProjectIds, sc.projectId) === "unknown").length
             const total = (data.total as number | undefined) ?? list.length
             const rows = list.map((ds) => {
               const url = datasourceUrl(ds.connectionParams)
@@ -610,7 +611,8 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
                 type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
                 status: ds.status,
                 url: argv["show-secrets"] ? url : maskSecrets(url),
-                scope: datasourceScope(ds.relatedProjectIds, sc.projectId) === "shared" ? "shared" : "workspace",
+                // Rows of other workspaces are filtered out above, so this is shared, workspace or unknown.
+                scope: datasourceScope(ds.relatedProjectIds, sc.projectId),
                 tenantId: ds.tenantId ?? sc.tenantId,
                 instanceId: ds.instanceId ?? sc.instanceId,
                 connectionParams: argv["show-secrets"] ? ds.connectionParams : maskSecrets(ds.connectionParams),
@@ -621,8 +623,9 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(rows, {
               format, timeMs: Date.now() - t0,
               aiMessage: `Tenant ${sc.tenantId}, instance ${sc.instanceName} (${sc.instanceId}), workspace ${sc.workspaceName} (project ${sc.projectId}). `
-                + `Page ${argv.page}, showing ${rows.length} of ${total} datasources; scope 'shared' means usable from every workspace.`
-                + (outOfScope > 0 ? ` Dropped ${outOfScope} row(s) the backend matched by id substring but that belong to other workspaces; the total may count them.` : ""),
+                + `Page ${argv.page}, showing ${rows.length} of ${total} datasources; scope 'shared' means usable from every workspace, 'unknown' means the backend gave no membership.`
+                + (outOfScope > 0 ? ` Dropped ${outOfScope} row(s) the backend matched by id substring but that belong to other workspaces; the total may count them.` : "")
+                + (unknownScope > 0 ? ` ${unknownScope} row(s) carry no workspace membership from the backend; their scope is 'unknown'.` : ""),
             })
           } catch (err) {
             logOperation("datasource list", { ok: false, timeMs: Date.now() - t0 })
