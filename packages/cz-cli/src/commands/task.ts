@@ -58,7 +58,7 @@ import { studioUrl } from "./studio-url.js"
 import { normalizeTaskIdentity } from "../identity.js"
 import { t } from "../locale.js"
 import { resolveConnectionConfig } from "../connection/config.js"
-import { resolveDatasource } from "./datasource.js"
+import { resolveDatasource, resolveWorkspaceLakehouseDatasource } from "./datasource.js"
 import { convertAgentCron, cronNextRuns, type CronResult } from "../cron-adapter.js"
 import { registerTaskIntegrationCommands } from "./integration.js"
 import {
@@ -343,18 +343,10 @@ async function checkCdcPrereqs(
   return { ok: true, message: "" } // other types: no check needed
 }
 
+/** The current workspace's Lakehouse datasource, for commands whose --target is omitted. */
 async function autoResolveLakehouseDs(sc: StudioConfig): Promise<{ id: number; name: string } | null> {
-  const resp = await studioRequest<{ list?: unknown[] }>(sc, "/ide-authority/v1/projectDataSources/list", {
-    current: 1, pageSize: 50, status: 1, pageIndex: 1, dsType: 1, projectName: sc.workspaceName,
-  })
-  const list = (resp.data as Record<string, unknown>)?.list as Record<string, unknown>[] | undefined ?? []
-  if (list.length === 0) return null
-  // Prefer datasource whose name contains the workspace name (e.g. LAKEHOUSE_quick_start for workspace quick_start)
-  const wsName = sc.workspaceName?.toLowerCase() ?? ""
-  const match = list.find((ds) => String(ds.dsName ?? "").toLowerCase().includes(wsName))
-    ?? list.find((ds) => String(ds.dsName ?? "").toUpperCase().startsWith("LAKEHOUSE_"))
-    ?? list[0]
-  return { id: Number(match.id), name: String(match.dsName ?? "LAKEHOUSE") }
+  const ds = await resolveWorkspaceLakehouseDatasource(sc)
+  return ds ? { id: ds.id, name: ds.name } : null
 }
 
 async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> {
@@ -870,9 +862,21 @@ async function resolveScheduleVc(sc: StudioConfig, argv: Record<string, unknown>
     ?? (oldData.etlVcCode as string | undefined)
     ?? "DEFAULT"
   const etlVcId = argv["vc-id"] != null
-    ? Number(argv["vc-id"])
+    ? parseVcId(argv["vc-id"])
     : (oldData.etlVcId as number | string | undefined) ?? await resolveVclusterId(sc, etlVcCode).catch(() => undefined)
   return { etlVcCode, etlVcId }
+}
+
+/**
+ * A virtual cluster ID from the command line, kept as a string: IDs are 64-bit and lose
+ * precision past Number.MAX_SAFE_INTEGER (2331822492426291798 would become ...700).
+ */
+export function parseVcId(value: unknown): string {
+  const id = String(value).trim()
+  if (!/^\d+$/.test(id)) {
+    handledError("INVALID_ARGUMENTS", `--vc-id must be a numeric virtual cluster ID, got '${id}'.`, { exitCode: 2 })
+  }
+  return id
 }
 
 function parseConfigProperties(value: unknown): Record<string, unknown> {
@@ -3274,9 +3278,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (p.paramKey && p.paramType === "manual") savedDefaults[p.paramKey] = p.paramValue
               }
             }
-            const params = Object.keys(cliParams).length > 0 || Object.keys(savedDefaults).length > 0
-              ? { ...savedDefaults, ...cliParams }
-              : undefined
+            // Always send an object: admin's adhoc execute reads params without a null check
+            // when paramList is empty, so omitting it fails tasks that take no parameters.
+            const params: Record<string, string> = { ...savedDefaults, ...cliParams }
             // Parse adhocConfigs for JDBC datasource binding
             const adhocConfigsRaw = data?.adhocConfigs ?? taskDetail?.adhocConfigs
             const adhocConfigs = (() => {
