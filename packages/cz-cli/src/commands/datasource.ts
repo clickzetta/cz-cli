@@ -53,7 +53,39 @@ const API = {
   SAMPLE: "/ide-authority/v1/projectDataSources/getSampleData",
 }
 
-async function apiList(sc: StudioConfig, opts: { dsName?: string; dsType?: number; page?: number; pageSize?: number }) {
+/**
+ * Connection param keys that hold an address, in priority order. A JDBC-style URL wins over
+ * host lists; types without any of them (HBase, DynamoDB, SharePoint) have no URL.
+ */
+const URL_KEYS = ["jdbcUrl", "url", "uri", "bootstrapServers", "hosts", "hostPortList", "hostAndPorts", "endpoint", "metaStoreSlbUrl", "metaStoreUrl"]
+
+/** Address of a datasource: the first address-like connection param, host lists joined by ",". */
+export function datasourceUrl(connectionParams: unknown): string | undefined {
+  const parsed = typeof connectionParams === "string" ? tryParseJson(connectionParams) : connectionParams
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined
+  const params = parsed as Record<string, unknown>
+  const address = URL_KEYS.map((key) => params[key])
+    .map((value) => (Array.isArray(value) ? value.filter((item) => typeof item === "string" && item).join(",") : value))
+    .find((value): value is string => typeof value === "string" && value !== "")
+  if (address) return address
+  return typeof params.host === "string" && params.host ? (params.port ? `${params.host}:${params.port}` : params.host) : undefined
+}
+
+/**
+ * Whether a datasource is usable from the project: shared with every workspace ("*") or bound
+ * to it. The backend matches the project id as a substring, so project 3360001 also matches
+ * 60001; this exact check removes those rows.
+ */
+export function datasourceScope(relatedProjectIds: unknown, projectId: number): "shared" | "workspace" | "other" | "unknown" {
+  if (typeof relatedProjectIds !== "string" || relatedProjectIds === "") return "unknown"
+  if (relatedProjectIds.trim() === "*") return "shared"
+  return relatedProjectIds.split(",").some((id) => id.trim() === String(projectId)) ? "workspace" : "other"
+}
+
+async function apiList(
+  sc: StudioConfig,
+  opts: { dsName?: string; dsType?: number; page?: number; pageSize?: number; scoped?: boolean },
+) {
   return studioRequest<{ list?: unknown[]; total?: number }>(sc, API.LIST, {
     current: opts.page ?? 1,
     pageSize: opts.pageSize ?? 20,
@@ -61,6 +93,9 @@ async function apiList(sc: StudioConfig, opts: { dsName?: string; dsType?: numbe
     pageIndex: opts.page ?? 1,
     dsName: opts.dsName,
     dsType: opts.dsType,
+    // Without projectId the backend lists every datasource of the tenant. Only `datasource list`
+    // asks for the workspace scope; name resolution for other commands keeps its tenant-wide search.
+    ...(opts.scoped && { projectId: sc.projectId, workspace: sc.workspaceName }),
     projectName: sc.workspaceName
   })
 }
@@ -533,6 +568,14 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             .option("type", { type: "string", describe: `Filter by type: ${Object.keys(DS_TYPE_MAP).join(", ")}` })
             .option("page", { type: "number", default: 1, describe: "Page number" })
             .option("page-size", { type: "number", default: 20, describe: "Items per page" })
+            .option("tenant-id", {
+              type: "number",
+              describe: "Expected tenant id. The tenant comes from the login and cannot be switched; the command fails with SCOPE_MISMATCH when it differs",
+            })
+            .option("instance-id", {
+              type: "number",
+              describe: "Expected instance id. Select the instance with --instance (name); the command fails with SCOPE_MISMATCH when its id differs",
+            })
             .option("show-secrets", {
               type: "boolean",
               default: false,
@@ -547,22 +590,39 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             if (argv.type && dsType === undefined) {
               error("INVALID_TYPE", `Unknown datasource type '${argv.type}'. Valid: ${Object.keys(DS_TYPE_MAP).join(", ")}`, { format }); return
             }
-            const resp = await apiList(sc, { dsName: argv.name, dsType, page: argv.page, pageSize: argv["page-size"] })
+            if (argv["tenant-id"] !== undefined && argv["tenant-id"] !== sc.tenantId) {
+              error("SCOPE_MISMATCH", `--tenant-id ${argv["tenant-id"]} does not match the logged-in tenant ${sc.tenantId}. The tenant is fixed by the login; use another profile to query another tenant.`, { format }); return
+            }
+            if (argv["instance-id"] !== undefined && argv["instance-id"] !== sc.instanceId) {
+              error("SCOPE_MISMATCH", `--instance-id ${argv["instance-id"]} does not match instance '${sc.instanceName}' (id ${sc.instanceId}). Select the instance with --instance <name>.`, { format }); return
+            }
+            const resp = await apiList(sc, { dsName: argv.name, dsType, page: argv.page, pageSize: argv["page-size"], scoped: true })
             const data = (resp.data && typeof resp.data === "object" ? resp.data : {}) as Record<string, unknown>
-            const list = (Array.isArray(data.list) ? data.list : Array.isArray(resp.data) ? resp.data : []) as Record<string, unknown>[]
+            const fetched = (Array.isArray(data.list) ? data.list : Array.isArray(resp.data) ? resp.data : []) as Record<string, unknown>[]
+            const list = fetched.filter((ds) => datasourceScope(ds.relatedProjectIds, sc.projectId) !== "other")
+            const outOfScope = fetched.length - list.length
             const total = (data.total as number | undefined) ?? list.length
-            const rows = list.map((ds) => ({
-              id: ds.id ?? ds.dsId,
-              name: ds.dsName ?? ds.name,
-              type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
-              status: ds.status,
-              connectionParams: argv["show-secrets"] ? ds.connectionParams : maskSecrets(ds.connectionParams),
-              testFailedReason:ds.testFailedReason
-            }))
+            const rows = list.map((ds) => {
+              const url = datasourceUrl(ds.connectionParams)
+              return {
+                id: ds.id ?? ds.dsId,
+                name: ds.dsName ?? ds.name,
+                type: DS_TYPE_NAMES[Number(ds.dsType)] ?? ds.dsType,
+                status: ds.status,
+                url: argv["show-secrets"] ? url : maskSecrets(url),
+                scope: datasourceScope(ds.relatedProjectIds, sc.projectId) === "shared" ? "shared" : "workspace",
+                tenantId: ds.tenantId ?? sc.tenantId,
+                instanceId: ds.instanceId ?? sc.instanceId,
+                connectionParams: argv["show-secrets"] ? ds.connectionParams : maskSecrets(ds.connectionParams),
+                testFailedReason: ds.testFailedReason,
+              }
+            })
             logOperation("datasource list", { ok: true, rows: rows.length, timeMs: Date.now() - t0 })
             success(rows, {
               format, timeMs: Date.now() - t0,
-              aiMessage: `Page ${argv.page}, showing ${rows.length} of ${total} datasources.`,
+              aiMessage: `Tenant ${sc.tenantId}, instance ${sc.instanceName} (${sc.instanceId}), workspace ${sc.workspaceName} (project ${sc.projectId}). `
+                + `Page ${argv.page}, showing ${rows.length} of ${total} datasources; scope 'shared' means usable from every workspace.`
+                + (outOfScope > 0 ? ` Dropped ${outOfScope} row(s) the backend matched by id substring but that belong to other workspaces; the total may count them.` : ""),
             })
           } catch (err) {
             logOperation("datasource list", { ok: false, timeMs: Date.now() - t0 })
