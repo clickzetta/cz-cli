@@ -81,6 +81,11 @@ export async function createDatasource(
   sc: StudioConfig,
   opts: { name: string; dsType: number; params: Record<string, unknown>; description?: string },
 ) {
+  // The command's name and description are the source of truth. A dsName or dsDesc in the params
+  // file would otherwise end up different from the top-level fields of the same request.
+  const params = { ...opts.params }
+  delete params.dsName
+  delete params.dsDesc
   return studioRequest<{ id?: number; dsName?: string; dsType?: number }>(sc, API.CREATE, {
     projectIds: String(sc.projectId),
     relatedProjectId: sc.projectId,
@@ -92,9 +97,9 @@ export async function createDatasource(
     // there next to dsName; the dsDesc field above only reaches the list and detail views.
     connectionParamsList: [{
       env: "prod",
-      connectionParam: JSON.stringify({ dsName: opts.name, ...(opts.description && { dsDesc: opts.description }), ...opts.params }),
+      connectionParam: JSON.stringify({ dsName: opts.name, ...(opts.description && { dsDesc: opts.description }), ...params }),
     }],
-  })
+  }, undefined, "POST", { redactBody: true })
 }
 
 export async function deleteDatasource(sc: StudioConfig, id: number) {
@@ -110,18 +115,22 @@ export async function uploadDatasourceFile(sc: StudioConfig, path: string, expir
   const file = Bun.file(path)
   if (!(await file.exists())) handledError("FILE_NOT_FOUND", `File not found: ${path}`)
   const form = new FormData()
-  // Bun would send a BunFile under its full local path; only the base name goes to storage.
-  form.append("file", new File([file], basename(path)))
+  // Copying the bytes matters: a File wrapped around the BunFile still goes out under the full
+  // local path on the wire, and only the base name should reach storage.
+  form.append("file", new File([await file.arrayBuffer()], basename(path)))
   const query = expireSeconds ? `?expireTimeSeconds=${expireSeconds}` : ""
   return studioRequest<string>(sc, `${API.UPLOAD}${query}`, form)
 }
 
 /** Connection JSON from a file, or from stdin with "-", so secrets stay out of argv and shell history. */
 export async function readParamsFile(path: string): Promise<Record<string, unknown>> {
+  if (path !== "-" && !(await Bun.file(path).exists())) handledError("FILE_NOT_FOUND", `File not found: ${path}`)
   const text = path === "-" ? await Bun.stdin.text() : await Bun.file(path).text()
-  const parsed: unknown = JSON.parse(text)
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    handledError("INVALID_PARAMS", "Connection params must be a JSON object.")
+  // The parser's own error can quote the value it stopped at, which is a credential here, so the
+  // message is fixed and says nothing about the content.
+  const parsed = tryParseJson(text)
+  if (!parsed || Array.isArray(parsed)) {
+    handledError("INVALID_PARAMS", "Connection params must be a valid JSON object. The file content is not shown.")
   }
   return parsed as Record<string, unknown>
 }
@@ -784,6 +793,9 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
               error("INVALID_TYPE", `Unknown datasource type '${argv.type}'. Valid: ${Object.keys(DS_TYPE_MAP).join(", ")}`, { format }); return
             }
             const params = await readParamsFile(argv["params-file"] as string)
+            if (JSON.stringify(maskSecrets(params)) !== JSON.stringify(params)) {
+              process.stderr.write("Warning: the credentials in the params file are sent as given and stored unencrypted by the backend. The Studio web page encrypts them before saving.\n")
+            }
             const sc = await getStudioContext(argv)
             const resp = await createDatasource(sc, { name: argv.name as string, dsType, params, description: argv.description })
             const id = resp.data?.id

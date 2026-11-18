@@ -7,12 +7,18 @@ function debugString(value: unknown): string {
   return text.length > 2000 ? `${text.slice(0, 2000)}...<truncated>` : text
 }
 
+export interface StudioRequestOptions {
+  /** Keep the request body out of the debug log. Use it for bodies that carry credentials. */
+  redactBody?: boolean
+}
+
 export async function studioRequest<T>(
   config: StudioConfig,
   path: string,
   body: unknown,
   extraHeaders?: Record<string, string>,
   method: string = "POST",
+  options: StudioRequestOptions = {},
 ) {
   const opts: ClientOptions = {
     baseUrl: config.baseUrl,
@@ -38,7 +44,7 @@ export async function studioRequest<T>(
       env: customHeaders.env,
       ...extraHeaders,
     }
-    process.stderr.write(`[debug] studioRequest: ${method} ${config.baseUrl}${path} body=${debugString(body)} headers=${debugString(debugHeaders)}\n`)
+    process.stderr.write(`[debug] studioRequest: ${method} ${config.baseUrl}${path} body=${options.redactBody ? "<redacted>" : debugString(body)} headers=${debugString(debugHeaders)}\n`)
   }
   const resp = await request<T>(opts, path, body, method)
   if (config.debug) {

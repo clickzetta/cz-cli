@@ -10,13 +10,13 @@ afterAll(() => {
   mock.module("@clickzetta/sdk", () => actualSdk)
 })
 
-const calls: { path: string; body: unknown }[] = []
+const calls: { path: string; body: unknown; options?: unknown }[] = []
 
 function installSdkMock() {
   mock.module("@clickzetta/sdk", () => ({
     ...actualSdk,
-    studioRequest: async (_sc: unknown, path: string, body?: unknown) => {
-      calls.push({ path, body })
+    studioRequest: async (_sc: unknown, path: string, body?: unknown, _headers?: unknown, _method?: string, options?: unknown) => {
+      calls.push({ path, body, options })
       if (path.startsWith("/clickzetta-groot/api/v1/storage/uploadFile")) return { code: 0, data: "https://oss.invalid/ca.pem?sig" }
       if (path === "/ide-authority/v1/projectDataSources/create") return { code: 200, data: { id: 42 } }
       return { code: 200, data: true }
@@ -71,6 +71,31 @@ describe("datasource create", () => {
     expect(body.dsDesc).toBe("orders db")
     const list = body.connectionParamsList as { connectionParam: string }[]
     expect(JSON.parse(list[0]!.connectionParam)).toEqual({ dsName: "mysql_a", dsDesc: "orders db", jdbcUrl: "jdbc:mysql://h:3306" })
+  })
+
+  test("keeps the request body out of the debug log", async () => {
+    await createDatasource(sc, { name: "mysql_a", dsType: 5, params: { jdbcUrl: "jdbc:mysql://h:3306", password: "p" } })
+    expect(calls[0]!.options).toEqual({ redactBody: true })
+  })
+
+  test("the command's name and description replace dsName and dsDesc in the params", async () => {
+    await createDatasource(sc, {
+      name: "mysql_a", dsType: 5, description: "orders db",
+      params: { dsName: "other", dsDesc: "other desc", jdbcUrl: "jdbc:mysql://h:3306" },
+    })
+    const body = calls[0]!.body as Record<string, unknown>
+    const params = JSON.parse((body.connectionParamsList as { connectionParam: string }[])[0]!.connectionParam)
+    expect(body.dsName).toBe("mysql_a")
+    expect(body.dsDesc).toBe("orders db")
+    expect(params).toEqual({ dsName: "mysql_a", dsDesc: "orders db", jdbcUrl: "jdbc:mysql://h:3306" })
+  })
+
+  test("a dsDesc in the params does not survive when the command has no description", async () => {
+    await createDatasource(sc, { name: "mysql_a", dsType: 5, params: { dsDesc: "from file", jdbcUrl: "jdbc:mysql://h:3306" } })
+    const body = calls[0]!.body as Record<string, unknown>
+    const params = JSON.parse((body.connectionParamsList as { connectionParam: string }[])[0]!.connectionParam)
+    expect(body.dsDesc).toBe("")
+    expect(params).toEqual({ dsName: "mysql_a", jdbcUrl: "jdbc:mysql://h:3306" })
   })
 
   test("adds no dsDesc to the connection params when there is no description", async () => {
