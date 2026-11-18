@@ -3,7 +3,7 @@ import { ClickZettaApiError } from "../types/api.js"
 import type { StudioConfig } from "../types/index.js"
 
 function debugString(value: unknown): string {
-  const text = JSON.stringify(value)
+  const text = JSON.stringify(value) ?? String(value)
   return text.length > 2000 ? `${text.slice(0, 2000)}...<truncated>` : text
 }
 

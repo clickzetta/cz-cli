@@ -504,6 +504,141 @@ export function checkCdcTables(config: StudioConfig, pipelineId: number, workspa
 }
 
 
+/** One expression of a multi-table merge rule (rocket PipelineDSL.PipelineRuleDTO.ExpressionDTO). */
+export interface MergeRuleExpression {
+  exact?: (string | number)[]
+  match?: string[]
+}
+
+/** One source rule of a multi-table merge target: which datasource / db / schema / tables feed it. */
+export interface MergeRule {
+  datasourceExpression?: MergeRuleExpression
+  dbExpression?: MergeRuleExpression
+  schemaExpression?: MergeRuleExpression
+  tableExpression?: MergeRuleExpression
+}
+
+export interface CheckMergeRuleParams {
+  pipelineId: number
+  /** Required by rocket to resolve the Lakehouse connection of the target. */
+  projectId: number
+  virtualSchema: string
+  virtualTable: string
+  pipelineRule: MergeRule[]
+  heterogeneous?: boolean
+  supportNoPK?: boolean
+}
+
+/** Result of rocket table check: the matched source tables and the unioned schema, cached on save. */
+export interface MergeRuleCheckResult {
+  valid?: boolean
+  tableListStr?: string
+  tableSchemaStr?: string
+  tableComment?: string
+}
+
+/**
+ * Expand a merge rule into its matched source tables and schema (Studio "check" on a merge target).
+ * Rocket runs the check asynchronously; the result endpoint reports the failure reason, which the
+ * synchronous check endpoint drops.
+ */
+export async function checkMergeRule(
+  config: StudioConfig,
+  params: CheckMergeRuleParams,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<MergeRuleCheckResult> {
+  const started = await studioRequest<string>(config, "/ide-admin/v1/timelyTask/pipeline/check/async", {
+    pipelineId: params.pipelineId,
+    projectId: params.projectId,
+    virtualSchema: params.virtualSchema,
+    virtualTable: params.virtualTable,
+    pipelineRule: params.pipelineRule,
+    heterogeneous: params.heterogeneous ?? false,
+    supportNoPK: params.supportNoPK ?? false,
+  })
+  const uuid = String(started.data)
+  const deadline = Date.now() + (opts.timeoutMs ?? 120_000)
+  for (;;) {
+    const resp = await studioRequest<MergeRuleCheckResult & { finish?: boolean }>(
+      config,
+      `/ide-admin/v1/timelyTask/pipeline/check/async/result?uuid=${encodeURIComponent(uuid)}`,
+      undefined,
+      undefined,
+      "GET",
+    )
+    if (resp.data?.finish) return resp.data
+    if (Date.now() > deadline) throw new Error(`Merge rule check ${uuid} did not finish in time.`)
+    await new Promise((r) => setTimeout(r, opts.intervalMs ?? 2000))
+  }
+}
+
+/**
+ * Open a merge-rule edit session. Rocket keeps the matched table list / schema of each merge
+ * target in a per-session Redis hash keyed by `czClientSessionUid` until the content is saved.
+ */
+export function startMergeRuleEdit(config: StudioConfig, pipelineId: number, czClientSessionUid: string) {
+  return studioRequest(
+    config,
+    `/ide-admin/v1/timelyTask/ruleContent/start/edit?pipelineId=${pipelineId}`,
+    undefined,
+    { czClientSessionUid },
+    "GET",
+  )
+}
+
+export interface CacheMergeRuleParams {
+  pipelineId: number
+  virtualSchema: string
+  virtualTable: string
+  tableListStr: string
+  tableSchemaStr: string
+  heterogeneous?: boolean
+}
+
+/** Cache one checked merge target in the edit session (Studio templateType=1: single rule). */
+export function cacheMergeRule(config: StudioConfig, czClientSessionUid: string, params: CacheMergeRuleParams) {
+  return studioRequest(
+    config,
+    "/ide-admin/v1/timelyTask/ruleContent/change/tmp",
+    {
+      pipelineId: params.pipelineId,
+      templateType: 1,
+      pipelineType: 2,
+      heterogeneous: params.heterogeneous ?? false,
+      virtualSchema: params.virtualSchema,
+      virtualTable: params.virtualTable,
+      tableListStr: params.tableListStr,
+      tableSchemaStr: params.tableSchemaStr,
+    },
+    { czClientSessionUid },
+  )
+}
+
+/**
+ * Save MULTI_REALTIME content inside a merge-rule edit session. With `czClientSessionUid`
+ * admin persists the session's cached table lists / schemas after saving the content.
+ */
+export function saveMergeTaskContent(
+  config: StudioConfig,
+  czClientSessionUid: string,
+  params: Pick<SaveTaskContentParams, "dataFileId" | "dataFileContent" | "projectId" | "updateBy" | "instanceName">,
+) {
+  return studioRequest(
+    config,
+    "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration",
+    {
+      dataFileId: params.dataFileId,
+      dataFileContent: typeof params.dataFileContent === "string" ? params.dataFileContent : JSON.stringify(params.dataFileContent),
+      collectType: 1,
+      onlySaveContent: 1,
+      projectId: params.projectId,
+      updateBy: params.updateBy,
+      instanceName: params.instanceName,
+    },
+    { czClientSessionUid },
+  )
+}
+
 /** Take a realtime pipeline task offline (back to draft, offlines table mappings).
  *  fileId is sent as a number to match the Studio backend (timelyTask/pipeline/offline). */
 export function offlineCdcTask(config: StudioConfig, fileId: number, updateBy: string) {
