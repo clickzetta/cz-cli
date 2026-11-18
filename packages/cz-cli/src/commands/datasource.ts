@@ -30,6 +30,23 @@ export const DS_TYPE_NAMES: Record<number, string> = {
   51: "DynamoDB",
 }
 
+/**
+ * One read-only statement (SELECT / SHOW / DESC / EXPLAIN). EXPLAIN ANALYZE is rejected:
+ * PostgreSQL and MySQL run the explained statement, so it would execute writes.
+ * Any backslash is rejected: MySQL treats \' as an escaped quote but PostgreSQL standard strings
+ * do not, so the dialects disagree on where a literal ends and a second statement could hide.
+ */
+export function isReadOnlySql(sql: string): boolean {
+  if (sql.includes("\\")) return false
+  // Blank out string literals, quoted identifiers and comments so a ';' or keyword inside them is ignored.
+  const code = sql.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`|--[^\n]*|\/\*[\s\S]*?\*\//g, (m) =>
+    m.startsWith("--") || m.startsWith("/*") ? " " : "''",
+  ).trim()
+  if (code.replace(/;\s*$/, "").includes(";")) return false
+  if (!/^(select|show|desc|describe|explain)\b/i.test(code)) return false
+  return !/^explain\b[\s\S]*\banaly[sz]e\b/i.test(code)
+}
+
 export function parseDsType(value: string): number | undefined {
   const n = Number(value)
   if (Number.isFinite(n)) return n
@@ -737,6 +754,39 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             success(rows, { format, timeMs: Date.now() - t0 })
           } catch (err) {
             logOperation("datasource sample", { ok: false, timeMs: Date.now() - t0 })
+            reportDatasourceError(err, format)
+          }
+        },
+      )
+      // ── exec ──────────────────────────────────────────────────────────────
+      .command(
+        "exec <datasource>",
+        "Run one read-only query (SELECT/SHOW/DESC/EXPLAIN) on an external datasource. To write to a datasource, run a JDBC task: task create-setup --type JDBC --datasource <ds>, then task execute.",
+        (y) =>
+          y
+            .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
+            .option("sql", { type: "string", demandOption: true, describe: "Read-only SQL statement to run on the datasource" }),
+        async (argv) => {
+          const format = argv.format
+          const t0 = Date.now()
+          try {
+            const sql = String(argv.sql).trim()
+            // The authority endpoint runs statements with JDBC executeQuery, which rejects DDL/DML.
+            if (!isReadOnlySql(sql)) {
+              error("INVALID_ARGUMENTS", "datasource exec only runs one read-only statement. Use a JDBC task (task create-setup --type JDBC --datasource <ds>; task execute) to write.", { format, exitCode: 2 })
+              return
+            }
+            const sc = await getStudioContext(argv)
+            const ds = await resolveDatasource(sc, argv.datasource as string)
+            const resp = await studioRequest<unknown>(
+              sc,
+              `/ide-authority/v1/ai/mcp/execute?instanceId=${sc.instanceId}`,
+              { id: ds.id, sql, options: {} },
+            )
+            logOperation("datasource exec", { ok: true, timeMs: Date.now() - t0 })
+            success({ datasource: ds.name, result: resp.data ?? null }, { format, timeMs: Date.now() - t0 })
+          } catch (err) {
+            logOperation("datasource exec", { ok: false, timeMs: Date.now() - t0 })
             reportDatasourceError(err, format)
           }
         },
