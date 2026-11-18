@@ -12,6 +12,8 @@
 - **重新登录**：默认只更新 token，不改 `llm.json`，因为里面的 key 可能是用户自己建的网关 key；只有显式 `--refresh-llm` 才重写。证据：[login.ts](../../packages/cz-cli/src/commands/login.ts)。
 - **密码只发给用户配置的主机**：不要发给从 URL 推导出来的 account 主机；回退时校验主机名、要求 console key、拒绝重定向。证据：[#155](https://github.com/clickzetta/cz-cli/pull/155)。
 
+- **Secret-file/stdin inputs still need output checks**: keeping credentials out of argv does not protect logs or errors. On 2026-11-18, actual-command probes of PR #217 head `e94b9e90` reproduced credential disclosure through SDK debug request bodies and raw malformed-JSON errors despite passing focused tests/typechecks (private review/probe evidence; [public review context](https://github.com/clickzetta/cz-cli/pull/217#issuecomment-6975356814)). Next time trace command, context and SDK logging and check sanitized stdout/stderr through the actual command for debug and malformed input. This historical finding does not assess replacement heads; verify each new head.
+
 ## SQL 与命令参数
 
 - **写操作判断**：不要对 SQL 原文跑正则。先去掉字符串和注释、跳过 CTE，再找括号深度为 0 的关键字；看不懂的 SQL 一律当写操作。新的写动词加进 [readonly.ts](../../packages/clickzetta-sdk/src/sql/readonly.ts) 的 `WRITE` 并补测试。证据：[#194](https://github.com/clickzetta/cz-cli/pull/194)。
