@@ -2820,7 +2820,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   const t0 = Date.now()
                   const rawJoins = Array.isArray(argv["join"]) ? argv["join"] : [argv["join"]]
                   if (rawJoins.length === 0) {
-                    error("USAGE_ERROR", "At least one --join value is required", { format })
+                    error("USAGE_ERROR", "At least one --join value is required", { format, exitCode: EXIT_USAGE_ERROR })
                     return
                   }
                   let joinRelations: Record<string, unknown>[]
@@ -2833,7 +2833,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       }
                     })
                   } catch (err) {
-                    error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+                    error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format, exitCode: EXIT_USAGE_ERROR })
                     return
                   }
                   try {

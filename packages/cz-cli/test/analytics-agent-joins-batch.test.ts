@@ -145,8 +145,8 @@ describe("domain joins batch apply", () => {
   ].map((args) => ({ args })))("missing join value in $args stops before HTTP", async ({ args }) => {
     response = { submittedCount: 0, results: [] }
     const result = await run([], args)
-    expect(result.code, result.stdout + result.stderr).not.toBe(0)
-    expect(result.payload.error.code).toBe(args[0] === "--join=" ? "USAGE_ERROR" : "INTERNAL_ERROR")
+    expect(result.code, result.stdout + result.stderr).toBe(2)
+    expect(result.payload.error.code).toBe("USAGE_ERROR")
     expect(result.payload.error.message).toContain(args[0] === "--join=" ? "--join item 1" : "Not enough arguments following: join")
     expect(requests).toHaveLength(0)
   })
