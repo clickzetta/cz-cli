@@ -25,6 +25,36 @@
 - `session create` 的非空标题先取 `--title` 或 `--body.title`，再取问题文本，最后使用 `Analytics Agent Session`。
 - `session run` 未传 `--session-id` 时可按 `--domain-id` 自动建会话，标题取 `--body` 中的非空 `title` 或问题文本；没有可用标题时在建会话前拒绝请求。
 
+## Reading historical session questions
+
+`session questions --session-id <id>` reads all historical questions through
+`POST /open/session/open`, using the selected profile's authenticated identity.
+No domain ID or individual question IDs are required. Questions retain the
+backend order, newest first. By default each row includes `questionId`,
+`questionText`, and `createTime`; `--include-answers` retains complete question
+records, including answer responses, SQL, charts, and historical error events.
+
+```bash
+cz-cli analytics-agent session questions --session-id 1354 --format table
+cz-cli analytics-agent session questions --session-id 1354 --include-answers
+```
+
+JSON output includes session metadata, `questions`, and the returned question
+count. Table, CSV, text, and JSONL output project questions as rows. The full
+session endpoint avoids incomplete history from the current paged endpoint's
+unpopulated `hasMore`; large histories can produce large responses. The CLI
+computes `totalCount` from the complete returned list instead of trusting the
+full endpoint's default zero value.
+
+An existing empty session succeeds with `questions: []`; a deleted session
+reports `SESSION_DELETED`. Missing session data reports
+`SESSION_NOT_FOUND_OR_FORBIDDEN`, because the backend does not distinguish a
+missing session from another user's inaccessible private session. Explicit
+backend permission failures retain their error code and message. Historical
+answer error events remain readable history and do not fail the listing.
+
+Regression coverage: [session question history tests](../../packages/cz-cli/test/analytics-agent-session-questions.test.ts).
+
 ## 实现与验证入口
 
 - [命令、参数校验和请求执行](../../packages/cz-cli/src/commands/analytics-agent.ts)、[endpoint 选择](../../packages/cz-cli/src/connection/profile-store.ts)。
