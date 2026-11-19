@@ -37,22 +37,30 @@ Repeat `--join` once per relation string to send all relations in one `joins` ar
 Read each dataset ID and canonical table name from `domain detail <domainId>
 --with-tables`; never infer names or add a view prefix. Values use
 `ID:TABLE.COLUMN=JOIN_ID:JOIN_TABLE.COLUMN@RELATION`, not JSON objects or arrays.
-Every value is parsed before any request; an invalid value reports its one-based
-`--join item N` position and stops the batch.
+Each occurrence requires one nonempty value, and the batch must contain at least
+one relation. Every value is parsed before any request; an invalid value reports
+its one-based `--join item N` position and stops the batch. Missing values are
+rejected by the CLI parser before HTTP.
 
-The response retains backend `results` (zero-based input indexes) and
-`submittedCount` (new joins only), adding `requestedCount`, `appliedCount`,
-`alreadyExistsCount`, and `rejectedCount`. Four already-existing relations therefore
-return `requestedCount: 4`, `submittedCount: 0`, and `alreadyExistsCount: 4`.
+The following are CLI parsing expectations, not a verified backend contract.
+When `results` is present, the CLI expects exactly one result per input with a
+unique zero-based `index` and a string `status` of `applied`, `already_exists`, or
+`rejected`. It retains the original results and adds `requestedCount`,
+`appliedCount`, `alreadyExistsCount`, and `rejectedCount`. If `submittedCount` is
+present, the CLI expects it to equal the number of `applied` results. For example,
+a fixture with four `already_exists` results and `submittedCount: 0` yields
+`requestedCount: 4` and `alreadyExistsCount: 4`.
 
-Any rejected item produces exit code 1 and `JOIN_APPLY_REJECTED`, with counts and
-original per-item reasons under `data`. Successful items are not rolled back.
-Incomplete, duplicate, out-of-range or unknown-status results, or an inconsistent
-`submittedCount`, produce `JOIN_APPLY_RESULT_MISMATCH`; read back the saved joins
-before retrying. Older servers without `results` retain exit code 0 but report
-`status: "unverified"`, without inventing applied counts.
+Any recognized rejected item produces exit code 1 and `JOIN_APPLY_REJECTED`,
+with counts and original per-item reasons under `data`. The CLI sends no rollback
+request. Incomplete, duplicate, out-of-range, unknown-status or non-string-status
+results, or an inconsistent `submittedCount`, produce
+`JOIN_APPLY_RESULT_MISMATCH`; read back the saved joins before retrying. Responses
+without `results` retain exit code 0 but report `status: "unverified"`, without
+inventing applied counts.
 
-Verify using `domain joins list --domain-id <id>`. The server may swap the tables
-and columns and invert `n:1`/`1:n` when normalizing a relation; the two directions
-are equivalent. Regression coverage uses the real CLI parser and local HTTP
-transport in [batch apply tests](../../packages/cz-cli/test/analytics-agent-joins-batch.test.ts).
+Verify using `domain joins list --domain-id <id>`. Backend result semantics and
+normalization have not been established by an authoritative contract or captured
+backend response. Regression coverage verifies these CLI expectations against
+synthetic responses through the real parser and local HTTP transport in
+[batch apply tests](../../packages/cz-cli/test/analytics-agent-joins-batch.test.ts).
