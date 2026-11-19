@@ -82,6 +82,7 @@ const ROUTES = {
   knowledgeUploadUrl: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/upload-url` },
   knowledgeUploadComplete: { method: "POST", path: (argv: Record<string, unknown>) => `/open/api/v1/analytics-agent/knowledge/spaces/${encodePath(argv["space-id"])}/nodes/${encodePath(argv["node-id"])}/upload-complete` },
   sessionList: { method: "POST", path: "/open/session/list" },
+  sessionOpen: { method: "POST", path: "/open/session/open", openSessionAuth: true },
   sessionCreate: { method: "POST", path: "/open/session/safe_new", openSessionAuth: true },
   sessionDelete: { method: "POST", path: "/open/datagpt/deleteSession", openSessionAuth: true },
   sessionRun: { method: "POST", path: "/open/text2insight/query", openSessionAuth: true },
@@ -1831,6 +1832,64 @@ async function runTableUpdate(argv: Record<string, unknown>): Promise<void> {
     const code = err instanceof AnalyticsBusinessError ? err.code : "ANALYTICS_AGENT_ERROR"
     error(code, err instanceof Error ? err.message : String(err), {
       format, ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
+    })
+  }
+}
+
+async function executeSessionQuestionsCommand(argv: Record<string, unknown>): Promise<void> {
+  const name = "analytics-agent session questions"
+  const format = typeof argv.format === "string" ? argv.format : "json"
+  const t0 = Date.now()
+  try {
+    const sessionId = requiredPositiveIntegerValue(argv["session-id"], "--session-id", format)
+    // The full-session endpoint avoids relying on openPaged.hasMore, which is
+    // not populated by the current backend. Do not silently return one page.
+    const payload = await requestAnalytics(argv, ROUTES.sessionOpen, { sessionId })
+    const bizErr = extractBusinessError(payload)
+    if (bizErr) throw new AnalyticsBusinessError(bizErr.code, bizErr.message)
+    const data = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? "data" in payload ? payload.data : "sessionId" in payload ? payload : undefined
+      : payload
+    // The backend also returns no data for another user's private session.
+    // It cannot tell us whether that session is missing or inaccessible.
+    if (data === undefined || data === null) {
+      throw new AnalyticsBusinessError("SESSION_NOT_FOUND_OR_FORBIDDEN", `Session ${sessionId} does not exist or the current account cannot access it.`)
+    }
+    if (typeof data !== "object" || Array.isArray(data) || !("sessionId" in data) || String(data.sessionId) !== String(sessionId)) {
+      throw new Error("Invalid session response: expected the requested session and its questions")
+    }
+    if ("deleted" in data && data.deleted === true) {
+      throw new AnalyticsBusinessError("SESSION_DELETED", `Session ${sessionId} has been deleted.`)
+    }
+    if (!("questions" in data) || !Array.isArray(data.questions)) {
+      throw new Error("Invalid session response: expected a questions array")
+    }
+    const questions = data.questions.map((question: unknown) => {
+      if (!question || typeof question !== "object" || Array.isArray(question)
+        || !("questionId" in question) || !("questionText" in question)) {
+        throw new Error("Invalid session response: expected questionId and questionText for each question")
+      }
+      if (argv["include-answers"]) return question
+      return {
+        questionId: question.questionId,
+        questionText: question.questionText,
+        ...("createTime" in question ? { createTime: question.createTime } : {}),
+      }
+    })
+    logOperation(name, { ok: true, timeMs: Date.now() - t0 })
+    success({ ...data, questions, totalCount: questions.length, hasMore: false }, {
+      format,
+      rowsKey: "questions",
+      timeMs: Date.now() - t0,
+      extra: { count: questions.length },
+      aiMessage: questions.length === 0 ? `Session ${sessionId} has no questions.` : undefined,
+    })
+  } catch (err) {
+    logOperation(name, { ok: false, timeMs: Date.now() - t0 })
+    if (isHandledCliError(err)) return
+    error(err instanceof AnalyticsBusinessError ? err.code : "ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
+      format,
+      ...(err instanceof AnalyticsHttpError ? { extra: { request: err.request } } : {}),
     })
   }
 }
@@ -4072,6 +4131,18 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
       })
       .command("session", "Manage Analytics Agent text2insight sessions", (session) => {
         session
+          .command(
+            "questions",
+            "List all historical questions in a session (newest first)",
+            (y) => y
+              .option("session-id", { type: "number", demandOption: true, describe: "Session ID" })
+              .option("include-answers", { type: "boolean", default: false, describe: "Include full question records with answer responses" })
+              .example("cz-cli analytics-agent session questions --session-id 1354 --format table", "Show every question in a session")
+              .example("cz-cli analytics-agent session questions --session-id 1354 --include-answers", "Read historical questions and answers"),
+            async (argv) => {
+              await executeSessionQuestionsCommand(argv as Record<string, unknown>)
+            },
+          )
           .command(
             "list",
             "List text2insight sessions in one domain (--domain-id is required)",
