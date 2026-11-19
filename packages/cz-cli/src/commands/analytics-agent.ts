@@ -604,6 +604,54 @@ function parseJoinFlag(raw: string): Record<string, unknown> {
   }
 }
 
+function reportJoinApply(response: unknown, requestedCount: number, format: string, timeMs: number) {
+  const data = response && typeof response === "object" && !Array.isArray(response)
+    ? response as Record<string, unknown>
+    : {}
+  const summary = { ...data, requestedCount }
+  // Older servers do not return per-item results. Do not invent applied counts.
+  if (data.results === undefined) {
+    success({ ...summary, status: "unverified" }, {
+      format, timeMs,
+      aiMessage: "Server did not return per-item results. Verify with analytics-agent domain joins list --domain-id <id>.",
+    })
+    return
+  }
+  const results = Array.isArray(data.results) ? data.results : []
+  const valid = Array.isArray(data.results) && results.length === requestedCount
+    && results.every((result: unknown) => {
+      if (!result || typeof result !== "object") return false
+      const item = result as Record<string, unknown>
+      return typeof item.index === "number" && Number.isInteger(item.index)
+        && item.index >= 0 && item.index < requestedCount
+        && ["applied", "already_exists", "rejected"].includes(String(item.status))
+    })
+    && new Set(results.map((item) => item.index)).size === requestedCount
+  if (!valid) {
+    error("JOIN_APPLY_RESULT_MISMATCH", "Server results do not cover every submitted join exactly once with a recognized status. Verify with domain joins list before retrying.", {
+      format, extra: { data: { ...summary, status: "unverified" }, time_ms: timeMs },
+    })
+    return
+  }
+  const appliedCount = results.filter((item) => item.status === "applied").length
+  const alreadyExistsCount = results.filter((item) => item.status === "already_exists").length
+  const rejectedCount = results.filter((item) => item.status === "rejected").length
+  const counts = { ...summary, appliedCount, alreadyExistsCount, rejectedCount }
+  if (data.submittedCount !== undefined && data.submittedCount !== appliedCount) {
+    error("JOIN_APPLY_RESULT_MISMATCH", "Server submittedCount does not match the number of applied results. Verify with domain joins list before retrying.", {
+      format, extra: { data: { ...counts, status: "unverified" }, time_ms: timeMs },
+    })
+    return
+  }
+  if (rejectedCount > 0) {
+    error("JOIN_APPLY_REJECTED", `${rejectedCount} of ${requestedCount} joins rejected; ${appliedCount} applied, ${alreadyExistsCount} already existed. See data.results for indexes and reasons. Successful joins are not rolled back.`, {
+      format, extra: { data: { ...counts, status: "partial_failure" }, time_ms: timeMs },
+    })
+    return
+  }
+  success({ ...counts, status: "ok" }, { format, timeMs })
+}
+
 function parseLooseJsonValue(raw: string): unknown {
   const value = raw.trim()
   if (value === "true") return true
@@ -2740,6 +2788,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                 (y) =>
                   y.option("join", {
                     type: "string",
+                    array: true,
                     demandOption: true,
                     describe:
                       "Join format: ID:TABLE.COLUMN=JOIN_ID:JOIN_TABLE.JOIN_COLUMN@RELATION. Read ID/table pairs from 'domain detail <domainId> --with-tables'. Never infer table names. Relation: n:1, 1:1, or 1:n. May be repeated.",
@@ -2754,6 +2803,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     "  3. Copy tableName exactly. Never use physicalTable/displayName or reconstruct it.",
                     "     Never add v_gpt_.",
                     "  4. If either pair cannot be verified, do not apply and do not retry with guessed values.",
+                    "Repeat --join for multiple relation strings; JSON values are not accepted.",
+                    "submittedCount counts new joins only; already-existing joins are counted separately.",
+                    "The server may swap the sides and invert n:1/1:n to normalize an equivalent relation.",
                     "",
                     "Example (replace every value with one verified table/column pair):",
                     "  cz-cli analytics-agent domain joins apply --domain-id 27 \\",
@@ -2767,7 +2819,13 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   const rawJoins = Array.isArray(argv["join"]) ? argv["join"] : [argv["join"]]
                   let joinRelations: Record<string, unknown>[]
                   try {
-                    joinRelations = (rawJoins as string[]).map((r) => parseJoinFlag(r))
+                    joinRelations = rawJoins.map((raw, index) => {
+                      try {
+                        return parseJoinFlag(String(raw))
+                      } catch (err) {
+                        throw new Error(`--join item ${index + 1}: ${err instanceof Error ? err.message : String(err)}`)
+                      }
+                    })
                   } catch (err) {
                     error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
                     return
@@ -2778,7 +2836,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     const bizErr = extractBusinessError(payload)
                     if (bizErr) { error(bizErr.code, bizErr.message, { format }); return }
                     const responseData = payload && typeof payload === "object" ? (payload as Record<string, unknown>).data : undefined
-                    success(responseData ?? { submittedCount: joinRelations.length, status: "ok" }, { format, timeMs: Date.now() - t0 })
+                    reportJoinApply(responseData, joinRelations.length, format, Date.now() - t0)
                   } catch (err) {
                     if (isHandledCliError(err)) return
                     error("ANALYTICS_AGENT_ERROR", err instanceof Error ? err.message : String(err), {
