@@ -11,6 +11,10 @@ on:
         description: Validate without publishing a review
         default: true
         type: boolean
+      candidate_model:
+        description: Model override for a dry run
+        required: false
+        type: string
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, edited]
     paths:
@@ -37,7 +41,7 @@ jobs:
   review:
     if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false && (github.event.action != 'edited' || github.event.changes.base))
     concurrency:
-      group: codex-review-${{ github.event.pull_request.number || inputs.pull_request }}
+      group: codex-review-${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run && format('dry-run-{0}', github.run_id)) || github.event.pull_request.number || inputs.pull_request }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -87,7 +91,7 @@ jobs:
           CODEX_REVIEW_API_KEY: ${{ secrets.CODEX_REVIEW_API_KEY }}
           CODEX_REVIEW_BASE_URL: ${{ secrets.CODEX_REVIEW_BASE_URL }}
           CODEX_REVIEW_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-          CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+          CODEX_REVIEW_MODEL: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run && inputs.candidate_model) || vars.CODEX_REVIEW_MODEL }}
         run: |
           export CODEX_BINARY="$(command -v codex)"
           bun .github/scripts/ai-review.ts
