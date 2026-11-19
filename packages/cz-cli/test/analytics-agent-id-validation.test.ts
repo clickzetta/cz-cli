@@ -820,7 +820,7 @@ describe("analytics-agent id validation", () => {
       "0:orders.user_id=2:users.id@n:1",
     ])
 
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.output).toContain("datasetId must be a positive integer")
   })
 
