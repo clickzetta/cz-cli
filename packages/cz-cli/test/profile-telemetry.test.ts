@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { ConnectionEnv } from "../src/connection/env.js"
 import { saveProfiles, setDefaultProfile } from "../src/connection/profile-store.js"
-import { profileTelemetryAttributes } from "../src/connection/telemetry.js"
+import { identityAttributes, profileTelemetryAttributes } from "../src/connection/telemetry.js"
 import { trackCommand } from "../src/telemetry.js"
 import { OTEL_DEFAULTS } from "../src/otel-defaults.js"
 
@@ -68,7 +68,15 @@ test("missing profile fields stay absent", () => {
   expect(profileTelemetryAttributes()).toEqual({})
 })
 
-test("command export includes the active profile resource attributes", async () => {
+/**
+ * Identity belongs to the log RECORD, and appears once in the payload.
+ *
+ * It used to be merged into `resource.attributes`, where the OTel resource spec says only
+ * the producing service goes: every (user, instance, workspace) triple then looked like a
+ * separate service instance downstream, and the trace path (which puts the same attributes
+ * on the span) disagreed with the log path about where to read identity from.
+ */
+test("command export puts the active profile identity on the log record, exactly once", async () => {
   ConnectionEnv.pin("second.profile")
   const received: unknown[] = []
   const server = Bun.serve({
@@ -83,20 +91,81 @@ test("command export includes the active profile resource attributes", async () 
   try {
     await trackCommand({ command: "sql", success: true, duration_ms: 1 })
     expect(received).toHaveLength(1)
+
+    // Serialise BEFORE toMatchObject: bun substitutes the expected matchers INTO the
+    // received object, so a string assertion afterwards reads the expectation back rather
+    // than the payload — which is how a first draft of this test "proved" a key it had
+    // itself just written in.
+    const payload = JSON.stringify(received)
+    expect(payload.match(/"enduser\.id"/g)).toHaveLength(1)
+    expect(payload).not.toContain("secret")
+
     expect(received[0]).toMatchObject({
       resourceLogs: [
         {
           resource: {
-            attributes: expect.arrayContaining([
-              { key: "enduser.id", value: { stringValue: "22" } },
-              { key: "instance.name", value: { stringValue: "second-instance" } },
-              { key: "workspace.name", value: { stringValue: "ws" } },
-            ]),
+            attributes: [
+              { key: "service.name", value: { stringValue: "cz-cli" } },
+              { key: "service.version", value: { stringValue: expect.any(String) } },
+            ],
           },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: expect.arrayContaining([
+                    { key: "enduser.id", value: { stringValue: "22" } },
+                    { key: "instance.name", value: { stringValue: "second-instance" } },
+                    { key: "workspace.name", value: { stringValue: "ws" } },
+                    { key: "service.url", value: { stringValue: "https://example.test" } },
+                  ]),
+                },
+              ],
+            },
+          ],
         },
       ],
     })
-    expect(JSON.stringify(received)).not.toContain("secret")
+  } finally {
+    await server.stop(true)
+  }
+})
+
+/**
+ * 0 is the "unknown user" sentinel — login-browser.ts:452 hands it out when a login cannot
+ * learn the user, and profile-store.ts:531 refuses to persist it — so it must not become a
+ * cohort. Guarded in identityAttributes so BOTH the profile path and setup's hand-built row
+ * are covered by one rule.
+ */
+test("user_id = 0 is not an identity", () => {
+  saveProfiles({ zero: { user_id: 0, instance: "inst" } })
+  setDefaultProfile("zero")
+  ConnectionEnv.pin("zero")
+  expect(profileTelemetryAttributes()).toEqual({ "instance.name": "inst" })
+  expect(identityAttributes({ user_id: 0 })).toEqual({})
+  expect(identityAttributes({ user_id: 556 })).toEqual({ "enduser.id": "556" })
+})
+
+/**
+ * trackSetup always passes a row, and it is `{}` on a setup that failed before learning
+ * anything. `??` alone let that empty object win, so the events you most want attributed
+ * went out anonymous on a machine whose default profile knew the user.
+ */
+test("an empty identity override falls back to the active profile", async () => {
+  ConnectionEnv.pin("second.profile")
+  const received: unknown[] = []
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      received.push(await request.json())
+      return new Response(null, { status: 202 })
+    },
+  })
+  OTEL_DEFAULTS.endpoint = server.url.toString().replace(/\/$/, "")
+  try {
+    await trackCommand({ command: "setup", success: false, duration_ms: 1, identityAttributes: {} })
+    expect(JSON.stringify(received)).toContain('"stringValue":"22"')
   } finally {
     await server.stop(true)
   }
