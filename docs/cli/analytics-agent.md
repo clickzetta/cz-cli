@@ -30,3 +30,29 @@
 - [命令、参数校验和请求执行](../../packages/cz-cli/src/commands/analytics-agent.ts)、[endpoint 选择](../../packages/cz-cli/src/connection/profile-store.ts)。
 - [endpoint 回归](../../packages/cz-cli/test/profile-store.test.ts)、[数字 ID 回归](../../packages/cz-cli/test/analytics-agent-id-validation.test.ts)、[多域绑定回归](../../packages/cz-cli/test/analytics-agent-knowledge-domain-id.test.ts)。
 - [会话参数与提示回归](../../packages/cz-cli/test/analytics-agent-session-commands.test.ts)、[实际请求边界回归](../../packages/cz-cli/test/analytics-agent-session-run.test.ts)。
+
+## Applying domain joins
+
+Repeat `--join` once per relation string to send all relations in one `joins` array.
+Read each dataset ID and canonical table name from `domain detail <domainId>
+--with-tables`; never infer names or add a view prefix. Values use
+`ID:TABLE.COLUMN=JOIN_ID:JOIN_TABLE.COLUMN@RELATION`, not JSON objects or arrays.
+Every value is parsed before any request; an invalid value reports its one-based
+`--join item N` position and stops the batch.
+
+The response retains backend `results` (zero-based input indexes) and
+`submittedCount` (new joins only), adding `requestedCount`, `appliedCount`,
+`alreadyExistsCount`, and `rejectedCount`. Four already-existing relations therefore
+return `requestedCount: 4`, `submittedCount: 0`, and `alreadyExistsCount: 4`.
+
+Any rejected item produces exit code 1 and `JOIN_APPLY_REJECTED`, with counts and
+original per-item reasons under `data`. Successful items are not rolled back.
+Incomplete, duplicate, out-of-range or unknown-status results, or an inconsistent
+`submittedCount`, produce `JOIN_APPLY_RESULT_MISMATCH`; read back the saved joins
+before retrying. Older servers without `results` retain exit code 0 but report
+`status: "unverified"`, without inventing applied counts.
+
+Verify using `domain joins list --domain-id <id>`. The server may swap the tables
+and columns and invert `n:1`/`1:n` when normalizing a relation; the two directions
+are equivalent. Regression coverage uses the real CLI parser and local HTTP
+transport in [batch apply tests](../../packages/cz-cli/test/analytics-agent-joins-batch.test.ts).

@@ -132,7 +132,7 @@ describe("analytics-agent domain joins", () => {
     expect(sessionListCalled).toBe(false)
   })
 
-  test("apply parses --join into backend body and reports submittedCount", async () => {
+  test("apply parses --join into backend body without inventing legacy applied counts", async () => {
     let requestUrl = ""
     let requestBody: unknown
     onFetch({
@@ -170,7 +170,7 @@ describe("analytics-agent domain joins", () => {
         relation: "n:1",
       }],
     })
-    expect(parseData(result.output)).toEqual({ submittedCount: 1, status: "ok" })
+    expect(parseData(result.output)).toEqual({ requestedCount: 1, status: "unverified" })
   })
 
   test("apply rejects invalid relation before sending request", async () => {
