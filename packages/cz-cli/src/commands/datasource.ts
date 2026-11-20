@@ -5,6 +5,8 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error, handledError, isHandledCliError } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { getStudioContext } from "./studio-context.js"
+import { confirm } from "../confirm.js"
+import { basename } from "node:path"
 
 // ---------------------------------------------------------------------------
 // Type mapping: user-friendly string → numeric code
@@ -51,6 +53,9 @@ const API = {
   META_DETAIL: "/ide-authority/v1/projectDataSources/getDataObjectMeta",
   TEST: "/ide-authority/v1/projectDataSources/testDatasource",
   SAMPLE: "/ide-authority/v1/projectDataSources/getSampleData",
+  CREATE: "/ide-authority/v1/projectDataSources/create",
+  DELETE: "/ide-authority/v1/projectDataSources/delete",
+  UPLOAD: "/clickzetta-groot/api/v1/storage/uploadFile",
 }
 
 async function apiList(sc: StudioConfig, opts: { dsName?: string; dsType?: number; page?: number; pageSize?: number }) {
@@ -63,6 +68,71 @@ async function apiList(sc: StudioConfig, opts: { dsName?: string; dsType?: numbe
     dsType: opts.dsType,
     projectName: sc.workspaceName
   })
+}
+
+/**
+ * Create a datasource bound to the current workspace, the same request the
+ * Studio page sends. `params` is the connection JSON of the datasource type
+ * (hosts, username, password, SSL fields ...). Secrets go as given: the page
+ * encrypts them first, and the backend falls back to the plain value when it
+ * cannot decrypt one.
+ */
+export async function createDatasource(
+  sc: StudioConfig,
+  opts: { name: string; dsType: number; params: Record<string, unknown>; description?: string },
+) {
+  // The command's name and description are the source of truth. A dsName or dsDesc in the params
+  // file would otherwise end up different from the top-level fields of the same request.
+  const params = { ...opts.params }
+  delete params.dsName
+  delete params.dsDesc
+  return studioRequest<{ id?: number; dsName?: string; dsType?: number }>(sc, API.CREATE, {
+    projectIds: String(sc.projectId),
+    relatedProjectId: sc.projectId,
+    dsName: opts.name,
+    dsType: opts.dsType,
+    dsDesc: opts.description ?? "",
+    modelType: 1,
+    // The Studio edit page fills its form from the connection params, so the description goes in
+    // there next to dsName; the dsDesc field above only reaches the list and detail views.
+    connectionParamsList: [{
+      env: "prod",
+      connectionParam: JSON.stringify({ dsName: opts.name, ...(opts.description && { dsDesc: opts.description }), ...params }),
+    }],
+  }, undefined, "POST", { redactBody: true })
+}
+
+export async function deleteDatasource(sc: StudioConfig, id: number) {
+  return studioRequest<boolean>(sc, API.DELETE, { id })
+}
+
+/**
+ * Upload a file such as a CA certificate to Studio storage. Returns the download
+ * URL that file fields of a datasource (truststorePath, sslTruststoreLocation ...)
+ * take, like the upload button on the datasource page.
+ */
+export async function uploadDatasourceFile(sc: StudioConfig, path: string, expireSeconds?: number) {
+  const file = Bun.file(path)
+  if (!(await file.exists())) handledError("FILE_NOT_FOUND", `File not found: ${path}`)
+  const form = new FormData()
+  // Copying the bytes matters: a File wrapped around the BunFile still goes out under the full
+  // local path on the wire, and only the base name should reach storage.
+  form.append("file", new File([await file.arrayBuffer()], basename(path)))
+  const query = expireSeconds ? `?expireTimeSeconds=${expireSeconds}` : ""
+  return studioRequest<string>(sc, `${API.UPLOAD}${query}`, form)
+}
+
+/** Connection JSON from a file, or from stdin with "-", so secrets stay out of argv and shell history. */
+export async function readParamsFile(path: string): Promise<Record<string, unknown>> {
+  if (path !== "-" && !(await Bun.file(path).exists())) handledError("FILE_NOT_FOUND", `File not found: ${path}`)
+  const text = path === "-" ? await Bun.stdin.text() : await Bun.file(path).text()
+  // The parser's own error can quote the value it stopped at, which is a credential here, so the
+  // message is fixed and says nothing about the content.
+  const parsed = tryParseJson(text)
+  if (!parsed || Array.isArray(parsed)) {
+    handledError("INVALID_PARAMS", "Connection params must be a valid JSON object. The file content is not shown.")
+  }
+  return parsed as Record<string, unknown>
 }
 
 async function apiNamespaces(sc: StudioConfig, datasourceId: number) {
@@ -700,6 +770,94 @@ export function registerDatasourceCommand(cli: Argv<GlobalArgs>): void {
             }
           } catch (err) {
             logOperation("datasource test", { ok: false, timeMs: Date.now() - t0 })
+            reportDatasourceError(err, format)
+          }
+        },
+      )
+      // ── create ────────────────────────────────────────────────────────
+      .command(
+        "create <name>",
+        "Create a data source in the current workspace from a connection-params JSON file. Run 'datasource test <name>' afterwards to check connectivity.",
+        (y) =>
+          y
+            .positional("name", { type: "string", demandOption: true, describe: "Datasource name" })
+            .option("type", { type: "string", demandOption: true, describe: `Datasource type: ${Object.keys(DS_TYPE_MAP).join(", ")}, or the numeric code` })
+            .option("params-file", { type: "string", demandOption: true, describe: "JSON object of connection params (hosts, username, password, SSL fields ...); '-' reads stdin. Kept out of argv so secrets do not reach shell history" })
+            .option("description", { type: "string", describe: "Datasource description" }),
+        async (argv) => {
+          const format = argv.format
+          const t0 = Date.now()
+          try {
+            const dsType = parseDsType(argv.type as string)
+            if (dsType === undefined) {
+              error("INVALID_TYPE", `Unknown datasource type '${argv.type}'. Valid: ${Object.keys(DS_TYPE_MAP).join(", ")}`, { format }); return
+            }
+            const params = await readParamsFile(argv["params-file"] as string)
+            if (JSON.stringify(maskSecrets(params)) !== JSON.stringify(params)) {
+              process.stderr.write("Warning: the credentials in the params file are sent as given and stored unencrypted by the backend. The Studio web page encrypts them before saving.\n")
+            }
+            const sc = await getStudioContext(argv)
+            const resp = await createDatasource(sc, { name: argv.name as string, dsType, params, description: argv.description })
+            const id = resp.data?.id
+            logOperation("datasource create", { ok: true, timeMs: Date.now() - t0 })
+            success({ id, name: argv.name, type: dsTypeLabel(dsType) }, {
+              format, timeMs: Date.now() - t0,
+              aiMessage: `Datasource '${argv.name}' created (id=${id}). Check it with: cz-cli datasource test ${id ?? argv.name}`,
+            })
+          } catch (err) {
+            logOperation("datasource create", { ok: false, timeMs: Date.now() - t0 })
+            reportDatasourceError(err, format)
+          }
+        },
+      )
+      // ── delete ────────────────────────────────────────────────────────
+      .command(
+        "delete <datasource>",
+        "[🔴 DESTRUCTIVE] Delete a data source by name or id. Requires confirmation; the backend refuses when tasks still use it.",
+        (y) =>
+          y
+            .positional("datasource", { type: "string", demandOption: true, describe: "Datasource name or ID" })
+            .option("yes", { alias: "y", type: "boolean", default: false, describe: "Skip confirmation" }),
+        async (argv) => {
+          const format = argv.format
+          const t0 = Date.now()
+          try {
+            const sc = await getStudioContext(argv)
+            const ds = await resolveDatasource(sc, argv.datasource as string)
+            if (!argv.yes) {
+              const ok = await confirm(`Delete datasource '${ds.name}' (id=${ds.id})? This is irreversible.`)
+              if (!ok) {
+                success({ message: "Cancelled by user.", action: "datasource.delete", executed: false }, { format })
+                return
+              }
+            }
+            await deleteDatasource(sc, ds.id)
+            logOperation("datasource delete", { ok: true, timeMs: Date.now() - t0 })
+            success({ id: ds.id, name: ds.name, deleted: true }, { format, timeMs: Date.now() - t0, aiMessage: `Datasource '${ds.name}' deleted.` })
+          } catch (err) {
+            logOperation("datasource delete", { ok: false, timeMs: Date.now() - t0 })
+            reportDatasourceError(err, format)
+          }
+        },
+      )
+      // ── upload-file ───────────────────────────────────────────────────
+      .command(
+        "upload-file <path>",
+        "Upload a file (e.g. a CA certificate) to Studio storage and print its URL, for file fields in 'datasource create' params such as truststorePath.",
+        (y) =>
+          y
+            .positional("path", { type: "string", demandOption: true, describe: "Local file path" })
+            .option("expire-seconds", { type: "number", describe: "Lifetime of the returned URL in seconds (server default: one year)" }),
+        async (argv) => {
+          const format = argv.format
+          const t0 = Date.now()
+          try {
+            const sc = await getStudioContext(argv)
+            const resp = await uploadDatasourceFile(sc, argv.path as string, argv["expire-seconds"])
+            logOperation("datasource upload-file", { ok: true, timeMs: Date.now() - t0 })
+            success({ url: resp.data }, { format, timeMs: Date.now() - t0, aiMessage: "Put this URL into the file field of the datasource params." })
+          } catch (err) {
+            logOperation("datasource upload-file", { ok: false, timeMs: Date.now() - t0 })
             reportDatasourceError(err, format)
           }
         },
