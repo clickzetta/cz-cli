@@ -8,3 +8,14 @@ cz-cli 的输出同时给人和脚本、Agent 用，格式、错误结构和退�
 - **需要用户批准的写操作**：错误码 `WRITE_NOT_ALLOWED`，`status: "action_required"`，并给出 `next_steps`。见 [Data Agent](data-agent.md#写操作门)。
 
 新增命令或错误时复用 `success`、`error`、`handledError`，不要自己拼 JSON 或直接写 stdout；新增错误码时同步更新调用方会解析的地方（skill 文档、guide）。
+
+## Ad-hoc execution outcomes
+
+`task execute` returns a `data` object alongside an error when submission has started. It contains `task_id`, `submission_status` (`submitted` or `unknown`), `execution_status`, and `run_id` when available. JSON consumers must retain these fields even when the process exits with code 1.
+
+- `EXECUTE_FAILED`: the existing run failed; `data` retains its identity and terminal status.
+- `EXECUTE_TIMEOUT`: the CLI stopped waiting; the run can still be active. `data.execution_status` is the last observed status, or `UNKNOWN` if none was read.
+- `EXECUTE_STATUS_UNKNOWN`: submission returned a run ID, but a subsequent status read failed. Inspect that run instead of submitting another one.
+- `EXECUTE_SUBMISSION_UNKNOWN`: submission failed to return a usable ID, or its request failed. The service may already have created a run. Inspect the task's TEMP runs before taking any further submission action.
+
+`task execute` merges saved manual parameters with explicit command parameters and always submits a parameter object, even when it is empty. The ad-hoc submission transport does not retry requests automatically. A response error cannot establish that a non-idempotent request was never accepted. An end timestamp without an explicit terminal status does not establish successful completion.

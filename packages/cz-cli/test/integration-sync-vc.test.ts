@@ -20,6 +20,9 @@ let existingTaskAdhoc: string | undefined
 // Controls single-table setup probing: whether the sink table exists, and getDdl call count.
 let sinkTableExists = true
 let getDdlCalls = 0
+let execution: "success" | "failed" | "missing-status" | "poll-error" | "submit-error" | "missing-id" = "success"
+let executeCalls = 0
+let submittedParams: unknown
 // Sink columns returned by getColumnMapMeta, and CREATE TABLE SQLs executed against a sink.
 let metaSinkColumns: Array<Record<string, unknown>> = [{ name: "id" }]
 const createTableSqls: string[] = []
@@ -32,6 +35,17 @@ const actualResolver = await import("../src/resolver.ts")
 function installSdkMock() {
   mock.module("@clickzetta/sdk", () => ({
   ...actualSdk,
+  executeAdhoc: async (_c: unknown, params: Record<string, unknown>) => {
+    executeCalls++
+    submittedParams = params.params
+    if (execution === "submit-error") throw new Error("Control plane unavailable")
+    return { data: execution === "missing-id" ? {} : { scheduleInstanceId: 98765 } }
+  },
+  getRunDetail: async () => {
+    if (execution === "poll-error") throw new Error("Run detail unavailable")
+    if (execution === "missing-status") return { data: { executeEndTime: 123456 } }
+    return { data: { instanceStatus: execution === "failed" ? 3 : 1 } }
+  },
   listVclusters: async () => vclusters,
   resolveVclusterId: async (_c: unknown, name: string) =>
     vclusters.find((v) => v.name === name || v.id === name)?.id,
@@ -124,6 +138,9 @@ beforeEach(() => {
   existingTaskAdhoc = undefined
   sinkTableExists = true
   getDdlCalls = 0
+  execution = "success"
+  executeCalls = 0
+  submittedParams = undefined
   metaSinkColumns = [{ name: "id" }]
   createTableSqls.length = 0
   vclusters = [
@@ -524,5 +541,75 @@ describe("integration setup: kafka → lakehouse", () => {
     const params = (((content.jobs as Record<string, unknown>[])[0]!.source) as Record<string, unknown>).params as Record<string, unknown>
     expect(params.mode).toBe("earliest-offset")
     expect(params.groupId).toBe("lh_demo_group")
+  })
+})
+
+
+describe("task execute: preserve submission and run identity", () => {
+  const RUN = "task execute 12345 --vc SYNC_VC --content SELECT_1 --format json"
+
+  test("known failed run includes task and run IDs", async () => {
+    execution = "failed"
+    const result = await execute(RUN)
+    expect(result.exitCode).toBe(1)
+    expect(firstJson(result.output)).toMatchObject({
+      error: { code: "EXECUTE_FAILED" },
+      data: { task_id: 12345, run_id: 98765, submission_status: "submitted", execution_status: "FAILED" },
+    })
+    expect(executeCalls).toBe(1)
+  })
+
+  test("timeout retains the submitted run ID without claiming task failure", async () => {
+    const result = await execute(`${RUN} --max-wait-seconds 0`)
+    expect(result.exitCode).toBe(1)
+    expect(firstJson(result.output)).toMatchObject({
+      error: { code: "EXECUTE_TIMEOUT" },
+      data: { task_id: 12345, run_id: 98765, submission_status: "submitted", execution_status: "UNKNOWN" },
+    })
+    expect(executeCalls).toBe(1)
+  })
+
+  test("polling failure keeps the known run ID", async () => {
+    execution = "poll-error"
+    const result = await execute(RUN)
+    expect(result.exitCode).toBe(1)
+    expect(firstJson(result.output)).toMatchObject({
+      error: { code: "EXECUTE_STATUS_UNKNOWN" },
+      data: { task_id: 12345, run_id: 98765, submission_status: "submitted", execution_status: "UNKNOWN" },
+    })
+    expect(result.output).toContain("Do not resubmit")
+    expect(executeCalls).toBe(1)
+  })
+
+  for (const mode of ["submit-error", "missing-id"] as const) {
+    test(`${mode} reports an unknown submission, never retries`, async () => {
+      execution = mode
+      const result = await execute(RUN)
+      expect(result.exitCode).toBe(1)
+      expect(firstJson(result.output)).toMatchObject({
+        error: { code: "EXECUTE_SUBMISSION_UNKNOWN" },
+        data: { task_id: 12345, submission_status: "unknown", execution_status: "UNKNOWN" },
+      })
+      expect(result.output).toContain("Do not resubmit")
+      expect(executeCalls).toBe(1)
+    })
+  }
+
+  test("an end timestamp without a status does not prove success", async () => {
+    execution = "missing-status"
+    const result = await execute(`${RUN} --max-wait-seconds 0.05 --poll-interval 0.01`)
+    expect(result.exitCode).toBe(1)
+    expect(firstJson(result.output)).toMatchObject({
+      error: { code: "EXECUTE_TIMEOUT" },
+      data: { run_id: 98765, submission_status: "submitted", execution_status: "UNKNOWN" },
+    })
+    expect(executeCalls).toBe(1)
+  })
+
+  test("successful execution sends empty params as an object", async () => {
+    const result = await execute(RUN)
+    expect(result.exitCode).toBe(0)
+    expect(submittedParams).toEqual({})
+    expect(firstJson(result.output)).toMatchObject({ data: { task_id: 12345, run_id: 98765, execution_status: "SUCCESS" } })
   })
 })

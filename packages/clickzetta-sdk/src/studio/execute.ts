@@ -42,6 +42,8 @@ export interface ExecuteAdhocParams {
 }
 
 export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
+  // A timeout or gateway failure can happen after acceptance. There is no
+  // idempotency key, so transport retries could create duplicate task runs.
   return studioRequest(config, "/ide-admin/v1/adhoc/execute", {
     updateBy: params.updateBy,
     dataFileId: params.dataFileId,
@@ -65,5 +67,5 @@ export function executeAdhoc(config: StudioConfig, params: ExecuteAdhocParams) {
     {
       env: "prod",
       workspaceName:config.workspaceName
-    })
+    }, "POST", { maxRetries: 0 })
 }

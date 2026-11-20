@@ -13,8 +13,10 @@ export async function studioRequest<T>(
   body: unknown,
   extraHeaders?: Record<string, string>,
   method: string = "POST",
+  transport: Pick<ClientOptions, "maxRetries"> = {},
 ) {
   const opts: ClientOptions = {
+    ...transport,
     baseUrl: config.baseUrl,
     tokens: config.tokens,
     customHeaders: {
