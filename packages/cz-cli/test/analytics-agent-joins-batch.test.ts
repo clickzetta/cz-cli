@@ -41,10 +41,10 @@ const flags = [
   "105:ws.demo.v_gpt_shipments.order_id=101:ws.demo.v_gpt_orders.id@n:1",
 ]
 const applied = flags.map((_, index) => ({ index, status: "applied", joinId: 700 + index }))
-async function run(values = flags) {
+async function run(values = flags, args = values.flatMap((value) => ["--join", value])) {
   const child = Bun.spawn([
     process.execPath, "src/main.ts", "analytics-agent", "domain", "joins", "apply",
-    "--domain-id", "55", ...values.flatMap((value) => ["--join", value]), "--profile", "test",
+    "--domain-id", "55", ...args, "--profile", "test",
   ], {
     cwd: join(import.meta.dir, ".."), env: { ...process.env, CLICKZETTA_TEST_HOME: home },
     stdout: "pipe", stderr: "pipe",
@@ -135,6 +135,31 @@ describe("domain joins batch apply", () => {
     expect(result.payload.data.appliedCount).toBeUndefined()
     expect(result.payload.ai_message).toContain("domain joins list")
   })
+
+  test.each([
+    ["--join"],
+    ["--join", "--join", flags[0]!],
+    ["--join", flags[0]!, "--join"],
+    ["--join", flags[0]!, "--join", "--join", flags[1]!],
+    ["--join="],
+  ].map((args) => ({ args })))("missing join value in $args stops before HTTP", async ({ args }) => {
+    response = { submittedCount: 0, results: [] }
+    const result = await run([], args)
+    expect(result.code, result.stdout + result.stderr).toBe(2)
+    expect(result.payload.error.code).toBe("USAGE_ERROR")
+    expect(result.payload.error.message).toContain(args[0] === "--join=" ? "--join item 1" : "Not enough arguments following: join")
+    expect(requests).toHaveLength(0)
+  })
+
+  test.each([["rejected"], ["applied"], ["already_exists"], [], {}, null, false, 0].map((status) => ({ status })))(
+    "rejects non-string status $status",
+    async ({ status }) => {
+      response = { submittedCount: 0, results: flags.map((_, index) => ({ index, status })) }
+      const result = await run()
+      expect(result.code).toBe(1)
+      expect(result.payload.error.code).toBe("JOIN_APPLY_RESULT_MISMATCH")
+    },
+  )
 
   test("JSON input is rejected rather than silently losing items", async () => {
     const result = await run(['{"datasetId":101}', flags[3]!])

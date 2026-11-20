@@ -4,7 +4,7 @@ import { HandledCliError, defaultFormat, outputState, parseOutputArgs, renderErr
 import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
 import { suggestClosest } from "./suggest.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
-import { UsageError } from "./usage-error.js"
+import { UsageError, isParserError } from "./usage-error.js"
 import type { CliArgs } from "./connection/config.js"
 
 export interface GlobalArgs extends CliArgs {
@@ -343,10 +343,9 @@ export function createCli(args: string[]) {
     }, /* applyBeforeValidation */ true)
     .strict()
     .fail((msg, err, failYargs) => {
-      // Our own validators (see the check() above) report through UsageError so
-      // they get the USAGE_ERROR envelope; anything else is a real exception and
-      // must keep propagating rather than being relabelled as bad usage.
-      if (err && !(err instanceof UsageError)) throw err
+      // Parser diagnostics and explicit validation failures are usage errors;
+      // command execution exceptions must retain their original classification.
+      if (err && !(err instanceof UsageError) && !isParserError(err, msg)) throw err
       if (err instanceof UsageError) msg = err.message
       // Defensive net: a group built with raw `.demandCommand()` (no commandGroup
       // fail handler of its own, e.g. mcp / some agent.ts subtrees) bubbles its

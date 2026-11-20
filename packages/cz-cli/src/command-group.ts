@@ -3,7 +3,7 @@ import { suggestClosest } from "./suggest.js"
 import { HandledCliError, parseOutputArgs, renderErrorOutput } from "./output/index.js"
 import { KNOWN_GLOBAL_FLAGS, INVOCATION_ARGS_KEY } from "./cli.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
-import { UsageError } from "./usage-error.js"
+import { UsageError, isParserError } from "./usage-error.js"
 
 // Re-exported so the opencode agent runtime (which imports commandGroup from
 // this module) can catch the sentinel at its own parse boundaries. See
@@ -33,9 +33,9 @@ export function commandGroup<T>(yargs: Argv<T>, commandName: string): Argv<T> {
     .strictCommands()
     .strictOptions()
     .fail((msg, err, failYargs) => {
-      // See cli.ts's fail handler: UsageError is our own validation speaking, so
-      // it renders as USAGE_ERROR; every other error keeps propagating.
-      if (err && !(err instanceof UsageError)) throw err
+      // Parser diagnostics and explicit validation failures are usage errors;
+      // command execution exceptions must retain their original classification.
+      if (err && !(err instanceof UsageError) && !isParserError(err, msg)) throw err
       if (err instanceof UsageError) msg = err.message
 
       // A bare group invocation (`cz-cli ai-gateway`, `cz-cli ai-gateway key`)
