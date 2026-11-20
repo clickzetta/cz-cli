@@ -20,6 +20,11 @@ let existingTaskAdhoc: string | undefined
 // Controls single-table setup probing: whether the sink table exists, and getDdl call count.
 let sinkTableExists = true
 let getDdlCalls = 0
+let ddlFailure = false
+let ddl = "CREATE TABLE db1.t1 (id BIGINT)"
+let createFailure = false
+let probeFailure: "schema" | "table" | undefined
+const sqlCalls: string[] = []
 // Sink columns returned by getColumnMapMeta, and CREATE TABLE SQLs executed against a sink.
 let metaSinkColumns: Array<Record<string, unknown>> = [{ name: "id" }]
 const createTableSqls: string[] = []
@@ -52,14 +57,30 @@ function installSdkMock() {
   // Probe endpoints used by single-table setup: schema/table existence, DDL, column meta.
   studioRequest: async (_c: unknown, path: string, body?: Record<string, unknown>) => {
     if (path.includes("getColumnMapMeta")) {
+      if (!sinkTableExists && (body?.sourceReq as Record<string, unknown>)?.id === 500) {
+        throw new Error("Sink table does not exist")
+      }
       return { data: { sourceMeta: { columns: [{ name: "id" }] }, sinkMeta: { columns: metaSinkColumns } } }
     }
-    if (path.includes("getDdl")) { getDdlCalls++; return { data: "CREATE TABLE db1.t1 (id BIGINT)" } }
+    if (path.includes("getDdl")) {
+      getDdlCalls++
+      if (ddlFailure) throw new Error("Source metadata unavailable")
+      return { data: ddl }
+    }
     if (path.includes("ai/mcp/execute")) {
       const sql = String(body?.sql ?? "")
+      sqlCalls.push(sql)
+      if ((probeFailure === "schema" && /SHOW SCHEMAS/i.test(sql)) ||
+          (probeFailure === "table" && /SHOW TABLES/i.test(sql))) {
+        throw new Error("Existence probe unavailable")
+      }
       // SHOW TABLES → controls whether the sink table "exists"; other execs (schema, create) are no-ops.
       if (/SHOW TABLES/i.test(sql)) return { data: { rows: sinkTableExists ? [["t1"]] : [] } }
-      if (/CREATE TABLE/i.test(sql)) createTableSqls.push(sql)
+      if (/CREATE TABLE/i.test(sql)) {
+        if (createFailure) throw new Error("CREATE TABLE denied")
+        createTableSqls.push(sql)
+        sinkTableExists = true
+      }
       return { data: { rows: [["dummy"]] } }
     }
     return { data: null }
@@ -124,6 +145,11 @@ beforeEach(() => {
   existingTaskAdhoc = undefined
   sinkTableExists = true
   getDdlCalls = 0
+  ddlFailure = false
+  ddl = "CREATE TABLE db1.t1 (id BIGINT)"
+  createFailure = false
+  probeFailure = undefined
+  sqlCalls.length = 0
   metaSinkColumns = [{ name: "id" }]
   createTableSqls.length = 0
   vclusters = [
@@ -349,17 +375,19 @@ describe("integration setup: elasticsearch → lakehouse", () => {
     "--sink-datasource lakehouse_sink --sink-schema automated_test --sink-table demo_es_sink " +
     "--write-mode OVERWRITE --format json"
 
-  test("builds the Lakehouse sink from column metadata, never calls getDdl, saves ES source params", async () => {
+  test("creates the absent Lakehouse table before requesting paired metadata", async () => {
     sinkTableExists = false
-    metaSinkColumns = [{ name: "keyword", type: "string" }, { name: "long", type: "bigint" }]
+    ddl = "CREATE TABLE demo_es_index (`keyword` string, `unsigned` DECIMAL(20,0))"
+    metaSinkColumns = [{ name: "keyword", type: "string" }, { name: "unsigned", type: "DECIMAL(20,0)" }]
     const result = await execute(`${ES_BASE} --source-filter 'status:active' --source-batch-size 50`)
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
-    // Sink table built from metadata columns, not a mirrored source DDL.
-    expect(getDdlCalls).toBe(0)
+    // The service converts source types; paired metadata may only read an existing sink.
+    expect(getDdlCalls).toBe(1)
     expect(createTableSqls.length).toBe(1)
+    expect(createTableSqls[0]).toContain("CREATE TABLE automated_test.demo_es_sink")
     expect(createTableSqls[0]).toContain("`keyword` string")
-    expect(createTableSqls[0]).toContain("`long` bigint")
+    expect(createTableSqls[0]).toContain("`unsigned` DECIMAL(20,0)")
     // Saved content carries ES-shaped source.params.
     expect(saveContentCalls.length).toBe(1)
     const raw = saveContentCalls[0]!.dataFileContent
@@ -382,13 +410,35 @@ describe("integration setup: elasticsearch → lakehouse", () => {
     expect(saveContentCalls.length).toBe(1)
   })
 
-  test("no sink column metadata → SINK_TABLE_REQUIRED", async () => {
+  for (const probe of ["schema", "table"] as const) {
+    test(`${probe} existence lookup failure stops before creation or save`, async () => {
+      probeFailure = probe
+      const result = await execute(ES_BASE)
+      expect(result.exitCode).toBe(1)
+      expect(result.output).toContain("Existence probe unavailable")
+      expect(sqlCalls.some((sql) => /CREATE/i.test(sql))).toBe(false)
+      expect(getDdlCalls).toBe(0)
+      expect(saveContentCalls).toHaveLength(0)
+    })
+  }
+
+  test("source metadata failure does not create or save", async () => {
     sinkTableExists = false
-    metaSinkColumns = []
+    ddlFailure = true
     const result = await execute(ES_BASE)
-    expect(result.exitCode).toBe(2)
-    expect(result.output).toContain("SINK_TABLE_REQUIRED")
-    expect(saveContentCalls.length).toBe(0)
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain("Source metadata unavailable")
+    expect(createTableSqls).toHaveLength(0)
+    expect(saveContentCalls).toHaveLength(0)
+  })
+
+  test("create failure does not save task content", async () => {
+    sinkTableExists = false
+    createFailure = true
+    const result = await execute(ES_BASE)
+    expect(result.exitCode).toBe(1)
+    expect(result.output).toContain("CREATE TABLE denied")
+    expect(saveContentCalls).toHaveLength(0)
   })
 })
 
