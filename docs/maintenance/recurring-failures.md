@@ -43,3 +43,11 @@ Next time: open the report, check its verdict, reviewed head and conditions, the
 Trigger: `sync`, `git fetch` or `git push` reports an empty reply or a port-443 timeout.
 
 On 2026-11-10 and 2026-11-11 this happened in several Worker and Curator rounds: sync failed five times on 11-11 and implementer pushes needed up to eight attempts. The cause is unknown and lies outside the repository; the evidence is private (session transcripts). Retry a few times with growing pauses. Confirm a push landed with `git ls-remote origin BRANCH` before declaring it unpushed or pushing again, and never force. Do not pipe `sync` into `head` or similar before reading its exit status, because the pipe reports the last command's status. If sync still fails, follow the role prompt: report it and end the round. Remove this entry once a week passes without the failure.
+
+## Runtime discovery repeats failed reads
+
+Trigger: a maintenance round needs command usage, an existing task, or a large runtime record.
+
+On 2026-11-19–20, Worker and Curator rounds repeatedly tried `cz-maintenance --help`, guessed legacy task paths and JSON shapes, and displayed records too large for the tool output budget. The deployed controller returned usage with exit 1 for that help invocation; missing paths, parsing failures and truncated displays left reads incomplete. Evidence is private session transcripts. These local read failures do not establish intake-source degradation.
+
+Next time, use the [documented commands](workflow.md#runtime-and-versions) and handoff's stable task ID with `cz-maintenance task ID` before guessing storage paths. Save large command results privately, inspect actual JSON keys and types, then read original records in bounded chunks; summaries locate evidence but do not replace it. Check each read's result, retain unread gaps, and reread omitted content before claiming coverage or advancing its cursor. Recheck the help-specific conclusion when the deployed controller changes; this is not a claim about other tools' help support.
