@@ -7,6 +7,7 @@ import type { GlobalArgs } from "../cli.js"
 import { success, error } from "../output/index.js"
 import { logOperation } from "../logger.js"
 import { loginByAccountSite } from "./account-login.js"
+import { parseJwtPayload } from "../connection/jwt.js"
 import { verbatimTokenSource } from "../connection/token-source.js"
 
 // ---------------------------------------------------------------------------
@@ -241,15 +242,6 @@ function parseStudioUrl(studioUrl: string, serviceOverride?: string): StudioUrlI
 // Authentication helpers
 // ---------------------------------------------------------------------------
 
-function decodeJwtPayload(token: string): Record<string, unknown> {
-  try {
-    const parts = token.split(".")
-    if (parts.length < 2) return {}
-    const padded = parts[1] + "=".repeat((4 - (parts[1].length % 4)) % 4)
-    return JSON.parse(Buffer.from(padded, "base64").toString())
-  } catch { return {} }
-}
-
 function coerceInt(value: unknown, fallback = 0): number {
   try {
     const n = Number(value)
@@ -279,7 +271,7 @@ async function loginByAccount(
     info.accountDisplayName, username, password,
     info.accountLoginUrl, timeout,
   )
-  const jp = decodeJwtPayload(token)
+  const jp = parseJwtPayload(token)
   return {
     token,
     userId: coerceInt(jp.userId ?? jp.user_id ?? data.userId ?? data.id),
@@ -300,7 +292,7 @@ async function loginByInstance(
   const loginData = await loginWithPassword(baseUrl, username, password, instanceName)
   const jwt = loginData.token
   if (!jwt) throw new Error("INSTANCE_LOGIN_FAILED: jwt token missing")
-  const jp = decodeJwtPayload(jwt)
+  const jp = parseJwtPayload(jwt)
   let userId = coerceInt(jp.userId ?? jp.user_id ?? loginData.userId)
   let tenantId = coerceInt(jp.accountId ?? jp.tenantId)
   let userName = String(jp.userName ?? username)
@@ -358,7 +350,7 @@ async function authenticate(
       const { token, data, serviceUrl } = await loginWithPasswordRaw(
         info.envToken, username, password, accountLoginUrl, timeout,
       )
-      const jp = decodeJwtPayload(token)
+      const jp = parseJwtPayload(token)
       return {
         token,
         userId: coerceInt(jp.userId ?? jp.user_id),

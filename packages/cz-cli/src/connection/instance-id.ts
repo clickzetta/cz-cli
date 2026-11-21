@@ -7,6 +7,30 @@ function numeric(value: unknown): number {
 }
 
 /**
+ * Is this `serviceId` a Lakehouse instance? Lakehouse is 1; every other value
+ * names a product this CLI cannot connect to.
+ *
+ * An ABSENT value counts as Lakehouse. Older `serviceInstanceList` and userinfo
+ * bodies omit the field entirely and only ever listed Lakehouse instances, so
+ * treating absence as a mismatch would strand those accounts with no instance.
+ *
+ * The value is COERCED, not type-checked. The field arrives as a JSON number on
+ * some routes and as a numeric string on others, and a `typeof === "number"`
+ * test would fall through to the absent-value default and accept `"2"` as
+ * Lakehouse — resolving not just the wrong instance but the wrong region gateway,
+ * since callers read cspId/regionId off the row they picked.
+ *
+ * Exported so the userinfo path (oauth-userinfo.ts) and bootstrap's
+ * `listInstances` filter apply the same judgement: they must agree about what is
+ * connectable, or one of them generates a profile another cannot serve. setup.ts's
+ * `filterLakehouseInstances` is deliberately NOT a caller — see the note on
+ * `isLakehouseInstance` in oauth-userinfo.ts.
+ */
+export function isLakehouseServiceId(value: unknown): boolean {
+  return numeric(value ?? 1) === 1
+}
+
+/**
  * Look up a Lakehouse instance id by name via `serviceInstanceList`.
  *
  * Single implementation shared by the cookie-token path and the studio /
@@ -59,7 +83,7 @@ export async function resolveInstanceIdByName(
     // instance: that enumeration builds the profile matrix, this resolves the id a JobID needs.
     const match = (payload.data ?? []).find((row) =>
       String(row.name ?? row.instanceName ?? "") === instanceName
-      && numeric(row.serviceId ?? 1) === 1,
+      && isLakehouseServiceId(row.serviceId),
     )
     // Only "no row matched" is a statement about what the account owns. A row that matched
     // but carried no usable id is a malformed payload, and reporting THAT as not-owned would
