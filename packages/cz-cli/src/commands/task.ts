@@ -1565,7 +1565,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(shouldRegenerateSchedule
                 ? studioScheduleFieldsFromCron(cronResult, activeStartTime, configProperties)
                 : existingStudioScheduleFields(oldData)),
-                  ...(oldData.scheduleCreatedType != null && { scheduleCreatedType: String(oldData.scheduleCreatedType) }),
+              ...(oldData.scheduleCreatedType != null && { scheduleCreatedType: String(oldData.scheduleCreatedType) }),
             })
             logOperation("task save-merge", { ok: true })
             success({
