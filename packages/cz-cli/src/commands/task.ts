@@ -906,10 +906,14 @@ function studioScheduleFieldsFromCron(cronResult: CronResult, activeStartTime: u
   }
 }
 
+const scheduleCreatedTypeOption = {
+  type: "string",
+  describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted",
+} as const
+
 function parseScheduleCreatedType(value: unknown, format: string | undefined) {
   if (value === undefined) return undefined
-  const mode = Array.isArray(value) && value.length === 1 ? value[0] : value
-  if (mode === "1" || mode === "2") return mode
+  if (value === "1" || value === "2") return value
   handledError("INVALID_ARGUMENTS", "--schedule-created-type must be 1 (next day) or 2 (after publish).", { format, exitCode: 2 })
 }
 
@@ -1962,7 +1966,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
-            .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
+            .option("schedule-created-type", scheduleCreatedTypeOption)
             .option("type", { type: "string", demandOption: true, describe: `Task type: ${SCRIPT_TASK_TYPE_OPTIONS_TEXT}. For non-script task types, use their dedicated create/setup commands where applicable.` })
             .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
             .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
@@ -2667,7 +2671,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
-            .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
+            .option("schedule-created-type", scheduleCreatedTypeOption)
             .option("cron", { type: "string", demandOption: true, describe: "Cron expression — ClickZetta uses 7-field format: second minute hour day month weekday year (e.g. '0 30 9 * * ? *' = daily 09:30)" })
             .option("vc", { type: "string", describe: "Virtual cluster code (integration tasks MUST use INTEGRATION type VC)" })
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
@@ -2759,7 +2763,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
-            .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
+            .option("schedule-created-type", scheduleCreatedTypeOption)
             .option("retry-count", { type: "number", describe: "Max retry attempts" })
             .option("retry-interval", { type: "number", describe: "Retry interval value" })
             .option("retry-unit", { type: "string", describe: "Retry interval unit (m/s)" })
@@ -3843,7 +3847,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
-                .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
+                .option("schedule-created-type", scheduleCreatedTypeOption)
                 .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("cron", { type: "string" })

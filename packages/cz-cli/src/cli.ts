@@ -44,6 +44,8 @@ function collapseDuplicateScalars(argv: Record<string, unknown>, instance: unkno
     // are arrays by definition, never a repeated option.
     if (key === "_" || key === "$0" || key === "--") continue
     if (Array.isArray(value) && !declaredArrays.has(key) && value.length > 1) {
+      // Task scheduling rejects repeated activation modes.
+      if (kebab(key) === "schedule-created-type") continue
       argv[key] = value[value.length - 1]
     }
   }
@@ -306,8 +308,8 @@ export function createCli(args: string[]) {
     // on field.replace, `--protocol http --protocol https` crashed in
     // normalizeProtocol, and `--profile p1 --profile p2` silently resolved to no
     // profile at all. Collapse to last-wins here — the GNU convention — but only
-    // for options NOT declared `array: true`, of which this CLI has 15 (`--set`,
-    // `--variable`, `--header`, …) that must keep collecting. yargs' global
+    // for options that accept last-wins. Array options such as `--set`,
+    // `--variable` and `--header` must keep collecting. yargs' global
     // `duplicate-arguments-array: false` cannot make that distinction: it would
     // reduce those to their last element too.
     //
