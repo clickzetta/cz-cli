@@ -8,6 +8,10 @@ on:
         description: "Release version (e.g. 0.3.78 or dev-v0.3.79.20260616200210)"
         required: true
         type: string
+      published_version:
+        description: "Verified current stable version"
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -74,6 +78,7 @@ jobs:
       # of its git tag.
       - uses: actions/checkout@v4
         with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
           fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
@@ -89,13 +94,19 @@ jobs:
       - name: Check release lineage
         env:
           FORCE_LINEAGE_SWITCH: ${{ vars.FORCE_LINEAGE_SWITCH }}
+          PUBLISHED_VERSION: ${{ inputs.published_version }}
         run: |
           ARGS=(
             --version "${{ steps.release.outputs.version }}"
             --channel "${{ steps.release.outputs.is_stable == 'true' && 'stable' || 'nightly' }}"
           )
-          if [ "$FORCE_LINEAGE_SWITCH" = "true" ] && [ "${{ steps.release.outputs.is_stable }}" = "true" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$FORCE_LINEAGE_SWITCH" = "true" ] && [ "${{ steps.release.outputs.is_stable }}" = "true" ]; then
             ARGS+=(--force)
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "${{ steps.release.outputs.tag }}" = "v2.0.10"
+            [[ "$PUBLISHED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            ARGS+=(--published "$PUBLISHED_VERSION")
           fi
           bun run scripts/check-release-lineage.mjs "${ARGS[@]}"
 
@@ -105,6 +116,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: refs/tags/${{ needs.resolve-release.outputs.tag }}
           fetch-depth: 0
 
       - name: Generate release notes
@@ -148,7 +160,7 @@ jobs:
         run: |
           PRERELEASE_ARGS=()
           if [ "${{ needs.resolve-release.outputs.is_dev }}" = "true" ]; then
-            PRERELEASE_ARGS+=(--prerelease --latest=false --verify-tag)
+            PRERELEASE_ARGS+=(--prerelease --latest=false)
           else
             gh release delete "${{ needs.resolve-release.outputs.tag }}" \
               --yes --cleanup-tag=false \
@@ -157,6 +169,7 @@ jobs:
           gh release create "${{ needs.resolve-release.outputs.tag }}" \
             --title "${{ needs.resolve-release.outputs.tag }}" \
             --notes-file /tmp/release-notes.md \
+            --verify-tag \
             "${PRERELEASE_ARGS[@]}" \
             --repo "${{ github.repository }}"
 
@@ -186,6 +199,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.resolve-release.outputs.tag }}
 
       - name: Sync clickzetta-skills
         shell: bash
@@ -314,6 +329,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.resolve-release.outputs.tag }}
 
   # Package the VS Code extension and attach the .vsix to the GitHub release, so
   # internal users have a stable download URL per version instead of digging
@@ -343,6 +360,8 @@ jobs:
         working-directory: sdks/cz-vscode
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.resolve-release.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -420,6 +439,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.resolve-release.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -456,6 +477,8 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.resolve-release.outputs.tag }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -500,7 +523,7 @@ jobs:
           ARGS=(
             --version "${{ needs.resolve-release.outputs.version }}"
             --dist packages/opencode/dist
-            --git-sha "${{ github.sha }}"
+            --git-sha "$(git rev-parse HEAD)"
             --build-date "${{ needs.resolve-release.outputs.build_date }}"
           )
           if [ "${{ needs.resolve-release.outputs.is_stable }}" = "true" ]; then
@@ -526,7 +549,7 @@ jobs:
             --repo "${{ github.repository }}"
 
       - name: Notify Feishu group
-        if: success()
+        if: success() && github.event_name == 'push'
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
