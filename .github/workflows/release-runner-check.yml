@@ -1,0 +1,42 @@
+name: release-runner-check
+on:
+  push:
+    branches: [release-runner-check]
+    paths: [.github/workflows/release-runner-check.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Check release lineage
+        id: lineage
+        continue-on-error: true
+        run: bun run scripts/check-release-lineage.mjs --version 2.0.10 --channel stable --json
+      - name: Compare HTTP clients and channels
+        run: |
+          getent ahosts cz-cli.ai || true
+          for channel in stable nightly; do
+            url="https://cz-cli.ai/api/$channel"
+            curl --silent --show-error --fail --max-time 15 \
+              --write-out "\n$channel ip=%{remote_ip} http=%{http_code} dns=%{time_namelookup} tcp=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}\n" \
+              "$url" || true
+            bun -e 'const start = performance.now(); const url = process.argv[1]; try { const response = await fetch(url, { signal: AbortSignal.timeout(15000) }); console.log("Bun", url, response.status, await response.text(), Math.round(performance.now() - start), "ms"); } catch (error) { console.error("Bun", url, error.name, error.message, Math.round(performance.now() - start), "ms"); }' "$url"
+          done
+      - name: Require successful lineage check
+        if: always()
+        env:
+          LINEAGE_OUTCOME: ${{ steps.lineage.outcome }}
+        run: test "$LINEAGE_OUTCOME" = success
