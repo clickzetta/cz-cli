@@ -13,3 +13,5 @@
 - [Analytics Agent](analytics-agent.md)：服务配置、知识库与对话。
 - [Data Agent](data-agent.md)：data_engineer 提示词、内置 skill 和写操作门。
 - [输出](output.md)：输出格式、错误结构和退出码。
+
+- [Task scheduling](task-scheduling.md): schedule activation modes and preservation.

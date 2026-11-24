@@ -82,6 +82,7 @@ beforeEach(() => {
   onStudio("/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ({
     code: 0,
     data: {
+      scheduleCreatedType: "1",
       cronExpress: "0 00 00 * * ? *",
       activeStartTime: "2026-06-29T00:00:00.000Z",
       activeEndTime: "2099-01-01T00:00:00.000Z",
@@ -304,4 +305,10 @@ describe("task create-setup cron validation", () => {
     expect(saveContentCalls).toHaveLength(0)
     expect(saveConfigCalls).toHaveLength(0)
   })
+})
+
+
+test("save-merge with changed cron preserves next-day mode", async () => {
+  expect((await execute('task save-merge merge_task --dependency select_3 --cron "0 00 07 * * ? *"')).exitCode).toBe(0)
+  expect(saveConfigCalls[0]?.scheduleCreatedType).toBe("1")
 })

@@ -906,8 +906,16 @@ function studioScheduleFieldsFromCron(cronResult: CronResult, activeStartTime: u
   }
 }
 
+function parseScheduleCreatedType(value: unknown, format: string | undefined) {
+  if (value === undefined) return undefined
+  const mode = Array.isArray(value) && value.length === 1 ? value[0] : value
+  if (mode === "1" || mode === "2") return mode
+  handledError("INVALID_ARGUMENTS", "--schedule-created-type must be 1 (next day) or 2 (after publish).", { format, exitCode: 2 })
+}
+
 function existingStudioScheduleFields(data: Record<string, unknown>) {
   return {
+    ...(data.scheduleCreatedType != null && { scheduleCreatedType: String(data.scheduleCreatedType) }),
     ...(Array.isArray(data.schedule) && { schedule: data.schedule as unknown[][] }),
     ...(data.frequency !== undefined && { frequency: String(data.frequency) }),
     ...(data.scheduleStartTime !== undefined && { scheduleStartTime: String(data.scheduleStartTime) }),
@@ -1105,6 +1113,7 @@ const SCHEDULE_INFO_FIELDS: Record<string, string> = {
   cycleTaskName: "task_name", cycleTaskCode: "task_code",
   cycleTaskType: "task_type", cronExpression: "cron_expression",
   taskStatus: "task_status", scheduleConfigType: "schedule_config_type",
+  scheduleCreatedType: "schedule_created_type",
   taskOwnerCn: "owner_cn", taskOwnerEn: "owner_en",
   retryCount: "retry_count", retryIntervalTime: "retry_interval_time",
   retryIntervalTimeUnit: "retry_interval_time_unit",
@@ -1148,6 +1157,7 @@ const CONFIG_DETAIL_FIELDS: Record<string, string> = {
   executeTimeout: "execute_timeout", executeTimeoutUnit: "execute_timeout_unit",
   taskPriority: "task_priority", triggerType: "trigger_type",
   scheduleRateType: "schedule_rate_type", scheduleConfigType: "schedule_config_type",
+  scheduleCreatedType: "schedule_created_type",
   dependencyTimeout: "dependency_timeout", dependencyTimeoutUnit: "dependency_timeout_unit",
   configProperties: "config_properties",
 }
@@ -1192,6 +1202,7 @@ function convertConfigFields(data: Record<string, unknown>): Record<string, unkn
 function normalizePublishComparableSchedule(data: Record<string, unknown>) {
   return {
     cron_express: data.cron_express ?? "",
+    schedule_created_type: data.schedule_created_type == null ? "" : String(data.schedule_created_type),
     retry_count: data.retry_count ?? "",
     retry_interval_time: data.retry_interval_time ?? "",
     retry_interval_time_unit: data.retry_interval_time_unit ?? "",
@@ -1557,6 +1568,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(shouldRegenerateSchedule
                 ? studioScheduleFieldsFromCron(cronResult, activeStartTime, configProperties)
                 : existingStudioScheduleFields(oldData)),
+              ...(oldData.scheduleCreatedType != null && { scheduleCreatedType: String(oldData.scheduleCreatedType) }),
             })
             logOperation("task save-merge", { ok: true })
             success({
@@ -1950,6 +1962,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("name", { type: "string", demandOption: true })
+            .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
             .option("type", { type: "string", demandOption: true, describe: `Task type: ${SCRIPT_TASK_TYPE_OPTIONS_TEXT}. For non-script task types, use their dedicated create/setup commands where applicable.` })
             .option("folder", { type: "string", describe: "Folder ID or name (required). Run 'cz-cli task folder-tree' to find folder IDs." })
             .option("content", { type: "string", describe: "Script content as a string. Use --file to read from a file instead." })
@@ -1963,6 +1976,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
+            const scheduleCreatedType = parseScheduleCreatedType(argv["schedule-created-type"], format)
+            if (scheduleCreatedType !== undefined && !argv.cron) {
+              error("INVALID_ARGUMENTS", "--schedule-created-type requires --cron for create-setup.", { format, exitCode: 2 }); return
+            }
             if (argv.content && argv.file) {
               error("INVALID_ARGUMENTS", "Provide --content or --file, not both.", { format, exitCode: 2 }); return
             }
@@ -2072,6 +2089,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const oldConfigProps: Record<string, unknown> = {}
                 const activeStartTime = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"
                 await saveTaskConfig(sc, {
+                  scheduleCreatedType,
                   dataFileId: fileId,
                   projectId: sc.projectId,
                   updateBy: String(sc.userId),
@@ -2649,6 +2667,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
+            .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
             .option("cron", { type: "string", demandOption: true, describe: "Cron expression — ClickZetta uses 7-field format: second minute hour day month weekday year (e.g. '0 30 9 * * ? *' = daily 09:30)" })
             .option("vc", { type: "string", describe: "Virtual cluster code (integration tasks MUST use INTEGRATION type VC)" })
             .option("vc-id", { type: "string", describe: "Virtual cluster ID" })
@@ -2659,6 +2678,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
+            const scheduleCreatedType = parseScheduleCreatedType(argv["schedule-created-type"], format)
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const cronResult = convertAgentCron(argv.cron as string)
@@ -2723,6 +2743,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileOutputListReqs: outputTables,
               configProperties: JSON.stringify(oldConfigProps),
               ...studioScheduleFieldsFromCron(cronResult, activeStartTime, oldConfigProps),
+              scheduleCreatedType: scheduleCreatedType ?? (oldData.scheduleCreatedType == null ? undefined : String(oldData.scheduleCreatedType)),
               ...(cronExistingParams && cronExistingParams.length > 0 && { paramValueList: cronExistingParams }),
             })
             logOperation("task save-cron", { ok: true })
@@ -2738,6 +2759,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         (y) =>
           y
             .positional("task", { type: "string", demandOption: true })
+            .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
             .option("retry-count", { type: "number", describe: "Max retry attempts" })
             .option("retry-interval", { type: "number", describe: "Retry interval value" })
             .option("retry-unit", { type: "string", describe: "Retry interval unit (m/s)" })
@@ -2757,7 +2779,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
-            const configOpts = ["retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vcluster", "vc-id", "schema", "timeout", "timeout-unit", "auto-lineage", "deps", "outputs", "output-tables", "param"] as const
+            const scheduleCreatedType = parseScheduleCreatedType(argv["schedule-created-type"], format)
+            const configOpts = ["schedule-created-type", "retry-count", "retry-interval", "retry-unit", "rerun-property", "self-depends", "vc", "vcluster", "vc-id", "schema", "timeout", "timeout-unit", "auto-lineage", "deps", "outputs", "output-tables", "param"] as const
             if (!configOpts.some((k) => argv[k] != null)) {
               error("INVALID_ARGUMENTS", "At least one configuration option is required.", { format, exitCode: 2 })
               return
@@ -2842,6 +2865,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               dataFileOutputListReqs: outputTables,
               configProperties: oldData.configProperties ?? "{}",
               ...existingStudioScheduleFields(oldData),
+              ...(scheduleCreatedType !== undefined && { scheduleCreatedType }),
               ...(paramValueList && { paramValueList }),
             })
             // Save params separately via saveTaskContent (paramValueList is stored with content, not config)
@@ -3627,6 +3651,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     branchDependency,
                   ]
                   await saveFlowNodeConfig(sc, {
+                    scheduleCreatedType: configData.scheduleCreatedType == null ? undefined : String(configData.scheduleCreatedType),
                     dataFileId: fileId,
                     nodeId: downstreamNodeId,
                     projectId: sc.projectId,
@@ -3818,6 +3843,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             (y) =>
               y
                 .positional("task", { type: "string", demandOption: true })
+                .option("schedule-created-type", { type: "string", array: true, describe: "Schedule activation: 1=next day (T+1), 2=after publish; preserves existing mode when omitted" })
                 .option("node-id", { type: "string", describe: "Node ID or name" })
                 .option("name", { type: "string", describe: "Node name (resolved via DAG)" })
                 .option("cron", { type: "string" })
@@ -3826,17 +3852,20 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             async (argv) => {
               const format = argv.format
               try {
+                const scheduleCreatedType = parseScheduleCreatedType(argv["schedule-created-type"], format)
                 const sc = await ctx(argv)
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                 const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
-                const [flowDetail, nodeDetail] = await Promise.all([
+                const [flowDetail, nodeDetail, nodeConfig] = await Promise.all([
                   getTaskDetail(sc, fileId),
                   getFlowNodeDetail(sc, fileId, nodeId),
+                  getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId, nodeId, collectType: 2 }),
                 ])
                 const flowData = isRecord(flowDetail.data) ? flowDetail.data : {}
                 const flowName = String(flowData.dataFileName ?? flowData.task_name ?? fileId)
                 const nodeData = isRecord(nodeDetail.data) ? nodeDetail.data : {}
+                const nodeConfigData = isRecord(nodeConfig.data) ? nodeConfig.data : {}
                 const nodeName = String(nodeData.dataFileName ?? nodeData.fileName ?? nodeData.task_name ?? nodeId)
                 const nodeFileType = Number(nodeData.fileType ?? 0)
                 const nodeCronResult = argv.cron ? convertAgentCron(argv.cron) : undefined
@@ -3855,6 +3884,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   })
                   : undefined
                 const resp = await saveFlowNodeConfig(sc, {
+                  scheduleCreatedType: scheduleCreatedType ?? (nodeConfigData.scheduleCreatedType == null ? undefined : String(nodeConfigData.scheduleCreatedType)),
                   dataFileId: fileId,
                   nodeId,
                   projectId: sc.projectId,
@@ -3929,6 +3959,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   ...(flowCronResult
                     ? studioScheduleFieldsFromCron(flowCronResult, activeStartTime, oldData.configProperties)
                     : existingStudioScheduleFields(oldData)),
+                  ...(oldData.scheduleCreatedType != null && { scheduleCreatedType: String(oldData.scheduleCreatedType) }),
                   connectionParam: JSON.stringify({
                     lakeHouseInstanceId: String(sc.instanceId),
                     adhocVcCode: vcCode.toLowerCase(),

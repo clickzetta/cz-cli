@@ -85,6 +85,7 @@ export interface SaveFlowNodeConfigParams {
   projectId: number
   updateBy: string
   instanceName: string
+  scheduleCreatedType?: string
   cronExpress?: string
   retryCount?: number
   retryIntervalTime?: number
@@ -380,7 +381,7 @@ export function saveFlowNodeConfig(config: StudioConfig, params: SaveFlowNodeCon
       scheduleRateType: params.scheduleRateType ?? 2,
       scheduleType: 1,
       fileCreateType: 1,
-      scheduleCreatedType: "2",
+      scheduleCreatedType: params.scheduleCreatedType ?? "2",
       scheduleConfigType: "1",
       ...(params.schedule !== undefined && { schedule: params.schedule }),
       ...(params.frequency !== undefined && { frequency: params.frequency }),
