@@ -1113,6 +1113,7 @@ const SCHEDULE_INFO_FIELDS: Record<string, string> = {
   cycleTaskName: "task_name", cycleTaskCode: "task_code",
   cycleTaskType: "task_type", cronExpression: "cron_expression",
   taskStatus: "task_status", scheduleConfigType: "schedule_config_type",
+  scheduleCreatedType: "schedule_created_type",
   taskOwnerCn: "owner_cn", taskOwnerEn: "owner_en",
   retryCount: "retry_count", retryIntervalTime: "retry_interval_time",
   retryIntervalTimeUnit: "retry_interval_time_unit",
@@ -1156,6 +1157,7 @@ const CONFIG_DETAIL_FIELDS: Record<string, string> = {
   executeTimeout: "execute_timeout", executeTimeoutUnit: "execute_timeout_unit",
   taskPriority: "task_priority", triggerType: "trigger_type",
   scheduleRateType: "schedule_rate_type", scheduleConfigType: "schedule_config_type",
+  scheduleCreatedType: "schedule_created_type",
   dependencyTimeout: "dependency_timeout", dependencyTimeoutUnit: "dependency_timeout_unit",
   configProperties: "config_properties",
 }
@@ -1200,6 +1202,7 @@ function convertConfigFields(data: Record<string, unknown>): Record<string, unkn
 function normalizePublishComparableSchedule(data: Record<string, unknown>) {
   return {
     cron_express: data.cron_express ?? "",
+    schedule_created_type: data.schedule_created_type == null ? "" : String(data.schedule_created_type),
     retry_count: data.retry_count ?? "",
     retry_interval_time: data.retry_interval_time ?? "",
     retry_interval_time_unit: data.retry_interval_time_unit ?? "",
