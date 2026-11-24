@@ -1565,6 +1565,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(shouldRegenerateSchedule
                 ? studioScheduleFieldsFromCron(cronResult, activeStartTime, configProperties)
                 : existingStudioScheduleFields(oldData)),
+                  ...(oldData.scheduleCreatedType != null && { scheduleCreatedType: String(oldData.scheduleCreatedType) }),
             })
             logOperation("task save-merge", { ok: true })
             success({
@@ -3853,13 +3854,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const fileId = await resolveTaskId(sc, argv.task as string, format)
                 if (!argv["node-id"] && !argv.name) { error("INVALID_ARGUMENTS", "Provide --node-id or --name.", { format, exitCode: 2 }); return }
                 const nodeId = await resolveNodeArg(sc, fileId, argv["node-id"] ?? argv.name, format)
-                const [flowDetail, nodeDetail] = await Promise.all([
+                const [flowDetail, nodeDetail, nodeConfig] = await Promise.all([
                   getTaskDetail(sc, fileId),
                   getFlowNodeDetail(sc, fileId, nodeId),
+                  getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId, nodeId, collectType: 2 }),
                 ])
                 const flowData = isRecord(flowDetail.data) ? flowDetail.data : {}
                 const flowName = String(flowData.dataFileName ?? flowData.task_name ?? fileId)
                 const nodeData = isRecord(nodeDetail.data) ? nodeDetail.data : {}
+                const nodeConfigData = isRecord(nodeConfig.data) ? nodeConfig.data : {}
                 const nodeName = String(nodeData.dataFileName ?? nodeData.fileName ?? nodeData.task_name ?? nodeId)
                 const nodeFileType = Number(nodeData.fileType ?? 0)
                 const nodeCronResult = argv.cron ? convertAgentCron(argv.cron) : undefined
@@ -3878,7 +3881,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   })
                   : undefined
                 const resp = await saveFlowNodeConfig(sc, {
-                  scheduleCreatedType: scheduleCreatedType ?? (nodeData.scheduleCreatedType == null ? undefined : String(nodeData.scheduleCreatedType)),
+                  scheduleCreatedType: scheduleCreatedType ?? (nodeConfigData.scheduleCreatedType == null ? undefined : String(nodeConfigData.scheduleCreatedType)),
                   dataFileId: fileId,
                   nodeId,
                   projectId: sc.projectId,
@@ -3953,6 +3956,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   ...(flowCronResult
                     ? studioScheduleFieldsFromCron(flowCronResult, activeStartTime, oldData.configProperties)
                     : existingStudioScheduleFields(oldData)),
+                  ...(oldData.scheduleCreatedType != null && { scheduleCreatedType: String(oldData.scheduleCreatedType) }),
                   connectionParam: JSON.stringify({
                     lakeHouseInstanceId: String(sc.instanceId),
                     adhocVcCode: vcCode.toLowerCase(),

@@ -136,6 +136,7 @@ beforeEach(() => {
                 ? 500
                 : 19,
           schemaName: "public",
+          scheduleCreatedType: 1,
           cronExpress: "0 */5 * * * ? *",
           retryCount: 1,
           retryIntervalTime: 1,
@@ -375,5 +376,17 @@ describe("condition task contracts", () => {
     expect(result.exitCode).toBe(1)
     expect(submitTaskCalls).toHaveLength(0)
     expect(saveFlowNodeContentCalls.some((call) => call.nodeId === 13412006)).toBe(false)
+  })
+})
+
+
+describe("flow schedule activation preservation", () => {
+  test("node VC update retains mode from config rather than content detail", async () => {
+    expect((await execute("task flow node-save-config 13412004 --node-id 13412005 --vc DEFAULT")).exitCode).toBe(0)
+    expect(saveFlowNodeConfigCalls[0]?.scheduleCreatedType).toBe("1")
+  })
+  test("flow submit with changed cron retains mode", async () => {
+    expect((await execute('task flow submit 13412004 --cron "0 00 07 * * ? *"')).exitCode).toBe(0)
+    expect(saveTaskConfigCalls[0]?.scheduleCreatedType).toBe("1")
   })
 })
