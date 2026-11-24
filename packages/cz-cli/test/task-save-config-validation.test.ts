@@ -67,10 +67,14 @@ beforeEach(() => {
   onStudio("/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ({
     code: 0,
     data: {
+      scheduleCreatedType: "1",
       cronExpress: "0 00 00 * * ? *",
       activeStartTime: "2026-01-01T00:00:00.000Z",
       activeEndTime: "2099-01-01T00:00:00.000Z",
-      schedule: [["weekly", "1"], ["weekly", "2"]],
+      schedule: [
+        ["weekly", "1"],
+        ["weekly", "2"],
+      ],
       frequency: "1",
       scheduleStartTime: "2026-01-01T07:00:00.000Z",
       isScheduleRateTypeOff: false,
@@ -261,7 +265,10 @@ describe("task save-config dependency validation", () => {
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
     expect(saveCalls[0]).toMatchObject({
-      schedule: [["weekly", "1"], ["weekly", "2"]],
+      schedule: [
+        ["weekly", "1"],
+        ["weekly", "2"],
+      ],
       frequency: "1",
       scheduleStartTime: "2026-01-01T07:00:00.000Z",
       isScheduleRateTypeOff: false,
@@ -291,7 +298,9 @@ describe("task save-config dependency validation", () => {
   })
 
   test("save-config replaces output tables from manual output parameters", async () => {
-    const result = await execute(`task save-config 123 --outputs replace --output-tables '[{"outputTableName":"ws.manual_output","refTableName":"ws.public.manual_output"}]'`)
+    const result = await execute(
+      `task save-config 123 --outputs replace --output-tables '[{"outputTableName":"ws.manual_output","refTableName":"ws.public.manual_output"}]'`,
+    )
 
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -311,7 +320,9 @@ describe("task save-config dependency validation", () => {
   test("recovers output tables when the runtime splits the JSON into fragments", async () => {
     // Stripped quotes + an internal space cause the shell/agent to split the value
     // into a separate positional fragment, which previously failed with "Unknown command".
-    const result = await execute("task save-schedule 123 --outputs replace --output-tables [{outputTableName:ws.manual_output, refTableName:ws.public.manual_output}]")
+    const result = await execute(
+      "task save-schedule 123 --outputs replace --output-tables [{outputTableName:ws.manual_output, refTableName:ws.public.manual_output}]",
+    )
 
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -319,7 +330,9 @@ describe("task save-config dependency validation", () => {
   })
 
   test("recovers output tables when quotes are stripped without a split", async () => {
-    const result = await execute("task save-config 123 --outputs replace --output-tables [{outputTableName:ws.manual_output,refTableName:ws.public.manual_output}]")
+    const result = await execute(
+      "task save-config 123 --outputs replace --output-tables [{outputTableName:ws.manual_output,refTableName:ws.public.manual_output}]",
+    )
 
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -327,7 +340,9 @@ describe("task save-config dependency validation", () => {
   })
 
   test("recovers output tables from a backslash-escaped, split blob", async () => {
-    const result = await execute("task save-schedule 123 --outputs replace --output-tables [{outputTableName\\:\\ws.manual_output\\,\\refTableName\\:\\ws.public.manual_output\\}]")
+    const result = await execute(
+      "task save-schedule 123 --outputs replace --output-tables [{outputTableName\\:\\ws.manual_output\\,\\refTableName\\:\\ws.public.manual_output\\}]",
+    )
 
     if (result.exitCode !== 0) console.log(result.output)
     expect(result.exitCode).toBe(0)
@@ -342,4 +357,35 @@ describe("task save-config dependency validation", () => {
     expect((json.error as Record<string, unknown>)?.code).toBe("INVALID_ARGUMENTS")
     expect(saveCalls).toHaveLength(0)
   })
+})
+
+describe("schedule activation", () => {
+  for (const command of ["save-config 123 --retry-count 2", 'save-cron 123 --cron "0 30 2 * * ? *"']) {
+    test(`preserves mode for ${command}`, async () => {
+      expect((await execute(`task ${command}`)).exitCode).toBe(0)
+      expect(saveCalls[0]?.scheduleCreatedType).toBe("1")
+    })
+    for (const mode of ["1", "2"]) {
+      test(`sets ${mode} for ${command}`, async () => {
+        expect((await execute(`task ${command} --schedule-created-type ${mode}`)).exitCode).toBe(0)
+        expect(saveCalls[0]?.scheduleCreatedType).toBe(mode)
+      })
+    }
+  }
+  test("mode alone is a configuration option", async () => {
+    expect((await execute("task save-schedule 123 --schedule-created-type 2")).exitCode).toBe(0)
+    expect(saveCalls[0]?.scheduleCreatedType).toBe("2")
+  })
+  for (const raw of ["0", "3", "1.0", "true", "", "1 --schedule-created-type 2"]) {
+    test(`rejects original value ${raw}`, async () => {
+      expect((await execute(`task save-config 123 --schedule-created-type ${raw}`)).exitCode).toBe(2)
+      expect(saveCalls).toHaveLength(0)
+    })
+  }
+})
+
+
+test("create-setup mode requires cron before setup", async () => {
+  expect((await execute("task create-setup example --type SQL --schedule-created-type 1")).exitCode).toBe(2)
+  expect(saveCalls).toHaveLength(0)
 })
