@@ -136,10 +136,14 @@ async function doRequest<T>(
         rotatedCredential = undefined
         headers = buildHeaders(opts, credential)
       }
+      // A multipart upload goes as is: fetch writes its own Content-Type with the boundary.
       const resp = await fetch(url, {
         method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        headers:
+          body instanceof FormData
+            ? Object.fromEntries(Object.entries(headers).filter(([name]) => name !== "content-type"))
+            : headers,
+        body: body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
         signal: deadline.signal,
       })
       const text = await resp.text()
