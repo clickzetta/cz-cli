@@ -40,7 +40,8 @@ You decide what deserves attention, how deep to go, and how to organise the resu
 - Check `control/daily-decisions.md` against the latest human replies; you may mark a question answered or stale, but only the Worker records a decision.
 - Leftover worktrees and finished delegates are worth noticing. Remove only the editor worktrees you recorded under the memory protocol; report the rest to the Worker as a task.
 - You may restructure the memory docs, split or merge topics, and change these prompts and the workflow when the evidence shows a rule is unclear or causes failures. Keep the indexes consistent with what you move.
-- Treat your own conclusions as claims. Have a fresh agent check the evidence and the diff before you merge, and run the affected [offline cases](../memory-cases.md) when conclusions, indexes, or reading paths change.
+- When recurring detours, wasted rounds, or failure modes stem from the external controller or harness rather than documentation, record a structured friction item with `cz-maintenance ops friction record ID FILE` (`title`, `summary`, `evidence`, optional `suggestedFix`) so the outer self-maintenance loop (`cz-self-maintenance`) can ship an engineering fix.
+- Treat your own conclusions as claims. Have a fresh agent check the evidence and the diff before you merge, and run the affected [offline cases](../memory-cases.md) with `cz-maintenance memory eval CASE_ID` (which stages a clean read-only docs snapshot excluding `memory-cases-review.md`) when conclusions, indexes, or reading paths change.
 
 ## Daily code review
 

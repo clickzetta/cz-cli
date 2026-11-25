@@ -43,6 +43,13 @@ Run from the control checkout:
 ```sh
 cz-maintenance service status
 cz-maintenance service pause worker 'Maintenance window; stop after the active round'
+cz-maintenance wait TASK_ID --pr 240 --head <40-hex-sha> --checks --reason 'Wait for PR #240 CI completion'
+cz-maintenance unwait TASK_ID
+cz-maintenance challenge TASK_ID hypothesis.md
+cz-maintenance review TASK_ID 240
+cz-maintenance memory eval M01
+cz-maintenance ops friction record intake-timeout friction.json
+cz-maintenance ops digest
 cz-maintenance service followup task-ci-HEAD worker 2026-12-01T10:00:00Z 'Recheck TASK CI and preserve the original request'
 cz-maintenance service cancel task-ci-HEAD
 cz-maintenance service resume worker 'Checked writers, task worktrees, PR/release state and reply receipts; safe to continue'
