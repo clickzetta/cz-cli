@@ -3244,6 +3244,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .option("save-params", { type: "boolean", default: false, describe: "After execution, persist --param values back to task paramValueList so scheduled runs use the same values" }),
         async (argv) => {
           const format = argv.format
+          let execution: { task_id: number; run_id?: string | number; submission_status: "unknown" | "submitted"; execution_status: string } | undefined
           try {
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
@@ -3302,9 +3303,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 if (p.paramKey && p.paramType === "manual") savedDefaults[p.paramKey] = p.paramValue
               }
             }
-            const params = Object.keys(cliParams).length > 0 || Object.keys(savedDefaults).length > 0
-              ? { ...savedDefaults, ...cliParams }
-              : undefined
+            const params = { ...savedDefaults, ...cliParams }
             // Parse adhocConfigs for JDBC datasource binding
             const adhocConfigsRaw = data?.adhocConfigs ?? taskDetail?.adhocConfigs
             const adhocConfigs = (() => {
@@ -3369,6 +3368,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               const resolvedId = await resolveVclusterId(sc, vcCode).catch(() => undefined)
               if (resolvedId) adhocVcId = resolvedId
             }
+            // Once submission starts, an API error cannot prove that no run was created.
+            execution = { task_id: fileId, submission_status: "unknown", execution_status: "UNKNOWN" }
             const resp = await executeAdhoc(sc, {
               updateBy: String(sc.userId),
               dataFileId: fileId,
@@ -3391,13 +3392,15 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             })
             const execData = resp.data as Record<string, unknown> | undefined
             const runInstanceId = execData?.scheduleInstanceId ?? execData?.instanceId
-            if (runInstanceId == null) {
-              logOperation("task execute failed", { ok: false})
+            if ((typeof runInstanceId !== "number" && typeof runInstanceId !== "string") || !String(runInstanceId).trim()) {
               error(
-                "EXECUTE_FAILED",
-                "Can not trace execute cause no run id returned",execData ?? {})
+                "EXECUTE_SUBMISSION_UNKNOWN",
+                `Submission returned no run ID. Do not resubmit; inspect TEMP runs for task ${fileId}.`,
+                { format, extra: { data: execution } },
+              )
               return
             }
+            execution = { ...execution, run_id: runInstanceId, submission_status: "submitted" }
             const maxWaitMs = (argv["max-wait-seconds"] as number) * 1000
             const pollMs = (argv["poll-interval"] as number) * 1000
             const deadline = Date.now() + maxWaitMs
@@ -3410,15 +3413,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   : detailData
               ) as Record<string, unknown> | undefined
               const statusCode = (taskDetail?.instanceStatus ?? detailData?.instanceStatus) as number | undefined
-              const endTime = taskDetail?.executeEndTime ?? detailData?.executeEndTime
               const failMsg = taskDetail?.failMsg ?? detailData?.failMsg
-              const isTerminal = statusCode === StudioTaskRunStatus.Success || statusCode === StudioTaskRunStatus.Failed || (statusCode == null && endTime != null)
+              const isTerminal = statusCode === StudioTaskRunStatus.Success || statusCode === StudioTaskRunStatus.Failed
+              execution.execution_status = statusCode == null ? "UNKNOWN" : taskRunStatusName(statusCode)
               if (isTerminal) {
-                const result = {
-                  task_id: fileId,
-                  run_id: runInstanceId,
-                  execution_status: taskRunStatusName(statusCode),
-                }
+                const result = { ...execution }
                 const aiMessage =
                   `临时执行完成（task_id=${fileId}，run_id=${runInstanceId}）。Notice: 这是一次临时执行，不影响调度计划。` +
                   (argv["save-params"] && Object.keys(cliParams).length > 0
@@ -3426,7 +3425,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     : `--param 传入的参数值仅对本次执行有效，调度运行使用任务配置中保存的参数（通过 cz-cli task save-content --params 设置）。`) +
                   `如需将当前脚本提升为正式调度，请在用户确认后执行: cz-cli task online ${fileId} -y`
                 if (statusCode === StudioTaskRunStatus.Failed || failMsg) {
-                  error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format })
+                  error("EXECUTE_FAILED", String(failMsg ?? `Task execution ${runInstanceId} failed`), { format, extra: { data: result } })
                   return
                 }
                 // If --save-params, persist cliParams back to paramValueList for scheduled runs
@@ -3454,10 +3453,21 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
             error(
               "EXECUTE_TIMEOUT",
-              `Task execution ${runInstanceId} did not complete within ${argv["max-wait-seconds"]}s`,
-              { format },
+              `Task execution ${runInstanceId} did not complete within ${argv["max-wait-seconds"]}s. Do not resubmit; inspect the existing run.`,
+              { format, extra: { data: execution } },
             )
           } catch (err) {
+            if (execution && !isHandledCliError(err)) {
+              const submitted = execution.submission_status === "submitted"
+              error(
+                submitted ? "EXECUTE_STATUS_UNKNOWN" : "EXECUTE_SUBMISSION_UNKNOWN",
+                submitted
+                  ? `Unable to read task ${execution.task_id} run ${execution.run_id}. Do not resubmit; inspect the existing run.`
+                  : `Submission outcome for task ${execution.task_id} is unknown. Do not resubmit; inspect TEMP runs for this task.`,
+                { format, extra: { data: { ...execution, execution_status: "UNKNOWN" } } },
+              )
+              return
+            }
             reportTaskError(err, format)
           }
         },
