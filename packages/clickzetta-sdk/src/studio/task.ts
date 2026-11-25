@@ -604,6 +604,37 @@ export function listPipelineTables(config: StudioConfig, params: ListPipelineTab
   })
 }
 
+export type TableMatchType = "MATCH" | "LIKE" | "START_WITH" | "END_WITH"
+
+export interface TableMatchFilter {
+  type: TableMatchType
+  value: string
+}
+
+export interface QueryTasksByTableParams {
+  datasourceId?: number
+  sourceDb?: TableMatchFilter
+  sourceSchema?: TableMatchFilter
+  sourceTable?: TableMatchFilter
+  page?: number
+  pageSize?: number
+}
+
+/**
+ * Find the realtime pipelines that sync a source table, across all tasks. One row per source
+ * table and pipeline. The backend needs at least a source or target table filter.
+ */
+export function queryTasksByTable(config: StudioConfig, params: QueryTasksByTableParams) {
+  return studioRequest<{ list?: Record<string, unknown>[]; total?: number }>(config, "/clickzetta-rocket/api/v1/task/pipeline/table/tasks/query", {
+    datasourceId: params.datasourceId,
+    sourceDb: params.sourceDb,
+    sourceSchema: params.sourceSchema,
+    sourceTable: params.sourceTable,
+    pageIndex: params.page ?? 1,
+    pageSize: params.pageSize ?? 20,
+  })
+}
+
 export function saveCdcTask(config: StudioConfig, params: SaveCdcTaskParams) {
   return studioRequest(config, "/ide-admin/v1/ai/mcp/saveCdcTask", {
     dataFileId: params.dataFileId,
