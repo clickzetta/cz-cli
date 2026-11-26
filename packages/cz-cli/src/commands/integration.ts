@@ -1312,14 +1312,14 @@ export function registerTaskIntegrationCommands(taskYargs: Argv<GlobalArgs>): Ar
             .option("where", {
               type: "string",
               describe:
-                "[single] Source where filter (empty string clears it). IMPORTANT: when the filter involves scheduling date/time parameters (bizdate, yyyyMMdd, monthly partition, etc.), look up the correct Studio scheduling-parameter syntax first (cz-cli ai-guide / docs) — do NOT invent parameter formats.",
+                "[single] Source where filter (empty string clears it). IMPORTANT: when the filter involves scheduling date/time parameters (bizdate, yyyyMMdd, monthly partition, etc.), look up the correct Studio scheduling-parameter syntax first (cz-cli task save-content --help) — do NOT invent parameter formats.",
             })
             .option("advanced-params", { type: "string", describe: "[single] Advanced params as JSON rows [{\"key\":\"k\",\"value\":\"v\"}] (replaces existing)" })
             .option("write-mode", { type: "string", choices: ["OVERWRITE", "APPEND", "UPSERT"], describe: "[single] Sink write mode: OVERWRITE | APPEND | UPSERT" })
             .option("partitions", { type: "string", describe: "[single] Comma-separated sink partition expressions (empty string clears), e.g. 'dt=${bizdate}'" })
-            .option("source-partitions", { type: "string", describe: "[single] Read only these partitions from a partitioned SOURCE (empty string clears). Comma-separated 'col=value', e.g. 'dt=${bizdate}'. Values may use Studio scheduling params (declare via --param-value-list). Look up the correct param syntax first (cz-cli ai-guide / docs)." })
+            .option("source-partitions", { type: "string", describe: "[single] Read only these partitions from a partitioned SOURCE (empty string clears). Comma-separated 'col=value', e.g. 'dt=${bizdate}'. Values may use Studio scheduling params (declare via --param-value-list). Look up the correct param syntax first (cz-cli task save-content --help)." })
             .option("dynamic-partition", { type: "string", describe: "[single] Dynamic partition routing: 'col:source_col' (col defaults to dt). Routes each row to a partition by the source column's value. Empty string clears it. Mutually exclusive with --partitions." })
-            .option("param-value-list", { type: "string", describe: "Scheduling parameter declarations as JSON [{\"paramKey\":\"bizdate\",\"paramValue\":\"$[yyyyMMdd-1]\"}] (passed to save; needed by partition/where params). Look up the correct Studio scheduling-param syntax first (cz-cli ai-guide / docs) — do NOT invent formats." })
+            .option("param-value-list", { type: "string", describe: "Scheduling parameter declarations as JSON [{\"paramKey\":\"bizdate\",\"paramValue\":\"$[yyyyMMdd-1]\"}] (passed to save; needed by partition/where params). Look up the correct Studio scheduling-param syntax first (cz-cli task save-content --help) — do NOT invent formats." })
             // multi-table / whole-db
             .option("table-mapping", {
               type: "string",

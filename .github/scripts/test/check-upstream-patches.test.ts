@@ -48,6 +48,36 @@ test("auditUpstreamPatches catches unclosed banners, unrecorded edits, and bare 
   expect(result.ok).toBe(false)
   expect(result.errors.some((e) => e.includes("bare cz_change: comment"))).toBe(true)
   expect(result.errors.some((e) => e.includes("unclosed cz-cli change banner"))).toBe(true)
-  expect(result.errors.some((e) => e.includes("not documented in UPSTREAM-PATCHES.md"))).toBe(true)
+  expect(result.errors.some((e) => e.includes("not declared in a banner-bearing INTRUSIVE entry"))).toBe(true)
   expect(result.errors.some((e) => e.includes("has no cz-cli change banner"))).toBe(true)
+})
+
+test("auditUpstreamPatches rejects banners placed in HOOK-only upstream files", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-hook-only-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/opencode/src/cli"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## INTRUSIVE patches",
+      "## HOOK-based customizations",
+      "### 1. Hook check",
+      "- Upstream hook to re-verify: `packages/opencode/src/cli/upgrade.ts`",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/opencode/src/cli/upgrade.ts"),
+    [
+      "//======================== cz-cli change ========================",
+      "export const sneaky = true",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(result.errors.some((e) => e.includes("not declared in a banner-bearing INTRUSIVE entry"))).toBe(true)
 })

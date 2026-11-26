@@ -94,6 +94,23 @@ function resolveFirstPositionalAfterGlobals(tokens: string[]): { command?: strin
   return { rest: [] }
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+export function hasSubcommandInHelp(helpText: string, parentTokens: string[], subcommand: string): boolean {
+  const prefix = ["cz-cli", ...parentTokens, subcommand].map(escapeRegex).join("\\s+")
+  if (new RegExp(`${prefix}(?=[\\s<\\[]|$)`, "m").test(helpText)) return true
+  return new RegExp(`\\[aliases:[^\\]]*(?:[:,\\s])${escapeRegex(subcommand)}(?=[,\\]\\s])[^\\]]*\\]`).test(helpText)
+}
+
+test("hasSubcommandInHelp enforces token boundaries and rejects prefix collisions", () => {
+  const sampleHelp = "Commands:\n  cz-cli task schedule-info <task>  Show schedule\n  cz-cli task save-config <task>  Save [aliases: save-schedule]\n"
+  expect(hasSubcommandInHelp(sampleHelp, ["task"], "schedule")).toBe(false)
+  expect(hasSubcommandInHelp(sampleHelp, ["task"], "schedule-info")).toBe(true)
+  expect(hasSubcommandInHelp(sampleHelp, ["task"], "save-schedule")).toBe(true)
+})
+
 test("every cz-cli command and subcommand documented in skills/cz-cli/SKILL.md exists and avoids removed -o/--output flags", async () => {
   const skillPath = path.resolve(import.meta.dir, "../../../skills/cz-cli/SKILL.md")
   const skillText = readFileSync(skillPath, "utf8")
@@ -126,13 +143,25 @@ test("every cz-cli command and subcommand documented in skills/cz-cli/SKILL.md e
 
     if (command === "agent") {
       expect(AGENT_RUNTIME_SUBCOMMANDS.has(sub)).toBe(true)
+      const nestedAgent = rest[1]
+      if (
+        nestedAgent &&
+        !nestedAgent.startsWith("-") &&
+        !nestedAgent.startsWith("<") &&
+        !nestedAgent.startsWith("[") &&
+        !nestedAgent.startsWith('"') &&
+        !nestedAgent.startsWith("$") &&
+        (sub === "llm" || sub === "session")
+      ) {
+        const agentSubHelp = await readHelp(["agent", sub])
+        expect(hasSubcommandInHelp(agentSubHelp, ["agent", sub], nestedAgent)).toBe(true)
+      }
       continue
     }
 
     const groupHelp = await readHelp([command])
-    // If the command group lists subcommands (e.g. task, profile, auth), verify the documented subcommand appears in its help output.
     if (groupHelp.includes(`cz-cli ${command} `)) {
-      expect(groupHelp).toContain(`cz-cli ${command} ${sub}`)
+      expect(hasSubcommandInHelp(groupHelp, [command], sub)).toBe(true)
     }
 
     // Verify nested third-level command groups (such as `task integration setup` or `task cdc tables`).
@@ -145,7 +174,7 @@ test("every cz-cli command and subcommand documented in skills/cz-cli/SKILL.md e
       (sub === "integration" || sub === "cdc" || sub === "flow")
     ) {
       const subHelp = await readHelp([command, sub])
-      expect(subHelp).toContain(`cz-cli ${command} ${sub} ${nested}`)
+      expect(hasSubcommandInHelp(subHelp, [command, sub], nested)).toBe(true)
     }
   }
 })

@@ -133,11 +133,54 @@ export function hasReviewablePaths(diff: string): boolean {
   const locations = diffLineLocations(diff)
   locations.right.forEach((_, file) => touched.add(file))
   locations.left.forEach((_, file) => touched.add(file))
+  diff.split("\n").forEach((line) => {
+    if (!line.startsWith("diff --git ")) return
+    const headerPath = parseDiffGitHeaderPath(line.slice("diff --git ".length))
+    if (headerPath) touched.add(headerPath)
+  })
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md") return true
     if (file.endsWith(".md") || file.endsWith(".txt")) return false
     return true
   })
+}
+
+function parseDiffGitHeaderPath(rest: string): string | undefined {
+  // With --no-renames --src-prefix=a/ --dst-prefix=b/, both sides name the same path:
+  // either unquoted `a/<p> b/<p>` or quoted `"a/<escaped>" "b/<escaped>"`.
+  if (rest.startsWith('"')) {
+    const closing = findClosingQuote(rest, 0)
+    if (closing <= 1) return undefined
+    const decoded = decodeGitPath(rest.slice(0, closing + 1))
+    return decoded.startsWith("a/") ? decoded.slice(2) : undefined
+  }
+  const midpoint = Math.floor((rest.length - 1) / 2)
+  if (rest[midpoint] === " ") {
+    const left = rest.slice(0, midpoint)
+    const right = rest.slice(midpoint + 1)
+    if (left.startsWith("a/") && right === `b/${left.slice(2)}`) return left.slice(2)
+  }
+  return undefined
+}
+
+function findClosingQuote(text: string, start: number): number {
+  const state = { index: start + 1, escaped: false }
+  while (state.index < text.length) {
+    const ch = text[state.index]
+    if (state.escaped) {
+      state.escaped = false
+      state.index += 1
+      continue
+    }
+    if (ch === "\\") {
+      state.escaped = true
+      state.index += 1
+      continue
+    }
+    if (ch === '"') return state.index
+    state.index += 1
+  }
+  return -1
 }
 
 function decodeGitPath(value: string) {

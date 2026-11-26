@@ -88,7 +88,7 @@ Notes:
 - `setup` does NOT change field mapping/params on an existing task — use `edit`. `edit` does NOT change source/sink tables — use `setup`.
 - **Partition tables (single-table)**: the user must declare it explicitly. `setup --partitioned` auto-creates a `PARTITIONED BY (dt STRING)` sink table. Two mutually-exclusive modes: `--partitions 'dt=${bizdate}'` (static — whole batch to one partition value) or `--dynamic-partition 'dt:source_col'` (dynamic — each row routed by a source column; if the source column is missing, confirm the correct one with the user). Partition column defaults to `dt`. Without these flags the sink is a plain non-partition table (unchanged behavior).
 - Datasource types are auto-resolved from the datasource name/ID; no need to pass type codes.
-- **`--where` with date/time scheduling params** (e.g. `bizdate`, `$[yyyyMMdd]`, monthly partitions): look up the correct Studio scheduling-parameter syntax in `cz-cli task schedule --help` or `cz-cli task integration edit --help` first. Do NOT invent parameter formats.
+- **`--where` with date/time scheduling params** (e.g. `bizdate`, `$[yyyyMMdd]`, monthly partitions): look up the correct Studio scheduling-parameter syntax in `cz-cli task save-content --help` or `cz-cli task integration edit --help` first. Do NOT invent parameter formats.
 - Integration tasks must execute on an **INTEGRATION-type vcluster** — pick one via the vcluster list, not the default/GENERAL vc.
 
 #### Realtime CDC pipeline lifecycle (`cz-cli task cdc`)

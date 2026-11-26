@@ -33,11 +33,45 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   }
   const ledgerText = readFileSync(ledgerPath, "utf8")
   const intrusiveSection = ledgerText.split("## HOOK-based customizations")[0] ?? ledgerText
+  const entryBlocks = intrusiveSection.split(/\n### \d+\.\s+/).slice(1)
+  const checkSpinnerBackport = intrusiveSection.includes("registerOpencodeSpinner")
+
   const newCzOwnedFiles = new Set(
     [...intrusiveSection.matchAll(/`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx))`\s*\(new\b/g)].map(
       (match) => match[1]!,
     ),
   )
+
+  const documentedBannerFiles = new Set<string>()
+  const requiredIntrusiveFiles = new Set<string>()
+
+  entryBlocks.forEach((block) => {
+    const noBannerIntentional = block.includes("No `cz-cli change` banner, deliberately")
+    const headerSlice = block.slice(0, block.indexOf("\n- **What/why:**") > 0 ? block.indexOf("\n- **What/why:**") : block.length)
+    const verifyMatches = [...block.matchAll(/\n-\s+\*\*Verify:\*\*([\s\S]*?)(?=\n-\s+\*\*|\n---|\n###|$)/g)]
+      .map((match) => match[1] ?? "")
+      .join("\n")
+
+    const headerPaths = extractUpstreamPaths(headerSlice)
+    const verifyPaths = extractUpstreamPaths(verifyMatches)
+
+    headerPaths.forEach((relPath) => {
+      const full = path.join(repoRoot, relPath)
+      if (!existsSync(full)) {
+        errors.push(`${relPath}: listed in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
+        return
+      }
+      if (noBannerIntentional) return
+      documentedBannerFiles.add(relPath)
+      const isNewOwnedWithoutBanner = block.includes(`\`${relPath}\` (new`)
+      if (!isNewOwnedWithoutBanner) requiredIntrusiveFiles.add(relPath)
+    })
+
+    if (!noBannerIntentional) {
+      verifyPaths.forEach((relPath) => documentedBannerFiles.add(relPath))
+    }
+  })
+
   const bannerFiles: string[] = []
 
   UPSTREAM_PACKAGES.forEach((pkgRel) => {
@@ -48,6 +82,14 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       const content = readFileSync(absFile, "utf8")
       const lines = content.split("\n")
       const state = { openLine: 0, bannerCount: 0 }
+
+      if (
+        checkSpinnerBackport &&
+        (pkgRel === "packages/tui" || pkgRel === "packages/opencode") &&
+        /import\s+["']opentui-spinner\/solid["']/.test(content)
+      ) {
+        errors.push(`${relFile}: bare import "opentui-spinner/solid" regressed (UPSTREAM-PATCHES #12)`)
+      }
 
       lines.forEach((line, index) => {
         const trimmed = line.trim()
@@ -91,45 +133,24 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       }
       if (state.bannerCount > 0) {
         bannerFiles.push(relFile)
-        if (!ledgerText.includes(`\`${relFile}\``)) {
-          errors.push(`${relFile}: contains cz-cli change banner(s) but is not documented in UPSTREAM-PATCHES.md`)
+        if (!documentedBannerFiles.has(relFile)) {
+          errors.push(
+            `${relFile}: contains cz-cli change banner(s) but is not declared in a banner-bearing INTRUSIVE entry in UPSTREAM-PATCHES.md`,
+          )
         }
       }
     })
   })
 
-  // Verify every intrusive upstream source/test file listed before "## HOOK-based customizations" still exists and has banners
-  // (excluding entry 12 spinner backport, which explicitly documents its no-banner invariant).
-  const entryBlocks = intrusiveSection.split(/\n### \d+\.\s+/).slice(1)
   const bannerSet = new Set(bannerFiles)
-
-  entryBlocks.forEach((block) => {
-    const noBannerIntentional = block.includes("No `cz-cli change` banner, deliberately")
-    const bulletLines = block
-      .split("\n")
-      .filter((line) => /^\s*-\s+\*\*(?:Files?|cz files):\*\*/.test(line) || /^\s{2,}`packages\//.test(line))
-    const pathsInBullets = block
-      .slice(0, block.indexOf("\n- **What/why:**") > 0 ? block.indexOf("\n- **What/why:**") : block.length)
-      .match(/`packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx)`/g) ?? []
-    void bulletLines
-
-    pathsInBullets.map((token) => token.slice(1, -1)).forEach((relPath) => {
-      const full = path.join(repoRoot, relPath)
-      if (!existsSync(full)) {
-        errors.push(`${relPath}: listed in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
-        return
-      }
-      if (noBannerIntentional) return
-      // Newly added cz-owned files (like sql-command.ts) or modified upstream files: check modified upstream files carry banners.
-      const isNewCzOwnedFile = block.includes(`\`${relPath}\` (new`)
-      if (!isNewCzOwnedFile && !bannerSet.has(relPath)) {
-        errors.push(`${relPath}: listed as INTRUSIVE in UPSTREAM-PATCHES.md but has no cz-cli change banner`)
-      }
-    })
+  requiredIntrusiveFiles.forEach((relPath) => {
+    if (!bannerSet.has(relPath)) {
+      errors.push(`${relPath}: listed as INTRUSIVE in UPSTREAM-PATCHES.md but has no cz-cli change banner`)
+    }
   })
 
   // Entry 12 (<spinner> registration) mechanical checks while active in ledger.
-  if (intrusiveSection.includes("registerOpencodeSpinner")) {
+  if (checkSpinnerBackport) {
     const tuiPkgPath = path.join(repoRoot, "packages/tui/package.json")
     if (existsSync(tuiPkgPath)) {
       const tuiPkg = readFileSync(tuiPkgPath, "utf8")
@@ -151,9 +172,6 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       if (!siteText.includes("registerOpencodeSpinner(")) {
         errors.push(`${relSite}: missing registerOpencodeSpinner() call (UPSTREAM-PATCHES #12)`)
       }
-      if (siteText.includes('import "opentui-spinner/solid"')) {
-        errors.push(`${relSite}: bare import "opentui-spinner/solid" regressed (UPSTREAM-PATCHES #12)`)
-      }
     })
   }
 
@@ -162,6 +180,12 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     bannerFiles: bannerFiles.sort(),
     errors,
   }
+}
+
+function extractUpstreamPaths(section: string): string[] {
+  return [...section.matchAll(/`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx))`/g)].map(
+    (match) => match[1]!,
+  )
 }
 
 function walkSourceFiles(dir: string): string[] {
@@ -174,19 +198,21 @@ function walkSourceFiles(dir: string): string[] {
   })
 }
 
-if (import.meta.main) {
+function runCli() {
   const root = path.resolve(import.meta.dir, "..")
   const result = auditUpstreamPatches(root)
   if (!result.ok) {
     console.error("Upstream patch ledger audit failed:")
     result.errors.forEach((err) => console.error(`  - ${err}`))
     process.exitCode = 1
-  } else {
-    console.log(
-      JSON.stringify({
-        ok: true,
-        verifiedBannerFiles: result.bannerFiles.length,
-      }),
-    )
+    return
   }
+  console.log(
+    JSON.stringify({
+      ok: true,
+      verifiedBannerFiles: result.bannerFiles.length,
+    }),
+  )
 }
+
+if (import.meta.main) runCli()
