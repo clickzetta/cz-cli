@@ -49,6 +49,15 @@ jobs:
         working-directory: packages/cz-cli
         run: bun run typecheck
 
+      - name: Verify upstream patch banners and ledger
+        run: bun scripts/check-upstream-patches.ts
+
+      - name: Typecheck and test clickzetta-sdk
+        working-directory: packages/clickzetta-sdk
+        run: |
+          bun run typecheck
+          bun run test
+
       - name: Verify Action AI review
         working-directory: .github/scripts
         run: |

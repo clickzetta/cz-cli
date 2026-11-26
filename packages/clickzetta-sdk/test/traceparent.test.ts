@@ -1,12 +1,13 @@
-import { afterEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { staticTokenSource } from "../src/auth/token.js"
 
 /** Every authenticated request now names its credential source explicitly. */
 const tokens = staticTokenSource({ token: "tok", instanceId: 1, userId: 2 })
 
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = []
+const originalFetch = globalThis.fetch
 
-globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+const stubFetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
   fetchCalls.push({ url: String(input), init })
   return new Response(JSON.stringify({ code: 0, data: { ok: true } }), {
     status: 200,
@@ -18,8 +19,17 @@ const { requestRaw } = await import("../src/client.js")
 const { studioRequest } = await import("../src/studio/client.js")
 const { submitJob } = await import("../src/sql/submit.js")
 
+beforeEach(() => {
+  globalThis.fetch = stubFetch
+})
+
 afterEach(() => {
   delete process.env.CLICKZETTA_TRACEPARENT
+  globalThis.fetch = originalFetch
+})
+
+afterAll(() => {
+  globalThis.fetch = originalFetch
 })
 
 function headerValue(init: RequestInit | undefined, key: string) {

@@ -4,11 +4,11 @@ The external `cz-cli-maintainer` project owns the controller implementation, tes
 
 When the operator parks historical work, persist `intakeAfter` as a timezone-qualified ISO timestamp in private runtime `config.json`. The external controller admits only source events updated at or after that boundary; new replies in older threads still qualify. Preserve existing historical events and task records with explicit deferred dispositions, put active old tasks in `needs_attention` and cancel their one-shot followups. A startup wake or recurring timer does not authorize resuming, delivering, releasing or cleaning up parked tasks. New feedback or explicit user authorization is required to revisit them.
 
-The supervisor owns wakeups; Codex performs bounded rounds. Keep the existing `cz-maintenance` runtime, intake acknowledgements, tasks, claims, worktrees, outbox and release receipts. `control/service.sqlite` adds scheduling state, not a second task or delivery ledger. WAL transactions deduplicate wakeups, batch a role's pending events and admit at most one provider round across both roles. New input during a round waits for the next one.
+The supervisor owns wakeups; Codex performs bounded rounds. Keep the existing `cz-maintenance` runtime, intake acknowledgements, tasks, claims, worktrees, outbox and release receipts. `control/service.sqlite` adds scheduling and background-delegate job state (`delegates` table), not a second task or delivery ledger. WAL transactions deduplicate wakeups, batch a role's pending events, admit at most one foreground role round at a time while running up to `maxConcurrentDelegates` (default `2`, strictly at most `1` per task) isolated background delegates concurrently, and pre-compile a redacted `WakeBriefing` packet into each round prompt.
 
 ## Configuration and deployment
 
-Keep a dedicated private `CODEX_HOME`, with only the selected provider/model and credentials. Never copy another project's hooks, MCP servers, sessions or machine-specific paths. Set `native.scheduleMode` to `codex-service` and `native.codex` in private runtime `config.json`:
+Keep a dedicated private `CODEX_HOME`, with only the selected provider/model and credentials. Never copy another project's hooks, MCP servers, sessions or machine-specific paths. Set `native.scheduleMode` to `codex-service` and `native.codex` in private runtime `config.json` (optional heterogeneous reviewer/challenger routing may be configured via `native.reviewModel`, `native.challengeModel`, or `native.review.consensus` for dual-model consensus gates on sensitive paths):
 
 ```json
 {
@@ -42,11 +42,18 @@ Run from the control checkout:
 
 ```sh
 cz-maintenance service status
+cz-maintenance status --status running --limit 20
+cz-maintenance claim TASK_ID --owner worker-round-1 --note 'Triaging and preparing worktree'
+cz-maintenance worktree TASK_ID --branch fix-auth-race
+cz-maintenance task-patch TASK_ID --json '{"status":"running","phase":"implement"}' --increment-attempts
+cz-maintenance delegate dispatch TASK_ID --kind implement --worktree /abs/worktree --prompt-file brief.md
+cz-maintenance delegate list --task TASK_ID
 cz-maintenance service pause worker 'Maintenance window; stop after the active round'
-cz-maintenance wait TASK_ID --pr 240 --head <40-hex-sha> --checks --reason 'Wait for PR #240 CI completion'
+cz-maintenance wait TASK_ID --pr 240 --head "$PR_HEAD_SHA" --checks --reason 'Wait for PR #240 CI completion'
 cz-maintenance unwait TASK_ID
 cz-maintenance challenge TASK_ID hypothesis.md
 cz-maintenance review TASK_ID 240
+cz-maintenance release-claim TASK_ID --owner worker-round-1
 cz-maintenance memory eval M01
 cz-maintenance ops friction record intake-timeout friction.json
 cz-maintenance ops digest
@@ -77,7 +84,7 @@ The historical workflow file `claude-review.yml` now runs Codex. Configure priva
 
 The `pull_request_target` event keeps the workflow definition on the trusted base; manual dispatch uses the selected trusted branch. The workflow executes its runner from that base revision, then reviews a detached worktree at the immutable PR head. It does not run PR code or tests, and marks the source untrusted so project configuration cannot replace the review policy. Before Codex starts, it removes runner sudo access. A named permission profile grants read access only to system tool paths, the trusted checkout and reviewed source, with no command network access. Provider files remain outside those readable roots, and the model process receives no GitHub token. Named profiles must not be combined with legacy `--sandbox`, which overrides them. These boundaries follow the [official permission-profile guidance](https://learn.chatgpt.com/docs/permissions) and [Codex Action privilege guidance](https://learn.chatgpt.com/docs/github-action).
 
-Structured output must match the reviewed SHA and added/changed lines. The host checks decoded publication strings for private configuration, verifies the PR still has the reviewed head and base, and posts one review containing inline findings. A marker deduplicates repeat delivery for that base/head pair; ambiguous writes are reconciled before retry. Reviews remain advisory and never replace independent final-SHA review or required tests. Full model transcripts are not published to Actions logs or artifacts; private runner state is removed at job end.
+Structured output must match the reviewed SHA and changed or deleted diff lines (`side: "RIGHT"` for added/modified lines in `b/`, `side: "LEFT"` for deleted lines in `a/`). When the full `base...head` diff touches only `.md` or `.txt` documentation (excluding `.github/codex-review-prompt.md`), `ai-review.ts` exits cleanly without invoking the model, while still reviewing code PRs whose latest commit updated documentation. The host checks decoded publication strings for private configuration, verifies the PR still has the reviewed head and base, and posts one review containing inline findings. A marker deduplicates repeat delivery for that base/head pair; ambiguous writes are reconciled before retry. Reviews remain advisory and never replace independent final-SHA review or required tests. Full model transcripts are not published to Actions logs or artifacts; private runner state is removed at job end.
 
 Run a manual dry run on a same-repository, non-draft PR to verify credentials, schema and line mapping without posting a review. Set `candidate_model` to test a new model before changing `CODEX_REVIEW_MODEL`. The override applies only to that dry run, which has its own concurrency group so the PR's regular review can finish.
 

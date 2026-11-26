@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { changedLines, validateReview } from "../ai-review"
+import { changedLines, diffLineLocations, hasReviewablePaths, validateReview } from "../ai-review"
 
 const diff = `diff --git a/a.ts b/a.ts
 --- a/a.ts
@@ -215,4 +215,75 @@ test("Git-generated Unicode, whitespace and escaped paths retain valid finding l
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("pure-deletion hunks and deleted files validate cleanly on LEFT side and hasReviewablePaths detects docs-only diffs", () => {
+  const deletionDiff = [
+    "diff --git a/src/guard.ts b/src/guard.ts",
+    "--- a/src/guard.ts",
+    "+++ b/src/guard.ts",
+    "@@ -14,2 +13,0 @@",
+    "-if (!authorized) throw new Error('denied')",
+    "-auditAccess(user)",
+    "diff --git a/src/removed.ts b/src/removed.ts",
+    "deleted file mode 100644",
+    "--- a/src/removed.ts",
+    "+++ /dev/null",
+    "@@ -1,2 +0,0 @@",
+    "-export const legacy = true",
+    "-validateLegacy()",
+  ].join("\n")
+
+  const locations = diffLineLocations(deletionDiff)
+  expect([...(locations.right.get("src/guard.ts") ?? [])]).toEqual([])
+  expect([...(locations.left.get("src/guard.ts") ?? [])]).toEqual([14, 15])
+  expect([...(locations.left.get("src/removed.ts") ?? [])]).toEqual([1, 2])
+
+  const validated = validateReview(
+    {
+      reviewedSha: "sha-del",
+      summary: "Checked deleted auth guard",
+      findings: [
+        {
+          path: "src/guard.ts",
+          line: 14,
+          side: "LEFT",
+          severity: "CRITICAL",
+          confidence: "high",
+          body: "Deleting the authorization guard allows unauthenticated execution",
+        },
+        {
+          path: "src/removed.ts",
+          line: 2,
+          severity: "MEDIUM",
+          confidence: "medium",
+          body: "Omitted side falls back to LEFT when line only exists on deleted side",
+        },
+      ],
+    },
+    "sha-del",
+    locations,
+  )
+  expect(validated.findings).toMatchObject([
+    { path: "src/guard.ts", line: 14, side: "LEFT" },
+    { path: "src/removed.ts", line: 2, side: "LEFT" },
+  ])
+  expect(() =>
+    validateReview(
+      {
+        reviewedSha: "sha-del",
+        summary: "Wrong side",
+        findings: [{ path: "src/guard.ts", line: 14, side: "RIGHT", severity: "HIGH", confidence: "high", body: "bad" }],
+      },
+      "sha-del",
+      locations,
+    ),
+  ).toThrow()
+
+  const docsOnlyDiff = "diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-old\n+new\n"
+  expect(hasReviewablePaths(docsOnlyDiff)).toBe(false)
+  expect(hasReviewablePaths(deletionDiff)).toBe(true)
+  const promptDiff =
+    "diff --git a/.github/codex-review-prompt.md b/.github/codex-review-prompt.md\n--- a/.github/codex-review-prompt.md\n+++ b/.github/codex-review-prompt.md\n@@ -1 +1 @@\n-old\n+new\n"
+  expect(hasReviewablePaths(promptDiff)).toBe(true)
 })

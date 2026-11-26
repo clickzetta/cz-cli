@@ -2,7 +2,18 @@ import { chmodSync, mkdirSync } from "node:fs"
 import path from "node:path"
 import { executeReview } from "./review-executor"
 
-export function validateReview(value: unknown, sha: string, changed: Map<string, Set<number>>) {
+export type DiffLineMap = {
+  right: Map<string, Set<number>>
+  left: Map<string, Set<number>>
+}
+
+export function validateReview(
+  value: unknown,
+  sha: string,
+  changed: Map<string, Set<number>> | DiffLineMap,
+) {
+  const maps: DiffLineMap =
+    changed instanceof Map ? { right: changed, left: new Map() } : changed
   if (!value || typeof value !== "object") throw new Error("Review is not an object")
   const review = value as Record<string, unknown>
   if (
@@ -17,10 +28,32 @@ export function validateReview(value: unknown, sha: string, changed: Map<string,
   const findings = review.findings.map((input: unknown) => {
     if (!input || typeof input !== "object") throw new Error("Invalid finding")
     const finding = input as Record<string, unknown>
+    const requestedSide = finding.side === undefined ? undefined : finding.side
+    if (requestedSide !== undefined && requestedSide !== "RIGHT" && requestedSide !== "LEFT") {
+      throw new Error("Finding side must be RIGHT or LEFT")
+    }
+    const pathValue = typeof finding.path === "string" ? finding.path : ""
+    const lineValue = typeof finding.line === "number" ? finding.line : -1
+    const onRight = Boolean(maps.right.get(pathValue)?.has(lineValue))
+    const onLeft = Boolean(maps.left.get(pathValue)?.has(lineValue))
+    const resolvedSide =
+      requestedSide === "LEFT"
+        ? onLeft
+          ? "LEFT"
+          : undefined
+        : requestedSide === "RIGHT"
+          ? onRight
+            ? "RIGHT"
+            : undefined
+          : onRight
+            ? "RIGHT"
+            : onLeft
+              ? "LEFT"
+              : undefined
     if (
-      typeof finding.path !== "string" ||
-      typeof finding.line !== "number" ||
-      !changed.get(finding.path)?.has(finding.line) ||
+      !pathValue ||
+      !Number.isInteger(lineValue) ||
+      !resolvedSide ||
       typeof finding.severity !== "string" ||
       !["CRITICAL", "HIGH", "MEDIUM", "LOW"].includes(finding.severity) ||
       typeof finding.confidence !== "string" ||
@@ -29,43 +62,82 @@ export function validateReview(value: unknown, sha: string, changed: Map<string,
       !finding.body.trim() ||
       finding.body.length > 12000
     )
-      throw new Error("Finding must identify a changed line, severity, confidence and explanation")
+      throw new Error("Finding must identify a changed or deleted diff line, severity, confidence and explanation")
     return {
-      path: finding.path,
-      line: finding.line,
-      side: "RIGHT",
+      path: pathValue,
+      line: lineValue,
+      side: resolvedSide,
       body: `[${finding.severity}; ${finding.confidence} confidence] ${finding.body}`,
     }
   })
   return { summary: review.summary, findings }
 }
 
-export function changedLines(diff: string) {
-  const changed = new Map<string, Set<number>>()
-  const state = { file: "", line: 0, hunk: false }
+export function diffLineLocations(diff: string): DiffLineMap {
+  const right = new Map<string, Set<number>>()
+  const left = new Map<string, Set<number>>()
+  const state = { oldFile: "", newFile: "", oldLine: 0, newLine: 0, hunk: false }
   diff.split("\n").forEach((line) => {
     if (line.startsWith("diff --git ")) {
       state.hunk = false
-      state.file = ""
+      state.oldFile = ""
+      state.newFile = ""
+      return
+    }
+    if (!state.hunk && line.startsWith("--- ")) {
+      const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
+      if (!file.startsWith("a/")) return
+      state.oldFile = file.slice(2)
+      if (!left.has(state.oldFile)) left.set(state.oldFile, new Set())
       return
     }
     if (!state.hunk && line.startsWith("+++ ")) {
       const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
       if (!file.startsWith("b/")) return
-      state.file = file.slice(2)
-      changed.set(state.file, new Set())
+      state.newFile = file.slice(2)
+      if (!right.has(state.newFile)) right.set(state.newFile, new Set())
       return
     }
-    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
     if (hunk) {
-      state.line = Number(hunk[1])
+      state.oldLine = Number(hunk[1])
+      state.newLine = Number(hunk[2])
       state.hunk = true
       return
     }
-    if (state.hunk && line.startsWith("+")) changed.get(state.file)?.add(state.line++)
-    if (state.hunk && line.startsWith(" ")) state.line++
+    if (!state.hunk) return
+    if (line.startsWith("+")) {
+      if (state.newFile) right.get(state.newFile)?.add(state.newLine)
+      state.newLine += 1
+      return
+    }
+    if (line.startsWith("-")) {
+      if (state.oldFile) left.get(state.oldFile)?.add(state.oldLine)
+      state.oldLine += 1
+      return
+    }
+    if (line.startsWith(" ")) {
+      state.oldLine += 1
+      state.newLine += 1
+    }
   })
-  return changed
+  return { right, left }
+}
+
+export function changedLines(diff: string) {
+  return diffLineLocations(diff).right
+}
+
+export function hasReviewablePaths(diff: string): boolean {
+  const touched = new Set<string>()
+  const locations = diffLineLocations(diff)
+  locations.right.forEach((_, file) => touched.add(file))
+  locations.left.forEach((_, file) => touched.add(file))
+  return [...touched].some((file) => {
+    if (file === ".github/codex-review-prompt.md") return true
+    if (file.endsWith(".md") || file.endsWith(".txt")) return false
+    return true
+  })
 }
 
 function decodeGitPath(value: string) {
@@ -165,6 +237,9 @@ export async function runReview() {
     "--unified=0",
     `${base}...${head}`,
   ])
+  if (process.env.CODEX_REVIEW_DRY_RUN !== "true" && !hasReviewablePaths(diff)) {
+    return { skipped: "docs-only", head }
+  }
   const schema = path.join(directory, "schema.json")
   await Bun.write(
     schema,
@@ -180,10 +255,11 @@ export async function runReview() {
           items: {
             type: "object",
             additionalProperties: false,
-            required: ["path", "line", "severity", "confidence", "body"],
+            required: ["path", "line", "side", "severity", "confidence", "body"],
             properties: {
               path: { type: "string" },
               line: { type: "integer" },
+              side: { type: "string", enum: ["RIGHT", "LEFT"] },
               severity: { type: "string", enum: ["CRITICAL", "HIGH", "MEDIUM", "LOW"] },
               confidence: { type: "string", enum: ["high", "medium", "low"] },
               body: { type: "string" },
@@ -212,7 +288,7 @@ export async function runReview() {
     prompt,
   })
   if (!response) throw new Error("Codex review failed; no review was posted")
-  const review = validateReview(JSON.parse(response), head, changedLines(diff))
+  const review = validateReview(JSON.parse(response), head, diffLineLocations(diff))
   // Never publish a credential even if untrusted source persuaded the model to repeat it.
   const secrets = [key, url, process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter((value): value is string => !!value)
   const publication = [review.summary, ...review.findings.flatMap((finding) => [finding.path, finding.body])]
