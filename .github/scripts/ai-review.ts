@@ -282,7 +282,6 @@ export function hasReviewablePaths(diff: string, docSources?: MdxSourceMap): boo
   const docStaticImage = /\.(?:png|jpe?g|gif|webp|avif|ico)$/i
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md" || file === ".github/claude-review-context.md") return true
-    if (file.startsWith("docs/maintenance/")) return true
     const entry = docEntries.get(file)
     if (entry && docSources) {
       const leftDoc = docSources.left.get(file)

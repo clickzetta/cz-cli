@@ -1,17 +1,15 @@
-# 自维护发布
+# Release channels
 
-自动维护只允许 nightly，版本必须为 `dev-vX.Y.Z.<唯一后缀>`。先按当前 nightly 版本选择递增版本；不能从包内开发占位版本猜测对外版本。
+The [release-cos workflow](../../.github/workflows/release-cos.yml) builds and distributes Nightly prereleases and Stable releases.
 
-只有已合入 `main`、对应 SHA 的 `cz-test` 成功且发布代码包含渠道保护时，才能从控制 checkout 使用：
+## Nightly
 
-```sh
-cz-maintenance nightly VERSION MERGED_SHA
-cz-maintenance nightly VERSION MERGED_SHA --publish
-cz-maintenance nightly-status MERGED_SHA
-```
+A push of a tag named `dev-vX.Y.Z.<suffix>` triggers the workflow. The tag can be lightweight or annotated. For manual dispatch, pass the existing tag as the `version` input and select a ref whose commit matches the tag. The workflow checks that the tag resolves to the run's `GITHUB_SHA` and verifies the release lineage.
 
-首条命令仅预览。工具核对精确 SHA、CI、发布代码和 lineage，再推送一个绑定该 SHA 的 nightly tag，由现有 [release-cos](../../.github/workflows/release-cos.yml) 执行；不再重复 dispatch。发布回执和未知结果留在公共运行目录，先对账再继续。
+Automated maintenance uses timestamped lightweight tags on commits already merged to `main` after `cz-test` passes at the exact commit. Choose a version newer than the one currently published on the Nightly channel.
 
-GitHub release 必须为 prerelease，不能更新 latest；nightly 不发布 npm，不修改 stable 指针、安装入口和历史制品。发布 tag 统一经过该工具，不用全量 tag 推送、直接创建 release 或手工绕过 lineage。现有人工 stable 发布流程另行授权。
+GitHub marks the release as a prerelease. Nightly publishes to its own channel and leaves the Stable pointer, default installer, and npm publication unchanged. After the workflow succeeds, verify the versioned COS manifest, the installer's `--version` path, and the archive SHA-256.
 
-工作流成功后继续核对实际版本的 COS manifest、安装入口和主要用户路径；工具提示仍需产物验证时不能直接宣布发布完成。版本或 SHA 已有未知结果时不分配新版本绕过。
+## Stable
+
+Stable releases use `vX.Y.Z` and follow the authorized manual release process. The workflow builds for multiple platforms, publishes to COS and npm, updates the default installation channel, and creates a GitHub Release.

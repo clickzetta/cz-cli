@@ -2,16 +2,13 @@
 - The default branch of this ClickZetta fork is `main` (upstream uses `dev`).
 - Use the configured remote baseline, or `origin/main`, for fork diffs.
 
-## Project docs and maintenance
+## Project docs
 
-- Maintenance controller implementation, deployment and tests belong to the external `cz-cli-maintainer` project. Keep repository-owned maintenance material limited to docs, AGENTS.md and the Action AI review under `.github/`; do not add a repository-local controller or compatibility wrapper.
-
-- Start at [docs/INDEX.md](docs/INDEX.md); read relevant original sources and update affected contracts.
-- Maintenance uses [shared memory](docs/maintenance/memory/INDEX.md), not client-private auto-memory. Follow the [workflow](docs/maintenance/workflow.md) and [memory protocol](docs/maintenance/memory-workflow.md). Record only evidenced lessons, corrections, and useful usage feedback.
-- Reconcile existing tasks, use exclusive worktrees, and preserve others' changes. Keep state, cursors, private evidence, and receipts in runtime.
-- Fresh reviewers check the original request and latest decisions before acceptance criteria, final diff, SHA, and actual evidence. Source changes require re-review; record failed and unrun checks.
-- Follow current authorization and runtime permissions. Distinguish local completion, review, merge, and verified release. Do not manufacture work for a loop.
-- Write repository code, comments, maintenance docs, commit messages, PR text, and GitHub issue/PR replies in English; write Feishu group replies in Simplified Chinese. Preserve literal tool arguments, CLI flags, and source evidence.
+- Start at [docs/INDEX.md](docs/INDEX.md); read only the topics needed for the task and update affected domain contracts when behavior changes.
+- Before modifying `packages/cz-cli`, `packages/clickzetta-sdk`, upstream `opencode` packages, or CI/release workflows, check the corresponding `pitfalls.md` under `docs/`.
+- Use exclusive worktrees for parallel tasks and preserve others' changes.
+- Validate against acceptance criteria, run affected package-scoped tests and `bun typecheck`, and retain actual results, failures, and unrun checks. Source changes require renewed review.
+- Write repository code, comments, documentation, commit messages, PR text, and GitHub issue/PR replies in English; preserve literal tool arguments, CLI flags, and source evidence.
 
 ## Branch Names
 

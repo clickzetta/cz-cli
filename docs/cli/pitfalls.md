@@ -1,8 +1,10 @@
 # cli 容易踩的坑
 
-每条按「什么时候会踩 → 结论和条件 → 证据 → 下次怎么做」写。改 `packages/cz-cli` 或 `packages/clickzetta-sdk` 前先读一遍；发现新坑或某条已失效，按[记忆协议](../maintenance/memory-workflow.md)记录。
+每条按「什么时候会踩 → 结论和条件 → 证据 → 下次怎么做」写。改 `packages/cz-cli` 或 `packages/clickzetta-sdk` 前先读一遍；发现新坑或某条已失效，附上具体 Issue/PR 或源码证据直接更新本文件。
 
 ## 认证与身份
+
+- **私有化部署认证入口与多步认证**：核对实际部署的认证端点与完整响应，公有云域名惯例不一定适用；立即返回 token 的单测覆盖不到多步认证。MFA 或二次挑战表示认证尚未完成，不能当作密码错误或登录成功，也绝不能为跑通测试而关闭校验。参考 [authentication.md](authentication.md) 与 [account-login.ts](../../packages/cz-cli/src/commands/account-login.ts)。
 
 - **判断认证失败**：只认结构化的 `ClickZettaApiError.statusCode === 401`，不要在错误信息里搜 "401"。Job ID 里经常带 401，误判会触发凭据轮换并重复提交 SQL。证据：[#187](https://github.com/clickzetta/cz-cli/pull/187)。
 - **token 过期时间**：`expireTimeMs` 是时长（毫秒），不是时间点，绝对过期时间是 `obtainedAt + expireTimeMs`。当成时间点会让 status 显示 1970 年、`expires_in_s` 为 0。新增 token 来源时照 [login-browser.ts](../../packages/cz-cli/src/commands/login-browser.ts) 的写法填。证据：[types/index.ts](../../packages/clickzetta-sdk/src/types/index.ts)。

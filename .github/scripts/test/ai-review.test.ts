@@ -639,10 +639,6 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
     "diff --git a/.github/SECURITY.md b/.github/SECURITY.md\n--- a/.github/SECURITY.md\n+++ b/.github/SECURITY.md\n@@ -1 +1 @@\n-old\n+new\n"
   const contextDiff =
     "diff --git a/.github/claude-review-context.md b/.github/claude-review-context.md\n--- a/.github/claude-review-context.md\n+++ b/.github/claude-review-context.md\n@@ -1 +1 @@\n-old\n+new\n"
-  const maintWorkflowDiff =
-    "diff --git a/docs/maintenance/workflow.md b/docs/maintenance/workflow.md\n--- a/docs/maintenance/workflow.md\n+++ b/docs/maintenance/workflow.md\n@@ -1 +1 @@\n-old\n+new\n"
-  const maintPromptDiff =
-    "diff --git a/docs/maintenance/prompts/worker.md b/docs/maintenance/prompts/worker.md\n--- a/docs/maintenance/prompts/worker.md\n+++ b/docs/maintenance/prompts/worker.md\n@@ -1 +1 @@\n-old\n+new\n"
   const upstreamLedgerDiff =
     "diff --git a/packages/cz-cli/UPSTREAM-PATCHES.md b/packages/cz-cli/UPSTREAM-PATCHES.md\n--- a/packages/cz-cli/UPSTREAM-PATCHES.md\n+++ b/packages/cz-cli/UPSTREAM-PATCHES.md\n@@ -1 +1 @@\n-old\n+new\n"
   const opencodeToolDiff =
@@ -653,8 +649,6 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
   expect(hasReviewablePaths(githubSecurityDiff)).toBe(true)
   expect(hasReviewablePaths(spacedRootDoc + securityDiff)).toBe(true)
   expect(hasReviewablePaths(contextDiff)).toBe(true)
-  expect(hasReviewablePaths(maintWorkflowDiff)).toBe(true)
-  expect(hasReviewablePaths(maintPromptDiff)).toBe(true)
   expect(hasReviewablePaths(upstreamLedgerDiff)).toBe(true)
   expect(hasReviewablePaths(opencodeToolDiff)).toBe(true)
   expect(hasReviewablePaths(spacedRootDoc + opencodeToolDiff)).toBe(true)

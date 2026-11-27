@@ -770,8 +770,8 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
 
   // 2. Restore exact `./component/register-spinner` in app.tsx AND verify sequential `cd packages && cd core` + ledger-dir Markdown links (including non-test runbook/source reference links) + standalone relative Verify paths PASS
   mkdirSync(path.join(root, "packages/cz-cli/test"), { recursive: true })
-  mkdirSync(path.join(root, "docs/maintenance"), { recursive: true })
-  writeFileSync(path.join(root, "docs/maintenance/workflow.md"), "# Runbook\n")
+  mkdirSync(path.join(root, "docs/engineering"), { recursive: true })
+  writeFileSync(path.join(root, "docs/engineering/verification.md"), "# Runbook\n")
   writeFileSync(path.join(root, "packages/cz-cli/test/mcp-error-format.test.ts"), "export const mcpOk = true\n")
   writeFileSync(path.join(root, "packages/cz-cli/test/mcp-serve-smoke.ts"), "export const smokeOk = true\n")
   writeFileSync(
@@ -794,7 +794,7 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "### 1. Model selection",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** prefer ClickZetta model.",
-      "- **Verify:** `cd packages && cd core && bun test test/model-selection.test.ts`, [local link](./test/mcp-error-format.test.ts), [plain local](test/mcp-error-format.test.ts), `test/mcp-error-format.test.ts`, `bun packages/cz-cli/test/mcp-serve-smoke.ts`, [runbook ref](../../docs/maintenance/workflow.md), [source ref](../tui/src/app.tsx), [repo link](packages/core/test/model-selection.test.ts), and [ledger-relative link](../core/test/model-selection.test.ts)",
+      "- **Verify:** `cd packages && cd core && bun test test/model-selection.test.ts`, [local link](./test/mcp-error-format.test.ts), [plain local](test/mcp-error-format.test.ts), `test/mcp-error-format.test.ts`, `bun packages/cz-cli/test/mcp-serve-smoke.ts`, [runbook ref](../../docs/engineering/verification.md), [source ref](../tui/src/app.tsx), [repo link](packages/core/test/model-selection.test.ts), and [ledger-relative link](../core/test/model-selection.test.ts)",
       ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
@@ -813,7 +813,7 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "### 1. Model selection",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** prefer ClickZetta model.",
-      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, `bun run --cwd packages/core test test/missing-run-cwd.test.ts`, `test/missing-standalone.test.ts`, `CZ_MCP_ARGS='{}' bun test/mcp-call-repro.ts`, [broken runbook](../../docs/maintenance/missing.md), [missing local](./test/missing-local.test.ts), [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
+      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, `bun run --cwd packages/core test test/missing-run-cwd.test.ts`, `test/missing-standalone.test.ts`, `CZ_MCP_ARGS='{}' bun test/mcp-call-repro.ts`, [broken runbook](../../docs/engineering/missing.md), [missing local](./test/missing-local.test.ts), [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
       ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
@@ -827,7 +827,7 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
   ).toBe(true)
   expect(
     dotSlashCdResult.errors.some(
-      (e) => e.includes("docs/maintenance/missing.md") && e.includes("linked under Verify"),
+      (e) => e.includes("docs/engineering/missing.md") && e.includes("linked under Verify"),
     ),
   ).toBe(true)
   expect(

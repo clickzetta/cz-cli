@@ -9,7 +9,7 @@
 
 完整入口见 [CLI scripts](../../packages/cz-cli/package.json)、[SDK scripts](../../packages/clickzetta-sdk/package.json)、[core scripts](../../packages/core/package.json)和 [opencode scripts](../../packages/opencode/package.json)。按改动影响选择检查；集成测试的环境和凭据要求应先从对应测试入口核对。
 
-维护实现及其测试属于外部 `cz-cli-maintainer` 项目，在该项目中运行 `bun test` 和 `bun typecheck`，不依赖 cz-cli 的包或测试 preload。仓库内 Action AI review 在 `.github/scripts` 中运行 `bun test` 和 `bun typecheck`；产品发布器回归保留在 `packages/cz-cli/test/release-retention.test.ts`。发送、合入和发布测试不执行真实远端写入。
+仓库内 Action AI review 在 `.github/scripts` 中运行 `bun test` 和 `bun typecheck`；产品发布器回归保留在 `packages/cz-cli/test/release-retention.test.ts`。
 
 - 行为修复采用能捕捉原错误的回归验证；适用时确认旧行为失败、修复后通过。文档和保持行为的改动使用相称的检查。
 - 保存源码版本、工作目录、命令、退出码和日志。失败记录保留，修复后补充新的验证；未运行与跳过的检查明确列出。
