@@ -377,18 +377,26 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
 
 const author = ["head:", "  - tag: meta", "    attrs:", "      name: author", "      content: Docs Team"]
 const updatedAuthor = [...author.slice(0, -1), "      content: Documentation Team"]
+const authorLiteral = [...author.slice(0, -1), "      content: |+", "        Docs Team"]
+const authorWithExtraNewline = [...author.slice(0, -1), '      content: "Docs Team\\n\\n"']
 const page = (title: string, head: string[] = []) =>
   ["---", `title: ${title}`, ...head, "---", "", "Guide prose.", ""].join("\n")
 
 const metadataCases = [
   { operation: "adding head", before: page("Guide"), after: page("Guide", author), reviewable: true },
   { operation: "editing head", before: page("Guide", author), after: page("Guide", updatedAuthor), reviewable: true },
+  {
+    operation: "adding a trailing newline to a YAML author value",
+    before: page("Guide", authorLiteral),
+    after: page("Guide", authorWithExtraNewline),
+    reviewable: true,
+  },
   { operation: "deleting head", before: page("Guide", author), after: page("Guide"), reviewable: true },
   { operation: "editing title", before: page("Guide"), after: page("New Guide"), reviewable: false },
   {
     operation: "editing title with unchanged head",
-    before: page("Guide", author),
-    after: page("New Guide", author),
+    before: page("Guide", authorLiteral),
+    after: page("New Guide", authorLiteral),
     reviewable: false,
   },
   {
