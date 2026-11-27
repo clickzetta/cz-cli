@@ -303,16 +303,17 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
   const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"
   const contextDiff =
     "diff --git a/.github/claude-review-context.md b/.github/claude-review-context.md\n--- a/.github/claude-review-context.md\n+++ b/.github/claude-review-context.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const opencodeToolDiff =
+    "diff --git a/.opencode/tool/github-triage.ts b/.opencode/tool/github-triage.ts\n--- a/.opencode/tool/github-triage.ts\n+++ b/.opencode/tool/github-triage.ts\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(agentsDiff)).toBe(true)
   expect(hasReviewablePaths(claudeDiff)).toBe(true)
   expect(hasReviewablePaths(contextDiff)).toBe(true)
+  expect(hasReviewablePaths(opencodeToolDiff)).toBe(true)
+  expect(hasReviewablePaths(spacedRootDoc + opencodeToolDiff)).toBe(true)
 
   const workflow = await Bun.file(new URL("../../workflows/claude-review.yml", import.meta.url)).text()
-  expect(workflow).toContain('"AGENTS.md"')
-  expect(workflow).toContain('"CLAUDE.md"')
-  expect(workflow).toContain('".github/claude-review-context.md"')
-  expect(workflow).toContain('"package.json"')
-  expect(workflow).toContain('"bun.lock"')
+  expect(workflow).not.toContain("\n    paths:")
+  expect(workflow).not.toContain("\n    paths-ignore:")
 })
 
 test("rename detection matches GitHub PR diff paths for pure and edited renames", async () => {

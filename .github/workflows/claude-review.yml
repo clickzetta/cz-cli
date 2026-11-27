@@ -17,38 +17,6 @@ on:
         type: string
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, edited]
-    paths:
-      - "packages/**"
-      - "infra/**"
-      - "script/**"
-      - "scripts/**"
-      - "patches/**"
-      - "nix/**"
-      - "sdks/**"
-      - "github/**"
-      - ".github/scripts/**"
-      - ".github/actions/**"
-      - ".github/workflows/**"
-      - ".github/codex-review-prompt.md"
-      - ".github/claude-review-context.md"
-      - "AGENTS.md"
-      - "CLAUDE.md"
-      - "package.json"
-      - "bun.lock"
-      - "bunfig.toml"
-      - "tsconfig.json"
-      - "turbo.json"
-      - "sst.config.ts"
-      - "sst-env.d.ts"
-      - "flake.nix"
-      - "flake.lock"
-      - "install"
-      - "!**/dist/**"
-      - "!**/node_modules/**"
-      - "!packages/docs/**"
-      - "!packages/*/src/generated/**"
-      - "!packages/*/src/generated-effect/**"
-      - "!**/__snapshots__/**"
 
 permissions:
   contents: read

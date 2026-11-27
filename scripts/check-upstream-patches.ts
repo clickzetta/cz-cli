@@ -35,7 +35,13 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     }
   }
   const ledgerText = readFileSync(ledgerPath, "utf8")
-  const intrusiveSection = ledgerText.split("## HOOK-based customizations")[0] ?? ledgerText
+  const intrusiveMatch = ledgerText.match(
+    /(?:^|\n)## INTRUSIVE patches[^\n]*(?:\n(?!## |# )([\s\S]*?))?(?=\n## |\n# |$)/,
+  )
+  if (!intrusiveMatch) {
+    errors.push("packages/cz-cli/UPSTREAM-PATCHES.md: missing required '## INTRUSIVE patches' section")
+  }
+  const intrusiveSection = intrusiveMatch ? `\n${intrusiveMatch[1] ?? ""}` : ""
   const entryBlocks = intrusiveSection.split(/\n### \d+\.\s+/).slice(1)
   const checkSpinnerBackport = intrusiveSection.includes("registerOpencodeSpinner")
 

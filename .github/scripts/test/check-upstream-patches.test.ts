@@ -222,3 +222,41 @@ test("auditUpstreamPatches catches partial banner removal in multi-banner files 
     ),
   ).toBe(true)
 })
+
+test("auditUpstreamPatches requires the INTRUSIVE patches heading and ignores entries moved under another heading", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-missing-intrusive-heading-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/core/src"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/core/src/global.ts` (1 banner)",
+      "## Historical patches",
+      "### 1. Core global",
+      "- **File:** `packages/core/src/global.ts`",
+      "- **What/why:** isolate dirs.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/core/src/global.ts"),
+    [
+      "//======================== cz-cli change ========================",
+      "export const app = 'clickzetta'",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(result.errors.some((e) => e.includes("missing required '## INTRUSIVE patches' section"))).toBe(true)
+  expect(
+    result.errors.some(
+      (e) => e.includes("packages/core/src/global.ts") && e.includes("not declared in a banner-bearing INTRUSIVE entry"),
+    ),
+  ).toBe(true)
+})
