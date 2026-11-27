@@ -6,6 +6,7 @@ import { join } from "node:path"
 const home = mkdtempSync(join(tmpdir(), "cz-task-save-content-debug-"))
 const detailPath = "/ide-admin/v1/dataFile/getDetail"
 const savePath = "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"
+const executePath = "/ide-admin/v1/adhoc/execute"
 const storedValue = "synthetic-stored-param-value"
 const parameters = [
   { id: "1001", paramKey: "secret_ref", encrypt: true, ref: 3, extraMetadata: "synthetic-ref-metadata" },
@@ -27,6 +28,8 @@ const responses = new Map<string, () => Response>([
   [detailPath, () => ok({ id: 123, fileType: 4, paramValueList: parameters, scheduleConfig: { retryCount: 3 } })],
   ["/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ok({ etlVcId: 3 })],
   [savePath, () => ok({ message: "Draft saved" })],
+  [executePath, () => ok({ scheduleInstanceId: 456 })],
+  ["/ide-admin/v1/taskInst/getDetail", () => ok({ instanceStatus: 1 })],
 ])
 
 function ok(data: unknown) {
@@ -76,14 +79,38 @@ async function runTask(args: string[], debug = true, telemetry = false) {
     child.exited,
   ])
   const commandLogs: string[] = []
+  const adhoc: unknown[] = []
   for (const line of (await Bun.file(requestFile).text()).trim().split("\n").filter(Boolean)) {
     const request = JSON.parse(line)
     requests.push(request.path)
     if (request.path === savePath) saves.push(JSON.parse(request.body))
+    if (request.path === executePath) adhoc.push(JSON.parse(request.body))
     if (request.path === "/v1/logs") commandLogs.push(request.body)
   }
-  return { stdout, stderr, code, commandLogs }
+  return { stdout, stderr, code, commandLogs, adhoc }
 }
+
+test("task execute persists Windows backslashes and quotes exactly as sent for execution", async () => {
+  const scriptPath = String.raw`C:\Users\synthetic\job.py`
+  const label = `synthetic "double" and 'single' quotes`
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+    "--param", `script_path=${scriptPath}`, `label=${label}`, "--save-params",
+  ], false)
+  expect(result.code, result.stdout + result.stderr).toBe(0)
+  expect(result.adhoc).toEqual([expect.objectContaining({
+    params: { example: storedValue, script_path: scriptPath, label },
+  })])
+  expect(saves).toEqual([expect.objectContaining({
+    dataFileId: 123,
+    onlySaveContent: 1,
+    dataFileContent: "SELECT 1",
+    paramValueList: [
+      expect.objectContaining({ paramKey: "script_path", paramValue: scriptPath, paramType: "manual" }),
+      expect.objectContaining({ paramKey: "label", paramValue: label, paramType: "manual" }),
+    ],
+  })])
+})
 
 function saveWithDebug(command = "save-content") {
   return runTask([command, "123", "--content", "SELECT 1"])
@@ -228,6 +255,44 @@ test("save-content accepts matching numeric and string draft types", async () =>
   }
 })
 
+test("both content saves reject conflicting draft parameter lists before writing", async () => {
+  const respond = responses.get(detailPath)!
+  responses.set(detailPath, () => ok({
+    id: 123, fileType: 4, taskDetail: { fileType: 4, paramValueList: [] }, paramValueList: parameters,
+  }))
+  try {
+    for (const command of ["save-content", "save"]) {
+      const result = await saveWithDebug(command)
+      expect(result.code).not.toBe(0)
+      expect(JSON.parse(result.stdout).error.code).toBe("INVALID_RESPONSE")
+      expect(result.stdout + result.stderr).not.toContain(storedValue)
+      expect(saves).toHaveLength(0)
+    }
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
+test("save-content accepts identical nested and top-level draft parameter lists", async () => {
+  const respond = responses.get(detailPath)!
+  responses.set(detailPath, () => ok({
+    id: 123,
+    fileType: 4,
+    taskDetail: {
+      fileType: 4,
+      paramValueList: parameters.map((param) => Object.fromEntries(Object.entries(param).reverse())),
+    },
+    paramValueList: parameters,
+  }))
+  try {
+    const result = await saveWithDebug()
+    expect(result.code, result.stderr).toBe(0)
+    expect(saves).toEqual([expect.objectContaining({ paramValueList: parameters })])
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
 test("legacy task save requires readable draft parameters even without a task type", async () => {
   const respond = responses.get(detailPath)!
   try {
@@ -281,6 +346,26 @@ test("save-config preserves unrelated parameters and metadata in both writes", a
   ])
 })
 
+test.each([["off", false], ["on", true]] as const)("save-config hides an echoed configuration response with debug %s", async (_label, debug) => {
+  const respond = responses.get(savePath)!
+  responses.set(savePath, () => ok({ message: storedValue, paramValueList: parameters, nested: { value: storedValue } }))
+  try {
+    const result = await runTask(["save-config", "123", "--param", "owner=synthetic-owner"], debug)
+    expect(result.code, result.stderr).toBe(0)
+    expect(saves).toHaveLength(2)
+    expect(saves[0]).toMatchObject({ onlySaveContent: 0, paramValueList: expect.arrayContaining(parameters) })
+    expect(JSON.parse(result.stdout)).toEqual({
+      data: { message: "Draft saved", studio_url: "https://inst.studio.test/ide?workspace_name=ws&fileId=123" },
+      ai_message: expect.any(String),
+    })
+    for (const value of [storedValue, "secret_ref", "synthetic-ref-metadata", "synthetic-owner"]) {
+      expect(result.stdout + result.stderr).not.toContain(value)
+    }
+  } finally {
+    responses.set(savePath, respond)
+  }
+})
+
 const telemetryValue = "synthetic-command-param-value"
 for (const command of ["save-content", "save-config"]) {
   for (const inline of [false, true]) {
@@ -321,6 +406,40 @@ test("option validation rejects a params and clear conflict without putting para
   expect(result.commandLogs[0]).not.toContain(telemetryValue)
   expect(result.commandLogs[0]).not.toContain("secret_ref")
 })
+
+for (const args of [
+  ["save-content", "123", "--content", "SELECT 1"],
+  ["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1"],
+]) {
+  test.each([
+    ["--params", '{"secret_ref":', `"${telemetryValue}"}`],
+    ['--params={"secret_ref":', `"${telemetryValue}"}`],
+    ["--params", '{"secret_ref":', `--${telemetryValue}=fragment}`],
+    ["--params", "{}", telemetryValue],
+    ["--params.secret_ref", telemetryValue],
+    [`--params.secret_ref=${telemetryValue}`],
+  ].map((params) => [params]))(`task ${args[0]} rejects split or dotted params without exposing fragments (%j)`, async (params) => {
+    const result = await runTask([...args, ...params], true, true)
+    expect(result.code).toBe(2)
+    expect(JSON.parse(result.stdout).error.code).toBe("USAGE_ERROR")
+    expect(requests).toEqual(["/v1/logs"])
+    expect(result.commandLogs).toHaveLength(1)
+    expect(result.commandLogs[0]).toContain("<redacted>")
+    for (const value of [telemetryValue, "secret_ref"]) {
+      expect(result.stdout + result.stderr).not.toContain(value)
+      expect(result.commandLogs[0]).not.toContain(value)
+    }
+  })
+
+  test.each([[false], [true]])(`task ${args[0]} accepts params before the target with inline=%s`, async (inline) => {
+    const params = '{"date":"bizdate"}'
+    const result = await runTask([args[0], ...(inline ? [`--params=${params}`] : ["--params", params]), ...args.slice(1)])
+    expect(result.code, result.stdout + result.stderr).toBe(0)
+    expect(saves).toEqual([expect.objectContaining({ dataFileId: 123, paramValueList: expect.arrayContaining([
+      expect.objectContaining({ paramKey: "date", paramValue: "bizdate" }),
+    ]) })])
+  })
+}
 
 for (const fileType of [0, "0", "", " ", "invalid", null]) {
   test(`task save-content validates draft file type ${JSON.stringify(fileType)}`, async () => {

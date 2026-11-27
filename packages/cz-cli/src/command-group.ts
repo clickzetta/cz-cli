@@ -4,6 +4,7 @@ import { HandledCliError, parseOutputArgs, renderErrorOutput } from "./output/in
 import { KNOWN_GLOBAL_FLAGS, INVOCATION_ARGS_KEY } from "./cli.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
 import { UsageError } from "./usage-error.js"
+import { TASK_PARAMS_FLAG, TASK_PARAMS_USAGE } from "./task-param-args.js"
 
 // Re-exported so the opencode agent runtime (which imports commandGroup from
 // this module) can catch the sentinel at its own parse boundaries. See
@@ -55,6 +56,7 @@ export function commandGroup<T>(yargs: Argv<T>, commandName: string): Argv<T> {
         failYargs.showHelp((help: string) => process.stdout.write(help + "\n"))
         throw new SubcommandHelpShown()
       }
+      if (!err && outputArgsSource.some((arg) => TASK_PARAMS_FLAG.test(arg))) msg = TASK_PARAMS_USAGE
 
       // Distinguish the two yargs failure shapes so we suggest the right thing:
       //   "Unknown command: X"  -> X is a bad SUBCOMMAND  -> match subcommand names

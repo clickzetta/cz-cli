@@ -798,11 +798,12 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
   const startMs = Date.now()
   const { positional, args } = parseTrackingArgs(rawArgs)
 
-  const track = (success: boolean, error?: string) =>
+  const track = (success: boolean, error?: string, redactParams = false) =>
     trackCommand({
       command: positional[0] ?? "unknown",
       subcommand: positional[1],
-      args: Object.keys(args).length > 0 ? args : undefined,
+      // A usage rejection can leave sensitive argv fragments unclaimed by yargs.
+      args: redactParams ? { params: "<redacted>" } : Object.keys(args).length > 0 ? args : undefined,
       duration_ms: Date.now() - startMs,
       success,
       error,
@@ -817,7 +818,8 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
     }
   } catch (err) {
     if (positional[0] !== "setup") {
-      await track(false, err instanceof Error ? err.message : `exit_code=${process.exitCode ?? 1}`)
+      const redactParams = args.params === "<redacted>" && isHandledCliError(err) && err.code === "USAGE_ERROR"
+      await track(false, err instanceof Error ? err.message : `exit_code=${process.exitCode ?? 1}`, redactParams)
     }
     // Last resort. Everything this CLI prints is machine-readable, so an
     // exception that reaches the entry point must not become a bare stack trace

@@ -1,6 +1,7 @@
 import type { Argv } from "yargs"
 import { commandGroup } from "../command-group.js"
 import { readFileSync } from "node:fs"
+import { isDeepStrictEqual } from "node:util"
 import {
   listTasks, createTask, getTaskDetail, getTaskConfigDetail,
   getTaskPublishedVersionDetail,
@@ -412,7 +413,12 @@ async function readDraftParamsForSave(
       aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
     })
   }
-  const existing = taskDetail.paramValueList ?? detail.paramValueList ?? []
+  const nestedParams = taskDetail.paramValueList
+  const topLevelParams = detail.paramValueList
+  if (nestedParams != null && topLevelParams != null && !isDeepStrictEqual(nestedParams, topLevelParams)) {
+    handledError("INVALID_RESPONSE", "The draft contains conflicting parameter lists; draft was not saved.", { format })
+  }
+  const existing = nestedParams ?? topLevelParams ?? []
   if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
     if (!isRecord(param)) return false
     const key = param.paramKey ?? param.paramName
@@ -2927,6 +2933,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               })
             }
             logOperation("task save-schedule", { ok: true })
+            if (paramValueList !== undefined) {
+              reportDraftSaved(sc, fileId, format)
+              return
+            }
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
           } catch (err) {
             reportTaskError(err, format)
@@ -3474,9 +3484,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 }
                 // If --save-params, persist cliParams back to paramValueList for scheduled runs
                 if (argv["save-params"] && Object.keys(cliParams).length > 0) {
-                  const updatedParamList = parseParamValueList(
-                    "{" + Object.entries(cliParams).map(([k, v]) => `"${k}":"${v}"`).join(",") + "}"
-                  )
+                  const updatedParamList = parseParamValueList(JSON.stringify(cliParams))
                   if (updatedParamList) {
                     await saveTaskContent(sc, {
                       dataFileId: fileId,
