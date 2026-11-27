@@ -5,6 +5,7 @@ import { withClickZettaProfileOption } from "./clickzetta-profile-option.js"
 import { suggestClosest } from "./suggest.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
 import { UsageError } from "./usage-error.js"
+import { TASK_PARAM_FLAG, TASK_PARAM_USAGE, TASK_PARAMS_FLAG, TASK_PARAMS_USAGE } from "./task-param-args.js"
 import type { CliArgs } from "./connection/config.js"
 
 export interface GlobalArgs extends CliArgs {
@@ -216,6 +217,18 @@ export function coalesceJsonArrayOptionArgs(args: string[]): string[] {
 export const INVOCATION_ARGS_KEY = "__czInvocationArgs"
 
 export function createCli(args: string[]) {
+  const hasParams = args.some((arg) => TASK_PARAMS_FLAG.test(arg))
+  const hasParam = args.some((arg) => TASK_PARAM_FLAG.test(arg))
+  const optionEnd = args.indexOf("--")
+  const options = optionEnd < 0 ? args : args.slice(0, optionEnd)
+  const hasDottedParams = options.some((arg) => {
+    const flag = arg.match(TASK_PARAMS_FLAG)
+    return flag?.[1] === "--" && flag[2] === "."
+  })
+  const hasDottedParam = options.some((arg) => {
+    const flag = arg.match(TASK_PARAM_FLAG)
+    return flag?.[1] === "--" && flag[2] === "."
+  })
   const cli = withClickZettaProfileOption(yargs(coalesceJsonArrayOptionArgs(args)))
   Object.defineProperty(cli, INVOCATION_ARGS_KEY, {
     value: args,
@@ -324,6 +337,8 @@ export function createCli(args: string[]) {
     // needed here — a NaN in argv IS a rejected value. check() reports through
     // the fail handler, i.e. USAGE_ERROR with exit 2, like any other bad value.
     .check((argv) => {
+      if (hasDottedParams) throw new UsageError(TASK_PARAMS_USAGE)
+      if (hasDottedParam) throw new UsageError(TASK_PARAM_USAGE)
       const invalid = new Set<string>()
       for (const [key, value] of Object.entries(argv)) {
         if (key === "_" || key === "$0" || key === "--") continue
@@ -361,10 +376,13 @@ export function createCli(args: string[]) {
         failYargs.showHelp((help: string) => process.stdout.write(help + "\n"))
         throw new SubcommandHelpShown()
       }
+      // Yargs can quote stray parameter fragments in its diagnostics.
+      const redactParams = !err && (hasParams || hasParam)
+      if (redactParams) msg = hasParams ? TASK_PARAMS_USAGE : TASK_PARAM_USAGE
       // A UsageError carries OUR message, already complete. Running it through the
       // scan below could append "Did you mean '--limit'?" to a message about a
       // perfectly valid flag, because the scan only looks at the raw tokens.
-      const selfReported = err instanceof UsageError
+      const selfReported = redactParams || err instanceof UsageError
       const KNOWN_FLAGS = KNOWN_GLOBAL_FLAGS
       const KNOWN_COMMANDS = KNOWN_TOP_COMMANDS
       const knownFlagSet = new Set(KNOWN_FLAGS)

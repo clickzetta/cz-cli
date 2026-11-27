@@ -17,6 +17,7 @@ const stubFetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
 
 const { requestRaw } = await import("../src/client.js")
 const { studioRequest } = await import("../src/studio/client.js")
+const { saveFlowNodeContent } = await import("../src/studio/flow.js")
 const { submitJob } = await import("../src/sql/submit.js")
 
 beforeEach(() => {
@@ -135,6 +136,53 @@ describe("traceparent propagation", () => {
     expect(writes.join("")).toContain("[debug] studioRequest: POST https://studio.invalid/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut")
     expect(writes.join("")).toContain('"dataFileId":123')
     expect(writes.join("")).not.toContain("tok")
+  })
+
+  test("flow node saves redact all parameter lists while sending their values", async () => {
+    const values = {
+      paramValueList: [{ paramValue: "synthetic-flow-value" }],
+      inputParamValueList: [{ paramValue: "synthetic-input-value" }],
+      outputParamValueList: [{ paramValue: "synthetic-output-value" }],
+    }
+    const write = mock((_chunk: string | Uint8Array) => true)
+    const originalWrite = process.stderr.write
+    process.stderr.write = write
+    try {
+      await saveFlowNodeContent(
+        {
+          baseUrl: "https://studio.invalid",
+          tokens,
+          workspaceId: 1,
+          projectId: 2,
+          instanceName: "inst",
+          userId: 1,
+          tenantId: 2,
+          instanceId: 3,
+          workspaceName: "ws",
+          env: "dev",
+          debug: true,
+        },
+        {
+          dataFileId: 123,
+          nodeId: 456,
+          projectId: 2,
+          updateBy: "1",
+          instanceName: "inst",
+          dataFileContent: "SELECT 1",
+          ...values,
+        },
+      )
+    } finally {
+      process.stderr.write = originalWrite
+    }
+
+    expect(JSON.parse(String(fetchCalls.at(-1)?.init?.body))).toMatchObject(values)
+    const diagnostics = write.mock.calls.join("")
+    expect(diagnostics).toContain('"nodeId":456')
+    for (const [key, list] of Object.entries(values)) {
+      expect(diagnostics).toContain(`"${key}":"[redacted]"`)
+      expect(diagnostics).not.toContain(list[0]!.paramValue)
+    }
   })
 
   test("submitJob reuses the provided traceparent for request headers", async () => {

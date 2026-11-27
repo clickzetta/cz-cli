@@ -22,6 +22,14 @@ also accepts it and preserves the node's saved mode when omitted. Invalid values
 missing values, and repeated flags fail before network access.
 Draft-only `task create` does not set this field; select the mode when saving scheduling configuration.
 
+With `task save-config --param key=value`, parameter names must contain a
+non-whitespace character. Ordinary overrides keep existing IDs and other
+metadata, and unrelated parameters are preserved. Attempts to override an
+encrypted or referenced parameter fail before either configuration or content
+is saved. Conflicting top-level and nested draft parameter lists also stop both
+writes. Use Studio to change those parameters. When the save carries runtime
+parameters, the command returns `Draft saved` and the Studio URL.
+
 `task content` exposes the saved mode as `schedule_config.schedule_created_type`.
 `task status` includes it in draft and published schedules and reports
 `needs_publish: true` for a mode-only difference. Numeric and string representations

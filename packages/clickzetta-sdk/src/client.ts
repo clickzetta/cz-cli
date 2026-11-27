@@ -27,6 +27,8 @@ export interface ClientOptions {
    */
   tokens: TokenSource
   customHeaders?: Record<string, string>
+  /** Omit untrusted response text from HTTP and JSON parsing errors. */
+  omitResponseBodyInErrors?: boolean
   traceparent?: string
   timeout?: number
   /** Cancellation covers requests, credential waits and retry backoff. */
@@ -146,7 +148,7 @@ async function doRequest<T>(
       if (!resp.ok) {
         const apiErr = new ClickZettaApiError(
           `HTTP_${resp.status}`,
-          `HTTP ${resp.status}: ${text.slice(0, 1000)}`,
+          opts.omitResponseBodyInErrors ? `HTTP ${resp.status}` : `HTTP ${resp.status}: ${text.slice(0, 1000)}`,
           resp.status,
         )
         if (NON_RETRYABLE_STATUS.has(resp.status)) throw apiErr
@@ -170,7 +172,11 @@ async function doRequest<T>(
       try {
         return JSON.parse(text) as T
       } catch {
-        throw new ClickZettaApiError("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 200)}`, 0)
+        throw new ClickZettaApiError(
+          "PARSE_ERROR",
+          opts.omitResponseBodyInErrors ? "Invalid JSON response" : `Invalid JSON response: ${text.slice(0, 200)}`,
+          0,
+        )
       }
     } catch (err) {
       opts.signal?.throwIfAborted()

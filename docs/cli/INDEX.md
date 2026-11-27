@@ -15,3 +15,4 @@
 - [输出](output.md)：输出格式、错误结构和退出码。
 
 - [Task scheduling](task-scheduling.md): schedule activation modes and preservation.
+- [Task content](task-content.md) covers script saves and runtime parameters.

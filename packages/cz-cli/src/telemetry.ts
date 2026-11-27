@@ -3,6 +3,7 @@ import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
 import { currentTraceContext } from "./trace.js"
 import { redactSql } from "./logger.js"
+import { TASK_PARAM_FLAG, TASK_PARAMS_FLAG } from "./task-param-args.js"
 
 /**
  * CLI flag names whose values must never be exfiltrated via telemetry.
@@ -122,6 +123,37 @@ export function parseTrackingArgs(rawArgs: string[]): {
   const secretValues = new Set<number>()
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]
+    const paramsFlag = arg?.match(TASK_PARAMS_FLAG)
+    if (paramsFlag) {
+      const inline = arg.indexOf("=")
+      const value = inline < 0 ? rawArgs[i + 1] : arg.slice(inline + 1)
+      if (inline < 0 && value !== undefined) secretValues.add(i + 1)
+      // An incomplete value can leave fragments shaped like either operands or
+      // flags. Suppress the suffix until the caller supplies a whole object.
+      const object = value?.trim().replace(/^'([\s\S]*)'$/, "$1").trim()
+      if (paramsFlag[2] === "." || !object?.startsWith("{") || !object.endsWith("}")) {
+        for (let j = i + 1; j < rawArgs.length; j++) secretValues.add(j)
+        break
+      }
+      continue
+    }
+    const paramFlag = arg.match(TASK_PARAM_FLAG)
+    if (paramFlag?.[2] === ".") {
+      // Reject dotted syntax without collecting its key, value, or trailing fragments.
+      for (let j = i + 1; j < rawArgs.length; j++) secretValues.add(j)
+      break
+    }
+    if (paramFlag) {
+      const malformedSpacedFlag = paramFlag[1] !== "--" && paramFlag[2] !== "="
+      // yargs consumes consecutive values for --param, even after an inline value.
+      for (let j = i + 1; j < rawArgs.length; j++) {
+        const value = rawArgs[j]
+        const firstMalformedValue = malformedSpacedFlag && j === i + 1
+        if (!firstMalformedValue && value.startsWith("-") && !/^-(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) break
+        secretValues.add(j)
+      }
+      continue
+    }
     if (!arg || !arg.startsWith("-") || arg.includes("=")) continue
     const key = arg.replace(/^-+/, "").toLowerCase()
     const next = rawArgs[i + 1]
@@ -143,8 +175,17 @@ export function parseTrackingArgs(rawArgs: string[]): {
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]
-    if (!arg.startsWith("-")) continue
+    if (!arg.startsWith("-") || secretValues.has(i)) continue
     const eqIdx = arg.indexOf("=")
+    if (TASK_PARAMS_FLAG.test(arg)) {
+      args.params = "<redacted>"
+      continue
+    }
+    const paramFlag = arg.match(TASK_PARAM_FLAG)
+    if (paramFlag) {
+      args.param = paramFlag[1] !== "--" || paramFlag[2] === "." || eqIdx > 0 || secretValues.has(i + 1) ? "<redacted>" : "true"
+      continue
+    }
     if (eqIdx > 0) {
       const key = arg.slice(0, eqIdx).replace(/^-+/, "")
       const inlineValue = arg.slice(eqIdx + 1)
