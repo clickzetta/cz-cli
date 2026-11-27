@@ -1,6 +1,14 @@
 #!/usr/bin/env bun
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
+
+const TSX_TRANSPILER = new Bun.Transpiler({
+  loader: "tsx",
+  jsxOptimizationInline: false,
+  tsconfig: JSON.stringify({
+    compilerOptions: { jsx: "react", jsxFactory: "__jsx", jsxFragmentFactory: "__Frag" },
+  }),
+})
 
 const UPSTREAM_PACKAGES = ["packages/core", "packages/opencode", "packages/tui", "packages/schema"] as const
 const START_BANNER = "//======================== cz-cli change ========================"
@@ -27,7 +35,7 @@ export type PatchAuditResult = {
 export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   const errors: string[] = []
   const ledgerPath = path.join(repoRoot, "packages/cz-cli/UPSTREAM-PATCHES.md")
-  if (!existsSync(ledgerPath)) {
+  if (!isRegularFile(ledgerPath)) {
     return {
       ok: false,
       bannerFiles: [],
@@ -45,7 +53,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   const entryBlocks = intrusiveSection.split(/\n### \d+\.\s+/).slice(1)
 
   const tuiPkgPath = path.join(repoRoot, "packages/tui/package.json")
-  const parsedTuiPkg = existsSync(tuiPkgPath) ? parseJsonObject(readFileSync(tuiPkgPath, "utf8")) : undefined
+  const parsedTuiPkg = isRegularFile(tuiPkgPath) ? parseJsonObject(readFileSync(tuiPkgPath, "utf8")) : undefined
   const tuiPkgVersion = typeof parsedTuiPkg?.version === "string" ? parsedTuiPkg.version : undefined
   const ledgerBaseline = ledgerText.match(/baselined at v(\d+\.\d+\.\d+)/)?.[1]
   const baselineNeedsSpinner = needsSpinnerBackport(tuiPkgVersion) || needsSpinnerBackport(ledgerBaseline)
@@ -94,7 +102,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         return
       }
       manifestExpectedCounts.set(relPath, expectedCount)
-      if (!existsSync(path.join(repoRoot, relPath))) {
+      if (!isRegularFile(path.join(repoRoot, relPath))) {
         errors.push(`${relPath}: listed in Bannered upstream files manifest in UPSTREAM-PATCHES.md but file is missing`)
         return
       }
@@ -114,14 +122,14 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     const allVerifyRepoPaths = extractVerifyRepoPaths(verifyMatches)
 
     allVerifyRepoPaths.forEach((relPath) => {
-      if (!existsSync(path.join(repoRoot, relPath))) {
+      if (!isRegularFile(path.join(repoRoot, relPath))) {
         errors.push(`${relPath}: listed under Verify in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
       }
     })
 
     headerPaths.forEach((relPath) => {
       const full = path.join(repoRoot, relPath)
-      if (!existsSync(full)) {
+      if (!isRegularFile(full)) {
         errors.push(`${relPath}: listed in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
         return
       }
@@ -153,7 +161,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         checkSpinnerBackport &&
         relFile !== "packages/tui/src/component/register-spinner.ts" &&
         (pkgRel === "packages/tui" || pkgRel === "packages/opencode") &&
-        /\bimport\b[^;\n]*["']opentui-spinner\/solid["']/.test(stripJsComments(content, false))
+        hasDirectImportFrom(content, "opentui-spinner/solid")
       ) {
         errors.push(`${relFile}: direct import from "opentui-spinner/solid" regressed (UPSTREAM-PATCHES #12)`)
       }
@@ -232,14 +240,12 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
 
   // Entry 12 (<spinner> registration) mechanical checks while active in ledger.
   if (checkSpinnerBackport) {
-    const tuiPkgPath = path.join(repoRoot, "packages/tui/package.json")
-    if (!existsSync(tuiPkgPath)) {
+    if (!isRegularFile(tuiPkgPath)) {
       errors.push("packages/tui/package.json: missing package manifest (UPSTREAM-PATCHES #12)")
     }
-    if (existsSync(tuiPkgPath)) {
-      const parsedPkg = parseJsonObject(readFileSync(tuiPkgPath, "utf8"))
-      const exportsMap = parsedPkg && typeof parsedPkg.exports === "object" && parsedPkg.exports !== null
-        ? (parsedPkg.exports as Record<string, unknown>)
+    if (isRegularFile(tuiPkgPath)) {
+      const exportsMap = parsedTuiPkg && typeof parsedTuiPkg.exports === "object" && parsedTuiPkg.exports !== null
+        ? (parsedTuiPkg.exports as Record<string, unknown>)
         : undefined
       if (exportsMap?.["./component/register-spinner"] !== "./src/component/register-spinner.ts") {
         errors.push(
@@ -248,17 +254,12 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       }
     }
     const defPath = path.join(repoRoot, "packages/tui/src/component/register-spinner.ts")
-    if (!existsSync(defPath)) {
+    if (!isRegularFile(defPath)) {
       errors.push("packages/tui/src/component/register-spinner.ts: missing spinner registration module (UPSTREAM-PATCHES #12)")
     }
-    if (existsSync(defPath)) {
+    if (isRegularFile(defPath)) {
       const defRaw = readFileSync(defPath, "utf8")
-      const defUncommented = stripJsComments(defRaw, false)
-      const defCodeOnly = stripJsComments(defRaw, true)
-      if (
-        !/\bimport\s*\{[^}]*\bregisterSpinner\b[^}]*\}\s*from\s*["']opentui-spinner\/solid["']/.test(defUncommented) ||
-        !hasValidSpinnerWrapperBody(defCodeOnly)
-      ) {
+      if (!hasValidSpinnerWrapperAst(defRaw)) {
         errors.push(
           "packages/tui/src/component/register-spinner.ts: missing active registerOpencodeSpinner() -> registerSpinner() implementation (UPSTREAM-PATCHES #12)",
         )
@@ -266,20 +267,12 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     }
     SPINNER_CALL_SITES.forEach((relSite) => {
       const absSite = path.join(repoRoot, relSite)
-      if (!existsSync(absSite)) {
+      if (!isRegularFile(absSite)) {
         errors.push(`${relSite}: missing expected registerOpencodeSpinner call site`)
         return
       }
       const siteRaw = readFileSync(absSite, "utf8")
-      const uncommented = stripJsComments(siteRaw, false)
-      const codeOnly = stripJsComments(siteRaw, true)
-      const hasValidImport =
-        /\bimport\s*\{[^}]*\bregisterOpencodeSpinner\b[^}]*\}\s*from\s*["'](?:\.\.?\/(?:component\/)?register-spinner|@opencode-ai\/tui\/component\/register-spinner)["']/.test(
-          uncommented,
-        )
-      // Require an unconditional top-level module-initialization call (not buried inside an unused helper/closure)
-      const hasActiveCall = hasTopLevelUnconditionalCall(codeOnly, "registerOpencodeSpinner")
-      if (!hasValidImport || !hasActiveCall) {
+      if (!hasValidSpinnerCallSiteAst(siteRaw)) {
         errors.push(
           `${relSite}: missing active import or top-level registerOpencodeSpinner() startup call (UPSTREAM-PATCHES #12)`,
         )
@@ -304,151 +297,177 @@ function needsSpinnerBackport(version: string | undefined): boolean {
   return geMin && ltFixed
 }
 
-function hasValidSpinnerWrapperBody(codeOnly: string): boolean {
-  const header = codeOnly.match(/\bexport\s+function\s+registerOpencodeSpinner\s*\(\s*\)\s*\{/)
-  if (!header || header.index === undefined) return false
-  const bodyStart = header.index + header[0].length
-  const cursor = { index: bodyStart, depth: 1 }
-  while (cursor.index < codeOnly.length && cursor.depth > 0) {
-    const ch = codeOnly[cursor.index]
-    if (ch === "{") cursor.depth += 1
-    else if (ch === "}") cursor.depth -= 1
-    cursor.index += 1
-  }
-  if (cursor.depth !== 0) return false
-  const body = codeOnly.slice(bodyStart, cursor.index - 1)
-  if (/\b(?:function|return|while|for)\b|=>/.test(body)) return false
-  const normalized = body.replace(/\s+/g, " ").trim().replace(/;\s*$/, "")
-  return (
-    normalized === "registerSpinner()" ||
-    /^if\s*\(\s*!getComponentCatalogue\(\s*\)\.spinner\s*\)\s*(?:registerSpinner\(\s*\)|\{\s*registerSpinner\(\s*\)\s*;?\s*\})$/.test(
-      normalized,
-    )
-  )
+function isRegularFile(absPath: string): boolean {
+  return statSync(absPath, { throwIfNoEntry: false })?.isFile() === true
 }
 
-function hasTopLevelUnconditionalCall(codeOnly: string, fnName: string): boolean {
-  const tokens = tokenizeJs(codeOnly)
-  const cursor = { index: 0 }
-
-  const peek = (offset = 0) => tokens[cursor.index + offset]
-  const skipNewlines = () => {
-    while (peek() === "\n") cursor.index += 1
+function hasDirectImportFrom(source: string, specifier: string): boolean {
+  try {
+    return TSX_TRANSPILER.scanImports(source).some(
+      (imp) => imp.kind === "import-statement" && imp.path === specifier,
+    )
+  } catch {
+    return source.includes(specifier)
   }
-  const skipBalanced = (open: string, close: string): boolean => {
-    if (peek() !== open) return false
-    const state = { depth: 0 }
-    while (cursor.index < tokens.length) {
-      const tok = peek()!
-      cursor.index += 1
-      if (tok === open) state.depth += 1
-      else if (tok === close) {
-        state.depth -= 1
-        if (state.depth === 0) return true
-      }
+}
+
+function hasValidSpinnerWrapperAst(source: string): boolean {
+  try {
+    const imports = TSX_TRANSPILER.scanImports(source)
+    if (!imports.some((imp) => imp.kind === "import-statement" && imp.path === "opentui-spinner/solid")) {
+      return false
     }
+    const canonical = blankTemplateLiterals(TSX_TRANSPILER.transformSync(source))
+    return (
+      /\bimport\s*\{\s*registerSpinner\s*\}\s*from\s*["']opentui-spinner\/solid["']/.test(canonical) &&
+      (/^export function registerOpencodeSpinner\(\) \{\n  registerSpinner\(\);\n\}$/m.test(canonical) ||
+        /^export function registerOpencodeSpinner\(\) \{\n  if \(!getComponentCatalogue\(\)\.spinner\)\n    registerSpinner\(\);\n\}$/m.test(
+          canonical,
+        ))
+    )
+  } catch {
     return false
   }
-  const isContinuationBeforeNewline = (tok: string | undefined) =>
-    tok !== undefined &&
-    (/^(?:=>|[=?&|:+\-*/%,.([])$/.test(tok) || /^(?:else|do|return|await|yield|typeof|void|delete|new)$/.test(tok))
-
-  const skipSubordinateStatement = (): void => {
-    skipNewlines()
-    const head = peek()
-    if (!head) return
-    if (head === ";") {
-      cursor.index += 1
-      return
-    }
-    if (head === "{") {
-      skipBalanced("{", "}")
-      return
-    }
-    if (head === "if" || head === "while" || head === "for") {
-      cursor.index += 1
-      skipNewlines()
-      if (!skipBalanced("(", ")")) return
-      skipSubordinateStatement()
-      if (head === "if") {
-        const saved = cursor.index
-        skipNewlines()
-        if (peek() === "else") {
-          cursor.index += 1
-          skipSubordinateStatement()
-        } else {
-          cursor.index = saved
-        }
-      }
-      return
-    }
-    if (head === "do") {
-      cursor.index += 1
-      skipSubordinateStatement()
-      skipNewlines()
-      if (peek() === "while") {
-        cursor.index += 1
-        skipNewlines()
-        skipBalanced("(", ")")
-      }
-      return
-    }
-    const state = { depth: 0, prevNonNl: "" }
-    while (cursor.index < tokens.length) {
-      const tok = peek()!
-      if (state.depth === 0) {
-        if (tok === ";") {
-          cursor.index += 1
-          return
-        }
-        if (tok === "\n" && state.prevNonNl && !isContinuationBeforeNewline(state.prevNonNl)) {
-          cursor.index += 1
-          return
-        }
-      }
-      if (tok === "(" || tok === "[" || tok === "{") state.depth += 1
-      else if (tok === ")" || tok === "]" || tok === "}") state.depth = Math.max(0, state.depth - 1)
-      if (tok !== "\n") state.prevNonNl = tok
-      cursor.index += 1
-    }
-  }
-
-  while (cursor.index < tokens.length) {
-    while (peek() === "\n" || peek() === ";") cursor.index += 1
-    const tok = peek()
-    if (!tok) break
-    if (
-      tok === fnName &&
-      peek(1) === "(" &&
-      peek(2) === ")" &&
-      (peek(3) === undefined || peek(3) === ";" || peek(3) === "\n")
-    ) {
-      return true
-    }
-    skipSubordinateStatement()
-  }
-  return false
 }
 
-function tokenizeJs(codeOnly: string): string[] {
-  const tokens: string[] = []
-  const pattern = /\n|=>|[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|[{}()[\];,.?:+\-*/%&|=!<>~^]/g
-  for (const match of codeOnly.matchAll(pattern)) {
-    tokens.push(match[0]!)
+function hasValidSpinnerCallSiteAst(source: string): boolean {
+  const allowedSpecifiers = new Set([
+    "./register-spinner",
+    "./component/register-spinner",
+    "../register-spinner",
+    "@opencode-ai/tui/component/register-spinner",
+  ])
+  try {
+    const imports = TSX_TRANSPILER.scanImports(source)
+    if (!imports.some((imp) => imp.kind === "import-statement" && allowedSpecifiers.has(imp.path))) {
+      return false
+    }
+    const canonical = blankTemplateLiterals(TSX_TRANSPILER.transformSync(source))
+    const hasNamedImport =
+      /\bimport\s*\{[^}]*\bregisterOpencodeSpinner\b(?!\s+as\b)[^}]*\}\s*from\s*["'](?:\.\.?\/(?:component\/)?register-spinner|@opencode-ai\/tui\/component\/register-spinner)["']/.test(
+        canonical,
+      )
+    if (!hasNamedImport) return false
+    // In Bun.Transpiler's pretty-printed AST output, ONLY top-level module statements sit at column 0;
+    // every subordinate statement inside if/else/for/for-await/while/do/switch/try/function/labels is indented.
+    const lines = canonical.split("\n")
+    for (const line of lines) {
+      if (/^(?:throw\b|process\.exit\s*\()/.test(line)) return false
+      if (line === "registerOpencodeSpinner();") return true
+    }
+    return false
+  } catch {
+    return false
   }
-  return tokens
+}
+
+function blankTemplateLiterals(canonicalJs: string): string {
+  const out: string[] = []
+  const state = { i: 0, prevSig: "\n" }
+  while (state.i < canonicalJs.length) {
+    const ch = canonicalJs[state.i]!
+    // Skip regex literals so a backtick inside /`/ cannot desynchronize template scanning
+    if (ch === "/" && canonicalJs[state.i + 1] !== "/" && canonicalJs[state.i + 1] !== "*") {
+      if (/[=(:,;!&|?+\-*%~^<>{\[\n]/.test(state.prevSig)) {
+        out.push(ch)
+        state.i += 1
+        const inClass = { active: false }
+        while (state.i < canonicalJs.length) {
+          const rc = canonicalJs[state.i]!
+          out.push(rc)
+          state.i += 1
+          if (rc === "\\") {
+            if (state.i < canonicalJs.length) {
+              out.push(canonicalJs[state.i]!)
+              state.i += 1
+            }
+            continue
+          }
+          if (rc === "[") inClass.active = true
+          else if (rc === "]") inClass.active = false
+          else if (rc === "/" && !inClass.active) break
+        }
+        state.prevSig = "/"
+        continue
+      }
+    }
+    if (ch === "'" || ch === '"') {
+      const quote = ch
+      out.push(quote)
+      state.i += 1
+      while (state.i < canonicalJs.length && canonicalJs[state.i] !== quote) {
+        if (canonicalJs[state.i] === "\\") {
+          out.push(canonicalJs[state.i]!, canonicalJs[state.i + 1] ?? "")
+          state.i += 2
+          continue
+        }
+        out.push(canonicalJs[state.i]!)
+        state.i += 1
+      }
+      if (state.i < canonicalJs.length) {
+        out.push(quote)
+        state.i += 1
+      }
+      state.prevSig = quote
+      continue
+    }
+    if (ch === "`") {
+      out.push("`")
+      state.i += 1
+      while (state.i < canonicalJs.length && canonicalJs[state.i] !== "`") {
+        if (canonicalJs[state.i] === "\\") {
+          state.i += 2
+          continue
+        }
+        state.i += 1
+      }
+      if (state.i < canonicalJs.length) {
+        out.push("`")
+        state.i += 1
+      }
+      state.prevSig = "`"
+      continue
+    }
+    out.push(ch)
+    if (ch !== " " && ch !== "\t") state.prevSig = ch
+    state.i += 1
+  }
+  return out.join("")
 }
 
 function extractVerifyRepoPaths(verifyText: string): string[] {
   const found = new Set<string>()
+  const valueFlags = new Set(["--timeout", "--preload", "-r", "-t", "--test-name-pattern", "--seed", "--max-concurrency"])
   const state = { lastDir: "" }
+  const collectCommandTestFiles = (argTail: string, prefix: string) => {
+    const tokens = argTail.trim().split(/\s+/)
+    const cursor = { index: 0 }
+    while (cursor.index < tokens.length) {
+      const token = tokens[cursor.index]!
+      cursor.index += 1
+      if (valueFlags.has(token)) {
+        cursor.index += 1
+        continue
+      }
+      if (token.startsWith("-")) continue
+      const clean = token.replace(/^['"]|['"]$/g, "").replace(/^\.\//, "")
+      const joined = prefix ? `${prefix}/${clean}` : clean
+      if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^\s`]+$/.test(joined) && SOURCE_SUFFIX.test(joined)) {
+        found.add(joined)
+        state.lastDir = path.posix.dirname(joined)
+      }
+    }
+  }
   for (const match of verifyText.matchAll(/`([^`]+)`/g)) {
     const span = (match[1] ?? "").trim()
-    const cdRun = span.match(/^cd\s+(packages\/[\w-]+)\s*&&\s*bun\s+test\s+([^\s`]+\.(?:ts|tsx|js|mjs))$/)
+    const cdRun = span.match(/^cd\s+(packages\/[\w-]+)\s*&&\s*bun\s+test\b([\s\S]+)$/)
     if (cdRun) {
-      const joined = `${cdRun[1]}/${cdRun[2]!.replace(/^\.\//, "")}`
-      found.add(joined)
-      state.lastDir = path.posix.dirname(joined)
+      collectCommandTestFiles(cdRun[2]!, cdRun[1]!)
+      continue
+    }
+    const rootRun = span.match(/^bun\s+test\b([\s\S]+)$/)
+    if (rootRun) {
+      collectCommandTestFiles(rootRun[1]!, "")
       continue
     }
     if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^\s`]+\.(?:ts|tsx|js|mjs)$/.test(span)) {
@@ -472,52 +491,6 @@ function parseJsonObject(text: string): Record<string, unknown> | undefined {
   } catch {
     return undefined
   }
-}
-
-function stripJsComments(source: string, blankStringContents: boolean): string {
-  const out: string[] = []
-  const cursor = { i: 0 }
-  while (cursor.i < source.length) {
-    const ch = source[cursor.i]!
-    const next = source[cursor.i + 1]
-    if (ch === "/" && next === "/") {
-      cursor.i += 2
-      while (cursor.i < source.length && source[cursor.i] !== "\n") cursor.i += 1
-      continue
-    }
-    if (ch === "/" && next === "*") {
-      cursor.i += 2
-      while (cursor.i < source.length && !(source[cursor.i] === "*" && source[cursor.i + 1] === "/")) {
-        if (source[cursor.i] === "\n") out.push("\n")
-        cursor.i += 1
-      }
-      cursor.i += 2
-      continue
-    }
-    if (ch === "'" || ch === '"' || ch === "`") {
-      const quote = ch
-      out.push(quote)
-      cursor.i += 1
-      while (cursor.i < source.length && source[cursor.i] !== quote) {
-        if (source[cursor.i] === "\\") {
-          if (!blankStringContents) out.push(source[cursor.i]!, source[cursor.i + 1] ?? "")
-          cursor.i += 2
-          continue
-        }
-        if (source[cursor.i] === "\n") out.push("\n")
-        else if (!blankStringContents) out.push(source[cursor.i]!)
-        cursor.i += 1
-      }
-      if (cursor.i < source.length) {
-        out.push(quote)
-        cursor.i += 1
-      }
-      continue
-    }
-    out.push(ch)
-    cursor.i += 1
-  }
-  return out.join("")
 }
 
 function extractUpstreamPaths(section: string): string[] {

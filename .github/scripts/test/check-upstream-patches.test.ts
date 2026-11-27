@@ -517,7 +517,35 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
     ),
   ).toBe(true)
 
-  // Missing Verify test file (e.g. discovery test from entry 7) must FAIL
+  // Unbraced `for await` over an empty iterable must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "for await (const _ of [])",
+      "  registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(false)
+
+  // Unconditional call after a regex literal containing `{` must PASS
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "const bracePattern = /\\{/",
+      "void bracePattern",
+      "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(true)
+
+  // Missing Verify test file (including `cd ... && bun test ... --timeout 30000` and a directory masquerading as a test file) must FAIL
+  mkdirSync(path.join(root, "packages/opencode/test/provider/clickzetta-discovery.test.ts"), { recursive: true })
   writeFileSync(
     path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
     [
@@ -528,20 +556,11 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
       "### 7. Provider discovery",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** discovery.",
-      "- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts` and `clickzetta-context-limit.test.ts`",
+      "- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts` and `cd packages/core && bun test test/session-list-subpath.test.ts --timeout 30000`",
       "### 12. Spinner registration",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
       "## HOOK-based customizations",
-    ].join("\n"),
-  )
-  writeFileSync(
-    path.join(root, "packages/tui/src/app.tsx"),
-    [
-      'import { registerOpencodeSpinner } from "./component/register-spinner"',
-      "//======================== cz-cli change ========================",
-      "registerOpencodeSpinner()",
-      "//====================== end cz-cli change ======================",
     ].join("\n"),
   )
   const missingVerifyResult = auditUpstreamPatches(root)
@@ -553,7 +572,7 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   ).toBe(true)
   expect(
     missingVerifyResult.errors.some(
-      (e) => e.includes("packages/opencode/test/provider/clickzetta-context-limit.test.ts") && e.includes("listed under Verify"),
+      (e) => e.includes("packages/core/test/session-list-subpath.test.ts") && e.includes("listed under Verify"),
     ),
   ).toBe(true)
 
