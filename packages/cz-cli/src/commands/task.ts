@@ -174,7 +174,7 @@ function inferParamType(value: string): "manual" | "system" {
 }
 
 export function parseParamValueList(raw: string) {
-  const cleaned = raw.trim().replace(/^'|'$/g, "")
+  const cleaned = raw.trim().replace(/^'([\s\S]*)'$/, "$1").trim()
   const candidates = [cleaned]
   if (cleaned.includes('\\"')) candidates.push(cleaned.replace(/\\"/g, "\""))
   const tryJson = (): unknown => {
@@ -184,15 +184,16 @@ export function parseParamValueList(raw: string) {
     return null
   }
   const tryRelaxed = (): Record<string, string> | null => {
-    const relaxed = candidates[candidates.length - 1]!.replace(/^\{|\}$/g, "").trim()
-    if (!relaxed) return null
-    const pairs = relaxed.split(",").map((pair) => {
+    // Some Windows shells strip the quotes. Only recover complete, unquoted objects.
+    if (!/^\{[^{}"']+\}$/.test(cleaned)) return null
+    const pairs = cleaned.slice(1, -1).split(",").map((pair) => {
       const idx = pair.indexOf(":")
-      if (idx <= 0) return null
-      return [pair.slice(0, idx).trim().replace(/^["']|["']$/g, ""), pair.slice(idx + 1).trim().replace(/^["']|["']$/g, "")] as [string, string]
+      const key = pair.slice(0, idx).trim()
+      const value = pair.slice(idx + 1).trim()
+      return idx > 0 && key && value ? [key, value] as const : null
     })
-    if (pairs.some((p) => p === null)) return null
-    return Object.fromEntries(pairs as [string, string][])
+    if (!pairs.every((pair) => pair !== null)) return null
+    return Object.fromEntries(pairs)
   }
   const parsed = tryJson() ?? tryRelaxed()
   if (!isRecord(parsed)) return null
@@ -387,7 +388,7 @@ async function readDraftParamsForSave(
   sc: StudioConfig,
   fileId: number,
   format: string | undefined,
-  options?: { checkFileType: boolean },
+  options?: { requireNonStudioType: boolean },
 ) {
   const detail = (await getTaskDetail(sc, fileId)).data
   if (!isRecord(detail) || Object.keys(detail).length === 0) {
@@ -397,18 +398,19 @@ async function readDraftParamsForSave(
   if (!isRecord(taskDetail)) {
     handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
   }
-  if (options?.checkFileType) {
-    const rawFileType = taskDetail.fileType ?? taskDetail.file_type ?? detail.fileType ?? detail.file_type
-    const fileType = typeof rawFileType === "string" && /^\d+$/.test(rawFileType.trim()) ? Number(rawFileType) : rawFileType
-    if (typeof fileType !== "number" || !Number.isSafeInteger(fileType) || fileType < 0) {
-      handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
-    }
-    if (UI_ONLY_FILE_TYPES.has(fileType)) {
-      handledError("UI_ONLY_TASK", "This task type requires configuration via Studio UI.", {
-        format,
-        aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
-      })
-    }
+  const fileTypes = [taskDetail.fileType, taskDetail.file_type, detail.fileType, detail.file_type]
+    .filter((value) => value != null)
+    .map((value) => typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value) : value)
+  const fileType = fileTypes[0]
+  if ((options?.requireNonStudioType && fileType === undefined) ||
+    fileTypes.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value !== fileType)) {
+    handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
+  }
+  if (options?.requireNonStudioType && typeof fileType === "number" && UI_ONLY_FILE_TYPES.has(fileType)) {
+    handledError("UI_ONLY_TASK", "This task type requires configuration via Studio UI.", {
+      format,
+      aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
+    })
   }
   const existing = taskDetail.paramValueList ?? detail.paramValueList ?? []
   if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
@@ -2038,8 +2040,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
             const parsedFileType = parseTaskType(argv.type as string)
             const uiOnly = UI_ONLY_FILE_TYPES.has(parsedFileType)
-            const rawParams = !uiOnly && (argv.content || argv.file) ? argv.params : undefined
-            const paramValueList = rawParams === undefined ? undefined : parseParamValueList(rawParams as string)
+            const paramValueList = argv.params === undefined ? undefined : parseParamValueList(argv.params)
             if (paramValueList === null) {
               error("INVALID_ARGUMENTS", "--params must be an object with non-blank names and string values.", { format, exitCode: 2 })
               return
@@ -2417,7 +2418,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            const existing = await readDraftParamsForSave(sc, fileId, format, { checkFileType: true })
+            const existing = await readDraftParamsForSave(sc, fileId, format, { requireNonStudioType: true })
             const paramValueList = overrides
               ? mergeTaskParamValueList(existing, Object.fromEntries(overrides.map((param) => [param.paramKey, param.paramValue])), format)
               : argv.clearParams ? [] : existing

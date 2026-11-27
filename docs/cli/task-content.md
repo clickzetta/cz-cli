@@ -5,20 +5,24 @@ saving and sends back its runtime parameters, including existing IDs, bizdate
 configuration, and encrypted references that have no returned value. If the
 draft cannot be read or its parameter list is malformed, the command stops
 before saving. The legacy `task save` command also preserves the current
-parameters and keeps its existing task-type support. Studio-only task types
-continue to require Studio configuration when using `save-content`.
+parameters and keeps its existing task-type support. Both commands reject drafts
+with conflicting task types in the detail response. Studio-only task types
+require Studio configuration when using `save-content`.
 
 `--params '{"month":"$[yyyyMM]"}'` merges ordinary parameter values by key. The
 command preserves existing IDs, other metadata, and unrelated parameters.
-Parameter names must contain a non-whitespace character. This also applies to
-`--params` when creating a script draft with `task create-setup`. Use
-Studio to change encrypted or referenced parameters. An empty object leaves the
-parameters intact. If you previously used `--params '{}'` to clear the list, use
+Parameter names must contain a non-whitespace character. Both `save-content` and
+`create-setup` reject incomplete objects before making Studio requests. They
+still accept complete objects whose quotes were escaped or stripped by Windows
+shells. Use Studio to change encrypted or referenced parameters. An empty object
+leaves the parameters intact. If you previously used `--params '{}'` to clear the list, use
 `--clear-params` instead. The two options are mutually exclusive.
 
 The command saves draft script content without writing scheduling fields. The
 read and save are separate requests, so concurrent edits can race with a save.
-Draft save debug logs redact parameter lists. Errors from the Studio draft read
-and save endpoints report status information without displaying server response
-text that could contain parameter values. On success, both content-save commands
+Draft save debug logs redact parameter lists. Command telemetry redacts the
+payloads of `--param` and `--params` in argument attributes, including on failed
+commands. Errors from the Studio draft read and save endpoints report status
+information without displaying server response text that could contain parameter
+values. On success, both content-save commands
 return a local `Draft saved` acknowledgement and the Studio URL.

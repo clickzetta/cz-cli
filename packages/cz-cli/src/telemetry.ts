@@ -96,6 +96,8 @@ function takesNoValue(key: string): boolean {
   return VALUELESS_FLAGS.has(name) || name.startsWith("no-")
 }
 
+const TASK_PARAM_FLAG = /^--(params?)(=|$)/i
+
 /**
  * Parse raw CLI args into positional tokens and a flag map suitable for telemetry.
  * Expects args already sliced to user-visible tokens (i.e. process.argv.slice(2) or hideBin output).
@@ -122,6 +124,19 @@ export function parseTrackingArgs(rawArgs: string[]): {
   const secretValues = new Set<number>()
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]
+    const paramFlag = arg?.match(TASK_PARAM_FLAG)
+    if (paramFlag) {
+      const variadic = paramFlag[1].toLowerCase() === "param"
+      if (!variadic && paramFlag[2] === "=") continue
+      // yargs consumes consecutive values for --param, even after an inline value.
+      for (let j = i + 1; j < rawArgs.length; j++) {
+        const value = rawArgs[j]
+        if (value.startsWith("-") && !/^-(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) break
+        secretValues.add(j)
+        if (!variadic) break
+      }
+      continue
+    }
     if (!arg || !arg.startsWith("-") || arg.includes("=")) continue
     const key = arg.replace(/^-+/, "").toLowerCase()
     const next = rawArgs[i + 1]
@@ -143,8 +158,13 @@ export function parseTrackingArgs(rawArgs: string[]): {
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]
-    if (!arg.startsWith("-")) continue
+    if (!arg.startsWith("-") || secretValues.has(i)) continue
     const eqIdx = arg.indexOf("=")
+    const paramFlag = arg.match(TASK_PARAM_FLAG)
+    if (paramFlag) {
+      args[paramFlag[1]] = eqIdx > 0 || secretValues.has(i + 1) ? "<redacted>" : "true"
+      continue
+    }
     if (eqIdx > 0) {
       const key = arg.slice(0, eqIdx).replace(/^-+/, "")
       const inlineValue = arg.slice(eqIdx + 1)

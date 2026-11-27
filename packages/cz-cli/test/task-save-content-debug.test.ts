@@ -46,7 +46,7 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })
 
-async function runTask(args: string[], debug = true) {
+async function runTask(args: string[], debug = true, telemetry = false) {
   requests.length = 0
   saves.length = 0
   const requestFile = join(home, "requests.jsonl")
@@ -61,7 +61,12 @@ async function runTask(args: string[], debug = true) {
     process.execPath, "--preload", "./test/fixtures/studio-cli-transport.ts", "src/main.ts", ...(debug ? ["--debug"] : []), "task", ...args, "--profile", "test", "--format", "json",
   ], {
     cwd: join(import.meta.dir, ".."),
-    env: { HOME: home, CLICKZETTA_TEST_HOME: home, CLICKZETTA_DISABLE_AUTOUPDATE: "1" },
+    env: {
+      HOME: home,
+      CLICKZETTA_TEST_HOME: home,
+      CLICKZETTA_DISABLE_AUTOUPDATE: "1",
+      ...(telemetry && { CLICKZETTA_TEST_TELEMETRY: "1" }),
+    },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -70,12 +75,14 @@ async function runTask(args: string[], debug = true) {
     new Response(child.stderr).text(),
     child.exited,
   ])
+  const commandLogs: string[] = []
   for (const line of (await Bun.file(requestFile).text()).trim().split("\n").filter(Boolean)) {
     const request = JSON.parse(line)
     requests.push(request.path)
     if (request.path === savePath) saves.push(JSON.parse(request.body))
+    if (request.path === "/v1/logs") commandLogs.push(request.body)
   }
-  return { stdout, stderr, code }
+  return { stdout, stderr, code, commandLogs }
 }
 
 function saveWithDebug(command = "save-content") {
@@ -188,6 +195,39 @@ test("legacy task save can write a Studio-only draft while save-content rejects 
   }
 })
 
+for (const typeFields of [
+  { fileType: 500, taskDetail: { fileType: 4 } },
+  { file_type: "4", taskDetail: { fileType: "500" } },
+  { fileType: 4, file_type: 500 },
+]) {
+  test(`both content saves reject conflicting draft types (${JSON.stringify(typeFields)})`, async () => {
+    const respond = responses.get(detailPath)!
+    responses.set(detailPath, () => ok({ id: 123, ...typeFields, paramValueList: parameters }))
+    try {
+      for (const command of ["save-content", "save"]) {
+        const result = await saveWithDebug(command)
+        expect(saves).toHaveLength(0)
+        expect(result.code).not.toBe(0)
+        expect(JSON.parse(result.stdout).error.code).toBe("INVALID_RESPONSE")
+      }
+    } finally {
+      responses.set(detailPath, respond)
+    }
+  })
+}
+
+test("save-content accepts matching numeric and string draft types", async () => {
+  const respond = responses.get(detailPath)!
+  responses.set(detailPath, () => ok({ id: 123, fileType: 4, taskDetail: { file_type: "4", paramValueList: parameters } }))
+  try {
+    const result = await saveWithDebug()
+    expect(result.code, result.stderr).toBe(0)
+    expect(saves).toEqual([expect.objectContaining({ paramValueList: parameters })])
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
 test("legacy task save requires readable draft parameters even without a task type", async () => {
   const respond = responses.get(detailPath)!
   try {
@@ -241,6 +281,47 @@ test("save-config preserves unrelated parameters and metadata in both writes", a
   ])
 })
 
+const telemetryValue = "synthetic-command-param-value"
+for (const command of ["save-content", "save-config"]) {
+  for (const inline of [false, true]) {
+    test(`failed ${command} redacts ${inline ? "inline" : "separated"} parameter values in command telemetry`, async () => {
+      const flag = command === "save-content" ? "params" : "param"
+      const primary = command === "save-content" ? JSON.stringify({ secret_ref: telemetryValue }) : `secret_ref=${telemetryValue}`
+      const result = await runTask([
+        command, "123",
+        ...(command === "save-content" ? ["--content", "SELECT 1"] : []),
+        ...(inline ? [`--${flag}=${primary}`] : [`--${flag}`, primary]),
+        ...(command === "save-config" ? ["synthetic-extra-key=synthetic-extra-value"] : []),
+      ], false, true)
+      expect(result.code).not.toBe(0)
+      expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
+      expect(saves).toHaveLength(0)
+      expect(result.commandLogs).toHaveLength(1)
+      const record = JSON.parse(result.commandLogs[0]).resourceLogs[0].scopeLogs[0].logRecords[0]
+      expect(record.body.stringValue).toBe(`Command task ${command} failed`)
+      const attributes = Object.fromEntries(record.attributes.map((attr: { key: string; value: unknown }) => [attr.key, attr.value]))
+      expect(attributes[`cz_cli.command.arg.${flag}`]).toEqual({ stringValue: "<redacted>" })
+      expect(attributes["cz_cli.command.arg._positional"]).toEqual({ stringValue: command === "save-content" ? "123 SELECT 1 test json" : "123 test json" })
+      for (const value of [telemetryValue, "secret_ref", "synthetic-extra-key", "synthetic-extra-value"]) {
+        expect(result.commandLogs[0]).not.toContain(value)
+      }
+    })
+  }
+}
+
+test("option validation rejects a params and clear conflict without putting params in telemetry", async () => {
+  const result = await runTask([
+    "save-content", "123", "--content", "SELECT 1", "--params", JSON.stringify({ secret_ref: telemetryValue }), "--clear-params",
+  ], false, true)
+  expect(result.code).toBe(2)
+  expect(JSON.parse(result.stdout).error.code).toBe("USAGE_ERROR")
+  expect(requests).toEqual(["/v1/logs"])
+  expect(result.commandLogs).toHaveLength(1)
+  expect(result.commandLogs[0]).toContain("<redacted>")
+  expect(result.commandLogs[0]).not.toContain(telemetryValue)
+  expect(result.commandLogs[0]).not.toContain("secret_ref")
+})
+
 for (const fileType of [0, "0", "", " ", "invalid", null]) {
   test(`task save-content validates draft file type ${JSON.stringify(fileType)}`, async () => {
     const respond = responses.get(detailPath)!
@@ -262,16 +343,39 @@ for (const fileType of [0, "0", "", " ", "invalid", null]) {
   })
 }
 
-test("create-setup rejects malformed params before creating and keeps values out of diagnostics", async () => {
-  const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
-    "--params", JSON.stringify({ secret: storedValue, bad: null })])
-  expect({
-    code: result.code,
-    error: JSON.parse(result.stdout).error.code,
-    requests: [...requests],
-    exposed: (result.stdout + result.stderr).includes(storedValue),
-  }).toEqual({ code: 2, error: "INVALID_ARGUMENTS", requests: [], exposed: false })
-})
+for (const args of [
+  ["save-content", "123", "--content", "SELECT 1"],
+  ["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1"],
+]) {
+  test.each([
+    JSON.stringify({ month: storedValue, bad: null }),
+    JSON.stringify({ month: storedValue }).slice(0, -1),
+    JSON.stringify({ month: storedValue }).replaceAll('"', '\\"').slice(0, -1),
+    JSON.stringify({ month: storedValue }).slice(1),
+    `{"month":"${storedValue}}`,
+    `{"month":"${storedValue}",}`,
+    `{month:${storedValue},other:}`,
+  ])(`task ${args[0]} rejects malformed params %s before network access`, async (raw) => {
+    const result = await runTask([...args, "--params", raw])
+    expect(result.code).not.toBe(0)
+    expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
+    expect(requests).toEqual([])
+    expect(result.stdout + result.stderr).not.toContain(storedValue)
+  })
+
+  test.each([
+    JSON.stringify({ date: "bizdate" }).replaceAll('"', '\\"'),
+    "'{\"date\":\"bizdate\"}'",
+    "{date:bizdate}",
+  ])(`task ${args[0]} accepts Windows-compatible params %s`, async (raw) => {
+    const result = await runTask([...args, "--params", raw])
+    expect(result.code, result.stdout + result.stderr).toBe(0)
+    expect(saves).toHaveLength(1)
+    expect(saves[0]).toMatchObject({
+      paramValueList: expect.arrayContaining([{ paramKey: "date", paramType: "system", paramValue: "bizdate", id: expect.any(String), ref: 0, encrypt: false, ignore: false }]),
+    })
+  })
+}
 
 test("create-setup saves valid params for script tasks", async () => {
   const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
@@ -298,8 +402,17 @@ test("create-setup rolls back after a failed save with valid params", async () =
 
 test("create-setup keeps UI-only draft creation independent of script params", async () => {
   const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "INTEGRATION", "--content", "SELECT 1",
-    "--params", JSON.stringify({ invalid: null })])
+    "--params", JSON.stringify({ date: "bizdate" })])
   expect(result.code, result.stdout + result.stderr).toBe(0)
   expect(requests).toContain(createPath)
   expect(saves).toHaveLength(0)
+})
+
+test("create-setup rejects incomplete params even when the draft would not use them", async () => {
+  for (const args of [["--type", "SQL"], ["--type", "INTEGRATION", "--content", "SELECT 1"]]) {
+    const result = await runTask(["create-setup", "sample", "--folder", "10", ...args, "--params", '{"date":"bizdate"'])
+    expect(result.code).toBe(2)
+    expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
+    expect(requests).toEqual([])
+  }
 })
