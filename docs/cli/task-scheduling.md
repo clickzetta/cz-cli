@@ -22,6 +22,14 @@ also accepts it and preserves the node's saved mode when omitted. Invalid values
 missing values, and repeated flags fail before network access.
 Draft-only `task create` does not set this field; select the mode when saving scheduling configuration.
 
+For task types supported by the lineage parser, `task save-config --auto-lineage`
+and `task save-cron --auto-lineage` use the draft script field precedence of the
+content writer. They check `fileContent` and `dataFileContent` before the aliases
+`taskContent`, `task_content`, `script`, and `content`. Within each group, nested
+task detail takes precedence over top-level detail. An explicit empty string is
+passed to the parser. A missing or unreadable script returns `INVALID_RESPONSE`
+before lineage parsing or any configuration or content write.
+
 With `task save-config --param key=value`, parameter names must contain a
 non-whitespace character. Ordinary overrides keep existing IDs and other
 metadata, and unrelated parameters are preserved. Attempts to override an

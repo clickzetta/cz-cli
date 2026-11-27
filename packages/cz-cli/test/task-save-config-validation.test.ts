@@ -9,7 +9,10 @@ import { join } from "node:path"
 // path/body fixtures. HOME/profile are isolated by test/preload.ts.
 
 const saveCalls: Array<Record<string, unknown>> = []
+const contentSaveCalls: Array<Record<string, unknown>> = []
 const parseCalls: Array<Record<string, unknown>> = []
+const sql = "create table lineage_smoke_out as select * from upstream_table;"
+let scriptFields: Record<string, unknown>
 const outputDtos = [
   {
     projectId: 9,
@@ -19,6 +22,13 @@ const outputDtos = [
     fileShowName: "ws.lineage_smoke",
     refTableName: "ws.public.lineage_smoke_out",
     parseType: 2,
+  },
+]
+const existingOutputDtos = [
+  {
+    ...outputDtos[0],
+    fileShowName: "ws.existing_output",
+    refTableName: "ws.public.existing_output",
   },
 ]
 const manualOutputDtos = [
@@ -44,7 +54,9 @@ function firstJson(output: string) {
 beforeEach(() => {
   clearTokenCache()
   saveCalls.length = 0
+  contentSaveCalls.length = 0
   parseCalls.length = 0
+  scriptFields = { fileContent: sql }
   writeFileSync(
     join(process.env.CLICKZETTA_TEST_HOME!, ".clickzetta", "profiles.toml"),
     "[profiles.test]\npat = 'pat'\nworkspace = 'ws'\ninstance = 'inst'\n",
@@ -58,7 +70,7 @@ beforeEach(() => {
       id: 123,
       fileType: 4,
       dataFileName: "lineage_smoke",
-      fileContent: "create table lineage_smoke_out as select * from upstream_table;",
+      ...scriptFields,
       ownerCnName: "owner-cn",
       ownerEnName: "owner-en",
     },
@@ -89,13 +101,17 @@ beforeEach(() => {
       executeTimeout: 0,
       executeTimeoutUnit: "m",
       dataFileDependencyDTOS: [],
-      fileOutputTableDTOS: outputDtos,
+      fileOutputTableDTOS: existingOutputDtos,
       configProperties: "{}",
     },
   }))
   // parseTaskDependencyOut
   onStudio("/ide-admin/v1/dataFileConfiguration/parseDataFileDependencyOut", (body) => {
-    parseCalls.push(body as Record<string, unknown>)
+    const request = body as Record<string, unknown>
+    parseCalls.push(request)
+    if (request.dataFileContent === "") {
+      return { code: 0, data: { dataFileDependencyDTOS: [], fileOutputTableDTOS: [] } }
+    }
     return {
       code: 0,
       data: {
@@ -119,12 +135,13 @@ beforeEach(() => {
     code: 0,
     data: [{ id: "vc-default-id", name: "DEFAULT", type: "GENERAL" }],
   }))
-  // saveDataFileConfiguration — capture only config saves (onlySaveContent=0)
+  // The same endpoint accepts configuration and content writes.
   onFetch({
     match: (url) => url.includes("/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"),
     respond: (_url, _method, body) => {
       const b = (body ?? {}) as Record<string, unknown>
-      if (Number(b.onlySaveContent) === 0) saveCalls.push(b)
+      if (b.onlySaveContent === 0) saveCalls.push(b)
+      if (b.onlySaveContent === 1) contentSaveCalls.push(b)
       return { code: 0, data: { ok: true } }
     },
   })
@@ -183,7 +200,7 @@ describe("task save-config dependency validation", () => {
     expect(result.exitCode).toBe(0)
     expect(parseCalls).toHaveLength(0)
     expect(saveCalls[0]?.dataFileInputListReqs).toEqual([])
-    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(outputDtos)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(existingOutputDtos)
     expect(saveCalls[0]).toMatchObject({
       ownerCnName: "owner-cn",
       ownerEnName: "owner-en",
@@ -227,7 +244,7 @@ describe("task save-config dependency validation", () => {
     expect(result.exitCode).toBe(0)
     expect(parseCalls).toHaveLength(0)
     expect(saveCalls[0]?.dataFileInputListReqs).toEqual([])
-    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(outputDtos)
+    expect(saveCalls[0]?.dataFileOutputListReqs).toEqual(existingOutputDtos)
     expect(saveCalls[0]).toMatchObject({
       ownerCnName: "owner-cn",
       ownerEnName: "owner-en",
@@ -357,6 +374,62 @@ describe("task save-config dependency validation", () => {
     expect((json.error as Record<string, unknown>)?.code).toBe("INVALID_ARGUMENTS")
     expect(saveCalls).toHaveLength(0)
   })
+})
+
+describe("task schedule auto-lineage draft script", () => {
+  for (const command of ["save-config", "save-cron"]) {
+    const args = command === "save-config" ? "--param label=fixture" : '--cron "0 30 2 * * ? *"'
+    const invocation = `task ${command} 123 --auto-lineage ${args}`
+
+    test(`${command} parses the SQL when taskContent is the only script field`, async () => {
+      scriptFields = { taskContent: sql }
+
+      const result = await execute(invocation)
+
+      expect(result.exitCode).toBe(0)
+      expect({ parseCalls, saveCalls, contentSaveCalls }).toEqual({
+        parseCalls: [expect.objectContaining({ dataFileContent: sql })],
+        saveCalls: [expect.objectContaining({
+          dataFileInputListReqs: [expect.objectContaining({ dependencyFileId: 456, depStrategy: 0 })],
+          dataFileOutputListReqs: outputDtos,
+        })],
+        contentSaveCalls: command === "save-config" ? [expect.objectContaining({ dataFileContent: sql })] : [],
+      })
+    })
+
+    test(`${command} parses an explicitly empty script`, async () => {
+      scriptFields = { taskContent: "" }
+
+      expect((await execute(invocation)).exitCode).toBe(0)
+      expect(parseCalls).toEqual([expect.objectContaining({ dataFileContent: "" })])
+      expect(saveCalls).toEqual([expect.objectContaining({ dataFileInputListReqs: [], dataFileOutputListReqs: [] })])
+      expect(contentSaveCalls).toEqual(
+        command === "save-config" ? [expect.objectContaining({ dataFileContent: "" })] : [],
+      )
+    })
+
+    for (const [name, fields] of [["missing", {}], ["unreadable", { fileContent: 42, taskContent: sql }]] as const) {
+      test(`${command} rejects ${name} script content before parsing or saving`, async () => {
+        scriptFields = fields
+
+        const result = await execute(invocation)
+
+        expect({
+          exitCode: result.exitCode,
+          json: firstJson(result.output),
+          parseCalls,
+          saveCalls,
+          contentSaveCalls,
+        }).toEqual({
+          exitCode: 1,
+          json: { error: { code: "INVALID_RESPONSE", message: "Cannot read current task script; draft was not saved." } },
+          parseCalls: [],
+          saveCalls: [],
+          contentSaveCalls: [],
+        })
+      })
+    }
+  }
 })
 
 describe("schedule activation", () => {

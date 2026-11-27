@@ -441,11 +441,11 @@ function draftParameters(detail: unknown) {
   return { detail, taskDetail, params: existing }
 }
 
-function readDraftScriptForConfigSave(draft: ReturnType<typeof draftParameters>) {
-  const script = draft.taskDetail.fileContent ?? draft.taskDetail.dataFileContent ??
-    draft.detail.fileContent ?? draft.detail.dataFileContent ??
-    draft.taskDetail.taskContent ?? draft.taskDetail.task_content ?? draft.taskDetail.script ?? draft.taskDetail.content ??
-    draft.detail.taskContent ?? draft.detail.task_content ?? draft.detail.script ?? draft.detail.content
+function readDraftScript(detail: Record<string, unknown>, taskDetail: Record<string, unknown>) {
+  const script = taskDetail.fileContent ?? taskDetail.dataFileContent ??
+    detail.fileContent ?? detail.dataFileContent ??
+    taskDetail.taskContent ?? taskDetail.task_content ?? taskDetail.script ?? taskDetail.content ??
+    detail.taskContent ?? detail.task_content ?? detail.script ?? detail.content
   if (typeof script !== "string") {
     throw new TaskDraftError("INVALID_RESPONSE", "Cannot read current task script; draft was not saved.")
   }
@@ -920,7 +920,7 @@ async function parseLineageForSave(sc: StudioConfig, fileId: number, schemaName:
     projectId: sc.projectId,
     workspaceId: sc.workspaceId,
     schemaName,
-    dataFileContent: String(detailObj.fileContent ?? detailObj.dataFileContent ?? ""),
+    dataFileContent: readDraftScript(detailData, detailObj),
     dataFileId: fileId,
   })
   const data = isRecord(resp.data) ? resp.data : {}
@@ -2902,7 +2902,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               })))
               : draft.params.length > 0 ? draft.params : undefined
             const contentSave = paramValueList === undefined ? undefined : {
-              dataFileContent: readDraftScriptForConfigSave(draft),
+              dataFileContent: readDraftScript(draft.detail, draft.taskDetail),
               paramValueList,
             }
 
