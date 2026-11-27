@@ -383,6 +383,10 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
 
   const agentsDiff = "diff --git a/AGENTS.md b/AGENTS.md\n--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old\n+new\n"
   const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const securityDiff =
+    "diff --git a/SECURITY.md b/SECURITY.md\n--- a/SECURITY.md\n+++ b/SECURITY.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const githubSecurityDiff =
+    "diff --git a/.github/SECURITY.md b/.github/SECURITY.md\n--- a/.github/SECURITY.md\n+++ b/.github/SECURITY.md\n@@ -1 +1 @@\n-old\n+new\n"
   const contextDiff =
     "diff --git a/.github/claude-review-context.md b/.github/claude-review-context.md\n--- a/.github/claude-review-context.md\n+++ b/.github/claude-review-context.md\n@@ -1 +1 @@\n-old\n+new\n"
   const maintWorkflowDiff =
@@ -395,6 +399,9 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
     "diff --git a/.opencode/tool/github-triage.ts b/.opencode/tool/github-triage.ts\n--- a/.opencode/tool/github-triage.ts\n+++ b/.opencode/tool/github-triage.ts\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(agentsDiff)).toBe(true)
   expect(hasReviewablePaths(claudeDiff)).toBe(true)
+  expect(hasReviewablePaths(securityDiff)).toBe(true)
+  expect(hasReviewablePaths(githubSecurityDiff)).toBe(true)
+  expect(hasReviewablePaths(spacedRootDoc + securityDiff)).toBe(true)
   expect(hasReviewablePaths(contextDiff)).toBe(true)
   expect(hasReviewablePaths(maintWorkflowDiff)).toBe(true)
   expect(hasReviewablePaths(maintPromptDiff)).toBe(true)

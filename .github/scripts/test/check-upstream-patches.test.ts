@@ -275,9 +275,12 @@ test("auditUpstreamPatches rejects commented-out registerOpencodeSpinner() calls
       "## Bannered upstream files (CI-enforced)",
       "- `packages/tui/src/app.tsx` (1 banner)",
       "## INTRUSIVE patches",
-      "### 12. Spinner registration",
+      "### 1. App banner",
       "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "- **What/why:** keep banner valid.",
+      "### 12. Spinner registration",
+      "- **Files:** `packages/tui/src/component/register-spinner.ts` (new), `packages/tui/package.json`, `packages/tui/src/app.tsx`, `packages/tui/src/component/spinner.tsx`, `packages/tui/src/component/prompt/index.tsx`, `packages/opencode/src/cli/cmd/run/footer.subagent.tsx`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`",
+      "- **What/why:** No `cz-cli change` banner, deliberately — call `registerOpencodeSpinner()` in every TUI entrypoint.",
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -349,7 +352,7 @@ test("auditUpstreamPatches keeps spinner gate active on v1.17.11 baseline even i
       "## INTRUSIVE patches",
       "### 1. App patch",
       "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** keep banner valid.",
+      "- **What/why:** keep banner valid; mentions `registerOpencodeSpinner` in prose without dedicated entry 12.",
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -398,7 +401,7 @@ test("auditUpstreamPatches keeps spinner gate active on v1.17.11 baseline even i
   const result = auditUpstreamPatches(root)
   expect(result.ok).toBe(false)
   expect(
-    result.errors.some((e) => e.includes("missing required registerOpencodeSpinner INTRUSIVE entry while upstream baseline is < 1.18.9")),
+    result.errors.some((e) => e.includes("missing required dedicated registerOpencodeSpinner INTRUSIVE entry while upstream baseline is < 1.18.9")),
   ).toBe(true)
   expect(
     result.errors.some((e) => e.includes("packages/tui/src/component/spinner.tsx") && e.includes('direct import from "opentui-spinner/solid" regressed')),
@@ -415,6 +418,12 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   mkdirSync(path.join(root, "packages/tui/src/component/prompt"), { recursive: true })
   mkdirSync(path.join(root, "packages/opencode/src/cli/cmd/run"), { recursive: true })
 
+  const dedicatedSpinnerEntry = [
+    "### 12. Spinner registration",
+    "- **Files:** `packages/tui/src/component/register-spinner.ts` (new), `packages/tui/package.json`, `packages/tui/src/app.tsx`, `packages/tui/src/component/spinner.tsx`, `packages/tui/src/component/prompt/index.tsx`, `packages/opencode/src/cli/cmd/run/footer.subagent.tsx`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`",
+    "- **What/why:** No `cz-cli change` banner, deliberately — call `registerOpencodeSpinner()` in every TUI entrypoint.",
+  ]
+
   writeFileSync(
     path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
     [
@@ -422,9 +431,10 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
       "## Bannered upstream files (CI-enforced)",
       "- `packages/tui/src/app.tsx` (1 banner)",
       "## INTRUSIVE patches",
-      "### 12. Spinner registration",
+      "### 1. App banner",
       "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "- **What/why:** bannered app patch.",
+      ...dedicatedSpinnerEntry,
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -568,10 +578,11 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
       "## Bannered upstream files (CI-enforced)",
       "- `packages/tui/src/app.tsx` (1 banner)",
       "## INTRUSIVE patches",
-      "### 12. Spinner registration",
+      "### 1. App banner",
       "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "- **What/why:** bannered app patch.",
       "- **Verify:** `cd packages/core && bun test test/session-list-subpath.test.ts --test-name-pattern \"session subpath.test.ts\"`",
+      ...dedicatedSpinnerEntry,
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -596,9 +607,7 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** discovery.",
       "- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts`, `packages/core/test/symlinked.test.ts`, and `cd packages/core && bun test \"test/missing spaced.test.ts\" --timeout 30000`",
-      "### 12. Spinner registration",
-      "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      ...dedicatedSpinnerEntry,
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -694,6 +703,12 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "//====================== end cz-cli change ======================",
     ].join("\n"),
   )
+  const dedicatedEntry12 = [
+    "### 12. Spinner registration",
+    "- **Files:** `packages/tui/src/component/register-spinner.ts` (new), `packages/tui/package.json`, `packages/tui/src/app.tsx`, `packages/tui/src/component/spinner.tsx`, `packages/tui/src/component/prompt/index.tsx`, `packages/opencode/src/cli/cmd/run/footer.subagent.tsx`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`",
+    "- **What/why:** No `cz-cli change` banner, deliberately — call `registerOpencodeSpinner()` in every TUI entrypoint.",
+  ]
+
   writeFileSync(
     path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
     [
@@ -703,11 +718,10 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "- `packages/core/test/model-selection.test.ts` (1 banner)",
       "## INTRUSIVE patches",
       "### 1. Model selection",
+      "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** prefer ClickZetta model.",
       "- **Verify:** `bun test packages/core/test/model-selection.test.ts`",
-      "### 12. Spinner registration",
-      "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -723,7 +737,7 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
     wrongSpecifierResult.errors.some((e) => e.includes("packages/core/test/model-selection.test.ts")),
   ).toBe(false)
 
-  // 2. Restore exact `./component/register-spinner` in app.tsx -> full audit PASSES with command-form Verify coverage
+  // 2. Restore exact `./component/register-spinner` in app.tsx AND verify sequential `cd packages && cd core` + Markdown links PASS
   writeFileSync(
     path.join(root, "packages/tui/src/app.tsx"),
     [
@@ -733,9 +747,6 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "//====================== end cz-cli change ======================",
     ].join("\n"),
   )
-  expect(auditUpstreamPatches(root).ok).toBe(true)
-
-  // 3. `cd ./packages/core && bun test test/missing.test.ts` must FAIL when test file is missing
   writeFileSync(
     path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
     [
@@ -745,11 +756,29 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "- `packages/core/test/model-selection.test.ts` (1 banner)",
       "## INTRUSIVE patches",
       "### 1. Model selection",
-      "- **What/why:** prefer ClickZetta model.",
-      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`",
-      "### 12. Spinner registration",
       "- **File:** `packages/tui/src/app.tsx`",
-      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "- **What/why:** prefer ClickZetta model.",
+      "- **Verify:** `cd packages && cd core && bun test test/model-selection.test.ts`, [repo link](packages/core/test/model-selection.test.ts), and [ledger-relative link](../core/test/model-selection.test.ts)",
+      ...dedicatedEntry12,
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(true)
+
+  // 3. Subshell `./` cd AND Markdown links to missing tests under Verify must FAIL
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "- `packages/core/test/model-selection.test.ts` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 1. Model selection",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** prefer ClickZetta model.",
+      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
+      ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
   )
@@ -758,6 +787,16 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
   expect(
     dotSlashCdResult.errors.some(
       (e) => e.includes("packages/core/test/missing.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/core/test/missing-link.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/core/test/missing-rel.test.ts") && e.includes("listed under Verify"),
     ),
   ).toBe(true)
   expect(dotSlashCdResult.errors.some((e) => e.includes("model-selection.test.ts"))).toBe(false)

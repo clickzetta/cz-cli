@@ -155,12 +155,13 @@ export function hasReviewablePaths(diff: string): boolean {
       }
     }
   })
+  const rootReviewableDocs = /^(?:AGENTS|CLAUDE|SECURITY|LICENSE)\.(?:md|mdx)$/i
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md" || file === ".github/claude-review-context.md") return true
     if (file.startsWith("docs/maintenance/")) return true
     if (/^docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
     if (/^packages\/docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
-    if (!file.includes("/") && /\.(?:md|mdx)$/.test(file) && file !== "AGENTS.md" && file !== "CLAUDE.md") return false
+    if (!file.includes("/") && /\.(?:md|mdx)$/.test(file) && !rootReviewableDocs.test(file)) return false
     if (/^(?:packages|sdks|infra)\/(?:[^/\0]+\/)*(?:README|CHANGELOG|CONTRIBUTING)\.(?:md|mdx)$/i.test(file)) {
       return false
     }

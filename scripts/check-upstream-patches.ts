@@ -58,12 +58,14 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   const tuiPkgVersion = typeof parsedTuiPkg?.version === "string" ? parsedTuiPkg.version : undefined
   const ledgerBaseline = ledgerText.match(/baselined at v(\d+\.\d+\.\d+)/)?.[1]
   const baselineNeedsSpinner = needsSpinnerBackport(tuiPkgVersion) || needsSpinnerBackport(ledgerBaseline)
-  if (baselineNeedsSpinner && !intrusiveSection.includes("registerOpencodeSpinner")) {
+  const hasDedicatedSpinnerEntry = entryBlocks.some((block) => isDedicatedSpinnerBackportEntry(block))
+  if (baselineNeedsSpinner && !hasDedicatedSpinnerEntry) {
     errors.push(
-      "packages/cz-cli/UPSTREAM-PATCHES.md: missing required registerOpencodeSpinner INTRUSIVE entry while upstream baseline is < 1.18.9",
+      "packages/cz-cli/UPSTREAM-PATCHES.md: missing required dedicated registerOpencodeSpinner INTRUSIVE entry while upstream baseline is < 1.18.9",
     )
   }
-  const checkSpinnerBackport = baselineNeedsSpinner || intrusiveSection.includes("registerOpencodeSpinner")
+  const checkSpinnerBackport =
+    baselineNeedsSpinner || hasDedicatedSpinnerEntry || intrusiveSection.includes("registerOpencodeSpinner")
 
   const newCzOwnedFiles = new Set(
     [...intrusiveSection.matchAll(NEW_OWNED_PATTERN)].map((match) => match[1]!),
@@ -301,6 +303,21 @@ function needsSpinnerBackport(version: string | undefined): boolean {
   const geMin = major > 1 || (major === 1 && (minor > 17 || (minor === 17 && patch >= 11)))
   const ltFixed = major < 1 || (major === 1 && (minor < 18 || (minor === 18 && patch < 9)))
   return geMin && ltFixed
+}
+
+function isDedicatedSpinnerBackportEntry(block: string): boolean {
+  const headingLine = block.split("\n", 1)[0] ?? ""
+  if (!/\bspinner\b/i.test(headingLine) || !block.includes("registerOpencodeSpinner")) {
+    return false
+  }
+  const headerBoundary = block.search(/\n-\s+\*\*(?!Files?:|cz files:|Marker:|Upstream value:)/)
+  const entryHeader = headerBoundary > 0 ? block.slice(0, headerBoundary) : block
+  const headerFiles = new Set(extractUpstreamPaths(entryHeader))
+  return (
+    /`(?:\.\/)?packages\/tui\/package\.json`/.test(entryHeader) &&
+    headerFiles.has("packages/tui/src/component/register-spinner.ts") &&
+    SPINNER_CALL_SITES.every(([relSite]) => headerFiles.has(relSite))
+  )
 }
 
 function isRegularRepoFile(repoRoot: string, relPath: string): boolean {
@@ -566,11 +583,15 @@ function shellSplitClauses(raw: string): string[] {
       state.i += 1
       continue
     }
-    if (ch === ";" || (ch === "&" && unwrapped[state.i + 1] === "&")) {
+    if (ch === ";" || ch === "|" || (ch === "&" && unwrapped[state.i + 1] === "&")) {
       const clause = state.current.trim()
       if (clause) clauses.push(clause)
       state.current = ""
-      state.i += ch === ";" ? 1 : 2
+      if (ch === "&" || (ch === "|" && unwrapped[state.i + 1] === "|")) {
+        state.i += 2
+        continue
+      }
+      state.i += 1
       continue
     }
     state.current += ch
@@ -581,14 +602,26 @@ function shellSplitClauses(raw: string): string[] {
   return clauses
 }
 
-function normalizeRepoDir(raw: string): string | undefined {
-  if (!raw || raw.startsWith("/") || raw.includes("\0") || raw.includes("\\") || raw.includes("`")) {
-    return undefined
+function resolveRelativeRepoDir(baseCwd: string, rawTarget: string): string {
+  if (baseCwd.startsWith("__invalid__:")) {
+    return `${baseCwd}/${rawTarget}`
   }
-  const normalized = path.posix.normalize(raw).replace(/\/+$/, "")
+  if (
+    !rawTarget ||
+    rawTarget === "~" ||
+    rawTarget.startsWith("~/") ||
+    rawTarget.startsWith("/") ||
+    rawTarget.includes("\0") ||
+    rawTarget.includes("\\") ||
+    rawTarget.includes("`")
+  ) {
+    return `__invalid__:${rawTarget}`
+  }
+  const joined = baseCwd ? `${baseCwd}/${rawTarget}` : rawTarget
+  const normalized = path.posix.normalize(joined).replace(/\/+$/, "")
   if (normalized === "." || normalized === "") return ""
   if (normalized === ".." || normalized.startsWith("../") || normalized.startsWith("/")) {
-    return undefined
+    return `__invalid__:${joined}`
   }
   return normalized
 }
@@ -616,6 +649,86 @@ function normalizeRepoSourcePath(raw: string): string | undefined {
   return undefined
 }
 
+function findMarkdownBracketEnd(text: string, start: number): number {
+  const cursor = { i: start }
+  while (cursor.i < text.length) {
+    const ch = text[cursor.i]!
+    if (ch === "\n" && text[cursor.i + 1] === "\n") return -1
+    if (ch === "\\") {
+      cursor.i += 2
+      continue
+    }
+    if (ch === "`") {
+      cursor.i += 1
+      while (cursor.i < text.length && text[cursor.i] !== "`") cursor.i += 1
+      cursor.i += 1
+      continue
+    }
+    if (ch === "[") return -1
+    if (ch === "]") return cursor.i
+    cursor.i += 1
+  }
+  return -1
+}
+
+function resolveMarkdownVerifyTarget(rawSpec: string): string | undefined {
+  const trimmed = rawSpec.trim()
+  if (!trimmed) return undefined
+  const withoutTitle =
+    trimmed.startsWith("<") && trimmed.includes(">")
+      ? trimmed.slice(1, trimmed.indexOf(">")).trim()
+      : trimmed.split(/\s+["']/)[0]!.trim()
+  if (
+    !withoutTitle ||
+    withoutTitle.startsWith("#") ||
+    /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(withoutTitle) ||
+    withoutTitle.startsWith("//")
+  ) {
+    return undefined
+  }
+  const cleanPath = withoutTitle.split(/[?#]/, 1)[0]!.trim()
+  if (!cleanPath) return undefined
+  if (cleanPath.startsWith("/")) {
+    return path.posix.normalize(cleanPath.slice(1))
+  }
+  if (cleanPath.startsWith("../")) {
+    return path.posix.normalize(`packages/cz-cli/${cleanPath}`)
+  }
+  return path.posix.normalize(cleanPath)
+}
+
+function extractMarkdownLinkTargets(verifyText: string): string[] {
+  const targets: string[] = []
+  const cursor = { i: 0 }
+  while (cursor.i < verifyText.length) {
+    const ch = verifyText[cursor.i]!
+    if (ch === "`") {
+      cursor.i += 1
+      while (cursor.i < verifyText.length && verifyText[cursor.i] !== "`") cursor.i += 1
+      cursor.i += 1
+      continue
+    }
+    if (ch === "[") {
+      const labelEnd = findMarkdownBracketEnd(verifyText, cursor.i + 1)
+      if (labelEnd !== -1 && verifyText[labelEnd + 1] === "(") {
+        const targetEnd = verifyText.indexOf(")", labelEnd + 2)
+        if (targetEnd !== -1) {
+          const resolved = resolveMarkdownVerifyTarget(verifyText.slice(labelEnd + 2, targetEnd))
+          if (resolved !== undefined) targets.push(resolved)
+          cursor.i = targetEnd + 1
+          continue
+        }
+      }
+    }
+    cursor.i += 1
+  }
+  for (const defMatch of verifyText.matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)) {
+    const resolved = resolveMarkdownVerifyTarget(defMatch[1] ?? "")
+    if (resolved !== undefined) targets.push(resolved)
+  }
+  return targets
+}
+
 function extractVerifyRepoPaths(verifyText: string): string[] {
   const found = new Set<string>()
   const valueFlags = new Set([
@@ -635,6 +748,12 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
     "--env-file",
   ])
   const state = { lastDir: "" }
+
+  extractMarkdownLinkTargets(verifyText).forEach((target) => {
+    found.add(target)
+    const repoPath = normalizeRepoSourcePath(target)
+    if (repoPath) state.lastDir = path.posix.dirname(repoPath)
+  })
 
   for (const match of verifyText.matchAll(/`([^`]+)`/g)) {
     const span = (match[1] ?? "").trim()
@@ -656,9 +775,16 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
       while (tokens[0] && /^[A-Za-z_]\w*=/.test(tokens[0])) {
         tokens.shift()
       }
-      if (tokens[0] === "cd" && tokens.length === 2) {
-        const nextDir = normalizeRepoDir(tokens[1]!)
-        cwdStack[cwdStack.length - 1] = nextDir === undefined ? `__invalid__:${tokens[1]!}` : nextDir
+      const cdTarget =
+        tokens[0] === "cd"
+          ? tokens[1] === "--" && tokens.length === 3
+            ? tokens[2]
+            : tokens.length === 2
+              ? tokens[1]
+              : undefined
+          : undefined
+      if (cdTarget !== undefined) {
+        cwdStack[cwdStack.length - 1] = resolveRelativeRepoDir(currentCwd, cdTarget)
         cmdState.handledCommand = true
         continue
       }
@@ -678,16 +804,12 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
               continue
             }
             if ((token === "--cwd" || token === "-C") && tokens[cursor.index] !== undefined) {
-              const rawDir = tokens[cursor.index]!
-              const flagDir = normalizeRepoDir(rawDir)
-              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              cursor.effectiveCwd = resolveRelativeRepoDir(cursor.effectiveCwd, tokens[cursor.index]!)
               cursor.index += 1
               continue
             }
             if (token.startsWith("--cwd=")) {
-              const rawDir = token.slice("--cwd=".length)
-              const flagDir = normalizeRepoDir(rawDir)
-              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              cursor.effectiveCwd = resolveRelativeRepoDir(cursor.effectiveCwd, token.slice("--cwd=".length))
               continue
             }
             break
@@ -698,16 +820,12 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
               continue
             }
             if ((token === "--cwd" || token === "-C") && tokens[cursor.index] !== undefined) {
-              const rawDir = tokens[cursor.index]!
-              const flagDir = normalizeRepoDir(rawDir)
-              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              cursor.effectiveCwd = resolveRelativeRepoDir(cursor.effectiveCwd, tokens[cursor.index]!)
               cursor.index += 1
               continue
             }
             if (token.startsWith("--cwd=")) {
-              const rawDir = token.slice("--cwd=".length)
-              const flagDir = normalizeRepoDir(rawDir)
-              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              cursor.effectiveCwd = resolveRelativeRepoDir(cursor.effectiveCwd, token.slice("--cwd=".length))
               continue
             }
             if (valueFlags.has(token)) {
