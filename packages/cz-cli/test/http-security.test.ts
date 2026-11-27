@@ -225,7 +225,7 @@ describe("HTTP decoding boundary (CVE-2026-111497)", () => {
 
   test("installs the boundary in source and compiled processes and Workers", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "cz-http-security-"))
-    try {
+    const run = async () => {
       const security = JSON.stringify(path.resolve(import.meta.dir, "../src/bootstrap/http-security.ts"))
       await Bun.write(
         path.join(dir, "worker.ts"),
@@ -277,8 +277,39 @@ describe("HTTP decoding boundary (CVE-2026-111497)", () => {
         ])
         expect({ stdout: stdout.trim(), stderr, code }).toEqual({ stdout: "protected", stderr: "", code: 0 })
       }
-    } finally {
-      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => undefined)
     }
+    await withCompiledTestCleanup(run, () => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
   }, 30_000)
 })
+
+describe("compiled HTTP temporary-directory cleanup", () => {
+  test("surfaces a removal error after a passing body", async () => {
+    const error = Object.assign(new Error("permission denied"), { code: "EACCES" })
+    await expect(withCompiledTestCleanup(() => Promise.resolve(), () => Promise.reject(error))).rejects.toBe(error)
+  })
+
+  test("attempts cleanup and preserves a failing body's error", async () => {
+    const error = new Error("test body failed")
+    const calls: string[] = []
+    const remove = async () => {
+      calls.push("remove")
+      throw Object.assign(new Error("permission denied"), { code: "EACCES" })
+    }
+    await expect(withCompiledTestCleanup(() => Promise.reject(error), remove)).rejects.toBe(error)
+    expect(calls).toEqual(["remove"])
+  })
+})
+
+async function withCompiledTestCleanup(run: () => Promise<void>, remove: () => Promise<void>) {
+  let passed = false
+  try {
+    await run()
+    passed = true
+  } finally {
+    try {
+      await remove()
+    } catch (error) {
+      if (passed) throw error
+    }
+  }
+}
