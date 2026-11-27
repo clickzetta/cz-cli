@@ -37,6 +37,28 @@ Find every intrusive patch:
 rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/schema -g '!**/dist/**'
 ```
 
+## Bannered upstream files (CI-enforced)
+
+`scripts/check-upstream-patches.ts` verifies that every file listed below exists and retains balanced `cz-cli change` banners (including banner-carrying regression tests listed under `Verify`):
+
+- `packages/core/src/flag/flag.ts`
+- `packages/core/src/global.ts`
+- `packages/core/src/model-selection.ts`
+- `packages/core/src/session.ts`
+- `packages/core/test/global.test.ts`
+- `packages/core/test/model-selection.test.ts`
+- `packages/opencode/src/config/paths.ts`
+- `packages/opencode/src/provider/provider.ts`
+- `packages/opencode/src/server/routes/instance/httpapi/handlers/instance.ts`
+- `packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts`
+- `packages/opencode/src/session/processor.ts`
+- `packages/schema/src/session-v1.ts`
+- `packages/tui/src/component/prompt/index.tsx`
+- `packages/tui/src/context/local.tsx`
+- `packages/tui/src/util/presentation.ts`
+- `packages/tui/test/app-lifecycle.test.tsx`
+- `packages/tui/test/util/presentation.test.ts`
+
 ---
 
 ## INTRUSIVE patches (must survive/re-apply on every re-baseline)

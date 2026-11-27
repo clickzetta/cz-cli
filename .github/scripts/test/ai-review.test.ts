@@ -286,6 +286,9 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
   const promptDiff =
     "diff --git a/.github/codex-review-prompt.md b/.github/codex-review-prompt.md\n--- a/.github/codex-review-prompt.md\n+++ b/.github/codex-review-prompt.md\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(promptDiff)).toBe(true)
+  const runtimePromptAssetDiff =
+    "diff --git a/packages/opencode/src/session/prompt/anthropic.txt b/packages/opencode/src/session/prompt/anthropic.txt\n--- a/packages/opencode/src/session/prompt/anthropic.txt\n+++ b/packages/opencode/src/session/prompt/anthropic.txt\n@@ -1 +1 @@\n-old\n+new\n"
+  expect(hasReviewablePaths(runtimePromptAssetDiff)).toBe(true)
   const modeOnlyDiff =
     "diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/scripts/run.sh b/scripts/run.sh\nold mode 100644\nnew mode 100755\n"
   expect(hasReviewablePaths(modeOnlyDiff)).toBe(true)

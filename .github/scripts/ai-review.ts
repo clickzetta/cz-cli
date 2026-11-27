@@ -140,7 +140,8 @@ export function hasReviewablePaths(diff: string): boolean {
   })
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md") return true
-    if (file.endsWith(".md") || file.endsWith(".txt")) return false
+    if (/^docs\/.*\.(?:md|txt)$/.test(file)) return false
+    if (/^[A-Za-z0-9._-]+\.md$/.test(file) && file !== "AGENTS.md" && file !== "CLAUDE.md") return false
     return true
   })
 }

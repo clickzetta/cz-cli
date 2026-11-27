@@ -81,3 +81,29 @@ test("auditUpstreamPatches rejects banners placed in HOOK-only upstream files", 
   expect(result.ok).toBe(false)
   expect(result.errors.some((e) => e.includes("not declared in a banner-bearing INTRUSIVE entry"))).toBe(true)
 })
+
+test("auditUpstreamPatches catches missing banners on explicit Bannered upstream files manifest entries including Verify tests", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-manifest-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/core/test"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/core/test/model-selection.test.ts`",
+      "## INTRUSIVE patches",
+      "### 1. Model selection",
+      "- **Verify:** `packages/core/test/model-selection.test.ts`",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  // File exists without any cz-cli change banner
+  writeFileSync(path.join(root, "packages/core/test/model-selection.test.ts"), "export const ok = true\n")
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(result.errors.some((e) => e.includes("packages/core/test/model-selection.test.ts") && e.includes("has no cz-cli change banner"))).toBe(true)
+})

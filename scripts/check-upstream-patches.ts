@@ -5,6 +5,9 @@ import path from "node:path"
 const UPSTREAM_PACKAGES = ["packages/core", "packages/opencode", "packages/tui", "packages/schema"] as const
 const START_BANNER = "//======================== cz-cli change ========================"
 const END_BANNER = "//====================== end cz-cli change ======================"
+const SOURCE_SUFFIX = /\.(?:ts|tsx|js|mjs)$/
+const LEDGER_PATH_PATTERN = /`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`/g
+const NEW_OWNED_PATTERN = /`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`\s*\(new\b/g
 const IGNORED_DIRS = new Set(["node_modules", "dist", "generated", "generated-effect", ".turbo", ".git"])
 
 const SPINNER_CALL_SITES = [
@@ -37,13 +40,21 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   const checkSpinnerBackport = intrusiveSection.includes("registerOpencodeSpinner")
 
   const newCzOwnedFiles = new Set(
-    [...intrusiveSection.matchAll(/`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx))`\s*\(new\b/g)].map(
-      (match) => match[1]!,
-    ),
+    [...intrusiveSection.matchAll(NEW_OWNED_PATTERN)].map((match) => match[1]!),
   )
 
   const documentedBannerFiles = new Set<string>()
   const requiredIntrusiveFiles = new Set<string>()
+
+  const explicitManifestMatch = ledgerText.match(
+    /## Bannered upstream files \(CI-enforced\)([\s\S]*?)(?=\n## |\n# |$)/,
+  )
+  if (explicitManifestMatch) {
+    extractUpstreamPaths(explicitManifestMatch[1] ?? "").forEach((relPath) => {
+      documentedBannerFiles.add(relPath)
+      requiredIntrusiveFiles.add(relPath)
+    })
+  }
 
   entryBlocks.forEach((block) => {
     const noBannerIntentional = block.includes("No `cz-cli change` banner, deliberately")
@@ -183,9 +194,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
 }
 
 function extractUpstreamPaths(section: string): string[] {
-  return [...section.matchAll(/`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx))`/g)].map(
-    (match) => match[1]!,
-  )
+  return [...section.matchAll(LEDGER_PATH_PATTERN)].map((match) => match[1]!)
 }
 
 function walkSourceFiles(dir: string): string[] {
@@ -193,7 +202,7 @@ function walkSourceFiles(dir: string): string[] {
     if (IGNORED_DIRS.has(entry.name)) return []
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) return walkSourceFiles(full)
-    if (!entry.isFile() || !/\.(?:ts|tsx|js|mjs)$/.test(entry.name)) return []
+    if (!entry.isFile() || !SOURCE_SUFFIX.test(entry.name)) return []
     return [full]
   })
 }

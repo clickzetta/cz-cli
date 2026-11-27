@@ -3,7 +3,7 @@
 `cz-cli agent` 在上游 opencode 的 agent 运行时上跑一个 ClickZetta 的 `data_engineer` agent。它怎么被注入上游见 [扩展点](../opencode/extension-points.md)；这里讲 cz-cli 自己负责的部分。
 
 - **提示词**：操作参考写在 [agent-system-prompt.ts](../../packages/cz-cli/src/agent-system-prompt.ts)，身份部分在 [agent-identity-prompt.ts](../../packages/cz-cli/src/agent-identity-prompt.ts)。通过 `CLICKZETTA_AGENT_SYSTEM_PROMPT` 交给 cz 插件，由插件在每次请求时加进 system prompt。
-- **内置 skill**：从 `~/.clickzetta` 下的 `skill/`、`skills/` 目录逐个找 `SKILL.md`，把目录交给上游加载，见 [runtime-config.ts](../../packages/cz-cli/src/bootstrap/runtime-config.ts)。对外发布的 cz-cli skill 在仓库根目录的 [skills/cz-cli/SKILL.md](../../skills/cz-cli/SKILL.md)。
+- **内置 skill**：从 `~/.clickzetta` 下的 `skill/`、`skills/` 目录逐个找 `SKILL.md`，把目录交给上游加载，见 [runtime-config.ts](../../packages/cz-cli/src/bootstrap/runtime-config.ts)。随包内置技能与外部客户端通过 `cz-cli mcp init` 接入的方式见 [内置技能与外部客户端接入](skills.md)。
 - **模型**：来自 `~/.clickzetta/llm.json`，见 [配置与连接](configuration.md)。
 
 ## 写操作门
