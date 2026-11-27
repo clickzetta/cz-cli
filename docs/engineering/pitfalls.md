@@ -4,6 +4,7 @@
 
 - **安装脚本地址与版本参数核对**：README 示例可能与实际发布链路不一致。改安装说明或脚本时，必须核对安装脚本的真实 URL、响应内容和参数解析逻辑，不要想当然假设存在对应的 GitHub Release Asset 或读取了某个环境变量；同时验证默认安装与指定 `--version` 两条路径。证据：[#148](https://github.com/clickzetta/cz-cli/issues/148)、[#150](https://github.com/clickzetta/cz-cli/pull/150)。
 
+- **Match the Codex review gateway API base URL**. Set the `CODEX_REVIEW_BASE_URL` secret to the Responses API base, including the version prefix (typically `/v1`). Codex appends `/responses` to this base. Check the actual gateway route before reusing the old Claude client configuration. [Review workflow](../../.github/workflows/claude-review.yml)
 - **在仓库根目录跑测试什么也测不到**：根目录的 `bunfig.toml` 把测试根指到了一个不存在的目录。进包目录（如 `packages/cz-cli`）再跑 `bun test`。证据：[bunfig.toml](../../bunfig.toml)、[AGENTS](../../AGENTS.md#testing)。
 - **`bun typecheck` 只查 `src`**：`packages/cz-cli` 的 tsconfig 只包含 `src`，改了 `scripts/` 或 `test/` 它不会报错。Action review 在 `.github/scripts` 单独运行 `bun typecheck`，外部维护程序在自身项目运行类型检查；普通测试文件没有类型检查，靠 `bun test` 发现问题。见 [验证](verification.md)。
 - **pre-push 钩子检查整个工作区**：它跑全仓 `bun typecheck`，别人没提交的改动或旧的 `dist/` 会让干净的提交也推不上去。从独立的 detached worktree 推送，不要用 `git stash` 绕过。证据：[.husky/pre-push](../../.husky/pre-push)。
