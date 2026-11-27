@@ -278,7 +278,7 @@ describe("HTTP decoding boundary (CVE-2026-111497)", () => {
         expect({ stdout: stdout.trim(), stderr, code }).toEqual({ stdout: "protected", stderr: "", code: 0 })
       }
     } finally {
-      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => undefined)
     }
   }, 30_000)
 })

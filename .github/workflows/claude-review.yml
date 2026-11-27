@@ -33,10 +33,11 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      # Execute the trusted base runner, never scripts from the proposed head.
+      # Execute the trusted workflow revision from main (github.sha), never scripts from the proposed head
+      # or an outdated pre-merge PR base SHA that lacks exports expected by this workflow file.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-runtime
