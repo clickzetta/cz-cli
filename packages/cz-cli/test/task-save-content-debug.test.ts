@@ -126,6 +126,12 @@ test.each([false, true])("task execute reports both outcomes and preserves param
       task_id: 123, run_id: 456, execution_status: "SUCCESS", params_saved: !saveFails,
     })
     if (saveFails) expect(output.error.code).toBe("SAVE_PARAMS_FAILED")
+    expect(result.commandLogs).toHaveLength(1)
+    const record = JSON.parse(result.commandLogs[0]).resourceLogs[0].scopeLogs[0].logRecords[0]
+    expect(record.attributes).toEqual(expect.arrayContaining([
+      { key: "cz_cli.command.arg.param", value: { stringValue: "<redacted>" } },
+      { key: "cz_cli.command.arg.vc", value: { stringValue: "test-vc" } },
+    ]))
     for (const value of [storedValue, "synthetic-ref-metadata", "script_path", "job.py", "single' quotes", "secret_ref"]) {
       expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(value)
     }
@@ -536,6 +542,40 @@ test.each([["off", false], ["on", true]] as const)("save-config hides an echoed 
 })
 
 const telemetryValue = "synthetic-command-param-value"
+const trailingKey = "synthetic-trailing-param-key"
+const trailingValue = "synthetic-trailing-param-value"
+
+test.each([
+  ["save-config", "param", ["--param"]],
+  ["save-config", "param", ["--param", "--param"]],
+  ["save-config", "param", [`--param=example=${telemetryValue}`, "--param"]],
+  ["save-content", "params", [`--params={"example":"${telemetryValue}"}`, "--params={}"]],
+] as const)("usage rejection for %s keeps only the %s redaction marker (%j)", async (command, flag, args) => {
+  const result = await runTask([
+    command, "123", "--content", "SELECT 1", ...args, `--${trailingKey}`, trailingValue,
+  ], true, true)
+  expect(result.code).toBe(2)
+  const output = JSON.parse(result.stdout)
+  expect(output.error.code).toBe("USAGE_ERROR")
+  expect(output.error.message).toStartWith(`Invalid arguments with --${flag}.`)
+  expect(requests).toEqual(["/v1/logs"])
+  expect(result.commandLogs).toHaveLength(1)
+  const log = result.commandLogs[0]
+  for (const marker of [telemetryValue, trailingKey, trailingValue]) {
+    expect(result.stdout).not.toContain(marker)
+    expect(result.stderr).not.toContain(marker)
+    expect(log).not.toContain(marker)
+  }
+  const record = JSON.parse(log).resourceLogs[0].scopeLogs[0].logRecords[0]
+  expect(record.attributes.filter((attr: { key: string }) => attr.key.startsWith("cz_cli.command.arg."))).toEqual([
+    { key: `cz_cli.command.arg.${flag}`, value: { stringValue: "<redacted>" } },
+  ])
+  expect(record.attributes).toContainEqual({
+    key: "cz_cli.command.error",
+    value: { stringValue: output.error.message },
+  })
+})
+
 for (const dash of ["-", "---"]) {
   for (const [command, param] of [["save-content", "params"], ["save-config", "param"]]) {
     const raw = param === "params" ? JSON.stringify({ example: telemetryValue }) : `example=${telemetryValue}`
@@ -636,11 +676,18 @@ for (const args of [
 
   test.each([[false], [true]])(`task ${args[0]} accepts params before the target with inline=%s`, async (inline) => {
     const params = '{"date":"bizdate"}'
-    const result = await runTask([args[0], ...(inline ? [`--params=${params}`] : ["--params", params]), ...args.slice(1)])
+    const result = await runTask([args[0], ...(inline ? [`--params=${params}`] : ["--params", params]), ...args.slice(1)], true, true)
     expect(result.code, result.stdout + result.stderr).toBe(0)
     expect(saves).toEqual([expect.objectContaining({ dataFileId: 123, paramValueList: expect.arrayContaining([
       expect.objectContaining({ paramKey: "date", paramValue: "bizdate" }),
     ]) })])
+    expect(result.commandLogs).toHaveLength(1)
+    expect(result.commandLogs[0]).not.toContain("bizdate")
+    const record = JSON.parse(result.commandLogs[0]).resourceLogs[0].scopeLogs[0].logRecords[0]
+    expect(record.attributes).toEqual(expect.arrayContaining([
+      { key: "cz_cli.command.arg.params", value: { stringValue: "<redacted>" } },
+      { key: "cz_cli.command.arg.format", value: { stringValue: "json" } },
+    ]))
   })
 }
 

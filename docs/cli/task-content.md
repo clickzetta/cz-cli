@@ -23,11 +23,13 @@ parameters. An empty object leaves the parameters intact. To clear the list, use
 The command saves draft script content without writing scheduling fields. The
 read and save are separate requests, so concurrent edits can race with a save.
 Draft save debug logs redact parameter lists. Command telemetry redacts the
-payloads of `--param` and `--params` in argument attributes, including on failed
-commands. Dotted flags such as `--param.month` are rejected and redacted. Errors from the Studio draft read and save endpoints report status
-information without displaying server response text that could contain parameter
-values. On success, both content-save commands
-return a local `Draft saved` acknowledgement and the Studio URL.
+payloads of `--param` and `--params` in argument attributes. On a usage rejection
+with either option present, telemetry keeps only the parameter redaction markers
+among argument attributes, including for bare or repeated flags. Dotted flags
+such as `--param.month` are rejected and redacted. Errors from the Studio draft
+read and save endpoints report status information without displaying server
+response text that could contain parameter values. On success, both content-save
+commands return a local `Draft saved` acknowledgement and the Studio URL.
 
 `task execute --param key=value --save-params` checks the draft before execution.
 After the run succeeds, it reads the draft again and merges the supplied values

@@ -13,6 +13,7 @@ import * as Profile from "./connection/profile-context.js"
 import { EXIT_BIZ_ERROR, isHandledCliError, parseOutputArgs, renderOutput, renderErrorOutput } from "./output/index.js"
 import { registerCommands } from "./register-commands.js"
 import { SubcommandHelpShown } from "./subcommand-help.js"
+import { TASK_PARAM_FLAG, TASK_PARAMS_FLAG } from "./task-param-args.js"
 import { trackCommand, parseTrackingArgs } from "./telemetry.js"
 
 interface CliRuntime {
@@ -798,12 +799,11 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
   const startMs = Date.now()
   const { positional, args } = parseTrackingArgs(rawArgs)
 
-  const track = (success: boolean, error?: string, redactParams = false) =>
+  const track = (success: boolean, error?: string, trackedArgs = args) =>
     trackCommand({
       command: positional[0] ?? "unknown",
       subcommand: positional[1],
-      // A usage rejection can leave sensitive argv fragments unclaimed by yargs.
-      args: redactParams ? { ...(args.param && { param: "<redacted>" }), ...(args.params && { params: "<redacted>" }) } : Object.keys(args).length > 0 ? args : undefined,
+      args: Object.keys(trackedArgs).length > 0 ? trackedArgs : undefined,
       duration_ms: Date.now() - startMs,
       success,
       error,
@@ -818,8 +818,15 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
     }
   } catch (err) {
     if (positional[0] !== "setup") {
-      const redactParams = (args.params === "<redacted>" || args.param === "<redacted>") && isHandledCliError(err) && err.code === "USAGE_ERROR"
-      await track(false, err instanceof Error ? err.message : `exit_code=${process.exitCode ?? 1}`, redactParams)
+      const usageError = isHandledCliError(err) && err.code === "USAGE_ERROR"
+      // A usage rejection can leave parameter fragments in argument keys or values,
+      // even when a bare or repeated flag has no redaction marker in the parsed map.
+      const hasParam = usageError && rawArgs.some((arg) => TASK_PARAM_FLAG.test(arg))
+      const hasParams = usageError && rawArgs.some((arg) => TASK_PARAMS_FLAG.test(arg))
+      const trackedArgs = hasParam || hasParams
+        ? { ...(hasParam && { param: "<redacted>" }), ...(hasParams && { params: "<redacted>" }) }
+        : args
+      await track(false, err instanceof Error ? err.message : `exit_code=${process.exitCode ?? 1}`, trackedArgs)
     }
     // Last resort. Everything this CLI prints is machine-readable, so an
     // exception that reaches the entry point must not become a bare stack trace
