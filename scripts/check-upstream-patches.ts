@@ -250,8 +250,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       const defCodeOnly = stripJsComments(defRaw, true)
       if (
         !/\bimport\s*\{[^}]*\bregisterSpinner\b[^}]*\}\s*from\s*["']opentui-spinner\/solid["']/.test(defUncommented) ||
-        !/\bexport\s+function\s+registerOpencodeSpinner\s*\(/.test(defCodeOnly) ||
-        !/\bregisterSpinner\s*\(\s*\)/.test(defCodeOnly)
+        !hasValidSpinnerWrapperBody(defCodeOnly)
       ) {
         errors.push(
           "packages/tui/src/component/register-spinner.ts: missing active registerOpencodeSpinner() -> registerSpinner() implementation (UPSTREAM-PATCHES #12)",
@@ -298,6 +297,29 @@ function needsSpinnerBackport(version: string | undefined): boolean {
   return geMin && ltFixed
 }
 
+function hasValidSpinnerWrapperBody(codeOnly: string): boolean {
+  const header = codeOnly.match(/\bexport\s+function\s+registerOpencodeSpinner\s*\(\s*\)\s*\{/)
+  if (!header || header.index === undefined) return false
+  const bodyStart = header.index + header[0].length
+  const cursor = { index: bodyStart, depth: 1 }
+  while (cursor.index < codeOnly.length && cursor.depth > 0) {
+    const ch = codeOnly[cursor.index]
+    if (ch === "{") cursor.depth += 1
+    else if (ch === "}") cursor.depth -= 1
+    cursor.index += 1
+  }
+  if (cursor.depth !== 0) return false
+  const body = codeOnly.slice(bodyStart, cursor.index - 1)
+  if (/\b(?:function|return|while|for)\b|=>/.test(body)) return false
+  const normalized = body.replace(/\s+/g, " ").trim().replace(/;\s*$/, "")
+  return (
+    normalized === "registerSpinner()" ||
+    /^if\s*\(\s*!getComponentCatalogue\(\s*\)\.spinner\s*\)\s*(?:registerSpinner\(\s*\)|\{\s*registerSpinner\(\s*\)\s*;?\s*\})$/.test(
+      normalized,
+    )
+  )
+}
+
 function hasTopLevelUnconditionalCall(codeOnly: string, fnName: string): boolean {
   const callLinePattern = new RegExp(`^\\s*${fnName}\\s*\\(\\s*\\)\\s*;?\\s*$`)
   const state = { depth: 0, prevControlContinuation: false, found: false }
@@ -311,12 +333,29 @@ function hasTopLevelUnconditionalCall(codeOnly: string, fnName: string): boolean
       else if (ch === "}" || ch === ")" || ch === "]") state.depth = Math.max(0, state.depth - 1)
     }
     if (trimmed.length > 0) {
-      state.prevControlContinuation =
-        (/(?:^|\b)(?:if|else|while|for|do|return|function)\b/.test(trimmed) && !trimmed.endsWith(";")) ||
-        /(?:=>|[=?&|:+\-*/%,(])$/.test(trimmed)
+      state.prevControlContinuation = isDanglingControlLine(trimmed)
     }
   })
   return state.found
+}
+
+function isDanglingControlLine(trimmed: string): boolean {
+  if (/(?:=>|[=?&|:+\-*/%,(])$/.test(trimmed)) return true
+  if (/^(?:else|do|return)$/.test(trimmed)) return true
+  if (/^(?:export\s+)?(?:async\s+)?function\b[^{]*\)$/.test(trimmed)) return true
+  const header = trimmed.match(/^(?:else\s+)?(?:if|while|for)\s*\(/)
+  if (!header) return false
+  const cursor = { index: header[0].length, depth: 1 }
+  while (cursor.index < trimmed.length && cursor.depth > 0) {
+    const ch = trimmed[cursor.index]
+    if (ch === "(") cursor.depth += 1
+    else if (ch === ")") cursor.depth -= 1
+    cursor.index += 1
+  }
+  if (cursor.depth !== 0) return true
+  const remainder = trimmed.slice(cursor.index).trim()
+  if (!remainder) return true
+  return isDanglingControlLine(remainder)
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {

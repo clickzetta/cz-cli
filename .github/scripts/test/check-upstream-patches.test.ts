@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { auditUpstreamPatches } from "../../../scripts/check-upstream-patches"
@@ -406,4 +406,107 @@ test("auditUpstreamPatches keeps spinner gate active on v1.17.11 baseline even i
   expect(
     result.errors.some((e) => e.includes("packages/tui/src/app.tsx") && e.includes("top-level registerOpencodeSpinner() startup call")),
   ).toBe(true)
+})
+
+test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, accepts startup calls after one-line conditionals, and verifies live registration", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-noop-wrapper-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/tui/src/component/prompt"), { recursive: true })
+  mkdirSync(path.join(root, "packages/opencode/src/cli/cmd/run"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 12. Spinner registration",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/tui/package.json"),
+    JSON.stringify({
+      name: "@opencode-ai/tui",
+      version: "1.17.11",
+      exports: { "./component/register-spinner": "./src/component/register-spinner.ts" },
+    }),
+  )
+  // No-op wrapper: registerSpinner() is hidden inside an unused inner function
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { getComponentCatalogue } from "@opentui/solid/components"',
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "export function registerOpencodeSpinner() {",
+      "  function neverCalled() {",
+      "    if (!getComponentCatalogue().spinner) registerSpinner()",
+      "  }",
+      "  void neverCalled",
+      "}",
+    ].join("\n"),
+  )
+  // Valid startup call immediately following a complete one-line conditional without semicolon
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "if (process.env.DEBUG) console.debug('boot')",
+      "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  for (const [rel, spec] of [
+    ["packages/tui/src/component/spinner.tsx", "./register-spinner"],
+    ["packages/tui/src/component/prompt/index.tsx", "../register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.subagent.tsx", "@opencode-ai/tui/component/register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.view.tsx", "@opencode-ai/tui/component/register-spinner"],
+  ] as const) {
+    writeFileSync(
+      path.join(root, rel),
+      `import { registerOpencodeSpinner } from "${spec}"\nregisterOpencodeSpinner()\n`,
+    )
+  }
+
+  const noopResult = auditUpstreamPatches(root)
+  expect(noopResult.ok).toBe(false)
+  expect(
+    noopResult.errors.some((e) =>
+      e.includes("packages/tui/src/component/register-spinner.ts: missing active registerOpencodeSpinner() -> registerSpinner()"),
+    ),
+  ).toBe(true)
+  // Confirm app.tsx's startup call after the complete one-line `if (...) ...` passed!
+  expect(noopResult.errors.some((e) => e.includes("packages/tui/src/app.tsx"))).toBe(false)
+
+  // Restore active wrapper and confirm full audit passes
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { getComponentCatalogue } from "@opentui/solid/components"',
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "export function registerOpencodeSpinner() {",
+      "  if (!getComponentCatalogue().spinner) registerSpinner()",
+      "}",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(true)
+
+  // Execute the real registerOpencodeSpinner() module in packages/tui to prove runtime registration succeeds
+  const tuiDir = path.resolve(import.meta.dir, "../../../packages/tui")
+  if (existsSync(path.join(tuiDir, "node_modules")) || existsSync(path.resolve(tuiDir, "../../node_modules"))) {
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        'import { getComponentCatalogue } from "@opentui/solid/components"; import { registerOpencodeSpinner } from "./src/component/register-spinner.ts"; registerOpencodeSpinner(); if (!getComponentCatalogue().spinner) process.exit(1);',
+      ],
+      { cwd: tuiDir, stdout: "pipe", stderr: "pipe" },
+    )
+    expect(await proc.exited).toBe(0)
+  }
 })
