@@ -5,6 +5,7 @@ import { join } from "node:path"
 
 const home = mkdtempSync(join(tmpdir(), "cz-task-save-content-debug-"))
 const detailPath = "/ide-admin/v1/dataFile/getDetail"
+const configPath = "/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail"
 const savePath = "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"
 const executePath = "/ide-admin/v1/adhoc/execute"
 const runDetailPath = "/ide-admin/v1/taskInst/getDetail"
@@ -28,7 +29,7 @@ const responses = new Map<string, () => Response>([
   [createPath, () => ok(123)],
   [deletePath, () => ok(null)],
   [detailPath, () => ok({ id: 123, fileType: 4, fileContent: savedScript, paramValueList: parameters, scheduleConfig: { retryCount: 3 } })],
-  ["/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ok({ etlVcId: 3 })],
+  [configPath, () => ok({ etlVcId: 3 })],
   [savePath, () => ok({ message: "Draft saved" })],
   [executePath, () => ok({ scheduleInstanceId: 456 })],
   [runDetailPath, () => ok({ instanceStatus: 1 })],
@@ -51,7 +52,7 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })
 
-async function runTask(args: string[], debug = true, telemetry = false, responseSequences: Record<string, Response[]> = {}) {
+async function runTask(args: string[], debug = true, telemetry = false, responseOverrides: Record<string, Response | Response[]> = {}) {
   requests.length = 0
   saves.length = 0
   const requestFile = join(home, "requests.jsonl")
@@ -62,8 +63,10 @@ async function runTask(args: string[], debug = true, telemetry = false, response
       return [path, { status: response.status, body: await response.text() }]
     })),
   )
-  for (const [path, sequence] of Object.entries(responseSequences)) {
-    fixtures[path] = await Promise.all(sequence.map(async (response) => ({ status: response.status, body: await response.text() })))
+  for (const [path, response] of Object.entries(responseOverrides)) {
+    fixtures[path] = Array.isArray(response)
+      ? await Promise.all(response.map(async (item) => ({ status: item.status, body: await item.text() })))
+      : { status: response.status, body: await response.text() }
   }
   await Bun.write(join(home, "responses.json"), JSON.stringify(fixtures))
   const child = Bun.spawn([
@@ -159,6 +162,7 @@ test("task execute saves into the draft refreshed after polling", async () => {
     [runDetailPath]: [ok({ instanceStatus: 0 }), ok({ instanceStatus: 1 })],
   })
   expect(result.code, result.stdout + result.stderr).toBe(0)
+  expect(JSON.parse(result.stdout).data).toEqual({ task_id: 123, run_id: 456, execution_status: "SUCCESS", params_saved: true })
   expect(result.adhoc).toEqual([expect.objectContaining({ dataFileContent: "SELECT 1" })])
   expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)))
     .toEqual([detailPath, executePath, runDetailPath, runDetailPath, detailPath, savePath])
@@ -197,32 +201,50 @@ test.each([
   expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
 })
 
-test("task execute without persistence uses the original run path", async () => {
+test.each([
+  [{ instanceStatus: 1 }, "SUCCESS"],
+  [{ executeEndTime: "2026-11-27T00:00:00Z" }, "UNKNOWN"],
+] as const)("task execute without persistence preserves the result for %j", async (runDetail, status) => {
   const result = await runTask([
     "execute", "123", "--content", "SELECT 1", "--vc", "test-vc", "--param", "example=override",
-  ])
+  ], true, false, { [runDetailPath]: [ok(runDetail)] })
   expect(result.code, result.stdout + result.stderr).toBe(0)
-  expect(JSON.parse(result.stdout).data).toEqual({ task_id: 123, run_id: 456, execution_status: "SUCCESS" })
+  expect(JSON.parse(result.stdout).data).toEqual({ task_id: 123, run_id: 456, execution_status: status })
   expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)))
     .toEqual([detailPath, executePath, runDetailPath])
 })
 
-test("task execute does not save parameters after a failed ad hoc run", async () => {
-  const respond = responses.get(runDetailPath)!
-  responses.set(runDetailPath, () => ok({ instanceStatus: 3, failMsg: storedValue }))
-  try {
-    const result = await runTask([
-      "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
-      "--param", `example=${storedValue}`, "--save-params",
-    ], true, true)
-    expect(result.code).not.toBe(0)
-    expect(JSON.parse(result.stdout).error.code).toBe("EXECUTE_FAILED")
-    expect(result.adhoc).toHaveLength(1)
-    expect(saves).toHaveLength(0)
-    expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
-  } finally {
-    responses.set(runDetailPath, respond)
-  }
+test.each([
+  ["omitted status", undefined, "UNKNOWN"],
+  ["unrecognized code", 99, "99"],
+] as const)("task execute denies writeback when the run ends with %s", async (_label, instanceStatus, status) => {
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc", "--param", "example=override",
+    "--save-params", "--poll-interval", "1", "--max-wait-seconds", "1",
+  ], true, false, { [runDetailPath]: ok({ instanceStatus, executeEndTime: "2026-11-27T00:00:00Z" }) })
+  expect(saves).toHaveLength(0)
+  expect(result.code).not.toBe(0)
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    error: { code: "SAVE_PARAMS_FAILED" },
+    data: { task_id: 123, run_id: 456, execution_status: status, params_saved: false },
+  })
+  expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)))
+    .toEqual([detailPath, executePath, runDetailPath])
+})
+
+test.each([[3, "FAILED"], [8, "UPSTREAM_FAILED"]] as const)("task execute reports failed run status %s without a draft save", async (instanceStatus, status) => {
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+    "--param", `example=${storedValue}`, "--save-params", "--poll-interval", "1", "--max-wait-seconds", "1",
+  ], true, true, { [runDetailPath]: ok({ instanceStatus, failMsg: storedValue }) })
+  expect(result.code).not.toBe(0)
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    error: { code: "EXECUTE_FAILED" },
+    data: { task_id: 123, run_id: 456, execution_status: status, params_saved: false },
+  })
+  expect(result.adhoc).toHaveLength(1)
+  expect(saves).toHaveLength(0)
+  expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
 })
 
 test("task execute rejects a protected draft override before starting a run", async () => {
@@ -521,6 +543,48 @@ test("save-config preserves unrelated parameters and metadata in both writes", a
   ])
 })
 
+const scheduleScript = "# café\r\n" + String.raw`print("C:\draft\script.py")` + "\r\n"
+
+test.each([
+  [{ taskDetail: { taskContent: scheduleScript } }, scheduleScript],
+  [{ taskContent: scheduleScript }, scheduleScript],
+  [{ taskDetail: { fileContent: "" } }, ""],
+  [{ dataFileContent: scheduleScript }, scheduleScript],
+  [{ script: scheduleScript }, scheduleScript],
+  [{ content: scheduleScript }, scheduleScript],
+] as const)("save-config preserves the draft script from %j", async (scriptFields, expected) => {
+  const result = await runTask(["save-config", "123", "--retry-count", "2", "--param", "label=synthetic"], true, false, {
+    [detailPath]: ok({ id: 123, fileType: 4, ...scriptFields }),
+    [configPath]: ok({ etlVcId: 3, scheduleCreatedType: 1 }),
+  })
+  expect(result.code, result.stdout + result.stderr).toBe(0)
+  expect(saves).toEqual([
+    expect.objectContaining({ onlySaveContent: 0, retryCount: 2, scheduleCreatedType: "1" }),
+    expect.objectContaining({
+      onlySaveContent: 1,
+      dataFileContent: expected,
+      paramValueList: [expect.objectContaining({ paramKey: "label", paramValue: "synthetic" })],
+    }),
+  ])
+})
+
+test.each([{}, { fileContent: { unexpected: true } }])("save-config rejects an unreadable draft script before either write (%j)", async (scriptFields) => {
+  const result = await runTask(["save-config", "123", "--retry-count", "2", "--param", "label=synthetic"], true, false, {
+    [detailPath]: ok({ id: 123, fileType: 4, ...scriptFields }),
+  })
+  expect(saves).toHaveLength(0)
+  expect(result.code).not.toBe(0)
+  expect(JSON.parse(result.stdout).error.code).toBe("INVALID_RESPONSE")
+})
+
+test("save-config can save scheduling options without a script when there are no parameters", async () => {
+  const result = await runTask(["save-config", "123", "--retry-count", "2"], true, false, {
+    [detailPath]: ok({ id: 123, fileType: 4 }),
+  })
+  expect(result.code, result.stdout + result.stderr).toBe(0)
+  expect(saves).toEqual([expect.objectContaining({ onlySaveContent: 0, retryCount: 2 })])
+})
+
 test.each([["off", false], ["on", true]] as const)("save-config hides an echoed configuration response with debug %s", async (_label, debug) => {
   const respond = responses.get(savePath)!
   responses.set(savePath, () => ok({ message: storedValue, paramValueList: parameters, nested: { value: storedValue } }))
@@ -723,14 +787,33 @@ for (const args of [
     JSON.stringify({ month: storedValue }).slice(1),
     `{"month":"${storedValue}}`,
     `{"month":"${storedValue}",}`,
-    `{month:${storedValue},other:}`,
+    `{month:${storedValue},other}`,
+    `{ :${storedValue}}`,
+    `{month:${storedValue},}`,
   ])(`task ${args[0]} rejects malformed params %s before network access`, async (raw) => {
-    const result = await runTask([...args, "--params", raw])
+    const result = await runTask([...args, "--params", raw], true, true)
     expect(result.code).not.toBe(0)
     expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
-    expect(requests).toEqual([])
-    expect(result.stdout + result.stderr).not.toContain(storedValue)
+    expect(requests).toEqual(["/v1/logs"])
+    expect(result.commandLogs).toHaveLength(1)
+    expect(result.commandLogs[0]).toContain("<redacted>")
+    expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
   })
+
+  test.each(['{"synthetic-label":""}', "{synthetic-label:}"])(
+    `task ${args[0]} accepts empty parameter values in %s`, async (raw) => {
+      const result = await runTask([...args, "--params", raw], true, true)
+      expect(result.code, result.stdout + result.stderr).toBe(0)
+      expect(saves).toEqual([expect.objectContaining({
+        paramValueList: expect.arrayContaining([
+          expect.objectContaining({ paramKey: "synthetic-label", paramValue: "", paramType: "manual" }),
+        ]),
+      })])
+      expect(result.commandLogs).toHaveLength(1)
+      expect(result.commandLogs[0]).toContain("<redacted>")
+      expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain("synthetic-label")
+    },
+  )
 
   test.each([
     JSON.stringify({ date: "bizdate" }).replaceAll('"', '\\"'),

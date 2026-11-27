@@ -28,7 +28,10 @@ metadata, and unrelated parameters are preserved. Attempts to override an
 encrypted or referenced parameter fail before either configuration or content
 is saved. Conflicting top-level and nested draft parameter lists also stop both
 writes. Use Studio to change those parameters. When the save carries runtime
-parameters, the command returns `Draft saved` and the Studio URL.
+parameters, the content write carries the existing draft script, including scripts
+returned as `taskContent` and explicit empty scripts. A missing or unreadable
+script stops both writes on this path. A successful save with runtime parameters
+returns `Draft saved` and the Studio URL.
 
 `task content` exposes the saved mode as `schedule_config.schedule_created_type`.
 `task status` includes it in draft and published schedules and reports

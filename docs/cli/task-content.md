@@ -15,10 +15,11 @@ command preserves existing IDs, other metadata, and unrelated parameters.
 Parameter names must contain a non-whitespace character. Both `save-content` and
 `create-setup` reject incomplete objects before making Studio requests. They
 still accept complete objects whose quotes were escaped or stripped by Windows
-shells. Pass the complete object as one argument. Dotted flags such as
-`--params.month` are rejected. Use Studio to change encrypted or referenced
-parameters. An empty object leaves the parameters intact. To clear the list, use
-`--clear-params`. The two options are mutually exclusive.
+shells, including `{label:}` for an empty string. Pass the complete object as one
+argument. Dotted flags such as `--params.month` are rejected. Use Studio to
+change encrypted or referenced parameters. An empty object leaves the parameters
+intact. To clear the list, use `--clear-params`. The two options are mutually
+exclusive.
 
 The command saves draft script content without writing scheduling fields. The
 read and save are separate requests, so concurrent edits can race with a save.
@@ -32,11 +33,14 @@ response text that could contain parameter values. On success, both content-save
 commands return a local `Draft saved` acknowledgement and the Studio URL.
 
 `task execute --param key=value --save-params` checks the draft before execution.
-After the run succeeds, it reads the draft again and merges the supplied values
-into the latest parameter records, retaining their IDs, metadata, and unrelated
-entries. The content-save endpoint stores the parameters with the latest draft
-script, including changes saved during polling. The refresh and write are
-separate requests, so an edit between those requests can still race with the save.
-An unreadable or conflicting draft, a protected override, or a failed save
-after execution yields `SAVE_PARAMS_FAILED` with the completed run ID and status
-and `params_saved: false` in JSON. A confirmed save reports `params_saved: true`.
+After Studio reports a successful run status, the command reads the draft again
+and merges the supplied values into the latest parameter records, retaining
+their IDs, metadata, and unrelated entries. The content-save endpoint stores the
+parameters with the latest draft script, including changes saved during polling.
+The refresh and write are separate requests, so an edit between those requests
+can still race with the save.
+A run end time with an unconfirmed status, an unreadable or conflicting draft,
+a protected override on refresh, or a failed save after execution yields
+`SAVE_PARAMS_FAILED` with the run ID, execution status, and `params_saved: false`
+in JSON. A known run failure yields `EXECUTE_FAILED`. A confirmed save reports
+`params_saved: true`.
