@@ -51,7 +51,10 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   )
   if (explicitManifestMatch) {
     extractUpstreamPaths(explicitManifestMatch[1] ?? "").forEach((relPath) => {
-      documentedBannerFiles.add(relPath)
+      if (!existsSync(path.join(repoRoot, relPath))) {
+        errors.push(`${relPath}: listed in Bannered upstream files manifest in UPSTREAM-PATCHES.md but file is missing`)
+        return
+      }
       requiredIntrusiveFiles.add(relPath)
     })
   }

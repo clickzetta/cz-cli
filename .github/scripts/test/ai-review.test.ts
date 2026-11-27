@@ -293,3 +293,18 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
     "diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/scripts/run.sh b/scripts/run.sh\nold mode 100644\nnew mode 100755\n"
   expect(hasReviewablePaths(modeOnlyDiff)).toBe(true)
 })
+
+test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigger and run review", async () => {
+  const spacedRootDoc =
+    'diff --git "a/Release Notes.md" "b/Release Notes.md"\n--- "a/Release Notes.md"\n+++ "b/Release Notes.md"\n@@ -1 +1 @@\n-old\n+new\n'
+  expect(hasReviewablePaths(spacedRootDoc)).toBe(false)
+
+  const agentsDiff = "diff --git a/AGENTS.md b/AGENTS.md\n--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"
+  expect(hasReviewablePaths(agentsDiff)).toBe(true)
+  expect(hasReviewablePaths(claudeDiff)).toBe(true)
+
+  const workflow = await Bun.file(new URL("../../workflows/claude-review.yml", import.meta.url)).text()
+  expect(workflow).toContain('"AGENTS.md"')
+  expect(workflow).toContain('"CLAUDE.md"')
+})

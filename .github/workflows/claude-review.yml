@@ -25,6 +25,8 @@ on:
       - ".github/scripts/**"
       - ".github/workflows/claude-review.yml"
       - ".github/codex-review-prompt.md"
+      - "AGENTS.md"
+      - "CLAUDE.md"
       - "!**/dist/**"
       - "!**/node_modules/**"
       - "!packages/docs/**"

@@ -107,3 +107,37 @@ test("auditUpstreamPatches catches missing banners on explicit Bannered upstream
   expect(result.ok).toBe(false)
   expect(result.errors.some((e) => e.includes("packages/core/test/model-selection.test.ts") && e.includes("has no cz-cli change banner"))).toBe(true)
 })
+
+test("auditUpstreamPatches fails when an INTRUSIVE ledger entry is removed while manifest row and source banners remain", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-missing-entry-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/core/src"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/core/src/session.ts`",
+      "## INTRUSIVE patches",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/core/src/session.ts"),
+    [
+      "//======================== cz-cli change ========================",
+      "export const patched = true",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(
+    result.errors.some(
+      (e) => e.includes("packages/core/src/session.ts") && e.includes("not declared in a banner-bearing INTRUSIVE entry"),
+    ),
+  ).toBe(true)
+})
