@@ -41,6 +41,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-runtime
+      - name: Install review classifier dependencies
+        working-directory: .github/scripts
+        run: bun install --frozen-lockfile --production --ignore-scripts
       - name: Resolve PR identity and classify full diff
         id: identity
         env:

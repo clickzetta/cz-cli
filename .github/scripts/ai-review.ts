@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync } from "node:fs"
 import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
+import { load } from "js-yaml"
 import { executeReview } from "./review-executor"
 
 export type DiffLineMap = {
@@ -320,7 +321,7 @@ function starlightHead(doc: string): unknown {
   if (!match) return []
   const frontmatter = match[2]!
   try {
-    const data: unknown = match[1] === "+++" ? Bun.TOML.parse(frontmatter) : Bun.YAML.parse(frontmatter)
+    const data: unknown = match[1] === "+++" ? Bun.TOML.parse(frontmatter) : load(frontmatter)
     return data && typeof data === "object" && "head" in data ? data.head : []
   } catch {
     // Keep changes reviewable when the frontmatter cannot be parsed.
