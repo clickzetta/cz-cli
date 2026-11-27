@@ -43,7 +43,18 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   }
   const intrusiveSection = intrusiveMatch ? `\n${intrusiveMatch[1] ?? ""}` : ""
   const entryBlocks = intrusiveSection.split(/\n### \d+\.\s+/).slice(1)
-  const checkSpinnerBackport = intrusiveSection.includes("registerOpencodeSpinner")
+
+  const tuiPkgPath = path.join(repoRoot, "packages/tui/package.json")
+  const parsedTuiPkg = existsSync(tuiPkgPath) ? parseJsonObject(readFileSync(tuiPkgPath, "utf8")) : undefined
+  const tuiPkgVersion = typeof parsedTuiPkg?.version === "string" ? parsedTuiPkg.version : undefined
+  const ledgerBaseline = ledgerText.match(/baselined at v(\d+\.\d+\.\d+)/)?.[1]
+  const baselineNeedsSpinner = needsSpinnerBackport(tuiPkgVersion) || needsSpinnerBackport(ledgerBaseline)
+  if (baselineNeedsSpinner && !intrusiveSection.includes("registerOpencodeSpinner")) {
+    errors.push(
+      "packages/cz-cli/UPSTREAM-PATCHES.md: missing required registerOpencodeSpinner INTRUSIVE entry while upstream baseline is < 1.18.9",
+    )
+  }
+  const checkSpinnerBackport = baselineNeedsSpinner || intrusiveSection.includes("registerOpencodeSpinner")
 
   const newCzOwnedFiles = new Set(
     [...intrusiveSection.matchAll(NEW_OWNED_PATTERN)].map((match) => match[1]!),
@@ -133,10 +144,11 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
 
       if (
         checkSpinnerBackport &&
+        relFile !== "packages/tui/src/component/register-spinner.ts" &&
         (pkgRel === "packages/tui" || pkgRel === "packages/opencode") &&
-        /import\s+["']opentui-spinner\/solid["']/.test(content)
+        /\bimport\b[^;\n]*["']opentui-spinner\/solid["']/.test(stripJsComments(content, false))
       ) {
-        errors.push(`${relFile}: bare import "opentui-spinner/solid" regressed (UPSTREAM-PATCHES #12)`)
+        errors.push(`${relFile}: direct import from "opentui-spinner/solid" regressed (UPSTREAM-PATCHES #12)`)
       }
 
       lines.forEach((line, index) => {
@@ -259,11 +271,11 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         /\bimport\s*\{[^}]*\bregisterOpencodeSpinner\b[^}]*\}\s*from\s*["'](?:\.\.?\/(?:component\/)?register-spinner|@opencode-ai\/tui\/component\/register-spinner)["']/.test(
           uncommented,
         )
-      // Match an actual call expression (not a declaration or commented/quoted string)
-      const hasActiveCall = /(?<!function\s)\bregisterOpencodeSpinner\s*\(\s*\)/.test(codeOnly)
+      // Require an unconditional top-level module-initialization call (not buried inside an unused helper/closure)
+      const hasActiveCall = hasTopLevelUnconditionalCall(codeOnly, "registerOpencodeSpinner")
       if (!hasValidImport || !hasActiveCall) {
         errors.push(
-          `${relSite}: missing active import or registerOpencodeSpinner() call (UPSTREAM-PATCHES #12)`,
+          `${relSite}: missing active import or top-level registerOpencodeSpinner() startup call (UPSTREAM-PATCHES #12)`,
         )
       }
     })
@@ -274,6 +286,37 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     bannerFiles: bannerFiles.sort(),
     errors,
   }
+}
+
+function needsSpinnerBackport(version: string | undefined): boolean {
+  if (!version) return false
+  const parts = version.split(".").map((n) => Number(n))
+  if (parts.length < 3 || parts.some((n) => !Number.isInteger(n) || n < 0)) return false
+  const [major, minor, patch] = [parts[0]!, parts[1]!, parts[2]!]
+  const geMin = major > 1 || (major === 1 && (minor > 17 || (minor === 17 && patch >= 11)))
+  const ltFixed = major < 1 || (major === 1 && (minor < 18 || (minor === 18 && patch < 9)))
+  return geMin && ltFixed
+}
+
+function hasTopLevelUnconditionalCall(codeOnly: string, fnName: string): boolean {
+  const callLinePattern = new RegExp(`^\\s*${fnName}\\s*\\(\\s*\\)\\s*;?\\s*$`)
+  const state = { depth: 0, prevControlContinuation: false, found: false }
+  codeOnly.split("\n").forEach((line) => {
+    const trimmed = line.trim()
+    if (state.depth === 0 && !state.prevControlContinuation && callLinePattern.test(line)) {
+      state.found = true
+    }
+    for (const ch of line) {
+      if (ch === "{" || ch === "(" || ch === "[") state.depth += 1
+      else if (ch === "}" || ch === ")" || ch === "]") state.depth = Math.max(0, state.depth - 1)
+    }
+    if (trimmed.length > 0) {
+      state.prevControlContinuation =
+        (/(?:^|\b)(?:if|else|while|for|do|return|function)\b/.test(trimmed) && !trimmed.endsWith(";")) ||
+        /(?:=>|[=?&|:+\-*/%,(])$/.test(trimmed)
+    }
+  })
+  return state.found
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {

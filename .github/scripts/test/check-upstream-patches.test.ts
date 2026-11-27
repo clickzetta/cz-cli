@@ -328,6 +328,82 @@ test("auditUpstreamPatches rejects commented-out registerOpencodeSpinner() calls
     result.errors.some((e) => e.includes("packages/tui/package.json") && e.includes("exports['./component/register-spinner']")),
   ).toBe(true)
   expect(
-    result.errors.some((e) => e.includes("packages/tui/src/app.tsx") && e.includes("missing active import or registerOpencodeSpinner() call")),
+    result.errors.some((e) => e.includes("packages/tui/src/app.tsx") && e.includes("top-level registerOpencodeSpinner() startup call")),
+  ).toBe(true)
+})
+
+test("auditUpstreamPatches keeps spinner gate active on v1.17.11 baseline even if entry 12 is deleted and rejects calls hidden in unused helpers", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-spinner-baseline-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/tui/src/component/prompt"), { recursive: true })
+  mkdirSync(path.join(root, "packages/opencode/src/cli/cmd/run"), { recursive: true })
+
+  // Ledger still records v1.17.11 baseline, but entry 12 was deleted
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 1. App patch",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** keep banner valid.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/tui/package.json"),
+    JSON.stringify({
+      name: "@opencode-ai/tui",
+      version: "1.17.11",
+      exports: { "./component/register-spinner": "./src/component/register-spinner.ts" },
+    }),
+  )
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "export function registerOpencodeSpinner() {",
+      "  registerSpinner()",
+      "}",
+    ].join("\n"),
+  )
+  // Startup call moved inside an unused initializer function in app.tsx
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "function unusedInitializer() {",
+      "  registerOpencodeSpinner()",
+      "}",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  // Bare import restored in spinner.tsx
+  writeFileSync(path.join(root, "packages/tui/src/component/spinner.tsx"), 'import "opentui-spinner/solid"\n')
+  for (const [rel, spec] of [
+    ["packages/tui/src/component/prompt/index.tsx", "../register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.subagent.tsx", "@opencode-ai/tui/component/register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.view.tsx", "@opencode-ai/tui/component/register-spinner"],
+  ] as const) {
+    writeFileSync(
+      path.join(root, rel),
+      `import { registerOpencodeSpinner } from "${spec}"\nregisterOpencodeSpinner()\n`,
+    )
+  }
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(
+    result.errors.some((e) => e.includes("missing required registerOpencodeSpinner INTRUSIVE entry while upstream baseline is < 1.18.9")),
+  ).toBe(true)
+  expect(
+    result.errors.some((e) => e.includes("packages/tui/src/component/spinner.tsx") && e.includes('direct import from "opentui-spinner/solid" regressed')),
+  ).toBe(true)
+  expect(
+    result.errors.some((e) => e.includes("packages/tui/src/app.tsx") && e.includes("top-level registerOpencodeSpinner() startup call")),
   ).toBe(true)
 })
