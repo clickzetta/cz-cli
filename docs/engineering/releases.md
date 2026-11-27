@@ -1,17 +1,11 @@
-# 自维护发布
+# 发布渠道与约束
 
-自动维护只允许 nightly，版本必须为 `dev-vX.Y.Z.<唯一后缀>`。先按当前 nightly 版本选择递增版本；不能从包内开发占位版本猜测对外版本。
+`cz-cli` 区分 **Nightly（预发布）** 与 **Stable（正式版）** 两个发布渠道，由 [.github/workflows/release-cos.yml](../../.github/workflows/release-cos.yml) 执行构建与分发：
 
-只有已合入 `main`、对应 SHA 的 `cz-test` 成功且发布代码包含渠道保护时，才能从控制 checkout 使用：
-
-```sh
-cz-maintenance nightly VERSION MERGED_SHA
-cz-maintenance nightly VERSION MERGED_SHA --publish
-cz-maintenance nightly-status MERGED_SHA
-```
-
-首条命令仅预览。工具核对精确 SHA、CI、发布代码和 lineage，再推送一个绑定该 SHA 的 nightly tag，由现有 [release-cos](../../.github/workflows/release-cos.yml) 执行；不再重复 dispatch。发布回执和未知结果留在公共运行目录，先对账再继续。
-
-GitHub release 必须为 prerelease，不能更新 latest；nightly 不发布 npm，不修改 stable 指针、安装入口和历史制品。发布 tag 统一经过该工具，不用全量 tag 推送、直接创建 release 或手工绕过 lineage。现有人工 stable 发布流程另行授权。
-
-工作流成功后继续核对实际版本的 COS manifest、安装入口和主要用户路径；工具提示仍需产物验证时不能直接宣布发布完成。版本或 SHA 已有未知结果时不分配新版本绕过。
+- **Nightly 预发布（`dev-vX.Y.Z.<timestamp>`）**：
+  - 仅针对已合入 `main` 且对应精确 SHA 的 `cz-test` 通过的提交打轻量 tag 触发。
+  - 版本号必须在当前线上 Nightly 通道版本之上严格单调递增，不得直接沿用包内本地开发占位版本。
+  - GitHub Release 标记为 prerelease，不更新 `latest`，不发布 npm，也不修改 Stable 指针、默认安装入口或历史制品。
+  - 工作流完成后需校验对应版本的 COS manifest、带 `--version` 的安装入口及归档 SHA-256 完整性。
+- **Stable 正式版（`vX.Y.Z`）**：
+  - 仅由人工正式发版流程触发，包含多平台构建、COS 分发、npm 发布、默认安装器更新与 GitHub Release 正式发布。

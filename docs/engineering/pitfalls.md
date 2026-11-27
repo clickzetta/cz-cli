@@ -1,6 +1,8 @@
 # 测试、CI 和发布环境的坑
 
-每条按「什么时候会踩 → 结论和条件 → 证据 → 下次怎么做」写。发现新坑或某条已失效，按[记忆协议](../maintenance/memory-workflow.md)记录。
+每条按「什么时候会踩 → 结论和条件 → 证据 → 下次怎么做」写。发现新坑或某条已失效，附上具体 Issue/PR 或源码证据直接更新本文件。
+
+- **安装脚本地址与版本参数核对**：README 示例可能与实际发布链路不一致。改安装说明或脚本时，必须核对安装脚本的真实 URL、响应内容和参数解析逻辑，不要想当然假设存在对应的 GitHub Release Asset 或读取了某个环境变量；同时验证默认安装与指定 `--version` 两条路径。证据：[#148](https://github.com/clickzetta/cz-cli/issues/148)、[#150](https://github.com/clickzetta/cz-cli/pull/150)。
 
 - **在仓库根目录跑测试什么也测不到**：根目录的 `bunfig.toml` 把测试根指到了一个不存在的目录。进包目录（如 `packages/cz-cli`）再跑 `bun test`。证据：[bunfig.toml](../../bunfig.toml)、[AGENTS](../../AGENTS.md#testing)。
 - **`bun typecheck` 只查 `src`**：`packages/cz-cli` 的 tsconfig 只包含 `src`，改了 `scripts/` 或 `test/` 它不会报错。Action review 在 `.github/scripts` 单独运行 `bun typecheck`，外部维护程序在自身项目运行类型检查；普通测试文件没有类型检查，靠 `bun test` 发现问题。见 [验证](verification.md)。
