@@ -7,6 +7,7 @@ const home = mkdtempSync(join(tmpdir(), "cz-task-save-content-debug-"))
 const detailPath = "/ide-admin/v1/dataFile/getDetail"
 const savePath = "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"
 const executePath = "/ide-admin/v1/adhoc/execute"
+const runDetailPath = "/ide-admin/v1/taskInst/getDetail"
 const storedValue = "synthetic-stored-param-value"
 const parameters = [
   { id: "1001", paramKey: "secret_ref", encrypt: true, ref: 3, extraMetadata: "synthetic-ref-metadata" },
@@ -29,7 +30,7 @@ const responses = new Map<string, () => Response>([
   ["/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ok({ etlVcId: 3 })],
   [savePath, () => ok({ message: "Draft saved" })],
   [executePath, () => ok({ scheduleInstanceId: 456 })],
-  ["/ide-admin/v1/taskInst/getDetail", () => ok({ instanceStatus: 1 })],
+  [runDetailPath, () => ok({ instanceStatus: 1 })],
 ])
 
 function ok(data: unknown) {
@@ -90,26 +91,72 @@ async function runTask(args: string[], debug = true, telemetry = false) {
   return { stdout, stderr, code, commandLogs, adhoc }
 }
 
-test("task execute persists Windows backslashes and quotes exactly as sent for execution", async () => {
+test.each([false, true])("task execute reports both outcomes and preserves parameters (save failure=%s)", async (saveFails) => {
   const scriptPath = String.raw`C:\Users\synthetic\job.py`
   const label = `synthetic "double" and 'single' quotes`
+  const respond = responses.get(savePath)!
+  if (saveFails) responses.set(savePath, () => Response.json({ code: 4001, message: label }))
+  try {
+    const result = await runTask([
+      "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+      "--param", `script_path=${scriptPath}`, `example=${label}`, "--save-params",
+    ], true, true)
+    expect(result.adhoc).toEqual([expect.objectContaining({
+      params: { example: label, script_path: scriptPath },
+    })])
+    expect(saves).toEqual([expect.objectContaining({
+      dataFileId: 123,
+      onlySaveContent: 1,
+      dataFileContent: "SELECT 1",
+      paramValueList: [
+        parameters[0],
+        parameters[1],
+        { ...parameters[2], paramValue: label },
+        expect.objectContaining({ paramKey: "script_path", paramValue: scriptPath, paramType: "manual" }),
+      ],
+    })])
+    expect(result.code === 0).toBe(!saveFails)
+    const output = JSON.parse(result.stdout)
+    expect(output.data).toEqual({
+      task_id: 123, run_id: 456, execution_status: "SUCCESS", params_saved: !saveFails,
+    })
+    if (saveFails) expect(output.error.code).toBe("SAVE_PARAMS_FAILED")
+    for (const value of [storedValue, "synthetic-ref-metadata", "script_path", "job.py", "single' quotes", "secret_ref"]) {
+      expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(value)
+    }
+  } finally {
+    responses.set(savePath, respond)
+  }
+})
+
+test("task execute does not save parameters after a failed ad hoc run", async () => {
+  const respond = responses.get(runDetailPath)!
+  responses.set(runDetailPath, () => ok({ instanceStatus: 3, failMsg: storedValue }))
+  try {
+    const result = await runTask([
+      "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+      "--param", `example=${storedValue}`, "--save-params",
+    ], true, true)
+    expect(result.code).not.toBe(0)
+    expect(JSON.parse(result.stdout).error.code).toBe("EXECUTE_FAILED")
+    expect(result.adhoc).toHaveLength(1)
+    expect(saves).toHaveLength(0)
+    expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
+  } finally {
+    responses.set(runDetailPath, respond)
+  }
+})
+
+test("task execute rejects a protected draft override before starting a run", async () => {
   const result = await runTask([
     "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
-    "--param", `script_path=${scriptPath}`, `label=${label}`, "--save-params",
-  ], false)
-  expect(result.code, result.stdout + result.stderr).toBe(0)
-  expect(result.adhoc).toEqual([expect.objectContaining({
-    params: { example: storedValue, script_path: scriptPath, label },
-  })])
-  expect(saves).toEqual([expect.objectContaining({
-    dataFileId: 123,
-    onlySaveContent: 1,
-    dataFileContent: "SELECT 1",
-    paramValueList: [
-      expect.objectContaining({ paramKey: "script_path", paramValue: scriptPath, paramType: "manual" }),
-      expect.objectContaining({ paramKey: "label", paramValue: label, paramType: "manual" }),
-    ],
-  })])
+    "--param", `secret_ref=${storedValue}`, "--save-params",
+  ], true, true)
+  expect(result.code).not.toBe(0)
+  expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
+  expect(result.adhoc).toHaveLength(0)
+  expect(saves).toHaveLength(0)
+  expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
 })
 
 function saveWithDebug(command = "save-content") {
@@ -273,6 +320,43 @@ test("both content saves reject conflicting draft parameter lists before writing
   }
 })
 
+test("save-config rejects conflicting draft parameter lists before either write", async () => {
+  const respond = responses.get(detailPath)!
+  responses.set(detailPath, () => ok({
+    id: 123, fileType: 4, taskDetail: { fileType: 4, paramValueList: [] }, paramValueList: parameters,
+  }))
+  try {
+    const result = await runTask(["save-config", "123", "--retry-count", "2", "--param", `secret_ref=${storedValue}`])
+    expect(result.code).not.toBe(0)
+    expect(JSON.parse(result.stdout).error.code).toBe("INVALID_RESPONSE")
+    expect(result.stdout + result.stderr).not.toContain(storedValue)
+    expect(saves).toHaveLength(0)
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
+test("both content saves reject an empty nested draft and accept an explicit empty list with VIRTUAL type", async () => {
+  const respond = responses.get(detailPath)!
+  try {
+    for (const command of ["save-content", "save"]) {
+      for (const detail of [{ taskDetail: {} }, { fileType: 0, taskDetail: {} }]) {
+        responses.set(detailPath, () => ok(detail))
+        const invalid = await saveWithDebug(command)
+        expect(invalid.code).not.toBe(0)
+        expect(JSON.parse(invalid.stdout).error.code).toBe("INVALID_RESPONSE")
+        expect(saves).toHaveLength(0)
+      }
+      responses.set(detailPath, () => ok({ taskDetail: { fileType: 0, paramValueList: [] } }))
+      const valid = await saveWithDebug(command)
+      expect(valid.code, valid.stdout + valid.stderr).toBe(0)
+      expect(saves).toEqual([expect.objectContaining({ paramValueList: [] })])
+    }
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
 test("save-content accepts identical nested and top-level draft parameter lists", async () => {
   const respond = responses.get(detailPath)!
   responses.set(detailPath, () => ok({
@@ -393,6 +477,22 @@ for (const command of ["save-content", "save-config"]) {
     })
   }
 }
+
+test.each([
+  ["--param.synthetic-opaque-key", telemetryValue],
+  [`--param.synthetic-opaque-key=${telemetryValue}`],
+  ["--param.synthetic-opaque-key", `--${telemetryValue}`],
+].map((args) => [args]))("dotted singular params are rejected and hidden in diagnostics and telemetry (%j)", async (args) => {
+  const result = await runTask(["save-config", "123", ...args], true, true)
+  expect(result.code).toBe(2)
+  expect(JSON.parse(result.stdout).error.code).toBe("USAGE_ERROR")
+  expect(requests).toEqual(["/v1/logs"])
+  expect(result.commandLogs).toHaveLength(1)
+  expect(result.commandLogs[0]).toContain("<redacted>")
+  for (const value of [telemetryValue, "synthetic-opaque-key"]) {
+    expect(result.stdout + result.stderr + result.commandLogs[0]).not.toContain(value)
+  }
+})
 
 test("option validation rejects a params and clear conflict without putting params in telemetry", async () => {
   const result = await runTask([

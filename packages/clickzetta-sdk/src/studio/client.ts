@@ -4,6 +4,8 @@ import type { StudioConfig } from "../types/index.js"
 
 const SAVE_FILE_CONFIGURATION = "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"
 const FILE_DETAIL = "/ide-admin/v1/dataFile/getDetail"
+const ADHOC_EXECUTE = "/ide-admin/v1/adhoc/execute"
+const RUN_DETAIL = "/ide-admin/v1/taskInst/getDetail"
 const PARAMETER_FIELDS = new Set(["paramValueList", "inputParamValueList", "outputParamValueList"])
 
 function debugString(value: unknown): string {
@@ -18,8 +20,8 @@ export async function studioRequest<T>(
   extraHeaders?: Record<string, string>,
   method: string = "POST",
 ) {
-  // Draft reads and saves can return parameter values even in failure responses.
-  const sensitiveResponse = path === FILE_DETAIL || path === SAVE_FILE_CONFIGURATION
+  // Draft and ad hoc endpoints can echo parameter values in failure responses.
+  const sensitiveResponse = path === FILE_DETAIL || path === SAVE_FILE_CONFIGURATION || path === ADHOC_EXECUTE || path === RUN_DETAIL
   const opts: ClientOptions = {
     baseUrl: config.baseUrl,
     tokens: config.tokens,
@@ -45,8 +47,10 @@ export async function studioRequest<T>(
       env: customHeaders.env,
       ...extraHeaders,
     }
-    const debugBody = path === SAVE_FILE_CONFIGURATION && body && typeof body === "object"
-      ? Object.fromEntries(Object.entries(body).map(([key, value]) => [key, PARAMETER_FIELDS.has(key) ? "[redacted]" : value]))
+    const debugBody = (path === SAVE_FILE_CONFIGURATION || path === ADHOC_EXECUTE) && body && typeof body === "object"
+      ? Object.fromEntries(Object.entries(body).map(([key, value]) => [
+        key, PARAMETER_FIELDS.has(key) || key === "params" ? "[redacted]" : value,
+      ]))
       : body
     process.stderr.write(`[debug] studioRequest: ${method} ${config.baseUrl}${path} body=${debugString(debugBody)} headers=${debugString(debugHeaders)}\n`)
   }

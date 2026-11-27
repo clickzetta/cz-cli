@@ -6,7 +6,8 @@ configuration, and encrypted references that have no returned value. If the
 draft cannot be read or its parameter list is malformed, the command stops
 before saving. The legacy `task save` command also preserves the current
 parameters and keeps its existing task-type support. Both commands reject drafts
-with conflicting task types or parameter lists in the detail response.
+with an empty nested draft envelope or conflicting task types or parameter
+lists in the detail response.
 Studio-only task types require Studio configuration when using `save-content`.
 
 `--params '{"month":"$[yyyyMM]"}'` merges ordinary parameter values by key. The
@@ -23,10 +24,14 @@ The command saves draft script content without writing scheduling fields. The
 read and save are separate requests, so concurrent edits can race with a save.
 Draft save debug logs redact parameter lists. Command telemetry redacts the
 payloads of `--param` and `--params` in argument attributes, including on failed
-commands. Errors from the Studio draft read and save endpoints report status
+commands. Dotted flags such as `--param.month` are rejected and redacted. Errors from the Studio draft read and save endpoints report status
 information without displaying server response text that could contain parameter
 values. On success, both content-save commands
 return a local `Draft saved` acknowledgement and the Studio URL.
 
-`task execute --param key=value --save-params` sends the supplied values with
-their original backslashes and quotes in both the ad hoc execution and draft save.
+`task execute --param key=value --save-params` validates and merges ordinary
+overrides into the current draft parameters, retaining IDs, metadata, and
+unrelated entries. It sends the original backslashes and quotes during execution
+and saves the merged draft after the run succeeds. If Studio does not confirm the
+save, the command exits with `SAVE_PARAMS_FAILED` and reports the run ID and status
+with `params_saved: false` in JSON. A confirmed save reports `params_saved: true`.

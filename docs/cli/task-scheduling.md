@@ -26,7 +26,8 @@ With `task save-config --param key=value`, parameter names must contain a
 non-whitespace character. Ordinary overrides keep existing IDs and other
 metadata, and unrelated parameters are preserved. Attempts to override an
 encrypted or referenced parameter fail before either configuration or content
-is saved. Use Studio to change those parameters. When the save carries runtime
+is saved. Conflicting top-level and nested draft parameter lists also stop both
+writes. Use Studio to change those parameters. When the save carries runtime
 parameters, the command returns `Draft saved` and the Studio URL.
 
 `task content` exposes the saved mode as `schedule_config.schedule_created_type`.

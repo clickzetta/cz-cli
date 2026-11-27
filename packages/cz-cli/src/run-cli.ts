@@ -803,7 +803,7 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
       command: positional[0] ?? "unknown",
       subcommand: positional[1],
       // A usage rejection can leave sensitive argv fragments unclaimed by yargs.
-      args: redactParams ? { params: "<redacted>" } : Object.keys(args).length > 0 ? args : undefined,
+      args: redactParams ? { ...(args.param && { param: "<redacted>" }), ...(args.params && { params: "<redacted>" }) } : Object.keys(args).length > 0 ? args : undefined,
       duration_ms: Date.now() - startMs,
       success,
       error,
@@ -818,7 +818,7 @@ export async function runCliWithTracking(rawArgs: string[]): Promise<void> {
     }
   } catch (err) {
     if (positional[0] !== "setup") {
-      const redactParams = args.params === "<redacted>" && isHandledCliError(err) && err.code === "USAGE_ERROR"
+      const redactParams = (args.params === "<redacted>" || args.param === "<redacted>") && isHandledCliError(err) && err.code === "USAGE_ERROR"
       await track(false, err instanceof Error ? err.message : `exit_code=${process.exitCode ?? 1}`, redactParams)
     }
     // Last resort. Everything this CLI prints is machine-readable, so an

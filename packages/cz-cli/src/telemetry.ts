@@ -3,7 +3,7 @@ import { OTEL_DEFAULTS } from "./otel-defaults.js"
 import { VERSION } from "./version.js"
 import { currentTraceContext } from "./trace.js"
 import { redactSql } from "./logger.js"
-import { TASK_PARAMS_FLAG } from "./task-param-args.js"
+import { TASK_PARAM_FLAG, TASK_PARAMS_FLAG } from "./task-param-args.js"
 
 /**
  * CLI flag names whose values must never be exfiltrated via telemetry.
@@ -97,8 +97,6 @@ function takesNoValue(key: string): boolean {
   return VALUELESS_FLAGS.has(name) || name.startsWith("no-")
 }
 
-const TASK_PARAM_FLAG = /^--param(?:=|$)/i
-
 /**
  * Parse raw CLI args into positional tokens and a flag map suitable for telemetry.
  * Expects args already sliced to user-visible tokens (i.e. process.argv.slice(2) or hideBin output).
@@ -139,7 +137,13 @@ export function parseTrackingArgs(rawArgs: string[]): {
       }
       continue
     }
-    if (TASK_PARAM_FLAG.test(arg)) {
+    const paramFlag = arg.match(TASK_PARAM_FLAG)
+    if (paramFlag?.[1] === ".") {
+      // Reject dotted syntax without collecting its key, value, or trailing fragments.
+      for (let j = i + 1; j < rawArgs.length; j++) secretValues.add(j)
+      break
+    }
+    if (paramFlag) {
       // yargs consumes consecutive values for --param, even after an inline value.
       for (let j = i + 1; j < rawArgs.length; j++) {
         const value = rawArgs[j]
@@ -176,7 +180,7 @@ export function parseTrackingArgs(rawArgs: string[]): {
       continue
     }
     if (TASK_PARAM_FLAG.test(arg)) {
-      args.param = eqIdx > 0 || secretValues.has(i + 1) ? "<redacted>" : "true"
+      args.param = arg.match(TASK_PARAM_FLAG)?.[1] === "." || eqIdx > 0 || secretValues.has(i + 1) ? "<redacted>" : "true"
       continue
     }
     if (eqIdx > 0) {
