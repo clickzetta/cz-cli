@@ -132,22 +132,43 @@ export function changedLines(diff: string) {
 
 export function hasReviewablePaths(diff: string): boolean {
   const touched = new Set<string>()
+  const mdxChangedLines = new Map<string, string[]>()
   const locations = diffLineLocations(diff)
   locations.right.forEach((_, file) => touched.add(file))
   locations.left.forEach((_, file) => touched.add(file))
-  const headerState = { inHunk: false }
+  const state = { inHunk: false, oldFile: "", newFile: "" }
   diff.split("\n").forEach((line) => {
     if (line.startsWith("diff --git ")) {
-      headerState.inHunk = false
+      state.inHunk = false
+      state.oldFile = ""
+      state.newFile = ""
       const headerPath = parseDiffGitHeaderPath(line.slice("diff --git ".length))
       if (headerPath) touched.add(headerPath)
       return
     }
-    if (line.startsWith("@@ ")) {
-      headerState.inHunk = true
+    if (!state.inHunk && line.startsWith("--- ")) {
+      const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
+      if (file.startsWith("a/")) state.oldFile = file.slice(2)
       return
     }
-    if (headerState.inHunk) return
+    if (!state.inHunk && line.startsWith("+++ ")) {
+      const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
+      if (file.startsWith("b/")) state.newFile = file.slice(2)
+      return
+    }
+    if (line.startsWith("@@ ")) {
+      state.inHunk = true
+      return
+    }
+    if (state.inHunk) {
+      const targetFile = state.newFile || state.oldFile
+      if (targetFile && /\.mdx$/i.test(targetFile) && (line.startsWith("+") || line.startsWith("-"))) {
+        const list = mdxChangedLines.get(targetFile) ?? []
+        list.push(line.slice(1))
+        mdxChangedLines.set(targetFile, list)
+      }
+      return
+    }
     for (const prefix of ["rename from ", "rename to ", "copy from ", "copy to "]) {
       if (line.startsWith(prefix)) {
         touched.add(decodeGitPath(line.slice(prefix.length)))
@@ -156,17 +177,43 @@ export function hasReviewablePaths(diff: string): boolean {
     }
   })
   const rootReviewableDocs = /^(?:AGENTS|CLAUDE|SECURITY|LICENSE)\.(?:md|mdx)$/i
+  const docStaticImage = /\.(?:png|jpe?g|gif|webp|avif|ico)$/i
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md" || file === ".github/claude-review-context.md") return true
     if (file.startsWith("docs/maintenance/")) return true
-    if (/^docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
-    if (/^packages\/docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
-    if (/^packages\/web\/src\/content\/docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
-    if (!file.includes("/") && /\.(?:md|mdx)$/.test(file) && !rootReviewableDocs.test(file)) return false
+    if (/\.mdx$/i.test(file) && hasExecutableMdxChanges(mdxChangedLines.get(file) ?? [])) return true
+    if (/^docs\/.*\.(?:md|mdx|txt)$/i.test(file) || (/^docs\//.test(file) && docStaticImage.test(file))) return false
+    if (
+      /^packages\/docs\/.*\.(?:md|mdx|txt)$/i.test(file) ||
+      (/^packages\/docs\//.test(file) && docStaticImage.test(file))
+    ) {
+      return false
+    }
+    if (
+      /^packages\/web\/src\/content\/docs\/.*\.(?:md|mdx|txt)$/i.test(file) ||
+      (/^packages\/web\/src\/content\/docs\//.test(file) && docStaticImage.test(file))
+    ) {
+      return false
+    }
+    if (!file.includes("/") && /\.(?:md|mdx)$/i.test(file) && !rootReviewableDocs.test(file)) return false
     if (/^(?:packages|sdks|infra)\/(?:[^/\0]+\/)*(?:README|CHANGELOG|CONTRIBUTING)\.(?:md|mdx)$/i.test(file)) {
       return false
     }
     return true
+  })
+}
+
+function hasExecutableMdxChanges(lines: string[]): boolean {
+  const state = { inFence: false }
+  return lines.some((raw) => {
+    if (/^\s*(?:```|~~~)/.test(raw)) {
+      state.inFence = !state.inFence
+      return false
+    }
+    if (state.inFence) return false
+    const withoutInlineCode = raw.replace(/`+[^`]*`+/g, "")
+    const cleaned = withoutInlineCode.replace(/<(?:https?:\/\/|mailto:)[^>\s]+>/gi, "")
+    return /^\s*(?:import|export)\b/.test(cleaned) || /<\/?[A-Za-z]/.test(cleaned) || /(?<!\\)[{}]/.test(cleaned)
   })
 }
 

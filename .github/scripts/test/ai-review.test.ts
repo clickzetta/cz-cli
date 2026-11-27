@@ -375,14 +375,23 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
   const packageDocsMdx =
     "diff --git a/packages/docs/quickstart.mdx b/packages/docs/quickstart.mdx\n--- a/packages/docs/quickstart.mdx\n+++ b/packages/docs/quickstart.mdx\n@@ -1 +1 @@\n-old\n+new\n"
   const webContentDocsMdx =
-    "diff --git a/packages/web/src/content/docs/pl/skills.mdx b/packages/web/src/content/docs/pl/skills.mdx\n--- a/packages/web/src/content/docs/pl/skills.mdx\n+++ b/packages/web/src/content/docs/pl/skills.mdx\n@@ -1 +1 @@\n-old\n+new\n"
+    "diff --git a/packages/web/src/content/docs/pl/skills.mdx b/packages/web/src/content/docs/pl/skills.mdx\n--- a/packages/web/src/content/docs/pl/skills.mdx\n+++ b/packages/web/src/content/docs/pl/skills.mdx\n@@ -1 +1 @@\n-Project: `.opencode/skills/<name>/SKILL.md`\n+Project: `.clickzetta/skills/<name>/SKILL.md`\n"
+  const docImageBinaryDiff =
+    "diff --git a/packages/docs/images/hero-dark.png b/packages/docs/images/hero-dark.png\nindex 1111111..2222222 100644\nBinary files a/packages/docs/images/hero-dark.png and b/packages/docs/images/hero-dark.png differ\n"
   const packageReadme =
     "diff --git a/packages/cz-cli/README.md b/packages/cz-cli/README.md\n--- a/packages/cz-cli/README.md\n+++ b/packages/cz-cli/README.md\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(spacedRootDoc)).toBe(false)
   expect(hasReviewablePaths(packageDocsMdx)).toBe(false)
   expect(hasReviewablePaths(webContentDocsMdx)).toBe(false)
+  expect(hasReviewablePaths(docImageBinaryDiff)).toBe(false)
   expect(hasReviewablePaths(packageReadme)).toBe(false)
-  expect(hasReviewablePaths(spacedRootDoc + packageDocsMdx + webContentDocsMdx + packageReadme)).toBe(false)
+  expect(hasReviewablePaths(spacedRootDoc + packageDocsMdx + webContentDocsMdx + docImageBinaryDiff + packageReadme)).toBe(
+    false,
+  )
+
+  const executableMdxImportDiff =
+    'diff --git a/packages/web/src/content/docs/pl/skills.mdx b/packages/web/src/content/docs/pl/skills.mdx\n--- a/packages/web/src/content/docs/pl/skills.mdx\n+++ b/packages/web/src/content/docs/pl/skills.mdx\n@@ -1,0 +1,2 @@\n+import { Aside } from "@astrojs/starlight/components"\n+<Aside>{dynamicValue}</Aside>\n'
+  expect(hasReviewablePaths(executableMdxImportDiff)).toBe(true)
 
   const agentsDiff = "diff --git a/AGENTS.md b/AGENTS.md\n--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old\n+new\n"
   const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"

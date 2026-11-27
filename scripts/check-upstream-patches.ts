@@ -137,6 +137,13 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         )
       }
     })
+    verifyTargets.refs.forEach((relPath) => {
+      if (!isRegularRepoFile(repoRoot, relPath)) {
+        errors.push(
+          `${relPath}: linked under Verify in UPSTREAM-PATCHES.md INTRUSIVE section but regular non-symlink file is missing`,
+        )
+      }
+    })
 
     headerPaths.forEach((relPath) => {
       if (!isRegularRepoFile(repoRoot, relPath)) {
@@ -755,9 +762,10 @@ function extractMarkdownLinkTargets(verifyText: string): string[] {
   return targets
 }
 
-function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts: string[] } {
+function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts: string[]; refs: string[] } {
   const foundTests = new Set<string>()
   const foundScripts = new Set<string>()
+  const foundRefs = new Set<string>()
   const valueFlags = new Set([
     "--timeout",
     "--preload",
@@ -777,9 +785,13 @@ function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts:
   const state = { lastDir: "" }
 
   extractMarkdownLinkTargets(verifyText).forEach((target) => {
-    foundTests.add(target)
-    const repoPath = normalizeRepoSourcePath(target)
-    if (repoPath) state.lastDir = path.posix.dirname(repoPath)
+    if (/\.(?:test|spec)\.[^/]+$/i.test(target)) {
+      foundTests.add(target)
+      const repoPath = normalizeRepoSourcePath(target)
+      if (repoPath) state.lastDir = path.posix.dirname(repoPath)
+      return
+    }
+    foundRefs.add(target)
   })
 
   for (const match of verifyText.matchAll(/`([^`]+)`/g)) {
@@ -915,7 +927,7 @@ function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts:
       }
     }
   }
-  return { tests: [...foundTests], scripts: [...foundScripts] }
+  return { tests: [...foundTests], scripts: [...foundScripts], refs: [...foundRefs] }
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
