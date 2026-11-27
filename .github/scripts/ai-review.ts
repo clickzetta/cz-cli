@@ -161,6 +161,7 @@ export function hasReviewablePaths(diff: string): boolean {
     if (file.startsWith("docs/maintenance/")) return true
     if (/^docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
     if (/^packages\/docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
+    if (/^packages\/web\/src\/content\/docs\/.*\.(?:md|mdx|txt)$/.test(file)) return false
     if (!file.includes("/") && /\.(?:md|mdx)$/.test(file) && !rootReviewableDocs.test(file)) return false
     if (/^(?:packages|sdks|infra)\/(?:[^/\0]+\/)*(?:README|CHANGELOG|CONTRIBUTING)\.(?:md|mdx)$/i.test(file)) {
       return false

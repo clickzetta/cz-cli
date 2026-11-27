@@ -121,12 +121,19 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       .join("\n")
 
     const headerPaths = extractUpstreamPaths(headerSlice)
-    const allVerifyRepoPaths = extractVerifyRepoPaths(verifyMatches)
+    const verifyTargets = extractVerifyRepoPaths(verifyMatches)
 
-    allVerifyRepoPaths.forEach((relPath) => {
+    verifyTargets.tests.forEach((relPath) => {
       if (!/\.test\.(?:ts|tsx|js|mjs)$/.test(relPath) || !isRegularRepoFile(repoRoot, relPath)) {
         errors.push(
           `${relPath}: listed under Verify in UPSTREAM-PATCHES.md INTRUSIVE section but regular non-symlink test file is missing`,
+        )
+      }
+    })
+    verifyTargets.scripts.forEach((relPath) => {
+      if (!SOURCE_SUFFIX.test(relPath) || !isRegularRepoFile(repoRoot, relPath)) {
+        errors.push(
+          `${relPath}: listed under Verify command in UPSTREAM-PATCHES.md INTRUSIVE section but regular non-symlink script is missing`,
         )
       }
     })
@@ -143,7 +150,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     })
 
     if (!noBannerIntentional) {
-      allVerifyRepoPaths.forEach((relPath) => {
+      ;[...verifyTargets.tests, ...verifyTargets.scripts].forEach((relPath) => {
         if (UPSTREAM_PACKAGES.some((pkg) => relPath.startsWith(`${pkg}/`))) {
           documentedBannerFiles.add(relPath)
         }
@@ -425,6 +432,25 @@ function blankTemplateLiterals(canonicalJs: string): string {
 
   while (state.i < canonicalJs.length) {
     const ch = canonicalJs[state.i]!
+    // Strip preserved JS comments (such as `/*! ... */` legal blocks) so commented text never satisfies AST checks
+    if (ch === "/" && canonicalJs[state.i + 1] === "/") {
+      state.i += 2
+      while (state.i < canonicalJs.length && canonicalJs[state.i] !== "\n") {
+        state.i += 1
+      }
+      continue
+    }
+    if (ch === "/" && canonicalJs[state.i + 1] === "*") {
+      state.i += 2
+      while (
+        state.i < canonicalJs.length &&
+        !(canonicalJs[state.i] === "*" && canonicalJs[state.i + 1] === "/")
+      ) {
+        state.i += 1
+      }
+      if (state.i < canonicalJs.length) state.i += 2
+      continue
+    }
     // Skip regex literals so `/` or `` ` `` inside `/.../` cannot desynchronize scanning
     if (ch === "/" && canonicalJs[state.i + 1] !== "/" && canonicalJs[state.i + 1] !== "*") {
       if (/[=(:,;!&|?+\-*%~^<>{\[\n]/.test(state.prevSig)) {
@@ -691,10 +717,10 @@ function resolveMarkdownVerifyTarget(rawSpec: string): string | undefined {
   if (cleanPath.startsWith("/")) {
     return path.posix.normalize(cleanPath.slice(1))
   }
-  if (cleanPath.startsWith("../")) {
-    return path.posix.normalize(`packages/cz-cli/${cleanPath}`)
+  if (/^(?:\.\/)?(?:packages\/|scripts\/|\.github\/)/.test(cleanPath)) {
+    return path.posix.normalize(cleanPath)
   }
-  return path.posix.normalize(cleanPath)
+  return path.posix.normalize(`packages/cz-cli/${cleanPath}`)
 }
 
 function extractMarkdownLinkTargets(verifyText: string): string[] {
@@ -729,8 +755,9 @@ function extractMarkdownLinkTargets(verifyText: string): string[] {
   return targets
 }
 
-function extractVerifyRepoPaths(verifyText: string): string[] {
-  const found = new Set<string>()
+function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts: string[] } {
+  const foundTests = new Set<string>()
+  const foundScripts = new Set<string>()
   const valueFlags = new Set([
     "--timeout",
     "--preload",
@@ -750,7 +777,7 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
   const state = { lastDir: "" }
 
   extractMarkdownLinkTargets(verifyText).forEach((target) => {
-    found.add(target)
+    foundTests.add(target)
     const repoPath = normalizeRepoSourcePath(target)
     if (repoPath) state.lastDir = path.posix.dirname(repoPath)
   })
@@ -812,6 +839,19 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
               cursor.effectiveCwd = resolveRelativeRepoDir(cursor.effectiveCwd, token.slice("--cwd=".length))
               continue
             }
+            const scriptCandidate = token === "run" ? tokens[cursor.index] : token
+            if (scriptCandidate && !scriptCandidate.startsWith("-") && SOURCE_SUFFIX.test(scriptCandidate)) {
+              if (cursor.effectiveCwd.startsWith("__invalid__:")) {
+                foundScripts.add(`${cursor.effectiveCwd.slice("__invalid__:".length)}/${scriptCandidate}`)
+              } else if (cursor.effectiveCwd) {
+                foundScripts.add(path.posix.normalize(`${cursor.effectiveCwd}/${scriptCandidate}`))
+              } else if (/^(?:\.\/)?(?:packages\/|scripts\/|\.github\/)/.test(scriptCandidate)) {
+                foundScripts.add(path.posix.normalize(scriptCandidate))
+              } else {
+                foundScripts.add(path.posix.normalize(`packages/cz-cli/${scriptCandidate}`))
+              }
+              cmdState.handledCommand = true
+            }
             break
           }
           if (!cursor.afterDoubleDash) {
@@ -835,18 +875,18 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
             if (token.startsWith("-")) continue
           }
           if (cursor.effectiveCwd.startsWith("__invalid__:")) {
-            found.add(`${cursor.effectiveCwd.slice("__invalid__:".length)}/${token}`)
+            foundTests.add(`${cursor.effectiveCwd.slice("__invalid__:".length)}/${token}`)
             continue
           }
           const joined = cursor.effectiveCwd ? `${cursor.effectiveCwd}/${token}` : token
           const normalizedTarget = path.posix.normalize(joined)
           const repoPath = normalizeRepoSourcePath(normalizedTarget)
           if (repoPath) {
-            found.add(repoPath)
+            foundTests.add(repoPath)
             state.lastDir = path.posix.dirname(repoPath)
             continue
           }
-          found.add(normalizedTarget)
+          foundTests.add(normalizedTarget)
         }
         if (cursor.isTestSubcommand) cmdState.handledCommand = true
       }
@@ -854,19 +894,28 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
 
     if (cmdState.handledCommand) continue
 
-    if (!/[;&|]/.test(span)) {
+    if (!/[;&|\s]/.test(span)) {
       const directRepoPath = normalizeRepoSourcePath(span)
       if (directRepoPath) {
-        found.add(directRepoPath)
+        foundTests.add(directRepoPath)
         state.lastDir = path.posix.dirname(directRepoPath)
         continue
       }
-    }
-    if (state.lastDir && !span.includes("/") && /^[^`/\0]+\.test\.(?:ts|tsx|js|mjs)$/.test(span)) {
-      found.add(`${state.lastDir}/${span}`)
+      if (/\.test\.(?:ts|tsx|js|mjs)$/.test(span)) {
+        if (state.lastDir && !span.includes("/")) {
+          foundTests.add(`${state.lastDir}/${span}`)
+          continue
+        }
+        const resolvedRel = span.startsWith("/")
+          ? path.posix.normalize(span.slice(1))
+          : path.posix.normalize(`packages/cz-cli/${span}`)
+        foundTests.add(resolvedRel)
+        const repoPath = normalizeRepoSourcePath(resolvedRel)
+        if (repoPath) state.lastDir = path.posix.dirname(repoPath)
+      }
     }
   }
-  return [...found]
+  return { tests: [...foundTests], scripts: [...foundScripts] }
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {

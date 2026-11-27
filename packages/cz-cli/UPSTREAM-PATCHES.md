@@ -230,9 +230,10 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/sche
   `runMcpServe` ONLY — deliberately not in `applyAgentRuntimeInjection`, because
   `cz-cli serve` binds a real port and internals must not leave the machine.
 - **Verify:** `packages/cz-cli/test/mcp-error-format.test.ts` pins the rendering of both
-  shapes (with and without `detail`). End to end:
-  `CZ_MCP_ARGS='{"prompt":"hi"}' bun test/mcp-call-repro.ts` must name the real cause,
-  not a bare ref.
+  shapes (with and without `detail`), `packages/cz-cli/test/mcp-serve-injection.test.ts`
+  locks turn-error propagation, and `bun packages/cz-cli/test/mcp-serve-smoke.ts` checks
+  stdio framing; end to end, a failing `tools/call` against `cz-cli mcp serve` must name
+  the real cause, not a bare ref.
 
 ### 7. ClickZetta dynamic model discovery in the provider loader
 

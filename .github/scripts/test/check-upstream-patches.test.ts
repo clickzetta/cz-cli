@@ -737,7 +737,10 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
     wrongSpecifierResult.errors.some((e) => e.includes("packages/core/test/model-selection.test.ts")),
   ).toBe(false)
 
-  // 2. Restore exact `./component/register-spinner` in app.tsx AND verify sequential `cd packages && cd core` + Markdown links PASS
+  // 2. Restore exact `./component/register-spinner` in app.tsx AND verify sequential `cd packages && cd core` + ledger-dir Markdown links + standalone relative Verify paths PASS
+  mkdirSync(path.join(root, "packages/cz-cli/test"), { recursive: true })
+  writeFileSync(path.join(root, "packages/cz-cli/test/mcp-error-format.test.ts"), "export const mcpOk = true\n")
+  writeFileSync(path.join(root, "packages/cz-cli/test/mcp-serve-smoke.ts"), "export const smokeOk = true\n")
   writeFileSync(
     path.join(root, "packages/tui/src/app.tsx"),
     [
@@ -758,14 +761,14 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "### 1. Model selection",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** prefer ClickZetta model.",
-      "- **Verify:** `cd packages && cd core && bun test test/model-selection.test.ts`, [repo link](packages/core/test/model-selection.test.ts), and [ledger-relative link](../core/test/model-selection.test.ts)",
+      "- **Verify:** `cd packages && cd core && bun test test/model-selection.test.ts`, [local link](./test/mcp-error-format.test.ts), [plain local](test/mcp-error-format.test.ts), `test/mcp-error-format.test.ts`, `bun packages/cz-cli/test/mcp-serve-smoke.ts`, [repo link](packages/core/test/model-selection.test.ts), and [ledger-relative link](../core/test/model-selection.test.ts)",
       ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
   )
   expect(auditUpstreamPatches(root).ok).toBe(true)
 
-  // 3. Subshell `./` cd AND Markdown links to missing tests under Verify must FAIL
+  // 3. Subshell `./` cd, standalone relative missing test, missing `bun test/repro.ts` script, AND Markdown links to missing tests under Verify must FAIL
   writeFileSync(
     path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
     [
@@ -777,7 +780,7 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "### 1. Model selection",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** prefer ClickZetta model.",
-      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
+      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, `test/missing-standalone.test.ts`, `CZ_MCP_ARGS='{}' bun test/mcp-call-repro.ts`, [missing local](./test/missing-local.test.ts), [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
       ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
@@ -787,6 +790,21 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
   expect(
     dotSlashCdResult.errors.some(
       (e) => e.includes("packages/core/test/missing.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/cz-cli/test/missing-standalone.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/cz-cli/test/mcp-call-repro.ts") && e.includes("listed under Verify command"),
+    ),
+  ).toBe(true)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/cz-cli/test/missing-local.test.ts") && e.includes("listed under Verify"),
     ),
   ).toBe(true)
   expect(
@@ -811,6 +829,21 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "function registerOpencodeSpinner() {}",
       "//======================== cz-cli change ========================",
       "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(false)
+
+  // 5. Preserved legal block comment `/*! ... */` containing `registerOpencodeSpinner();` must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "/*!",
+      "registerOpencodeSpinner();",
+      "*/",
+      "void registerOpencodeSpinner",
       "//====================== end cz-cli change ======================",
     ].join("\n"),
   )
