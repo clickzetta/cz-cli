@@ -84,6 +84,7 @@ import {
   INTEGRATION_FILE_TYPES,
   SCRIPT_FILE_TYPES,
   TASK_EDIT_STATE_CLI_NAMES,
+  TASK_RUN_STATUS_NAMES,
   UI_ONLY_FILE_TYPES,
   UI_ONLY_SYNC_FILE_TYPES,
   addMethodName,
@@ -191,7 +192,7 @@ export function parseParamValueList(raw: string) {
       const idx = pair.indexOf(":")
       const key = pair.slice(0, idx).trim()
       const value = pair.slice(idx + 1).trim()
-      return idx > 0 && key && value ? [key, value] as const : null
+      return idx > 0 && key ? [key, value] as const : null
     })
     if (!pairs.every((pair) => pair !== null)) return null
     return Object.fromEntries(pairs)
@@ -438,6 +439,17 @@ function draftParameters(detail: unknown) {
     throw new TaskDraftError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.")
   }
   return { detail, taskDetail, params: existing }
+}
+
+function readDraftScriptForConfigSave(draft: ReturnType<typeof draftParameters>) {
+  const script = draft.taskDetail.fileContent ?? draft.taskDetail.dataFileContent ??
+    draft.detail.fileContent ?? draft.detail.dataFileContent ??
+    draft.taskDetail.taskContent ?? draft.taskDetail.task_content ?? draft.taskDetail.script ?? draft.taskDetail.content ??
+    draft.detail.taskContent ?? draft.detail.task_content ?? draft.detail.script ?? draft.detail.content
+  if (typeof script !== "string") {
+    throw new TaskDraftError("INVALID_RESPONSE", "Cannot read current task script; draft was not saved.")
+  }
+  return script
 }
 
 function reportDraftSaved(sc: StudioConfig, fileId: number, format: string | undefined) {
@@ -2879,7 +2891,6 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 : lineage.dataFileOutputListReqs
 
             const draft = draftParameters((await getTaskDetail(sc, fileId)).data)
-            const existingContent = String(draft.taskDetail.fileContent ?? draft.taskDetail.dataFileContent ?? draft.detail.fileContent ?? draft.detail.dataFileContent ?? "")
             const paramOverrides = (argv.param as string[] | undefined) ?? []
             const paramValueList = paramOverrides.length > 0
               ? mergeTaskParamValueList(draft.params, Object.fromEntries(paramOverrides.flatMap((param) => {
@@ -2890,6 +2901,10 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 return [[key, param.slice(eq + 1)]]
               })))
               : draft.params.length > 0 ? draft.params : undefined
+            const contentSave = paramValueList === undefined ? undefined : {
+              dataFileContent: readDraftScriptForConfigSave(draft),
+              paramValueList,
+            }
 
             const resp = await saveTaskConfig(sc, {
               dataFileId: fileId,
@@ -2919,14 +2934,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(paramValueList && { paramValueList }),
             })
             // Save params separately via saveTaskContent (paramValueList is stored with content, not config)
-            if (paramValueList !== undefined) {
+            if (contentSave) {
               await saveTaskContent(sc, {
                 dataFileId: fileId,
-                dataFileContent: existingContent,
                 projectId: sc.projectId,
                 updateBy: String(sc.userId),
                 instanceName: sc.instanceName,
-                paramValueList,
+                ...contentSave,
               })
             }
             logOperation("task save-schedule", { ok: true })
@@ -3465,21 +3479,35 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   ? detailData.taskDetail
                   : detailData
               ) as Record<string, unknown> | undefined
-              const statusCode = (taskDetail?.instanceStatus ?? detailData?.instanceStatus) as number | undefined
+              const statusCode = taskDetail?.instanceStatus ?? detailData?.instanceStatus
               const endTime = taskDetail?.executeEndTime ?? detailData?.executeEndTime
               const failMsg = taskDetail?.failMsg ?? detailData?.failMsg
-              const isTerminal = statusCode === StudioTaskRunStatus.Success || statusCode === StudioTaskRunStatus.Failed || (statusCode == null && endTime != null)
+              const succeeded = statusCode === StudioTaskRunStatus.Success
+              const failed = statusCode === StudioTaskRunStatus.Failed || (initialDraft && statusCode === StudioTaskRunStatus.UpstreamFailed)
+              const unrecognizedStatus = typeof statusCode !== "number" || !Object.hasOwn(TASK_RUN_STATUS_NAMES, statusCode)
+              const isTerminal = succeeded || failed || (endTime != null && (statusCode == null || (initialDraft && unrecognizedStatus)))
               if (isTerminal) {
                 const result = {
                   task_id: fileId,
                   run_id: runInstanceId,
-                  execution_status: taskRunStatusName(statusCode),
+                  execution_status: taskRunStatusName(initialDraft && typeof statusCode !== "number" ? undefined : statusCode),
                 }
-                if (statusCode === StudioTaskRunStatus.Failed || failMsg) {
-                  error("EXECUTE_FAILED", `Ad hoc run ${runInstanceId} failed. Check the run in Studio for details.`, { format })
+                if (failed || failMsg) {
+                  error("EXECUTE_FAILED", `Ad hoc run ${runInstanceId} failed. Check the run in Studio for details.`, {
+                    format,
+                    ...(initialDraft && { extra: { data: { ...result, params_saved: false } } }),
+                  })
                   return
                 }
                 if (initialDraft) {
+                  if (!succeeded) {
+                    logOperation("task execute save-params", { ok: false })
+                    error("SAVE_PARAMS_FAILED", `Studio did not confirm success for ad hoc run ${runInstanceId}. Draft parameters were not saved.`, {
+                      format,
+                      extra: { data: { ...result, params_saved: false } },
+                    })
+                    return
+                  }
                   try {
                     const draft = draftParameters((await getTaskDetail(sc, fileId)).data)
                     if (initialDraft.params.length > 0 &&
