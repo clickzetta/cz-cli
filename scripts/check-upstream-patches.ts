@@ -214,15 +214,37 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   // Entry 12 (<spinner> registration) mechanical checks while active in ledger.
   if (checkSpinnerBackport) {
     const tuiPkgPath = path.join(repoRoot, "packages/tui/package.json")
+    if (!existsSync(tuiPkgPath)) {
+      errors.push("packages/tui/package.json: missing package manifest (UPSTREAM-PATCHES #12)")
+    }
     if (existsSync(tuiPkgPath)) {
-      const tuiPkg = readFileSync(tuiPkgPath, "utf8")
-      if (!tuiPkg.includes("./component/register-spinner")) {
-        errors.push("packages/tui/package.json: missing ./component/register-spinner export (UPSTREAM-PATCHES #12)")
+      const parsedPkg = parseJsonObject(readFileSync(tuiPkgPath, "utf8"))
+      const exportsMap = parsedPkg && typeof parsedPkg.exports === "object" && parsedPkg.exports !== null
+        ? (parsedPkg.exports as Record<string, unknown>)
+        : undefined
+      if (exportsMap?.["./component/register-spinner"] !== "./src/component/register-spinner.ts") {
+        errors.push(
+          "packages/tui/package.json: exports['./component/register-spinner'] must equal './src/component/register-spinner.ts' (UPSTREAM-PATCHES #12)",
+        )
       }
     }
     const defPath = path.join(repoRoot, "packages/tui/src/component/register-spinner.ts")
     if (!existsSync(defPath)) {
       errors.push("packages/tui/src/component/register-spinner.ts: missing spinner registration module (UPSTREAM-PATCHES #12)")
+    }
+    if (existsSync(defPath)) {
+      const defRaw = readFileSync(defPath, "utf8")
+      const defUncommented = stripJsComments(defRaw, false)
+      const defCodeOnly = stripJsComments(defRaw, true)
+      if (
+        !/\bimport\s*\{[^}]*\bregisterSpinner\b[^}]*\}\s*from\s*["']opentui-spinner\/solid["']/.test(defUncommented) ||
+        !/\bexport\s+function\s+registerOpencodeSpinner\s*\(/.test(defCodeOnly) ||
+        !/\bregisterSpinner\s*\(\s*\)/.test(defCodeOnly)
+      ) {
+        errors.push(
+          "packages/tui/src/component/register-spinner.ts: missing active registerOpencodeSpinner() -> registerSpinner() implementation (UPSTREAM-PATCHES #12)",
+        )
+      }
     }
     SPINNER_CALL_SITES.forEach((relSite) => {
       const absSite = path.join(repoRoot, relSite)
@@ -230,9 +252,19 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         errors.push(`${relSite}: missing expected registerOpencodeSpinner call site`)
         return
       }
-      const siteText = readFileSync(absSite, "utf8")
-      if (!siteText.includes("registerOpencodeSpinner(")) {
-        errors.push(`${relSite}: missing registerOpencodeSpinner() call (UPSTREAM-PATCHES #12)`)
+      const siteRaw = readFileSync(absSite, "utf8")
+      const uncommented = stripJsComments(siteRaw, false)
+      const codeOnly = stripJsComments(siteRaw, true)
+      const hasValidImport =
+        /\bimport\s*\{[^}]*\bregisterOpencodeSpinner\b[^}]*\}\s*from\s*["'](?:\.\.?\/(?:component\/)?register-spinner|@opencode-ai\/tui\/component\/register-spinner)["']/.test(
+          uncommented,
+        )
+      // Match an actual call expression (not a declaration or commented/quoted string)
+      const hasActiveCall = /(?<!function\s)\bregisterOpencodeSpinner\s*\(\s*\)/.test(codeOnly)
+      if (!hasValidImport || !hasActiveCall) {
+        errors.push(
+          `${relSite}: missing active import or registerOpencodeSpinner() call (UPSTREAM-PATCHES #12)`,
+        )
       }
     })
   }
@@ -242,6 +274,63 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     bannerFiles: bannerFiles.sort(),
     errors,
   }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function stripJsComments(source: string, blankStringContents: boolean): string {
+  const out: string[] = []
+  const cursor = { i: 0 }
+  while (cursor.i < source.length) {
+    const ch = source[cursor.i]!
+    const next = source[cursor.i + 1]
+    if (ch === "/" && next === "/") {
+      cursor.i += 2
+      while (cursor.i < source.length && source[cursor.i] !== "\n") cursor.i += 1
+      continue
+    }
+    if (ch === "/" && next === "*") {
+      cursor.i += 2
+      while (cursor.i < source.length && !(source[cursor.i] === "*" && source[cursor.i + 1] === "/")) {
+        if (source[cursor.i] === "\n") out.push("\n")
+        cursor.i += 1
+      }
+      cursor.i += 2
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const quote = ch
+      out.push(quote)
+      cursor.i += 1
+      while (cursor.i < source.length && source[cursor.i] !== quote) {
+        if (source[cursor.i] === "\\") {
+          if (!blankStringContents) out.push(source[cursor.i]!, source[cursor.i + 1] ?? "")
+          cursor.i += 2
+          continue
+        }
+        if (source[cursor.i] === "\n") out.push("\n")
+        else if (!blankStringContents) out.push(source[cursor.i]!)
+        cursor.i += 1
+      }
+      if (cursor.i < source.length) {
+        out.push(quote)
+        cursor.i += 1
+      }
+      continue
+    }
+    out.push(ch)
+    cursor.i += 1
+  }
+  return out.join("")
 }
 
 function extractUpstreamPaths(section: string): string[] {

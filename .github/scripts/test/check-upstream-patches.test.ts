@@ -260,3 +260,74 @@ test("auditUpstreamPatches requires the INTRUSIVE patches heading and ignores en
     ),
   ).toBe(true)
 })
+
+test("auditUpstreamPatches rejects commented-out registerOpencodeSpinner() calls and fake package.json description strings", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-spinner-semantics-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/tui/src/component/prompt"), { recursive: true })
+  mkdirSync(path.join(root, "packages/opencode/src/cli/cmd/run"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 12. Spinner registration",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+
+  // Put "./component/register-spinner" in description rather than exports
+  writeFileSync(
+    path.join(root, "packages/tui/package.json"),
+    JSON.stringify({
+      name: "@opencode-ai/tui",
+      description: "mentions ./component/register-spinner only in prose",
+      exports: { ".": "./src/index.tsx" },
+    }),
+  )
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "export function registerOpencodeSpinner() {",
+      "  registerSpinner()",
+      "}",
+    ].join("\n"),
+  )
+  // Comment out the call in app.tsx while keeping valid banners
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "// registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  for (const [rel, spec] of [
+    ["packages/tui/src/component/spinner.tsx", "./register-spinner"],
+    ["packages/tui/src/component/prompt/index.tsx", "../register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.subagent.tsx", "@opencode-ai/tui/component/register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.view.tsx", "@opencode-ai/tui/component/register-spinner"],
+  ] as const) {
+    writeFileSync(
+      path.join(root, rel),
+      `import { registerOpencodeSpinner } from "${spec}"\nregisterOpencodeSpinner()\n`,
+    )
+  }
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(
+    result.errors.some((e) => e.includes("packages/tui/package.json") && e.includes("exports['./component/register-spinner']")),
+  ).toBe(true)
+  expect(
+    result.errors.some((e) => e.includes("packages/tui/src/app.tsx") && e.includes("missing active import or registerOpencodeSpinner() call")),
+  ).toBe(true)
+})

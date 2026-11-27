@@ -138,6 +138,35 @@ console.log(JSON.stringify({type:'turn.completed'}));`,
     expect(JSON.parse(receipt)).toMatchObject({ commit_id: head, comments: [{ path: "a.ts", line: 1, side: "RIGHT" }] })
     expect((await execute(false, "retry")).duplicate).toBe(true)
     expect(await Bun.file(posted).text()).toBe(receipt)
+
+    // Docs-only PR skips cleanly BEFORE requiring CODEX_REVIEW_API_KEY / provider settings
+    await Bun.write(path.join(upstream, "README.md"), "# Docs only\n")
+    await run(["git", "add", "README.md"], upstream)
+    await run(["git", "-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "readme"], upstream)
+    const docsHead = await run(["git", "rev-parse", "HEAD"], upstream)
+    const docsChild = Bun.spawn([process.execPath, path.resolve(import.meta.dir, "../ai-review.ts")], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        GITHUB_REPOSITORY: "example/repo",
+        REVIEW_PR_NUMBER: "2",
+        REVIEW_HEAD_SHA: docsHead,
+        REVIEW_BASE_SHA: head,
+        CODEX_REVIEW_API_KEY: "",
+        CODEX_REVIEW_BASE_URL: "",
+        CODEX_REVIEW_MODEL: "",
+        CODEX_BINARY: "",
+      },
+    })
+    const [docsOut, docsErr, docsCode] = await Promise.all([
+      new Response(docsChild.stdout).text(),
+      new Response(docsChild.stderr).text(),
+      docsChild.exited,
+    ])
+    expect(docsErr + ` exit=${docsCode}`).toContain("exit=0")
+    expect(JSON.parse(docsOut)).toEqual({ skipped: "docs-only", head: docsHead })
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

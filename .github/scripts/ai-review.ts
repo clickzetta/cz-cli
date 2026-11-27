@@ -247,6 +247,21 @@ export async function runReview() {
   )
     throw new Error("Invalid immutable review identity")
   const root = process.cwd()
+  await command(["git", "fetch", "--no-tags", "origin", head, base])
+  const diff = await command([
+    "git",
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--find-renames",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "--unified=0",
+    `${base}...${head}`,
+  ])
+  if (process.env.CODEX_REVIEW_DRY_RUN !== "true" && !hasReviewablePaths(diff)) {
+    return { skipped: "docs-only", head }
+  }
   const directory = path.join(required("RUNNER_TEMP"), "cz-ai-review")
   const home = path.join(directory, "codex")
   const source = path.join(directory, "source")
@@ -291,22 +306,7 @@ export async function runReview() {
   )
   chmodSync(path.join(home, "auth.json"), 0o600)
   chmodSync(path.join(home, "config.toml"), 0o600)
-  await command(["git", "fetch", "--no-tags", "origin", head, base])
   await command(["git", "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", source, head])
-  const diff = await command([
-    "git",
-    "diff",
-    "--no-color",
-    "--no-ext-diff",
-    "--find-renames",
-    "--src-prefix=a/",
-    "--dst-prefix=b/",
-    "--unified=0",
-    `${base}...${head}`,
-  ])
-  if (process.env.CODEX_REVIEW_DRY_RUN !== "true" && !hasReviewablePaths(diff)) {
-    return { skipped: "docs-only", head }
-  }
   const schema = path.join(directory, "schema.json")
   await Bun.write(
     schema,
