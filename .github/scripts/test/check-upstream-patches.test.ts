@@ -530,6 +530,20 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   )
   expect(auditUpstreamPatches(root).ok).toBe(false)
 
+  // Nested template literal with inner backticks containing fake `registerOpencodeSpinner();` must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "const msg = `outer ${String(`inner`)}\nregisterOpencodeSpinner();\ntrailer`",
+      "void msg",
+      "void registerOpencodeSpinner",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(false)
+
   // Unconditional call after a regex literal containing `{` must PASS
   writeFileSync(
     path.join(root, "packages/tui/src/app.tsx"),
@@ -543,6 +557,26 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
     ].join("\n"),
   )
   expect(auditUpstreamPatches(root).ok).toBe(true)
+
+  // Quoted `--test-name-pattern "session subpath.test.ts"` is NOT misparsed as a separate test file
+  mkdirSync(path.join(root, "packages/core/test"), { recursive: true })
+  writeFileSync(path.join(root, "packages/core/test/session-list-subpath.test.ts"), "export const ok = 1\n")
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 12. Spinner registration",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "- **Verify:** `cd packages/core && bun test test/session-list-subpath.test.ts --test-name-pattern \"session subpath.test.ts\"`",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(true)
+  rmSync(path.join(root, "packages/core/test/session-list-subpath.test.ts"), { force: true })
 
   // Missing Verify test file (including `cd ... && bun test ... --timeout 30000` and a directory masquerading as a test file) must FAIL
   mkdirSync(path.join(root, "packages/opencode/test/provider/clickzetta-discovery.test.ts"), { recursive: true })

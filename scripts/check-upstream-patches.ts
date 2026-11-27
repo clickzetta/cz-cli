@@ -363,10 +363,39 @@ function hasValidSpinnerCallSiteAst(source: string): boolean {
 
 function blankTemplateLiterals(canonicalJs: string): string {
   const out: string[] = []
+  // Stack tracks nested `${ ... }` brace depth for each active template literal
+  const templateBraceStack: number[] = []
   const state = { i: 0, prevSig: "\n" }
+
+  const consumeTemplateSpan = () => {
+    while (state.i < canonicalJs.length) {
+      const tc = canonicalJs[state.i]!
+      if (tc === "\\") {
+        state.i += 2
+        continue
+      }
+      if (tc === "`") {
+        out.push("`")
+        state.i += 1
+        state.prevSig = "`"
+        return
+      }
+      if (tc === "$" && canonicalJs[state.i + 1] === "{") {
+        // Blank `${...}` expression too? No: code inside `${registerOpencodeSpinner()}` AT TOP LEVEL IS executed!
+        //Wait: inside `const s = `${registerOpencodeSpinner()}`;`, Bun.Transpiler prints it on the `const s = ...` line (NOT `^registerOpencodeSpinner();$`), unless a multiline function/block inside `${...}` is indented anyway! Still, tracking brace depth keeps outer template scanning synchronized across inner backticks!
+        out.push("${")
+        state.i += 2
+        state.prevSig = "{"
+        templateBraceStack.push(1)
+        return
+      }
+      state.i += 1
+    }
+  }
+
   while (state.i < canonicalJs.length) {
     const ch = canonicalJs[state.i]!
-    // Skip regex literals so a backtick inside /`/ cannot desynchronize template scanning
+    // Skip regex literals so `/` or `` ` `` inside `/.../` cannot desynchronize scanning
     if (ch === "/" && canonicalJs[state.i + 1] !== "/" && canonicalJs[state.i + 1] !== "*") {
       if (/[=(:,;!&|?+\-*%~^<>{\[\n]/.test(state.prevSig)) {
         out.push(ch)
@@ -414,19 +443,23 @@ function blankTemplateLiterals(canonicalJs: string): string {
     if (ch === "`") {
       out.push("`")
       state.i += 1
-      while (state.i < canonicalJs.length && canonicalJs[state.i] !== "`") {
-        if (canonicalJs[state.i] === "\\") {
-          state.i += 2
+      consumeTemplateSpan()
+      continue
+    }
+    if (templateBraceStack.length > 0) {
+      if (ch === "{") {
+        templateBraceStack[templateBraceStack.length - 1]! += 1
+      } else if (ch === "}") {
+        const nextDepth = templateBraceStack[templateBraceStack.length - 1]! - 1
+        if (nextDepth === 0) {
+          templateBraceStack.pop()
+          out.push("}")
+          state.i += 1
+          consumeTemplateSpan()
           continue
         }
-        state.i += 1
+        templateBraceStack[templateBraceStack.length - 1] = nextDepth
       }
-      if (state.i < canonicalJs.length) {
-        out.push("`")
-        state.i += 1
-      }
-      state.prevSig = "`"
-      continue
     }
     out.push(ch)
     if (ch !== " " && ch !== "\t") state.prevSig = ch
@@ -435,12 +468,61 @@ function blankTemplateLiterals(canonicalJs: string): string {
   return out.join("")
 }
 
+function shellSplitArgs(raw: string): string[] {
+  const args: string[] = []
+  const state = { current: "", quote: "", hasToken: false, i: 0 }
+  while (state.i < raw.length) {
+    const ch = raw[state.i]!
+    if (state.quote) {
+      if (ch === "\\" && state.quote === '"' && state.i + 1 < raw.length) {
+        state.current += raw[state.i + 1]!
+        state.i += 2
+        continue
+      }
+      if (ch === state.quote) {
+        state.quote = ""
+        state.i += 1
+        continue
+      }
+      state.current += ch
+      state.i += 1
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      state.quote = ch
+      state.hasToken = true
+      state.i += 1
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (state.hasToken) {
+        args.push(state.current)
+        state.current = ""
+        state.hasToken = false
+      }
+      state.i += 1
+      continue
+    }
+    if (ch === "\\" && state.i + 1 < raw.length) {
+      state.current += raw[state.i + 1]!
+      state.hasToken = true
+      state.i += 2
+      continue
+    }
+    state.current += ch
+    state.hasToken = true
+    state.i += 1
+  }
+  if (state.hasToken) args.push(state.current)
+  return args
+}
+
 function extractVerifyRepoPaths(verifyText: string): string[] {
   const found = new Set<string>()
   const valueFlags = new Set(["--timeout", "--preload", "-r", "-t", "--test-name-pattern", "--seed", "--max-concurrency"])
   const state = { lastDir: "" }
   const collectCommandTestFiles = (argTail: string, prefix: string) => {
-    const tokens = argTail.trim().split(/\s+/)
+    const tokens = shellSplitArgs(argTail.trim())
     const cursor = { index: 0 }
     while (cursor.index < tokens.length) {
       const token = tokens[cursor.index]!
@@ -450,7 +532,7 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
         continue
       }
       if (token.startsWith("-")) continue
-      const clean = token.replace(/^['"]|['"]$/g, "").replace(/^\.\//, "")
+      const clean = token.replace(/^\.\//, "")
       const joined = prefix ? `${prefix}/${clean}` : clean
       if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^\s`]+$/.test(joined) && SOURCE_SUFFIX.test(joined)) {
         found.add(joined)
