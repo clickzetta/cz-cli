@@ -86,7 +86,7 @@ else console.log(JSON.stringify({head:{sha:${JSON.stringify(head)}},base:{sha:pr
 const args=process.argv.slice(2); await Bun.stdin.text();
 if(args.includes('--sandbox') || !args.includes('--strict-config') || !args.includes('--ignore-rules') || !args.includes('default_permissions="review"')) process.exit(21);
 const summary=process.env.CODEX_HOME.includes('/escaped/')?'private-fixture-key':'Reviewed source; no tests executed';
-const response=JSON.stringify({reviewedSha:${JSON.stringify(head)},summary,findings:[{path:'a.ts',line:1,severity:'HIGH',confidence:'high',body:'Concrete fixture finding'}]});
+const response=JSON.stringify({reviewedSha:${JSON.stringify(head)},summary,findings:[{path:'a.ts',line:1,side:'RIGHT',severity:'HIGH',confidence:'high',body:'Concrete fixture finding'}]});
 await Bun.write(args[args.indexOf('--output-last-message')+1],response.replaceAll('-',String.fromCharCode(92)+'u002d'));
 console.log(JSON.stringify({type:'turn.completed'}));`,
     })) {
@@ -284,9 +284,10 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
         {
           path: "src/removed.ts",
           line: 2,
+          side: "LEFT",
           severity: "MEDIUM",
           confidence: "medium",
-          body: "Omitted side falls back to LEFT when line only exists on deleted side",
+          body: "Deleted exported symbol in removed module",
         },
       ],
     },
@@ -308,6 +309,51 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
       locations,
     ),
   ).toThrow()
+  expect(() =>
+    validateReview(
+      {
+        reviewedSha: "sha-del",
+        summary: "Missing explicit side on DiffLineMap",
+        findings: [{ path: "src/removed.ts", line: 2, severity: "MEDIUM", confidence: "medium", body: "missing side" }],
+      },
+      "sha-del",
+      locations,
+    ),
+  ).toThrow("Finding side must be RIGHT or LEFT")
+
+  const sharedLineLocations = diffLineLocations(
+    "diff --git a/src/shared.ts b/src/shared.ts\n--- a/src/shared.ts\n+++ b/src/shared.ts\n@@ -2,1 +2,1 @@\n-oldCall()\n+newCall()\n",
+  )
+  expect([...(sharedLineLocations.left.get("src/shared.ts") ?? [])]).toEqual([2])
+  expect([...(sharedLineLocations.right.get("src/shared.ts") ?? [])]).toEqual([2])
+  expect(() =>
+    validateReview(
+      {
+        reviewedSha: "sha-shared",
+        summary: "Ambiguous omitted side must fail",
+        findings: [{ path: "src/shared.ts", line: 2, severity: "HIGH", confidence: "high", body: "ambiguous side" }],
+      },
+      "sha-shared",
+      sharedLineLocations,
+    ),
+  ).toThrow("Finding side must be RIGHT or LEFT")
+  expect(
+    validateReview(
+      {
+        reviewedSha: "sha-shared",
+        summary: "Explicit sides resolve unambiguously",
+        findings: [
+          { path: "src/shared.ts", line: 2, side: "LEFT", severity: "MEDIUM", confidence: "high", body: "deleted call" },
+          { path: "src/shared.ts", line: 2, side: "RIGHT", severity: "HIGH", confidence: "high", body: "added call" },
+        ],
+      },
+      "sha-shared",
+      sharedLineLocations,
+    ).findings,
+  ).toMatchObject([
+    { path: "src/shared.ts", line: 2, side: "LEFT" },
+    { path: "src/shared.ts", line: 2, side: "RIGHT" },
+  ])
 
   const docsOnlyDiff = "diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(docsOnlyDiff)).toBe(false)

@@ -637,3 +637,143 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
     expect(await proc.exited).toBe(0)
   }
 })
+
+test("auditUpstreamPatches enforces per-site spinner import specifiers and unifies Verify path normalization and coverage", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-per-site-and-verify-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/core/test"), { recursive: true })
+  mkdirSync(path.join(root, "packages/tui/src/component/prompt"), { recursive: true })
+  mkdirSync(path.join(root, "packages/opencode/src/cli/cmd/run"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/tui/package.json"),
+    JSON.stringify({
+      name: "@opencode-ai/tui",
+      version: "1.17.11",
+      exports: { "./component/register-spinner": "./src/component/register-spinner.ts" },
+    }),
+  )
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { getComponentCatalogue } from "@opentui/solid/components"',
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "export function registerOpencodeSpinner() {",
+      "  if (!getComponentCatalogue().spinner) registerSpinner()",
+      "}",
+    ].join("\n"),
+  )
+  for (const [rel, spec] of [
+    ["packages/tui/src/component/spinner.tsx", "./register-spinner"],
+    ["packages/tui/src/component/prompt/index.tsx", "../register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.subagent.tsx", "@opencode-ai/tui/component/register-spinner"],
+    ["packages/opencode/src/cli/cmd/run/footer.view.tsx", "@opencode-ai/tui/component/register-spinner"],
+  ] as const) {
+    writeFileSync(
+      path.join(root, rel),
+      `import { registerOpencodeSpinner } from "${spec}"\nregisterOpencodeSpinner()\n`,
+    )
+  }
+
+  // 1. Wrong relative specifier in app.tsx ("../register-spinner" belongs to prompt/index.tsx, not app.tsx) must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "../register-spinner"',
+      "//======================== cz-cli change ========================",
+      "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/core/test/model-selection.test.ts"),
+    [
+      "//======================== cz-cli change ========================",
+      "export const banneredTest = true",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "- `packages/core/test/model-selection.test.ts` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 1. Model selection",
+      "- **What/why:** prefer ClickZetta model.",
+      "- **Verify:** `bun test packages/core/test/model-selection.test.ts`",
+      "### 12. Spinner registration",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  const wrongSpecifierResult = auditUpstreamPatches(root)
+  expect(wrongSpecifierResult.ok).toBe(false)
+  expect(
+    wrongSpecifierResult.errors.some(
+      (e) => e.includes("packages/tui/src/app.tsx") && e.includes('import from "./component/register-spinner"'),
+    ),
+  ).toBe(true)
+  // Bannered test cited via `bun test packages/core/test/model-selection.test.ts` IS recognized in documentedBannerFiles
+  expect(
+    wrongSpecifierResult.errors.some((e) => e.includes("packages/core/test/model-selection.test.ts")),
+  ).toBe(false)
+
+  // 2. Restore exact `./component/register-spinner` in app.tsx -> full audit PASSES with command-form Verify coverage
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import { registerOpencodeSpinner } from "./component/register-spinner"',
+      "//======================== cz-cli change ========================",
+      "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(true)
+
+  // 3. `cd ./packages/core && bun test test/missing.test.ts` must FAIL when test file is missing
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger (currently baselined at v1.17.11)",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/tui/src/app.tsx` (1 banner)",
+      "- `packages/core/test/model-selection.test.ts` (1 banner)",
+      "## INTRUSIVE patches",
+      "### 1. Model selection",
+      "- **What/why:** prefer ClickZetta model.",
+      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`",
+      "### 12. Spinner registration",
+      "- **File:** `packages/tui/src/app.tsx`",
+      "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  const dotSlashCdResult = auditUpstreamPatches(root)
+  expect(dotSlashCdResult.ok).toBe(false)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/core/test/missing.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(dotSlashCdResult.errors.some((e) => e.includes("model-selection.test.ts"))).toBe(false)
+
+  // 4. Side-effect import + string literal containing fake named import in app.tsx must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/app.tsx"),
+    [
+      'import "./component/register-spinner"',
+      'const fake = \'import { registerOpencodeSpinner } from "./component/register-spinner"\'',
+      "void fake",
+      "function registerOpencodeSpinner() {}",
+      "//======================== cz-cli change ========================",
+      "registerOpencodeSpinner()",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  expect(auditUpstreamPatches(root).ok).toBe(false)
+})

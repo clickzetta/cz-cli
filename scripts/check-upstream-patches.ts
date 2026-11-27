@@ -14,16 +14,16 @@ const UPSTREAM_PACKAGES = ["packages/core", "packages/opencode", "packages/tui",
 const START_BANNER = "//======================== cz-cli change ========================"
 const END_BANNER = "//====================== end cz-cli change ======================"
 const SOURCE_SUFFIX = /\.(?:ts|tsx|js|mjs)$/
-const LEDGER_PATH_PATTERN = /`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`/g
-const NEW_OWNED_PATTERN = /`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`\s*\(new\b/g
+const LEDGER_PATH_PATTERN = /`(?:\.\/)?(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`/g
+const NEW_OWNED_PATTERN = /`(?:\.\/)?(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`\s*\(new\b/g
 const IGNORED_DIRS = new Set(["node_modules", "dist", "generated", "generated-effect", ".turbo", ".git"])
 
 const SPINNER_CALL_SITES = [
-  "packages/tui/src/app.tsx",
-  "packages/tui/src/component/spinner.tsx",
-  "packages/tui/src/component/prompt/index.tsx",
-  "packages/opencode/src/cli/cmd/run/footer.subagent.tsx",
-  "packages/opencode/src/cli/cmd/run/footer.view.tsx",
+  ["packages/tui/src/app.tsx", "./component/register-spinner"],
+  ["packages/tui/src/component/spinner.tsx", "./register-spinner"],
+  ["packages/tui/src/component/prompt/index.tsx", "../register-spinner"],
+  ["packages/opencode/src/cli/cmd/run/footer.subagent.tsx", "@opencode-ai/tui/component/register-spinner"],
+  ["packages/opencode/src/cli/cmd/run/footer.view.tsx", "@opencode-ai/tui/component/register-spinner"],
 ] as const
 
 export type PatchAuditResult = {
@@ -119,7 +119,6 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       .join("\n")
 
     const headerPaths = extractUpstreamPaths(headerSlice)
-    const verifyPaths = extractUpstreamPaths(verifyMatches)
     const allVerifyRepoPaths = extractVerifyRepoPaths(verifyMatches)
 
     allVerifyRepoPaths.forEach((relPath) => {
@@ -142,7 +141,11 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     })
 
     if (!noBannerIntentional) {
-      verifyPaths.forEach((relPath) => documentedBannerFiles.add(relPath))
+      allVerifyRepoPaths.forEach((relPath) => {
+        if (UPSTREAM_PACKAGES.some((pkg) => relPath.startsWith(`${pkg}/`))) {
+          documentedBannerFiles.add(relPath)
+        }
+      })
     }
   })
 
@@ -268,16 +271,16 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         )
       }
     }
-    SPINNER_CALL_SITES.forEach((relSite) => {
+    SPINNER_CALL_SITES.forEach(([relSite, expectedSpecifier]) => {
       const absSite = path.join(repoRoot, relSite)
       if (!isRegularRepoFile(repoRoot, relSite)) {
         errors.push(`${relSite}: missing expected registerOpencodeSpinner call site`)
         return
       }
       const siteRaw = readFileSync(absSite, "utf8")
-      if (!hasValidSpinnerCallSiteAst(siteRaw)) {
+      if (!hasValidSpinnerCallSiteAst(siteRaw, expectedSpecifier)) {
         errors.push(
-          `${relSite}: missing active import or top-level registerOpencodeSpinner() startup call (UPSTREAM-PATCHES #12)`,
+          `${relSite}: missing active import from "${expectedSpecifier}" or top-level registerOpencodeSpinner() startup call (UPSTREAM-PATCHES #12)`,
         )
       }
     })
@@ -343,23 +346,20 @@ function hasValidSpinnerWrapperAst(source: string): boolean {
   }
 }
 
-function hasValidSpinnerCallSiteAst(source: string): boolean {
-  const allowedSpecifiers = new Set([
-    "./register-spinner",
-    "./component/register-spinner",
-    "../register-spinner",
-    "@opencode-ai/tui/component/register-spinner",
-  ])
+function hasValidSpinnerCallSiteAst(source: string, expectedSpecifier: string): boolean {
   try {
     const imports = TSX_TRANSPILER.scanImports(source)
-    if (!imports.some((imp) => imp.kind === "import-statement" && allowedSpecifiers.has(imp.path))) {
+    if (!imports.some((imp) => imp.kind === "import-statement" && imp.path === expectedSpecifier)) {
       return false
     }
     const canonical = blankTemplateLiterals(TSX_TRANSPILER.transformSync(source))
-    const hasNamedImport =
-      /\bimport\s*\{[^}]*\bregisterOpencodeSpinner\b(?!\s+as\b)[^}]*\}\s*from\s*["'](?:\.\.?\/(?:component\/)?register-spinner|@opencode-ai\/tui\/component\/register-spinner)["']/.test(
-        canonical,
-      )
+    const hasNamedImport = [
+      ...canonical.matchAll(/(?:^|\n)import\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g),
+    ].some(
+      (match) =>
+        match[2] === expectedSpecifier &&
+        (match[1] ?? "").split(",").some((part) => part.trim() === "registerOpencodeSpinner"),
+    )
     if (!hasNamedImport) return false
     // In Bun.Transpiler's pretty-printed AST output, ONLY top-level module statements sit at column 0;
     // every subordinate statement inside if/else/for/for-await/while/do/switch/try/function/labels is indented.
@@ -530,45 +530,219 @@ function shellSplitArgs(raw: string): string[] {
   return args
 }
 
-function extractVerifyRepoPaths(verifyText: string): string[] {
-  const found = new Set<string>()
-  const valueFlags = new Set(["--timeout", "--preload", "-r", "-t", "--test-name-pattern", "--seed", "--max-concurrency"])
-  const state = { lastDir: "" }
-  const collectCommandTestFiles = (argTail: string, prefix: string) => {
-    const tokens = shellSplitArgs(argTail.trim())
-    const cursor = { index: 0 }
-    while (cursor.index < tokens.length) {
-      const token = tokens[cursor.index]!
-      cursor.index += 1
-      if (valueFlags.has(token)) {
-        cursor.index += 1
+function shellSplitClauses(raw: string): string[] {
+  const unwrapped = raw.trim()
+  const clauses: string[] = []
+  const state = { current: "", quote: "", i: 0 }
+  while (state.i < unwrapped.length) {
+    const ch = unwrapped[state.i]!
+    if (state.quote) {
+      if (ch === "\\" && state.quote === '"' && state.i + 1 < unwrapped.length) {
+        state.current += unwrapped.slice(state.i, state.i + 2)
+        state.i += 2
         continue
       }
-      if (token.startsWith("-")) continue
-      const clean = token.replace(/^\.\//, "")
-      const joined = prefix ? `${prefix}/${clean}` : clean
-      if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^`\0]+$/.test(joined) && SOURCE_SUFFIX.test(joined)) {
-        found.add(joined)
-        state.lastDir = path.posix.dirname(joined)
-      }
+      if (ch === state.quote) state.quote = ""
+      state.current += ch
+      state.i += 1
+      continue
     }
+    if (ch === "'" || ch === '"') {
+      state.quote = ch
+      state.current += ch
+      state.i += 1
+      continue
+    }
+    if (ch === "\\" && state.i + 1 < unwrapped.length) {
+      state.current += unwrapped.slice(state.i, state.i + 2)
+      state.i += 2
+      continue
+    }
+    if (ch === "(" || ch === ")") {
+      const clause = state.current.trim()
+      if (clause) clauses.push(clause)
+      clauses.push(ch)
+      state.current = ""
+      state.i += 1
+      continue
+    }
+    if (ch === ";" || (ch === "&" && unwrapped[state.i + 1] === "&")) {
+      const clause = state.current.trim()
+      if (clause) clauses.push(clause)
+      state.current = ""
+      state.i += ch === ";" ? 1 : 2
+      continue
+    }
+    state.current += ch
+    state.i += 1
   }
+  const tail = state.current.trim()
+  if (tail) clauses.push(tail)
+  return clauses
+}
+
+function normalizeRepoDir(raw: string): string | undefined {
+  if (!raw || raw.startsWith("/") || raw.includes("\0") || raw.includes("\\") || raw.includes("`")) {
+    return undefined
+  }
+  const normalized = path.posix.normalize(raw).replace(/\/+$/, "")
+  if (normalized === "." || normalized === "") return ""
+  if (normalized === ".." || normalized.startsWith("../") || normalized.startsWith("/")) {
+    return undefined
+  }
+  return normalized
+}
+
+function normalizeRepoSourcePath(raw: string): string | undefined {
+  if (!raw || raw.startsWith("/") || raw.includes("\0") || raw.includes("\\") || raw.includes("`")) {
+    return undefined
+  }
+  const normalized = path.posix.normalize(raw)
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/")
+  ) {
+    return undefined
+  }
+  if (
+    /^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^`\0]+$/.test(normalized) &&
+    SOURCE_SUFFIX.test(normalized)
+  ) {
+    return normalized
+  }
+  return undefined
+}
+
+function extractVerifyRepoPaths(verifyText: string): string[] {
+  const found = new Set<string>()
+  const valueFlags = new Set([
+    "--timeout",
+    "--preload",
+    "-r",
+    "-t",
+    "--test-name-pattern",
+    "--seed",
+    "--max-concurrency",
+    "--rerun-each",
+    "--reporter",
+    "--reporter-outfile",
+    "--coverage-reporter",
+    "--coverage-dir",
+    "--root",
+    "--env-file",
+  ])
+  const state = { lastDir: "" }
+
   for (const match of verifyText.matchAll(/`([^`]+)`/g)) {
     const span = (match[1] ?? "").trim()
-    const cdRun = span.match(/^cd\s+(packages\/[\w-]+)\s*&&\s*bun\s+test\b([\s\S]+)$/)
-    if (cdRun) {
-      collectCommandTestFiles(cdRun[2]!, cdRun[1]!)
-      continue
+    const clauses = shellSplitClauses(span)
+    const cwdStack: string[] = [""]
+    const cmdState = { handledCommand: false }
+
+    for (const clause of clauses) {
+      if (clause === "(") {
+        cwdStack.push(cwdStack[cwdStack.length - 1]!)
+        continue
+      }
+      if (clause === ")") {
+        if (cwdStack.length > 1) cwdStack.pop()
+        continue
+      }
+      const currentCwd = cwdStack[cwdStack.length - 1]!
+      const tokens = [...shellSplitArgs(clause)]
+      while (tokens[0] && /^[A-Za-z_]\w*=/.test(tokens[0])) {
+        tokens.shift()
+      }
+      if (tokens[0] === "cd" && tokens.length === 2) {
+        const nextDir = normalizeRepoDir(tokens[1]!)
+        cwdStack[cwdStack.length - 1] = nextDir === undefined ? `__invalid__:${tokens[1]!}` : nextDir
+        cmdState.handledCommand = true
+        continue
+      }
+      if (tokens[0] === "bun") {
+        const cursor = { index: 1, effectiveCwd: currentCwd, isTestSubcommand: false, afterDoubleDash: false }
+        while (cursor.index < tokens.length) {
+          const token = tokens[cursor.index]!
+          cursor.index += 1
+          if (!cursor.isTestSubcommand) {
+            if (token === "test") {
+              cursor.isTestSubcommand = true
+              continue
+            }
+            if (token === "run" && tokens[cursor.index] === "test") {
+              cursor.index += 1
+              cursor.isTestSubcommand = true
+              continue
+            }
+            if ((token === "--cwd" || token === "-C") && tokens[cursor.index] !== undefined) {
+              const rawDir = tokens[cursor.index]!
+              const flagDir = normalizeRepoDir(rawDir)
+              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              cursor.index += 1
+              continue
+            }
+            if (token.startsWith("--cwd=")) {
+              const rawDir = token.slice("--cwd=".length)
+              const flagDir = normalizeRepoDir(rawDir)
+              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              continue
+            }
+            break
+          }
+          if (!cursor.afterDoubleDash) {
+            if (token === "--") {
+              cursor.afterDoubleDash = true
+              continue
+            }
+            if ((token === "--cwd" || token === "-C") && tokens[cursor.index] !== undefined) {
+              const rawDir = tokens[cursor.index]!
+              const flagDir = normalizeRepoDir(rawDir)
+              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              cursor.index += 1
+              continue
+            }
+            if (token.startsWith("--cwd=")) {
+              const rawDir = token.slice("--cwd=".length)
+              const flagDir = normalizeRepoDir(rawDir)
+              cursor.effectiveCwd = flagDir === undefined ? `__invalid__:${rawDir}` : flagDir
+              continue
+            }
+            if (valueFlags.has(token)) {
+              cursor.index += 1
+              continue
+            }
+            if (token.startsWith("-")) continue
+          }
+          if (cursor.effectiveCwd.startsWith("__invalid__:")) {
+            found.add(`${cursor.effectiveCwd.slice("__invalid__:".length)}/${token}`)
+            continue
+          }
+          const joined = cursor.effectiveCwd ? `${cursor.effectiveCwd}/${token}` : token
+          const normalizedTarget = path.posix.normalize(joined)
+          const repoPath = normalizeRepoSourcePath(normalizedTarget)
+          if (repoPath) {
+            found.add(repoPath)
+            state.lastDir = path.posix.dirname(repoPath)
+            continue
+          }
+          found.add(normalizedTarget)
+        }
+        if (cursor.isTestSubcommand) cmdState.handledCommand = true
+      }
     }
-    const rootRun = span.match(/^bun\s+test\b([\s\S]+)$/)
-    if (rootRun) {
-      collectCommandTestFiles(rootRun[1]!, "")
-      continue
-    }
-    if (!/[;&|]/.test(span) && /^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^`\0]+\.(?:ts|tsx|js|mjs)$/.test(span)) {
-      found.add(span)
-      state.lastDir = path.posix.dirname(span)
-      continue
+
+    if (cmdState.handledCommand) continue
+
+    if (!/[;&|]/.test(span)) {
+      const directRepoPath = normalizeRepoSourcePath(span)
+      if (directRepoPath) {
+        found.add(directRepoPath)
+        state.lastDir = path.posix.dirname(directRepoPath)
+        continue
+      }
     }
     if (state.lastDir && !span.includes("/") && /^[^`/\0]+\.test\.(?:ts|tsx|js|mjs)$/.test(span)) {
       found.add(`${state.lastDir}/${span}`)
@@ -589,7 +763,7 @@ function parseJsonObject(text: string): Record<string, unknown> | undefined {
 }
 
 function extractUpstreamPaths(section: string): string[] {
-  return [...section.matchAll(LEDGER_PATH_PATTERN)].map((match) => match[1]!)
+  return [...section.matchAll(LEDGER_PATH_PATTERN)].map((match) => path.posix.normalize(match[1]!))
 }
 
 function walkSourceFiles(dir: string): string[] {

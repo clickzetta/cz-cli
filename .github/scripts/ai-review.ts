@@ -12,8 +12,8 @@ export function validateReview(
   sha: string,
   changed: Map<string, Set<number>> | DiffLineMap,
 ) {
-  const maps: DiffLineMap =
-    changed instanceof Map ? { right: changed, left: new Map() } : changed
+  const legacyRightOnly = changed instanceof Map
+  const maps: DiffLineMap = legacyRightOnly ? { right: changed, left: new Map() } : changed
   if (!value || typeof value !== "object") throw new Error("Review is not an object")
   const review = value as Record<string, unknown>
   if (
@@ -28,8 +28,8 @@ export function validateReview(
   const findings = review.findings.map((input: unknown) => {
     if (!input || typeof input !== "object") throw new Error("Invalid finding")
     const finding = input as Record<string, unknown>
-    const requestedSide = finding.side === undefined ? undefined : finding.side
-    if (requestedSide !== undefined && requestedSide !== "RIGHT" && requestedSide !== "LEFT") {
+    const requestedSide = finding.side === undefined && legacyRightOnly ? "RIGHT" : finding.side
+    if (requestedSide !== "RIGHT" && requestedSide !== "LEFT") {
       throw new Error("Finding side must be RIGHT or LEFT")
     }
     const pathValue = typeof finding.path === "string" ? finding.path : ""
@@ -41,15 +41,9 @@ export function validateReview(
         ? onLeft
           ? "LEFT"
           : undefined
-        : requestedSide === "RIGHT"
-          ? onRight
-            ? "RIGHT"
-            : undefined
-          : onRight
-            ? "RIGHT"
-            : onLeft
-              ? "LEFT"
-              : undefined
+        : onRight
+          ? "RIGHT"
+          : undefined
     if (
       !pathValue ||
       !Number.isInteger(lineValue) ||
