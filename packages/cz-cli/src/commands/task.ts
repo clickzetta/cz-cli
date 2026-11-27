@@ -173,11 +173,11 @@ function inferParamType(value: string): "manual" | "system" {
   return "manual"
 }
 
-export function parseParamValueList(raw: string): unknown[] | null {
+export function parseParamValueList(raw: string) {
   const cleaned = raw.trim().replace(/^'|'$/g, "")
   const candidates = [cleaned]
   if (cleaned.includes('\\"')) candidates.push(cleaned.replace(/\\"/g, "\""))
-  const tryJson = (): Record<string, string> | null => {
+  const tryJson = (): unknown => {
     for (const candidate of candidates) {
       try { return JSON.parse(candidate) } catch {}
     }
@@ -195,8 +195,10 @@ export function parseParamValueList(raw: string): unknown[] | null {
     return Object.fromEntries(pairs as [string, string][])
   }
   const parsed = tryJson() ?? tryRelaxed()
-  if (!parsed) return null
-  return Object.entries(parsed).map(([k, v], i) => ({
+  if (!isRecord(parsed)) return null
+  const entries = Object.entries(parsed)
+  if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) return null
+  return entries.map(([k, v], i) => ({
     encrypt: false,
     id: String(Date.now() + i),
     ignore: false,
@@ -213,7 +215,7 @@ export function mergeTaskParamValueList(
 ): unknown[] {
   const updated = existingParams.map((param) => {
     const key = String(param.paramKey ?? param.paramName ?? "")
-    if (!(key in overrideMap)) return param
+    if (!Object.hasOwn(overrideMap, key)) return param
     const value = overrideMap[key]!
     return { ...param, paramValue: value, paramType: inferParamType(value) }
   })
@@ -355,13 +357,6 @@ async function autoResolveLakehouseDs(sc: StudioConfig): Promise<{ id: number; n
     ?? list.find((ds) => String(ds.dsName ?? "").toUpperCase().startsWith("LAKEHOUSE_"))
     ?? list[0]
   return { id: Number(match.id), name: String(match.dsName ?? "LAKEHOUSE") }
-}
-
-async function isUiOnlyTask(sc: StudioConfig, fileId: number): Promise<boolean> {
-  const detail = await getTaskDetail(sc, fileId)
-  const data = detail.data as Record<string, unknown> | undefined
-  const fileType = Number(data?.fileType ?? data?.file_type ?? 0)
-  return UI_ONLY_FILE_TYPES.has(fileType)
 }
 
 function normalizeCron(value: string): string {
@@ -2355,7 +2350,9 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             .positional("task", { type: "string", demandOption: true })
             .option("content", { type: "string", describe: "Script content" })
             .option("file", { alias: "f", type: "string", describe: "Read content from file" })
-            .option("params", { type: "string", describe: 'Runtime parameters as JSON object. Values starting with "$[" or matching system param names (bizdate, sys_biz_day, sys_plan_day, etc.) are treated as system/expression params automatically. e.g. \'{"city":"beijing","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}\'' })
+            .option("clear-params", { type: "boolean", describe: "Remove all runtime parameters. Conflicts with --params." })
+            .conflicts("clear-params", "params")
+            .option("params", { type: "string", describe: 'Merge runtime parameter values by key. Values starting with "$[" or matching system param names (bizdate, sys_biz_day, sys_plan_day, etc.) are treated as system/expression params automatically. e.g. \'{"city":"beijing","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}\'' })
             .option("datasource", { type: "string", describe: "JDBC datasource name or ID to bind (auto-resolves dsType)" })
             .option("database", { type: "string", describe: "JDBC database/schema name to USE after connecting" }),
         async (argv) => {
@@ -2368,19 +2365,45 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            if (await isUiOnlyTask(sc, fileId)) {
+            const detail = (await getTaskDetail(sc, fileId)).data
+            if (!isRecord(detail)) {
+              handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+            }
+            const taskDetail = detail.taskDetail ?? detail
+            if (!isRecord(taskDetail)) {
+              handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+            }
+            const rawFileType = taskDetail.fileType ?? taskDetail.file_type ?? detail.fileType ?? detail.file_type
+            const fileType = typeof rawFileType === "string" || typeof rawFileType === "number" ? Number(rawFileType) : NaN
+            if (!Number.isInteger(fileType) || fileType <= 0) {
+              handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
+            }
+            if (UI_ONLY_FILE_TYPES.has(fileType)) {
               error("UI_ONLY_TASK", `This task type requires configuration via Studio UI.`, {
                 format,
                 aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
               }); return
             }
-            let paramValueList: unknown[] | undefined
-            if (argv.params) {
+            const existing = taskDetail.paramValueList ?? detail.paramValueList ?? []
+            if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
+              if (!isRecord(param)) return false
+              const key = param.paramKey ?? param.paramName
+              return typeof key === "string" && key.length > 0
+            })) {
+              handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+            }
+            let paramValueList: unknown[] = argv.clearParams ? [] : existing
+            if (argv.params !== undefined) {
               const result = parseParamValueList(argv.params as string)
               if (!result) {
-                error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}. Use: --params '{"key":"value","dt":"bizdate","yesterday":"$[yyyy-MM-dd,-1d]"}'`, { format }); return
+                error("INVALID_ARGUMENTS", "--params must be an object of string values. Draft was not saved.", { format }); return
               }
-              paramValueList = result
+              const overrides = Object.fromEntries(result.map((param) => [param.paramKey, param.paramValue]))
+              if (existing.some((param) => Object.hasOwn(overrides, String(param.paramKey ?? param.paramName ?? "")) &&
+                ((param.encrypt != null && param.encrypt !== false) || (param.ref != null && param.ref !== 0)))) {
+                handledError("INVALID_ARGUMENTS", "--params cannot override encrypted or referenced parameters. Use Studio to change those values; draft was not saved.", { format })
+              }
+              paramValueList = mergeTaskParamValueList(existing, overrides)
             }
             // Build adhocConfigs for JDBC datasource binding
             let adhocConfigs: string | undefined
@@ -2401,7 +2424,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               updateBy: String(sc.userId),
               instanceName: sc.instanceName,
               replaceEscapedChars: false,
-              ...(paramValueList && { paramValueList }),
+              paramValueList,
               ...(adhocConfigs && { adhocConfigs }),
             })
             logOperation("task save-content", { ok: true })
