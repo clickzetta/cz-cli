@@ -828,7 +828,7 @@ function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts:
         continue
       }
       if (tokens[0] === "bun") {
-        const cursor = { index: 1, effectiveCwd: currentCwd, isTestSubcommand: false, afterDoubleDash: false }
+        const cursor = { index: 1, effectiveCwd: currentCwd, sawRun: false, isTestSubcommand: false, afterDoubleDash: false }
         while (cursor.index < tokens.length) {
           const token = tokens[cursor.index]!
           cursor.index += 1
@@ -837,9 +837,8 @@ function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts:
               cursor.isTestSubcommand = true
               continue
             }
-            if (token === "run" && tokens[cursor.index] === "test") {
-              cursor.index += 1
-              cursor.isTestSubcommand = true
+            if (token === "run" && !cursor.sawRun) {
+              cursor.sawRun = true
               continue
             }
             if ((token === "--cwd" || token === "-C") && tokens[cursor.index] !== undefined) {
@@ -851,16 +850,21 @@ function extractVerifyRepoPaths(verifyText: string): { tests: string[]; scripts:
               cursor.effectiveCwd = resolveRelativeRepoDir(cursor.effectiveCwd, token.slice("--cwd=".length))
               continue
             }
-            const scriptCandidate = token === "run" ? tokens[cursor.index] : token
-            if (scriptCandidate && !scriptCandidate.startsWith("-") && SOURCE_SUFFIX.test(scriptCandidate)) {
+            if (token === "-e" || token === "--eval" || token === "-p" || token === "--print") {
+              break
+            }
+            if (token === "--silent" || token === "--if-present" || token === "--bun" || token === "-b") {
+              continue
+            }
+            if (!token.startsWith("-") && SOURCE_SUFFIX.test(token)) {
               if (cursor.effectiveCwd.startsWith("__invalid__:")) {
-                foundScripts.add(`${cursor.effectiveCwd.slice("__invalid__:".length)}/${scriptCandidate}`)
+                foundScripts.add(`${cursor.effectiveCwd.slice("__invalid__:".length)}/${token}`)
               } else if (cursor.effectiveCwd) {
-                foundScripts.add(path.posix.normalize(`${cursor.effectiveCwd}/${scriptCandidate}`))
-              } else if (/^(?:\.\/)?(?:packages\/|scripts\/|\.github\/)/.test(scriptCandidate)) {
-                foundScripts.add(path.posix.normalize(scriptCandidate))
+                foundScripts.add(path.posix.normalize(`${cursor.effectiveCwd}/${token}`))
+              } else if (/^(?:\.\/)?(?:packages\/|scripts\/|\.github\/)/.test(token)) {
+                foundScripts.add(path.posix.normalize(token))
               } else {
-                foundScripts.add(path.posix.normalize(`packages/cz-cli/${scriptCandidate}`))
+                foundScripts.add(path.posix.normalize(`packages/cz-cli/${token}`))
               }
               cmdState.handledCommand = true
             }

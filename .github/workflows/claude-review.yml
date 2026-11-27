@@ -50,7 +50,7 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           bun -e '
-            import { hasReviewablePaths } from "./.github/scripts/ai-review.ts";
+            import { hasReviewablePaths, loadDiffMdxSources } from "./.github/scripts/ai-review.ts";
             const number = process.env.REVIEW_NUMBER;
             if (!/^[1-9]\d*$/.test(number)) throw new Error("Invalid PR number");
             const child = Bun.spawn(["gh", "api", `repos/${process.env.GITHUB_REPOSITORY}/pulls/${number}`]);
@@ -64,7 +64,8 @@ jobs:
             const diffProc = Bun.spawn(["git", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--unified=0", `${pr.base.sha}...${pr.head.sha}`]);
             const diff = await new Response(diffProc.stdout).text();
             if (await diffProc.exited !== 0) throw new Error("Failed to compute full PR diff");
-            const skipDocsOnly = process.env.DRY_RUN !== "true" && !hasReviewablePaths(diff);
+            const mdxSources = await loadDiffMdxSources(diff, pr.base.sha, pr.head.sha);
+            const skipDocsOnly = process.env.DRY_RUN !== "true" && !hasReviewablePaths(diff, mdxSources);
             const file = Bun.file(process.env.GITHUB_OUTPUT);
             await Bun.write(file, await file.text() + `head=${pr.head.sha}\nbase=${pr.base.sha}\nskip_docs_only=${skipDocsOnly}\n`);
           '

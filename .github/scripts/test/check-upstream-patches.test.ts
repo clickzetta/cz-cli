@@ -782,13 +782,18 @@ test("auditUpstreamPatches enforces per-site spinner import specifiers and unifi
       "### 1. Model selection",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** prefer ClickZetta model.",
-      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, `test/missing-standalone.test.ts`, `CZ_MCP_ARGS='{}' bun test/mcp-call-repro.ts`, [broken runbook](../../docs/maintenance/missing.md), [missing local](./test/missing-local.test.ts), [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
+      "- **Verify:** `(cd ./packages/core && bun test ./test/model-selection.test.ts) && (cd ./packages/core && bun test test/missing.test.ts)`, `bun run --cwd packages/core test test/missing-run-cwd.test.ts`, `test/missing-standalone.test.ts`, `CZ_MCP_ARGS='{}' bun test/mcp-call-repro.ts`, [broken runbook](../../docs/maintenance/missing.md), [missing local](./test/missing-local.test.ts), [missing repo link](packages/core/test/missing-link.test.ts), and [missing rel link](../core/test/missing-rel.test.ts)",
       ...dedicatedEntry12,
       "## HOOK-based customizations",
     ].join("\n"),
   )
   const dotSlashCdResult = auditUpstreamPatches(root)
   expect(dotSlashCdResult.ok).toBe(false)
+  expect(
+    dotSlashCdResult.errors.some(
+      (e) => e.includes("packages/core/test/missing-run-cwd.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
   expect(
     dotSlashCdResult.errors.some(
       (e) => e.includes("docs/maintenance/missing.md") && e.includes("linked under Verify"),

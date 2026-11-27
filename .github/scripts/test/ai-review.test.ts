@@ -2,7 +2,13 @@ import { expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { changedLines, diffLineLocations, hasReviewablePaths, validateReview } from "../ai-review"
+import {
+  changedLines,
+  diffLineLocations,
+  hasReviewablePaths,
+  loadDiffMdxSources,
+  validateReview,
+} from "../ai-review"
 
 const diff = `diff --git a/a.ts b/a.ts
 --- a/a.ts
@@ -392,6 +398,116 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
   const executableMdxImportDiff =
     'diff --git a/packages/web/src/content/docs/pl/skills.mdx b/packages/web/src/content/docs/pl/skills.mdx\n--- a/packages/web/src/content/docs/pl/skills.mdx\n+++ b/packages/web/src/content/docs/pl/skills.mdx\n@@ -1,0 +1,2 @@\n+import { Aside } from "@astrojs/starlight/components"\n+<Aside>{dynamicValue}</Aside>\n'
   expect(hasReviewablePaths(executableMdxImportDiff)).toBe(true)
+
+  // Full-document Git MDX context:
+  // 1) Editing an `import` line inside an unchanged fenced code sample skips as prose-only.
+  // 2) Editing a continuation attribute line inside an existing multiline JSX component triggers review.
+  // 3) Adding a top-level import before a changed code fence triggers review.
+  const mdxRepo = mkdtempSync(path.join(tmpdir(), "review-mdx-context-"))
+  const gitMdx = async (args: string[]) => {
+    const child = Bun.spawn(["git", ...args], { cwd: mdxRepo, stdout: "pipe", stderr: "pipe" })
+    const [out, err, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    expect(err + ` exit=${code}`).toContain("exit=0")
+    return out.trim()
+  }
+  try {
+    await gitMdx(["init", "-q", "--initial-branch=main"])
+    const mdxRel = "packages/web/src/content/docs/guide.mdx"
+    const baseMdx = [
+      "---",
+      'title: "Guide"',
+      "---",
+      "",
+      "<Aside",
+      '  type="note"',
+      '  title="Old heading"',
+      ">",
+      "Plain paragraph text.",
+      "</Aside>",
+      "",
+      "```ts",
+      'import { oldClient } from "@opencode-ai/sdk"',
+      "const sample = <Widget count={1} />",
+      "```",
+      "",
+    ].join("\n")
+    await Bun.write(path.join(mdxRepo, mdxRel), baseMdx)
+    await gitMdx(["add", "."])
+    await gitMdx(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "base"])
+    const baseCommit = await gitMdx(["rev-parse", "HEAD"])
+
+    // Case 1: Only edit `import` and JSX inside the unchanged ```ts code fence -> must SKIP (false)
+    await Bun.write(
+      path.join(mdxRepo, mdxRel),
+      baseMdx
+        .replace('import { oldClient } from "@opencode-ai/sdk"', 'import { newClient } from "@opencode-ai/sdk"')
+        .replace("const sample = <Widget count={1} />", "const sample = <Widget count={2} />"),
+    )
+    await gitMdx(["add", "."])
+    await gitMdx(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "code-sample-only"])
+    const sampleCommit = await gitMdx(["rev-parse", "HEAD"])
+    const sampleDiff = await gitMdx([
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+      `${baseCommit}...${sampleCommit}`,
+    ])
+    const sampleSources = await loadDiffMdxSources(sampleDiff, baseCommit, sampleCommit, mdxRepo)
+    expect(hasReviewablePaths(sampleDiff, sampleSources)).toBe(false)
+
+    // Case 2: Edit only a continuation prop line (`  title="Updated heading"`) inside `<Aside ...>` -> must REVIEW (true)
+    await gitMdx(["checkout", "-q", "-B", "jsx-prop", baseCommit])
+    await Bun.write(path.join(mdxRepo, mdxRel), baseMdx.replace('  title="Old heading"', '  title="Updated heading"'))
+    await gitMdx(["add", "."])
+    await gitMdx(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "jsx-continuation"])
+    const jsxCommit = await gitMdx(["rev-parse", "HEAD"])
+    const jsxDiff = await gitMdx([
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+      `${baseCommit}...${jsxCommit}`,
+    ])
+    const jsxSources = await loadDiffMdxSources(jsxDiff, baseCommit, jsxCommit, mdxRepo)
+    expect(hasReviewablePaths(jsxDiff, jsxSources)).toBe(true)
+
+    // Case 3: Add top-level `import` before a changed code fence -> must REVIEW (true)
+    await gitMdx(["checkout", "-q", "-B", "import-and-fence", baseCommit])
+    await Bun.write(
+      path.join(mdxRepo, mdxRel),
+      baseMdx
+        .replace('<Aside', 'import { Aside } from "@astrojs/starlight/components"\n\n<Aside')
+        .replace("```ts", "```tsx"),
+    )
+    await gitMdx(["add", "."])
+    await gitMdx(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "import-before-fence"])
+    const impCommit = await gitMdx(["rev-parse", "HEAD"])
+    const impDiff = await gitMdx([
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+      `${baseCommit}...${impCommit}`,
+    ])
+    const impSources = await loadDiffMdxSources(impDiff, baseCommit, impCommit, mdxRepo)
+    expect(hasReviewablePaths(impDiff, impSources)).toBe(true)
+  } finally {
+    rmSync(mdxRepo, { recursive: true, force: true })
+  }
 
   const agentsDiff = "diff --git a/AGENTS.md b/AGENTS.md\n--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old\n+new\n"
   const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"
