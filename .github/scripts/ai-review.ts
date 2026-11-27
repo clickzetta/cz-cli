@@ -308,8 +308,10 @@ function isReviewableMdxFile(
   const hasFullLeft = Boolean(mdxSources?.left.has(targetKey))
   const hasFullRight = Boolean(mdxSources?.right.has(targetKey))
   if (hasFullLeft || hasFullRight) {
-    const leftExec = mdxExecutableLines(mdxSources?.left.get(targetKey) ?? "")
-    const rightExec = mdxExecutableLines(mdxSources?.right.get(targetKey) ?? "")
+    const leftDoc = mdxSources?.left.get(targetKey) ?? ""
+    const rightDoc = mdxSources?.right.get(targetKey) ?? ""
+    const leftExec = mdxExecutableLines(leftDoc)
+    const rightExec = mdxExecutableLines(rightDoc)
     const deletedLines = locations.left.get(targetKey) ?? new Set<number>()
     const addedLines = locations.right.get(targetKey) ?? new Set<number>()
     for (const lineNo of deletedLines) {
@@ -318,6 +320,9 @@ function isReviewableMdxFile(
     for (const lineNo of addedLines) {
       if (rightExec.has(lineNo)) return true
     }
+    if (mdxExecutableSignature(leftDoc, leftExec) !== mdxExecutableSignature(rightDoc, rightExec)) {
+      return true
+    }
     // Moving an MDX file that contains executable imports/components can break relative resolution.
     if (entry && entry.oldFile && entry.newFile && entry.oldFile !== entry.newFile) {
       if (leftExec.size > 0 || rightExec.size > 0) return true
@@ -325,11 +330,14 @@ function isReviewableMdxFile(
     return false
   }
   if (!entry) return false
-  const fallbackLeftExec = mdxExecutableLines(entry.beforeHunkLines.join("\n"))
-  const fallbackRightExec = mdxExecutableLines(entry.afterHunkLines.join("\n"))
+  const beforeHunkDoc = entry.beforeHunkLines.join("\n")
+  const afterHunkDoc = entry.afterHunkLines.join("\n")
+  const fallbackLeftExec = mdxExecutableLines(beforeHunkDoc)
+  const fallbackRightExec = mdxExecutableLines(afterHunkDoc)
   return (
     entry.deletedHunkIndices.some((idx) => fallbackLeftExec.has(idx)) ||
-    entry.addedHunkIndices.some((idx) => fallbackRightExec.has(idx))
+    entry.addedHunkIndices.some((idx) => fallbackRightExec.has(idx)) ||
+    mdxExecutableSignature(beforeHunkDoc, fallbackLeftExec) !== mdxExecutableSignature(afterHunkDoc, fallbackRightExec)
   )
 }
 
@@ -414,7 +422,7 @@ export function mdxExecutableLines(doc: string): Set<number> {
     }
 
     if (!state.inJsxTag && state.braceDepth === 0 && !state.inHtmlComment && !state.rawTag) {
-      if (/^\s*import\s*(?:["'{*]|type\b|[\w$])/.test(line)) {
+      if (isMdxEsmImportStart(line)) {
         executable.add(lineNo)
         const depth = updateBracketBalance(line, 0)
         if (depth > 0 || !/["']\s*;?\s*$/.test(line)) {
@@ -562,6 +570,22 @@ export function mdxExecutableLines(doc: string): Set<number> {
   }
 
   return executable
+}
+
+function mdxExecutableSignature(doc: string, execLines: Set<number>): string {
+  if (execLines.size === 0 || !doc) return ""
+  const lines = doc.replace(/\r\n/g, "\n").split("\n")
+  return [...execLines]
+    .sort((a, b) => a - b)
+    .map((lineNo) => lines[lineNo - 1] ?? "")
+    .join("\n")
+}
+
+function isMdxEsmImportStart(line: string): boolean {
+  if (/^\s*import\s*(?:["'{]|\*\s*as\b)/.test(line)) return true
+  if (/^\s*import\s+type(?:\s*\{|\s*\*\s*as\b|\s+[A-Za-z_$][\w$]*(?:\s+from\b|\s*$)|\s*$)/.test(line)) return true
+  if (/^\s*import\s+[A-Za-z_$][\w$]*\s*,/.test(line)) return true
+  return /^\s*import\s+[A-Za-z_$][\w$]*\s+from(?:\s*["']|\s*$)/.test(line)
 }
 
 function stepJsExpressionChar(

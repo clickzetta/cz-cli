@@ -358,6 +358,16 @@ function hasDirectImportFrom(source: string, specifier: string): boolean {
   }
 }
 
+function hasNamedImportBinding(canonical: string, expectedSpecifier: string, bindingName: string): boolean {
+  return [
+    ...canonical.matchAll(/(?:^|\n)import\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g),
+  ].some(
+    (match) =>
+      match[2] === expectedSpecifier &&
+      (match[1] ?? "").split(",").some((part) => part.trim() === bindingName),
+  )
+}
+
 function hasValidSpinnerWrapperAst(source: string): boolean {
   try {
     const imports = TSX_TRANSPILER.scanImports(source)
@@ -365,12 +375,18 @@ function hasValidSpinnerWrapperAst(source: string): boolean {
       return false
     }
     const canonical = blankTemplateLiterals(TSX_TRANSPILER.transformSync(source))
+    if (!hasNamedImportBinding(canonical, "opentui-spinner/solid", "registerSpinner")) {
+      return false
+    }
+    if (/^export function registerOpencodeSpinner\(\) \{\n  registerSpinner\(\);\n\}$/m.test(canonical)) {
+      return true
+    }
     return (
-      /\bimport\s*\{\s*registerSpinner\s*\}\s*from\s*["']opentui-spinner\/solid["']/.test(canonical) &&
-      (/^export function registerOpencodeSpinner\(\) \{\n  registerSpinner\(\);\n\}$/m.test(canonical) ||
-        /^export function registerOpencodeSpinner\(\) \{\n  if \(!getComponentCatalogue\(\)\.spinner\)\n    registerSpinner\(\);\n\}$/m.test(
-          canonical,
-        ))
+      imports.some((imp) => imp.kind === "import-statement" && imp.path === "@opentui/solid/components") &&
+      hasNamedImportBinding(canonical, "@opentui/solid/components", "getComponentCatalogue") &&
+      /^export function registerOpencodeSpinner\(\) \{\n  if \(!getComponentCatalogue\(\)\.spinner\)\n    registerSpinner\(\);\n\}$/m.test(
+        canonical,
+      )
     )
   } catch {
     return false
@@ -384,14 +400,7 @@ function hasValidSpinnerCallSiteAst(source: string, expectedSpecifier: string): 
       return false
     }
     const canonical = blankTemplateLiterals(TSX_TRANSPILER.transformSync(source))
-    const hasNamedImport = [
-      ...canonical.matchAll(/(?:^|\n)import\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g),
-    ].some(
-      (match) =>
-        match[2] === expectedSpecifier &&
-        (match[1] ?? "").split(",").some((part) => part.trim() === "registerOpencodeSpinner"),
-    )
-    if (!hasNamedImport) return false
+    if (!hasNamedImportBinding(canonical, expectedSpecifier, "registerOpencodeSpinner")) return false
     // In Bun.Transpiler's pretty-printed AST output, ONLY top-level module statements sit at column 0;
     // every subordinate statement inside if/else/for/for-await/while/do/switch/try/function/labels is indented.
     const lines = canonical.split("\n")

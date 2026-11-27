@@ -506,6 +506,37 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   )
   expect(auditUpstreamPatches(root).ok).toBe(true)
 
+  // Guarded wrapper using a fake local `getComponentCatalogue()` without importing it from `@opentui/solid/components` must FAIL
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "function getComponentCatalogue() { return { spinner: true } }",
+      "export function registerOpencodeSpinner() {",
+      "  if (!getComponentCatalogue().spinner) registerSpinner()",
+      "}",
+    ].join("\n"),
+  )
+  const fakeCatalogueResult = auditUpstreamPatches(root)
+  expect(fakeCatalogueResult.ok).toBe(false)
+  expect(
+    fakeCatalogueResult.errors.some((e) =>
+      e.includes("packages/tui/src/component/register-spinner.ts: missing active registerOpencodeSpinner() -> registerSpinner()"),
+    ),
+  ).toBe(true)
+
+  // Restore valid wrapper before testing call-site bypasses
+  writeFileSync(
+    path.join(root, "packages/tui/src/component/register-spinner.ts"),
+    [
+      'import { getComponentCatalogue } from "@opentui/solid/components"',
+      'import { registerSpinner } from "opentui-spinner/solid"',
+      "export function registerOpencodeSpinner() {",
+      "  if (!getComponentCatalogue().spinner) registerSpinner()",
+      "}",
+    ].join("\n"),
+  )
+
   // Multiline braceless `if (\n  false\n)\n  registerOpencodeSpinner()` must FAIL
   writeFileSync(
     path.join(root, "packages/tui/src/app.tsx"),

@@ -505,6 +505,53 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
     ])
     const impSources = await loadDiffMdxSources(impDiff, baseCommit, impCommit, mdxRepo)
     expect(hasReviewablePaths(impDiff, impSources)).toBe(true)
+
+    // Case 4: Prose lines starting with `important` or English `import data into ...` -> must SKIP (false)
+    await gitMdx(["checkout", "-q", "-B", "prose-import-word", baseCommit])
+    await Bun.write(
+      path.join(mdxRepo, mdxRel),
+      baseMdx.replace(
+        "Plain paragraph text.",
+        "important setup details before running queries.\nimport data into ClickZetta tables using COPY INTO.",
+      ),
+    )
+    await gitMdx(["add", "."])
+    await gitMdx(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "prose-import-word"])
+    const proseImpCommit = await gitMdx(["rev-parse", "HEAD"])
+    const proseImpDiff = await gitMdx([
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+      `${baseCommit}...${proseImpCommit}`,
+    ])
+    const proseImpSources = await loadDiffMdxSources(proseImpDiff, baseCommit, proseImpCommit, mdxRepo)
+    expect(hasReviewablePaths(proseImpDiff, proseImpSources)).toBe(false)
+
+    // Case 5: Removing ```ts fences around unchanged `import` / `<Widget />` lines activates MDX -> must REVIEW (true)
+    await gitMdx(["checkout", "-q", "-B", "unfence-mdx", baseCommit])
+    await Bun.write(
+      path.join(mdxRepo, mdxRel),
+      baseMdx.replace("```ts\n", "").replace("\n```\n", "\n"),
+    )
+    await gitMdx(["add", "."])
+    await gitMdx(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "unfence-mdx"])
+    const unfenceCommit = await gitMdx(["rev-parse", "HEAD"])
+    const unfenceDiff = await gitMdx([
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+      `${baseCommit}...${unfenceCommit}`,
+    ])
+    const unfenceSources = await loadDiffMdxSources(unfenceDiff, baseCommit, unfenceCommit, mdxRepo)
+    expect(hasReviewablePaths(unfenceDiff, unfenceSources)).toBe(true)
   } finally {
     rmSync(mdxRepo, { recursive: true, force: true })
   }
