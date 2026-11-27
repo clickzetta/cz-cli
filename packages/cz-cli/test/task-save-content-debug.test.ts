@@ -9,6 +9,7 @@ const savePath = "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"
 const executePath = "/ide-admin/v1/adhoc/execute"
 const runDetailPath = "/ide-admin/v1/taskInst/getDetail"
 const storedValue = "synthetic-stored-param-value"
+const savedScript = "# original saved script\n"
 const parameters = [
   { id: "1001", paramKey: "secret_ref", encrypt: true, ref: 3, extraMetadata: "synthetic-ref-metadata" },
   { id: "1002", paramKey: "bizdate", paramType: "system", paramValue: "bizdate" },
@@ -26,7 +27,7 @@ const responses = new Map<string, () => Response>([
   ["/ide-admin/v1/ai/mcp/listFiles", () => ok({ list: [] })],
   [createPath, () => ok(123)],
   [deletePath, () => ok(null)],
-  [detailPath, () => ok({ id: 123, fileType: 4, paramValueList: parameters, scheduleConfig: { retryCount: 3 } })],
+  [detailPath, () => ok({ id: 123, fileType: 4, fileContent: savedScript, paramValueList: parameters, scheduleConfig: { retryCount: 3 } })],
   ["/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ok({ etlVcId: 3 })],
   [savePath, () => ok({ message: "Draft saved" })],
   [executePath, () => ok({ scheduleInstanceId: 456 })],
@@ -50,17 +51,21 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })
 
-async function runTask(args: string[], debug = true, telemetry = false) {
+async function runTask(args: string[], debug = true, telemetry = false, responseSequences: Record<string, Response[]> = {}) {
   requests.length = 0
   saves.length = 0
   const requestFile = join(home, "requests.jsonl")
   await Bun.write(requestFile, "")
-  await Bun.write(join(home, "responses.json"), JSON.stringify(Object.fromEntries(
+  const fixtures = Object.fromEntries(
     await Promise.all(Array.from(responses, async ([path, respond]) => {
       const response = respond()
       return [path, { status: response.status, body: await response.text() }]
     })),
-  )))
+  )
+  for (const [path, sequence] of Object.entries(responseSequences)) {
+    fixtures[path] = await Promise.all(sequence.map(async (response) => ({ status: response.status, body: await response.text() })))
+  }
+  await Bun.write(join(home, "responses.json"), JSON.stringify(fixtures))
   const child = Bun.spawn([
     process.execPath, "--preload", "./test/fixtures/studio-cli-transport.ts", "src/main.ts", ...(debug ? ["--debug"] : []), "task", ...args, "--profile", "test", "--format", "json",
   ], {
@@ -107,7 +112,7 @@ test.each([false, true])("task execute reports both outcomes and preserves param
     expect(saves).toEqual([expect.objectContaining({
       dataFileId: 123,
       onlySaveContent: 1,
-      dataFileContent: "SELECT 1",
+      dataFileContent: savedScript,
       paramValueList: [
         parameters[0],
         parameters[1],
@@ -127,6 +132,73 @@ test.each([false, true])("task execute reports both outcomes and preserves param
   } finally {
     responses.set(savePath, respond)
   }
+})
+
+test("task execute saves into the draft refreshed after polling", async () => {
+  const latestScript = "# café\r\n" + String.raw`print("C:\draft\script.py")` + "\r\n"
+  const latestParams = [
+    { ...parameters[0], id: "2001", ref: 8, extraMetadata: "updated-ref-metadata" },
+    { ...parameters[1], paramValue: "$[yyyyMMdd,-1d]" },
+    { ...parameters[2], id: "2003" },
+    { id: "2004", paramKey: "new_entry", paramValue: "latest-unrelated-value", ignore: false },
+  ]
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+    "--param", "example=override", "--save-params", "--poll-interval", "0",
+  ], true, true, {
+    [detailPath]: [
+      responses.get(detailPath)!(),
+      ok({ taskDetail: { fileContent: latestScript, paramValueList: latestParams } }),
+    ],
+    [runDetailPath]: [ok({ instanceStatus: 0 }), ok({ instanceStatus: 1 })],
+  })
+  expect(result.code, result.stdout + result.stderr).toBe(0)
+  expect(result.adhoc).toEqual([expect.objectContaining({ dataFileContent: "SELECT 1" })])
+  expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)))
+    .toEqual([detailPath, executePath, runDetailPath, runDetailPath, detailPath, savePath])
+  expect(saves).toEqual([expect.objectContaining({
+    dataFileContent: latestScript,
+    replace_escaped_chars: false,
+    paramValueList: [latestParams[0], latestParams[1], { ...latestParams[2], paramValue: "override" }, latestParams[3]],
+  })])
+  for (const value of ["updated-ref-metadata", "latest-unrelated-value"]) {
+    expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(value)
+  }
+})
+
+test.each([
+  ["Studio read error", () => Response.json({ code: 4001, message: storedValue })],
+  ["missing script", () => ok({ id: 123, paramValueList: parameters })],
+  ["non-string script", () => ok({ fileContent: { value: storedValue }, paramValueList: parameters })],
+  ["conflicting scripts", () => ok({ fileContent: storedValue, taskDetail: { fileContent: savedScript }, paramValueList: parameters })],
+  ["omitted previously present records", () => ok({ fileContent: savedScript })],
+  ["malformed records", () => ok({ fileContent: savedScript, paramValueList: [null] })],
+  ["conflicting records", () => ok({ fileContent: savedScript, paramValueList: parameters, taskDetail: { paramValueList: [] } })],
+  ["newly protected override", () => ok({ fileContent: savedScript, paramValueList: [...parameters.slice(0, 2), { ...parameters[2], encrypt: true }] })],
+] as const)("task execute reports a failed writeback after a successful run when refresh finds %s", async (_label, refresh) => {
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+    "--param", "example=override", "--save-params",
+  ], true, true, { [detailPath]: [responses.get(detailPath)!(), refresh()] })
+  expect(result.code).not.toBe(0)
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    error: { code: "SAVE_PARAMS_FAILED" },
+    data: { task_id: 123, run_id: 456, execution_status: "SUCCESS", params_saved: false },
+  })
+  expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)))
+    .toEqual([detailPath, executePath, runDetailPath, detailPath])
+  expect(saves).toHaveLength(0)
+  expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
+})
+
+test("task execute without persistence uses the original run path", async () => {
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc", "--param", "example=override",
+  ])
+  expect(result.code, result.stdout + result.stderr).toBe(0)
+  expect(JSON.parse(result.stdout).data).toEqual({ task_id: 123, run_id: 456, execution_status: "SUCCESS" })
+  expect(requests.filter((path) => [detailPath, executePath, runDetailPath, savePath].includes(path)))
+    .toEqual([detailPath, executePath, runDetailPath])
 })
 
 test("task execute does not save parameters after a failed ad hoc run", async () => {
@@ -154,6 +226,19 @@ test("task execute rejects a protected draft override before starting a run", as
   ], true, true)
   expect(result.code).not.toBe(0)
   expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
+  expect(result.adhoc).toHaveLength(0)
+  expect(saves).toHaveLength(0)
+  expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
+})
+
+test("task execute rejects a malformed persistence override before starting a run", async () => {
+  const result = await runTask([
+    "execute", "123", "--content", "SELECT 1", "--vc", "test-vc",
+    "--param", "example=override", storedValue, "--save-params",
+  ], true, true)
+  expect(result.code).not.toBe(0)
+  expect(JSON.parse(result.stdout).error.code).toBe("INVALID_ARGUMENTS")
+  expect(requests).toEqual(["/v1/logs"])
   expect(result.adhoc).toHaveLength(0)
   expect(saves).toHaveLength(0)
   expect(result.stdout + result.stderr + result.commandLogs.join("")).not.toContain(storedValue)
@@ -451,6 +536,24 @@ test.each([["off", false], ["on", true]] as const)("save-config hides an echoed 
 })
 
 const telemetryValue = "synthetic-command-param-value"
+for (const dash of ["-", "---"]) {
+  for (const [command, param] of [["save-content", "params"], ["save-config", "param"]]) {
+    const raw = param === "params" ? JSON.stringify({ example: telemetryValue }) : `example=${telemetryValue}`
+    test.each([[`${dash}${param}=${raw}`], [`${dash}${param}`, raw]].map((args) => [args]))(
+      `malformed ${param} flag is redacted in diagnostics and telemetry (%j)`, async (args) => {
+        const result = await runTask([command, "123", "--content", "SELECT 1", ...args], true, true)
+        expect(result.code).toBe(2)
+        expect(JSON.parse(result.stdout).error.code).toBe("USAGE_ERROR")
+        expect(requests).toEqual(["/v1/logs"])
+        expect(result.commandLogs).toHaveLength(1)
+        expect(result.commandLogs[0]).toContain(`cz_cli.command.arg.${param}"`)
+        expect(result.commandLogs[0]).toContain("<redacted>")
+        expect(result.stdout + result.stderr + result.commandLogs[0]).not.toContain(telemetryValue)
+      },
+    )
+  }
+}
+
 for (const command of ["save-content", "save-config"]) {
   for (const inline of [false, true]) {
     test(`failed ${command} redacts ${inline ? "inline" : "separated"} parameter values in command telemetry`, async () => {

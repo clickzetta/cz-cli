@@ -221,8 +221,14 @@ export function createCli(args: string[]) {
   const hasParam = args.some((arg) => TASK_PARAM_FLAG.test(arg))
   const optionEnd = args.indexOf("--")
   const options = optionEnd < 0 ? args : args.slice(0, optionEnd)
-  const hasDottedParams = options.some((arg) => arg.match(TASK_PARAMS_FLAG)?.[1] === ".")
-  const hasDottedParam = options.some((arg) => arg.match(TASK_PARAM_FLAG)?.[1] === ".")
+  const hasDottedParams = options.some((arg) => {
+    const flag = arg.match(TASK_PARAMS_FLAG)
+    return flag?.[1] === "--" && flag[2] === "."
+  })
+  const hasDottedParam = options.some((arg) => {
+    const flag = arg.match(TASK_PARAM_FLAG)
+    return flag?.[1] === "--" && flag[2] === "."
+  })
   const cli = withClickZettaProfileOption(yargs(coalesceJsonArrayOptionArgs(args)))
   Object.defineProperty(cli, INVOCATION_ARGS_KEY, {
     value: args,

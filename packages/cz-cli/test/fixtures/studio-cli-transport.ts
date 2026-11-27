@@ -3,7 +3,8 @@ import { join } from "node:path"
 import { OTEL_DEFAULTS } from "../../src/otel-defaults.js"
 
 const home = process.env.CLICKZETTA_TEST_HOME!
-const responses: Record<string, { status: number; body: string }> = await Bun.file(join(home, "responses.json")).json()
+type FixtureResponse = { status: number; body: string }
+const responses: Record<string, FixtureResponse | FixtureResponse[]> = await Bun.file(join(home, "responses.json")).json()
 const requestFile = join(home, "requests.jsonl")
 if (process.env.CLICKZETTA_TEST_TELEMETRY === "1") OTEL_DEFAULTS.endpoint = "http://telemetry.test"
 
@@ -14,6 +15,7 @@ globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: Request
   const path = url.pathname
   appendFileSync(requestFile, JSON.stringify({ path, body: await request.text() }) + "\n")
   if (url.origin === OTEL_DEFAULTS.endpoint && path === "/v1/logs") return new Response(null, { status: 202 })
-  const response = url.hostname === "studio.test" ? responses[path] : undefined
+  const fixture = url.hostname === "studio.test" ? responses[path] : undefined
+  const response = Array.isArray(fixture) ? fixture.shift() : fixture
   return response ? new Response(response.body, { status: response.status }) : new Response("Unexpected request", { status: 404 })
 }, { preconnect: () => {} })

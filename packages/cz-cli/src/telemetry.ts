@@ -131,23 +131,25 @@ export function parseTrackingArgs(rawArgs: string[]): {
       // An incomplete value can leave fragments shaped like either operands or
       // flags. Suppress the suffix until the caller supplies a whole object.
       const object = value?.trim().replace(/^'([\s\S]*)'$/, "$1").trim()
-      if (paramsFlag[1] === "." || !object?.startsWith("{") || !object.endsWith("}")) {
+      if (paramsFlag[2] === "." || !object?.startsWith("{") || !object.endsWith("}")) {
         for (let j = i + 1; j < rawArgs.length; j++) secretValues.add(j)
         break
       }
       continue
     }
     const paramFlag = arg.match(TASK_PARAM_FLAG)
-    if (paramFlag?.[1] === ".") {
+    if (paramFlag?.[2] === ".") {
       // Reject dotted syntax without collecting its key, value, or trailing fragments.
       for (let j = i + 1; j < rawArgs.length; j++) secretValues.add(j)
       break
     }
     if (paramFlag) {
+      const malformedSpacedFlag = paramFlag[1] !== "--" && paramFlag[2] !== "="
       // yargs consumes consecutive values for --param, even after an inline value.
       for (let j = i + 1; j < rawArgs.length; j++) {
         const value = rawArgs[j]
-        if (value.startsWith("-") && !/^-(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) break
+        const firstMalformedValue = malformedSpacedFlag && j === i + 1
+        if (!firstMalformedValue && value.startsWith("-") && !/^-(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) break
         secretValues.add(j)
       }
       continue
@@ -179,8 +181,9 @@ export function parseTrackingArgs(rawArgs: string[]): {
       args.params = "<redacted>"
       continue
     }
-    if (TASK_PARAM_FLAG.test(arg)) {
-      args.param = arg.match(TASK_PARAM_FLAG)?.[1] === "." || eqIdx > 0 || secretValues.has(i + 1) ? "<redacted>" : "true"
+    const paramFlag = arg.match(TASK_PARAM_FLAG)
+    if (paramFlag) {
+      args.param = paramFlag[1] !== "--" || paramFlag[2] === "." || eqIdx > 0 || secretValues.has(i + 1) ? "<redacted>" : "true"
       continue
     }
     if (eqIdx > 0) {

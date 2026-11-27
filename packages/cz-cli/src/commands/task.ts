@@ -211,16 +211,21 @@ export function parseParamValueList(raw: string) {
   }))
 }
 
+class TaskDraftError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message)
+  }
+}
+
 export function mergeTaskParamValueList(
   existingParams: Record<string, unknown>[],
   overrideMap: Record<string, string>,
-  format?: string,
 ): unknown[] {
   const updated = existingParams.map((param) => {
     const key = String(param.paramKey ?? param.paramName ?? "")
     if (!Object.hasOwn(overrideMap, key)) return param
     if ((param.encrypt != null && param.encrypt !== false) || (param.ref != null && param.ref !== 0)) {
-      handledError("INVALID_ARGUMENTS", "Cannot override encrypted or referenced parameters. Use Studio to change those values.", { format })
+      throw new TaskDraftError("INVALID_ARGUMENTS", "Cannot override encrypted or referenced parameters. Use Studio to change those values.")
     }
     const value = overrideMap[key]!
     return { ...param, paramValue: value, paramType: inferParamType(value) }
@@ -391,7 +396,7 @@ async function readDraftParamsForSave(
   format: string | undefined,
   options?: { requireNonStudioType: boolean },
 ) {
-  const draft = draftParameters((await getTaskDetail(sc, fileId)).data, format)
+  const draft = draftParameters((await getTaskDetail(sc, fileId)).data)
   const detail = draft.detail
   const taskDetail = draft.taskDetail
   const fileTypes = [taskDetail.fileType, taskDetail.file_type, detail.fileType, detail.file_type]
@@ -411,18 +416,18 @@ async function readDraftParamsForSave(
   return draft.params
 }
 
-function draftParameters(detail: unknown, format: string | undefined) {
+function draftParameters(detail: unknown) {
   if (!isRecord(detail) || Object.keys(detail).length === 0) {
-    handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+    throw new TaskDraftError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.")
   }
   const taskDetail = detail.taskDetail ?? detail
   if (!isRecord(taskDetail) || Object.keys(taskDetail).length === 0) {
-    handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+    throw new TaskDraftError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.")
   }
   const nestedParams = taskDetail.paramValueList
   const topLevelParams = detail.paramValueList
   if (nestedParams != null && topLevelParams != null && !isDeepStrictEqual(nestedParams, topLevelParams)) {
-    handledError("INVALID_RESPONSE", "The draft contains conflicting parameter lists; draft was not saved.", { format })
+    throw new TaskDraftError("INVALID_RESPONSE", "The draft contains conflicting parameter lists; draft was not saved.")
   }
   const existing = nestedParams ?? topLevelParams ?? []
   if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
@@ -430,7 +435,7 @@ function draftParameters(detail: unknown, format: string | undefined) {
     const key = param.paramKey ?? param.paramName
     return typeof key === "string" && key.trim().length > 0
   })) {
-    handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+    throw new TaskDraftError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.")
   }
   return { detail, taskDetail, params: existing }
 }
@@ -445,7 +450,7 @@ async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
 
 function reportTaskError(err: unknown, format: string | undefined): void {
   if (isHandledCliError(err)) return
-  error("TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
+  error(err instanceof TaskDraftError ? err.code : "TASK_ERROR", err instanceof Error ? err.message : String(err), { format })
 }
 
 function summarizeWorkspaceParamFailure(detail: Record<string, unknown>): string {
@@ -2432,7 +2437,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const fileId = await resolveTaskId(sc, argv.task as string, format)
             const existing = await readDraftParamsForSave(sc, fileId, format, { requireNonStudioType: true })
             const paramValueList = overrides
-              ? mergeTaskParamValueList(existing, Object.fromEntries(overrides.map((param) => [param.paramKey, param.paramValue])), format)
+              ? mergeTaskParamValueList(existing, Object.fromEntries(overrides.map((param) => [param.paramKey, param.paramValue])))
               : argv.clearParams ? [] : existing
             // Build adhocConfigs for JDBC datasource binding
             let adhocConfigs: string | undefined
@@ -2873,7 +2878,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 })
                 : lineage.dataFileOutputListReqs
 
-            const draft = draftParameters((await getTaskDetail(sc, fileId)).data, format)
+            const draft = draftParameters((await getTaskDetail(sc, fileId)).data)
             const existingContent = String(draft.taskDetail.fileContent ?? draft.taskDetail.dataFileContent ?? draft.detail.fileContent ?? draft.detail.dataFileContent ?? "")
             const paramOverrides = (argv.param as string[] | undefined) ?? []
             const paramValueList = paramOverrides.length > 0
@@ -2883,7 +2888,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const key = param.slice(0, eq)
                 if (!key.trim()) handledError("INVALID_ARGUMENTS", "--param requires a non-blank parameter name.", { format })
                 return [[key, param.slice(eq + 1)]]
-              })), format)
+              })))
               : draft.params.length > 0 ? draft.params : undefined
 
             const resp = await saveTaskConfig(sc, {
@@ -3290,25 +3295,32 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
         async (argv) => {
           const format = argv.format
           try {
-            const sc = await ctx(argv)
-            const fileId = await resolveTaskId(sc, argv.task as string, format)
-            let content = argv.content as string | undefined
-            if (argv.file) content = readFileSync(argv.file as string, "utf-8")
-            const cliParams = Object.fromEntries((argv.param ?? []).flatMap((param) => {
+            const paramArgs = argv.param ?? []
+            const paramEntries = paramArgs.flatMap((param) => {
               const eq = param.indexOf("=")
               return eq > 0 && param.slice(0, eq).trim()
                 ? [[param.slice(0, eq), param.slice(eq + 1)] as const]
                 : []
-            }))
+            })
+            if (argv["save-params"] && paramEntries.length !== paramArgs.length) {
+              error("INVALID_ARGUMENTS", "--param requires key=value with a non-blank parameter name.", { format })
+              return
+            }
+            const cliParams = Object.fromEntries(paramEntries)
+            const sc = await ctx(argv)
+            const fileId = await resolveTaskId(sc, argv.task as string, format)
+            let content = argv.content as string | undefined
+            if (argv.file) content = readFileSync(argv.file as string, "utf-8")
             // Resolve VC + content + saved paramValueList from task detail
             let vcCode = argv.vc as string | undefined
             const [detail, cfgDetail] = await Promise.all([
               getTaskDetail(sc, fileId),
               getTaskConfigDetail(sc, { projectId: sc.projectId, workspaceId: sc.workspaceId, dataFileId: fileId }).catch(() => null),
             ])
-            const updatedParamList = argv["save-params"] && Object.keys(cliParams).length > 0
-              ? mergeTaskParamValueList(draftParameters(detail.data, format).params, cliParams, format)
+            const initialDraft = argv["save-params"] && paramEntries.length > 0
+              ? draftParameters(detail.data)
               : undefined
+            if (initialDraft) mergeTaskParamValueList(initialDraft.params, cliParams)
             const data = detail.data as Record<string, unknown> | undefined
             const taskDetail = (
               typeof data?.taskDetail === "object" && data?.taskDetail !== null ? data.taskDetail : data
@@ -3467,16 +3479,29 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                   error("EXECUTE_FAILED", `Ad hoc run ${runInstanceId} failed. Check the run in Studio for details.`, { format })
                   return
                 }
-                if (updatedParamList !== undefined) {
+                if (initialDraft) {
                   try {
+                    const draft = draftParameters((await getTaskDetail(sc, fileId)).data)
+                    if (initialDraft.params.length > 0 &&
+                      !Object.hasOwn(draft.taskDetail, "paramValueList") && !Object.hasOwn(draft.detail, "paramValueList")) {
+                      throw new Error("The refreshed draft omitted its parameter list.")
+                    }
+                    const scripts = [draft.taskDetail, draft.detail].flatMap((data) =>
+                      [data.taskContent, data.fileContent, data.task_content, data.dataFileContent, data.content]
+                        .filter((value) => value != null),
+                    )
+                    const script = scripts[0]
+                    if (typeof script !== "string" || scripts.some((value) => value !== script)) {
+                      throw new Error("Cannot read the current draft script.")
+                    }
                     await saveTaskContent(sc, {
                       dataFileId: fileId,
-                      dataFileContent: content,
+                      dataFileContent: script,
                       projectId: sc.projectId,
                       updateBy: String(sc.userId),
                       instanceName: sc.instanceName,
                       replaceEscapedChars: false,
-                      paramValueList: updatedParamList,
+                      paramValueList: mergeTaskParamValueList(draft.params, cliParams),
                     })
                   } catch {
                     logOperation("task execute save-params", { ok: false })
@@ -3487,11 +3512,11 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                     return
                   }
                 }
-                const aiMessage = updatedParamList === undefined
-                  ? "Ad hoc execution completed. Supplied parameters apply to this run."
-                  : "Ad hoc execution completed and parameters were saved to the draft."
+                const aiMessage = initialDraft
+                  ? "Ad hoc execution completed and parameters were saved to the draft."
+                  : "Ad hoc execution completed. Supplied parameters apply to this run."
                 logOperation("task execute", { ok: true })
-                success(updatedParamList === undefined ? result : { ...result, params_saved: true }, { format, aiMessage })
+                success(initialDraft ? { ...result, params_saved: true } : result, { format, aiMessage })
                 return
               }
               await new Promise((r) => setTimeout(r, pollMs))

@@ -29,9 +29,12 @@ information without displaying server response text that could contain parameter
 values. On success, both content-save commands
 return a local `Draft saved` acknowledgement and the Studio URL.
 
-`task execute --param key=value --save-params` validates and merges ordinary
-overrides into the current draft parameters, retaining IDs, metadata, and
-unrelated entries. It sends the original backslashes and quotes during execution
-and saves the merged draft after the run succeeds. If Studio does not confirm the
-save, the command exits with `SAVE_PARAMS_FAILED` and reports the run ID and status
-with `params_saved: false` in JSON. A confirmed save reports `params_saved: true`.
+`task execute --param key=value --save-params` checks the draft before execution.
+After the run succeeds, it reads the draft again and merges the supplied values
+into the latest parameter records, retaining their IDs, metadata, and unrelated
+entries. The content-save endpoint stores the parameters with the latest draft
+script, including changes saved during polling. The refresh and write are
+separate requests, so an edit between those requests can still race with the save.
+An unreadable or conflicting draft, a protected override, or a failed save
+after execution yields `SAVE_PARAMS_FAILED` with the completed run ID and status
+and `params_saved: false` in JSON. A confirmed save reports `params_saved: true`.

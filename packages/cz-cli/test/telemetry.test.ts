@@ -116,6 +116,22 @@ test("parseTrackingArgs redacts --password and --pat=inline forms too", () => {
   expect(spaced.args["_positional"]).toBe("s u")
 })
 
+test("parseTrackingArgs redacts malformed parameter flags before generic flag collection", () => {
+  const opaque = "synthetic-opaque-param"
+  const result = parseTrackingArgs([
+    "task", "save-content", "123", "--debug",
+    "-params", `{"month":"${opaque}"}`, "---param", `--${opaque}`, `month=${opaque}`,
+    "--poll-interval", "5",
+  ])
+  expect(result.args).toMatchObject({
+    debug: "true",
+    params: "<redacted>",
+    param: "<redacted>",
+    "poll-interval": "5",
+  })
+  expect(JSON.stringify(result)).not.toContain(opaque)
+})
+
 test("parseTrackingArgs redacts datasource connection credentials and JDBC URLs", () => {
   const result = parseTrackingArgs([
     "analytics-agent",
