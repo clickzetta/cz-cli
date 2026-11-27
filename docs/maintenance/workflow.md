@@ -21,11 +21,11 @@ Own the problem as a maintainer with repository access and take responsibility f
 
 Proceed on clear requirements and routine implementation choices. Existing behavior and tests establish compatibility, not product authorization.
 
-When a user reports a bug without specifying their `cz-cli` version (or reports from an older version), check current `origin/main` and published releases first:
+Before replying to a bug report or broad feature request, inspect current `origin/main`, git history, related tasks, and published releases first, and lead with concrete codebase facts (naming existing commands/flags that already address part of the request and pinpointing which surface still lacks support):
 - **Already fixed in the latest Stable release**: recommend updating first (`cz-cli update` or the official installer) and state what diagnostic evidence to share only if the issue still reproduces after upgrading — do not block progress or send a round-trip question just to ask `cz-cli --version`.
 - **Fixed only in a Nightly (`dev-v...`) pre-release**: explain that the fix is currently available on the opt-in Nightly channel (with the explicit versioned installer command) and is not yet in a Stable release; do not promise when Stable will ship or imply default `cz-cli update` installs Nightly builds.
 - **Merged on `origin/main` pending Nightly publication**: advance or wait for the verified Nightly artifact before advising the user to upgrade.
-- **Still reproduces on `origin/main` or depends on private deployment state**: ask for the specific environment or diagnostic evidence needed up front.
+- **Still reproduces on `origin/main`, needs scope disambiguation, or depends on private deployment state**: summarize what current `origin/main` already supports versus where support is missing, ask only for the specific target surface, decision, or private environment detail needed, and never ask for `cz-cli --version` unless a verified behavioral difference across versions changes the diagnosis or next action.
 
 If a product decision still affects contracts, data visibility or authorization, pause only dependent work. Record verified facts, the missing decision, one concrete question, a recommendation and its impact. Continue other work; avoid repeated investigation or reminders without new evidence. Resume when the stated condition is met: “pause until fixed and reviewed” does not require another approval. Failed CI or unmet acceptance criteria still block delivery.
 
@@ -87,7 +87,7 @@ Timeout/ambiguous outcomes stay `unknown` and block later sends to that target. 
 
 ## Replies and documentation
 
-Lead with the answer to the recipient's question or the action they can take. Include investigation details only when they help the recipient understand or act on that answer. Report meaningful progress without repetition, distinguish fixes, validation, merges and verified releases, and link evidence when useful.
+Lead with the answer to the recipient's question or the action they can take. Include investigation details only when they help the recipient understand or act on that answer. Write Feishu group Bot replies in Simplified Chinese, and write GitHub issue/PR comments, commit messages, and PR text in English; preserve literal CLI flags, commands, identifiers, and error strings. Report meaningful progress without repetition, distinguish fixes, validation, merges and verified releases, and link evidence when useful.
 
 Follow [verification rules](../engineering/verification.md), update affected domain contracts with behavior changes, and keep task logs private.
 

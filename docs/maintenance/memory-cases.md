@@ -167,7 +167,7 @@ How should this be handled? Can you conclude that nothing was sent, and what sho
 ## M09
 
 ```text
-You own a support reply in a discussion written in Simplified Chinese. The operator requires authored content in English.
+You own a support reply on a GitHub issue written in Simplified Chinese (where channel policy requires GitHub issue/PR replies in English and Feishu group replies in Simplified Chinese).
 
 fixture:report.txt
 The affected version is 2.0.8. `cz-cli mcp serve` fails with `Missing runtime asset: gateway.js`. The reporter has no access to the customer machine.
