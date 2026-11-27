@@ -326,17 +326,33 @@ test("pure-deletion hunks and deleted files validate cleanly on LEFT side and ha
 test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigger and run review", async () => {
   const spacedRootDoc =
     'diff --git "a/Release Notes.md" "b/Release Notes.md"\n--- "a/Release Notes.md"\n+++ "b/Release Notes.md"\n@@ -1 +1 @@\n-old\n+new\n'
+  const packageDocsMdx =
+    "diff --git a/packages/docs/quickstart.mdx b/packages/docs/quickstart.mdx\n--- a/packages/docs/quickstart.mdx\n+++ b/packages/docs/quickstart.mdx\n@@ -1 +1 @@\n-old\n+new\n"
+  const packageReadme =
+    "diff --git a/packages/cz-cli/README.md b/packages/cz-cli/README.md\n--- a/packages/cz-cli/README.md\n+++ b/packages/cz-cli/README.md\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(spacedRootDoc)).toBe(false)
+  expect(hasReviewablePaths(packageDocsMdx)).toBe(false)
+  expect(hasReviewablePaths(packageReadme)).toBe(false)
+  expect(hasReviewablePaths(spacedRootDoc + packageDocsMdx + packageReadme)).toBe(false)
 
   const agentsDiff = "diff --git a/AGENTS.md b/AGENTS.md\n--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old\n+new\n"
   const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"
   const contextDiff =
     "diff --git a/.github/claude-review-context.md b/.github/claude-review-context.md\n--- a/.github/claude-review-context.md\n+++ b/.github/claude-review-context.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const maintWorkflowDiff =
+    "diff --git a/docs/maintenance/workflow.md b/docs/maintenance/workflow.md\n--- a/docs/maintenance/workflow.md\n+++ b/docs/maintenance/workflow.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const maintPromptDiff =
+    "diff --git a/docs/maintenance/prompts/worker.md b/docs/maintenance/prompts/worker.md\n--- a/docs/maintenance/prompts/worker.md\n+++ b/docs/maintenance/prompts/worker.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const upstreamLedgerDiff =
+    "diff --git a/packages/cz-cli/UPSTREAM-PATCHES.md b/packages/cz-cli/UPSTREAM-PATCHES.md\n--- a/packages/cz-cli/UPSTREAM-PATCHES.md\n+++ b/packages/cz-cli/UPSTREAM-PATCHES.md\n@@ -1 +1 @@\n-old\n+new\n"
   const opencodeToolDiff =
     "diff --git a/.opencode/tool/github-triage.ts b/.opencode/tool/github-triage.ts\n--- a/.opencode/tool/github-triage.ts\n+++ b/.opencode/tool/github-triage.ts\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(agentsDiff)).toBe(true)
   expect(hasReviewablePaths(claudeDiff)).toBe(true)
   expect(hasReviewablePaths(contextDiff)).toBe(true)
+  expect(hasReviewablePaths(maintWorkflowDiff)).toBe(true)
+  expect(hasReviewablePaths(maintPromptDiff)).toBe(true)
+  expect(hasReviewablePaths(upstreamLedgerDiff)).toBe(true)
   expect(hasReviewablePaths(opencodeToolDiff)).toBe(true)
   expect(hasReviewablePaths(spacedRootDoc + opencodeToolDiff)).toBe(true)
 

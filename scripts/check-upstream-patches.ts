@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs"
 import path from "node:path"
 
 const TSX_TRANSPILER = new Bun.Transpiler({
@@ -35,7 +35,7 @@ export type PatchAuditResult = {
 export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   const errors: string[] = []
   const ledgerPath = path.join(repoRoot, "packages/cz-cli/UPSTREAM-PATCHES.md")
-  if (!isRegularFile(ledgerPath)) {
+  if (!isRegularRepoFile(repoRoot, "packages/cz-cli/UPSTREAM-PATCHES.md")) {
     return {
       ok: false,
       bannerFiles: [],
@@ -53,7 +53,8 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   const entryBlocks = intrusiveSection.split(/\n### \d+\.\s+/).slice(1)
 
   const tuiPkgPath = path.join(repoRoot, "packages/tui/package.json")
-  const parsedTuiPkg = isRegularFile(tuiPkgPath) ? parseJsonObject(readFileSync(tuiPkgPath, "utf8")) : undefined
+  const hasRegularTuiPkg = isRegularRepoFile(repoRoot, "packages/tui/package.json")
+  const parsedTuiPkg = hasRegularTuiPkg ? parseJsonObject(readFileSync(tuiPkgPath, "utf8")) : undefined
   const tuiPkgVersion = typeof parsedTuiPkg?.version === "string" ? parsedTuiPkg.version : undefined
   const ledgerBaseline = ledgerText.match(/baselined at v(\d+\.\d+\.\d+)/)?.[1]
   const baselineNeedsSpinner = needsSpinnerBackport(tuiPkgVersion) || needsSpinnerBackport(ledgerBaseline)
@@ -102,8 +103,8 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         return
       }
       manifestExpectedCounts.set(relPath, expectedCount)
-      if (!isRegularFile(path.join(repoRoot, relPath))) {
-        errors.push(`${relPath}: listed in Bannered upstream files manifest in UPSTREAM-PATCHES.md but file is missing`)
+      if (!isRegularRepoFile(repoRoot, relPath)) {
+        errors.push(`${relPath}: listed in Bannered upstream files manifest in UPSTREAM-PATCHES.md but regular file is missing`)
         return
       }
       requiredIntrusiveFiles.add(relPath)
@@ -122,15 +123,16 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     const allVerifyRepoPaths = extractVerifyRepoPaths(verifyMatches)
 
     allVerifyRepoPaths.forEach((relPath) => {
-      if (!isRegularFile(path.join(repoRoot, relPath))) {
-        errors.push(`${relPath}: listed under Verify in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
+      if (!/\.test\.(?:ts|tsx|js|mjs)$/.test(relPath) || !isRegularRepoFile(repoRoot, relPath)) {
+        errors.push(
+          `${relPath}: listed under Verify in UPSTREAM-PATCHES.md INTRUSIVE section but regular non-symlink test file is missing`,
+        )
       }
     })
 
     headerPaths.forEach((relPath) => {
-      const full = path.join(repoRoot, relPath)
-      if (!isRegularFile(full)) {
-        errors.push(`${relPath}: listed in UPSTREAM-PATCHES.md INTRUSIVE section but file is missing`)
+      if (!isRegularRepoFile(repoRoot, relPath)) {
+        errors.push(`${relPath}: listed in UPSTREAM-PATCHES.md INTRUSIVE section but regular file is missing`)
         return
       }
       if (noBannerIntentional) return
@@ -240,10 +242,10 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
 
   // Entry 12 (<spinner> registration) mechanical checks while active in ledger.
   if (checkSpinnerBackport) {
-    if (!isRegularFile(tuiPkgPath)) {
+    if (!hasRegularTuiPkg) {
       errors.push("packages/tui/package.json: missing package manifest (UPSTREAM-PATCHES #12)")
     }
-    if (isRegularFile(tuiPkgPath)) {
+    if (hasRegularTuiPkg) {
       const exportsMap = parsedTuiPkg && typeof parsedTuiPkg.exports === "object" && parsedTuiPkg.exports !== null
         ? (parsedTuiPkg.exports as Record<string, unknown>)
         : undefined
@@ -253,11 +255,12 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
         )
       }
     }
-    const defPath = path.join(repoRoot, "packages/tui/src/component/register-spinner.ts")
-    if (!isRegularFile(defPath)) {
+    const defRel = "packages/tui/src/component/register-spinner.ts"
+    const defPath = path.join(repoRoot, defRel)
+    if (!isRegularRepoFile(repoRoot, defRel)) {
       errors.push("packages/tui/src/component/register-spinner.ts: missing spinner registration module (UPSTREAM-PATCHES #12)")
     }
-    if (isRegularFile(defPath)) {
+    if (isRegularRepoFile(repoRoot, defRel)) {
       const defRaw = readFileSync(defPath, "utf8")
       if (!hasValidSpinnerWrapperAst(defRaw)) {
         errors.push(
@@ -267,7 +270,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     }
     SPINNER_CALL_SITES.forEach((relSite) => {
       const absSite = path.join(repoRoot, relSite)
-      if (!isRegularFile(absSite)) {
+      if (!isRegularRepoFile(repoRoot, relSite)) {
         errors.push(`${relSite}: missing expected registerOpencodeSpinner call site`)
         return
       }
@@ -297,8 +300,18 @@ function needsSpinnerBackport(version: string | undefined): boolean {
   return geMin && ltFixed
 }
 
-function isRegularFile(absPath: string): boolean {
-  return statSync(absPath, { throwIfNoEntry: false })?.isFile() === true
+function isRegularRepoFile(repoRoot: string, relPath: string): boolean {
+  if (!relPath || relPath.startsWith("/") || relPath.includes("\0") || relPath.includes("\\")) return false
+  const segments = relPath.split("/")
+  if (segments.some((seg) => !seg || seg === "." || seg === "..")) return false
+  const absPath = path.join(repoRoot, ...segments)
+  const info = lstatSync(absPath, { throwIfNoEntry: false })
+  if (!info || !info.isFile() || info.isSymbolicLink()) return false
+  try {
+    return realpathSync(absPath) === path.join(realpathSync(repoRoot), ...segments)
+  } catch {
+    return false
+  }
 }
 
 function hasDirectImportFrom(source: string, specifier: string): boolean {
@@ -534,7 +547,7 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
       if (token.startsWith("-")) continue
       const clean = token.replace(/^\.\//, "")
       const joined = prefix ? `${prefix}/${clean}` : clean
-      if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^\s`]+$/.test(joined) && SOURCE_SUFFIX.test(joined)) {
+      if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^`\0]+$/.test(joined) && SOURCE_SUFFIX.test(joined)) {
         found.add(joined)
         state.lastDir = path.posix.dirname(joined)
       }
@@ -552,12 +565,12 @@ function extractVerifyRepoPaths(verifyText: string): string[] {
       collectCommandTestFiles(rootRun[1]!, "")
       continue
     }
-    if (/^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^\s`]+\.(?:ts|tsx|js|mjs)$/.test(span)) {
+    if (!/[;&|]/.test(span) && /^(?:packages\/[\w-]+\/|scripts\/|\.github\/scripts\/)[^`\0]+\.(?:ts|tsx|js|mjs)$/.test(span)) {
       found.add(span)
       state.lastDir = path.posix.dirname(span)
       continue
     }
-    if (state.lastDir && /^[\w.-]+\.test\.(?:ts|tsx|js|mjs)$/.test(span)) {
+    if (state.lastDir && !span.includes("/") && /^[^`/\0]+\.test\.(?:ts|tsx|js|mjs)$/.test(span)) {
       found.add(`${state.lastDir}/${span}`)
     }
   }
@@ -581,7 +594,7 @@ function extractUpstreamPaths(section: string): string[] {
 
 function walkSourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    if (IGNORED_DIRS.has(entry.name)) return []
+    if (IGNORED_DIRS.has(entry.name) || entry.isSymbolicLink()) return []
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) return walkSourceFiles(full)
     if (!entry.isFile() || !SOURCE_SUFFIX.test(entry.name)) return []

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { auditUpstreamPatches } from "../../../scripts/check-upstream-patches"
@@ -578,8 +578,13 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   expect(auditUpstreamPatches(root).ok).toBe(true)
   rmSync(path.join(root, "packages/core/test/session-list-subpath.test.ts"), { force: true })
 
-  // Missing Verify test file (including `cd ... && bun test ... --timeout 30000` and a directory masquerading as a test file) must FAIL
+  // Missing Verify test file (including quoted spaced path, symlinked test file, `cd ... && bun test ... --timeout 30000`, and directory) must FAIL
   mkdirSync(path.join(root, "packages/opencode/test/provider/clickzetta-discovery.test.ts"), { recursive: true })
+  writeFileSync(path.join(root, "packages/core/test/target-real.ts"), "export const x = 1\n")
+  symlinkSync(
+    path.join(root, "packages/core/test/target-real.ts"),
+    path.join(root, "packages/core/test/symlinked.test.ts"),
+  )
   writeFileSync(
     path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
     [
@@ -590,7 +595,7 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
       "### 7. Provider discovery",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** discovery.",
-      "- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts` and `cd packages/core && bun test test/session-list-subpath.test.ts --timeout 30000`",
+      "- **Verify:** `packages/opencode/test/provider/clickzetta-discovery.test.ts`, `packages/core/test/symlinked.test.ts`, and `cd packages/core && bun test \"test/missing spaced.test.ts\" --timeout 30000`",
       "### 12. Spinner registration",
       "- **File:** `packages/tui/src/app.tsx`",
       "- **What/why:** call `registerOpencodeSpinner()` in every TUI entrypoint.",
@@ -606,7 +611,12 @@ test("auditUpstreamPatches rejects a no-op registerOpencodeSpinner() wrapper, ac
   ).toBe(true)
   expect(
     missingVerifyResult.errors.some(
-      (e) => e.includes("packages/core/test/session-list-subpath.test.ts") && e.includes("listed under Verify"),
+      (e) => e.includes("packages/core/test/symlinked.test.ts") && e.includes("listed under Verify"),
+    ),
+  ).toBe(true)
+  expect(
+    missingVerifyResult.errors.some(
+      (e) => e.includes("packages/core/test/missing spaced.test.ts") && e.includes("listed under Verify"),
     ),
   ).toBe(true)
 
