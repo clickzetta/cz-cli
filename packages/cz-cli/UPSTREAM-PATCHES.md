@@ -37,6 +37,28 @@ Find every intrusive patch:
 rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/schema -g '!**/dist/**'
 ```
 
+## Bannered upstream files (CI-enforced)
+
+`scripts/check-upstream-patches.ts` verifies that every file listed below exists and retains the exact expected count of balanced `cz-cli change` banner blocks (including banner-carrying regression tests listed under `Verify`):
+
+- `packages/core/src/flag/flag.ts` (1 banner)
+- `packages/core/src/global.ts` (1 banner)
+- `packages/core/src/model-selection.ts` (1 banner)
+- `packages/core/src/session.ts` (1 banner)
+- `packages/core/test/global.test.ts` (1 banner)
+- `packages/core/test/model-selection.test.ts` (1 banner)
+- `packages/opencode/src/config/paths.ts` (1 banner)
+- `packages/opencode/src/provider/provider.ts` (2 banners)
+- `packages/opencode/src/server/routes/instance/httpapi/handlers/instance.ts` (1 banner)
+- `packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts` (2 banners)
+- `packages/opencode/src/session/processor.ts` (1 banner)
+- `packages/schema/src/session-v1.ts` (1 banner)
+- `packages/tui/src/component/prompt/index.tsx` (3 banners)
+- `packages/tui/src/context/local.tsx` (2 banners)
+- `packages/tui/src/util/presentation.ts` (2 banners)
+- `packages/tui/test/app-lifecycle.test.tsx` (1 banner)
+- `packages/tui/test/util/presentation.test.ts` (1 banner)
+
 ---
 
 ## INTRUSIVE patches (must survive/re-apply on every re-baseline)
@@ -208,9 +230,10 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/sche
   `runMcpServe` ONLY — deliberately not in `applyAgentRuntimeInjection`, because
   `cz-cli serve` binds a real port and internals must not leave the machine.
 - **Verify:** `packages/cz-cli/test/mcp-error-format.test.ts` pins the rendering of both
-  shapes (with and without `detail`). End to end:
-  `CZ_MCP_ARGS='{"prompt":"hi"}' bun test/mcp-call-repro.ts` must name the real cause,
-  not a bare ref.
+  shapes (with and without `detail`), `packages/cz-cli/test/mcp-serve-injection.test.ts`
+  locks turn-error propagation, and `bun packages/cz-cli/test/mcp-serve-smoke.ts` checks
+  stdio framing; end to end, a failing `tools/call` against `cz-cli mcp serve` must name
+  the real cause, not a bare ref.
 
 ### 7. ClickZetta dynamic model discovery in the provider loader
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { CLICKZETTA_RUNTIME_ASSETS } from "../src/bootstrap/runtime-assets"
@@ -133,4 +134,69 @@ describe("runtime assets reach the installed binary", () => {
       }
     })
   }
+
+  test("legacy skills/cz-cli/SKILL.md is removed from packaged skills and purged on install", async () => {
+    expect(existsSync(join(ROOT, "skills", "cz-cli", "SKILL.md"))).toBe(false)
+    const skillsRoot = join(ROOT, "skills")
+    const scanDirs = [skillsRoot, join(skillsRoot, "external")].filter((dir) => existsSync(dir))
+    const bundledSkillNames = scanDirs.flatMap((base) =>
+      readdirSync(base).filter((name) => {
+        if (name === "external") return false
+        const full = join(base, name)
+        return statSync(full).isDirectory() && existsSync(join(full, "SKILL.md"))
+      }),
+    )
+    expect(bundledSkillNames).not.toContain("cz-cli")
+
+    const shBin = Bun.which("sh")
+    if (process.platform !== "win32" || shBin) {
+      const sandbox = mkdtempSync(join(tmpdir(), "cz-cli-skill-purge-"))
+      try {
+        const archiveBin = join(sandbox, "archive-bin")
+        const homeDir = join(sandbox, "home")
+        const installDir = join(homeDir, ".local", "bin")
+        mkdirSync(archiveBin, { recursive: true })
+        writeFileSync(join(archiveBin, "cz-cli"), "#!/bin/sh\nexit 0\n")
+        chmodSync(join(archiveBin, "cz-cli"), 0o755)
+        writeFileSync(join(archiveBin, "setup.sh"), read("scripts/setup.sh"))
+        chmodSync(join(archiveBin, "setup.sh"), 0o755)
+
+        // Pre-populate stale packaged and external cz-cli skills from an older install
+        for (const staleDir of [
+          join(homeDir, ".clickzetta", "skills", ".builtin", "cz-cli"),
+          join(homeDir, ".claude", "skills", "cz-cli"),
+          join(homeDir, ".codex", "skills", "cz-cli"),
+        ]) {
+          mkdirSync(staleDir, { recursive: true })
+          writeFileSync(join(staleDir, "SKILL.md"), "# stale\n")
+        }
+
+        const proc = Bun.spawn([shBin ?? "/bin/sh", join(archiveBin, "setup.sh")], {
+          env: { ...process.env, HOME: homeDir, INSTALL_DIR: installDir, NON_INTERACTIVE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        expect(await proc.exited).toBe(0)
+
+        expect(existsSync(join(homeDir, ".clickzetta", "skills", ".builtin", "cz-cli"))).toBe(false)
+        expect(existsSync(join(homeDir, ".claude", "skills", "cz-cli"))).toBe(false)
+        expect(existsSync(join(homeDir, ".codex", "skills", "cz-cli"))).toBe(false)
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    }
+
+    const { renderBootstrapPs1 } = await import("../../../scripts/cos-release.mjs")
+    const ps1: string = renderBootstrapPs1({
+      version: "1.0.0",
+      channel: "stable",
+      platforms: { "win32-x64": { archive: "a.zip", url: "https://example.invalid/a.zip", checksum: "0" } },
+    })
+    expect(ps1).toContain(".builtin")
+    expect(ps1).toContain("cz-cli mcp init")
+
+    const integrationSrc = read("packages/cz-cli/src/commands/integration.ts")
+    expect(integrationSrc).not.toContain("cz-cli ai-guide")
+    expect(integrationSrc.match(/cz-cli task save-content --help/g)?.length ?? 0).toBeGreaterThanOrEqual(6)
+  })
 })

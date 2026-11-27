@@ -43,7 +43,7 @@ For changed conclusions, scope, indexes, or pruning, run affected [offline cases
 
 Save document revision/diff, model, input, answer, reading path, and score. Compare versions only with matching models, inputs, permissions, and fresh sessions. Without a baseline, claim no percentage improvement. Offline runs make no external writes; real usage and correction events test continuing value.
 
-Curate in an exclusive worktree from updated `origin/main` and open a docs-only PR. After independent review, merge it with `gh pr merge --admin --squash` and run `cz-maintenance sync`. Agents pick it up on their next read: the control checkout tracks main and every new task worktree starts from it. **Recorded, reviewed, and merged are separate states.** Keep events pending until the merge.
+Curate in an exclusive worktree from updated `origin/main` and open a docs-only PR. Register or claim its maintenance task, run `cz-maintenance review TASK PR` on the open PR, read the full independent review report, and once it produces an exact-head `APPROVE` receipt in `outbox/reviews/` and required CI passes, preview with `cz-maintenance merge TASK PR`, merge via `cz-maintenance merge TASK PR --merge` (never raw `gh pr merge`), and run `cz-maintenance sync curator`. Agents pick it up on their next read: the control checkout tracks main and every new task worktree starts from it. **Recorded, reviewed, and merged are separate states.** Keep events pending until the merge.
 
 Then run `memory resolve ID FILE.json` with the merged main commit:
 

@@ -8,7 +8,8 @@
     "./fsutil": "./src/fsutil.ts"
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit -p tsconfig.srconly.json"
+    "typecheck": "tsgo --noEmit -p tsconfig.srconly.json",
+    "test": "bun test --isolate --timeout 30000"
   },
   "dependencies": {
     "apache-arrow": "21.1.0"

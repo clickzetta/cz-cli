@@ -34,7 +34,9 @@ Trigger: a reviewer delegate has finished, CI is green, and the merge guard acce
 
 On 2026-11-11 the Worker merged PRs 162–165 within minutes of their reviewer notifications arriving, before reading the reports, and saved records saying "APPROVE" ahead of the reports. It recurred in the records for PRs 167, 186 and 187. All reports later proved APPROVE, so nothing bad shipped, but `merge` checks only the task record (`status`, `phase`, `reviewedSha` equal to the head), not that a report was read. Main `cz-test` went red right after (PR 163's stall test), which is when the gap surfaced.
 
-Next time: open the report, check its verdict, reviewed head and conditions, then save `reviewedSha`, then preview and merge. Wait for pending CI in the background instead of repeating the merge preview. Evidence: PRs [162](https://github.com/clickzetta/cz-cli/pull/162)–[165](https://github.com/clickzetta/cz-cli/pull/165); the session transcripts are private. Retire this entry if the merge tool starts checking the report itself.
+Next time: run `cz-maintenance review TASK PR` so the external controller executes an isolated read-only review on the exact remote PR head, writes a structured receipt in `outbox/reviews/`, and gates `cz-maintenance merge` on an `APPROVE` verdict with zero high-severity findings (or, if also running a manual delegate, read its full report before saving `reviewedSha`). Wait for pending CI via Supervisor delivery probes or `cz-maintenance wait` instead of repeating the merge preview.
+
+2026-11-25 update: `cz-maintenance review` and `merge` (`src/review.ts`, `src/merge.ts`) now verify `outbox/reviews/` receipts directly for the final head SHA; keep this note as provenance for why `merge` enforces receipt verification. Evidence: PRs [162](https://github.com/clickzetta/cz-cli/pull/162)–[165](https://github.com/clickzetta/cz-cli/pull/165); the session transcripts are private.
 
 <a id="github-https-间歇失败"></a>
 

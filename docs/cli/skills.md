@@ -1,21 +1,21 @@
-# 内置技能与外部客户端接入
+# 技能加载与外部客户端接入
 
-内置技能供 cz-cli 自身使用；外部 AI 客户端通过 `cz-cli mcp init` 接入。
+仓库已移除历史遗留的 `skills/cz-cli/` 外部客户端技能；`cz-cli agent` 自身的技能加载（含发布期打包的外部仓技能与用户本地安装的技能）与外部 AI 客户端通过 MCP 接入是两条独立的路径：
 
 ## 当前行为
 
-- 构建从仓库 `skills/` 及 `skills/external/` 收集带有 `SKILL.md` 的技能目录，复制到各平台产物的 `bin/skills/`。
-- npm 安装、归档安装与生成的 PowerShell 安装器把随包技能写入 `~/.clickzetta/skills/.builtin/`。安装时重建该目录，避免旧版本技能残留。
-- 安装器不再向 Claude Code、Codex 等外部客户端的技能目录自动安装 cz-cli 技能。它们清理旧的 `cz-cli`、`czagent`、`czcli`、`cz-cli-v2` 目录，并提示使用 MCP 接入。
+- **本地 `cz-cli agent` 技能加载**：运行时扫描 `~/.clickzetta/skill/` 与 `~/.clickzetta/skills/` 下带有 `SKILL.md` 的目录（包括安装器写入的 `.builtin/` 子目录及用户自行安装的技能目录）并交给上游加载。
+- **发布期外部技能同步与 `.builtin/` 重建托管**：仓库源码树内已删除旧的 `skills/cz-cli/`，但发布工作流（`.github/workflows/release-cos.yml`）在构建前会将 `clickzetta/clickzetta-skills` 中匹配的技能（如 `clickzetta-*`、`lakehouse-doc*`）同步至 `skills/external/`，由 `packages/cz-cli/script/build.ts` 收集所有含 `SKILL.md` 的技能目录打入各平台产物的 `bin/skills/`。npm 安装、归档安装与生成的 PowerShell 安装器在安装/升级时会重建 `~/.clickzetta/skills/.builtin/` 并写入随包技能，避免已下线的旧版本技能残留。
+- **外部 AI 客户端通过 MCP 接入**：安装器不再向 Claude Code、Codex、Cursor 等外部客户端的技能目录写入技能，而是在升级时清理旧的 `cz-cli`、`czagent`、`czcli`、`cz-cli-v2` 目录，并引导运行 `cz-cli mcp init` 注册 MCP 服务。
 
 ## 维护约束
 
-- `.builtin/` 属于安装器管理范围，不能把用户自建技能放进该目录；清理外部旧技能时只处理指定名称。
-- 技能随平台产物交付，修改打包或安装布局时同时核对实际安装结果。
-- 产品内置技能与本仓库维护 loop 的 docs、prompt 分开管理。
+- `.builtin/` 属于安装器重建托管范围，不能把用户自建技能放进该目录（用户自建或手动安装的技能应放在 `~/.clickzetta/skills/` 的其他子目录）；清理外部旧技能时只处理指定名称。
+- 修改技能加载、打包或安装清理逻辑时，同时核对产物归档内容与升级后的实际目录状态。
+- 产品侧技能加载与本仓库维护 loop 的 docs、prompt 分开管理。
 
 ## 实现与验证入口
 
-- [构建打包](../../packages/cz-cli/script/build.ts)、[归档安装](../../scripts/setup.sh)、[npm 安装](../../packages/npm/cz-cli/bin/postinstall.js)、[生成的安装器](../../scripts/cos-release.mjs)。
+- [运行时技能发现](../../packages/cz-cli/src/bootstrap/runtime-config.ts)、[构建打包](../../packages/cz-cli/script/build.ts)、[归档安装](../../scripts/setup.sh)、[npm 安装](../../packages/npm/cz-cli/bin/postinstall.js)、[生成的安装器](../../scripts/cos-release.mjs)。
 - [MCP 初始化](../../packages/cz-cli/src/commands/mcp-init.ts)、[MCP 初始化回归](../../packages/cz-cli/test/mcp-init.test.ts)。
-- [安装资产回归](../../packages/cz-cli/test/runtime-assets-installers.test.ts)、[Windows 安装回归](../../packages/cz-cli/test/installer-windows.test.ts)。
+- [安装资产与旧技能清理回归](../../packages/cz-cli/test/runtime-assets-installers.test.ts)、[Windows 安装回归](../../packages/cz-cli/test/installer-windows.test.ts)。

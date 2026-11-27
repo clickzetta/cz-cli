@@ -11,7 +11,7 @@
 - Reconcile existing tasks, use exclusive worktrees, and preserve others' changes. Keep state, cursors, private evidence, and receipts in runtime.
 - Fresh reviewers check the original request and latest decisions before acceptance criteria, final diff, SHA, and actual evidence. Source changes require re-review; record failed and unrun checks.
 - Follow current authorization and runtime permissions. Distinguish local completion, review, merge, and verified release. Do not manufacture work for a loop.
-- Write all authored content in English, including code, comments, replies, documentation, commit messages and PR text. Preserve literal tool arguments and source evidence.
+- Write repository code, comments, maintenance docs, commit messages, PR text, and GitHub issue/PR replies in English; write Feishu group replies in Simplified Chinese. Preserve literal tool arguments, CLI flags, and source evidence.
 
 ## Branch Names
 

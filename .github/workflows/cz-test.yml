@@ -49,6 +49,15 @@ jobs:
         working-directory: packages/cz-cli
         run: bun run typecheck
 
+      - name: Verify upstream patch banners and ledger
+        run: bun scripts/check-upstream-patches.ts
+
+      - name: Typecheck and test clickzetta-sdk
+        working-directory: packages/clickzetta-sdk
+        run: |
+          bun run typecheck
+          bun run test
+
       - name: Verify Action AI review
         working-directory: .github/scripts
         run: |
@@ -98,5 +107,14 @@ jobs:
       # fork, without pulling every upstream package's suite into this workflow.
       - name: Run cz-owned tests inside upstream packages
         run: |
-          (cd packages/core && bun test test/model-selection.test.ts)
-          (cd packages/opencode && bun test test/provider/clickzetta-discovery.test.ts test/provider/clickzetta-context-limit.test.ts)
+          set -euo pipefail
+          for spec in \
+            "packages/core:test/model-selection.test.ts" \
+            "packages/core:test/session-list-subpath.test.ts" \
+            "packages/opencode:test/provider/clickzetta-discovery.test.ts" \
+            "packages/opencode:test/provider/clickzetta-context-limit.test.ts"; do
+            pkg="${spec%%:*}"
+            rel="${spec#*:}"
+            test -f "$pkg/$rel"
+            (cd "$pkg" && bun test "./$rel")
+          done
