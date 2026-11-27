@@ -51,7 +51,7 @@
     "opencode": "workspace:*",
     "openid-client": "6.8.4",
     "semver": "7.7.4",
-    "smol-toml": "1.6.1",
+    "smol-toml": "1.9.0",
     "yargs": "18.0.0",
     "zod": "catalog:"
   },
