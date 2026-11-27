@@ -141,3 +141,43 @@ test("auditUpstreamPatches fails when an INTRUSIVE ledger entry is removed while
     ),
   ).toBe(true)
 })
+
+test("auditUpstreamPatches requires the CI-enforced banner manifest section and rejects undocumented bannered files", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-missing-manifest-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/core/src"), { recursive: true })
+  mkdirSync(path.join(root, "packages/core/test"), { recursive: true })
+
+  // Renamed/removed manifest heading + stripped Verify test banner
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## Renamed manifest heading",
+      "- `packages/core/src/model-selection.ts`",
+      "- `packages/core/test/model-selection.test.ts`",
+      "## INTRUSIVE patches",
+      "### 1. Model selection",
+      "- **File:** `packages/core/src/model-selection.ts`",
+      "- **What/why:** prefer ClickZetta model.",
+      "- **Verify:** `packages/core/test/model-selection.test.ts`",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  writeFileSync(
+    path.join(root, "packages/core/src/model-selection.ts"),
+    [
+      "//======================== cz-cli change ========================",
+      "export const model = 'cz'",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+  writeFileSync(path.join(root, "packages/core/test/model-selection.test.ts"), "export const testOk = true\n")
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(
+    result.errors.some((e) => e.includes("missing required '## Bannered upstream files (CI-enforced)' section")),
+  ).toBe(true)
+})

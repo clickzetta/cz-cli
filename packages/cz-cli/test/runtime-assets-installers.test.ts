@@ -191,5 +191,9 @@ describe("runtime assets reach the installed binary", () => {
     })
     expect(ps1).toContain(".builtin")
     expect(ps1).toContain("cz-cli mcp init")
+
+    const integrationSrc = read("packages/cz-cli/src/commands/integration.ts")
+    expect(integrationSrc).not.toContain("cz-cli ai-guide")
+    expect(integrationSrc.match(/cz-cli task save-content --help/g)?.length ?? 0).toBeGreaterThanOrEqual(6)
   })
 })

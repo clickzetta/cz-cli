@@ -88,14 +88,12 @@ export function diffLineLocations(diff: string): DiffLineMap {
       const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
       if (!file.startsWith("a/")) return
       state.oldFile = file.slice(2)
-      if (!left.has(state.oldFile)) left.set(state.oldFile, new Set())
       return
     }
     if (!state.hunk && line.startsWith("+++ ")) {
       const file = decodeGitPath(line.slice(4).split("\t", 1)[0])
       if (!file.startsWith("b/")) return
       state.newFile = file.slice(2)
-      if (!right.has(state.newFile)) right.set(state.newFile, new Set())
       return
     }
     const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
@@ -106,13 +104,23 @@ export function diffLineLocations(diff: string): DiffLineMap {
       return
     }
     if (!state.hunk) return
+    // GitHub PR diff entries key renamed/modified files by destination path (b/), falling back to a/ only for deleted files.
+    const targetFile = state.newFile || state.oldFile
     if (line.startsWith("+")) {
-      if (state.newFile) right.get(state.newFile)?.add(state.newLine)
+      if (state.newFile) {
+        const set = right.get(state.newFile) ?? new Set<number>()
+        set.add(state.newLine)
+        right.set(state.newFile, set)
+      }
       state.newLine += 1
       return
     }
     if (line.startsWith("-")) {
-      if (state.oldFile) left.get(state.oldFile)?.add(state.oldLine)
+      if (targetFile) {
+        const set = left.get(targetFile) ?? new Set<number>()
+        set.add(state.oldLine)
+        left.set(targetFile, set)
+      }
       state.oldLine += 1
       return
     }
@@ -133,10 +141,25 @@ export function hasReviewablePaths(diff: string): boolean {
   const locations = diffLineLocations(diff)
   locations.right.forEach((_, file) => touched.add(file))
   locations.left.forEach((_, file) => touched.add(file))
+  const headerState = { inHunk: false }
   diff.split("\n").forEach((line) => {
-    if (!line.startsWith("diff --git ")) return
-    const headerPath = parseDiffGitHeaderPath(line.slice("diff --git ".length))
-    if (headerPath) touched.add(headerPath)
+    if (line.startsWith("diff --git ")) {
+      headerState.inHunk = false
+      const headerPath = parseDiffGitHeaderPath(line.slice("diff --git ".length))
+      if (headerPath) touched.add(headerPath)
+      return
+    }
+    if (line.startsWith("@@ ")) {
+      headerState.inHunk = true
+      return
+    }
+    if (headerState.inHunk) return
+    for (const prefix of ["rename from ", "rename to ", "copy from ", "copy to "]) {
+      if (line.startsWith(prefix)) {
+        touched.add(decodeGitPath(line.slice(prefix.length)))
+        return
+      }
+    }
   })
   return [...touched].some((file) => {
     if (file === ".github/codex-review-prompt.md") return true
@@ -275,7 +298,7 @@ export async function runReview() {
     "diff",
     "--no-color",
     "--no-ext-diff",
-    "--no-renames",
+    "--find-renames",
     "--src-prefix=a/",
     "--dst-prefix=b/",
     "--unified=0",
@@ -320,7 +343,7 @@ export async function runReview() {
     "Trusted base context:",
     await Bun.file(path.join(root, ".github/claude-review-context.md")).text(),
     `Read ${path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md")} for the trusted patch ledger.`,
-    "Inspect the diff using git and read full surrounding files; do not execute source.",
+    `Inspect the diff using git diff --find-renames ${base}...${head} and read full surrounding files; do not execute source. For renamed files with edits, use the destination (b/) path for both RIGHT and LEFT inline findings; pure renames have no inline diff hunks, so cover them in summary.`,
   ].join("\n")
   const response = await executeReview({
     binary: required("CODEX_BINARY"),

@@ -307,4 +307,133 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
   const workflow = await Bun.file(new URL("../../workflows/claude-review.yml", import.meta.url)).text()
   expect(workflow).toContain('"AGENTS.md"')
   expect(workflow).toContain('"CLAUDE.md"')
+  expect(workflow).toContain('"package.json"')
+  expect(workflow).toContain('"bun.lock"')
+})
+
+test("rename detection matches GitHub PR diff paths for pure and edited renames", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "review-git-renames-"))
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(["git", ...args], { cwd: directory, stdout: "pipe", stderr: "pipe" })
+    const [out, error, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    expect(error + ` exit=${code}`).toContain("exit=0")
+    return out
+  }
+  try {
+    await run(["init", "-q"])
+    await Bun.write(path.join(directory, "src/pure-old.ts"), "export const a = 1\nexport const b = 2\n")
+    await Bun.write(
+      path.join(directory, "src/edit old.ts"),
+      [
+        "export const line1 = 1",
+        "export const line2 = 2",
+        "export const line3 = 3",
+        "export const line4 = 4",
+        "export const line5 = 5",
+        "",
+      ].join("\n"),
+    )
+    await Bun.write(path.join(directory, "docs/old.md"), "# Doc\n")
+    await run(["add", "."])
+    await run(["-c", "user.name=Fixture", "-c", "user.email=f@example.test", "commit", "-m", "base"])
+
+    // 1. Pure docs-only rename
+    await run(["mv", "docs/old.md", "docs/new.md"])
+    const docsRenameDiff = await run([
+      "diff",
+      "--cached",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+    ])
+    expect(hasReviewablePaths(docsRenameDiff)).toBe(false)
+
+    // 2. Pure code rename + edited code rename
+    await run(["mv", "src/pure-old.ts", "src/pure-new.ts"])
+    await run(["mv", "src/edit old.ts", "src/edit new.ts"])
+    await Bun.write(
+      path.join(directory, "src/edit new.ts"),
+      [
+        "export const line1 = 1",
+        "export const line2 = 200",
+        "export const line3 = 3",
+        "export const line4 = 4",
+        "export const line5 = 5",
+        "",
+      ].join("\n"),
+    )
+    await run(["add", "."])
+    const renameDiff = await run([
+      "diff",
+      "--cached",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+    ])
+
+    expect(hasReviewablePaths(renameDiff)).toBe(true)
+    const locations = diffLineLocations(renameDiff)
+    // Pure rename has zero inline hunks on either side
+    expect(locations.right.has("src/pure-new.ts")).toBe(false)
+    expect(locations.left.has("src/pure-old.ts")).toBe(false)
+    expect(locations.left.has("src/pure-new.ts")).toBe(false)
+
+    // Edited rename exposes BOTH RIGHT and LEFT on destination path ("src/edit new.ts")
+    expect([...(locations.right.get("src/edit new.ts") ?? [])]).toEqual([2])
+    expect([...(locations.left.get("src/edit new.ts") ?? [])]).toEqual([2])
+    expect(locations.left.has("src/edit old.ts")).toBe(false)
+
+    const validated = validateReview(
+      {
+        reviewedSha: "sha-ren",
+        summary: "Reviewed pure and edited renames",
+        findings: [
+          {
+            path: "src/edit new.ts",
+            line: 2,
+            side: "LEFT",
+            severity: "MEDIUM",
+            confidence: "high",
+            body: "Deleted original value",
+          },
+          {
+            path: "src/edit new.ts",
+            line: 2,
+            side: "RIGHT",
+            severity: "HIGH",
+            confidence: "high",
+            body: "Updated value changes range",
+          },
+        ],
+      },
+      "sha-ren",
+      locations,
+    )
+    expect(validated.findings).toHaveLength(2)
+    expect(() =>
+      validateReview(
+        {
+          reviewedSha: "sha-ren",
+          summary: "Old path rejected",
+          findings: [
+            { path: "src/edit old.ts", line: 2, side: "LEFT", severity: "LOW", confidence: "low", body: "stale path" },
+          ],
+        },
+        "sha-ren",
+        locations,
+      ),
+    ).toThrow()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
