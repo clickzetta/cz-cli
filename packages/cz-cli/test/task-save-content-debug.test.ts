@@ -25,6 +25,7 @@ const responses = new Map<string, () => Response>([
   [createPath, () => ok(123)],
   [deletePath, () => ok(null)],
   [detailPath, () => ok({ id: 123, fileType: 4, paramValueList: parameters, scheduleConfig: { retryCount: 3 } })],
+  ["/ide-admin/v1/dataFileConfiguration/getFileConfigurationDetail", () => ok({ etlVcId: 3 })],
   [savePath, () => ok({ message: "Draft saved" })],
 ])
 
@@ -45,7 +46,7 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })
 
-async function runTask(...args: string[]) {
+async function runTask(args: string[], debug = true) {
   requests.length = 0
   saves.length = 0
   const requestFile = join(home, "requests.jsonl")
@@ -57,7 +58,7 @@ async function runTask(...args: string[]) {
     })),
   )))
   const child = Bun.spawn([
-    process.execPath, "--preload", "./test/fixtures/studio-cli-transport.ts", "src/main.ts", "--debug", "task", ...args, "--profile", "test", "--format", "json",
+    process.execPath, "--preload", "./test/fixtures/studio-cli-transport.ts", "src/main.ts", ...(debug ? ["--debug"] : []), "task", ...args, "--profile", "test", "--format", "json",
   ], {
     cwd: join(import.meta.dir, ".."),
     env: { HOME: home, CLICKZETTA_TEST_HOME: home, CLICKZETTA_DISABLE_AUTOUPDATE: "1" },
@@ -78,7 +79,7 @@ async function runTask(...args: string[]) {
 }
 
 function saveWithDebug(command = "save-content") {
-  return runTask(command, "123", "--content", "SELECT 1")
+  return runTask([command, "123", "--content", "SELECT 1"])
 }
 
 test("debug output hides stored parameters while the CLI sends the complete records", async () => {
@@ -133,6 +134,113 @@ test("legacy task save sends the full current parameters", async () => {
   expect(saves[0]).toMatchObject({ onlySaveContent: 1, paramValueList: parameters })
 })
 
+for (const command of ["save-content", "save"]) {
+  test.each([["off", false], ["on", true]] as const)(`task ${command} hides echoed parameters with debug %s`, async (_label, debug) => {
+    const respond = responses.get(savePath)!
+    responses.set(savePath, () => ok({ message: storedValue, paramValueList: parameters, studio_url: storedValue }))
+    try {
+      const result = await runTask([command, "123", "--content", "SELECT 1"], debug)
+      expect(result.code, result.stderr).toBe(0)
+      expect(saves).toHaveLength(1)
+      expect(saves[0]).toMatchObject({ onlySaveContent: 1, paramValueList: parameters })
+      expect(result.stdout + result.stderr).not.toContain(storedValue)
+      expect(JSON.parse(result.stdout)).toEqual({
+        data: { message: "Draft saved", studio_url: "https://inst.studio.test/ide?workspace_name=ws&fileId=123" },
+        ai_message: expect.any(String),
+      })
+    } finally {
+      responses.set(savePath, respond)
+    }
+  })
+}
+
+for (const name of ["", " \t "]) {
+  for (const args of [
+    ["save-content", "123", "--content", "SELECT 1", "--params", JSON.stringify({ [name]: storedValue })],
+    ["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1", "--params", JSON.stringify({ [name]: storedValue })],
+    ["save-config", "123", "--param", `${name}=${storedValue}`],
+  ]) {
+    test(`task ${args[0]} rejects parameter name ${JSON.stringify(name)} before writing`, async () => {
+      const result = await runTask(args)
+      expect({
+        succeeded: result.code === 0,
+        error: JSON.parse(result.stdout).error?.code,
+        writes: requests.filter((path) => path === createPath || path === savePath),
+        exposed: (result.stdout + result.stderr).includes(storedValue),
+      }).toEqual({ succeeded: false, error: "INVALID_ARGUMENTS", writes: [], exposed: false })
+    })
+  }
+}
+
+test("legacy task save can write a Studio-only draft while save-content rejects it", async () => {
+  const respond = responses.get(detailPath)!
+  responses.set(detailPath, () => ok({ id: 123, fileType: 500, paramValueList: parameters }))
+  try {
+    const publicSave = await saveWithDebug()
+    expect(saves).toHaveLength(0)
+    expect(JSON.parse(publicSave.stdout).error.code).toBe("UI_ONLY_TASK")
+    const legacySave = await saveWithDebug("save")
+    expect(legacySave.code, legacySave.stdout + legacySave.stderr).toBe(0)
+    expect(saves).toHaveLength(1)
+    expect(saves[0]).toMatchObject({ onlySaveContent: 1, paramValueList: parameters })
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
+test("legacy task save requires readable draft parameters even without a task type", async () => {
+  const respond = responses.get(detailPath)!
+  try {
+    responses.set(detailPath, () => ok({ id: 123, paramValueList: parameters }))
+    const result = await saveWithDebug("save")
+    expect(result.code, result.stdout + result.stderr).toBe(0)
+    expect(saves[0]).toMatchObject({ paramValueList: parameters })
+    for (const detail of [{}, { id: 123, paramValueList: storedValue }]) {
+      responses.set(detailPath, () => ok(detail))
+      const invalid = await saveWithDebug("save")
+      expect(invalid.code).not.toBe(0)
+      expect(JSON.parse(invalid.stdout).error.code).toBe("INVALID_RESPONSE")
+      expect(invalid.stdout + invalid.stderr).not.toContain(storedValue)
+      expect(saves).toHaveLength(0)
+    }
+  } finally {
+    responses.set(detailPath, respond)
+  }
+})
+
+for (const metadata of [{ encrypt: true, ref: 0 }, { encrypt: false, ref: 3 }]) {
+  test(`save-config rejects protected parameter overrides before either write (${JSON.stringify(metadata)})`, async () => {
+    const respond = responses.get(detailPath)!
+    responses.set(detailPath, () => ok({ id: 123, fileType: 4, paramValueList: [{ ...parameters[0], ...metadata }, ...parameters.slice(1)] }))
+    try {
+      const result = await runTask(["save-config", "123", "--retry-count", "2", "--param", "example=updated", `secret_ref=${storedValue}`])
+      expect({
+        succeeded: result.code === 0,
+        error: JSON.parse(result.stdout).error?.code,
+        writes: saves.length,
+        exposed: (result.stdout + result.stderr).includes(storedValue),
+      }).toEqual({ succeeded: false, error: "INVALID_ARGUMENTS", writes: 0, exposed: false })
+    } finally {
+      responses.set(detailPath, respond)
+    }
+  })
+}
+
+test("save-config preserves unrelated parameters and metadata in both writes", async () => {
+  const result = await runTask(["save-config", "123", "--param", "example=$[yyyyMM]", "owner=synthetic-owner"])
+  expect(result.code, result.stdout + result.stderr).toBe(0)
+  const merged = [
+    parameters[0],
+    parameters[1],
+    { ...parameters[2], paramValue: "$[yyyyMM]", paramType: "system" },
+    expect.objectContaining({ paramKey: "owner", paramValue: "synthetic-owner", paramType: "manual" }),
+  ]
+  expect(saves).toEqual([
+    expect.objectContaining({ onlySaveContent: 0, paramValueList: merged }),
+    expect.objectContaining({ onlySaveContent: 1, paramValueList: merged }),
+  ])
+})
+
 for (const fileType of [0, "0", "", " ", "invalid", null]) {
   test(`task save-content validates draft file type ${JSON.stringify(fileType)}`, async () => {
     const respond = responses.get(detailPath)!
@@ -155,8 +263,8 @@ for (const fileType of [0, "0", "", " ", "invalid", null]) {
 }
 
 test("create-setup rejects malformed params before creating and keeps values out of diagnostics", async () => {
-  const result = await runTask("create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
-    "--params", JSON.stringify({ secret: storedValue, bad: null }))
+  const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
+    "--params", JSON.stringify({ secret: storedValue, bad: null })])
   expect({
     code: result.code,
     error: JSON.parse(result.stdout).error.code,
@@ -166,8 +274,8 @@ test("create-setup rejects malformed params before creating and keeps values out
 })
 
 test("create-setup saves valid params for script tasks", async () => {
-  const result = await runTask("create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
-    "--params", JSON.stringify({ date: "bizdate" }))
+  const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
+    "--params", JSON.stringify({ date: "bizdate" })])
   expect(result.code, result.stdout + result.stderr).toBe(0)
   expect(requests).toContain(createPath)
   expect(saves).toHaveLength(1)
@@ -178,8 +286,8 @@ test("create-setup rolls back after a failed save with valid params", async () =
   const respond = responses.get(savePath)!
   responses.set(savePath, () => Response.json({ code: 4001, message: storedValue }))
   try {
-    const result = await runTask("create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
-      "--params", JSON.stringify({ date: "bizdate" }))
+    const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "SQL", "--content", "SELECT 1",
+      "--params", JSON.stringify({ date: "bizdate" })])
     expect(result.code).not.toBe(0)
     expect(requests.slice(-3)).toEqual([createPath, savePath, deletePath])
     expect(result.stdout + result.stderr).not.toContain(storedValue)
@@ -189,8 +297,8 @@ test("create-setup rolls back after a failed save with valid params", async () =
 })
 
 test("create-setup keeps UI-only draft creation independent of script params", async () => {
-  const result = await runTask("create-setup", "sample", "--folder", "10", "--type", "INTEGRATION", "--content", "SELECT 1",
-    "--params", JSON.stringify({ invalid: null }))
+  const result = await runTask(["create-setup", "sample", "--folder", "10", "--type", "INTEGRATION", "--content", "SELECT 1",
+    "--params", JSON.stringify({ invalid: null })])
   expect(result.code, result.stdout + result.stderr).toBe(0)
   expect(requests).toContain(createPath)
   expect(saves).toHaveLength(0)

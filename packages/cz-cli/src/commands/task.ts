@@ -197,7 +197,7 @@ export function parseParamValueList(raw: string) {
   const parsed = tryJson() ?? tryRelaxed()
   if (!isRecord(parsed)) return null
   const entries = Object.entries(parsed)
-  if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) return null
+  if (!entries.every((entry): entry is [string, string] => entry[0].trim().length > 0 && typeof entry[1] === "string")) return null
   return entries.map(([k, v], i) => ({
     encrypt: false,
     id: String(Date.now() + i),
@@ -212,10 +212,14 @@ export function parseParamValueList(raw: string) {
 export function mergeTaskParamValueList(
   existingParams: Record<string, unknown>[],
   overrideMap: Record<string, string>,
+  format?: string,
 ): unknown[] {
   const updated = existingParams.map((param) => {
     const key = String(param.paramKey ?? param.paramName ?? "")
     if (!Object.hasOwn(overrideMap, key)) return param
+    if ((param.encrypt != null && param.encrypt !== false) || (param.ref != null && param.ref !== 0)) {
+      handledError("INVALID_ARGUMENTS", "Cannot override encrypted or referenced parameters. Use Studio to change those values.", { format })
+    }
     const value = overrideMap[key]!
     return { ...param, paramValue: value, paramType: inferParamType(value) }
   })
@@ -379,25 +383,32 @@ function normalizeScheduleClock(value: string, label: string): string {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`
 }
 
-async function readDraftParamsForSave(sc: StudioConfig, fileId: number, format: string | undefined) {
+async function readDraftParamsForSave(
+  sc: StudioConfig,
+  fileId: number,
+  format: string | undefined,
+  options?: { checkFileType: boolean },
+) {
   const detail = (await getTaskDetail(sc, fileId)).data
-  if (!isRecord(detail)) {
+  if (!isRecord(detail) || Object.keys(detail).length === 0) {
     handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
   }
   const taskDetail = detail.taskDetail ?? detail
   if (!isRecord(taskDetail)) {
     handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
   }
-  const rawFileType = taskDetail.fileType ?? taskDetail.file_type ?? detail.fileType ?? detail.file_type
-  const fileType = typeof rawFileType === "string" && /^\d+$/.test(rawFileType.trim()) ? Number(rawFileType) : rawFileType
-  if (typeof fileType !== "number" || !Number.isSafeInteger(fileType) || fileType < 0) {
-    handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
-  }
-  if (UI_ONLY_FILE_TYPES.has(fileType)) {
-    handledError("UI_ONLY_TASK", `This task type requires configuration via Studio UI.`, {
-      format,
-      aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
-    })
+  if (options?.checkFileType) {
+    const rawFileType = taskDetail.fileType ?? taskDetail.file_type ?? detail.fileType ?? detail.file_type
+    const fileType = typeof rawFileType === "string" && /^\d+$/.test(rawFileType.trim()) ? Number(rawFileType) : rawFileType
+    if (typeof fileType !== "number" || !Number.isSafeInteger(fileType) || fileType < 0) {
+      handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
+    }
+    if (UI_ONLY_FILE_TYPES.has(fileType)) {
+      handledError("UI_ONLY_TASK", "This task type requires configuration via Studio UI.", {
+        format,
+        aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
+      })
+    }
   }
   const existing = taskDetail.paramValueList ?? detail.paramValueList ?? []
   if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
@@ -408,6 +419,10 @@ async function readDraftParamsForSave(sc: StudioConfig, fileId: number, format: 
     handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
   }
   return existing
+}
+
+function reportDraftSaved(sc: StudioConfig, fileId: number, format: string | undefined) {
+  success({ message: "Draft saved", studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
 }
 
 async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
@@ -2026,7 +2041,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const rawParams = !uiOnly && (argv.content || argv.file) ? argv.params : undefined
             const paramValueList = rawParams === undefined ? undefined : parseParamValueList(rawParams as string)
             if (paramValueList === null) {
-              error("INVALID_ARGUMENTS", "--params must be an object of string values.", { format, exitCode: 2 }); return
+              error("INVALID_ARGUMENTS", "--params must be an object with non-blank names and string values.", { format, exitCode: 2 })
+              return
             }
             const sc = await ctx(argv)
             const folderRaw = (argv.folder as string | undefined)?.trim()
@@ -2393,23 +2409,18 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               error("INVALID_ARGUMENTS", "Exactly one of --content or --file is required.", { format, exitCode: 2 })
               return
             }
+            const overrides = argv.params === undefined ? undefined : parseParamValueList(argv.params as string)
+            if (overrides === null) {
+              error("INVALID_ARGUMENTS", "--params must be an object with non-blank names and string values. Draft was not saved.", { format })
+              return
+            }
             const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            const existing = await readDraftParamsForSave(sc, fileId, format)
-            let paramValueList: unknown[] = argv.clearParams ? [] : existing
-            if (argv.params !== undefined) {
-              const result = parseParamValueList(argv.params as string)
-              if (!result) {
-                error("INVALID_ARGUMENTS", "--params must be an object of string values. Draft was not saved.", { format }); return
-              }
-              const overrides = Object.fromEntries(result.map((param) => [param.paramKey, param.paramValue]))
-              if (existing.some((param) => Object.hasOwn(overrides, String(param.paramKey ?? param.paramName ?? "")) &&
-                ((param.encrypt != null && param.encrypt !== false) || (param.ref != null && param.ref !== 0)))) {
-                handledError("INVALID_ARGUMENTS", "--params cannot override encrypted or referenced parameters. Use Studio to change those values; draft was not saved.", { format })
-              }
-              paramValueList = mergeTaskParamValueList(existing, overrides)
-            }
+            const existing = await readDraftParamsForSave(sc, fileId, format, { checkFileType: true })
+            const paramValueList = overrides
+              ? mergeTaskParamValueList(existing, Object.fromEntries(overrides.map((param) => [param.paramKey, param.paramValue])), format)
+              : argv.clearParams ? [] : existing
             // Build adhocConfigs for JDBC datasource binding
             let adhocConfigs: string | undefined
             if (argv.datasource) {
@@ -2422,7 +2433,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 schema: "public",
               })
             }
-            const resp = await saveTaskContent(sc, {
+            await saveTaskContent(sc, {
               dataFileId: fileId,
               dataFileContent: text,
               projectId: sc.projectId,
@@ -2433,7 +2444,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               ...(adhocConfigs && { adhocConfigs }),
             })
             logOperation("task save-content", { ok: true })
-            success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
+            reportDraftSaved(sc, fileId, format)
           } catch (err) {
             reportTaskError(err, format)
           }
@@ -2865,9 +2876,12 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
                 const overrideMap: Record<string, string> = {}
                 for (const p of paramOverrides) {
                   const eq = p.indexOf("=")
-                  if (eq > 0) overrideMap[p.slice(0, eq)] = p.slice(eq + 1)
+                  if (eq < 0) continue
+                  const key = p.slice(0, eq)
+                  if (!key.trim()) handledError("INVALID_ARGUMENTS", "--param requires a non-blank parameter name.", { format })
+                  overrideMap[key] = p.slice(eq + 1)
                 }
-                paramValueList = mergeTaskParamValueList(existingParams, overrideMap)
+                paramValueList = mergeTaskParamValueList(existingParams, overrideMap, format)
               } else if (existingParams.length > 0) {
                 paramValueList = existingParams
               }
@@ -4607,7 +4621,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const text = (argv.content ?? readFileSync(argv.file as string, "utf-8")) as string
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, String(argv.task), format)
-            const resp = await saveTaskContent(sc, {
+            await saveTaskContent(sc, {
               dataFileId: fileId,
               dataFileContent: text,
               projectId: sc.projectId,
@@ -4617,7 +4631,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               paramValueList: await readDraftParamsForSave(sc, fileId, format),
             })
             logOperation("task save (alias)", { ok: true })
-            success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })
+            reportDraftSaved(sc, fileId, format)
           } catch (err) {
             reportTaskError(err, format)
           }
