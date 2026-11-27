@@ -301,12 +301,16 @@ test("root Markdown with spaces skips review while AGENTS.md and CLAUDE.md trigg
 
   const agentsDiff = "diff --git a/AGENTS.md b/AGENTS.md\n--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-old\n+new\n"
   const claudeDiff = "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n"
+  const contextDiff =
+    "diff --git a/.github/claude-review-context.md b/.github/claude-review-context.md\n--- a/.github/claude-review-context.md\n+++ b/.github/claude-review-context.md\n@@ -1 +1 @@\n-old\n+new\n"
   expect(hasReviewablePaths(agentsDiff)).toBe(true)
   expect(hasReviewablePaths(claudeDiff)).toBe(true)
+  expect(hasReviewablePaths(contextDiff)).toBe(true)
 
   const workflow = await Bun.file(new URL("../../workflows/claude-review.yml", import.meta.url)).text()
   expect(workflow).toContain('"AGENTS.md"')
   expect(workflow).toContain('"CLAUDE.md"')
+  expect(workflow).toContain('".github/claude-review-context.md"')
   expect(workflow).toContain('"package.json"')
   expect(workflow).toContain('"bun.lock"')
 })

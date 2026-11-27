@@ -93,7 +93,7 @@ test("auditUpstreamPatches catches missing banners on explicit Bannered upstream
     [
       "# Ledger",
       "## Bannered upstream files (CI-enforced)",
-      "- `packages/core/test/model-selection.test.ts`",
+      "- `packages/core/test/model-selection.test.ts` (1 banner)",
       "## INTRUSIVE patches",
       "### 1. Model selection",
       "- **Verify:** `packages/core/test/model-selection.test.ts`",
@@ -119,7 +119,7 @@ test("auditUpstreamPatches fails when an INTRUSIVE ledger entry is removed while
     [
       "# Ledger",
       "## Bannered upstream files (CI-enforced)",
-      "- `packages/core/src/session.ts`",
+      "- `packages/core/src/session.ts` (1 banner)",
       "## INTRUSIVE patches",
       "## HOOK-based customizations",
     ].join("\n"),
@@ -179,5 +179,46 @@ test("auditUpstreamPatches requires the CI-enforced banner manifest section and 
   expect(result.ok).toBe(false)
   expect(
     result.errors.some((e) => e.includes("missing required '## Bannered upstream files (CI-enforced)' section")),
+  ).toBe(true)
+})
+
+test("auditUpstreamPatches catches partial banner removal in multi-banner files such as provider.ts", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cz-patch-multi-banner-"))
+  tempDirs.push(root)
+  mkdirSync(path.join(root, "packages/cz-cli"), { recursive: true })
+  mkdirSync(path.join(root, "packages/opencode/src/provider"), { recursive: true })
+
+  writeFileSync(
+    path.join(root, "packages/cz-cli/UPSTREAM-PATCHES.md"),
+    [
+      "# Ledger",
+      "## Bannered upstream files (CI-enforced)",
+      "- `packages/opencode/src/provider/provider.ts` (2 banners)",
+      "## INTRUSIVE patches",
+      "### 7. Provider model discovery",
+      "- **File:** `packages/opencode/src/provider/provider.ts`",
+      "- **What/why:** two required blocks (helper + discovery call site).",
+      "## HOOK-based customizations",
+    ].join("\n"),
+  )
+  // Only 1 banner block remains after an accidental merge drop of the second block
+  writeFileSync(
+    path.join(root, "packages/opencode/src/provider/provider.ts"),
+    [
+      "//======================== cz-cli change ========================",
+      "function helperStillHere() {}",
+      "//====================== end cz-cli change ======================",
+    ].join("\n"),
+  )
+
+  const result = auditUpstreamPatches(root)
+  expect(result.ok).toBe(false)
+  expect(
+    result.errors.some(
+      (e) =>
+        e.includes("packages/opencode/src/provider/provider.ts") &&
+        e.includes("expected 2 cz-cli change banner block(s)") &&
+        e.includes("found 1"),
+    ),
   ).toBe(true)
 })

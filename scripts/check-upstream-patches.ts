@@ -45,7 +45,7 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
 
   const documentedBannerFiles = new Set<string>()
   const requiredIntrusiveFiles = new Set<string>()
-  const manifestSet = new Set<string>()
+  const manifestExpectedCounts = new Map<string, number>()
 
   const explicitManifestMatch = ledgerText.match(
     /## Bannered upstream files \(CI-enforced\)([\s\S]*?)(?=\n## |\n# |$)/,
@@ -56,14 +56,27 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
     )
   }
   if (explicitManifestMatch) {
-    const manifestFiles = extractUpstreamPaths(explicitManifestMatch[1] ?? "")
-    if (manifestFiles.length === 0) {
+    const manifestRows = [
+      ...(explicitManifestMatch[1] ?? "").matchAll(
+        /`(packages\/(?:core|opencode|tui|schema)\/[^`\s]+\.(?:ts|tsx|js|mjs))`(?:\s*\((\d+)\s+banners?\))?/g,
+      ),
+    ]
+    if (manifestRows.length === 0) {
       errors.push(
         "packages/cz-cli/UPSTREAM-PATCHES.md: '## Bannered upstream files (CI-enforced)' section lists no upstream files",
       )
     }
-    manifestFiles.forEach((relPath) => {
-      manifestSet.add(relPath)
+    manifestRows.forEach((match) => {
+      const relPath = match[1]!
+      const rawCount = match[2]
+      const expectedCount = rawCount ? Number(rawCount) : 0
+      if (!Number.isSafeInteger(expectedCount) || expectedCount <= 0) {
+        errors.push(
+          `${relPath}: '## Bannered upstream files (CI-enforced)' entry must declare an explicit '(N banner)' or '(N banners)' count`,
+        )
+        return
+      }
+      manifestExpectedCounts.set(relPath, expectedCount)
       if (!existsSync(path.join(repoRoot, relPath))) {
         errors.push(`${relPath}: listed in Bannered upstream files manifest in UPSTREAM-PATCHES.md but file is missing`)
         return
@@ -100,6 +113,8 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   })
 
   const bannerFiles: string[] = []
+
+  const actualBannerCounts = new Map<string, number>()
 
   UPSTREAM_PACKAGES.forEach((pkgRel) => {
     const pkgDir = path.join(repoRoot, pkgRel)
@@ -160,7 +175,8 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
       }
       if (state.bannerCount > 0) {
         bannerFiles.push(relFile)
-        if (!manifestSet.has(relFile)) {
+        actualBannerCounts.set(relFile, state.bannerCount)
+        if (!manifestExpectedCounts.has(relFile)) {
           errors.push(
             `${relFile}: contains cz-cli change banner(s) but is missing from '## Bannered upstream files (CI-enforced)' in UPSTREAM-PATCHES.md`,
           )
@@ -178,6 +194,14 @@ export function auditUpstreamPatches(repoRoot: string): PatchAuditResult {
   requiredIntrusiveFiles.forEach((relPath) => {
     if (!bannerSet.has(relPath)) {
       errors.push(`${relPath}: listed as INTRUSIVE in UPSTREAM-PATCHES.md but has no cz-cli change banner`)
+    }
+  })
+  manifestExpectedCounts.forEach((expectedCount, relPath) => {
+    const actualCount = actualBannerCounts.get(relPath) ?? 0
+    if (actualCount !== expectedCount) {
+      errors.push(
+        `${relPath}: expected ${expectedCount} cz-cli change banner block(s) per UPSTREAM-PATCHES.md manifest, found ${actualCount}`,
+      )
     }
   })
 

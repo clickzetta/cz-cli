@@ -30,6 +30,7 @@ on:
       - ".github/actions/**"
       - ".github/workflows/**"
       - ".github/codex-review-prompt.md"
+      - ".github/claude-review-context.md"
       - "AGENTS.md"
       - "CLAUDE.md"
       - "package.json"

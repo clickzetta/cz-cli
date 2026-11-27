@@ -39,25 +39,25 @@ rg -n "cz-cli change" packages/core packages/opencode packages/tui packages/sche
 
 ## Bannered upstream files (CI-enforced)
 
-`scripts/check-upstream-patches.ts` verifies that every file listed below exists and retains balanced `cz-cli change` banners (including banner-carrying regression tests listed under `Verify`):
+`scripts/check-upstream-patches.ts` verifies that every file listed below exists and retains the exact expected count of balanced `cz-cli change` banner blocks (including banner-carrying regression tests listed under `Verify`):
 
-- `packages/core/src/flag/flag.ts`
-- `packages/core/src/global.ts`
-- `packages/core/src/model-selection.ts`
-- `packages/core/src/session.ts`
-- `packages/core/test/global.test.ts`
-- `packages/core/test/model-selection.test.ts`
-- `packages/opencode/src/config/paths.ts`
-- `packages/opencode/src/provider/provider.ts`
-- `packages/opencode/src/server/routes/instance/httpapi/handlers/instance.ts`
-- `packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts`
-- `packages/opencode/src/session/processor.ts`
-- `packages/schema/src/session-v1.ts`
-- `packages/tui/src/component/prompt/index.tsx`
-- `packages/tui/src/context/local.tsx`
-- `packages/tui/src/util/presentation.ts`
-- `packages/tui/test/app-lifecycle.test.tsx`
-- `packages/tui/test/util/presentation.test.ts`
+- `packages/core/src/flag/flag.ts` (1 banner)
+- `packages/core/src/global.ts` (1 banner)
+- `packages/core/src/model-selection.ts` (1 banner)
+- `packages/core/src/session.ts` (1 banner)
+- `packages/core/test/global.test.ts` (1 banner)
+- `packages/core/test/model-selection.test.ts` (1 banner)
+- `packages/opencode/src/config/paths.ts` (1 banner)
+- `packages/opencode/src/provider/provider.ts` (2 banners)
+- `packages/opencode/src/server/routes/instance/httpapi/handlers/instance.ts` (1 banner)
+- `packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts` (2 banners)
+- `packages/opencode/src/session/processor.ts` (1 banner)
+- `packages/schema/src/session-v1.ts` (1 banner)
+- `packages/tui/src/component/prompt/index.tsx` (3 banners)
+- `packages/tui/src/context/local.tsx` (2 banners)
+- `packages/tui/src/util/presentation.ts` (2 banners)
+- `packages/tui/test/app-lifecycle.test.tsx` (1 banner)
+- `packages/tui/test/util/presentation.test.ts` (1 banner)
 
 ---
 
