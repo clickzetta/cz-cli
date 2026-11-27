@@ -379,6 +379,37 @@ function normalizeScheduleClock(value: string, label: string): string {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`
 }
 
+async function readDraftParamsForSave(sc: StudioConfig, fileId: number, format: string | undefined) {
+  const detail = (await getTaskDetail(sc, fileId)).data
+  if (!isRecord(detail)) {
+    handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+  }
+  const taskDetail = detail.taskDetail ?? detail
+  if (!isRecord(taskDetail)) {
+    handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+  }
+  const rawFileType = taskDetail.fileType ?? taskDetail.file_type ?? detail.fileType ?? detail.file_type
+  const fileType = typeof rawFileType === "string" && /^\d+$/.test(rawFileType.trim()) ? Number(rawFileType) : rawFileType
+  if (typeof fileType !== "number" || !Number.isSafeInteger(fileType) || fileType < 0) {
+    handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
+  }
+  if (UI_ONLY_FILE_TYPES.has(fileType)) {
+    handledError("UI_ONLY_TASK", `This task type requires configuration via Studio UI.`, {
+      format,
+      aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
+    })
+  }
+  const existing = taskDetail.paramValueList ?? detail.paramValueList ?? []
+  if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
+    if (!isRecord(param)) return false
+    const key = param.paramKey ?? param.paramName
+    return typeof key === "string" && key.length > 0
+  })) {
+    handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
+  }
+  return existing
+}
+
 async function ctx(argv: Record<string, unknown>): Promise<StudioConfig> {
   return getStudioContext(argv)
 }
@@ -1990,6 +2021,13 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             if (!argv.content && !argv.file && !argv.cron) {
               process.stderr.write("Warning: no --content/--file or --cron provided. Task will be created as an empty draft.\n")
             }
+            const parsedFileType = parseTaskType(argv.type as string)
+            const uiOnly = UI_ONLY_FILE_TYPES.has(parsedFileType)
+            const rawParams = !uiOnly && (argv.content || argv.file) ? argv.params : undefined
+            const paramValueList = rawParams === undefined ? undefined : parseParamValueList(rawParams as string)
+            if (paramValueList === null) {
+              error("INVALID_ARGUMENTS", "--params must be an object of string values.", { format, exitCode: 2 }); return
+            }
             const sc = await ctx(argv)
             const folderRaw = (argv.folder as string | undefined)?.trim()
             if (!folderRaw) {
@@ -2011,9 +2049,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             }
 
             // Step 1: create
-            const parsedFileType = parseTaskType(argv.type as string)
             // UI_ONLY types: content must be configured in Studio UI
-            if (UI_ONLY_FILE_TYPES.has(parsedFileType)) {
+            if (uiOnly) {
               const createResp = await createTask(sc, {
                 fileType: String(parsedFileType),
                 createdBy: String(sc.userId),
@@ -2052,14 +2089,8 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             // Steps 2 & 3 with rollback on failure
             try {
               // Step 2: save content (optional)
-              let paramValueList: unknown[] | undefined
               if (argv.content || argv.file) {
                 const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
-                if (argv.params) {
-                  const result = parseParamValueList(argv.params as string)
-                  if (!result) { error("INVALID_ARGUMENTS", `--params is not valid: ${argv.params}`, { format }); return }
-                  paramValueList = result
-                }
                 let casAdhocConfigs: string | undefined
                 if (argv.datasource) {
                   const ds = await resolveDatasource(sc, String(argv.datasource))
@@ -2365,33 +2396,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
             const text = argv.content ?? readFileSync(argv.file as string, "utf-8")
             const sc = await ctx(argv)
             const fileId = await resolveTaskId(sc, argv.task as string, format)
-            const detail = (await getTaskDetail(sc, fileId)).data
-            if (!isRecord(detail)) {
-              handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
-            }
-            const taskDetail = detail.taskDetail ?? detail
-            if (!isRecord(taskDetail)) {
-              handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
-            }
-            const rawFileType = taskDetail.fileType ?? taskDetail.file_type ?? detail.fileType ?? detail.file_type
-            const fileType = typeof rawFileType === "string" || typeof rawFileType === "number" ? Number(rawFileType) : NaN
-            if (!Number.isInteger(fileType) || fileType <= 0) {
-              handledError("INVALID_RESPONSE", "Cannot read current task type; draft was not saved.", { format })
-            }
-            if (UI_ONLY_FILE_TYPES.has(fileType)) {
-              error("UI_ONLY_TASK", `This task type requires configuration via Studio UI.`, {
-                format,
-                aiMessage: `Open Studio to configure: ${studioUrl(sc, fileId)}`,
-              }); return
-            }
-            const existing = taskDetail.paramValueList ?? detail.paramValueList ?? []
-            if (!Array.isArray(existing) || !existing.every((param): param is Record<string, unknown> => {
-              if (!isRecord(param)) return false
-              const key = param.paramKey ?? param.paramName
-              return typeof key === "string" && key.length > 0
-            })) {
-              handledError("INVALID_RESPONSE", "Cannot read current task parameters; draft was not saved.", { format })
-            }
+            const existing = await readDraftParamsForSave(sc, fileId, format)
             let paramValueList: unknown[] = argv.clearParams ? [] : existing
             if (argv.params !== undefined) {
               const result = parseParamValueList(argv.params as string)
@@ -4609,6 +4614,7 @@ export function registerTaskCommand(cli: Argv<GlobalArgs>): void {
               updateBy: String(sc.userId),
               instanceName: sc.instanceName,
               replaceEscapedChars: false,
+              paramValueList: await readDraftParamsForSave(sc, fileId, format),
             })
             logOperation("task save (alias)", { ok: true })
             success({ ...resp.data as object, studio_url: studioUrl(sc, fileId) }, { format, aiMessage: t("task_save_online_reminder", fileId) })

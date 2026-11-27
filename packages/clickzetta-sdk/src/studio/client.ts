@@ -2,6 +2,10 @@ import { request, type ClientOptions } from "../client.js"
 import { ClickZettaApiError } from "../types/api.js"
 import type { StudioConfig } from "../types/index.js"
 
+const SAVE_FILE_CONFIGURATION = "/ide-admin/v1/dataFileConfiguration/saveDataFileConfiguration"
+const FILE_DETAIL = "/ide-admin/v1/dataFile/getDetail"
+const PARAMETER_FIELDS = new Set(["paramValueList", "inputParamValueList", "outputParamValueList"])
+
 function debugString(value: unknown): string {
   const text = JSON.stringify(value)
   return text.length > 2000 ? `${text.slice(0, 2000)}...<truncated>` : text
@@ -14,9 +18,12 @@ export async function studioRequest<T>(
   extraHeaders?: Record<string, string>,
   method: string = "POST",
 ) {
+  // Draft reads and saves can return parameter values even in failure responses.
+  const sensitiveResponse = path === FILE_DETAIL || path === SAVE_FILE_CONFIGURATION
   const opts: ClientOptions = {
     baseUrl: config.baseUrl,
     tokens: config.tokens,
+    omitResponseBodyInErrors: sensitiveResponse,
     customHeaders: {
       instanceName: config.instanceName,
       instanceid: String(config.instanceId),
@@ -38,17 +45,23 @@ export async function studioRequest<T>(
       env: customHeaders.env,
       ...extraHeaders,
     }
-    process.stderr.write(`[debug] studioRequest: ${method} ${config.baseUrl}${path} body=${debugString(body)} headers=${debugString(debugHeaders)}\n`)
+    const debugBody = path === SAVE_FILE_CONFIGURATION && body && typeof body === "object"
+      ? Object.fromEntries(Object.entries(body).map(([key, value]) => [key, PARAMETER_FIELDS.has(key) ? "[redacted]" : value]))
+      : body
+    process.stderr.write(`[debug] studioRequest: ${method} ${config.baseUrl}${path} body=${debugString(debugBody)} headers=${debugString(debugHeaders)}\n`)
   }
   const resp = await request<T>(opts, path, body, method)
+  const code = sensitiveResponse ? resp?.code : resp.code
+  const diagnosticCode = sensitiveResponse && !(typeof code === "number" || (typeof code === "string" && /^-?\d+$/.test(code)))
+    ? "INVALID_RESPONSE"
+    : String(code)
   if (config.debug) {
-    process.stderr.write(`[debug] studioRequest: ${path} code=${String(resp.code)}\n`)
+    process.stderr.write(`[debug] studioRequest: ${path} code=${diagnosticCode}\n`)
   }
-  const code = resp.code
   if (code !== 0 && code !== "0" && code !== "200" && code !== 200) {
     throw new ClickZettaApiError(
-      String(code),
-      resp.message ?? `Studio API error (code=${code})`,
+      diagnosticCode,
+      (sensitiveResponse ? undefined : resp.message) ?? `Studio API error (code=${diagnosticCode})`,
     )
   }
   return resp
