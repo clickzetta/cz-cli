@@ -610,7 +610,7 @@ function reportJoinApply(response: unknown, requestedCount: number, format: stri
     ? response as Record<string, unknown>
     : {}
   const summary = { ...data, requestedCount }
-  // Older servers do not return per-item results. Do not invent applied counts.
+  // Responses without per-item results cannot establish applied counts.
   if (data.results === undefined) {
     success({ ...summary, status: "unverified" }, {
       format, timeMs,
@@ -625,7 +625,7 @@ function reportJoinApply(response: unknown, requestedCount: number, format: stri
       const item = result as Record<string, unknown>
       return typeof item.index === "number" && Number.isInteger(item.index)
         && item.index >= 0 && item.index < requestedCount
-        && ["applied", "already_exists", "rejected"].includes(String(item.status))
+        && typeof item.status === "string" && ["applied", "already_exists", "rejected"].includes(item.status)
     })
     && new Set(results.map((item) => item.index)).size === requestedCount
   if (!valid) {
@@ -645,7 +645,7 @@ function reportJoinApply(response: unknown, requestedCount: number, format: stri
     return
   }
   if (rejectedCount > 0) {
-    error("JOIN_APPLY_REJECTED", `${rejectedCount} of ${requestedCount} joins rejected; ${appliedCount} applied, ${alreadyExistsCount} already existed. See data.results for indexes and reasons. Successful joins are not rolled back.`, {
+    error("JOIN_APPLY_REJECTED", `${rejectedCount} of ${requestedCount} joins rejected; ${appliedCount} applied, ${alreadyExistsCount} already existed. See data.results for indexes and reasons. The CLI does not send a rollback request.`, {
       format, extra: { data: { ...counts, status: "partial_failure" }, time_ms: timeMs },
     })
     return
@@ -2848,6 +2848,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   y.option("join", {
                     type: "string",
                     array: true,
+                    nargs: 1,
                     demandOption: true,
                     describe:
                       "Join format: ID:TABLE.COLUMN=JOIN_ID:JOIN_TABLE.JOIN_COLUMN@RELATION. Read ID/table pairs from 'domain detail <domainId> --with-tables'. Never infer table names. Relation: n:1, 1:1, or 1:n. May be repeated.",
@@ -2863,8 +2864,9 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                     "     Never add v_gpt_.",
                     "  4. If either pair cannot be verified, do not apply and do not retry with guessed values.",
                     "Repeat --join for multiple relation strings; JSON values are not accepted.",
-                    "submittedCount counts new joins only; already-existing joins are counted separately.",
-                    "The server may swap the sides and invert n:1/1:n to normalize an equivalent relation.",
+                    "CLI expectations: results use unique zero-based indexes and string statuses applied/already_exists/rejected.",
+                    "When present, submittedCount must equal the number of applied results for CLI verification.",
+                    "Backend response semantics and normalization are not independently verified.",
                     "",
                     "Example (replace every value with one verified table/column pair):",
                     "  cz-cli analytics-agent domain joins apply --domain-id 27 \\",
@@ -2876,6 +2878,10 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                   const format = typeof argv.format === "string" ? argv.format : "json"
                   const t0 = Date.now()
                   const rawJoins = Array.isArray(argv["join"]) ? argv["join"] : [argv["join"]]
+                  if (rawJoins.length === 0) {
+                    error("USAGE_ERROR", "At least one --join value is required", { format, exitCode: EXIT_USAGE_ERROR })
+                    return
+                  }
                   let joinRelations: Record<string, unknown>[]
                   try {
                     joinRelations = rawJoins.map((raw, index) => {
@@ -2886,7 +2892,7 @@ export function registerAnalyticsAgentCommand(cli: Argv<GlobalArgs>): void {
                       }
                     })
                   } catch (err) {
-                    error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format })
+                    error("USAGE_ERROR", err instanceof Error ? err.message : String(err), { format, exitCode: EXIT_USAGE_ERROR })
                     return
                   }
                   try {

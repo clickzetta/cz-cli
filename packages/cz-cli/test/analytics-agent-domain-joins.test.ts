@@ -192,7 +192,7 @@ describe("analytics-agent domain joins", () => {
       "101:orders.user_id=202:users.id@many:one",
     ])
 
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     const parsed = JSON.parse(result.output.trim())
     expect(parsed.error.code).toBe("USAGE_ERROR")
     expect(parsed.error.message).toContain("relation must be one of n:1, 1:1, 1:n")

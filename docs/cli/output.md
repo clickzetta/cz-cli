@@ -8,3 +8,5 @@ cz-cli 的输出同时给人和脚本、Agent 用，格式、错误结构和退�
 - **需要用户批准的写操作**：错误码 `WRITE_NOT_ALLOWED`，`status: "action_required"`，并给出 `next_steps`。见 [Data Agent](data-agent.md#写操作门)。
 
 新增命令或错误时复用 `success`、`error`、`handledError`，不要自己拼 JSON 或直接写 stdout；新增错误码时同步更新调用方会解析的地方（skill 文档、guide）。
+
+Missing option values rejected by yargs arity validation use `USAGE_ERROR` and exit `2`, including incomplete repeated `--join` flags. Unexpected command execution exceptions retain `INTERNAL_ERROR` and exit `1`.
